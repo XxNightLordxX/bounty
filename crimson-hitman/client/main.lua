@@ -571,8 +571,9 @@ local UI_EVENTS = {
     'verifyKill',
     'bailout', 'informant',
     -- The one read of the whitelisted-job view (Config.WhitelistedView),
-    -- which the server answers only for a player on a job the app bars.
-    'whitelistedView',
+    -- which the server answers only for a player on a job the app bars, and
+    -- its Notify me toggle, answered for the same players.
+    'whitelistedView', 'whitelistedViewAlerts',
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',
     'threads', 'readThread', 'sendMessage', 'requestCall', 'endCall', 'muteThread',

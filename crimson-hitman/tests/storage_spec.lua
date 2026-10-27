@@ -2744,6 +2744,26 @@ describe('the handover meeting point, in every backend', function()
     end)
 end)
 
+--- The whitelisted-job view's Notify me (Config.WhitelistedView.Alerts):
+--- one choice per character, off until they turn it on, and kept apart for
+--- each of them.
+describe('the whitelisted-job view\'s Notify me, in every backend', function()
+    it('is off by default, on once chosen, off again, and per character', function()
+        for _, b in ipairs(backends()) do
+            local m = b.store
+            falsy(m.readViewAlerts('OFFICER1'), b.name .. ': off by default')
+            truthy(m.setViewAlerts('OFFICER1', true, 1000), b.name)
+            truthy(m.readViewAlerts('OFFICER1'), b.name .. ': on once chosen')
+            falsy(m.readViewAlerts('OFFICER2'), b.name .. ': for that character alone')
+            truthy(m.setViewAlerts('OFFICER1', true, 1010), b.name .. ': chosen again')
+            truthy(m.readViewAlerts('OFFICER1'), b.name)
+            truthy(m.setViewAlerts('OFFICER1', false, 1020), b.name)
+            falsy(m.readViewAlerts('OFFICER1'), b.name .. ': off again')
+            truthy(m.setViewAlerts('OFFICER1', false, 1030), b.name .. ': off when off')
+        end
+    end)
+end)
+
 --- The SQL an owner can import by hand is the SQL mysql mode runs.
 ---
 --- install/sql/crimson_hitman.sql is for a database user that may not
@@ -2783,7 +2803,7 @@ describe('the install SQL', function()
         local shipped = statements(handle:read('a'))
         handle:close()
 
-        eq(#ran, 16, 'the sixteen crimson_* tables')
+        eq(#ran, 17, 'the seventeen crimson_* tables')
         eq(#shipped, #ran, 'one statement for every table')
         for i = 1, #ran do
             eq(shipped[i], ran[i], 'statement ' .. i .. ' as mysql mode runs it')
@@ -2914,6 +2934,9 @@ describe('every mysql statement is executable', function()
             function() m.reviewItems(true, 10) end,
             function() m.reviewItems(false, 10) end,
             function() m.setReviewState('rv1', 'open', 'resolving', { resolution = { action = 'dismiss' }, resolved_by = 'console' }) end,
+            function() m.setViewAlerts('OFFICER1', true, 1) end,
+            function() m.readViewAlerts('OFFICER1') end,
+            function() m.setViewAlerts('OFFICER1', false, 2) end,
             function() m.writeSetting('Bailout.Enabled', false, 'STAFF01', 1) end,
             function() m.writeSetting('Advisory.TriggerJobNames', { 'fib', 'sast' }, 'STAFF01', 2) end,
             function() m.readSettings() end,

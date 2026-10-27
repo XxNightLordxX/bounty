@@ -344,8 +344,10 @@ describe('the grid covers the whole action surface', function()
         -- are walked in photos_spec.
         openPhoto = true, photoDecision = true,
         -- Names no contract: the caller's whitelisted-job view, which lists
-        -- live contracts only (whitelisted_view_spec).
+        -- live contracts only (whitelisted_view_spec), and its Notify me,
+        -- a choice of the caller's own.
         whitelistedView = true,
+        whitelistedViewAlerts = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

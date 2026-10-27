@@ -373,7 +373,7 @@ function _G.newStack()
     settings.init({ storage = storage, audit = audit,
                     check = require('crimson-hitman.server.main').checkCandidate })
     audit.init(storage)
-    notify.init({ identity = identity, storage = storage })
+    notify.init({ identity = identity, storage = storage, projection = projection })
     review.init({ storage = storage, escrow = escrow, audit = audit })
     escrow.init(storage, audit, review)
     progression.init({ storage = storage, identity = identity, audit = audit })

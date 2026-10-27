@@ -67,8 +67,24 @@ Config.HideAppFromBlockedJobs = true
 --- report. A job change moves a player in or out of it at once. One there
 --- by a job they hold but are not working is told which, and how to get
 --- the whole app back.
+---
+--- Alerts lets a player on that screen turn on Notify me, for that
+--- character and off until they do (kept by the store, so a restart keeps
+--- their choice). With it on they get a phone notice when a NEW entry
+--- appears on their screen: a contract on them at the end of the same wait
+--- their own alert keeps (Notifications.ParanoidAlertJitter, or at once
+--- where the posting bulletin dates it), never sooner; and a contract on
+--- another whitelisted-job member the moment the advisory bulletin that
+--- puts it on their screen goes out, never sooner, and only where their
+--- screen lists it. It says who the contract is on and that member's job,
+--- and nothing else: never who placed it or a hitman. Within the notice
+--- budget (Notifications.MaxPerRecipientPerMinute and PerHour), once per
+--- contract. Changing it is rate-limited (Cooldowns.message). Off hides the
+--- toggle and sends nothing; each player's choice is kept for when it is
+--- back on. Also in the admin panel's Features.
 Config.WhitelistedView = {
     Enabled = true,     -- true = whitelisted jobs get that one screen; false = the app is closed to them, as HideAppFromBlockedJobs says
+    Alerts = true,      -- true = players on that screen may turn on Notify me (off until they do); false = no toggle, nothing sent
 }
 
 --- How the app reaches players' phones.
@@ -367,6 +383,8 @@ Config.Cooldowns = {
     --- is charged, whatever these are set to here or in the admin panel.
     bailout   = { per = 60, burst = 1 },
     informant = { per = 300, burst = 1 },
+    --- Placing and ending a call, muting a thread, and turning Notify me
+    --- on the whitelisted-job view on or off.
     message   = { per = 5,  burst = 5 },
     amend     = { per = 30, burst = 3 },
 

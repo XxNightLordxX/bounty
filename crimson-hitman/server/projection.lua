@@ -771,6 +771,59 @@ local function whitelistedEntry(contract, job, advised)
     }
 end
 
+--- A colleague's entry, where the view lists one: a member of a whitelisted
+--- job by the contract, and only where a bulletin said something of it.
+---@param contract table
+---@param advised table { posted = boolean, accepted = boolean }
+---@return table|nil
+local function colleagueEntry(contract, advised)
+    local member, job = Identity.whitelistedTarget(contract)
+    local entry = member and whitelistedEntry(contract, job, advised)
+    -- Only where a bulletin said something of it.
+    if entry and (entry.postedAt or entry.hitmenActive) then return entry end
+    return nil
+end
+
+--- Which advisory bulletins go out now, where the colleagues' list is sent
+--- to this viewer at all: one the law enforcement advisory reaches, while
+--- a stage of it goes out. nil where there is no such list.
+---@param viewerJob table|nil
+---@return table|nil { posted = boolean, accepted = boolean }
+local function advisedFor(viewerJob)
+    local advised = { posted = Util.advises('posted'), accepted = Util.advises('accepted') }
+    if Identity.isAdvisoryRecipient(viewerJob) and (advised.posted or advised.accepted) then
+        return advised
+    end
+    return nil
+end
+
+--- What the whitelisted-job view lists for this viewer of one contract as it
+--- stands, or nil where it lists nothing: the rule the view itself reads
+--- (Projection.whitelistedView), for its Notify me notices (Notify), so a
+--- notice is never sent for an entry the screen would not show, or say more
+--- than it. Never the buyout fields a contract on them carries on screen.
+---@param contract table
+---@param viewerCid string
+---@param viewerJob table|nil the job the viewer is working
+---@return table|nil entry
+---@return boolean|nil own true for a contract on the viewer
+function Projection.whitelistedListing(contract, viewerCid, viewerJob)
+    if type(contract) ~= 'table' or type(viewerCid) ~= 'string' then return nil end
+    if contract.target_cid == viewerCid then
+        if CH.TERMINAL[contract.state] or not Notify.shownToTarget(contract) then return nil end
+        local member, job = Identity.whitelistedTarget(contract)
+        return whitelistedEntry(contract, member and job or nil), true
+    end
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
+        return nil
+    end
+    local advised = advisedFor(viewerJob)
+    if not advised or not Notify.shownToTarget(contract) then return nil end
+    local entry = colleagueEntry(contract, advised)
+    if entry then return entry, false end
+    return nil
+end
+
 --- The whitelisted-job view (Config.WhitelistedView), for a player the app
 --- bars: every live contract naming them ("Contracts on you"), and every
 --- live contract naming another member of a whitelisted job, as the
@@ -798,11 +851,15 @@ end
 --- And, where a job they hold but are not working is what puts them here,
 --- that job (`heldJob`), for the banner to name with how to get the whole
 --- app back: their own job, which nothing on the page hides from them.
+---
+--- And their own Notify me (`alerts`, Config.WhitelistedView.Alerts):
+--- whether they turned it on, which is off until they do. Absent while the
+--- server does not allow it, and the page draws no toggle.
 ---@param viewerCid string
 ---@param viewerJob table|nil the job the viewer is working, which decides
 --- whether the advisory reaches them
 ---@param heldJob string|nil the held job that bars them (Identity.barredBy)
----@return table { onYou = entry[], colleagues = entry[]|nil, settings = table, heldJob = string|nil }
+---@return table { onYou = entry[], colleagues = entry[]|nil, settings = table, heldJob = string|nil, alerts = table|nil }
 function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
     local onYou, colleagues = {}, nil
 
@@ -825,19 +882,15 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
         end
     end
 
-    local advised = { posted = Util.advises('posted'), accepted = Util.advises('accepted') }
-    if Identity.isAdvisoryRecipient(viewerJob) and (advised.posted or advised.accepted) then
+    local advised = advisedFor(viewerJob)
+    if advised then
         colleagues = {}
         local live = Storage.liveContracts()
         for i = 1, #live do
             local c = live[i]
             if c.target_cid ~= viewerCid and Notify.shownToTarget(c) then
-                local member, job = Identity.whitelistedTarget(c)
-                local entry = member and whitelistedEntry(c, job, advised)
-                -- Only where a bulletin said something of it.
-                if entry and (entry.postedAt or entry.hitmenActive) then
-                    colleagues[#colleagues + 1] = entry
-                end
+                local entry = colleagueEntry(c, advised)
+                if entry then colleagues[#colleagues + 1] = entry end
             end
         end
     end
@@ -863,6 +916,7 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
             buyouts = Config.Bailout.Enabled == true,
             buyoutDelaySeconds = Config.Bailout.ProcessingDelaySeconds or 0,
         },
+        alerts = Notify.viewAlertsAllowed() and { on = Notify.viewAlertsOn(viewerCid) } or nil,
     }
 end
 

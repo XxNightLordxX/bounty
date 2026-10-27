@@ -46,7 +46,7 @@ function Memory.open()
     db = {
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
-        photos = {}, reviews = {}, settings = {}, alerts = {}, seq = 0,
+        photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
     }
     return true
 end
@@ -1486,6 +1486,34 @@ end
 --- One pruned (Alerts.MAX).
 function Memory.deleteAlert(id)
     db.alerts[id] = nil
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The whitelisted-job view's Notify me
+--------------------------------------------------------------------------
+
+--- Whether a character turned on Notify me on the whitelisted-job view
+--- (Config.WhitelistedView.Alerts), by citizen id: a row is the choice, and
+--- turning it off removes the row, so off is what every character starts
+--- with. One small row for each character who chose it, never pruned: a
+--- choice is kept until they change it.
+---@param cid string
+---@return boolean
+function Memory.readViewAlerts(cid)
+    return (db.viewAlerts or {})[cid] ~= nil
+end
+
+---@param cid string
+---@param on boolean
+---@param at integer os.time() of the change
+function Memory.setViewAlerts(cid, on, at)
+    db.viewAlerts = db.viewAlerts or {}
+    if on then
+        db.viewAlerts[cid] = { cid = cid, set_at = at }
+    else
+        db.viewAlerts[cid] = nil
+    end
     return true
 end
 

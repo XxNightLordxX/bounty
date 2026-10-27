@@ -138,6 +138,13 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   contract on them, through the same server path as On me and `/cleanse`. A
   job change moves them in or out of it at once. In the admin panel's
   Features; off is the app closed to them, as before (see *Access*).
+- **Notify me on the whitelisted-job view** (`Config.WhitelistedView.Alerts`,
+  shipped allowed): a player on that screen can turn it on, per character and
+  off until they do, for a phone notice when a new entry appears there: a
+  contract on them at the end of the same wait as their own alert, one on
+  another whitelisted-job member as the advisory bulletin for it goes out.
+  It names who the contract is on and their job, nothing else, within the
+  notice budget (see *Access*).
 
 ---
 
@@ -177,7 +184,8 @@ Nothing to import either way. The tables are
 `crimson_messages`, `crimson_ledger`, `crimson_pending`, `crimson_stats`,
 `crimson_audit`, `crimson_reveals`, `crimson_mutes`, `crimson_photos`,
 `crimson_review`, `crimson_settings` (what staff changed from the admin panel),
-`crimson_alerts` (the admin panel's alerts) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+`crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (who turned
+on the whitelisted-job view's Notify me) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
 engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
@@ -192,8 +200,9 @@ columns `crimson_escrow.deliver_raises`, `deliver_before`, `deliver_arrived`,
 `'either'`), `advised_posted_at` and `advised_hitmen` (what the law
 enforcement advisory said of each contract, which the whitelisted-job view
 shows; NULL where no bulletin went), and the tables `crimson_review` (the
-review queue), `crimson_settings` (the admin panel's settings) and
-`crimson_alerts` (the admin panel's alerts): import
+review queue), `crimson_settings` (the admin panel's settings),
+`crimson_alerts` (the admin panel's alerts) and `crimson_view_alerts` (the
+whitelisted-job view's Notify me): import
 `install/sql/crimson_hitman.sql`, or create them as a user that may. It also
 adds three indexes, which an existing database gets at its next start (about
 three seconds per million audit rows, with writes going on) or, for a user
@@ -397,6 +406,7 @@ restart only once it says `database: answering`. For backups use
 | `Config.App.DefaultInstalled` | Whether the app is on every eligible player's home screen (`true`) or left in the phone's App Store for each player to download (`false`, as shipped). Players are not told it exists either way; see *Install* |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who the app is barred to: the whitelisted jobs. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit. With the whitelisted-job view on they see its one screen and nothing else (see *Access*) |
 | `Config.WhitelistedView.Enabled` | The whitelisted-job view (`true`, as shipped): players on a job the app bars open it to one read-only screen, the contracts on them and (for those the advisory reaches) on other whitelisted-job members, and the buyout on their own. `false` closes the app to them as before, and `Config.HideAppFromBlockedJobs` then decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features, kept across restarts |
+| `Config.WhitelistedView.Alerts` | Whether a player on the whitelisted-job view may turn on **Notify me** (`true`, as shipped; each player's own choice is off until they turn it on). `false` hides the toggle and sends nothing, notices still waiting included; each choice is kept for when it is back on. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features. See *Access* |
 | `Config.HideAppFromBlockedJobs` | Whether a barred player's phone shows the app at all (`true`, as shipped: hidden). Applies only while the whitelisted-job view is off; with it on they have the app, showing that one screen, and the admin panel marks this as not applying |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry. `TriggerJobNames` ships with every name in `Config.BlockedJobNames`, so a barred job whose type `qbx_core` leaves out still counts; a barred job in neither trigger list is warned about at startup. The app words a protected target by the kind of job (law enforcement, emergency services, legal), never as a sworn officer unless they are one, and says only what placing or accepting will do under the switches now. `FlagListing` marks the card itself (its chip, its notice and its styling). The target's own notice says *Your department has been advised* only where their job receives the advisory, and *Law enforcement has been advised* otherwise |
 | `Config.Kidnap.MeetingPoint` | Whether the person who placed an alive-only contract can set a meeting point for the handover where they stand (`true`, as shipped). Only the hitmen on that contract see it, on their GPS; nobody else does but staff with `Config.Admin.IdentityAce`, in the admin panel's contract view. Off hides the controls and keeps any point already set. See *Live transfer only* |
@@ -849,7 +859,8 @@ notices a minute and `MaxPerRecipientPerHour` (40) an hour. Contract messages
 and call requests count against those figures apart from everything else, so a
 handover arranged by message never silences *Contract accepted* or *Handover
 starting*; a message into a muted thread is counted and not sent, so nobody
-can tell they were muted. A contract notice past the budget is kept, one per
+can tell they were muted. The whitelisted-job view's **Notify me** notices
+count as contract notices (see *Access*). A contract notice past the budget is kept, one per
 contract and kind (the newest in place of the one before), and sent once the
 minute opens; receipts and endings are outside the budget. What a player is
 told while they are away is kept for their next login: endings, an
@@ -1022,9 +1033,46 @@ processing delay while a hitman is engaged, no buyout from the floor, the
 settle attempts and the refund, who it pays, its audit rows and notices).
 With buyouts off there is no button. Nothing else in the app answers them:
 not the board, Place, Accept, Deliver, Message, the wallet or the ledger,
-and every other request is refused as it always was, apart from the page's
-own fault report, so a fault on this screen reaches `/ch-diag` and the page
-log the diagnosis asks their app for comes back.
+and every other request is refused as it always was, apart from **Notify
+me** (below) and the page's own fault report, so a fault on this screen
+reaches `/ch-diag` and the page log the diagnosis asks their app for comes
+back.
+
+**Notify me.** Beside **Refresh** the view has a **Notify me** button, while
+`Config.WhitelistedView.Alerts` is on (as shipped). It is off for every
+character until they turn it on, and their choice is kept by the store your
+server runs (`data/records.json`, the `crimson_view_alerts` table, or memory),
+so a restart keeps it; it belongs to that character, not to the player's other
+ones. With it on, their phone is told when a **new** entry appears on their
+screen, while they are in the city:
+
+- **A contract on them**: at the end of the same wait their own alert keeps
+  (`Config.Notifications.ParanoidAlertJitter`, or at once where the posting
+  bulletin goes to them and dates it anyway), never sooner. *Contract on you:
+  A contract on you is now listed in this app.* One withdrawn inside the
+  wait sends nothing.
+- **A contract on another whitelisted-job member**: at the moment the advisory
+  bulletin that puts it on their screen goes out, never sooner, and only
+  where their screen lists it: they are one the advisory reaches, and the
+  bulletin is the first said of it (the posting one, or with posting bulletins
+  off, the first acceptance one). *Contract on a whitelisted job: A contract
+  on Colin Hart (Police) is now listed in this app.* A later bulletin about
+  an entry already listed is not new, and sends nothing more.
+
+It says who the contract is on and that member's job, and nothing else:
+never who placed it, a hitman, the reason, the reward or the contract's id.
+Nothing is sent for a contract the view would not list (a civilian's, or a
+colleague's while the advisory is off or does not reach them). Each goes
+through the notice budget (`Config.Notifications.MaxPerRecipientPerMinute`
+and `PerHour`) like any other news, once per contract: one past the budget is
+kept and sent when the minute opens, and let go if the contract ends first,
+if they turn Notify me off, or if they leave the city. Changing it is a
+request through the view's own gate (only players the app bars, while the
+view is on), rate-limited in the `message` allowance (`Config.Cooldowns`),
+written and audited (`view_alerts_on`, `view_alerts_off`) only when it
+changes. `Config.WhitelistedView.Alerts = false`, or the switch in the admin
+panel's Features, hides the button and sends nothing, notices still waiting
+included; each player's choice is kept for when it is back on.
 
 A job change (the QBox job update, an `sc-multijob` switch, or the next
 maintenance tick if no event comes) moves them at once: somebody who leaves

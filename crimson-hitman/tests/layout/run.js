@@ -1296,7 +1296,9 @@ async function main() {
             state: i % 2 ? 'taken' : 'open', hitmenActive: i % 2 ? i : 0,
             secondsLeft: 3000 * i };
         }),
-        settings: { buyouts: true, buyoutDelaySeconds: 120 }
+        settings: { buyouts: true, buyoutDelaySeconds: 120 },
+        // Notify me on, its longer label, beside Refresh.
+        alerts: { on: true }
       } }
     };
     window.fetch = function (url) {
@@ -1317,7 +1319,7 @@ async function main() {
     await vp.waitForTimeout(300);
     const top = await clearOfStatusBar(vp, '#view > *');
     const found = await vp.evaluate(function () {
-      const out = { faults: [], intro: false, buyout: false };
+      const out = { faults: [], intro: false, buyout: false, alerts: false };
       out.intro = document.getElementById('view').textContent
         .indexOf('only shows contracts on you') !== -1;
       const nav = document.querySelector('.tabs');
@@ -1349,6 +1351,13 @@ async function main() {
         const r = buy.getBoundingClientRect();
         if (r.height < 36) { out.faults.push('the buyout button is ' + r.height + 'px tall'); }
       }
+      const toggle = document.getElementById('jobview-alerts');
+      if (toggle) {
+        out.alerts = toggle.textContent === 'Turn off Notify me';
+        const r = toggle.getBoundingClientRect();
+        if (r.height < 36) { out.faults.push('the Notify me button is ' + r.height + 'px tall'); }
+        if (r.right > window.innerWidth + 1) { out.faults.push('the Notify me button is cut off'); }
+      }
       // Scrolled to the end, the last entry clears the home indicator.
       const main = document.querySelector('main');
       main.scrollTop = main.scrollHeight;
@@ -1364,6 +1373,7 @@ async function main() {
     viewMeasured++;
     if (!found.intro) { viewFaults.push(label + ': the view was not drawn'); }
     if (!found.buyout) { viewFaults.push(label + ': no buyout button on their own entry'); }
+    if (!found.alerts) { viewFaults.push(label + ': no Notify me button'); }
     if (found.images) { viewFaults.push(label + ': ' + found.images + ' image(s) drawn'); }
     if (top === null || top < STATUS_BAR_REM) {
       viewFaults.push(label + ': the first line starts at ' + top + 'rem, under the status bar');

@@ -994,6 +994,8 @@ describe('what this file leaves out', function()
         rewardBreakdown = true, amendments = true, threads = true,
         readThread = true, kidnapProgress = true, pageError = true,
         whitelistedView = true,
+        whitelistedViewAlerts = 'the same choice again is answered as it is, and written and '
+            .. 'audited once (whitelisted_view_spec, "Notify me on the view")',
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

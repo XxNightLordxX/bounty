@@ -205,6 +205,53 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] Nothing appears in console when a whitelisted player opens the app, and
       the admin panel's **Logs** gain no *rejected* `gate_list` row for it
 
+### 2a-i. Notify me on the view (as shipped, `Config.WhitelistedView.Alerts = true`)
+
+Two officers (SAST A who opens the view, SAST B a colleague) and a civilian
+placer, all online.
+
+- [ ] A's view has **Notify me** beside **Refresh**, and says *Notify me is
+      off. Turn it on and your phone tells you when a new contract appears
+      here, while you are in the city.* Place a contract on B: A gets the
+      THREAT ADVISORY bulletin and nothing else
+- [ ] Tap **Notify me**: *Notify me is on.*, the button reads **Turn off
+      Notify me**. Place a contract on B (another placer): A's phone gets the
+      bulletin and, in the same second, *Contract on a whitelisted job: A
+      contract on <B's name> (<B's job>) is now listed in this app.* The
+      notice names nobody else: not the placer, not a hitman, no reason or
+      reward. A hitman taking it sends A the acceptance bulletin and no
+      second Notify me
+- [ ] Turn off **Admin panel, Features, Law enforcement advisory, When
+      posted** (`OnCreate`) and place a contract on B: nothing reaches A until a hitman
+      takes it; then the acceptance bulletin and the Notify me notice arrive
+      together. Turn it back on
+- [ ] With **When posted** off, place a contract on A: A hears
+      nothing until their own alert (*Unsettling*, one to ten minutes later,
+      an estimate), and *Contract on you: A contract on you is now listed in
+      this app.* arrives in the same second, never before it. Withdraw one
+      inside that wait: no Notify me for it at all
+- [ ] A contract on a civilian sends A nothing. An EMS character who turned
+      Notify me on gets nothing for a contract on B (their view has no
+      colleagues' list)
+- [ ] Place seven contracts on colleagues inside a minute (several placers):
+      A gets six Notify me notices that minute and the seventh when the
+      minute opens (`Config.Notifications.MaxPerRecipientPerMinute`, 6 as
+      shipped); every bulletin still arrives at once
+- [ ] Tap **Turn off Notify me** and **Notify me** quickly six times: the
+      sixth says how many seconds to wait (`Config.Cooldowns.message`)
+- [ ] Restart the resource (or the server) with Notify me on: A's view still
+      says it is on, and the next contract on B still reaches A's phone. A's
+      other characters have it off
+- [ ] Admin panel, Features, Access: turn **Notify me on the whitelisted-job
+      view** off. A's open view loses the button at once; a contract on B
+      sends the bulletin and no Notify me. Turn it back on: A's choice is as
+      they left it
+- [ ] With **Whitelisted-job view** off, the panel says **Notify me on the
+      whitelisted-job view** does not apply
+- [ ] resmon with ten officers online, five with Notify me on, while a
+      contract on a colleague is placed: no lasting change from idle (0.02 ms
+      or less when nothing happens)
+
 ### 2b. The view switched off
 
 - [ ] Admin panel, Features, Access: turn **Whitelisted-job view** off. An

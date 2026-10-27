@@ -23,7 +23,7 @@ local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson
 local EMPTY = {
     contracts = {}, escrow = {}, hitmen = {}, amendments = {},
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
-    photos = {}, reviews = {}, settings = {}, alerts = {}, seq = 0,
+    photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -39,7 +39,8 @@ local indexDirty = false
 --- The records: everything that is not per-contract and is not the index's
 --- own bookkeeping. The ledger, pending payouts, the stats, the informant
 --- reveals, the kill photo records, the review queue, the settings staff
---- changed from the admin panel, and the admin panel's alerts.
+--- changed from the admin panel, the admin panel's alerts, and who turned on
+--- the whitelisted-job view's Notify me.
 ---
 --- They were fields of store.json, and store.json was rewritten whole on
 --- every financial write, even one that changed only a contract's own file.
@@ -51,7 +52,7 @@ local indexDirty = false
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
-                  'alerts' }
+                  'alerts', 'viewAlerts' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -1884,6 +1885,29 @@ function JsonStore.deleteAlert(id)
         db.alerts[id] = nil
         alertsDirty = true
     end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The whitelisted-job view's Notify me
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json with the stats, and written at
+--- once, as a setting staff change is: a crash in the seconds before the
+--- next save lost a choice the player had just been told was made. A
+--- change is rare, and rate-limited (Config.Cooldowns.message).
+function JsonStore.readViewAlerts(cid)
+    return (db.viewAlerts or {})[cid] ~= nil
+end
+
+function JsonStore.setViewAlerts(cid, on, at)
+    db.viewAlerts = db.viewAlerts or {}
+    if on then
+        db.viewAlerts[cid] = { cid = cid, set_at = at }
+    else
+        db.viewAlerts[cid] = nil
+    end
+    touch(true)
     return true
 end
 

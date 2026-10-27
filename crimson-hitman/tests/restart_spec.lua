@@ -133,6 +133,58 @@ describe('the handover meeting point across a restart', function()
     end
 end)
 
+--- Notify me on the whitelisted-job view is a choice kept by the store: a
+--- crash straight after turning it on keeps it, the view still says so, and
+--- the next new entry on their screen still reaches their phone.
+describe('Notify me on the whitelisted-job view across a restart', function()
+    local function reply(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        if not fire then return { ok = false, err = 'NO SUCH HANDLER' } end
+        Env.clientEvents = {}
+        _G.source = src
+        local fired, err = pcall(fire, payload or {})
+        _G.source = nil
+        if not fired then return { ok = false, err = 'THREW: ' .. tostring(err) } end
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then return event.args[1] end
+        end
+        return { ok = false, err = 'NO REPLY' }
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is kept, and still tells them', function()
+            local _, s = boot(mode)
+            fixture(s)
+            for _, who in ipairs({ { 11, 'OFFICER1' }, { 12, 'OFFICER2' } }) do
+                Env.addPlayer({ source = who[1], citizenid = who[2], license = 'license:' .. who[2],
+                    cash = 50000, bank = 50000, firstname = 'Colin', lastname = 'Hart',
+                    job = { name = 'police', label = 'Police', type = 'leo', onduty = true } })
+            end
+            eq(reply('whitelistedView', 11).data.alerts.on, false, mode .. ': off by default')
+            local on = reply('whitelistedViewAlerts', 11, { on = true })
+            truthy(on.ok, mode .. ': ' .. tostring(on.err))
+
+            local _, after = restart(mode, s)
+            local view = reply('whitelistedView', 11)
+            truthy(view.ok, tostring(view.err))
+            eq(view.data.alerts.on, true, mode .. ': lost to the restart')
+
+            Env.clientEvents = {}
+            local c = after.contracts.create(after.identity.resolve(1), { targetCid = 'OFFICER2',
+                reason = 'x', mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
+            truthy(c, 'placed')
+            local told = 0
+            for _, event in ipairs(Env.clientEvents) do
+                if Natives.isNotice(event) and event.target == 11
+                    and event.args[1].title == 'Contract on a whitelisted job' then
+                    told = told + 1
+                end
+            end
+            eq(told, 1, mode .. ': and still tells them')
+        end)
+    end
+end)
+
 --- W067: an agreed change the process died applying. Left open, the next
 --- Agree applied it a second time; it is closed as 'unknown' at the start,
 --- and both sides are told to look at the contract.

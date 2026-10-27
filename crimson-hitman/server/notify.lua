@@ -11,6 +11,9 @@ local Log = CrimsonBoot.requireShared('log')
 
 local Identity
 local Storage
+--- What the whitelisted-job view lists, for its Notify me notices
+--- (Projection.whitelistedListing).
+local Projection
 local budgets = {}
 --- [cid] = the same counters as `budgets`, for messages and call requests
 --- alone (opts.relay). One budget for both let a handover arranged by
@@ -69,9 +72,26 @@ local revealAt = {}
 --- first one's time while On me still showed nothing.
 local pendingAlert = {}
 
+--- [cid] = whether that character turned on the whitelisted-job view's
+--- Notify me (Notify.viewAlertsOn): as the store answered the first time it
+--- was asked this session, or as they set it since. Forgotten with the
+--- player (clearPlayer).
+local viewOptIn = {}
+
+--- [contractId .. ':' .. cid] = true once that viewer was sent, or kept,
+--- the Notify me notice for that contract's entry: one per contract.
+--- Cleared with the contract (clearContract).
+local viewTold = {}
+
+--- [contractId] = { [targetCid] = token }: the Notify me notice for a
+--- contract on that viewer, waiting out the same wait as their own alert
+--- (armViewOnYou). Let go with the contract (clearContract).
+local viewWaiting = {}
+
 function Notify.init(deps)
     Identity = deps.identity
     Storage = deps.storage
+    Projection = deps.projection
     budgets, relayBudgets, advisorySent = {}, {}, {}
     announced, told = {}, {}
     lastPush, trailing = {}, {}
@@ -79,6 +99,7 @@ function Notify.init(deps)
     paranoidUntil = {}
     revealAt = {}
     pendingAlert = {}
+    viewOptIn, viewTold, viewWaiting = {}, {}, {}
 end
 
 ---@param book table|nil budgets (contract notices) or relayBudgets
@@ -401,6 +422,201 @@ function Notify.clearPush(cid)
 end
 
 --------------------------------------------------------------------------
+-- The whitelisted-job view's Notify me (Config.WhitelistedView.Alerts)
+--------------------------------------------------------------------------
+--
+-- A player on the whitelisted-job view can turn on Notify me, for that
+-- character, off until they do. With it on they are told on their phone
+-- when a new entry appears on their view: a contract on them at the end of
+-- the same wait their own alert and On me keep (contractCreated draws it,
+-- Notify.shownToTarget reads it), never sooner; and a contract on another
+-- whitelisted-job member as the advisory bulletin that puts it on their
+-- view goes out, never sooner, and only where the view lists it for them
+-- (Projection.whitelistedListing). Each says only what the entry shows:
+-- who it is on, and a colleague's job; never who placed it or any hitman.
+-- Through the notice budget like any other news, once per contract and
+-- viewer, one kept past the budget coalesced by its contract (keepOver)
+-- and dropped with it (clearContract).
+
+--- Whether the server allows Notify me now: the view on, and its alerts.
+--- Read at every use, so the admin panel's switch applies at once, to
+--- notices already waiting too.
+---@return boolean
+function Notify.viewAlertsAllowed()
+    local view = Config.WhitelistedView
+    return type(view) == 'table' and view.Enabled == true and view.Alerts == true
+end
+
+--- Whether this character turned Notify me on. Asked of the store once a
+--- session and kept (viewOptIn); a store that does not answer is read as
+--- off this time, and asked again the next.
+---@param cid string
+---@return boolean
+function Notify.viewAlertsOn(cid)
+    if type(cid) ~= 'string' then return false end
+    local known = viewOptIn[cid]
+    if known ~= nil then return known end
+    if not (Storage and Storage.readViewAlerts) then return false end
+    local ok, on = pcall(Storage.readViewAlerts, cid)
+    if not ok then
+        Log.debug(('could not read a player\'s Notify me choice: %s'):format(Util.dbError(on)))
+        return false
+    end
+    viewOptIn[cid] = on == true
+    return viewOptIn[cid]
+end
+
+--- Let go of the Notify me notices kept for a player past their budget: one
+--- they turned off, or left the city with, is not sent later.
+local function dropKeptView(cid)
+    local list = waiting[cid]
+    if not list then return end
+    for i = #list, 1, -1 do
+        if list[i].opts and list[i].opts.view then table.remove(list, i) end
+    end
+    if #list == 0 then waiting[cid] = nil end
+end
+
+--- Turn Notify me on or off for this character. The store first: a write
+--- it refuses raises, and nothing here changes.
+---@param cid string
+---@param on boolean
+---@return boolean changed false where it was so already
+function Notify.setViewAlerts(cid, on)
+    on = on == true
+    local was = Notify.viewAlertsOn(cid)
+    if viewOptIn[cid] ~= nil and was == on then return false end
+    Storage.setViewAlerts(cid, on, os.time())
+    viewOptIn[cid] = on
+    if not on then dropKeptView(cid) end
+    return true
+end
+
+--- The player a Notify me notice may go to now, or nil: the server allows
+--- it, they are one the view is for (a player the app bars, as
+--- Identity.gateFor lets into it), and they turned it on.
+---@param actor table|nil in the city
+---@return table|nil actor
+local function viewViewer(actor)
+    if not actor or not Notify.viewAlertsAllowed() or not Projection then return nil end
+    local okBarred, barred = pcall(Identity.isBarred, actor)
+    if not (okBarred and barred) then return nil end
+    if not Notify.viewAlertsOn(actor.cid) then return nil end
+    return actor
+end
+
+--- A Notify me notice's words: the entry's own, never more. Who it is on,
+--- and the job a colleague is listed under; not when, open or taken, or
+--- how long, which the screen says; never who placed it or any hitman,
+--- which the entry does not carry.
+---@param entry table what the view lists
+---@param own boolean a contract on the viewer
+---@return string title
+---@return string content
+local function viewWords(entry, own)
+    if own then
+        return 'Contract on you', 'A contract on you is now listed in this app.'
+    end
+    local who = tostring(entry.targetName or 'a whitelisted-job member')
+    if type(entry.targetJob) == 'string' and entry.targetJob ~= '' then
+        who = ('%s (%s)'):format(who, entry.targetJob)
+    end
+    return 'Contract on a whitelisted job',
+        ('A contract on %s is now listed in this app.'):format(who)
+end
+
+--- Send one: once per contract and viewer, through the budget, and kept
+--- past it coalesced by the contract.
+local function sendView(actor, contractId, entry, own)
+    local key = tostring(contractId) .. ':' .. tostring(actor.cid)
+    if viewTold[key] then return false end
+    viewTold[key] = true
+    local title, content = viewWords(entry, own)
+    Notify.toCitizen(actor.cid, title, content, { contractId = contractId, view = true })
+    return true
+end
+
+--- A contract on its target: their Notify me notice at the end of `delay`,
+--- the wait drawn for it (contractCreated, rearm), which their own alert
+--- and On me keep, never sooner. Checked when it falls due, against the
+--- contract as stored then: one that ended inside the wait sends nothing
+--- (clearContract lets it go), nor one the view would not list. A bulletin
+--- that shows it to them sooner does not bring it forward.
+---@param contract table
+---@param delay integer seconds
+local function armViewOnYou(contract, delay)
+    local id, cid = contract and contract.id, contract and contract.target_cid
+    if not id or type(cid) ~= 'string' then return end
+    local token = {}
+    viewWaiting[id] = viewWaiting[id] or {}
+    viewWaiting[id][cid] = token
+    local function due()
+        local held = viewWaiting[id]
+        if not held or held[cid] ~= token then return end
+        held[cid] = nil
+        if next(held) == nil then viewWaiting[id] = nil end
+        local actor = viewViewer(Identity.byCitizenId(cid))
+        if not actor then return end
+        local okRead, row = pcall(Storage.readContract, id)
+        if not okRead or type(row) ~= 'table' then return end
+        local okList, entry, own = pcall(Projection.whitelistedListing, row, cid, actor.job)
+        if okList and entry and own then sendView(actor, id, entry, true) end
+    end
+    delay = math.max(0, math.floor(tonumber(delay) or 0))
+    if delay <= 0 then return due() end
+    SetTimeout(delay * 1000, due)
+end
+
+--- Before a bulletin's words are kept on its contract: who could be sent a
+--- Notify me notice for it (in the city, reached by the advisory, not its
+--- target, and with it on), and which of them their view lists it for
+--- already. nil where nobody could, so a bulletin nobody asked to hear of
+--- costs no read.
+---@param contract table
+---@return table|nil { viewers = actor[], prior = table, listed = { [cid] = true } }
+local function viewBefore(contract)
+    if not Notify.viewAlertsAllowed() or not Projection then return nil end
+    local viewers = {}
+    local online = Identity.online()
+    for i = 1, #online do
+        local actor = online[i]
+        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job)
+            and viewViewer(actor) then
+            viewers[#viewers + 1] = actor
+        end
+    end
+    if #viewers == 0 then return nil end
+    local okRead, row = pcall(Storage.readContract, contract.id)
+    local prior = Util.copy((okRead and type(row) == 'table') and row or contract)
+    local listed = {}
+    for i = 1, #viewers do
+        local ok, entry = pcall(Projection.whitelistedListing, prior, viewers[i].cid,
+            viewers[i].job)
+        if ok and entry then listed[viewers[i].cid] = true end
+    end
+    return { viewers = viewers, prior = prior, listed = listed }
+end
+
+--- As the bulletin goes out: each of them whose view lists the contract
+--- now, and did not before it, is told. `said` is what the bulletin kept on
+--- the contract, nil where keeping it failed: the view reads the store, and
+--- does not list it by that bulletin then.
+---@param before table|nil viewBefore's
+---@param said table|nil
+local function viewAfter(before, said)
+    if not before then return end
+    local after = Util.copy(before.prior)
+    for k, v in pairs(said or {}) do after[k] = v end
+    for i = 1, #before.viewers do
+        local actor = before.viewers[i]
+        if not before.listed[actor.cid] then
+            local ok, entry, own = pcall(Projection.whitelistedListing, after, actor.cid, actor.job)
+            if ok and entry and own == false then sendView(actor, after.id, entry, false) end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 -- Contract lifecycle notifications
 --------------------------------------------------------------------------
 
@@ -434,6 +650,10 @@ function Notify.contractCreated(contract, targetActor)
     local delay = (contract.target_protected and Notify.advises('posted')) and 0
         or revealDelay()
     if delay > 0 then revealAt[contract.id] = os.time() + delay end
+
+    -- The whitelisted-job view's Notify me for the target, at the end of
+    -- the same wait.
+    armViewOnYou(contract, delay)
 
     -- The target's paranoid alert. Deliberately vague: it tells them
     -- something is wrong, not who or how much.
@@ -601,6 +821,9 @@ function Notify.rearm(contracts)
             if Config.Notifications.ParanoidAlert == true then
                 Notify.paranoid(contract.target_cid, delay, contract.id)
             end
+            -- Held back from the target again, and appearing on their
+            -- whitelisted-job view at the end of it, as a new placement does.
+            armViewOnYou(contract, delay)
             rearmed = rearmed + 1
         elseif Config.Notifications.ParanoidAlert == true then
             told[contract.id] = true
@@ -861,11 +1084,16 @@ function Notify.deliverKept()
             local left = {}
             for i = 1, #list do
                 local note = list[i]
-                if (note.opts and note.opts.bypassBudget) or withinBudget(cid) then
-                    raise(actor, cid, note.title, note.content)
-                    sent = sent + 1
-                else
-                    left[#left + 1] = note
+                -- Notify me, turned off since by them or by the server, or
+                -- the view no longer theirs: let go, not sent.
+                local unwanted = note.opts and note.opts.view and not viewViewer(actor)
+                if not unwanted then
+                    if (note.opts and note.opts.bypassBudget) or withinBudget(cid) then
+                        raise(actor, cid, note.title, note.content)
+                        sent = sent + 1
+                    else
+                        left[#left + 1] = note
+                    end
                 end
             end
             waiting[cid] = #left > 0 and left or nil
@@ -1276,6 +1504,11 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     if advisorySent[key] then return end
     advisorySent[key] = true
 
+    -- Who has Notify me on their whitelisted-job view, and whether it lists
+    -- this contract already, before this bulletin's words are kept on it.
+    local viewers = viewBefore(contract)
+    local kept
+
     -- What it says, kept on the contract as it goes out: the whitelisted-job
     -- view lists a colleague's contract from this (Projection.whitelistedView),
     -- never from the advisory as it is set now. Read from the setting, a
@@ -1295,6 +1528,8 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
         if not okSaid then
             Log.always(('could not keep what the advisory said of contract %s: %s')
                 :format(tostring(contract.id), tostring(errSaid)))
+        else
+            kept = said
         end
     end
 
@@ -1330,6 +1565,10 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
             recipients = recipients + 1
         end
     end
+
+    -- With it: Notify me, to each of them whose whitelisted-job view lists
+    -- the contract from this bulletin on, and not before it.
+    viewAfter(viewers, kept)
 
     -- The targeted officer is told directly whatever the paranoid-alert
     -- setting says: with the whitelisted-job view off they cannot open the
@@ -1380,18 +1619,31 @@ function Notify.clearPlayer(cid)
     -- A cooldown still running is kept: relogging must not buy a second
     -- alert, and with it a count.
     if (paranoidUntil[cid] or 0) <= os.time() then paranoidUntil[cid] = nil end
+    -- Their Notify me choice is read again next time, and a notice kept
+    -- for them past the budget is not sent at their next login, by then
+    -- old news their view shows anyway.
+    viewOptIn[cid] = nil
+    dropKeptView(cid)
 end
 
 function Notify.clearContract(contractId, contract)
     revealAt[contractId] = nil
     told[contractId] = nil
     -- A kept "New message" about it (Notify.keepMessageNotice): its thread
-    -- has closed.
+    -- has closed. And a Notify me notice kept past the budget, or still
+    -- waiting out the wait: its entry has left the view.
     for cid, list in pairs(waiting) do
         for i = #list, 1, -1 do
-            if list[i].message and list[i].contract_id == contractId then table.remove(list, i) end
+            if (list[i].message or (list[i].opts and list[i].opts.view))
+                and list[i].contract_id == contractId then
+                table.remove(list, i)
+            end
         end
         if #list == 0 then waiting[cid] = nil end
+    end
+    viewWaiting[contractId] = nil
+    for key in pairs(viewTold) do
+        if key:sub(1, #contractId + 1) == contractId .. ':' then viewTold[key] = nil end
     end
     -- An alert still waiting goes only while a contract it stands for is
     -- still out. With none left it never goes (and no cooldown was started:

@@ -651,6 +651,22 @@ function App.register()
         return deps.projection.whitelistedView(actor.cid, actor.job, held and job or nil)
     end, 'view')
 
+    -- The view's Notify me (Config.WhitelistedView.Alerts): a phone notice
+    -- when a new entry appears on it (Notify.viewAlertsOn), for this
+    -- character, off until they turn it on. Through the view's own gate
+    -- ('view'): only a player the app bars, while the view is on. In the
+    -- relay's bucket, as muting a thread is: each change is a store write.
+    -- Written and audited only when it changes.
+    handler('whitelistedViewAlerts', 'message', function(actor, payload)
+        if not deps.notify.viewAlertsAllowed() then return false, CH.ERR.FEATURE_OFF end
+        if type(payload.on) ~= 'boolean' then return false, CH.ERR.INVALID_INPUT end
+        if deps.notify.setViewAlerts(actor.cid, payload.on) then
+            deps.audit.action(payload.on and 'view_alerts_on' or 'view_alerts_off',
+                actor.cid, nil, {})
+        end
+        return { on = payload.on }
+    end, 'view')
+
     -- The rows as the page is shown them (Ledger.entries), not as stored:
     -- a stored row carries cids and, on the client's own row, the handle of
     -- a photo, which crosses only as { handle, state }. With the photos

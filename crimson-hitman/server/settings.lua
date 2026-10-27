@@ -85,6 +85,9 @@ local NEEDS_OFF = {
         .. 'no kill photo is taken or kept, so this changes nothing until they are on again.',
     ['Mugshot.Enabled'] = 'Does not apply while target headshots are off (Mugshot.Enabled): '
         .. 'none is rendered, so this changes nothing until they are on again.',
+    ['WhitelistedView.Enabled'] = 'Does not apply while the whitelisted-job view is off '
+        .. '(WhitelistedView.Enabled): nobody has the view, so this changes nothing until it is '
+        .. 'on again.',
 }
 
 --- Every key the panel may show, in the order it shows them.
@@ -122,6 +125,17 @@ local CATALOGUE = {
           .. 'Off: the app is closed to them, as Hide the app from barred jobs says.',
       inflight = 'Every phone is told at once, and an open app changes screen at once. A buyout '
           .. 'already paid still closes after its delay either way.' },
+    { key = 'WhitelistedView.Alerts', section = 'features', group = 'Access', kind = 'switch',
+      needs = 'WhitelistedView.Enabled',
+      label = 'Notify me on the whitelisted-job view',
+      about = 'A player on the whitelisted-job view may turn on Notify me (off until they do, for '
+          .. 'each character): a phone notice when a new entry appears on their view. One on '
+          .. 'them after the same wait as their own alert; one on another whitelisted-job member '
+          .. 'as the advisory bulletin for it goes out. It says only who the contract is on and '
+          .. 'their job, within the notice budget.',
+      inflight = 'Read at every use, with no restart. Off hides the toggle and sends nothing, '
+          .. 'notices still waiting included; each player\'s choice is kept, and applies again '
+          .. 'when this is turned back on.' },
     { key = 'App.DefaultInstalled', section = 'features', group = 'The app', kind = 'switch',
       label = 'Put the app on every home screen', client = true, live = false,
       about = 'Installs the app on eligible phones instead of leaving it in the App Store.',
@@ -528,7 +542,8 @@ local BUCKET_ABOUT = {
     photoSubmit = 'Sending a kill photo.',
     photoView = 'Opening a kill photo from the Ledger.',
     photoDecide = 'Saving or deleting a kill photo just opened.',
-    message = 'Placing and ending a call, and muting a thread.',
+    message = 'Placing and ending a call, muting a thread, and turning Notify me on the '
+        .. 'whitelisted-job view on or off.',
     progress = 'In the background: the handover countdown the app asks for once a second while a '
         .. 'handover runs. Refused without a word: the countdown stops moving on the page.',
     death = 'In the background: death and revive reports from players\' games. Refused without a '

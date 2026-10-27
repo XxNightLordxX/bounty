@@ -213,9 +213,12 @@ describe('the whitelisted-job view', function()
         falsy(contains(data, w.civilian.id), 'nor their contract')
         eq(#data.onYou + #data.colleagues, 3, 'three entries: theirs and two colleagues\'')
         for key in pairs(data) do
-            truthy(key == 'onYou' or key == 'colleagues' or key == 'settings',
+            truthy(key == 'onYou' or key == 'colleagues' or key == 'settings' or key == 'alerts',
                 'nothing else at the top, a count included: ' .. key)
         end
+        local alertKeys = {}
+        for key in pairs(data.alerts) do alertKeys[#alertKeys + 1] = key end
+        eq(table.concat(alertKeys, ','), 'on', 'and Notify me says only whether it is on')
         local settingKeys = {}
         for key in pairs(data.settings) do settingKeys[#settingKeys + 1] = key end
         table.sort(settingKeys)
@@ -970,6 +973,322 @@ end)
 -- The setting
 --------------------------------------------------------------------------
 
+--------------------------------------------------------------------------
+-- Notify me (Config.WhitelistedView.Alerts)
+--------------------------------------------------------------------------
+
+describe('Notify me on the view', function()
+    local VIEW_TITLES = { ['Contract on you'] = true, ['Contract on a whitelisted job'] = true }
+
+    --- A fresh city: the fixture's creator (1), target (2) and hitman (3);
+    --- two officers, 11 who opens the view and 12 a colleague, and a third
+    --- (15) for a second colleague. The wait before a target is shown a
+    --- contract fixed at two minutes, so its end can be stepped onto.
+    local function stage()
+        local s = newStack()
+        s.app.init(s)
+        s.bridges.install(s)
+        local f = fixture(s)
+        Config.Notifications.ParanoidAlertJitter = { min = 120, max = 120 }
+        for _, who in ipairs({
+            { 11, 'OFFICER1', 'Olive', 'Ward' }, { 12, 'OFFICER2', 'Colin', 'Hart' },
+            { 15, 'OFFICER4', 'Ines', 'Moor' },
+        }) do
+            Env.addPlayer({ source = who[1], citizenid = who[2], license = 'license:' .. who[2],
+                cash = 50000, bank = 50000, firstname = who[3], lastname = who[4],
+                job = { name = 'police', label = 'Police', type = 'leo', onduty = true } })
+        end
+        -- The hitman places some too: a creator may have three out at once.
+        Env.players[3].PlayerData.money.cash = 200000
+        local w = { s = s, f = f }
+        function w.place(target, by, extra)
+            local spec = { targetCid = target, reason = 'Owes the Lost MC',
+                mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5001 } },
+                bailoutAmount = 15000 }
+            for k, v in pairs(extra or {}) do spec[k] = v end
+            local c, err = s.contracts.create(by or f.creator, spec)
+            assert(c, 'placing a contract on ' .. target .. ': ' .. tostring(err))
+            return c
+        end
+        --- The phone notices player `src` was sent since the last look,
+        --- each with what reached their phone.
+        function w.notices(src)
+            local out = {}
+            for _, event in ipairs(Env.clientEvents) do
+                if Natives.isNotice(event) and event.target == src then
+                    out[#out + 1] = event.args[1]
+                end
+            end
+            return out
+        end
+        --- Only the Notify me ones.
+        function w.viewNotices(src)
+            local out = {}
+            for _, notice in ipairs(w.notices(src)) do
+                if VIEW_TITLES[notice.title] then out[#out + 1] = notice end
+            end
+            return out
+        end
+        function w.turnOn(src)
+            local reply = call('whitelistedViewAlerts', src or 11, { on = true })
+            truthy(reply and reply.ok, 'turned on: ' .. tostring(reply and reply.err))
+            Env.clientEvents = {}
+        end
+        return w
+    end
+
+    local function titled(list, title)
+        local n = 0
+        for _, notice in ipairs(list) do if notice.title == title then n = n + 1 end end
+        return n
+    end
+
+    it('is off until they turn it on, and tells them nothing till then', function()
+        local w = stage()
+        eq(view(11).alerts.on, false, 'off by default')
+        falsy(w.s.storage.readViewAlerts('OFFICER1'), 'and nothing is stored')
+        Env.clientEvents = {}
+        w.place('OFFICER2')
+        w.place('OFFICER1')
+        Env.advance(121)
+        eq(titled(w.notices(11), 'THREAT ADVISORY'), 2,
+            'the colleague\'s bulletin and their own copy go, as ever')
+        eq(#w.viewNotices(11), 0, 'and no Notify me')
+        eq(#view(11).colleagues, 1, 'though the view lists the colleague\'s')
+        eq(#view(11).onYou, 1, 'and their own')
+    end)
+
+    it('tells them of a colleague\'s new entry as the bulletin goes out, and once', function()
+        local w = stage()
+        w.turnOn()
+        eq(view(11).alerts.on, true, 'the view says it is on')
+        Env.clientEvents = {}
+        local c = w.place('OFFICER2')
+        local notices = w.notices(11)
+        eq(titled(notices, 'THREAT ADVISORY'), 1, 'the bulletin')
+        local mine = w.viewNotices(11)
+        eq(#mine, 1, 'and Notify me with it, at the same moment')
+        eq(mine[1].title, 'Contract on a whitelisted job')
+        eq(mine[1].content, 'A contract on Colin Hart (Police) is now listed in this app.')
+        eq(#w.viewNotices(12), 0, 'not to the colleague it is on, who did not turn it on')
+
+        Env.clientEvents = {}
+        truthy(w.s.contracts.accept(w.f.hitman, c.id, false), 'taken')
+        eq(titled(w.notices(11), 'THREAT ADVISORY — ACTIVE'), 1, 'the acceptance bulletin')
+        eq(#w.viewNotices(11), 0, 'an entry already listed is not new')
+        Env.advance(3600)
+        eq(#w.viewNotices(11), 0, 'nor later')
+    end)
+
+    it('waits for the acceptance bulletin where no posting one goes, and not a second longer', function()
+        local w = stage()
+        Config.Advisory.OnCreate = false
+        w.turnOn()
+        local c = w.place('OFFICER2')
+        Env.advance(121)
+        eq(#w.viewNotices(11), 0, 'no bulletin, no entry on the view')
+        eq(#view(11).colleagues, 0, 'the view lists none')
+        Env.clientEvents = {}
+        truthy(w.s.contracts.accept(w.f.hitman, c.id, false), 'taken')
+        eq(titled(w.notices(11), 'THREAT ADVISORY — ACTIVE'), 1, 'the bulletin')
+        eq(#w.viewNotices(11), 1, 'and Notify me at that moment')
+        eq(#view(11).colleagues, 1, 'as the view lists it from then')
+    end)
+
+    it('tells them of a contract on them at the end of their own alert\'s wait, never sooner', function()
+        local w = stage()
+        -- No posting bulletin, which would date it for everyone at once: the
+        -- target waits, and is told by the alert a civilian gets.
+        Config.Advisory.OnCreate = false
+        w.turnOn()
+        w.place('OFFICER1')
+        eq(#w.viewNotices(11), 0, 'not at once')
+        Env.advance(119)
+        eq(#w.viewNotices(11), 0, 'not a second before the wait ends')
+        eq(titled(w.notices(11), 'Unsettling'), 0, 'nor their alert')
+        eq(#view(11).onYou, 0, 'nor the view')
+        Env.clientEvents = {}
+        Env.advance(1)
+        eq(titled(w.notices(11), 'Unsettling'), 1, 'their alert')
+        local mine = w.viewNotices(11)
+        eq(#mine, 1, 'and Notify me in the same second')
+        eq(mine[1].title, 'Contract on you')
+        eq(mine[1].content, 'A contract on you is now listed in this app.')
+        eq(#view(11).onYou, 1, 'as the view shows it')
+    end)
+
+    it('tells them at once where their own bulletin dates it at once', function()
+        local w = stage()
+        w.turnOn()
+        w.place('OFFICER1')
+        local notices = w.notices(11)
+        eq(titled(notices, 'THREAT ADVISORY'), 1, 'their own copy of the bulletin')
+        eq(titled(notices, 'Contract on you'), 1, 'and Notify me with it')
+    end)
+
+    it('says nothing of a contract withdrawn inside the wait', function()
+        local w = stage()
+        Config.Advisory.OnCreate = false
+        w.turnOn()
+        local c = w.place('OFFICER1')
+        Env.advance(60)
+        truthy(w.s.contracts.cancel(w.f.creator, c.id), 'withdrawn')
+        Env.clientEvents = {}
+        Env.advance(120)
+        eq(#w.viewNotices(11), 0, 'its entry never appeared')
+    end)
+
+    it('says nothing of an entry the view would not show', function()
+        local w = stage()
+        w.turnOn()
+        -- A civilian: never on the view.
+        w.place('TARGET01')
+        -- With the advisory off, no colleague's contract is listed.
+        Config.Advisory.Enabled = false
+        w.place('OFFICER2')
+        Env.advance(121)
+        eq(#w.viewNotices(11), 0, 'neither')
+        eq(view(11).colleagues, nil, 'the view has no such list')
+
+        -- A viewer the advisory does not reach: EMS, barred all the same.
+        Config.Advisory.Enabled = true
+        Env.players[15].PlayerData.job = { name = 'ambulance', label = 'EMS', type = 'ems',
+            onduty = true }
+        w.turnOn(15)
+        Env.clientEvents = {}
+        w.place('OFFICER2', w.s.identity.resolve(3))
+        eq(#w.viewNotices(15), 0, 'not to one whose view lists no colleagues')
+        eq(#w.viewNotices(11), 1, 'while an officer who turned it on is told')
+    end)
+
+    it('carries only what the entry shows: never who placed it, a hitman, the reason or the reward', function()
+        for _, server in ipairs({ true, false }) do
+            local w = stage()
+            Natives.noServerNotification = not server or nil
+            w.turnOn()
+            Env.clientEvents = {}
+            local c = w.place('OFFICER2')
+            truthy(w.s.contracts.accept(w.f.hitman, c.id, false))
+            Env.clientEvents = {}
+            w.place('OFFICER1', w.s.identity.resolve(3))
+            Env.advance(121)
+            local sent = {}
+            for _, event in ipairs(Env.clientEvents) do
+                if Natives.isNotice(event) and event.target == 11
+                    and VIEW_TITLES[event.args[1].title] then
+                    sent[#sent + 1] = event
+                end
+            end
+            eq(#sent, 1, 'the one on them')
+            local keys = {}
+            for key in pairs(sent[1].args[1]) do keys[#keys + 1] = key end
+            table.sort(keys)
+            eq(table.concat(keys, ','), server and 'app,content,title' or 'content,title',
+                server and 'saved on the phone: the app, a title and the words'
+                or 'raised by their game: a title and the words')
+            for _, leak in ipairs({ 'Vic Marlowe', 'Rook Ash', 'Operative', 'Owes the Lost MC',
+                                     'CREATOR1', 'HITMAN01', 'Colin Hart', '5001', '15000',
+                                     '15,000', c.id }) do
+                falsy(contains(sent[1].args[1], leak), 'the notice carries ' .. leak)
+            end
+            Natives.noServerNotification = nil
+        end
+    end)
+
+    it('goes through the notice budget, kept past it once per contract and dropped with it', function()
+        local w = stage()
+        Config.Notifications.MaxPerRecipientPerMinute = 1
+        w.turnOn()
+        Env.clientEvents = {}
+        w.place('OFFICER2')
+        w.place('OFFICER4', w.s.identity.resolve(3))
+        eq(#w.viewNotices(11), 1, 'one this minute')
+        eq(titled(w.notices(11), 'THREAT ADVISORY'), 2, 'while every bulletin goes, as ever')
+        local count, titles = w.s.notify.waitingFor('OFFICER1')
+        eq(count, 1, 'the second kept')
+        eq(titles[1], 'Contract on a whitelisted job')
+
+        -- The minute opens: the one kept goes.
+        Env.clientEvents = {}
+        Env.advance(61)
+        w.s.notify.deliverKept()
+        local later = w.viewNotices(11)
+        eq(#later, 1, 'sent when the minute opened')
+        eq(later[1].content, 'A contract on Ines Moor (Police) is now listed in this app.')
+        eq((w.s.notify.waitingFor('OFFICER1')), 0)
+
+        -- Kept for a contract that ends before the minute opens: let go.
+        Env.addPlayer({ source = 16, citizenid = 'PLACER02', license = 'license:pl2',
+            cash = 200000, bank = 200000, firstname = 'Pia', lastname = 'Lund' })
+        local placer = w.s.identity.resolve(16)
+        Env.clientEvents = {}
+        Config.Notifications.MaxPerRecipientPerMinute = 0
+        local third = w.place('OFFICER2', placer)
+        eq(#w.viewNotices(11), 0, 'over the budget')
+        eq((w.s.notify.waitingFor('OFFICER1')), 1, 'kept')
+        truthy(w.s.contracts.cancel(placer, third.id), 'withdrawn')
+        eq((w.s.notify.waitingFor('OFFICER1')), 0, 'and let go with it')
+        Config.Notifications.MaxPerRecipientPerMinute = 6
+        Env.advance(61)
+        w.s.notify.deliverKept()
+        eq(#w.viewNotices(11), 0, 'never sent')
+    end)
+
+    it('is not allowed while the switch is off: no toggle, nothing sent, the choice kept', function()
+        local w = stage()
+        w.turnOn()
+        Config.WhitelistedView.Alerts = false
+        eq(view(11).alerts, nil, 'the page draws no toggle')
+        local refused = call('whitelistedViewAlerts', 11, { on = false })
+        eq(refused.err, CH.ERR.FEATURE_OFF, 'and a change is refused')
+        Env.clientEvents = {}
+        w.place('OFFICER2')
+        w.place('OFFICER1', w.s.identity.resolve(3))
+        Env.advance(121)
+        eq(#w.viewNotices(11), 0, 'nothing sent')
+
+        Config.WhitelistedView.Alerts = true
+        eq(view(11).alerts.on, true, 'their choice was kept')
+        Env.clientEvents = {}
+        w.place('OFFICER4', w.s.identity.resolve(3))
+        eq(#w.viewNotices(11), 1, 'and applies again')
+    end)
+
+    it('is changed through the view\'s gate, in order, rate-limited and audited once', function()
+        local w = stage()
+        eq(call('whitelistedViewAlerts', 2, { on = true }).err, CH.ERR.NOT_WHITELISTED,
+            'a player the whole app is open to has no view to set it on')
+        Config.WhitelistedView.Enabled = false
+        eq(call('whitelistedViewAlerts', 11, { on = true }).err, CH.ERR.BLACKLISTED_JOB,
+            'nor anybody while the view is off')
+        Config.WhitelistedView.Enabled = true
+        eq(call('whitelistedViewAlerts', 11, { on = 'yes' }).err, CH.ERR.INVALID_INPUT,
+            'a choice is true or false')
+        falsy(w.s.storage.readViewAlerts('OFFICER1'), 'nothing changed by those')
+
+        local answers = {}
+        for i = 1, 7 do
+            local reply = call('whitelistedViewAlerts', 11, { on = i % 2 == 1 })
+            answers[#answers + 1] = reply.ok and 'ok' or reply.err
+        end
+        eq(table.concat(answers, ','), 'ok,ok,ok,ok,ok,rate_limited,rate_limited',
+            'five held, as the bucket muting a thread spends; the refused one above cost nothing')
+        local refused = call('whitelistedViewAlerts', 11, { on = true })
+        truthy((refused.data and refused.data.retryAfter or 0) > 0, 'saying how long to wait')
+        truthy(w.s.storage.readViewAlerts('OFFICER1'), 'on, as the last one let through said')
+
+        local w2 = stage()
+        w2.turnOn()
+        eq(call('whitelistedViewAlerts', 11, { on = true }).ok, true, 'the same answer again')
+        w2.s.audit.flush()
+        local rows = 0
+        for _, row in ipairs(w2.s.storage.readAudit()) do
+            if row.action == 'view_alerts_on' then rows = rows + 1 end
+        end
+        eq(rows, 1, 'written and audited once')
+    end)
+end)
+
 describe('Config.WhitelistedView', function()
     local Main = require('crimson-hitman.server.main')
 
@@ -1036,8 +1355,35 @@ describe('Config.WhitelistedView', function()
         end
     end)
 
+    it('ships Notify me allowed, filled for a config that predates it, and read as off '
+        .. 'when it is not true or false', function()
+        local config = read_file('crimson-hitman/config/config.lua')
+        local defaults = read_file('crimson-hitman/config/defaults.lua')
+        truthy(config:find('\n    Alerts = true,', 1, true), 'config.lua ships it allowed')
+        truthy(defaults:find('\n    Alerts = true,', 1, true), 'and so do the defaults')
+        eq(Main.configDefaults.WhitelistedView.Alerts, true, 'and the start\'s fill')
+        resetConfig()
+        Config.WhitelistedView = { Enabled = true }
+        local ok, _, warn = Main.validateConfig(true)
+        truthy(ok)
+        eq(Config.WhitelistedView.Alerts, true, 'filled, allowed')
+        falsy(table.concat(warn or {}, '\n'):find('WhitelistedView.Alerts', 1, true))
+        resetConfig()
+        Config.WhitelistedView.Alerts = 'yes'
+        local ok2, _, warn2 = Main.validateConfig(true)
+        truthy(ok2, 'not a reason to refuse to start')
+        eq(Config.WhitelistedView.Alerts, false, 'read as off')
+        truthy(table.concat(warn2 or {}, '\n'):find('WhitelistedView.Alerts', 1, true))
+        resetConfig()
+    end)
+
     it('is a switch in the admin panel, under Access', function()
         local s = newStack()
+        local alerts = s.settings.entry('WhitelistedView.Alerts')
+        truthy(alerts, 'Notify me is on the panel\'s list')
+        eq(alerts.kind, 'switch')
+        eq(alerts.group, 'Access')
+        eq(alerts.needs, 'WhitelistedView.Enabled', 'and says it needs the view')
         local entry = s.settings.entry('WhitelistedView.Enabled')
         truthy(entry, 'on the panel\'s list')
         eq(entry.kind, 'switch')

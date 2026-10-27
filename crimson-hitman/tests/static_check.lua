@@ -1818,6 +1818,7 @@ do
             .. 'closed while the caller was reading',
         ['crimson_settings.setting_key']      = 'the primary key: which setting it is',
         ['crimson_alerts.id']                 = 'the primary key: which alert it is',
+        ['crimson_view_alerts.cid']           = 'the primary key: whose choice it is',
         ['crimson_escrow.id']                 = 'the primary key',
         ['crimson_escrow.contract_id']        = 'a line does not move between contracts',
         ['crimson_escrow.slot']               = 'which payout slot it belongs to',

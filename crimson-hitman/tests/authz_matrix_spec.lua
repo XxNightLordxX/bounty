@@ -340,6 +340,16 @@ MATRIX.whitelistedView = {
                stranger = CH.ERR.NOT_WHITELISTED, admin = CH.ERR.NOT_WHITELISTED },
     why = 'the view is the screen of a player the app bars, and nobody here is one',
 }
+-- Its Notify me toggle (Config.WhitelistedView.Alerts), through the same
+-- gate: refused to every role here, each a civilian the whole app is open
+-- to. Answered for the barred column below.
+MATRIX.whitelistedViewAlerts = {
+    payload = { on = true },
+    expect = { creator = CH.ERR.NOT_WHITELISTED, target = CH.ERR.NOT_WHITELISTED,
+               hitman = CH.ERR.NOT_WHITELISTED, otherHitman = CH.ERR.NOT_WHITELISTED,
+               stranger = CH.ERR.NOT_WHITELISTED, admin = CH.ERR.NOT_WHITELISTED },
+    why = 'a choice made on the view, the screen of a player the app bars, and nobody here is one',
+}
 MATRIX.rewardOptions = { payload = {}, expect = ANYONE,
     why = 'reads the caller own wallet' }
 
@@ -1165,8 +1175,9 @@ describe('a player on a whitelisted job', function()
         local wrong = {}
         for _, name in ipairs(names) do
             local w = barredWorld()
-            local reply = call(name, OFFICER.source, { id = w.mine.id, page = 1 })
-            if name == 'whitelistedView' or name == 'bailout' or name == 'pageError' then
+            local reply = call(name, OFFICER.source, { id = w.mine.id, page = 1, on = true })
+            if name == 'whitelistedView' or name == 'whitelistedViewAlerts' or name == 'bailout'
+                or name == 'pageError' then
                 if not (reply and reply.ok) then
                     wrong[#wrong + 1] = name .. ' refused them with ' .. tostring(reply and reply.err)
                 end
@@ -1177,8 +1188,8 @@ describe('a player on a whitelisted job', function()
                         hasPayload(reply) and 'data' or 'nothing')) or 'nothing')
             end
         end
-        eq(#wrong, 0, 'the view, their own buyout and their page\'s report, and nothing else: '
-            .. table.concat(wrong, '; '))
+        eq(#wrong, 0, 'the view and its Notify me, their own buyout and their page\'s report, '
+            .. 'and nothing else: ' .. table.concat(wrong, '; '))
     end)
 
     it('buys out only a contract naming them', function()

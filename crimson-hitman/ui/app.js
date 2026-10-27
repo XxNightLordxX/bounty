@@ -5749,7 +5749,18 @@
     var again = el('div', 'row actions');
     again.appendChild(actionButton('ghost ico i-refresh', 'Refresh', 'jobview:refresh',
       'Refreshing\u2026', function () { return readJobView({ keep: true }); }));
+    // Notify me, where the server sends whether it is on: it sends that
+    // only while it allows it (Config.WhitelistedView.Alerts).
+    var alerts = data.alerts && typeof data.alerts === 'object' ? data.alerts : null;
+    if (alerts) { again.appendChild(jobViewAlertsButton(alerts.on === true)); }
     view.appendChild(again);
+    if (alerts) {
+      view.appendChild(el('div', 'hint', alerts.on === true
+        ? 'Notify me is on: your phone tells you when a new contract appears here, while '
+          + 'you are in the city.'
+        : 'Notify me is off. Turn it on and your phone tells you when a new contract appears '
+          + 'here, while you are in the city.'));
+    }
     if (!mine.length && !others.length) {
       view.appendChild(el('div', 'empty', shared
         ? 'No contracts on you or other whitelisted-job members.' : 'No contracts on you.'));
@@ -5772,6 +5783,38 @@
     } else {
       view.appendChild(el('div', 'hint', 'None on other whitelisted-job members.'));
     }
+  }
+
+  /* Notify me on the view (Config.WhitelistedView.Alerts): a phone notice
+     when a new entry appears here, for this character, off until they turn
+     it on. Words on the button rather than a box to tick, as Mute on a
+     thread: which way it is set is the whole point of it. */
+  function jobViewAlertsButton(on) {
+    var button = actionButton('ghost ico i-phone', on ? 'Turn off Notify me' : 'Notify me',
+      'jobview:alerts', on ? 'Turning off\u2026' : 'Turning on\u2026',
+      function () { return setJobViewAlerts(!on); });
+    button.id = 'jobview-alerts';
+    return button;
+  }
+
+  function setJobViewAlerts(on) {
+    return post('whitelistedViewAlerts', { on: on }).then(function (r) {
+      if (!r.ok) {
+        // They have left the job: the whole app is theirs again.
+        if (r.err === 'not_whitelisted') { return leaveJobView(); }
+        // Switched off by the server since the screen was drawn: the
+        // toggle goes, as a read now would take it away.
+        if (r.err === 'feature_off' && state.jobView) {
+          delete state.jobView.alerts;
+          redrawFor(['jobview']);
+        }
+        return fail(r);
+      }
+      var now = !!(r.data && r.data.on === true);
+      if (state.jobView) { state.jobView.alerts = { on: now }; }
+      redrawFor(['jobview']);
+      say(now ? 'Notify me is on.' : 'Notify me is off.', 'ok');
+    });
   }
 
   /* One entry of the whitelisted-job view. `own` is a contract on this

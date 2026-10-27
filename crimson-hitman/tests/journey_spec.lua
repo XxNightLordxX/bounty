@@ -368,6 +368,9 @@ describe('what this suite really covered', function()
         -- Answered only for a player on a whitelisted job, whom no journey
         -- here plays.
         whitelistedView = 'whitelisted_view_spec, through the net event',
+        -- Its Notify me toggle, for the same players.
+        whitelistedViewAlerts = 'whitelisted_view_spec ("Notify me on the view"), through the '
+            .. 'net event',
     }
 
     it('got an ok from every handler the server registers', function()

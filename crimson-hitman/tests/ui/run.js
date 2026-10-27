@@ -10759,6 +10759,90 @@ async function main() {
     drewCleanly(app);
   })();
 
+  /* Notify me on the view (Config.WhitelistedView.Alerts): drawn only where
+     the server says whether it is on, which it does only while it allows
+     it. A tap asks the server, and the screen says what it answered. */
+  await (async function whitelistedViewAlerts() {
+    const asked = [];
+    const app = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: jobView({ alerts: { on: false } }),
+      whitelistedViewAlerts: function (body) {
+        asked.push(body);
+        return { ok: true, data: { on: body.on === true } };
+      }
+    });
+    await settle(); await settle(); await settle();
+    function buttons(which) {
+      return which.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    it('offers Notify me, off until they turn it on, saying what it does', function () {
+      truthy(buttons(app).indexOf('Notify me') !== -1, buttons(app).join(' | '));
+      truthy(app.view.textContent.indexOf('Notify me is off. Turn it on and your phone tells '
+        + 'you when a new contract appears here, while you are in the city.') !== -1,
+        app.view.textContent);
+    });
+    click(app, 'Notify me');
+    await settle(); await settle();
+    it('turns it on through the server, and says so', function () {
+      eq(asked.length, 1);
+      eq(JSON.stringify(asked[0].on), 'true', 'asked for on, and nothing else of theirs');
+      truthy(app.notice().indexOf('Notify me is on.') !== -1, app.notice());
+      truthy(buttons(app).indexOf('Turn off Notify me') !== -1, buttons(app).join(' | '));
+      truthy(app.view.textContent.indexOf('Notify me is on: your phone tells you when a new '
+        + 'contract appears here, while you are in the city.') !== -1, app.view.textContent);
+      truthy(app.view.textContent.indexOf(VIEW_INTRO) !== -1, 'still the view');
+    });
+    click(app, 'Turn off Notify me');
+    await settle(); await settle();
+    it('and off again', function () {
+      eq(asked.length, 2);
+      eq(asked[1].on, false);
+      truthy(app.notice().indexOf('Notify me is off.') !== -1, app.notice());
+      truthy(buttons(app).indexOf('Notify me') !== -1, buttons(app).join(' | '));
+    });
+    drewCleanly(app);
+
+    const plain = boot({ list: BARRED, mine: BARRED, ledger: BARRED, whitelistedView: jobView() });
+    await settle(); await settle(); await settle();
+    it('draws no toggle where the server does not allow it', function () {
+      eq(buttons(plain).filter(function (b) { return b.indexOf('Notify me') !== -1; }).length, 0,
+        buttons(plain).join(' | '));
+      falsy(plain.view.textContent.indexOf('Notify me') !== -1, plain.view.textContent);
+    });
+    drewCleanly(plain);
+
+    const off = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: jobView({ alerts: { on: false } }),
+      whitelistedViewAlerts: { ok: false, err: 'feature_off' }
+    });
+    await settle(); await settle(); await settle();
+    click(off, 'Notify me');
+    await settle(); await settle();
+    it('takes the toggle away when the server has switched it off since', function () {
+      truthy(off.notice().indexOf('That is turned off by the server right now.') !== -1,
+        off.notice());
+      falsy(off.view.textContent.indexOf('Notify me') !== -1, off.view.textContent);
+    });
+    drewCleanly(off);
+
+    const fast = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: jobView({ alerts: { on: false } }),
+      whitelistedViewAlerts: { ok: false, err: 'rate_limited', data: { retryAfter: 4 } }
+    });
+    await settle(); await settle(); await settle();
+    click(fast, 'Notify me');
+    await settle(); await settle();
+    it('says how long to wait when tapped too fast, and leaves it as it was', function () {
+      truthy(fast.notice().indexOf('Slow down') !== -1, fast.notice());
+      truthy(buttons(fast).indexOf('Notify me') !== -1, buttons(fast).join(' | '));
+    });
+    drewCleanly(fast);
+  })();
+
   /* A viewer the advisory does not reach (EMS, a lawyer), or a server with
      it off: the server sends no colleagues' list at all, and the page draws
      no such section, nor says there is nothing in it. An entry whose

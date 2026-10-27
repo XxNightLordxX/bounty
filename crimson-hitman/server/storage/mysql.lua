@@ -605,6 +605,15 @@ local SCHEMA = {
         acknowledged_by VARCHAR(64),
         acknowledged_at INT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- Who turned on Notify me on the whitelisted-job view
+    -- (Config.WhitelistedView.Alerts), by citizen id: a row is the choice,
+    -- and turning it off deletes it, so off is what everybody starts with.
+    -- Created on an existing database by the CREATE TABLE IF NOT EXISTS at
+    -- the next start, like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_view_alerts (
+        cid VARCHAR(32) PRIMARY KEY,
+        set_at INT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -800,8 +809,8 @@ end
 --- crimson_meta) was moved to InnoDB, rebuilt in utf8mb4 and given columns
 --- before the start refused, on "Multiple primary key", as a missing grant.
 --- Every table here has had the same key column since it was first made
---- (id; cid for crimson_stats; setting_key; meta_key), so a table without
---- it as its key is somebody else's.
+--- (id; cid for crimson_stats and crimson_view_alerts; setting_key;
+--- meta_key), so a table without it as its key is somebody else's.
 ---@param engines table<string, string> tablesPresent()
 ---@param cache table columnsOf's
 ---@return table[] { table, key }
@@ -2891,6 +2900,24 @@ end
 
 function MySQLStore.deleteAlert(id)
     db.query('DELETE FROM crimson_alerts WHERE id = ?', { id })
+    return true
+end
+
+--- The whitelisted-job view's Notify me; see the memory backend.
+function MySQLStore.readViewAlerts(cid)
+    local rows = db.query('SELECT cid FROM crimson_view_alerts WHERE cid = ?', { cid }) or {}
+    return rows[1] ~= nil
+end
+
+function MySQLStore.setViewAlerts(cid, on, at)
+    if on then
+        db.query([[
+            INSERT INTO crimson_view_alerts (cid, set_at) VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE set_at = VALUES(set_at)
+        ]], { cid, at })
+    else
+        db.query('DELETE FROM crimson_view_alerts WHERE cid = ?', { cid })
+    end
     return true
 end
 

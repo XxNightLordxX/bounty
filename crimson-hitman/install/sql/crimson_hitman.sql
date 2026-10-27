@@ -312,6 +312,13 @@ CREATE TABLE IF NOT EXISTS crimson_alerts (
     acknowledged_at INT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Who turned on Notify me on the whitelisted-job view: a row is the
+-- choice, and turning it off deletes it.
+CREATE TABLE IF NOT EXISTS crimson_view_alerts (
+    cid VARCHAR(32) PRIMARY KEY,
+    set_at INT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

@@ -186,8 +186,11 @@ local DEFAULTS = {
     --- The whitelisted-job view. A whole section a config from before it
     --- lacks is filled from defaults.lua; this fills the key in one that
     --- has the section without it, with what ships: on. Checked below.
+    --- And its Notify me, which a config from before it lacks too: allowed,
+    --- as shipped, and still off for every player until they turn it on.
     WhitelistedView = {
         Enabled = true,
+        Alerts = true,
     },
     --- Added to a section every config has. Absent read as 0, which is off:
     --- on every upgraded server an exclusive contract could still be held
@@ -733,6 +736,9 @@ local function validateConfig(quiet)
         -- the side that shows them least.
         { section = 'WhitelistedView', key = 'Enabled',
           off = 'players on a whitelisted job get no screen in the app, as before the view' },
+        -- Off is nothing sent to a phone about the view.
+        { section = 'WhitelistedView', key = 'Alerts',
+          off = 'nobody on the whitelisted-job view can turn on Notify me, and none is sent' },
         -- Off is nothing sent outside the server.
         { section = 'Alerts', key = 'ToDiscord',
           off = 'no alert is posted to Discord; the admin panel still lists every one' },
@@ -1562,7 +1568,8 @@ function StartCrimsonHitman()
     if Storage.timeWaitsWith then Storage.timeWaitsWith(timing.await) end
 
     audit.init(Storage)
-    notify.init({ identity = identity, storage = Storage })
+    -- With what the whitelisted-job view lists, for its Notify me notices.
+    notify.init({ identity = identity, storage = Storage, projection = projection })
     -- Money events no rule can settle by themselves are left for staff
     -- here (server/review.lua), from escrow, contracts, buyouts and staff
     -- settles alike.
