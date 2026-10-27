@@ -1904,3 +1904,294 @@ describe('the reach of a kill', function()
         eq(later, CH.ERR.NO_KILL_TO_VERIFY)
     end)
 end)
+
+--- Every notice one player's phone was sent, as { title, content }.
+local function noticesTo(src)
+    local out = {}
+    for _, event in ipairs(Env.clientEvents) do
+        if Natives.isNotice(event) and event.target == src then
+            local data = event.args and event.args[1] or {}
+            out[#out + 1] = { title = tostring(data.title), content = tostring(data.content) }
+        end
+    end
+    return out
+end
+
+local function toldTitle(src, title)
+    for _, note in ipairs(noticesTo(src)) do
+        if note.title == title then return note.content end
+    end
+    return nil
+end
+
+--- The slot's baseline line, as stored now.
+local function baselineOf(s, contractId)
+    for _, line in ipairs(s.storage.readEscrow(contractId)) do
+        if line.slot == 1 and line.portion == CH.PORTION.BASELINE then return line end
+    end
+end
+
+--- One statement failing inside a claim (a lock wait, a deadlock) left the
+--- contract COMPLETING with nothing paid: every delivery after it was
+--- refused as bad_state, nothing listed it for staff, and only the next
+--- start put it back, throwing the hitman's delivery away (S18). The tick
+--- finishes it as that start would.
+describe('a claim that raised part-way, finished by the tick', function()
+    --- 2 x Config.Database.QueryTimeoutSeconds and a second.
+    local function waitOut() Env.advance(2 * Config.Database.QueryTimeoutSeconds + 1) end
+
+    --- seeded(), on a store that hands out copies as a database does: on
+    --- the memory store a line the claim marked is the stored one, written
+    --- or not.
+    local function copyingSeeded()
+        local s = newCopyingStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+        })
+        s.contracts.accept(f.hitman, c.id, false)
+        return s, f, c
+    end
+
+    --- The claim's first release of a line raises; with `marks`, the write
+    --- of whose each line is raises too.
+    local function raisingClaim(s, c, marks)
+        local claim, write = s.storage.claimEscrowLine, s.storage.writeEscrow
+        local raised = false
+        s.storage.claimEscrowLine = function(id, from, to)
+            if not raised and from == CH.ESCROW_STATE.HELD then
+                raised = true
+                error('Lock wait timeout exceeded; try restarting transaction', 0)
+            end
+            return claim(id, from, to)
+        end
+        if marks then
+            s.storage.writeEscrow = function() error('Deadlock found when trying to get lock', 0) end
+        end
+        local ok = pcall(s.contracts.claimSlot, c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {})
+        s.storage.claimEscrowLine, s.storage.writeEscrow = claim, write
+        falsy(ok, 'the claim raised')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING, 'left mid-claim')
+    end
+
+    it('puts a claim whose marks and release both raised back, and a second delivery pays', function()
+        local s, _, c = copyingSeeded()
+        local before = Env.players[3].PlayerData.money.cash
+        raisingClaim(s, c, true)
+        eq(baselineOf(s, c.id).owed_to, nil, 'owed to nobody: the marks never landed')
+
+        eq(s.contracts.retryStuckClaims(), 0, 'not before a statement still on its way could land')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING)
+        waitOut()
+        eq(s.contracts.retryStuckClaims(), 1)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'open to the hitman again')
+        local line = baselineOf(s, c.id)
+        eq(line.state, CH.ESCROW_STATE.HELD)
+        eq(line.owed_to, nil)
+        truthy((toldTitle(3, 'Payout not recorded') or ''):find('nothing was paid', 1, true),
+            'the hitman is told nothing was paid and that they can collect again')
+        eq(Env.players[3].PlayerData.money.cash, before, 'nothing paid')
+
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}),
+            'a second delivery is not refused as bad_state')
+        eq(Env.players[3].PlayerData.money.cash - before, 5000, 'and pays once')
+        eq(s.contracts.retryStuckClaims(), 0, 'nothing left for the tick')
+    end)
+
+    it('finishes a claim whose marks were written and release raised, as a start would', function()
+        local s, _, c = copyingSeeded()
+        local before = Env.players[3].PlayerData.money.cash
+        raisingClaim(s, c, false)
+        eq(baselineOf(s, c.id).owed_to, 'HITMAN01', 'owed to the hitman by its marks')
+        waitOut()
+        eq(s.contracts.retryStuckClaims(), 1)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED, 'its only collection was paid')
+        s.escrow.retryPending('HITMAN01')
+        eq(Env.players[3].PlayerData.money.cash - before, 5000, 'the hitman is paid, once')
+        eq(s.storage.readStats('HITMAN01').completed, 1, 'and credited with it')
+        truthy(toldTitle(3, 'Payout recorded'), 'and told by a receipt')
+        truthy(toldTitle(1, 'Contract fulfilled'), 'and the client is told it was fulfilled')
+    end)
+
+    it('counts the completion once when the claim raised after counting it', function()
+        local s, _, c = copyingSeeded()
+        local before = Env.players[3].PlayerData.money.cash
+        local fields = s.storage.setContractFields
+        s.storage.setContractFields = function() error('Lost connection to server during query', 0) end
+        falsy(pcall(s.contracts.claimSlot, c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}))
+        s.storage.setContractFields = fields
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING, 'paid, and left mid-claim')
+        waitOut()
+        eq(s.contracts.retryStuckClaims(), 1)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        eq(Env.players[3].PlayerData.money.cash - before, 5000, 'paid once')
+        eq(s.storage.readStats('HITMAN01').completed, 1, 'and counted once')
+        truthy(toldTitle(1, 'Contract fulfilled'), 'the client is told')
+    end)
+
+    it('leaves a claim still running alone, and does nothing while the store is not answering', function()
+        local s, _, c = copyingSeeded()
+        raisingClaim(s, c, true)
+        waitOut()
+        s.escrow.holdClaim(c.id)
+        eq(s.contracts.retryStuckClaims(), 0, 'a claim runs on it')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING)
+        s.escrow.letClaim(c.id)
+
+        s.storage.healthy = function() return false end
+        eq(s.contracts.retryStuckClaims(), 0, 'the store is not answering')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING)
+        s.storage.healthy = nil
+
+        eq(s.contracts.retryStuckClaims(), 1)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+    end)
+end)
+
+--- Once the claim has paid, what follows is bookkeeping: a store that
+--- raised there answered server_error to a hitman who had been paid, their
+--- retry no kill to verify, and the client was never told (W171, W028).
+describe('a ledger write that raises after a paid kill', function()
+    local function ledgerRaises(s)
+        s.storage.writeLedger = function() error('Lost connection to server during query', 0) end
+    end
+
+    it('Verify kill at the scene still answers paid, once, and the client is told', function()
+        local s, f, c = seeded()
+        Config.Completion.KillPhotos = false
+        killTarget(s)
+        local before = Env.players[3].PlayerData.money.cash
+        ledgerRaises(s)
+        local ok, err, result = s.photo.verifyAtScene(f.hitman, c.id)
+        truthy(ok, 'answered as a failure: ' .. tostring(err))
+        eq(result.slot, 1)
+        eq(Env.players[3].PlayerData.money.cash - before, 5000, 'paid once')
+        truthy(toldTitle(1, 'Contract fulfilled'), 'the client is told')
+        local again = s.photo.verifyAtScene(f.hitman, c.id)
+        falsy(again, 'and not paid twice')
+        eq(Env.players[3].PlayerData.money.cash - before, 5000)
+    end)
+
+    it('a photo still answers paid, once, and the client is told', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        local token = s.photo.issue(f.hitman, c.id)
+        local before = Env.players[3].PlayerData.money.cash
+        ledgerRaises(s)
+        local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/proof.png')
+        truthy(ok, 'answered as a failure: ' .. tostring(err))
+        eq(Env.players[3].PlayerData.money.cash - before, 5000, 'paid once')
+        truthy(toldTitle(1, 'Contract fulfilled'), 'the client is told')
+    end)
+end)
+
+--- On a contract a kill completes (placed under 'either'), a kill refused
+--- because the target had only just got back up was answered "it counts if
+--- they are still lying dead when that protection runs out", and the kill
+--- lapsed long before (W172, W027).
+describe('a kill on a target still protected after a respawn', function()
+    --- A kill by the hitman the server sees land.
+    local function shoot(s)
+        Env.players[3]._coords = { x = 20.0, y = 20.0, z = 30.0 }
+        Env.players[2]._coords = { x = 21.0, y = 20.0, z = 30.0 }
+        Env.players[2]._health = 200
+        s.death.watch('TARGET01', 2, true)
+        Env.players[2]._health = 30
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        return s.death.onVictimReport(2, 3)
+    end
+
+    --- Killed, back up, and killed again `after` seconds later.
+    local function killedAfterRespawn(after)
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hitman, c.id, false)
+        Config.Completion.KillPhotos = false
+        eq(shoot(s), 1, 'the first kill')
+        Env.advance(Config.Completion.ProofWindowSeconds + 5)
+        Env.players[2].PlayerData.metadata.isdead = false
+        s.death.onRevivedVerified(2, 'TARGET01')
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
+        local up = s.death.sinceRespawn('TARGET01')
+        truthy(up, 'back on their feet')
+        Env.advance(after - up)
+        eq(shoot(s), 1, 'killed again')
+        return s, f, c
+    end
+
+    it('says a kill that lapses before the protection ends never counts', function()
+        local s, f, c = killedAfterRespawn(30)
+        local ok, err, data = s.photo.verifyAtScene(f.hitman, c.id)
+        falsy(ok)
+        eq(err, CH.ERR.KILL_TOO_SOON, 'not a promise the kill will outlive')
+        eq(data and data.rule, CH.ERR.TARGET_JUST_UP, 'and which protection it was')
+    end)
+
+    it('says how long to wait when the kill outlasts it', function()
+        local left = 60
+        local s, f, c = killedAfterRespawn(Config.Immunity.PostRespawnSeconds - left)
+        local ok, err, data = s.photo.verifyAtScene(f.hitman, c.id)
+        falsy(ok)
+        eq(err, CH.ERR.TARGET_JUST_UP)
+        eq(data and data.secondsLeft, left, 'the wait the page promises')
+        Env.advance(left)
+        truthy(s.photo.verifyAtScene(f.hitman, c.id), 'and the kill counts then')
+    end)
+end)
+
+--- A kill pending on a contract that has closed went on minting tokens, and
+--- each was refused at the claim as bad_state, "Not right now" (W031).
+describe('Verify kill on a contract that has closed', function()
+    it('is refused as closed, with no token, and a token from before is spent unread', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        local token = s.photo.issue(f.hitman, c.id)
+        truthy(token)
+        truthy(s.admin.void(0, c.id, 'staff'))
+        local ok, err, _, read = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/proof.png')
+        falsy(ok)
+        eq(err, CH.ERR.ALREADY_SETTLED, 'that contract is closed')
+        falsy(read, 'said before the picture is read')
+        local again, why = s.photo.issue(f.hitman, c.id)
+        falsy(again, 'no token for a contract that is over')
+        eq(why, CH.ERR.ALREADY_SETTLED)
+        Config.Completion.KillPhotos = false
+        eq(select(2, s.photo.verifyAtScene(f.hitman, c.id)), CH.ERR.ALREADY_SETTLED)
+    end)
+end)
+
+--- Pending kills and the hits that prove them are kept in memory only. A
+--- restart between a kill and Verify kill lost them, the target's game
+--- reported the death again naming the hitman, and they were told their
+--- weapon did not count (W030).
+describe('a death reported again after a start', function()
+    it('says the restart lost the proof, not that the weapon does not count', function()
+        local s, f, c = seeded()
+        s.death.noteStarted()
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 0, 'nothing of the kill was kept')
+        local token, err = s.photo.issue(f.hitman, c.id)
+        falsy(token)
+        eq(err, CH.ERR.KILL_LOST_RESTART)
+    end)
+
+    it('is the weapon again for a death long after the start', function()
+        local s, f, c = seeded()
+        s.death.noteStarted()
+        Env.advance(Config.Completion.PhotoTokenLifetimeSeconds + 61)
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 0)
+        eq(select(2, s.photo.issue(f.hitman, c.id)), CH.ERR.KILL_UNOBSERVED)
+    end)
+end)

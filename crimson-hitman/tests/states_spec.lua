@@ -180,9 +180,10 @@ local ACTIONS = {
     { name = 'requestPhotoToken', source = 3,
       payload = function(c) return { id = c.id } end,
       allowed = {},   -- needs an attributed kill, which no fixture here has
+      -- already_settled: a closed contract, to a hitman on it (W031).
       refusals = { no_kill_to_verify = true, invalid_input = true,
-                   not_participant = true },
-      why = 'proof is for a kill the server saw, whatever state the contract is in' },
+                   not_participant = true, already_settled = true },
+      why = 'proof is for a kill the server saw, on a contract still open' },
 
     -- With kill photos off, as they ship (Config.Completion.KillPhotos): on,
     -- every cell would be the one photo_required refusal, saying nothing
@@ -191,9 +192,10 @@ local ACTIONS = {
       setup = function() Config.Completion.KillPhotos = false end,
       payload = function(c) return { id = c.id } end,
       allowed = {},   -- needs an attributed kill, which no fixture here has
+      -- already_settled: a closed contract, to a hitman on it (W031).
       refusals = { no_kill_to_verify = true, invalid_input = true,
-                   not_participant = true },
-      why = 'proof is for a kill the server saw, whatever state the contract is in' },
+                   not_participant = true, already_settled = true },
+      why = 'proof is for a kill the server saw, on a contract still open' },
 
     { name = 'addEscrow', source = 1,
       payload = function(c) return { id = c.id, reward = { baseline = { cash = 1000 } } } end,

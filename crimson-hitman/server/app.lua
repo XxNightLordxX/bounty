@@ -616,6 +616,10 @@ function App.register()
             entries = entries,
             kept    = kept,
             record  = deps.progression.record(actor.cid),
+            -- Payments of theirs waiting for room (Projection.waitingForRoom):
+            -- a receipt missed was the only word of them anywhere.
+            waiting = deps.projection.waitingForRoom
+                and deps.projection.waitingForRoom(actor.cid) or 0,
         }
     end)
 
@@ -911,7 +915,10 @@ function App.register()
         -- How much could not be handed back yet, so the page does not say
         -- "everything has been returned" beside a phone notification saying
         -- some of it is waiting.
-        return { id = payload.id, queued = result and result.owed or 0 }
+        -- And apart from it what was left for staff to check: no retry
+        -- gives that, so "it arrives when you next have room" is untrue of it.
+        return { id = payload.id, queued = result and result.owed or 0,
+                 parked = result and result.parked or 0 }
     end)
 
     handler('revise', 'amend', function(actor, payload)
@@ -982,7 +989,10 @@ function App.register()
             -- A line that could not be handed back right now is not lost: it
             -- is owed and retried on next login. The page says so rather
             -- than reporting a smaller refund than the creator asked for.
-            queued = result and result.pending or 0,
+            -- And apart from it what was left for staff to check (its give
+            -- raised; Escrow.release counts it in `pending` too).
+            queued = result and math.max(0, (result.pending or 0) - (result.parked or 0)) or 0,
+            parked = result and result.parked or 0,
         }
     end)
 
@@ -1039,7 +1049,9 @@ function App.register()
     -- for.
     handler('submitPhoto', 'photoSubmit', function(actor, payload)
         local ok, err, result, read = deps.photo.submit(actor, payload.token, payload.url, payload.image)
-        if not ok then return false, err, nil, read == true end
+        -- On a refusal the third is what it says beyond the code: how long
+        -- a protection on the target has to run (Photo.submit).
+        if not ok then return false, err, result, read == true end
         return result
     end)
 
@@ -1051,7 +1063,9 @@ function App.register()
     -- photo_required, and the page opens the camera instead.
     handler('verifyKill', 'photo', function(actor, payload)
         local ok, err, result = deps.photo.verifyAtScene(actor, payload.id)
-        if not ok then return false, err end
+        -- On a refusal the third is what it says beyond the code: how long
+        -- a protection on the target has to run (Photo.verifyAtScene).
+        if not ok then return false, err, result end
         return result
     end)
 
@@ -1142,7 +1156,8 @@ function App.register()
             end
             if ended then
                 return { done = true, outcome = ended.outcome,
-                         reason = ended.reason, pending = ended.pending }
+                         reason = ended.reason, pending = ended.pending,
+                         parked = ended.parked }
             end
             -- Named, rather than left as a bare nil.
             --

@@ -769,6 +769,37 @@ async function main() {
     });
   })();
 
+  /* Payments of theirs waiting for room. A receipt missed, or a page
+     closed, was the only word of them anywhere (W086). */
+  await (async function paymentsWaitingForRoom() {
+    const waiting = JSON.parse(JSON.stringify(LEDGER));
+    waiting.data.waiting = 2;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: waiting
+    });
+    await settle(); await settle();
+    tab(app, 'ledger');
+    await settle();
+    it('lists the payments waiting for the player to make room', function () {
+      truthy(app.view.textContent.indexOf('2 payments waiting for room') !== -1,
+        app.view.textContent);
+    });
+
+    const none = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: LEDGER
+    });
+    await settle(); await settle();
+    tab(none, 'ledger');
+    await settle();
+    it('says nothing of waiting payments when none wait', function () {
+      falsy(none.view.textContent.indexOf('waiting for room') !== -1, none.view.textContent);
+    });
+  })();
+
   await (async function photoAlreadyGone() {
     const app = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
@@ -5969,6 +6000,16 @@ async function main() {
       truthy(owedPage.notice().indexOf('held for you') !== -1, owedPage.notice());
     });
 
+    /* A part whose give raised and whose arrival could not be read is left
+       for staff, and no retry gives it: "make room and it will be handed
+       over" was untrue of it (W087). */
+    const parkedPage = await endedWith({ outcome: 'paid', parked: true });
+    it('says staff are checking a part left for them, not to make room', function () {
+      const said = parkedPage.notice();
+      truthy(said.indexOf('staff have been asked to check it') !== -1, said);
+      falsy(said.indexOf('make room') !== -1, said);
+    });
+
     const lostRace = await endedWith({ outcome: 'refused', reason: 'bad_state' });
     it('tells a hitman refused at the end that it was not paid, and why', function () {
       const said = lostRace.notice();
@@ -7774,9 +7815,11 @@ async function main() {
     }], onMe: [] } };
 
     await (async function protectedOnTheKillPath() {
+      // The server says how long the protection still runs only when the
+      // kill outlasts it (W172).
       const app = boot({
         mine: job,
-        takeVerificationPhoto: { ok: false, err: 'target_just_up' }
+        takeVerificationPhoto: { ok: false, err: 'target_just_up', data: { secondsLeft: 60 } }
       });
       await settle(); await settle();
       tab(app, 'mine');
@@ -7794,6 +7837,30 @@ async function main() {
         truthy(said.indexOf('just got back up') !== -1, said);
         truthy(said.indexOf('does not count yet') !== -1,
           'and that the kill may still count: ' + said);
+        truthy(said.indexOf('in 1 minute') !== -1, 'and the wait the server measured: ' + said);
+      });
+    })();
+
+    /* And when the kill lapses before the protection ends, waiting cannot
+       make it count: "it counts if they are still lying dead when that
+       protection runs out" sent the hitman to stand over a body until the
+       kill quietly lapsed. */
+    await (async function protectedPastTheKill() {
+      const app = boot({
+        mine: job,
+        takeVerificationPhoto: { ok: false, err: 'kill_too_soon', data: { rule: 'target_just_up' } }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Verify kill');
+      await settle(); await settle();
+
+      it('says a kill that lapses before the protection ends does not count', function () {
+        const said = app.notice();
+        truthy(said.indexOf('just got back up, so this kill does not count') !== -1, said);
+        falsy(said.indexOf('yet') !== -1, 'no wait promised: ' + said);
+        falsy(said.indexOf('protection runs out') !== -1, said);
       });
     })();
 
@@ -8890,6 +8957,26 @@ async function main() {
         falsy(app.notice().indexOf('Everything you put up has been returned') !== -1,
           app.notice());
         truthy(app.notice().indexOf('waiting for you') !== -1, app.notice());
+      });
+    })();
+
+    // And a refund left for staff, which making room does not hand over.
+    await (async function withdrawSaysWhatStaffAreChecking() {
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [] });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        cancel: { ok: true, data: { id: 'ct00000009', queued: 0, parked: 1 } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Withdraw'); click(app, 'Withdraw it'); await settle(); await settle();
+      it('says staff are checking a refund left for them, not that it all came back', function () {
+        const said = app.notice();
+        falsy(said.indexOf('Everything you put up has been returned') !== -1, said);
+        truthy(said.indexOf('staff have been asked to check it') !== -1, said);
+        falsy(said.indexOf('next have room') !== -1, said);
       });
     })();
 

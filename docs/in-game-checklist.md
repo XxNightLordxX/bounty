@@ -312,6 +312,18 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
 - [ ] Place a contract, take it with a second character, **restrain** the
       target (cuffs) and bring them to the person who placed it: the handover
       arms, counts down and pays the **whole reward**; the contract closes
+- [ ] With the phone closed during that countdown, the hitman's phone still
+      gets *Handover paid* (*Delivered alive: $… released to you. Your $…
+      stake has been returned.*) in its notification list. With their
+      pockets full of a reward that includes an item, it adds that part is
+      held until they make room, and their **Ledger** says *1 payment
+      waiting for room* until they do
+- [ ] Mid-countdown, the target quits the game: `/ch-timeline` on the
+      contract shows `kidnap_party_dropped` with role `target` and how far
+      the countdown had run. The same for the person who placed it
+      (`placer`); a hitman quitting shows that and `kidnap_cancelled`
+      (`hitman_dropped`). A `restart crimson-hitman` mid-countdown writes
+      none of them
 - [ ] Again, with the target uncuffed in the **hitman's vehicle**: the
       handover arms and pays the same
 - [ ] Again, but tap **Deliver alive** with the placer 30 m away: *The person
@@ -366,6 +378,22 @@ served, and no image host is asked anything.
 - [ ] Tap it again from 20 m away on a second kill: "You are too far from the
       body"; let the target respawn and wait past
       `ProofWindowSeconds` (60 s): the kill no longer pays
+- [ ] Kill the target again within a minute of that respawn and tap
+      **Verify kill**: *They had only just got back up, so this kill does not
+      count.* Kill them about four minutes after a respawn instead: it says
+      the kill does not count yet and how many seconds to wait; tap again
+      once they have passed, with the target still dead, and it pays
+- [ ] Kill the target, `restart crimson-hitman` before tapping **Verify
+      kill**, then tap it: *The server restarted and lost the proof of this
+      kill*, not a word about explosives or the weapon
+- [ ] Kill the target and have staff void the contract from `/hitmanadmin`
+      before tapping **Verify kill**: *That contract is closed.*, never
+      *Not right now.*
+- [ ] Admin panel, Features: **A downed target is not a kill** is shown
+      read-only, under the read-only settings, saying why
+- [ ] With **Kill photos** turned on from the panel on a server started with
+      them off, verify a kill with a photo on `'server'` storage:
+      `data/photos/.mode` appears beside the photo, naming the storage mode
 - [ ] The client's completion notice says the contract was fulfilled and
       nothing about a photo; their Ledger row has no **View photo**
 - [ ] With a link to a photo saved before (on a server that had them on),
@@ -518,6 +546,9 @@ uploads, and with neither. Restart the resource between them.
       documented; this is the check)
 - [ ] The targeted officer is notified directly
 - [ ] An `sc-dispatch` entry appears in the MDT
+- [ ] With an officer's contract taken, turn **Advisories**, **When
+      accepted** or **Use dispatch** off in the admin panel, then end the
+      contract (void it): both MDT entries are gone
 - [ ] Accepting raises a second advisory with the operative count
 - [ ] A second acceptance raises another, with the count now 2
 - [ ] The creator is **never** named in any of it
@@ -628,6 +659,18 @@ uploads, and with neither. Restart the resource between them.
 - [ ] A contract disappears from the board when the target logs out
 - [ ] It reappears when they return, with escrow intact
 - [ ] Restarting the resource mid-contract loses nothing
+- [ ] **mysql mode, test server:** hold a lock on the contract's baseline
+      escrow row from a second database session (`SELECT … FOR UPDATE`) past
+      `innodb_lock_wait_timeout` while a handover finishes: the hitman is told
+      the payout could not be recorded; within a minute (2 ×
+      `Config.Database.QueryTimeoutSeconds`) the console says the claim was
+      finished as the next start would, the hitman's phone says *Payout not
+      recorded … deliver again to collect*, and a second handover pays
+- [ ] Let a contract expire while its client is logged off, and stop the
+      server in the middle of it if you can (or on a test server make the
+      ending raise): at the next start the hitman is told *Contract expired*
+      and where their stake went, and the client finds *Contract expired* in
+      their notifications once they log back in
 - [ ] A payout to a player with a full inventory is delivered on their next login
 - [ ] ...and, with them still connected through a `restart crimson-hitman`,
       within a minute of making room, without a relog

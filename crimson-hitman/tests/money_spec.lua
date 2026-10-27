@@ -1161,3 +1161,83 @@ describe('what the log says of a stake a hitman walked away from', function()
         eq(#rows(s, 'stake_forfeited'), 0)
     end)
 end)
+
+--- A give that raised and whose arrival could not be read is left for
+--- staff (parked): no retry gives it. Counted in `pending` as one waiting
+--- for room, the hitman was told "make room and it will be handed over",
+--- the client "they arrive when you next have room", and making room did
+--- nothing (W087).
+describe('a payout left for staff is not one waiting for room', function()
+    --- src's money give lands and then raises, and their balance cannot be
+    --- read after it: left for staff at once.
+    local function unreadable(src)
+        local p = Env.players[src]
+        local realAdd, realGet = p.Functions.AddMoney, p.Functions.GetMoney
+        local raising = false
+        p.Functions.AddMoney = function(...)
+            realAdd(...)
+            raising = true
+            error('AddMoney hook raised', 0)
+        end
+        p.Functions.GetMoney = function(...)
+            if raising then error('GetMoney raised', 0) end
+            return realGet(...)
+        end
+        return function() p.Functions.AddMoney, p.Functions.GetMoney = realAdd, realGet end
+    end
+
+    local function noticesTo(src)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == src then
+                local data = event.args and event.args[1] or {}
+                out[#out + 1] = tostring(data.title) .. ': ' .. tostring(data.content)
+            end
+        end
+        return table.concat(out, ' | ')
+    end
+
+    it('counts a parked collection apart in the claim and the handover', function()
+        local s = newStack()
+        local f, c = fundedFrom(s, 'cash', 5000)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local restore = unreadable(3)
+        local ok, _, result = s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION)
+        restore()
+        truthy(ok)
+        eq(result.pending, 0, 'nothing waits for room')
+        eq(result.parked, 1, 'one left for staff to check')
+    end)
+
+    it('says so to a client withdrawing, apart from what waits for room', function()
+        local s = newStack()
+        local f, c = fundedFrom(s, 'cash', 5000)
+        local restore = unreadable(1)
+        local reply = s.app.handlers.cancel(f.creator, { id = c.id })
+        restore()
+        truthy(reply, 'withdrawn')
+        eq(reply.queued, 0, 'nothing waits for room')
+        eq(reply.parked, 1, 'one left for staff')
+        local said = noticesTo(1)
+        truthy(said:find('staff have been asked to check', 1, true), said)
+        falsy(said:find('next have room', 1, true), 'not told to make room: ' .. said)
+    end)
+
+    it('lists what waits for room on the Ledger, and not what staff are checking', function()
+        local s = newStack()
+        local f, c = fundedFrom(s, 'cash', 5000, 1000)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.removePlayer(3)
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.KIDNAPPING))
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
+            cash = 5000, bank = 5000, firstname = 'Rook', lastname = 'Ash' })
+        local ledger = s.app.handlers.ledger(s.identity.resolve(3), {})
+        eq(ledger.waiting, 2, 'the baseline and the bonus, waiting for them')
+        local first = s.storage.readPending('HITMAN01')[1]
+        local line = s.storage.readEscrowLine(first.line_id)
+        line.deliver_raises = s.escrow.DELIVER_RAISE_LIMIT
+        s.storage.writeEscrow(c.id, { line })
+        eq(s.app.handlers.ledger(s.identity.resolve(3), {}).waiting, 1,
+            'one left for staff is not one making room hands over')
+    end)
+end)

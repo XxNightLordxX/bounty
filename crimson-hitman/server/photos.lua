@@ -196,6 +196,10 @@ end
 --- once a process for each folder; "already there" is an answer like any
 --- other.
 local madeFolders = {}
+
+--- Whether this process has made sure the mode file is there (writeFile).
+local modeNoted = false
+
 local function makeFolder(dir)
     if madeFolders[dir] then return end
     madeFolders[dir] = true
@@ -211,6 +215,20 @@ end
 ---@return boolean written
 local function writeFile(file, data)
     makeFolder(PHOTO_DIR)
+    -- Which mode's store names the files here, beside the first one written
+    -- (Photos.sweepFiles). Only a start sweep wrote it, and only with photos
+    -- in use then, so photos turned on from the panel were written with no
+    -- mode beside them, and the first start after a Database.Mode switch
+    -- swept every one of them, kept photos included. Never over one already
+    -- there: that is the mode these files' store is.
+    if not modeNoted then
+        modeNoted = true
+        local resource = GetCurrentResourceName()
+        local okRead, owner = pcall(LoadResourceFile, resource, MODE_FILE)
+        if okRead and (owner == nil or owner == '') then
+            pcall(SaveResourceFile, resource, MODE_FILE, tostring(Config.Database.Mode), -1)
+        end
+    end
     local ok, wrote = pcall(SaveResourceFile, GetCurrentResourceName(), file, data, #data)
     if ok and wrote ~= false then return true end
     Log.always(('could not write the kill photo %s. Make sure the folder %s '

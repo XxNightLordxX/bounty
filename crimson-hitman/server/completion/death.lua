@@ -135,6 +135,20 @@ local unreported = {}
 --- can say so, rather than talk about a target who is only down.
 local unobserved = {}
 
+--- When this process started taking deaths (Death.noteStarted), on the
+--- monotonic clock; nil until it has. Pending kills and the damage log are
+--- held in memory only, so a restart between a kill and its proof loses
+--- the kill, and the target's restarted game reports the death again
+--- naming the killer, with no hit of theirs the server ever saw.
+local startedAt = nil
+
+--- How long after a start a death reported with its proof lost is put down
+--- to the restart (KILL_LOST_RESTART), at least: long enough for a target's
+--- game to load the restarted resource and report it. Never less than
+--- Config.Completion.PhotoTokenLifetimeSeconds, past which a kill from
+--- before the restart would have lapsed anyway.
+local RESTART_REPORT_SECONDS = 60
+
 --- A defibrillator's own gap, which is no revive whatever lands in it. The
 --- gap is first seen within one sample of the shock; a time up that begins
 --- later is not the gap, and taken for it, a real revive a hitman cut short
@@ -182,6 +196,26 @@ function Death.init(deps)
     defibAt, lastUp, inflight, credited = {}, {}, {}, {}
     lethalAt, deferred, downHits, polling = {}, {}, {}, {}
     aliveAt, unreported, unobserved = {}, {}, {}
+    startedAt = nil
+end
+
+--- Note that this process has started taking deaths (main.lua's start).
+function Death.noteStarted()
+    startedAt = Util.monotonicMs()
+end
+
+--- Whether a death reported now, with no hit of the named killer's seen,
+--- is one whose proof a restart lost: reported in the window after this
+--- start, of somebody this process has never seen alive. A death after
+--- the start follows a time alive the sampler or a hit saw, and is
+--- refused as unseen like any other.
+---@param victimCid string
+---@return boolean
+local function lostToRestart(victimCid)
+    if not startedAt or aliveAt[victimCid] then return false end
+    local window = math.max(RESTART_REPORT_SECONDS,
+        tonumber(Config.Completion.PhotoTokenLifetimeSeconds) or 0) * 1000
+    return Util.monotonicMs() - startedAt <= window
 end
 
 --------------------------------------------------------------------------
@@ -1172,13 +1206,19 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
                         coords = victimCoords or GetEntityCoords(GetPlayerPed(victimSource)),
                     }
                 elseif not hit then
-                    Audit.rejected('named_killer_unobserved', named, contract.id,
-                        { victim = victim.cid })
+                    -- Or a restart lost the hits that would have shown: the
+                    -- report of a death from before it, which the target's
+                    -- restarted game sends again. Blaming the weapon then
+                    -- was untrue of a hitman who had shot them.
+                    local lost = lostToRestart(victim.cid)
+                    Audit.rejected(lost and 'named_killer_lost_restart' or 'named_killer_unobserved',
+                        named, contract.id, { victim = victim.cid })
                     -- So Verify kill can tell them why: a bomb, a fire or a
                     -- car raises no weapon event, and "down is not dead"
                     -- said nothing to somebody who had just blown them up.
                     unobserved[contract.id .. ':' .. named] =
-                        { at = Util.monotonicMs(), victimCid = victim.cid, hitmanCid = named }
+                        { at = Util.monotonicMs(), victimCid = victim.cid, hitmanCid = named,
+                          restart = lost or nil }
                 end
 
                 -- Falling back to the damage log would hand the kill to
@@ -1291,21 +1331,51 @@ function Death.clearPending(contractId, hitmanCid)
     pending[contractId .. ':' .. hitmanCid] = nil
 end
 
+--- How many seconds from now a pending kill can still be verified, as it
+--- stands (aged): its lifetime from the death, or the photo token holding
+--- it, whichever is later. Asked when a claim on it is refused for a
+--- protection still running on the target, to say whether the kill
+--- outlasts that protection (Photo.verifyAtScene).
+---@param record table a pending kill (Death.getPending)
+---@return number seconds
+function Death.lastsFor(record)
+    local untilMs = record.at + Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    if record.heldUntil and record.heldUntil > untilMs then untilMs = record.heldUntil end
+    return math.max(0, (untilMs - Util.monotonicMs()) / 1000)
+end
+
+--- Drop every kill pending on a contract that has closed, and what was seen
+--- of one: nothing can claim them any more (Contracts.onResolved), and a
+--- pending kill outlived a staff void, minting photo tokens for a contract
+--- that was over.
+---@param contractId string
+function Death.clearContract(contractId)
+    local prefix = contractId .. ':'
+    for key in pairs(pending) do
+        if key:sub(1, #prefix) == prefix then pending[key] = nil end
+    end
+    for key in pairs(unobserved) do
+        if key:sub(1, #prefix) == prefix then unobserved[key] = nil end
+    end
+end
+
 --- Whether this hitman's last kill on this contract went unseen: their
 --- target's own game named them as the killer, and the server never saw a
 --- hit of theirs land. Only for as long as a kill would wait for its photo.
 ---@param contractId string
 ---@param hitmanCid string
 ---@return boolean
+---@return boolean restart the death was reported again after a start, its proof
+--- lost with the process before it (lostToRestart)
 function Death.unobservedKill(contractId, hitmanCid)
     local key = contractId .. ':' .. hitmanCid
     local record = unobserved[key]
-    if not record then return false end
+    if not record then return false, false end
     if Util.monotonicMs() - record.at > Config.Completion.PhotoTokenLifetimeSeconds * 1000 then
         unobserved[key] = nil
-        return false
+        return false, false
     end
-    return true
+    return true, record.restart == true
 end
 
 --- A revive invalidates every pending completion for that player: a target

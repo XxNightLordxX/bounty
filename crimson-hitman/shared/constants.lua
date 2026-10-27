@@ -155,6 +155,17 @@ CH.ERR = {
     --- fire, a car (Config.Completion.RequireObservedDamage). "Down is not
     --- dead" was what they were told, about a target they had blown up.
     KILL_UNOBSERVED   = 'kill_unobserved',
+    --- No kill to verify because the server restarted after it: pending
+    --- kills and the hits that prove them are kept in memory only, and the
+    --- target's game reported the death again naming this hitman, with no
+    --- hit of theirs seen since the start. Blaming the weapon was untrue.
+    KILL_LOST_RESTART = 'kill_lost_restart',
+    --- The kill was refused because the target was still protected (just
+    --- back on their feet, or just into the city), and that protection runs
+    --- past the time the kill can still be verified, so it can never count.
+    --- "It counts if they are still lying dead when the protection runs
+    --- out" was untrue in exactly this case.
+    KILL_TOO_SOON     = 'kill_too_soon',
     --- This contract pays only for delivering the target alive
     --- (CH.FULFILMENT_RULE.ALIVE), so a kill does not complete it and there
     --- is no kill to verify. Its own code: no_kill_to_verify tells the

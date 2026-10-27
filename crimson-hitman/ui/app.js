@@ -527,6 +527,15 @@
     kill_unobserved: 'They died, but no shot or blow of yours was seen landing on '
       + 'them, so the kill pays nobody. Only gunfire and melee count: '
       + 'explosives, fire, run-overs and falls do not.',
+    // The server restarted between the kill and Verify kill: what proved it
+    // is kept in memory only, and went with the restart.
+    kill_lost_restart: 'The server restarted and lost the proof of this kill, so it '
+      + 'cannot be verified.',
+    // Refused while the target was still protected, and the kill lapses
+    // before that protection ends, so waiting cannot make it count. The
+    // Verify kill path words which protection it was.
+    kill_too_soon: 'They were still protected when you killed them, so this kill does '
+      + 'not count.',
     // A contract placed for a live delivery only (its fulfilment is
     // 'alive'): a kill never completes it, so there is never one to verify.
     // What to do instead, with the server's distance and hold, is said by
@@ -2403,10 +2412,12 @@
           // same moment, which is the case where a player counts their
           // money, finds it short and reports it stolen.
           var queued = (r.data && Number(r.data.queued)) || 0;
+          var checking = staffChecking(r.data);
           say(queued > 0
             ? 'Contract withdrawn. Some of what you put up would not fit and is '
-              + 'waiting for you — it arrives when you next have room.'
-            : 'Contract withdrawn. Everything you put up has been returned.', 'ok');
+              + 'waiting for you — it arrives when you next have room.' + checking
+            : checking ? 'Contract withdrawn.' + checking
+              : 'Contract withdrawn. Everything you put up has been returned.', 'ok');
           refresh();
         });
       }, { yes: 'Withdraw it', no: 'Keep it' });
@@ -3082,15 +3093,28 @@
            logged in, and promised a retry the hold on the kill can outlast. */
         var noKill = noKillOn[contract.id];
         noKillOn[contract.id] = r.err === 'no_kill_to_verify'
-          || r.err === 'kill_unobserved'
+          || r.err === 'kill_unobserved' || r.err === 'kill_lost_restart'
+          || r.err === 'kill_too_soon'
           || (noKill && r.err === 'rate_limited');
+        /* How long the protection still runs, which the server says only when
+           the kill outlasts it; when it does not, the answer is kill_too_soon
+           and waiting cannot help. "It counts if they are still lying dead
+           when that protection runs out" was said either way, and the kill
+           lapsed first in the commonest case. */
+        var left = Number(r.data && r.data.secondsLeft);
+        var wait = left > 0
+          ? ' It counts if they are still lying dead in ' + waitText(left)
+            + ': tap Verify kill again then.'
+          : '';
+        var rule = r.data && r.data.rule;
         var here = {
           target_just_up: 'They had only just got back up when you killed them, '
-            + 'so the kill does not count yet. It counts only if they are still '
-            + 'lying dead when that protection runs out.',
+            + 'so the kill does not count yet.' + wait,
           target_just_on: 'They had only just come into the city, so the kill '
-            + 'does not count yet. It counts only if they are still lying dead '
-            + 'when that protection runs out \u2014 usually a few minutes.',
+            + 'does not count yet.' + wait,
+          kill_too_soon: rule === 'target_just_on'
+            ? 'They had only just come into the city, so this kill does not count.'
+            : 'They had only just got back up, so this kill does not count.',
           target_protected: 'They are protected right now, so the kill does not '
             + 'count.',
           rate_limited: 'Too many attempts just now. Wait a few seconds and '
@@ -3128,11 +3152,11 @@
       // which is right — but the app said the money had been released, so
       // the hitman stood there with nothing and no reason to think anything
       // was owed. The server says which happened; this now reads it.
-      var owed = r.data && r.data.pending;
+      var owed = r.data && Number(r.data.pending) > 0;
       say(owed
         ? 'Verified. Some of the reward would not fit and is being held for '
-          + 'you \u2014 make room and it will be handed over.'
-        : 'Verified. Payment released.', 'ok');
+          + 'you \u2014 make room and it will be handed over.' + staffChecking(r.data)
+        : 'Verified. Payment released.' + staffChecking(r.data), 'ok');
       refresh();
     });
   }
@@ -3306,6 +3330,25 @@
     }, 1000);
   }
 
+  /* What is said of a payment whose give raised and whose arrival could not
+     be read: it was left for staff, and no retry gives it, so "make room and
+     it will be handed over" was untrue of it. The server counts it apart
+     (`parked`) in a claim's answer, a handover's ending, and a withdrawal's. */
+  function staffChecking(data) {
+    var parked = data && (data.parked === true || Number(data.parked) > 0);
+    return parked
+      ? ' Part of it could not be confirmed; staff have been asked to check it.'
+      : '';
+  }
+
+  /* A wait the server measured, in words: seconds under a minute, else
+     minutes, rounded up. */
+  function waitText(seconds) {
+    var s = Math.max(0, Math.ceil(Number(seconds) || 0));
+    if (s < 60) { return s + (s === 1 ? ' second' : ' seconds'); }
+    return durationText(Math.ceil(s / 60));
+  }
+
   /* What a finished handover means, in words. The server keeps how each
      one ended for a couple of minutes; the phone notification says the same
      thing to a hitman who has closed the app. */
@@ -3313,8 +3356,8 @@
     if (ended.outcome === 'paid') {
       return say(ended.pending
         ? 'Delivered. Some of the reward would not fit and is being held for '
-          + 'you \u2014 make room and it will be handed over.'
-        : 'Delivered. Payment released.', 'ok');
+          + 'you \u2014 make room and it will be handed over.' + staffChecking(ended)
+        : 'Delivered. Payment released.' + staffChecking(ended), 'ok');
     }
     if (ended.outcome === 'closed') {
       return say('The contract closed before the handover finished.');
@@ -4519,10 +4562,12 @@
       }
 
       var queued = (r.data && r.data.queued) || 0;
+      var checking = staffChecking(r.data);
       say(queued
         ? 'Taken off the contract. Some of it could not fit and is waiting '
-          + 'for you — it arrives when you next have room.'
-        : 'Taken off the contract and returned to you.', 'ok');
+          + 'for you — it arrives when you next have room.' + checking
+        : checking ? 'Taken off the contract.' + checking
+          : 'Taken off the contract and returned to you.', 'ok');
 
       state.reward = null;
       state.dialog = null;
@@ -5267,6 +5312,16 @@
       }
       card.appendChild(stats);
       view.appendChild(card);
+    }
+
+    /* Payments of theirs that would not fit and wait for room. A receipt
+       missed, or a page closed, was the only word of them anywhere. A count
+       of their own and nothing else. */
+    var waiting = Number(data.waiting) || 0;
+    if (waiting > 0) {
+      view.appendChild(el('div', 'hint', waiting + ' payment' + (waiting === 1 ? '' : 's')
+        + ' waiting for room. Make room and ' + (waiting === 1 ? 'it is' : 'they are')
+        + ' handed over.'));
     }
 
     /* Photos kept for this client in the app whose ledger row is gone:

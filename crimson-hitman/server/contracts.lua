@@ -9,7 +9,7 @@ local Log = CrimsonBoot.requireShared('log')
 
 local Contracts = {}
 
-local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review
+local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger
 
 --- What settles a take, or a contract row, the store would not confirm
 --- (server/review.lua's deciders); defined with the code they finish.
@@ -23,6 +23,9 @@ function Contracts.init(deps)
     Notify      = deps.notify
     Progression = deps.progression
     Death       = deps.death
+    -- The rows a collection recovery found paid is credited with
+    -- (creditRecovered); without it, none are written.
+    Ledger      = deps.ledger
     -- Where money no rule here can settle is left for staff
     -- (server/review.lua).
     Review      = deps.review
@@ -92,6 +95,20 @@ end
 
 --- See Contracts.retryStuckJoins.
 local stuckJoins = {}
+
+--- Claims that raised, by contract id: { at = os.time(), hitman = cid,
+--- fulfilment }. See Contracts.retryStuckClaims.
+local stuckClaims = {}
+
+--- Contracts whose ending recovery finished and told its parties of, in
+--- this process, so a later pass does not tell them again (endingTold).
+local endingNotified = {}
+
+--- Collections whose claim counted the hitman's completion and then
+--- raised, by contractId .. ':' .. slot, so the tick finishing it does not
+--- count it again (creditRecovered). Cleared as a claim returns, and as the
+--- tick takes it: only a claim that raised leaves one.
+local creditedClaims = {}
 
 --- Contracts a throw left undecided while they were being placed, by id:
 --- who placed it, and the review item its take opened, if it did. See
@@ -207,15 +224,20 @@ end
 --- hands: a refund their pockets had no room for, or one queued while they
 --- were away. It arrives later, so "everything has been returned" is untrue
 --- in exactly that case.
----@return integer
+---
+--- A line left for staff (Escrow.parked) is counted apart: its give raised
+--- and whether it arrived could not be read, so no retry gives it, and
+--- "make room and it arrives" was untrue of it.
+---@return integer owed waiting for room or for them to be in the city
+---@return integer parked left for staff to check
 local function owedTo(contractId, cid)
-    local owed = 0
+    local owed, parked = 0, 0
     for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
         if line.owed_to == cid and line.state ~= CH.ESCROW_STATE.SETTLED then
-            owed = owed + 1
+            if Escrow.parked(line) then parked = parked + 1 else owed = owed + 1 end
         end
     end
-    return owed
+    return owed, parked
 end
 
 --- Hand the client a stake still held under a row its hitman walked away
@@ -252,7 +274,7 @@ local function forfeitWalkedStake(contract, staker, lines)
 end
 
 ---@return table[] outcomes one per hitman still on the contract:
---- { cid, stake, forfeited, owed }, for the notice that tells them
+--- { cid, stake, forfeited, owed, parked }, for the notice that tells them
 local function settleStakes(contractId, creatorCid, forfeit, contract)
     local stakes = heldStakes(contractId)
     local outcomes = {}
@@ -267,11 +289,15 @@ local function settleStakes(contractId, creatorCid, forfeit, contract)
         -- Only a hitman still on it is told it ended. One who walked away
         -- or was released already heard about it then.
         if hitman.state == 'active' then
+            -- A line left for staff is in `pending` too (Escrow.release),
+            -- and is not one that arrives when they can take it.
+            local parked = result and (result.parked or 0) or 0
             outcomes[#outcomes + 1] = {
                 cid = hitman.hitman_cid,
                 stake = stakes[hitman.hitman_cid] or 0,
                 forfeited = toCreator and true or false,
-                owed = result and (result.pending or 0) > 0 or false,
+                owed = result and (result.pending or 0) > parked or false,
+                parked = parked > 0,
             }
         end
     end
@@ -290,6 +316,8 @@ end
 ---@param forfeitStakes boolean
 ---@param ending string the terminal CH.STATE this contract is ending in
 ---@param winnerCid string|nil on a completion, the hitman who finished it
+---@return table[] stakes where each stake still on it went (settleStakes), so the
+--- claim that ended it can tell its winner where theirs went
 local function finalise(contractId, contract, forfeitStakes, ending, winnerCid)
     -- Read before the stakes settle, while the hitman records still say who
     -- was on this contract: they are who needs their card to change.
@@ -313,15 +341,20 @@ local function finalise(contractId, contract, forfeitStakes, ending, winnerCid)
     -- hitman's stake, and a buyout or a rival's kill took their contract,
     -- with nothing on the phone to say so (§11.4).
     local agreed = (settled or contract).resolution == 'cancelled_by_agreement'
+    local creatorOwed, creatorParked = 0, 0
+    if ending == CH.STATE.EXPIRED or agreed then
+        creatorOwed, creatorParked = owedTo(contractId, contract.creator_cid)
+    end
     Notify.contractEnded(settled or contract, ending, stakes, {
         winnerCid = winnerCid,
-        creatorOwed = (ending == CH.STATE.EXPIRED or agreed)
-            and owedTo(contractId, contract.creator_cid) or 0,
+        creatorOwed = creatorOwed,
+        creatorParked = creatorParked,
     })
 
     Notify.clearContract(contractId, settled or contract)
     if Contracts.onResolved then Contracts.onResolved(contractId) end
     if Contracts.onChanged then Contracts.onChanged() end
+    return stakes
 end
 
 --------------------------------------------------------------------------
@@ -496,6 +529,8 @@ end
 ---@param opts table|nil { deathAt = ms } when judging a claim on a specific death
 --- @return boolean immune
 --- @return string|nil why an ERR code naming which rule, for the player
+--- @return integer|nil endsIn seconds until that rule stops protecting them, for
+--- the session floor and the post-respawn window
 function Contracts.isImmune(targetActor, opts)
     -- Session length is measured by this resource, so it is always known
     -- for anyone who connected while it was running.
@@ -512,7 +547,9 @@ function Contracts.isImmune(targetActor, opts)
         -- rejoining was.
         local sessionAgo = Identity.sessionSeconds and Identity.sessionSeconds(targetActor.cid)
         if not (deathAgo ~= nil and sessionAgo ~= nil and deathAgo > sessionAgo) then
-            return true, CH.ERR.TARGET_JUST_ON
+            local floor = Config.Immunity.MinTargetSessionMinutes * 60
+            return true, CH.ERR.TARGET_JUST_ON,
+                math.max(0, math.ceil(floor - (sessionAgo or session * 60)))
         end
     end
 
@@ -541,7 +578,10 @@ function Contracts.isImmune(targetActor, opts)
         if since and since < Config.Immunity.PostRespawnSeconds then
             local respawnedAgo = since
             local claimPredatesRespawn = deathAgo ~= nil and deathAgo > respawnedAgo
-            if not claimPredatesRespawn then return true, CH.ERR.TARGET_JUST_UP end
+            if not claimPredatesRespawn then
+                return true, CH.ERR.TARGET_JUST_UP,
+                    math.max(0, math.ceil(Config.Immunity.PostRespawnSeconds - since))
+            end
         end
     end
 
@@ -2549,9 +2589,13 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- Which rule, as creation already says: the page told a hitman over a
     -- target who had just logged in that the target had just got up.
     local targetActor = Identity.byCitizenId(contract.target_cid)
-    local immune, why = false, nil
-    if targetActor then immune, why = Contracts.isImmune(targetActor, opts) end
-    if immune then return false, why or CH.ERR.TARGET_PROTECTED end
+    local immune, why, endsIn = false, nil, nil
+    if targetActor then immune, why, endsIn = Contracts.isImmune(targetActor, opts) end
+    -- With how long that protection has to run, so Verify kill can say
+    -- whether the kill outlasts it (Photo.verifyAtScene).
+    if immune then
+        return false, why or CH.ERR.TARGET_PROTECTED, endsIn and { protectedFor = endsIn } or nil
+    end
 
     -- Take the contract's lock for the duration of the settlement, so the
     -- slot cannot be claimed twice (§14.3).
@@ -2614,11 +2658,25 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
                 { error = not wrote and tostring(ok) or nil })
         end
     end
+    -- What this collection hands the hitman, for the receipt that tells them
+    -- (Notify.contractCompleted): money by its figure, goods by count. From
+    -- the lines just marked theirs, so no read is added to the claim.
+    local money, goods = 0, 0
+    for i = 1, #marks do
+        local line = marks[i]
+        if line.owed_to == hitmanCid then
+            if CH.MONEY_SOURCES[line.source] then
+                money = money + (tonumber(line.amount) or 0)
+            else
+                goods = goods + (line.source == CH.SOURCE.ITEM and tonumber(line.quantity) or 1)
+            end
+        end
+    end
 
     -- A kidnapping releases the slot's baseline and its bonus; an elimination
     -- releases the baseline only, and the bonus returns to the creator.
     local _, baseline = Escrow.release(contractId, hitmanCid, { slot = slot, portion = CH.PORTION.BASELINE }, 'payout_baseline')
-    local bonus = { settled = 0, pending = 0 }
+    local bonus = { settled = 0, pending = 0, parked = 0 }
     if kidnap then
         _, bonus = Escrow.release(contractId, hitmanCid, { slot = slot, portion = CH.PORTION.BONUS }, 'payout_bonus')
     else
@@ -2649,19 +2707,30 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- ends, in finalise() and resolve().
 
     if Progression then Progression.onCompleted(hitmanCid, fulfilment) end
+    creditedClaims[contractId .. ':' .. slot] = true
 
+    -- A line whose give raised and was left for staff (Escrow.parked) is in
+    -- a release's `pending` too. Counted apart from here on: no retry gives
+    -- it, and "make room and it is handed over" was untrue of it.
+    local parked = (baseline.parked or 0) + (bonus.parked or 0)
+    local waiting = baseline.pending + bonus.pending - parked
     Audit.financial('slot_claimed', hitmanCid, contractId, {
         slot = slot, fulfilment = fulfilment,
         settled = baseline.settled + bonus.settled,
-        pending = baseline.pending + bonus.pending,
+        pending = waiting, parked = parked > 0 and parked or nil,
     })
 
     local exhausted = contract.next_slot > (contract.payout_slots or 1)
+    local stake
     if exhausted then
         -- Last slot: the contract is finished for everyone. Every other
         -- hitman's stake comes back and any unclaimed escrow returns to the
         -- creator, while the contract is still non-terminal and reachable.
-        finalise(contractId, contract, false, CH.STATE.COMPLETED, hitmanCid)
+        -- And this one's: where it went goes on their receipt.
+        local stakes = finalise(contractId, contract, false, CH.STATE.COMPLETED, hitmanCid)
+        for _, outcome in ipairs(stakes or {}) do
+            if outcome.cid == hitmanCid then stake = outcome end
+        end
 
         contract.resolved_at = os.time()
         contract.resolution = 'completed'
@@ -2685,12 +2754,19 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
         Notify.pushParties(contract, cids, 'slot_claimed')
     end
 
+    creditedClaims[contractId .. ':' .. slot] = nil
     return true, nil, {
         slot = slot,
         remaining = math.max(0, (contract.payout_slots or 1) - contract.slots_claimed),
         exhausted = exhausted,
         settled = baseline.settled + bonus.settled,
-        pending = baseline.pending + bonus.pending,
+        -- Held for them until they can take it, and apart from it what was
+        -- left for staff to check.
+        pending = waiting,
+        parked = parked,
+        money = money,
+        goods = goods,
+        stake = stake,
     }
 end
 
@@ -2699,11 +2775,25 @@ end
 --- raises (Escrow.whileClaiming), so a contract left COMPLETING by one that
 --- raised is told from one a claim is paying, and its owed lines are listed
 --- for staff instead of waiting unseen for the next start.
+---
+--- One that raises is noted (stuckClaims): a lock wait or a deadlock on one
+--- statement left the contract COMPLETING with nothing paid, refused every
+--- delivery after it as bad_state, and only the next start put it back,
+--- which threw the hitman's delivery away. The maintenance tick finishes it
+--- the way that start would (Contracts.retryStuckClaims).
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil result
 function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
-    return Escrow.whileClaiming(contractId, claimSlot, contractId, hitmanCid, fulfilment, opts)
+    local out = table.pack(pcall(Escrow.whileClaiming, contractId, claimSlot, contractId,
+        hitmanCid, fulfilment, opts))
+    if not out[1] then
+        if contractId ~= nil then
+            stuckClaims[contractId] = { at = os.time(), hitman = hitmanCid, fulfilment = fulfilment }
+        end
+        error(out[2], 0)
+    end
+    return table.unpack(out, 2, out.n)
 end
 
 --------------------------------------------------------------------------
@@ -2770,22 +2860,34 @@ local function cancelUnlocked(actor, contractId)
     -- had no room for is owed and retried on next login, not lost — but
     -- "everything you put up has been returned" is untrue in exactly that
     -- case, and it is the case where a player counts their money, finds it
-    -- short, and reports it stolen.
-    local owed = owedTo(contractId, actor.cid)
+    -- short, and reports it stolen. One left for staff (its give raised and
+    -- what arrived could not be read) is said apart: no retry gives it, so
+    -- "they arrive when you next have room" was untrue of it.
+    local owed, parked = owedTo(contractId, actor.cid)
 
     local lead = taken and 'The operative who took it walked away' or 'Nobody had taken it'
     local everyone = math.ceil((Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60)
-    Notify.toCitizen(actor.cid, 'Contract withdrawn', (owed > 0
-        and (lead .. '. Most of what you put up is back; %d thing(s) '
-             .. 'would not fit and are waiting for you — they arrive when you '
-             .. 'next have room.'):format(owed)
-        or lead .. ', so everything you put up has been returned.')
+    local body
+    if owed > 0 or parked > 0 then
+        body = lead .. '. Most of what you put up is back.'
+        if owed > 0 then
+            body = body .. (' %d thing(s) would not fit and are waiting for you — they '
+                .. 'arrive when you next have room.'):format(owed)
+        end
+        if parked > 0 then
+            body = body .. (' %d thing(s) could not be confirmed as handed back; staff have '
+                .. 'been asked to check.'):format(parked)
+        end
+    else
+        body = lead .. ', so everything you put up has been returned.'
+    end
+    Notify.toCitizen(actor.cid, 'Contract withdrawn', body
         .. ((taken and everyone > 0)
             and (' Nobody can place a contract on %s for %d minute%s now.'):format(
                 contract.target_name or 'them', everyone, everyone == 1 and '' or 's')
             or ''),
         { bypassBudget = true })
-    return true, nil, { owed = owed }
+    return true, nil, { owed = owed, parked = parked }
 end
 
 --- One at a time with an acceptance, on the key acceptance holds. Whether
@@ -3394,6 +3496,205 @@ function Contracts.recoverJoining(contract)
     return undone
 end
 
+--- Where each stake still on a contract went, for one whose ending recovery
+--- finished: read from its stake lines as they stand now, by the rule the
+--- ending used (releaseUntouched) — forfeited only on an ending that
+--- forfeits, by a hitman on it while its deadline stood. One not handed
+--- over yet is owed, or left for staff where no retry gives it.
+---@param contract table
+---@param forfeit boolean
+---@return table[] outcomes { cid, stake, forfeited, owed, parked } per hitman still on it
+---@return string[] cids every hitman on it, whose card changed
+local function recoveredStakes(contract, forfeit)
+    local lines = Storage.readEscrow(contract.id) or {}
+    local outcomes, cids = {}, {}
+    for _, hitman in ipairs(Storage.readHitmen(contract.id) or {}) do
+        cids[#cids + 1] = hitman.hitman_cid
+        if hitman.state == 'active' then
+            local outcome = { cid = hitman.hitman_cid, stake = 0, owed = false, parked = false,
+                forfeited = forfeit and stakeForfeits(hitman, contract) or false }
+            for _, line in ipairs(lines) do
+                if line.portion == CH.PORTION.STAKE and line.staker == hitman.hitman_cid then
+                    outcome.stake = outcome.stake + (tonumber(line.amount) or 0)
+                    if line.state ~= CH.ESCROW_STATE.SETTLED then
+                        if line.owed_to and not Escrow.parked(line) then
+                            outcome.owed = true
+                        else
+                            outcome.parked = true
+                        end
+                    end
+                end
+            end
+            outcomes[#outcomes + 1] = outcome
+        end
+    end
+    return outcomes, cids
+end
+
+--- The half of finalise that tells people, for an ending recovery finished
+--- (Recover at boot, Contracts.finishEndings on the running server). It
+--- moved the money and nothing else: no party was told, no open app moved,
+--- and an MDT advisory against an officer stayed up. Once a contract a
+--- process (endingNotified), and never raised: the money has moved by now,
+--- and a boot that raised here would stop its own recovery.
+---@param contractId string
+---@param forfeit boolean whether its stakes forfeit, as releaseUntouched was told
+---@param winnerCid string|nil on a completion, the hitman whose claim it was
+local function endingTold(contractId, forfeit, winnerCid)
+    if endingNotified[contractId] then return end
+    endingNotified[contractId] = true
+    local told, err = pcall(function()
+        local contract = Storage.readContract(contractId)
+        if not contract or not CH.TERMINAL[contract.state] then return end
+        local outcomes, cids = recoveredStakes(contract, forfeit)
+        Notify.pushParties(contract, cids, contract.state)
+        local creatorOwed, creatorParked = 0, 0
+        if contract.state == CH.STATE.EXPIRED
+            or contract.resolution == 'cancelled_by_agreement' then
+            creatorOwed, creatorParked = owedTo(contractId, contract.creator_cid)
+        end
+        Notify.contractEnded(contract, contract.state, outcomes, {
+            winnerCid = winnerCid, creatorOwed = creatorOwed, creatorParked = creatorParked,
+        })
+        Notify.clearContract(contractId, contract)
+    end)
+    if not told then
+        Log.debug(('telling the parties to contract %s its ending was finished raised: %s')
+            :format(tostring(contractId), Util.dbError(err)))
+    end
+end
+
+--- Credit a collection recovery found paid to the hitman it was paid to.
+---
+--- The claim that paid it stopped before it got there (a crash, or a raise
+--- the tick finished, Contracts.retryStuckClaims), so the payout arrived
+--- with no completion on their record: their completed count and its trust
+--- never counted, no ledger rows, and the client never told it was done.
+--- Whose it was is read from the collection's baseline, which the claim
+--- marked for them (owed_to) before anything moved, or paid (settled_to);
+--- a live delivery from its bonus, marked for the hitman where an
+--- elimination's goes back to the client, and otherwise from the contract's
+--- rule. Once a collection: only the move that advanced it, or that closed
+--- the contract, calls this.
+---@param contract table as it stands now
+---@param slot integer the collection
+---@param stakes table[]|nil where each stake went (recoveredStakes), when it was the last
+---@return string|nil payee
+local function creditRecovered(contract, slot, stakes)
+    local lines = Storage.readEscrow(contract.id) or {}
+    local payee
+    for _, line in ipairs(lines) do
+        if line.slot == slot and line.portion == CH.PORTION.BASELINE then
+            payee = payee or line.owed_to or line.settled_to
+        end
+    end
+    if not payee or not Storage.readHitman(contract.id, payee) then return nil end
+    local stake
+    for _, outcome in ipairs(stakes or {}) do
+        if outcome.cid == payee then stake = outcome end
+    end
+
+    local bonusTo
+    local money, goods, pending, parked = 0, 0, 0, 0
+    for _, line in ipairs(lines) do
+        if line.slot == slot and (line.portion == CH.PORTION.BASELINE
+            or line.portion == CH.PORTION.BONUS) then
+            local to = line.owed_to or line.settled_to
+            if line.portion == CH.PORTION.BONUS then bonusTo = bonusTo or to end
+            if to == payee then
+                if CH.MONEY_SOURCES[line.source] then
+                    money = money + (tonumber(line.amount) or 0)
+                else
+                    goods = goods + (line.source == CH.SOURCE.ITEM and tonumber(line.quantity) or 1)
+                end
+                if line.state ~= CH.ESCROW_STATE.SETTLED then
+                    if Escrow.parked(line) then parked = parked + 1 else pending = pending + 1 end
+                end
+            end
+        end
+    end
+    local fulfilment = CH.FULFILMENT.ELIMINATION
+    if bonusTo then
+        if bonusTo == payee then fulfilment = CH.FULFILMENT.KIDNAPPING end
+    elseif Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
+        fulfilment = CH.FULFILMENT.KIDNAPPING
+    end
+
+    -- Not where the claim itself counted it before it raised (this process).
+    local key = contract.id .. ':' .. slot
+    if Progression and not creditedClaims[key] then Progression.onCompleted(payee, fulfilment) end
+    creditedClaims[key] = nil
+    Audit.financial('claim_recovered', payee, contract.id, { slot = slot, fulfilment = fulfilment })
+    local result = {
+        slot = slot,
+        exhausted = (contract.next_slot or 1) > (contract.payout_slots or 1),
+        remaining = math.max(0, (contract.payout_slots or 1)
+            - (contract.slots_claimed or ((contract.next_slot or 1) - 1))),
+        money = money, goods = goods, pending = pending, parked = parked,
+        stake = stake, recovered = true,
+    }
+    if Ledger then Ledger.record(contract, payee, nil, fulfilment, result) end
+    -- Kept for their next login, both of them: a recovery runs at a start,
+    -- or seconds after a claim the hitman was told had failed.
+    Notify.contractCompleted(contract, payee,
+        fulfilment == CH.FULFILMENT.KIDNAPPING and nil or {}, result,
+        { receipt = true, keep = true })
+    return payee
+end
+
+--- A COMPLETING contract no claim is paying any more, finished as the next
+--- start finds it (Recover) and as the maintenance tick finishes one whose
+--- claim raised (Contracts.retryStuckClaims).
+---
+--- A claim that had paid its collection and died before moving the slot
+--- on: every baseline line of that collection is either settled or waiting
+--- for the person it was paid to, so it was paid; left where it was, the
+--- next hitman to kill the target for it was paid out of an empty slot.
+--- Every collection paid: the last claim died between advancing the slot
+--- and closing, and the contract is finished (recoverEnded) rather than put
+--- back to accepted, which brought back a live contract with nothing left
+--- to claim. Otherwise settlement was interrupted: put back to accepted so
+--- the normal path can run again; escrow lines are individually guarded, so
+--- anything already settled stays settled.
+---
+--- A collection found paid here is credited to the hitman it was paid to
+--- (creditRecovered).
+---@param contract table as read
+---@param lines table[] its escrow lines as read
+---@return string|nil how 'completed' (closed), 'paid' (a collection found paid, open
+--- again), 'reopened' (nothing paid, open again), or nil when nothing was done
+function Contracts.recoverCompleting(contract, lines)
+    local slot = contract.next_slot or 1
+    local baseline, unpaid = 0, 0
+    for j = 1, #lines do
+        local line = lines[j]
+        if line.slot == slot and line.portion == CH.PORTION.BASELINE then
+            baseline = baseline + 1
+            if line.state ~= CH.ESCROW_STATE.SETTLED and not line.owed_to then
+                unpaid = unpaid + 1
+            end
+        end
+    end
+    local advanced = false
+    if baseline > 0 and unpaid == 0 and Storage.advanceSlot(contract.id, slot) then
+        advanced = true
+        contract = Storage.readContract(contract.id) or contract
+    end
+
+    if (contract.next_slot or 1) > (contract.payout_slots or 1) then
+        return Contracts.recoverEnded(contract.id)
+    end
+
+    Storage.compareSetContractState(contract.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED)
+    if not advanced then return 'reopened' end
+    local credited, err = pcall(creditRecovered, contract, slot)
+    if not credited then
+        Log.always(('contract %s: collection %d was found paid, and crediting it raised: %s')
+            :format(tostring(contract.id), slot, Util.dbError(err)))
+    end
+    return 'paid'
+end
+
 --- Finish a contract whose ending a crash interrupted.
 ---
 --- Two shapes, both left behind by a process that died part-way through:
@@ -3426,9 +3727,26 @@ function Contracts.recoverEnded(contractId, reason)
         contract.resolution = contract.resolution or 'completed'
         Storage.setContractFields(contractId,
             { resolved_at = contract.resolved_at, resolution = contract.resolution })
-        Contracts.transition(contractId, CH.STATE.COMPLETING, CH.STATE.COMPLETED,
+        local closed = Contracts.transition(contractId, CH.STATE.COMPLETING, CH.STATE.COMPLETED,
             'completed_on_recovery', SETTLING)
         if Contracts.onResolved then Contracts.onResolved(contractId) end
+        -- The claim that paid the last collection never got as far as
+        -- crediting it or telling anybody (creditRecovered), nor as the
+        -- ending's notices (endingTold). Only by the move that closed it,
+        -- so a second pass credits nothing.
+        if closed then
+            local payee
+            local credited, err = pcall(function()
+                local now = Storage.readContract(contractId) or contract
+                payee = creditRecovered(now, (now.next_slot or 1) - 1,
+                    (recoveredStakes(now, false)))
+            end)
+            if not credited then
+                Log.always(('contract %s: its last collection was found paid, and crediting it '
+                    .. 'raised: %s'):format(tostring(contractId), Util.dbError(err)))
+            end
+            endingTold(contractId, false, payee)
+        end
         return 'completed'
     end
 
@@ -3446,7 +3764,11 @@ function Contracts.recoverEnded(contractId, reason)
                 and at > contract.deadline_at
         end
         local released = releaseUntouched(contract, forfeit, reason)
-        return released > 0 and 'released' or nil
+        if released == 0 then return nil end
+        -- What its ending would have said once the money moved, which it
+        -- never reached: who it was released to has to be told.
+        endingTold(contractId, forfeit)
+        return 'released'
     end
 
     return nil
@@ -3520,6 +3842,96 @@ function Contracts.finishEndings()
         end
     end
     return finished, more
+end
+
+--- What a hitman whose claim raised is told once the tick has put the
+--- contract back with nothing paid. A collection the tick found paid is
+--- told by its receipt instead (creditRecovered).
+local REOPENED_WORDS = {
+    [CH.FULFILMENT.KIDNAPPING] = 'Your payout could not be recorded and nothing was paid. '
+        .. 'The contract is open to you again: deliver again to collect.',
+    [CH.FULFILMENT.ELIMINATION] = 'Your payout could not be recorded and nothing was paid. '
+        .. 'The contract is open to you again: verify the kill again to collect, while it '
+        .. 'still stands.',
+}
+
+--- Finish claims that raised part-way on the running server, as the next
+--- start would (Recover, through Contracts.recoverCompleting).
+---
+--- One statement failing inside a claim (a lock wait, a deadlock, a dropped
+--- connection) left the contract COMPLETING: every delivery after it was
+--- refused as bad_state, nothing listed it for staff while nothing was
+--- owed, and only the next start put it back — throwing the hitman's
+--- delivery away. Each is left for 2 x Config.Database.QueryTimeoutSeconds
+--- (10 s where that is 0), long enough for a statement the database has
+--- not answered yet to land, then finished here: a line left `releasing`
+--- with nothing holding it is put back as a start puts it back
+--- (Escrow.parkStuck), and the contract is finished from what its escrow
+--- says (recoverCompleting) — put back to accepted with nothing paid, or
+--- the collection found paid and credited. Owed lines go on their queue
+--- (Escrow.recoverOwed).
+---
+--- Not while the store says it is not answering (mysql), nor while a claim
+--- or an ending runs on the contract (Escrow.claimRunning), nor while its
+--- key is held: left for the next tick.
+---@return integer finished claims finished this pass
+function Contracts.retryStuckClaims()
+    if not next(stuckClaims) then return 0 end
+    if Storage.healthy and not Storage.healthy() then return 0 end
+    local timeout = tonumber(Config.Database.QueryTimeoutSeconds) or 0
+    local wait = 2 * (timeout > 0 and timeout or 5)
+    local now = os.time()
+    local finished = 0
+    -- From a snapshot: every store call below yields on mysql, and a claim
+    -- raising meanwhile adds to the table being walked.
+    local due = {}
+    for contractId, stuck in pairs(stuckClaims) do
+        if now - stuck.at >= wait then due[#due + 1] = { id = contractId, stuck = stuck } end
+    end
+    for _, entry in ipairs(due) do
+        local contractId, stuck = entry.id, entry.stuck
+        if stuckClaims[contractId] == stuck and not Escrow.claimRunning(contractId) then
+            local how
+            local ran, outcome, err = pcall(Contracts.serialized, { 'contract:' .. contractId },
+                Escrow.whileClaiming, contractId, function()
+                    local contract = Storage.readContract(contractId)
+                    if not contract or contract.state ~= CH.STATE.COMPLETING then return true end
+                    for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+                        if line.state == CH.ESCROW_STATE.RELEASING and not Escrow.inFlight(line.id) then
+                            Escrow.parkStuck(line.id)
+                        end
+                    end
+                    local lines = Storage.readEscrow(contractId) or {}
+                    how = Contracts.recoverCompleting(contract, lines)
+                    Escrow.recoverOwed(Storage.readEscrow(contractId))
+                    return true
+                end)
+            if not ran then
+                Log.always(('finishing the claim that raised on contract %s raised: %s')
+                    :format(tostring(contractId), Util.dbError(outcome)))
+            elseif outcome == false and err == CH.ERR.BUSY then
+                -- Its key is held: the next tick.
+                how = nil
+            else
+                if stuckClaims[contractId] == stuck then stuckClaims[contractId] = nil end
+                if how then
+                    finished = finished + 1
+                    Log.always(('contract %s: a claim raised part-way; finished as the next '
+                        .. 'start would (%s)'):format(tostring(contractId), how))
+                    if how == 'reopened' then
+                        Notify.tellOrKeep(stuck.hitman, 'Payout not recorded',
+                            REOPENED_WORDS[stuck.fulfilment]
+                                or REOPENED_WORDS[CH.FULFILMENT.KIDNAPPING],
+                            { bypassBudget = true }, contractId)
+                        Notify.push(stuck.hitman, 'claim_reopened', contractId)
+                    end
+                    -- Open again, or closed: the expiry pass looks again.
+                    if Contracts.onChanged then Contracts.onChanged() end
+                end
+            end
+        end
+    end
+    return finished
 end
 
 return Contracts

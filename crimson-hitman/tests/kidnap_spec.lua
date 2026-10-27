@@ -740,3 +740,133 @@ describe('a handover after the deadline', function()
         eq(err, CH.ERR.ALREADY_SETTLED)
     end)
 end)
+
+local Shipped = require('crimson-hitman.tests.harness.shipped')
+
+--- Every notice one player's phone was sent, as { title, content }.
+local function noticesTo(src)
+    local out = {}
+    for _, event in ipairs(Env.clientEvents) do
+        if Natives.isNotice(event) and event.target == src then
+            local data = event.args and event.args[1] or {}
+            out[#out + 1] = { title = tostring(data.title), content = tostring(data.content) }
+        end
+    end
+    return out
+end
+
+local function told(src, title)
+    for _, note in ipairs(noticesTo(src)) do
+        if note.title == title then return note.content end
+    end
+    return nil
+end
+
+local function auditRows(s, action)
+    s.audit.flush()
+    return s.storage.auditByAction(action, 100) or {}
+end
+
+--- The owner's server: alive only, one collection, a stake to put up.
+local function shippedHandover()
+    local s = Shipped.newStack()
+    local f = fixture(s)
+    local c = s.contracts.create(f.creator, {
+        targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+        reward = { baseline = { cash = 5000 } }, penaltyAmount = 500,
+    })
+    truthy(c, 'placed under the shipped rules')
+    truthy(s.contracts.accept(f.hitman, c.id, false))
+    for _, src in ipairs({ 1, 2, 3 }) do
+        Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
+    end
+    Env.players[2].PlayerData.metadata.ishandcuffed = true
+    truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+    return s, f, c
+end
+
+--- The paid ending was the one that sent the hitman nothing: the page's
+--- poller was all, and a hitman holding a target is the one most likely to
+--- have put the phone away (W086, W026, W194).
+describe('a handover that is paid', function()
+    it('sends the hitman a receipt: what was paid and where their stake went', function()
+        local s, _, c = shippedHandover()
+        runCountdown(s, Config.Kidnap.CountdownSeconds + 1)
+        eq(s.kidnap.outcome(c.id, 'HITMAN01').outcome, 'paid')
+        local receipt = told(3, 'Handover paid')
+        truthy(receipt, 'the hitman is sent a receipt')
+        truthy(receipt:find('Delivered alive: $5000 released to you.', 1, true), receipt)
+        truthy(receipt:find('Your $500 stake has been returned.', 1, true), receipt)
+    end)
+
+    it('keeps the receipt for a hitman who has gone by the time it is paid', function()
+        local s, _, c = shippedHandover()
+        local claim = s.contracts.claimSlot
+        local hitman = Env.players[3]
+        s.contracts.claimSlot = function(...)
+            Env.removePlayer(3)
+            return claim(...)
+        end
+        runCountdown(s, Config.Kidnap.CountdownSeconds + 1)
+        s.contracts.claimSlot = claim
+        eq(s.kidnap.outcome(c.id, 'HITMAN01').outcome, 'paid')
+        local count, titles = s.notify.waitingFor('HITMAN01')
+        truthy(count > 0 and table.concat(titles, ','):find('Handover paid', 1, true),
+            'kept for their next login: ' .. table.concat(titles, ','))
+        Env.players[3], Env.byCitizen.HITMAN01 = hitman, 3
+        s.notify.deliverWaiting('HITMAN01')
+        truthy((told(3, 'Handover paid') or ''):find('held until you make room', 1, true),
+            'and it says what waits for them')
+    end)
+
+    it('still tells the client and writes its row when the ledger write raises', function()
+        local s, _, c = shippedHandover()
+        s.storage.writeLedger = function() error('Lost connection to server during query', 0) end
+        runCountdown(s, Config.Kidnap.CountdownSeconds + 1)
+        eq(s.kidnap.outcome(c.id, 'HITMAN01').outcome, 'paid')
+        truthy(told(1, 'Contract fulfilled'), 'the client is told')
+        truthy(told(3, 'Handover paid'), 'and the hitman')
+        eq(#auditRows(s, 'kidnap_completed'), 1, 'the financial row is written')
+        eq(#auditRows(s, 'ledger_write_failed'), 1, 'and the failure is on record')
+    end)
+end)
+
+--- A party who left mid-handover left only kidnap_failed { party_offline },
+--- and a hitman who left nothing after kidnap_armed (W024, spec 14.42).
+describe('a party leaving in the middle of a handover', function()
+    it('records which party left and how far the countdown had run', function()
+        local s, _, c = shippedHandover()
+        runCountdown(s, 20)
+        s.bridges.onPlayerDropped(s, 'TARGET01')
+        local rows = auditRows(s, 'kidnap_party_dropped')
+        eq(#rows, 1)
+        eq(rows[1].contract_id, c.id)
+        eq(rows[1].detail.role, 'target')
+        eq(rows[1].detail.elapsedMs, 20000, 'twenty seconds in')
+        truthy(rows[1].detail.graceUsedMs, 'and the grace spent')
+        s.bridges.onPlayerDropped(s, 'TARGET01')
+        eq(#auditRows(s, 'kidnap_party_dropped'), 1, 'once, for a logout said twice')
+    end)
+
+    it('records a hitman who left, and that their countdown was cancelled', function()
+        local s, _, c = shippedHandover()
+        runCountdown(s, 10)
+        s.bridges.onPlayerDropped(s, 'HITMAN01')
+        local dropped = auditRows(s, 'kidnap_party_dropped')
+        eq(#dropped, 1)
+        eq(dropped[1].detail.role, 'hitman')
+        local cancelled = auditRows(s, 'kidnap_cancelled')
+        eq(#cancelled, 1)
+        eq(cancelled[1].contract_id, c.id)
+        eq(cancelled[1].detail.reason, 'hitman_dropped')
+        eq(s.kidnap.activeCount(), 0)
+    end)
+
+    it('records nothing while the resource itself is stopping', function()
+        local s = shippedHandover()
+        runCountdown(s, 10)
+        Natives.resourceStates[GetCurrentResourceName()] = 'stopping'
+        s.bridges.onPlayerDropped(s, 'TARGET01')
+        eq(#auditRows(s, 'kidnap_party_dropped'), 0)
+    end)
+end)

@@ -17,7 +17,7 @@ local active = {}
 local running = false
 
 --- How each hitman's last handover ended; see Kidnap.outcome below.
---- [contractId .. ':' .. hitmanCid] = { outcome, reason, pending, at }
+--- [contractId .. ':' .. hitmanCid] = { outcome, reason, pending, parked, at }
 local outcomes = {}
 
 function Kidnap.init(deps)
@@ -232,6 +232,10 @@ function Kidnap.arm(contractId, hitmanCid)
         -- What every sample measures against, whatever staff change it to
         -- meanwhile (Kidnap.conditionsMet).
         radius     = radius,
+        -- The other two parties, for the record a drop mid-handover leaves
+        -- (Kidnap.partyDropped): a disconnect reads nothing from the store.
+        targetCid  = contract.target_cid,
+        creatorCid = contract.creator_cid,
     }
 
     -- How the PREVIOUS handover ended is not how this one ends. Kept, it
@@ -286,11 +290,12 @@ end
 
 --- How this hitman's last handover on this contract ended, if it ended in
 --- the last couple of minutes.
----@return table|nil { outcome = 'paid'|'refused'|'failed'|'closed', reason, pending }
+---@return table|nil { outcome = 'paid'|'refused'|'failed'|'closed', reason, pending, parked }
 function Kidnap.outcome(contractId, hitmanCid)
     local record = outcomes[key(contractId, hitmanCid)]
     if not record or os.time() - record.at > OUTCOME_KEPT_SECONDS then return nil end
-    return { outcome = record.outcome, reason = record.reason, pending = record.pending }
+    return { outcome = record.outcome, reason = record.reason, pending = record.pending,
+             parked = record.parked }
 end
 
 --- What a hitman is told when a countdown that ran to the end is refused.
@@ -517,15 +522,36 @@ function Kidnap.tick(deltaMs)
             done.error = err
         elseif ok then
             -- Paid is recorded first: what follows is bookkeeping, and a
-            -- throw in it must not read as a claim that failed.
-            remember(k, { outcome = 'paid', pending = (result.pending or 0) > 0 })
+            -- throw in it must not read as a claim that failed. Held for
+            -- room apart from left for staff (Escrow.parked), which no retry
+            -- gives and making room does nothing for.
+            remember(k, { outcome = 'paid', pending = (result.pending or 0) > 0,
+                          parked = (result.parked or 0) > 0 })
             done.result = result
-            pcall(function()
-                local contract = Storage.readContract(done.contractId)
-                Ledger.record(contract, done.hitmanCid, nil, CH.FULFILMENT.KIDNAPPING, result)
-                Notify.contractCompleted(contract, done.hitmanCid, nil, result)
-                Audit.financial('kidnap_completed', done.hitmanCid, done.contractId, { slot = result.slot })
-            end)
+            -- Each step on its own. One pcall around all of them meant a
+            -- ledger write that raised dropped the client's notice and the
+            -- financial row too, and said nothing of it anywhere.
+            local read, contract = pcall(Storage.readContract, done.contractId)
+            if not read then
+                Log.always(('handover %s was paid, and reading its contract back raised: %s')
+                    :format(tostring(k), Util.dbError(contract)))
+                contract = nil
+            end
+            local wrote, ledgerErr = pcall(Ledger.record, contract, done.hitmanCid, nil,
+                CH.FULFILMENT.KIDNAPPING, result)
+            if not wrote then
+                pcall(Audit.financial, 'ledger_write_failed', done.hitmanCid, done.contractId,
+                    { error = tostring(ledgerErr) })
+                Log.always(('handover %s was paid, and writing its ledger rows raised: %s')
+                    :format(tostring(k), Util.dbError(ledgerErr)))
+            end
+            -- The client's notice, and the hitman's receipt: the paid
+            -- ending was the one that sent the hitman nothing, and the
+            -- countdown is when the phone is most likely put away.
+            pcall(Notify.contractCompleted, contract, done.hitmanCid, nil, result,
+                { receipt = true })
+            pcall(Audit.financial, 'kidnap_completed', done.hitmanCid, done.contractId,
+                { slot = result.slot })
         else
             done.error = err
 
@@ -569,8 +595,12 @@ function Kidnap.tick(deltaMs)
                 remember(k, { outcome = 'refused', reason = 'error' })
                 pcall(Audit.rejected, 'kidnap_claim_error', done.hitmanCid, done.contractId,
                     { err = tostring(settleError) })
+                -- The maintenance tick finishes a claim that raised within a
+                -- minute (Contracts.retryStuckClaims): a collection it paid is
+                -- credited and receipted, and one it did not is open again.
                 pcall(Notify.toCitizen, done.hitmanCid, 'Handover not paid',
-                    'The handover finished, but the payout hit an error. Staff can see it.',
+                    'The handover finished, but the payout could not be recorded. If it was '
+                        .. 'not paid, the contract is open to you again within a minute.',
                     { bypassBudget = true })
             end
         end
@@ -647,12 +677,42 @@ function Kidnap.clearPlayer(cid)
         if state.hitmanCid == cid then
             active[k] = nil
             lastFailure[k] = now
+            -- A countdown ended this way left only its kidnap_armed row, so
+            -- nothing on the record said how it ended.
+            Audit.action('kidnap_cancelled', cid, state.contractId, { reason = 'hitman_dropped' })
         end
     end
     local cooldown = Config.Kidnap.RearmCooldownSeconds or 0
     for k, at in pairs(lastFailure) do
         if now - at >= cooldown then lastFailure[k] = nil end
     end
+end
+
+--- Record a party leaving the city in the middle of a handover, for staff
+--- (spec §14.42): whose countdown, which party, and how far it had run. A
+--- target or a client who dropped at second 28 left only kidnap_failed
+--- { party_offline }, which said neither who went nor when. A record and no
+--- more: whether it was combat-logging is a ruling staff make from it, and
+--- an automatic penalty would punish a real crash. Called before anything
+--- is cleared (Bridges.onPlayerDropped), once per countdown and party.
+---@param cid string the player who dropped
+---@return integer recorded
+function Kidnap.partyDropped(cid)
+    local recorded = 0
+    for _, state in pairs(active) do
+        local role = (state.hitmanCid == cid and 'hitman')
+            or (state.targetCid == cid and 'target')
+            or (state.creatorCid == cid and 'placer') or nil
+        state.dropped = state.dropped or {}
+        if role and not state.dropped[cid] then
+            state.dropped[cid] = true
+            Audit.action('kidnap_party_dropped', cid, state.contractId, {
+                role = role, elapsedMs = state.elapsedMs, graceUsedMs = state.graceUsedMs,
+            })
+            recorded = recorded + 1
+        end
+    end
+    return recorded
 end
 
 function Kidnap.clearContract(contractId)

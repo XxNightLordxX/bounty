@@ -1115,7 +1115,8 @@ end
 --- going to (releasing_to), which may have reached them; 'stalled_claim'
 --- when it names none and its contract is COMPLETING with no claim running
 --- (the claim raised part-way, after owing it: given nothing, and the
---- contract stays so until that start); and 'unqueued' when it names none
+--- contract stays so until the maintenance tick finishes the claim,
+--- Contracts.retryStuckClaims, or that start); and 'unqueued' when it names none
 --- otherwise, and nothing of it was given. A stake's split
 --- (Escrow.reduceStake) is owed only once its stake stands where the split
 --- left it, as recovery reads it: with the stake still whole, paying the
@@ -1207,7 +1208,11 @@ end
 --- for a named `line`: `owed` (what it still owed as claimed), `given` (what
 --- this handed over), `why` and `owed_to` when `unpark` refused it
 --- (unparkRefusal), `requeued` when its give raised with nothing arriving
---- and it went back on the queue, `parked` when it was left for staff.
+--- and it went back on the queue, and `parked`: how many lines (of any
+--- release) were left for staff because their give raised (Escrow.parked).
+--- Those are counted in `pending` too, so a caller that tells a player what
+--- waits for them subtracts them: no retry gives one, and "make room and it
+--- is handed over" was untrue of it.
 local function release(mine, contractId, recipientCid, filter, reason, guard)
     forget()
     if type(filter) == 'string' then filter = { portion = filter } end

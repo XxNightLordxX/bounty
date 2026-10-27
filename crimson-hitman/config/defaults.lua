@@ -529,8 +529,11 @@ ConfigDefaults.Completion = {
     PhotoMaxBytes = 600000,
 
     --- Elimination requires a genuine death. A player who is merely downed
-    --- or bleeding out is not a kill, and this is re-checked when the proof
-    --- photo is submitted, not only when the death is reported.
+    --- or bleeding out is never a kill here, whatever this says: the server,
+    --- the death sampler and the photo checks all read last stand as down,
+    --- not dead. This only matters for a death provider that reports a
+    --- player as dead and in last stand at once, which it then does not
+    --- count. Shown read-only on the admin panel for that reason.
     RejectLastStand    = true,
 
     --- Server-side death state providers, tried in order. Each entry is
@@ -601,8 +604,15 @@ ConfigDefaults.Completion = {
     --- How close to the body the hitman must stand for the photo: to where
     --- it lay when the death was recorded, or to where it lies now, while
     --- the target is online and still dead (a car rolling on, a body
-    --- carried off).
+    --- carried off). It applies with KillPhotos = false too: it is how
+    --- close Verify kill at the scene needs the hitman to be.
     PhotoRadius         = 5.0,
+    --- How long, in seconds, a kill waits to be verified, counted from the
+    --- death: past it the kill lapses and cannot be claimed. With
+    --- KillPhotos = true a photo token asked for in that time keeps it for
+    --- one more lifetime from the token, never past two from the death.
+    --- With KillPhotos = false it is the whole time a hitman has to tap
+    --- Verify kill at the scene.
     PhotoTokenLifetimeSeconds = 120,
     --- How long the client may look at a kill photo once they open it.
     --- They see it once, with a Save to Photos button (or Save, to keep it
@@ -1031,6 +1041,9 @@ ConfigDefaults.Database = {
     --- truth, and a payment it was recording is settled by the server once the
     --- database answers again (README, When the database stops answering).
     --- Keep it under the phone's 15 s wait. 0 waits for ever, as before.
+    --- A payout claim that raised part-way (on any mode) is finished by the
+    --- maintenance tick twice this long after it raised (10 s at 0), so a
+    --- statement still on its way has landed first.
     QueryTimeoutSeconds = 10,
     --- json keeps its files in the resource folder, so an update that
     --- replaces the folder takes them with it: keep data/ when updating

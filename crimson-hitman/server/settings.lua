@@ -151,9 +151,6 @@ local CATALOGUE = {
       about = '\'server\': in this resource\'s data folder. \'host\': lb-phone\'s image host.',
       inflight = 'Photos already kept stay where they are and open as before; a photo token '
           .. 'asked for before the change is used the way it was issued.' },
-    { key = 'Completion.RejectLastStand', section = 'features', group = 'Completion', kind = 'switch',
-      label = 'A downed target is not a kill', about = 'Last stand does not count as dead.',
-      inflight = AT_USE },
     { key = 'Completion.RequireObservedDamage', section = 'features', group = 'Completion',
       kind = 'switch', label = 'Kills need damage the server saw',
       about = 'The killer a victim names must also be in the server\'s own damage log.',
@@ -329,6 +326,14 @@ local CATALOGUE = {
     { key = 'Database.QueryTimeoutSeconds', section = 'readonly', group = 'Storage',
       kind = 'number', label = 'Database answer limit (s)',
       readonly = 'mysql only. Set it in config.lua; it takes effect at the next start.' },
+    -- Shown, not switched: turned off it changed nothing. A target only in
+    -- last stand never reads as dead to the server, the sampler or the
+    -- photo checks, whatever it says; it only removes one a death provider
+    -- reports as dead and in last stand at once.
+    { key = 'Completion.RejectLastStand', section = 'readonly', group = 'Completion',
+      kind = 'switch', label = 'A downed target is not a kill',
+      readonly = 'Only matters for a death provider that reports dead and last stand at once; '
+          .. 'a downed target is never a kill here.' },
 
     -- Limits and settings -------------------------------------------------
     { key = 'Limits.MaxActiveContractsPerCreator', section = 'limits', group = 'Contract limits',

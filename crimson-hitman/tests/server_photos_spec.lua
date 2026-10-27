@@ -71,6 +71,16 @@ local function photoFiles()
     return out
 end
 
+--- The pictures among them: not the mark of which storage mode they belong
+--- to, written beside the first one (Photos' writeFile).
+local function pictureFiles()
+    local out = {}
+    for _, file in ipairs(photoFiles()) do
+        if file ~= 'data/photos/.mode' then out[#out + 1] = file end
+    end
+    return out
+end
+
 --- Fire a handler the way a client does: the reply, and every event the
 --- server sent while answering.
 local function call(name, src, payload)
@@ -179,7 +189,7 @@ describe('a kill photo sent to be kept on this server', function()
 
         local paid = call('submitPhoto', 3, { token = issued.data.token, image = uri('image/jpeg', JPEG) })
         truthy(paid and paid.ok, 'the kill is paid on the picture: ' .. tostring(paid and paid.err))
-        eq(#photoFiles(), 1)
+        eq(#pictureFiles(), 1)
         falsy(flat(paid):find(Util.toBase64(JPEG):sub(1, 40), 1, true),
             'the hitman is answered with the claim, never the photo')
         truthy(s.storage.readLedger('CREATOR1', 10)[1].photo_ref)
@@ -457,7 +467,7 @@ describe('what a refused picture costs the server', function()
         truthy(ok, 'the first send is paid')
         eq(inner[2], CH.ERR.BUSY)
         eq(decoded, 0, 'the second send was decoded only to be told the first is being claimed')
-        eq(#photoFiles(), 1)
+        eq(#pictureFiles(), 1)
     end)
 end)
 
@@ -1727,5 +1737,35 @@ describe('kill photos switched while a photo is under way', function()
         eq(Env.players[3].PlayerData.money.cash - before, 5000)
         eq(m.storage.readContract(c.id).state, CH.STATE.COMPLETED)
         local _ = f
+    end)
+
+    --- Only the start-up sweep wrote which mode the files belong to, and
+    --- only with photos in use at that start. Turned on from the panel on a
+    --- server started as it ships, the photos were written unmarked, and
+    --- the first start after a Database.Mode switch swept every one of them,
+    --- kept photos included (W174).
+    it('marks the files with their mode when photos are turned on live, so another mode leaves them', function()
+        local _, m = booted(function()
+            Shipped.apply()
+            Config.Database.Mode = 'json'
+            Natives.files = {}
+        end)
+        eq(Natives.files['data/photos/.mode'], nil, 'nothing marked while photos are off')
+        turn(m, 'Completion.KillPhotos', true)
+        turn(m, 'Completion.Fulfilment', 'either')
+        local _, c = killedOn(m)
+        local issued = call('requestPhotoToken', 3, { id = c.id })
+        truthy(issued and issued.ok, tostring(issued and issued.err))
+        local sent = call('submitPhoto', 3, { token = issued.data.token, image = uri('image/jpeg', JPEG) })
+        truthy(sent and sent.ok, tostring(sent and sent.err))
+        local kept = pictureFiles()
+        eq(#kept, 1, 'the photo is kept in its file')
+        eq(Natives.files['data/photos/.mode'], 'json', 'and marked as the json store\'s')
+
+        -- The next start is in mysql mode, photos still on: its store names
+        -- none of these, and it leaves them alone.
+        Config.Database.Mode = 'mysql'
+        eq(m.photos.sweepFiles(), 0)
+        truthy(Natives.files[kept[1]], 'the json store\'s photo is still there')
     end)
 end)

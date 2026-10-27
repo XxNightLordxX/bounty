@@ -754,9 +754,11 @@ describe('submitting the same photo token twice', function()
 
         local reissued, err = s.photo.issue(f.hitman, c.id)
         falsy(reissued, 'nothing is pending any more: ' .. tostring(reissued))
-        eq(err, CH.ERR.NO_KILL_TO_VERIFY,
-            'the pending kill is gone, which is the same answer a hitman gets '
-            .. 'for asking before there was one')
+        -- Its only collection paid, the contract is closed, and that is
+        -- what the hitman on it is told (W031): a kill pending on a closed
+        -- contract went on minting tokens for nothing.
+        eq(err, CH.ERR.ALREADY_SETTLED,
+            'the contract it paid is closed, and the hitman on it is told so')
         same(before, world(s), 'reissuing a token after the payout moved something')
     end)
 end)
@@ -779,8 +781,8 @@ describe('verifying the same kill twice with kill photos off', function()
         end)
         truthy(first[1], tostring(first[2]))
         falsy(second[1], 'the kill is claimed')
-        eq(second[2], CH.ERR.NO_KILL_TO_VERIFY,
-            'the same answer as asking before there was a kill: there is none now')
+        eq(second[2], CH.ERR.ALREADY_SETTLED,
+            'the contract it paid is closed, and the hitman on it is told so')
         eq(Env.players[3].PlayerData.money.cash, 5000 + 5000, 'one baseline')
         eq(#s.storage._raw().ledger, 3, 'and one set of ledger entries')
     end)

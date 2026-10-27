@@ -828,6 +828,36 @@ function Projection.onMe(viewerCid)
     return Escrow.cached(buildOnMe, viewerCid)
 end
 
+--- How many readings of a player's retry queue count toward what their
+--- Ledger says is waiting. The queue is a handful of rows at most; this
+--- only bounds the reads behind one Ledger load on mysql.
+local WAITING_READ = 20
+
+--- How many payments wait for the viewer to make room: lines owed to them,
+--- in their retry queue, not left for staff (Escrow.parked, which no retry
+--- gives). Shown on their Ledger, so a receipt missed or a page closed is
+--- not the only word of a payout that would not fit. A count of their own
+--- payments and nothing else: no contract, no party, no figure, so it says
+--- nothing they were not owed already.
+---@param viewerCid string
+---@return integer
+function Projection.waitingForRoom(viewerCid)
+    local count, seen = 0, {}
+    local entries = Storage.readPending(viewerCid) or {}
+    for i = 1, math.min(#entries, WAITING_READ) do
+        local id = entries[i].line_id
+        if id and not seen[id] then
+            seen[id] = true
+            local line = Storage.readEscrowLine(id)
+            if line and line.state == CH.ESCROW_STATE.HELD and line.owed_to == viewerCid
+                and not Escrow.parked(line) then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
 --- The exact key set each role may receive. Exported so the test suite can
 --- assert it; widening it is then a visible, deliberate change.
 Projection.ALLOWED_KEYS = {

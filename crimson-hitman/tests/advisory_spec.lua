@@ -530,3 +530,69 @@ describe('an advisory switched off at one stage', function()
         truthy(bulletins > 0, 'and the bulletin went, as the page says')
     end)
 end)
+
+--- clearContract cleared only the stages the advisory settings advised as
+--- they stood at the ending, and only with UseDispatch on then: staff
+--- turning either off while a contract on an officer was live left its
+--- bulletins in the MDT for good (W052). And an ending the tick finished
+--- after it raised cleared nothing at all (W075).
+describe('taking the threat off the MDT whatever the settings say now', function()
+    local function placedAndTaken()
+        local s, f = seeded(leoJob('trooper'))
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } }, penaltyAmount = 100,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        return s, f, c
+    end
+
+    local function clearedBy(fn)
+        Natives.calls.dispatchCleared = {}
+        local before = #Env.threads
+        fn()
+        for i = before + 1, #Env.threads do Env.threads[i]() end
+        local cleared = {}
+        for _, call in ipairs(Natives.calls.dispatchCleared) do cleared[call.uid] = true end
+        return cleared
+    end
+
+    for _, switch in ipairs({ 'UseDispatch', 'Enabled', 'OnAccept' }) do
+        it('clears both bulletins with Advisory.' .. switch .. ' turned off meanwhile', function()
+            local s, _, c = placedAndTaken()
+            Config.Advisory[switch] = false
+            local cleared = clearedBy(function() truthy(s.admin.void(0, c.id, 'staff')) end)
+            truthy(cleared['ch-' .. c.id .. '-posted'], 'the posting bulletin')
+            truthy(cleared['ch-' .. c.id .. '-accepted'], 'and the acceptance bulletin')
+        end)
+    end
+
+    it('clears them, and tells the hitman, when the tick finishes an ending that raised', function()
+        local s, _, c = placedAndTaken()
+        local release, raised = s.escrow.release, false
+        s.escrow.release = function(id, cid, filter, ...)
+            if not raised and type(filter) == 'table' and filter.portion == CH.PORTION.STAKE then
+                raised = true
+                error('the connection dropped', 0)
+            end
+            return release(id, cid, filter, ...)
+        end
+        s.admin.void(0, c.id, 'staff')
+        s.escrow.release = release
+        truthy(raised, 'the void raised before it handed the stake over')
+        Env.clientEvents = {}
+        local cleared = clearedBy(function() eq(s.contracts.finishEndings(), 1) end)
+        truthy(cleared['ch-' .. c.id .. '-posted'], 'the posting bulletin')
+        truthy(cleared['ch-' .. c.id .. '-accepted'], 'and the acceptance bulletin')
+        local said = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == 3 then
+                said[#said + 1] = tostring(event.args[1].content)
+            end
+        end
+        said = table.concat(said, ' | ')
+        truthy(said:find('Staff closed your contract', 1, true), said)
+        truthy(said:find('$100 stake has been returned', 1, true), said)
+    end)
+end)

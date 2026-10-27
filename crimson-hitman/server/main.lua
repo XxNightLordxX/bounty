@@ -1518,7 +1518,7 @@ function StartCrimsonHitman()
     progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
                      audit = audit, notify = notify, progression = progression,
-                     death = death, review = review })
+                     death = death, review = review, ledger = ledger })
     photos.init({ storage = Storage, audit = audit })
     ledger.init({ storage = Storage, photos = photos, notify = notify })
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
@@ -1602,7 +1602,10 @@ function StartCrimsonHitman()
         CrimsonBoot.require('server.bridges').install(modules)
 
         -- Its own clock, faster than the maintenance tick: attribution is
-        -- only as precise as the last condition sample.
+        -- only as precise as the last condition sample. And when this start
+        -- was, for a death reported again after it with its proof lost to
+        -- the restart (Death.noteStarted).
+        death.noteStarted()
         death.startSampler()
     end)
     if not wired then return recoveryFailed(wireErr) end
@@ -1835,41 +1838,17 @@ function Recover()
         end
 
         if contract.state == CH.STATE.COMPLETING then
-            -- A claim that had paid its collection and died before moving
-            -- the slot on. Every baseline line of that collection is either
-            -- settled or waiting for the person it was paid to, so it was
-            -- paid; left where it was, the next hitman to kill the target
-            -- for it was paid out of an empty slot.
-            local slot = contract.next_slot or 1
-            local baseline, unpaid = 0, 0
-            for j = 1, #lines do
-                local line = lines[j]
-                if line.slot == slot and line.portion == CH.PORTION.BASELINE then
-                    baseline = baseline + 1
-                    if line.state ~= CH.ESCROW_STATE.SETTLED and not line.owed_to then
-                        unpaid = unpaid + 1
-                    end
-                end
-            end
-            if baseline > 0 and unpaid == 0 and Storage.advanceSlot(contract.id, slot) then
-                contract = Storage.readContract(contract.id) or contract
-            end
-
-            if (contract.next_slot or 1) > (contract.payout_slots or 1) then
-                -- Every collection was already paid: the last claim died
-                -- between advancing the slot and closing. Put back to
-                -- accepted, this was a live contract with nothing left to
-                -- claim, which then ran out and forfeited the stake of the
-                -- hitman who had collected all of it. It is finished instead.
-                if modules.contracts.recoverEnded(contract.id) then
-                    finished = finished + 1
-                end
-            else
-                -- Settlement was interrupted. Put it back to accepted so the
-                -- normal path can run again; escrow lines are individually
-                -- guarded, so anything already settled stays settled.
-                Storage.compareSetContractState(contract.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED)
+            -- A claim caught part-way: a collection it had paid is moved on
+            -- past and credited, a contract every collection of which was
+            -- paid is finished, and anything else goes back to accepted so
+            -- the normal path can run again (Contracts.recoverCompleting).
+            -- The maintenance tick does the same to a claim that raised on
+            -- the running server (Contracts.retryStuckClaims).
+            local how = modules.contracts.recoverCompleting(contract, lines)
+            if how == 'paid' or how == 'reopened' then
                 recovered = recovered + 1
+            elseif how then
+                finished = finished + 1
             end
         elseif untouched and CH.TERMINAL[contract.state] then
             -- Closed, and still holding something nobody tried to pay.
@@ -2013,7 +1992,7 @@ local MONEY_JOBS = {
     ['bailout.processQueue'] = true, ['expireContracts'] = true,
     ['escrow.retryWaiting'] = true, ['contracts.finishEndings'] = true,
     ['contracts.retryStuckCreates'] = true, ['contracts.retryStuckJoins'] = true,
-    ['contracts.releaseIdleHolds'] = true,
+    ['contracts.releaseIdleHolds'] = true, ['contracts.retryStuckClaims'] = true,
     -- A payment the database did not confirm, which the server settles.
     ['review.decide'] = true,
 }
@@ -2151,6 +2130,11 @@ function Tick()
     -- An acceptance a throw left part-way, and whose taking back threw too.
     if modules.contracts.retryStuckJoins then
         job('contracts.retryStuckJoins', modules.contracts.retryStuckJoins)
+    end
+    -- A claim that raised part-way, left COMPLETING: finished as the next
+    -- start would, once a statement still on its way has had time to land.
+    if modules.contracts.retryStuckClaims then
+        job('contracts.retryStuckClaims', modules.contracts.retryStuckClaims)
     end
     -- A contract a throw left undecided as it was placed: its escrow and
     -- fee back once the store answers, if it was not stored after all.

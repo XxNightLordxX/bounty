@@ -487,10 +487,13 @@ end
 --- Ledger tab" read as a picture that would be there whenever they cared to
 --- look, and the client who opened it to glance at it and closed it lost it.
 ---@param contract table
----@param hitmanRecord table|nil
+---@param hitmanRecord table|string|nil the hitman paid: an actor, or a citizen id
 ---@param proof table|nil nil for a live delivery; for a kill, { photo = handle }, the handle nil when no photo was kept
 ---@param result table|nil the claim's own answer (Contracts.claimSlot)
-function Notify.contractCompleted(contract, hitmanRecord, proof, result)
+---@param opts table|nil { receipt = send the hitman theirs (hitmanReceipt), keep = keep
+--- the client's for their next login when they are away }
+function Notify.contractCompleted(contract, hitmanRecord, proof, result, opts)
+    if not contract then return end
     local delivered = type(proof) ~= 'table'
     local kept = not delivered and type(proof.photo) == 'string' and proof.photo ~= ''
     local waiting = 'The photo is waiting under Ledger. You can see it once: save it to '
@@ -530,9 +533,20 @@ function Notify.contractCompleted(contract, hitmanRecord, proof, result)
         body = body .. (' It is still running, with %d more to collect.')
             :format(tonumber(result.remaining) or 0)
     end
-    Notify.toCitizen(contract.creator_cid, title, body,
-        { bypassBudget = true })
-    local _ = hitmanRecord
+    if opts and opts.keep then
+        Notify.tellOrKeep(contract.creator_cid, title, body, { bypassBudget = true }, contract.id)
+    else
+        Notify.toCitizen(contract.creator_cid, title, body,
+            { bypassBudget = true })
+    end
+
+    if opts and opts.receipt then
+        local cid = type(hitmanRecord) == 'table' and hitmanRecord.cid or hitmanRecord
+        if type(cid) == 'string' then
+            local receiptTitle, receiptBody = Notify.hitmanReceipt(contract, delivered, result)
+            Notify.tellOrKeep(cid, receiptTitle, receiptBody, { bypassBudget = true }, contract.id)
+        end
+    end
 end
 
 --------------------------------------------------------------------------
@@ -618,11 +632,95 @@ local function stakeSentence(outcome)
         return (' Your %s stake went to the person who placed the contract.')
             :format(dollars(outcome.stake))
     end
+    -- Its give raised and what arrived could not be read: no retry gives
+    -- it, so "handed back as soon as you can take it" was untrue of it.
+    if outcome.parked then
+        return (' Your %s stake could not be confirmed as handed back; staff have been '
+            .. 'asked to check it.'):format(dollars(outcome.stake))
+    end
     if outcome.owed then
         return (' Your %s stake is held for you and is handed back as soon as '
             .. 'you can take it.'):format(dollars(outcome.stake))
     end
     return (' Your %s stake has been returned.'):format(dollars(outcome.stake))
+end
+
+--- A wait in the words a player reads: seconds under a minute, else
+--- minutes, rounded up.
+local function waitWords(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+    if seconds < 60 then return ('%d second%s'):format(seconds, seconds == 1 and '' or 's') end
+    local minutes = math.ceil(seconds / 60)
+    return ('%d minute%s'):format(minutes, minutes == 1 and '' or 's')
+end
+
+--- The receipt a hitman is sent for a collection paid to them
+--- (contractCompleted, `receipt`): outside the budget and kept for their
+--- next login. A live delivery is ended by the server, not by a tap, and a
+--- hitman holding a target for thirty seconds is the one most likely to
+--- have put the phone away: the paid ending was the one that sent them
+--- nothing. And a collection recovery found paid (a claim that stopped
+--- part-way), whose hitman was told it had failed.
+---
+--- What reached them and what did not: held until they make room, or left
+--- for staff to check (Escrow.parked); on the last collection where their
+--- stake went, and otherwise how many remain and when they may collect
+--- again (Config.Limits.SlotCooldownSeconds).
+---@param contract table
+---@param delivered boolean a live delivery, not a kill
+---@param result table|nil the claim's answer, or recovery's (creditRecovered)
+---@return string title
+---@return string body
+function Notify.hitmanReceipt(contract, delivered, result)
+    result = type(result) == 'table' and result or {}
+    local money = math.floor(tonumber(result.money) or 0)
+    local goods = math.floor(tonumber(result.goods) or 0)
+    local what
+    if money > 0 and goods > 0 then
+        what = ('%s and %d item(s)'):format(dollars(money), goods)
+    elseif money > 0 then
+        what = dollars(money)
+    elseif goods > 0 then
+        what = ('%d item(s)'):format(goods)
+    end
+
+    local title, body
+    if result.recovered then
+        title = 'Payout recorded'
+        body = ('Your payout on the contract on %s was recorded after a fault')
+            :format(contract.target_name or 'your target')
+            .. (what and (': ' .. what .. ' released to you.') or '.')
+    else
+        title = delivered and 'Handover paid' or 'Kill paid'
+        body = (delivered and 'Delivered alive' or 'Kill verified')
+            .. (what and (': ' .. what .. ' released to you.') or ': your payout was released.')
+    end
+
+    if (tonumber(result.pending) or 0) > 0 then
+        body = body .. (result.recovered
+            and ' Part of it is held for you and is handed over as soon as you can take it.'
+            or ' Part of it is held until you make room: make room and it is handed over.')
+    end
+    if (tonumber(result.parked) or 0) > 0 then
+        body = body .. ' Part of it could not be confirmed; staff have been asked to check it.'
+    end
+
+    if result.exhausted == false then
+        local left = math.floor(tonumber(result.remaining) or 0)
+        body = body .. (' The contract is still running, with %d more to collect')
+            :format(left)
+        local wait = tonumber(Config.Limits.SlotCooldownSeconds) or 0
+        -- Not after a recovery: whether the claim that stopped had started
+        -- the wait is not known.
+        if wait > 0 and not result.recovered then
+            body = body .. ('; you can collect again in %s.'):format(waitWords(wait))
+        else
+            body = body .. '.'
+        end
+    elseif type(result.stake) == 'table' then
+        body = body .. stakeSentence(result.stake)
+    end
+    return title, body
 end
 
 --- What a hitman still on the contract is told, by how it ended. nil for an
@@ -686,14 +784,22 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     -- An agreed cancel is new to the creator too: nothing else tells them
     -- it closed, what came back, or what still waits for them. Worded as
     -- their own withdrawal words it (Contracts.cancel).
+    -- What was left for staff to check is said apart (Escrow.parked): its
+    -- give raised and no retry gives it, so "they arrive" was untrue of it.
+    local parked = opts.creatorParked or 0
+    local staffCheck = parked > 0
+        and (' %d thing(s) could not be confirmed as handed back; staff have been asked '
+             .. 'to check.'):format(parked) or ''
+
     if ending == CH.STATE.CANCELLED and contract.resolution == 'cancelled_by_agreement' then
         local waits = opts.creatorOwed or 0
         tellOrKeep(contract.creator_cid, 'Contract called off',
             ('Your contract on %s was called off by agreement. '):format(
                 contract.target_name or 'your target')
-            .. (waits > 0
-                and ('Most of what you put up is back; %d thing(s) would not fit and are '
-                     .. 'waiting for you — they arrive when you next have room.'):format(waits)
+            .. ((waits > 0 or parked > 0)
+                and ('Most of what you put up is back.' .. (waits > 0
+                    and (' %d thing(s) would not fit and are waiting for you — they arrive '
+                         .. 'when you next have room.'):format(waits) or '') .. staffCheck)
                 or 'Everything you put up has been returned.'),
             { bypassBudget = true }, contract.id)
         return
@@ -706,10 +812,13 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     local owed = opts.creatorOwed or 0
     local body = ('Nobody finished your contract on %s in time.')
         :format(contract.target_name or 'your target')
-    body = body .. (owed > 0
-        and (' What you put up is coming back: %d thing(s) could not be handed '
+    if owed > 0 then
+        body = body .. (' What you put up is coming back: %d thing(s) could not be handed '
              .. 'over yet and arrive as soon as you can take them.'):format(owed)
-        or ' Everything you put up has been returned.')
+    elseif parked == 0 then
+        body = body .. ' Everything you put up has been returned.'
+    end
+    body = body .. staffCheck
     if forfeitedCount == 1 then
         body = body .. (" The operative's %s stake is yours."):format(dollars(forfeitedTotal))
     elseif forfeitedCount > 1 then
@@ -925,18 +1034,18 @@ function Notify.clearContract(contractId, contract)
     -- active call, and nothing closed it: an officer's dispatch list kept a
     -- live threat against a colleague for a contract long since settled.
     -- Every stage that could have been filed is cleared, because what was
-    -- sent before a restart is not remembered. In a thread of its own: the
-    -- export waits on the database, and this is the end of a settlement.
-    if contract and contract.target_protected
-        and Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
+    -- sent before a restart is not remembered — and whatever the advisory
+    -- settings say now: staff turning Advisory.Enabled, OnCreate, OnAccept
+    -- or UseDispatch off while one was up left it there for good. Clearing
+    -- an id never filed does nothing. In a thread of its own: the export
+    -- waits on the database, and this is the end of a settlement.
+    if contract and contract.target_protected and GetResourceState('sc-dispatch') == 'started' then
         local jobs = dispatchJobs()
         for _, stage in ipairs({ 'posted', 'accepted' }) do
-            if Notify.advises(stage) then
-                local uid = 'ch-' .. contractId .. '-' .. stage
-                CreateThread(function()
-                    pcall(function() exports['sc-dispatch']:ClearNotification(uid, jobs) end)
-                end)
-            end
+            local uid = 'ch-' .. contractId .. '-' .. stage
+            CreateThread(function()
+                pcall(function() exports['sc-dispatch']:ClearNotification(uid, jobs) end)
+            end)
         end
     end
 end

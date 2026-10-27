@@ -176,6 +176,18 @@ describe('what the admin panel can change', function()
             'the panel\'s own allowance, at any value')
     end)
 
+    --- Shown as a switch, "A downed target is not a kill", it did nothing
+    --- when turned off: a target only in last stand is never dead to the
+    --- server, the sampler or the photo checks (W176, W029).
+    it('shows the last-stand switch read-only, with why', function()
+        local s = stack()
+        local value, err, why = s.settings.check('Completion.RejectLastStand', false)
+        eq(value, nil)
+        eq(err, 'read_only', 'a switch that changed nothing is not offered as one')
+        truthy(why and why:find('a downed target is never a kill here', 1, true), tostring(why))
+        eq(Config.Completion.RejectLastStand, true, 'and it stays as config.lua says')
+    end)
+
     it('marks the one number whose lowering deletes something, with what the second click does', function()
         local s = stack()
         local marked = {}

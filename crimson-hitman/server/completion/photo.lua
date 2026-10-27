@@ -447,11 +447,22 @@ end
 --- not a way to ask whether a contract still exists.
 ---@return table|nil record the kill waiting for proof, when there is one
 ---@return string|nil err
+---@return table|nil contract as read, when there is a kill
 local function pendingKill(actor, contractId)
     local contract = Storage.readContract(contractId)
     if contract and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
         local hitman = Storage.readHitman(contractId, actor.cid)
         if hitman and hitman.state == 'active' then return nil, CH.ERR.KILL_NOT_ALLOWED end
+        return nil, CH.ERR.NO_KILL_TO_VERIFY
+    end
+
+    -- Closed: a staff void, an expiry, a buyout or the last collection
+    -- taken. A kill still pending on it went on minting tokens, every one
+    -- refused at the claim as bad_state, "Not right now", which says to try
+    -- again. Said only to a hitman on it, as the rule above is.
+    if contract and CH.TERMINAL[contract.state] then
+        local hitman = Storage.readHitman(contractId, actor.cid)
+        if hitman and hitman.state == 'active' then return nil, CH.ERR.ALREADY_SETTLED end
         return nil, CH.ERR.NO_KILL_TO_VERIFY
     end
 
@@ -461,12 +472,78 @@ local function pendingKill(actor, contractId)
     local record = Death.getPending(contractId, actor.cid)
     if not record then
         -- Killed, by their own game's word, with nothing the server can see
-        -- land: a blast, fire, a car. Only the hitman it named is told.
-        if Death.unobservedKill(contractId, actor.cid) then return nil, CH.ERR.KILL_UNOBSERVED end
+        -- land: a blast, fire, a car. Only the hitman it named is told. Or
+        -- the hits that showed it were lost with the process a restart
+        -- ended, and it is that, not the weapon, that they are told.
+        local unseen, lost = Death.unobservedKill(contractId, actor.cid)
+        if unseen then
+            return nil, lost and CH.ERR.KILL_LOST_RESTART or CH.ERR.KILL_UNOBSERVED
+        end
         if downedInReach(actor, contractId) then return nil, CH.ERR.PHOTO_STILL_DOWN end
         return nil, CH.ERR.NO_KILL_TO_VERIFY
     end
-    return record
+    return record, nil, contract
+end
+
+--- A claim on a kill refused because the target is still protected: just
+--- back on their feet, or just into the city. Whether waiting can help is
+--- the server's to say. A kill can be verified only so long (Death.lastsFor):
+--- one that lapses before the protection ends can never count, and "it
+--- counts if they are still lying dead when the protection runs out" sent
+--- the hitman to stand over a body until it quietly did. So that is said
+--- (KILL_TOO_SOON), and otherwise how long the wait is.
+---@param claimErr string
+---@param detail table|nil what the claim said beyond the code ({ protectedFor })
+---@param record table the pending kill
+---@return string err
+---@return table|nil detail { secondsLeft } or { rule }
+local function protectedClaim(claimErr, detail, record)
+    if claimErr ~= CH.ERR.TARGET_JUST_UP and claimErr ~= CH.ERR.TARGET_JUST_ON then
+        return claimErr
+    end
+    local left = type(detail) == 'table' and tonumber(detail.protectedFor) or nil
+    if not left then return claimErr end
+    if left > Death.lastsFor(record) then
+        return CH.ERR.KILL_TOO_SOON, { rule = claimErr }
+    end
+    return claimErr, { secondsLeft = math.ceil(left) }
+end
+
+--- What follows a claim that paid: the client's rows and the notice that
+--- tells them. Bookkeeping: the money has moved and the contract is done,
+--- so a store that raises here (a dropped connection, a deadlock) must not
+--- read as a claim that failed. It used to reach the page as server_error,
+--- with the hitman paid, and their retry answered as no kill to verify; and
+--- the client was never told. Each step on its own, and a failure said.
+---@param actor table
+---@param contractId string
+---@param fallback table|nil the contract as read before the claim, for a read that raises
+---@param capture table|nil the photo, when one was taken
+---@param result table the claim's answer
+local function afterPaid(actor, contractId, fallback, capture, result)
+    local read, contract = pcall(Storage.readContract, contractId)
+    if not read or not contract then
+        if not read then
+            Log.always(('contract %s was paid by a verified kill, and reading it back raised: %s')
+                :format(tostring(contractId), Util.dbError(contract)))
+        end
+        contract = fallback
+    end
+    local handle
+    local wrote, err = pcall(function()
+        handle = Ledger.record(contract, actor.cid, capture, CH.FULFILMENT.ELIMINATION, result)
+    end)
+    if not wrote then
+        pcall(Audit.financial, 'ledger_write_failed', actor.cid, contractId, { error = tostring(err) })
+        Log.always(('contract %s was paid by a verified kill, and writing its ledger rows '
+            .. 'raised: %s'):format(tostring(contractId), Util.dbError(err)))
+    end
+    local told, tellErr = pcall(Notify.contractCompleted, contract, actor,
+        { photo = handle }, result)
+    if not told then
+        Log.debug(('telling the client contract %s was fulfilled raised: %s')
+            :format(tostring(contractId), Util.dbError(tellErr)))
+    end
 end
 
 --- Verify a kill without a photo, where kill photos are switched off
@@ -486,13 +563,14 @@ end
 ---@param rawId any the contract
 ---@return boolean ok
 ---@return string|nil err
----@return table|nil result the claim's own answer (Contracts.claimSlot)
+---@return table|nil result the claim's own answer (Contracts.claimSlot); on a refusal for
+--- a protection still running, { secondsLeft } or, with KILL_TOO_SOON, { rule }
 function Photo.verifyAtScene(actor, rawId)
     if Util.killPhotos() then return false, CH.ERR.PHOTO_REQUIRED end
     local contractId = Util.toId(rawId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
 
-    local record, err = pendingKill(actor, contractId)
+    local record, err, placed = pendingKill(actor, contractId)
     if not record then return false, err end
 
     local standing, sceneErr = atTheScene(actor, {
@@ -512,15 +590,15 @@ function Photo.verifyAtScene(actor, rawId)
 
     if not ok then
         Audit.rejected('kill_claim_failed', actor.cid, contractId, { reason = claimErr })
-        return false, claimErr
+        -- On a refusal the third is what it says beyond the code.
+        local said, detail = protectedClaim(claimErr, result, record)
+        return false, said, detail
     end
 
     Death.clearPending(contractId, actor.cid)
     Audit.action('kill_verified_at_scene', actor.cid, contractId, {})
 
-    local contract = Storage.readContract(contractId)
-    Ledger.record(contract, actor.cid, nil, CH.FULFILMENT.ELIMINATION, result)
-    Notify.contractCompleted(contract, actor, {}, result)
+    afterPaid(actor, contractId, placed, nil, result)
     return true, nil, result
 end
 
@@ -628,6 +706,15 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
         Audit.rejected('photo_kill_not_allowed', actor.cid, record.contractId, {})
         return false, CH.ERR.KILL_NOT_ALLOWED
     end
+    -- Nor for one that has closed since the token was issued (a staff void,
+    -- an expiry, a buyout): spent, and said so before the picture is read.
+    -- The claim refused it as bad_state, "Not right now", after the picture
+    -- had been decoded and its allowance kept.
+    if placed and CH.TERMINAL[placed.state] then
+        tokens[token] = nil
+        Audit.rejected('photo_contract_closed', actor.cid, record.contractId, {})
+        return false, CH.ERR.ALREADY_SETTLED
+    end
 
     if Util.monotonicMs() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000)
         or (record.expiresAt and Util.monotonicMs() > record.expiresAt) then
@@ -698,7 +785,11 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
 
     if not ok then
         Audit.rejected('photo_claim_failed', actor.cid, record.contractId, { reason = err })
-        return false, err, nil, capture.kind == 'file'
+        -- The kill this token proves, for how long it can still be claimed.
+        local kill = Death.getPending(record.contractId, actor.cid)
+        local said, detail = err, nil
+        if kill then said, detail = protectedClaim(err, result, kill) end
+        return false, said, detail, capture.kind == 'file'
     end
 
     record.used = true
@@ -709,10 +800,7 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     -- The photo goes to the client's photo record and nowhere else: not to
     -- the hitman's ledger row, and not back to the hitman's page, which is
     -- answered with the claim's result alone.
-    local contract = Storage.readContract(record.contractId)
-    local handle = Ledger.record(contract, actor.cid, capture,
-        CH.FULFILMENT.ELIMINATION, result)
-    Notify.contractCompleted(contract, actor, { photo = handle }, result)
+    afterPaid(actor, record.contractId, placed, capture, result)
 
     return true, nil, result
 end
@@ -728,6 +816,14 @@ function Photo.forget(contractId, hitmanCid)
         if record.contractId == contractId and record.hitmanCid == hitmanCid then
             tokens[token] = nil
         end
+    end
+end
+
+--- Drop every token on a contract that has closed (Contracts.onResolved):
+--- nothing it proves can be claimed any more.
+function Photo.forgetContract(contractId)
+    for token, record in pairs(tokens) do
+        if record.contractId == contractId then tokens[token] = nil end
     end
 end
 

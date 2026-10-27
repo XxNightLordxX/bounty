@@ -4835,3 +4835,122 @@ describe('a stop before recovery has finished', function()
         eq(stored(), before, 'the stop moved the heartbeat on while the app was closed')
     end)
 end)
+
+--- Every notice one player's phone was sent, as 'title: content'.
+local function noticesTo(src)
+    local out = {}
+    for _, event in ipairs(Env.clientEvents) do
+        if Natives.isNotice(event) and event.target == src then
+            local data = event.args and event.args[1] or {}
+            out[#out + 1] = tostring(data.title) .. ': ' .. tostring(data.content)
+        end
+    end
+    return table.concat(out, ' | ')
+end
+
+--- A claim the server stopped after it wrote whose its collection is and
+--- before it paid: recovery paid the hitman and closed the contract, and
+--- nothing else of the claim ever happened. The hitman's completed count
+--- and trust, the ledger rows, and the client's "Contract fulfilled" were
+--- all lost (W153, W093).
+describe('a claim stopped after its marks', function()
+    it('json: is credited once, written to the ledger, and told to the client at login', function()
+        local _, s = boot('json')
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id))
+        local before = money(3)
+        s.storage.claimEscrowLine = function() error('process killed', 0) end
+        falsy(pcall(s.contracts.claimSlot, c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}))
+        local creator = Env.players[1]
+        Env.removePlayer(1)
+
+        local main2, s2 = restart('json', s)
+        eq(s2.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        s2.escrow.retryPending('HITMAN01')
+        eq(money(3) - before, 12000, 'paid, and the stake back')
+        eq(s2.storage.readStats('HITMAN01').completed or 0, 1, 'the completion counted')
+        eq(#s2.storage.readLedger('HITMAN01', 10), 1, 'on the hitman\'s ledger')
+        eq(#s2.storage.readLedger('CREATOR1', 10), 1, 'and the client\'s')
+        truthy(noticesTo(3):find('Payout recorded', 1, true), 'the hitman is sent a receipt')
+        main2.tick()
+        eq(#auditRows(s2, 'claim_recovered'), 1, 'and staff can see it was recovered')
+
+        local _, titles = s2.notify.waitingFor('CREATOR1')
+        truthy(table.concat(titles, ','):find('Contract fulfilled', 1, true),
+            'the client is told at their next login: ' .. table.concat(titles, ','))
+        Env.players[1], Env.byCitizen.CREATOR1 = creator, 1
+        s2.notify.deliverWaiting('CREATOR1')
+        truthy(noticesTo(1):find('Contract fulfilled', 1, true))
+
+        local _, s3 = restart('json', s2)
+        eq(s3.storage.readStats('HITMAN01').completed or 0, 1, 'and once only')
+    end)
+end)
+
+--- An ending recovery finished moved the money and nothing else: nobody was
+--- told, no app moved, and the MDT kept the advisory (W075).
+describe('an ending a restart finished', function()
+    it('json: tells the client and the hitman where the money went', function()
+        local main, s = boot('json')
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id))
+        main.tick()
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
+        main.markPresenceChanged()
+        s.escrow.release = function() error('process killed') end
+        truthy(pcall(main.expire))
+        local creator = Env.players[1]
+        Env.removePlayer(1)
+
+        local _, s2 = restart('json', s)
+        eq(s2.storage.readContract(c.id).state, CH.STATE.EXPIRED)
+        local hitman = noticesTo(3)
+        truthy(hitman:find('Contract expired', 1, true), hitman)
+        truthy(hitman:find('$2000 stake went to the person who placed the contract', 1, true), hitman)
+        local _, titles = s2.notify.waitingFor('CREATOR1')
+        truthy(table.concat(titles, ','):find('Contract expired', 1, true),
+            'kept for the client\'s next login: ' .. table.concat(titles, ','))
+        Env.players[1], Env.byCitizen.CREATOR1 = creator, 1
+    end)
+end)
+
+--- The tick finishing a claim that raised, on the strict executor: the
+--- wiring in main.lua's Tick, and a second delivery that pays (S18).
+describe('a claim that raised, on mysql', function()
+    it('mysql: is put back by the tick, and a second delivery pays', function()
+        local main, s = boot('mysql')
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local before = money(3)
+        local claim, write = s.storage.claimEscrowLine, s.storage.writeEscrow
+        s.storage.writeEscrow = function() error('Deadlock found when trying to get lock', 0) end
+        s.storage.claimEscrowLine = function() error('Lock wait timeout exceeded', 0) end
+        falsy(pcall(s.contracts.claimSlot, c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}))
+        s.storage.claimEscrowLine, s.storage.writeEscrow = claim, write
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING)
+
+        Env.advance(2 * Config.Database.QueryTimeoutSeconds + 1)
+        main.tick()
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'open again')
+        truthy(noticesTo(3):find('Payout not recorded', 1, true))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}))
+        eq(money(3) - before, 5000, 'paid once')
+    end)
+end)

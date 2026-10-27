@@ -82,6 +82,15 @@ function Bridges.onPlayerDropped(modules, cid)
     -- Someone leaving pauses the clock on every contract they are party to.
     if modules.scheduler then modules.scheduler.presenceChanged() end
 
+    -- A party to a handover in progress leaving the city, written down for
+    -- staff before anything below clears it (Kidnap.partyDropped). Not as
+    -- the resource stops, when everybody goes at once for no reason of
+    -- their own.
+    if modules.kidnap.partyDropped
+        and GetResourceState(GetCurrentResourceName()) ~= 'stopping' then
+        pcall(modules.kidnap.partyDropped, cid)
+    end
+
     modules.identity.endSession(cid)
     modules.ratelimit.clear(cid)
     modules.death.clearPlayer(cid)
@@ -143,6 +152,11 @@ function Bridges.install(modules)
         -- everybody on the server, refused as limit_reached, until a
         -- restart.
         modules.kidnap.clearContract(contractId)
+        -- And the kills pending on it and the photo tokens they minted:
+        -- nothing can claim them now, and one pending past a staff void went
+        -- on minting tokens for a contract that was over.
+        if modules.death.clearContract then modules.death.clearContract(contractId) end
+        if modules.photo.forgetContract then modules.photo.forgetContract(contractId) end
     end
 
     --- A hitman who is no longer on a contract has no handover on it either.
