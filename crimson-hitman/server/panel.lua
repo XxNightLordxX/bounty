@@ -34,9 +34,9 @@ local READ, WRITE, IDENTITY = 'read', 'write', 'identity'
 --- Every request the page may make, and what it needs.
 local OPS = {
     access = READ, overview = READ, contracts = READ, contract = READ, reviews = READ,
-    logs = READ, player = READ, settings = READ, diag = READ, stuck = READ,
+    logs = READ, player = READ, settings = READ, diag = READ, stuck = READ, alerts = READ,
     void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
-    resetSettings = WRITE, refresh = WRITE, flush = WRITE,
+    resetSettings = WRITE, refresh = WRITE, flush = WRITE, ackAlerts = WRITE, testAlert = WRITE,
     whois = IDENTITY,
 }
 
@@ -105,6 +105,10 @@ local LATENT_OVER, LATENT_BPS = 16000, 200000
 
 --- Rows the logs return per page at most, whatever the page asks for.
 local LOG_ROWS_MAX = 100
+
+--- Alerts shown at once, newest first, and acknowledged in one request at
+--- most (Acknowledge all shown).
+local ALERT_ROWS = 100
 
 function Panel.init(d)
     deps = d
@@ -310,6 +314,58 @@ local function partiesReader()
         end
         return contracts[contractId] or nil, hitmen[contractId]
     end
+end
+
+--- What names a player's account wherever it is written: a licence, and
+--- the other identifiers FiveM gives an account.
+local ACCOUNT_PREFIXES = { 'license2', 'license', 'steam', 'discord', 'fivem', 'xbl', 'live', 'ip' }
+
+--- Free text kept for staff (an alert, a console line), as one staff member
+--- may read it: whole with IdentityAce, and otherwise scrubbed as every
+--- other view here is. A database error in it keeps the server's words and
+--- the start of the statement, never the values it was sent (Util.dbErrorIn);
+--- the people of the contract it names are put as the redactor puts them
+--- (their place on it, Anonymous, an account); and any account, or word
+--- shaped like a citizen id (capitals and digits, both), whoever it names,
+--- is left out. `outside` is a reader outside the server (Discord, which
+--- never has an identity ACE): every party's name is their place on the
+--- contract as well, anonymous or not, and every link is left out; and where
+--- the contract named cannot be read, so its parties' names are not known,
+--- nothing is given at all (nil).
+---@param text any
+---@param canIdentify boolean
+---@param contractId string|nil the contract the text names
+---@param outside boolean|nil
+---@param parties function|nil a partiesReader, shared by every row of a page
+---@return string|nil
+function Panel.scrubText(text, canIdentify, contractId, outside, parties)
+    text = tostring(text or '')
+    if canIdentify and not outside then return text end
+    text = Util.dbErrorIn(text)
+    local contract, hitmen
+    if contractId and deps then contract, hitmen = (parties or partiesReader())(contractId) end
+    if outside and contractId and not contract then return nil end
+    text = redactor(false, contract, hitmen).value(nil, text)
+    if outside then
+        local names = {}
+        if contract and contract.creator_name then names[contract.creator_name] = 'the client' end
+        if contract and contract.target_name then names[contract.target_name] = 'the target' end
+        for _, hitman in ipairs(hitmen or {}) do
+            if hitman.hitman_name then
+                names[hitman.hitman_name] = ('operative %s'):format(tostring(hitman.alias or '?'))
+            end
+        end
+        text = scrubbed(text, names):gsub('https?://%S+', '(a link)')
+    end
+    for _, prefix in ipairs(ACCOUNT_PREFIXES) do
+        text = text:gsub('%f[%w]' .. prefix .. ':[%w%.:]+', ACCOUNT_SHOWN)
+    end
+    return (text:gsub('%f[%w][%u%d]+%f[%W]', function(word)
+        if #word >= 5 and #word <= 32 and word:find('%u') and word:find('%d') then
+            return '(a player)'
+        end
+        return word
+    end))
 end
 
 --- One escrow line, as the panel shows it.
@@ -570,6 +626,8 @@ local function buildOverview()
     end
 
     out.reviews = { open = deps.review and deps.review.openCount() or 0 }
+    -- Alerts nobody has acknowledged, for the badge and the tile.
+    out.alerts = { open = deps.alerts and deps.alerts.openCount() or 0 }
 
     local okPhotos, totals = pcall(deps.photos.totals)
     out.photos = okPhotos and totals or nil
@@ -1185,6 +1243,95 @@ H.diag = function(src, data)
         end
     end, { panel = true })
     return true, nil, nil, { lines = lines }
+end
+
+--------------------------------------------------------------------------
+-- Alerts
+--------------------------------------------------------------------------
+
+--- Alerts open or acknowledged, newest first, at most ALERT_ROWS, with how
+--- many of each there are, and where posting to Discord stands (whether a
+--- webhook is set, never its address). The text scrubbed for staff without
+--- IdentityAce as every other view is (Panel.scrubText), and with each staff
+--- command's name put as the panel's own place for it.
+H.alerts = function(src, data)
+    local Alerts = deps.alerts
+    if not Alerts then return false, 'unavailable', 'Alerts are not running on this server yet.' end
+    local canIdentify = identifies(src)
+    local state = data.state == 'acknowledged' and 'acknowledged' or 'open'
+    local list, counts = Alerts.list(state, ALERT_ROWS)
+    local parties = partiesReader()
+    local rows = {}
+    for _, a in ipairs(list) do
+        rows[#rows + 1] = {
+            id = a.id, level = a.level, contract = a.contract_id, count = a.count,
+            first_at = a.first_at, last_at = a.last_at,
+            text = deps.admin.panelWords(Panel.scrubText(a.text, canIdentify, a.contract_id, false,
+                parties)),
+            acknowledged_by = a.acknowledged_by, acknowledged_at = a.acknowledged_at,
+        }
+    end
+    return true, nil, nil, {
+        state = state, rows = rows, open = counts.open, acknowledged = counts.acknowledged,
+        limit = ALERT_ROWS, discord = Alerts.discordState(),
+    }
+end
+
+--- Acknowledge alerts: one, or every one the page shows (at most
+--- ALERT_ROWS). A write: the ACE itself, the write allowance, and a row in
+--- the log naming how many and which.
+H.ackAlerts = function(src, data)
+    local Alerts = deps.alerts
+    if not Alerts then return false, 'unavailable', 'Alerts are not running on this server yet.' end
+    local ids, seen = {}, {}
+    if type(data.ids) == 'table' then
+        for i = 1, ALERT_ROWS do
+            local id = Util.toId(data.ids[i])
+            if data.ids[i] == nil then break end
+            if id and not seen[id] then
+                seen[id] = true
+                ids[#ids + 1] = id
+            end
+        end
+    end
+    if #ids == 0 then return false, CH.ERR.INVALID_INPUT, 'Name the alerts to acknowledge.' end
+    local cid, who = staffOf(src)
+    local done, already, missing = Alerts.acknowledge(ids, who)
+    if done > 0 then
+        local named = {}
+        for i = 1, math.min(#ids, 20) do named[i] = ids[i] end
+        deps.audit.staff('admin_alerts_acknowledged', cid, nil,
+            { count = done, already = already > 0 and already or nil, ids = named })
+    end
+    local message
+    if done == 0 then
+        message = missing > 0 and already == 0 and 'Those alerts are gone: pruned since the list was read.'
+            or 'Those alerts were acknowledged already; nothing changed.'
+        return true, nil, message, { done = 0, already = already, missing = missing }
+    end
+    message = ('Acknowledged %d alert(s).'):format(done)
+    if already > 0 then message = message .. (' %d were acknowledged already.'):format(already) end
+    return true, nil, message, { done = done, already = already, missing = missing }
+end
+
+--- Put a test alert in the next post to Discord. A write, on the record,
+--- whether it went or not.
+H.testAlert = function(src)
+    local Alerts = deps.alerts
+    if not Alerts then return false, 'unavailable', 'Alerts are not running on this server yet.' end
+    local queued, err, seconds = Alerts.sendTest()
+    deps.audit.staff('admin_alert_test', staffOf(src), nil, { queued = queued, why = err })
+    if err == 'discord_off' then
+        return false, err, 'Not sent: posting alerts to Discord is switched off (Alerts.ToDiscord, '
+            .. 'under Features).'
+    end
+    if err == 'no_webhook' then
+        return false, err, 'Not sent: no webhook is set. Add set crimson_hitman_alert_webhook '
+            .. '"<your webhook>" to server.cfg (set, never setr), or run it in the server console, '
+            .. 'and send the test again.'
+    end
+    return true, nil, ('A test alert goes to Discord in about %d second(s). This section says '
+        .. 'whether it went through.'):format(math.max(0, seconds or 0)), { seconds = seconds }
 end
 
 --- What the store answered, not only whether it raised: the json store's

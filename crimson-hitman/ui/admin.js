@@ -252,13 +252,15 @@
 
   /* ---------- state ---------------------------------------------------- */
 
-  var SECTIONS = ['overview', 'contracts', 'stuck', 'reviews', 'logs', 'players', 'settings', 'tools'];
+  var SECTIONS = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'logs', 'players', 'settings',
+                  'tools'];
 
   /** Ops that only read. A refusal of one as not_allowed means the staff
       member may no longer read at all (an ACE taken away while the panel was
       open), and the panel closes on it, as the README says it does. */
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
-                   logs: true, player: true, settings: true, diag: true, whois: true, stuck: true };
+                   logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
+                   alerts: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -281,6 +283,7 @@
     drawer: { id: null, data: null, answer: null, whois: null },
     stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
+    alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
     players: { data: null, whois: {} },
     settings: { data: null, tab: 'features', answers: {} },
@@ -345,7 +348,10 @@
     store_failed: 'The store would not take it. Nothing changed.',
     store_unknown: 'The store may or may not have kept it; the diagnosis lists it.',
     not_overridden: 'That setting is what config.lua says already.',
-    busy: 'Another change is being saved right now. Try again in a moment.'
+    busy: 'Another change is being saved right now. Try again in a moment.',
+    no_webhook: 'No Discord webhook is set in server.cfg.',
+    discord_off: 'Posting alerts to Discord is switched off (Alerts.ToDiscord).',
+    unavailable: 'Alerts are not running on this server yet.'
   };
 
   function words(reply) {
@@ -654,6 +660,7 @@
     // they are settled.
     setCount('count-stuck', o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0, 'escrow line(s) left for you to settle');
     setCount('count-settings', Number(o.overrides) || 0, 'setting(s) changed from the panel');
+    setCount('count-alerts', o.alerts ? Number(o.alerts.open) || 0 : 0, 'open alerts, not acknowledged yet');
   }
 
   function setRecovery(state) {
@@ -727,6 +734,8 @@
       // Stuck escrow too while it is on screen, so its list and the badge
       // agree after another staff member settles a line.
       if (S.section === 'stuck' && !S.drawer.id) loadStuck(true);
+      // And the alerts, unless a button there waits for its second click.
+      if (S.section === 'alerts' && !S.drawer.id && !S.armed) loadAlerts();
       loadOverview(false).then(function () { schedule(gen); });
     }, refreshMs());
   }
@@ -812,6 +821,7 @@
     }
 
     var reviewsOpen = o.reviews ? Number(o.reviews.open) || 0 : 0;
+    var alertsOpen = o.alerts ? Number(o.alerts.open) || 0 : 0;
 
     return frag(
       h('div.tiles',
@@ -835,6 +845,11 @@
           h('p.sub', 'open item' + (reviewsOpen === 1 ? '' : 's') + ' in the review queue'),
           btn('.is-small', 'section', { 'data-section': 'reviews' }, 'Open the queue', 'arrow-right')),
           reviewsOpen > 0 ? '.is-warn' : ''),
+        tile('Alerts', frag(
+          h('p.big' + (alertsOpen > 0 ? '.is-warn' : ''), { id: 'ov-alerts' }, num(alertsOpen)),
+          h('p.sub', 'open alert' + (alertsOpen === 1 ? '' : 's') + ', not acknowledged yet'),
+          btn('.is-small', 'section', { 'data-section': 'alerts' }, 'Open Alerts', 'arrow-right')),
+          alertsOpen > 0 ? '.is-warn' : ''),
         tile('Kill photos', photos ? h('dl.facts',
           h('dt', 'Waiting'), h('dd', num(photos.waiting && photos.waiting.count) + ' · '
             + bytes(photos.waiting && photos.waiting.bytes)),
@@ -1578,6 +1593,125 @@
       h('div.stack', { id: 'rv-list' }, reviewList()));
   };
   LOAD.reviews = function () { loadReviews(); };
+
+  /* ---- alerts ---- */
+
+  var LEVEL_LABEL = { always: 'Needs staff', problem: 'Setting' };
+
+  function loadAlerts() {
+    return ask('alerts', { state: S.alerts.state }, 'alerts').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) {
+        S.alerts.error = words(reply);
+        if (!S.alerts.data) drawAlerts(); else toast(S.alerts.error, 'error');
+        return;
+      }
+      S.alerts.data = reply.data || {};
+      S.alerts.error = null;
+      drawAlerts();
+    });
+  }
+
+  function drawAlerts() { if (S.section === 'alerts') setHtml(byId('al-list'), alertsBody()); }
+
+  /** Where posting to Discord stands: whether a webhook is set (never what
+      it is), the last post, and the last one given up. */
+  function discordBody(d) {
+    d = d || {};
+    var where = d.webhook === 'alert' ? 'the alert webhook (crimson_hitman_alert_webhook)'
+      : d.webhook === 'staff' ? 'the staff webhook (crimson_hitman_webhook), as no alert webhook is set'
+      : null;
+    var status;
+    if (d.on === false) {
+      status = h('p.about', 'Off: Post alerts to Discord is switched off under Features. Nothing is posted; '
+        + 'every alert is still listed here.');
+    } else if (!where) {
+      status = h('p.about', 'No webhook is set, so nothing is posted. Set crimson_hitman_alert_webhook in '
+        + 'server.cfg (set, never setr), or crimson_hitman_webhook for the staff channel.');
+    } else {
+      status = h('p.about', 'Posting to ' + where + ': one post every 10 seconds at most, ten alerts a post, '
+        + 'with no identity in it.');
+    }
+    var fail = d.lastFail;
+    var failNote = null;
+    if (fail) {
+      var why = Number(fail.status) > 0 ? 'HTTP ' + fail.status : 'no answer';
+      var since = d.lastOkAt && Number(d.lastOkAt) > Number(fail.at);
+      var lost = [];
+      if (Number(fail.alerts) > 0) {
+        lost.push(num(fail.alerts) + ' alert' + (Number(fail.alerts) === 1 ? '' : 's')
+          + ' not posted, still listed here');
+      }
+      if (fail.test) lost.push('the test alert not posted');
+      failNote = h('p.note' + (since ? '' : '.is-warn'), (since ? 'Earlier, a' : 'A') + ' post was given up after '
+        + num(fail.tries) + ' tries (' + why + ') ' + ago(fail.at) + ': ' + lost.join(', and ') + '.'
+        + (since ? ' Posts have gone through since.' : ''));
+    }
+    return frag(status,
+      h('dl.facts',
+        h('dt', 'Last post'), h('dd', d.lastOkAt ? when(d.lastOkAt) + ' (' + ago(d.lastOkAt) + ')' : 'none since the start'),
+        h('dt', 'Posted since the start'), h('dd', num(d.posted) + ' alert' + (Number(d.posted) === 1 ? '' : 's')),
+        h('dt', 'Waiting'), h('dd', num(d.waiting) + (d.posting ? ', and a post being tried again' : ''))),
+      failNote,
+      h('div.btn-row', writeBtn('', 'al-test', {}, 'Send a test alert', null, 'paper-plane', true)),
+      answerBox(S.alerts.test));
+  }
+
+  function alertCard(a) {
+    var id = String(a.id);
+    var acked = !!a.acknowledged_at;
+    var count = Number(a.count) || 1;
+    return h('article.card.al' + (acked ? '' : '.is-open'), { id: 'al-' + id },
+      h('header.card-head',
+        h('span.chip' + (a.level === 'problem' ? '.is-panel' : '.is-warn'), LEVEL_LABEL[a.level] || String(a.level || '')),
+        count > 1 ? h('span.chip', 'said ' + num(count) + ' times') : null,
+        h('span.sub', ago(a.last_at))),
+      h('p.al-text', String(a.text || '')),
+      h('dl.facts',
+        h('dt', count > 1 ? 'First said' : 'Said'), h('dd', when(a.first_at)),
+        count > 1 ? h('dt', 'Last said') : null, count > 1 ? h('dd', when(a.last_at)) : null,
+        a.contract ? h('dt', 'Contract') : null,
+        a.contract ? h('dd', h('button.link.mono', { type: 'button', 'data-act': 'contract',
+          'data-id': String(a.contract) }, String(a.contract))) : null,
+        acked ? h('dt', 'Acknowledged') : null,
+        acked ? h('dd', String(a.acknowledged_by || '—') + ' · ' + when(a.acknowledged_at)) : null),
+      !acked && canWrite() ? h('div.btn-row', writeBtn('', 'al-ack', { 'data-id': id }, 'Acknowledge',
+        'Click again to acknowledge', 'check', true)) : null,
+      answerBox(S.alerts.answers[id]));
+  }
+
+  function alertsBody() {
+    var d = S.alerts.data;
+    if (!d) return S.alerts.error ? empty(S.alerts.error) : loading('Reading the alerts…');
+    var rows = asList(d.rows);
+    var open = S.alerts.state === 'open';
+    var total = open ? Number(d.open) || 0 : Number(d.acknowledged) || 0;
+    return frag(
+      card('Discord', discordBody(d.discord)),
+      h('div.toolbar',
+        h('span.sub', num(d.open) + ' open · ' + num(d.acknowledged) + ' acknowledged'
+          + (rows.length < total ? ' · the newest ' + num(rows.length) + ' shown' : '')),
+        open && rows.length && canWrite()
+          ? writeBtn('', 'al-ack-all', {}, 'Acknowledge all shown',
+            'Click again: acknowledge ' + num(rows.length), 'check-double', true)
+          : null),
+      answerBox(S.alerts.all),
+      rows.length ? rows.map(alertCard)
+        : empty(open ? 'No open alerts.' : 'Nothing has been acknowledged yet.'));
+  }
+
+  SHELL.alerts = function () {
+    return h('section.view',
+      h('div.toolbar',
+        segmented('al-state', [{ value: 'open', label: 'Open' }, { value: 'acknowledged', label: 'Acknowledged' }],
+          S.alerts.state),
+        btn('.is-ghost', 'al-refresh', {}, 'Refresh', 'rotate')),
+      h('p.hint', 'Every line the server console prints whatever Debug says: money at risk or left for staff, '
+        + 'a write that failed, a job that keeps failing, and each setting that needs attention. The same line '
+        + 'again is counted on its alert. Kept across restarts until acknowledged; acknowledging is on the record.'),
+      h('div.stack', { id: 'al-list' }, alertsBody()));
+  };
+  LOAD.alerts = function () { loadAlerts(); };
 
   /* ---- logs ---- */
 
@@ -2374,6 +2508,48 @@
     });
   };
 
+  ACTIONS['al-state'] = function (node) {
+    S.alerts.state = node.getAttribute('data-value') === 'acknowledged' ? 'acknowledged' : 'open';
+    S.alerts.data = null;
+    S.alerts.answers = {};
+    S.alerts.all = null;
+    show('alerts');
+  };
+  ACTIONS['al-refresh'] = function () { loadAlerts(); };
+  ACTIONS['al-ack'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!confirmed(node)) return;
+    write('ackAlerts', { ids: [id] }, 'ack:' + id, node).then(function (reply) {
+      if (!reply) return;
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      // A refusal stays beside the alert; one acknowledged leaves the list.
+      if (reply.ok) delete S.alerts.answers[id];
+      else S.alerts.answers[id] = { ok: false, text: words(reply) };
+      drawAlerts();
+      loadAlerts();
+    });
+  };
+  ACTIONS['al-ack-all'] = function (node) {
+    var ids = asList((S.alerts.data || {}).rows).filter(function (a) { return !a.acknowledged_at; })
+      .map(function (a) { return String(a.id); });
+    if (!ids.length || !confirmed(node)) return;
+    write('ackAlerts', { ids: ids }, 'ack-all', node).then(function (reply) {
+      if (!reply) return;
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      S.alerts.all = reply.ok ? null : { ok: false, text: words(reply) };
+      drawAlerts();
+      loadAlerts();
+    });
+  };
+  ACTIONS['al-test'] = function (node) {
+    write('testAlert', {}, 'alert-test', node).then(function (reply) {
+      if (!reply) return;
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      S.alerts.test = { ok: reply.ok === true, text: words(reply) };
+      drawAlerts();
+    });
+  };
+
   ACTIONS['lg-search-now'] = function () { firstLogPage(true); };
   LIVE['lg-search'] = function () {
     clearTimeout(S.logs.timer);
@@ -2615,6 +2791,7 @@
     S.contracts.data = null;
     S.reviews.items = null;
     S.reviews.answers = {};
+    S.alerts = { state: S.alerts.state, data: null, error: null, answers: {}, all: null, test: null };
     S.logs.data = null;
     S.logs.cursor = null;
     S.logs.back = [];

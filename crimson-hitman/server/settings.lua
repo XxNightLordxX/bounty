@@ -310,6 +310,14 @@ local CATALOGUE = {
       inflight = 'Money, staff actions and refusals are always logged whatever this says.' },
     { key = 'Audit.LogReasonText', section = 'features', group = 'Audit and debug', kind = 'switch',
       label = 'Log contract reasons', about = 'The reason text goes into the log.', inflight = AT_USE },
+    { key = 'Alerts.ToDiscord', section = 'features', group = 'Audit and debug', kind = 'switch',
+      label = 'Post alerts to Discord',
+      about = 'Every alert in the Alerts section is posted to the webhook set in server.cfg '
+          .. '(crimson_hitman_alert_webhook, or else crimson_hitman_webhook), scrubbed of every '
+          .. 'identity, at most one post every 10 seconds. Off: nothing is posted; the Alerts '
+          .. 'section still lists every one.',
+      inflight = 'Read at the next post, with no restart: turned off, alerts waiting to be posted '
+          .. 'are dropped, and nothing said while it is off is posted later.' },
     { key = 'Debug', section = 'features', group = 'Audit and debug', kind = 'switch',
       label = 'Debug output in the server console',
       about = 'Off: the server console prints only what needs you (refusing to start, money '

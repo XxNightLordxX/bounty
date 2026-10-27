@@ -118,7 +118,25 @@ function serverStub() {
       slowMs: 5,
       warnings: ['photo hosts: 0 -> add your phone\'s upload host to Config.Completion.ExtraPhotoHosts (a bare domain)',
         'PHOTO LINKS: the public address does not lead here -> set Config.Completion.PhotoPublicUrl'],
-      overrides: 3, auditQueued: 12 } },
+      overrides: 3, auditQueued: 12, alerts: { open: 12 } } },
+    // The alerts, with the longest things each holds: a block of lines, a
+    // line with no spaces to break at, a contract, a count, and a post given up.
+    alerts: { ok: true, data: { state: 'open', open: 12, acknowledged: 3, limit: 100,
+      discord: { on: true, webhook: 'staff', waiting: 3, posting: true, posted: 1234, lastOkAt: NOW - 600,
+        lastFail: { at: NOW - 60, tries: 3, status: 429, alerts: 14 } },
+      rows: (function () {
+        const out = [];
+        for (let i = 1; i <= 12; i++) {
+          out.push({ id: 'al' + String(10000000 + i), level: i % 3 ? 'always' : 'problem',
+            text: i === 1 ? 'BOOT RECOVERY FAILED: ' + REASON + '\n  What the last shutdown left part-way is not settled, '
+              + 'so the app,\n  the login payouts and the staff commands that settle, void or list escrow stay closed.'
+              : i === 2 ? 'a_line_with_no_spaces_to_break_at_' + 'x'.repeat(240)
+              : 'escrow line owe' + String(10000000 + i) + ': ' + REASON + ' -> left for staff in Stuck escrow',
+            contract: i % 2 ? 'ct' + String(10000000 + i) : null, count: i % 4 ? 1 : 27,
+            first_at: NOW - 86400 * i, last_at: NOW - 600 * i });
+        }
+        return out;
+      })() } },
     contracts: { ok: true, data: { rows: rows, page: 1, pages: 50, total: 1234 } },
     contract: { ok: true, data: {
       contract: { id: 'ct10000001', state: 'accepted', mode: 'exclusive', rule: 'either', reason: REASON,
@@ -346,7 +364,7 @@ async function main() {
     // Still usable: tables may scroll inside their own frame, never the page.
     { w: 1024, h: 768, tablesFit: false }
   ];
-  const sections = ['overview', 'contracts', 'stuck', 'reviews', 'logs', 'players', 'settings', 'tools'];
+  const sections = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'logs', 'players', 'settings', 'tools'];
 
   for (const size of sizes) {
     const page = await openAt(browser, size.w, size.h);
@@ -379,6 +397,11 @@ async function main() {
       if (section === 'tools') {
         await page.click('button[data-act="tl-diag"]');
         await page.waitForTimeout(120);
+      }
+      if (section === 'alerts') {
+        // Measured with Acknowledge all shown armed, its confirm showing.
+        await page.click('button[data-act="al-ack-all"]');
+        await page.waitForTimeout(60);
       }
       const faults = await page.evaluate(measure, { tablesFit: size.tablesFit });
       it(at + ': ' + section + ' fits, with nothing cut off, too small to hit or too small to read', function () {

@@ -321,6 +321,11 @@ local DEFAULTS = {
     Diagnostics = {
         SlowJobMs = 5,
     },
+    --- The same: a config with an Alerts section and not this key posts
+    --- alerts to Discord, as shipped, where a webhook is set. Checked below.
+    Alerts = {
+        ToDiscord = true,
+    },
 }
 
 --- A deep copy of a shipped default, so the live config and the fallback
@@ -725,6 +730,9 @@ local function validateConfig(quiet)
         -- the side that shows them least.
         { section = 'WhitelistedView', key = 'Enabled',
           off = 'players on a whitelisted job get no screen in the app, as before the view' },
+        -- Off is nothing sent outside the server.
+        { section = 'Alerts', key = 'ToDiscord',
+          off = 'no alert is posted to Discord; the admin panel still lists every one' },
     }) do
         local value = Config[switch.section][switch.key]
         if type(value) ~= 'boolean' then
@@ -1540,6 +1548,7 @@ function StartCrimsonHitman()
     local app        = CrimsonBoot.require('server.app')
     local timing     = CrimsonBoot.require('server.timing')
     local panel      = CrimsonBoot.require('server.panel')
+    local alerts     = CrimsonBoot.require('server.alerts')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1591,6 +1600,9 @@ function StartCrimsonHitman()
         -- The settings changed from the admin panel, and the panel's own
         -- requests (server/panel.lua).
         settings = settings, panel = panel,
+        -- Every line printed whatever Config.Debug says, kept as an alert
+        -- for the panel and posted to Discord (server/alerts.lua).
+        alerts = alerts,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -1636,6 +1648,10 @@ function StartCrimsonHitman()
         app.init(modules)
         admin.init(modules)
         panel.init(modules)
+        -- After the panel, whose scrub every post to Discord goes through.
+        -- Every line this start said before it (the checks above, the store
+        -- opening) waited in shared/log.lua and is kept now. Never raises.
+        alerts.init(modules)
         CrimsonBoot.require('server.bridges').install(modules)
 
         -- Its own clock, faster than the maintenance tick: attribution is
@@ -2475,6 +2491,8 @@ AddEventHandler('onResourceStop', function(name)
     -- awaited row yielded this handler, the stop went on without it, and
     -- every queued row behind that one was lost.
     modules.audit.flush(true)
+    -- The alerts not yet in the store, the same way (Alerts.flush).
+    if modules.alerts then pcall(modules.alerts.flush, true) end
 
     -- Memory mode: release every open escrow before the tables vanish.
     if Config.Database.Mode == 'memory' then

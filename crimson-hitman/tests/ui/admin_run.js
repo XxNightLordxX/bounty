@@ -125,8 +125,26 @@ function overview(extra) {
               { name: 'sampler', max: 0.4, avg: 0.2, last: 0.1, runs: 900 }],
     slowMs: 5,
     warnings: ['photo hosts: 0 -> add your upload host to Config.Completion.ExtraPhotoHosts'],
-    overrides: 2, auditQueued: 0
+    overrides: 2, auditQueued: 0, alerts: { open: 4 }
   }, extra || {}) };
+}
+
+/* The alerts, as server/panel.lua's alerts op answers: newest first, the
+   text already scrubbed for this staff member, and where Discord stands. */
+function alertRow(i, extra) {
+  return Object.assign({ id: 'al0000000' + i, level: i === 2 ? 'problem' : 'always',
+    text: 'escrow line owe0000000' + i + ' was mid-release at shutdown; returned to held',
+    contract: i === 1 ? 'ct00000001' : null, count: i === 1 ? 3 : 1,
+    first_at: NOW - 3600 - i, last_at: NOW - 60 * i }, extra || {});
+}
+function alertsView(data) {
+  const state = data && data.state === 'acknowledged' ? 'acknowledged' : 'open';
+  const rows = state === 'open'
+    ? [alertRow(1, { text: 'BOOT RECOVERY FAILED: ' + XSS + '\n  What the last shutdown left part-way' }),
+       alertRow(2, { text: 'warning: Kidnap.Radius is 2' }), alertRow(3), alertRow(4)]
+    : [alertRow(5, { acknowledged_by: 'ADMIN001', acknowledged_at: NOW - 30 })];
+  return { ok: true, data: { state: state, rows: rows, open: 4, acknowledged: 1, limit: 100,
+    discord: { on: true, webhook: 'alert', waiting: 0, posting: false, posted: 7, lastOkAt: NOW - 120 } } };
 }
 
 function contractRow(i, extra) {
@@ -286,7 +304,13 @@ function settingsView(extra) {
 function standardServer(extra) {
   return Object.assign({
     overview: overview(), contracts: contracts(), contract: contractDetail(null, false), reviews: reviews(),
-    stuck: stuckList(),
+    stuck: stuckList(), alerts: alertsView,
+    ackAlerts: function (data) {
+      return { ok: true, message: 'Acknowledged ' + (data.ids || []).length + ' alert(s).',
+        data: { done: (data.ids || []).length, already: 0, missing: 0 } };
+    },
+    testAlert: { ok: true, message: 'A test alert goes to Discord in about 0 second(s). This section says whether it went through.',
+      data: { seconds: 0 } },
     logs: logs(), player: player(), settings: settingsView(),
     whois: { ok: true, data: { creator: { cid: 'CREATOR1', name: 'Vic Marlowe', anonymous: true },
       target: { cid: 'TARGET01', name: 'Dana Reyes' },
@@ -1250,6 +1274,152 @@ async function main() {
     clean(app, 'a review left part-way, and one not in the store');
   })();
 
+  /* ---- alerts ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    it('counts the open alerts on the navigation and on the overview', function () {
+      eq(app.byId('count-alerts').textContent, '4');
+      eq(app.byId('count-alerts').hidden, false);
+      eq(app.byId('ov-alerts').textContent, '4');
+      has(app.main(), 'open alerts, not acknowledged yet');
+    });
+    app.click(app.button('Open Alerts'));
+    await settled();
+    it('opens on the open alerts, newest first, each with its level, count and contract', function () {
+      eq(app.last('alerts').data, { state: 'open' });
+      const cards = app.$$('article.al');
+      eq(cards.length, 4);
+      eq(cards[0].getAttribute('id'), 'al-al00000001');
+      has(app.text(cards[0]), 'Needs staff');
+      has(app.text(cards[0]), 'said 3 times');
+      has(app.text(cards[1]), 'Setting');
+      truthy(cards[0].querySelector('button.link').getAttribute('data-id') === 'ct00000001', 'the contract, as a link');
+      has(app.text(cards[0]), 'What the last shutdown left part-way', 'the block under its first line');
+      eq(app.$$('img').length, 0, 'the text is escaped');
+    });
+    it('says where Discord stands, and never shows a webhook', function () {
+      has(app.main(), 'Posting to the alert webhook (crimson_hitman_alert_webhook)');
+      has(app.main(), 'Posted since the start7 alerts');
+      lacks(app.main(), 'https://');
+      truthy(app.button('Send a test alert'), 'and a test button');
+    });
+
+    const ack = app.button('Acknowledge', app.byId('al-al00000003'));
+    app.click(ack);
+    await settled();
+    it('acknowledging one takes two clicks', function () {
+      eq(app.requests('ackAlerts').length, 0);
+      truthy(ack.classList.contains('is-armed'), 'armed');
+    });
+    const reads = app.requests('alerts').length;
+    app.click(ack);
+    await settled();
+    it('and sends that alert, then reads the list again', function () {
+      eq(app.last('ackAlerts').data, { ids: ['al00000003'] });
+      has(app.toasts(), 'Acknowledged 1 alert(s).');
+      truthy(app.requests('alerts').length > reads, 'read again');
+    });
+
+    const all = app.button('Acknowledge all shown');
+    app.click(all);
+    await settled();
+    it('acknowledging all shown takes two clicks too', function () {
+      eq(app.requests('ackAlerts').length, 1);
+    });
+    app.click(all);
+    await settled();
+    it('and sends every alert shown', function () {
+      eq(app.last('ackAlerts').data, { ids: ['al00000001', 'al00000002', 'al00000003', 'al00000004'] });
+    });
+
+    app.click(app.button('Send a test alert'));
+    await settled();
+    it('sends a test alert on one click, and says what came of it', function () {
+      eq(app.requests('testAlert').length, 1);
+      has(app.main(), 'A test alert goes to Discord');
+    });
+
+    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'acknowledged'; })[0]);
+    await settled();
+    it('lists the acknowledged ones apart, with who acknowledged each and when', function () {
+      eq(app.last('alerts').data, { state: 'acknowledged' });
+      const cards = app.$$('article.al');
+      eq(cards.length, 1);
+      has(app.text(cards[0]), 'ADMIN001');
+      eq(app.$$('article.al button').filter(function (b) { return b.getAttribute('data-act') === 'al-ack'; }).length, 0,
+        'nothing to acknowledge there');
+      lacks(app.main(), 'Acknowledge all shown');
+    });
+    clean(app, 'alerts');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(READER);
+    await settled();
+    app.nav('alerts');
+    await settled();
+    it('staff who may only read see the alerts, with nothing to acknowledge or send', function () {
+      eq(app.$$('article.al').length, 4);
+      eq(app.$$('button').filter(function (b) { return b.getAttribute('data-act') === 'al-ack'; }).length, 0);
+      lacks(app.main(), 'Acknowledge all shown');
+      truthy(app.button('Send a test alert').disabled, 'the test is a write');
+    });
+    clean(app, 'alerts read only');
+  })();
+
+  await (async function () {
+    function withDiscord(discord) {
+      return function (data) {
+        const view = alertsView(data);
+        view.data.discord = discord;
+        return view;
+      };
+    }
+    const off = boot(standardServer({ alerts: withDiscord({ on: false, webhook: 'alert', posted: 0, waiting: 0 }) }));
+    off.open(ADMIN);
+    await settled();
+    off.nav('alerts');
+    await settled();
+    const none = boot(standardServer({ alerts: withDiscord({ on: true, posted: 0, waiting: 0 }) }));
+    none.open(ADMIN);
+    await settled();
+    none.nav('alerts');
+    await settled();
+    const failed = boot(standardServer({ alerts: withDiscord({ on: true, webhook: 'staff', posted: 2, waiting: 1,
+      lastOkAt: NOW - 600, lastFail: { at: NOW - 60, tries: 3, status: 500, alerts: 4 } }) }));
+    failed.open(ADMIN);
+    await settled();
+    failed.nav('alerts');
+    await settled();
+    it('says when posting is switched off, and when no webhook is set', function () {
+      has(off.main(), 'Off: Post alerts to Discord is switched off under Features.');
+      has(none.main(), 'No webhook is set, so nothing is posted. Set crimson_hitman_alert_webhook');
+    });
+    it('says a post was given up after three tries, and that the alerts are still listed', function () {
+      has(failed.main(), 'the staff webhook (crimson_hitman_webhook)');
+      has(failed.main(), 'A post was given up after 3 tries (HTTP 500)');
+      has(failed.main(), '4 alerts not posted, still listed here.');
+    });
+    const test = boot(standardServer({ alerts: withDiscord({ on: true, webhook: 'alert', posted: 0, waiting: 0,
+      lastFail: { at: NOW - 60, tries: 3, status: 0, alerts: 0, test: true } }) }));
+    test.open(ADMIN);
+    await settled();
+    test.nav('alerts');
+    await settled();
+    it('and when it carried only the test, that the test was not posted', function () {
+      has(test.main(), 'A post was given up after 3 tries (no answer)');
+      has(test.main(), 'the test alert not posted.');
+      lacks(test.main(), 'still listed here');
+    });
+    clean(test, 'a test given up');
+    clean(off, 'discord off');
+    clean(none, 'no webhook');
+    clean(failed, 'a post given up');
+  })();
+
   /* ---- logs ---- */
   await (async function () {
     const app = boot(standardServer());
@@ -1734,7 +1904,7 @@ async function main() {
         app.open(who);
         await settled();
         sweep(app, 'overview');
-        for (const section of ['contracts', 'stuck', 'reviews', 'logs', 'players', 'settings', 'tools']) {
+        for (const section of ['contracts', 'stuck', 'reviews', 'alerts', 'logs', 'players', 'settings', 'tools']) {
           app.nav(section);
           await settled();
           sweep(app, section);

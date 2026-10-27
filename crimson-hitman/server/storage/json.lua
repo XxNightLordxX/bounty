@@ -23,7 +23,7 @@ local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson
 local EMPTY = {
     contracts = {}, escrow = {}, hitmen = {}, amendments = {},
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
-    photos = {}, reviews = {}, settings = {}, seq = 0,
+    photos = {}, reviews = {}, settings = {}, alerts = {}, seq = 0,
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -38,8 +38,8 @@ local indexDirty = false
 
 --- The records: everything that is not per-contract and is not the index's
 --- own bookkeeping. The ledger, pending payouts, the stats, the informant
---- reveals, the kill photo records, the review queue and the settings staff
---- changed from the admin panel.
+--- reveals, the kill photo records, the review queue, the settings staff
+--- changed from the admin panel, and the admin panel's alerts.
 ---
 --- They were fields of store.json, and store.json was rewritten whole on
 --- every financial write, even one that changed only a contract's own file.
@@ -50,8 +50,16 @@ local indexDirty = false
 --- on it. So they are a file of their own, records.json, written only when
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
-local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings' }
+local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
+                  'alerts' }
 local recordsDirty = false
+
+--- An alert changed (server/alerts.lua) since records.json was written.
+--- Apart from recordsDirty, so a money write's save never writes the file
+--- for an alert: only the flush and the close take it in (or a save that
+--- writes the records for something else anyway). An alert is said on the
+--- way out of a money path that failed, and must not slow the next one.
+local alertsDirty = false
 
 --- Whether records.json is known to be on disk: read at this start, or
 --- written since. The index says so (`records = true`), so a later start
@@ -645,7 +653,7 @@ local function writeRecords()
     local records = {}
     for i = 1, #RECORDS do records[RECORDS[i]] = db[RECORDS[i]] end
     if not writeFile(recordsPath(), records) then return false end
-    recordsOnDisk, recordsDirty = true, false
+    recordsOnDisk, recordsDirty, alertsDirty = true, false, false
     return true
 end
 
@@ -1075,7 +1083,7 @@ function JsonStore.open()
         db = json.decode(json.encode(EMPTY))
         escrowBy, hitmenBy, messagesBy = {}, {}, {}
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
-        recordsDirty, recordsOnDisk = true, false
+        recordsDirty, recordsOnDisk, alertsDirty = true, false, false
         auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
         JsonStore.save(true)
         JsonStore.assertWritable()
@@ -1091,7 +1099,7 @@ function JsonStore.open()
 
     db = json.decode(json.encode(EMPTY))
     dirtyShards, shardIds, quarantined = {}, {}, {}
-    recordsDirty, recordsOnDisk = false, false
+    recordsDirty, recordsOnDisk, alertsDirty = false, false, false
     for key, value in pairs(decoded) do
         -- The audit log is read from its own files, below, and the records
         -- from theirs. `records` is only the index saying that file exists.
@@ -1721,12 +1729,16 @@ end
 ---@return boolean saved
 ---@return string|nil file
 function JsonStore.flush()
+    -- The alerts changed since the records were written, which only this
+    -- and the close take in (alertsDirty).
+    if alertsDirty then dirty, recordsDirty = true, true end
     local ok, file = JsonStore.save(false)
     local logged, day = saveAudit()
     return ok and logged, file or day
 end
 
 function JsonStore.close()
+    if alertsDirty then dirty, recordsDirty = true, true end
     local ok, file = JsonStore.save(true)
     local logged, day = saveAudit()
     return ok and logged, file or day
@@ -1843,6 +1855,35 @@ end
 function JsonStore.clearSettings()
     db.settings = {}
     touch(true)
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The admin panel's alerts
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, written by the next flush or
+--- the close, never by a money write's save (alertsDirty).
+function JsonStore.readAlerts()
+    local out = {}
+    for _, row in pairs(db.alerts or {}) do
+        if type(row) == 'table' then out[#out + 1] = Util.copy(row) end
+    end
+    return out
+end
+
+function JsonStore.writeAlert(row)
+    db.alerts = db.alerts or {}
+    db.alerts[row.id] = Util.copy(row)
+    alertsDirty = true
+    return true
+end
+
+function JsonStore.deleteAlert(id)
+    if db.alerts and db.alerts[id] ~= nil then
+        db.alerts[id] = nil
+        alertsDirty = true
+    end
     return true
 end
 

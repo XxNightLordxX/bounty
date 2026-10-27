@@ -220,6 +220,21 @@ function Util.dbError(err)
     return text
 end
 
+--- A console line with a database error inside it, as Util.dbError keeps
+--- the error: the words before it kept whole, then the server's words and
+--- the start of the statement, never the values it was sent. A line that
+--- printed oxmysql's message as it came (`raised: <err>`) carried every
+--- parameter, a client's citizen id, licence and name among them. Any other
+--- line is given back as it is.
+---@param text any
+---@return string
+function Util.dbErrorIn(text)
+    text = tostring(text)
+    local query = text:find('\nQuery: ', 1, true)
+    if not query or not text:find('was unable to execute a query!', 1, true) then return text end
+    return text:sub(1, query - 1) .. ' ' .. Util.dbError(text)
+end
+
 --- A time on the clock rounded up to the next five minutes.
 ---
 --- A deadline set from the moment something happened carries that moment

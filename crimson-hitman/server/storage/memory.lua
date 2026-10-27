@@ -46,7 +46,7 @@ function Memory.open()
     db = {
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
-        photos = {}, reviews = {}, settings = {}, seq = 0,
+        photos = {}, reviews = {}, settings = {}, alerts = {}, seq = 0,
     }
     return true
 end
@@ -1373,6 +1373,34 @@ end
 --- Every one back to what config.lua says.
 function Memory.clearSettings()
     db.settings = {}
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The admin panel's alerts
+--------------------------------------------------------------------------
+
+--- Every line the console printed whatever Config.Debug said, kept as an
+--- alert (server/alerts.lua), by id: { id, level, text, contract_id,
+--- first_at, last_at, count, acknowledged_by, acknowledged_at }. Alerts
+--- keeps them all in memory and writes each one whole when it changes, so
+--- the store only keeps, hands back at start and forgets them.
+---@return table[] rows
+function Memory.readAlerts()
+    local out = {}
+    for _, row in pairs(db.alerts) do out[#out + 1] = Util.copy(row) end
+    return out
+end
+
+---@param row table one alert, whole
+function Memory.writeAlert(row)
+    db.alerts[row.id] = Util.copy(row)
+    return true
+end
+
+--- One pruned (Alerts.MAX).
+function Memory.deleteAlert(id)
+    db.alerts[id] = nil
     return true
 end
 

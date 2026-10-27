@@ -578,6 +578,25 @@ local SCHEMA = {
         set_by VARCHAR(64),
         set_at INT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- The admin panel's alerts (server/alerts.lua): every line the console
+    -- printed whatever Config.Debug said, one row each, the same line again
+    -- counted on it (`occurrences`, the alert's count, from `first_at` to
+    -- `last_at`; not `count`, which is a function's name and so a reserved
+    -- word where sql_mode has IGNORE_SPACE), until staff acknowledge it. At
+    -- most a few hundred rows, all read at start. Created on an existing
+    -- database by the CREATE TABLE IF NOT EXISTS at the next start, like any
+    -- table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_alerts (
+        id VARCHAR(32) PRIMARY KEY,
+        level VARCHAR(16) NOT NULL,
+        text TEXT NOT NULL,
+        contract_id VARCHAR(64),
+        first_at INT NOT NULL,
+        last_at INT NOT NULL,
+        occurrences INT NOT NULL DEFAULT 1,
+        acknowledged_by VARCHAR(64),
+        acknowledged_at INT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -2741,6 +2760,58 @@ end
 
 function MySQLStore.clearSettings()
     db.query('DELETE FROM crimson_settings')
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The admin panel's alerts
+--------------------------------------------------------------------------
+
+--- See the memory backend. Each alert is written whole, over what the row
+--- held: Alerts keeps every one in memory and is the only writer.
+local ALERT_INSERT = [[
+    INSERT INTO crimson_alerts
+        (id, level, text, contract_id, first_at, last_at, occurrences, acknowledged_by,
+         acknowledged_at)
+    VALUES (?,?,?,?,?,?,?,?,?)
+    ON DUPLICATE KEY UPDATE level = VALUES(level), text = VALUES(text),
+        contract_id = VALUES(contract_id), first_at = VALUES(first_at),
+        last_at = VALUES(last_at), occurrences = VALUES(occurrences),
+        acknowledged_by = VALUES(acknowledged_by), acknowledged_at = VALUES(acknowledged_at)
+]]
+
+local function alertParams(row)
+    return {
+        row.id, row.level, row.text, row.contract_id, row.first_at, row.last_at, row.count,
+        row.acknowledged_by, row.acknowledged_at,
+    }
+end
+
+function MySQLStore.readAlerts()
+    local rows = db.query('SELECT * FROM crimson_alerts') or {}
+    for i = 1, #rows do
+        local row = rows[i]
+        row.first_at, row.last_at = tonumber(row.first_at), tonumber(row.last_at)
+        row.count, row.occurrences = tonumber(row.occurrences), nil
+        row.acknowledged_at = tonumber(row.acknowledged_at)
+    end
+    return rows
+end
+
+function MySQLStore.writeAlert(row)
+    db.query(ALERT_INSERT, alertParams(row))
+    return true
+end
+
+--- At a stop, handed over without waiting, as the audit log is
+--- (writeAuditNoWait): waiting there yields the stop handler for good.
+function MySQLStore.writeAlertNoWait(row)
+    MySQL.query(ALERT_INSERT, alertParams(row))
+    return true
+end
+
+function MySQLStore.deleteAlert(id)
+    db.query('DELETE FROM crimson_alerts WHERE id = ?', { id })
     return true
 end
 

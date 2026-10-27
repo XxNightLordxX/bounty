@@ -868,6 +868,36 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       counting the ones left for you; each line's **Delivered** or **Pay**
       takes two clicks, its answer stays beside it, and its contract id opens
       the contract's view
+- [ ] **Alerts**: make something print whatever Debug says (stop the
+      resource mid-payout, or set a limit in `config.lua` the start corrects
+      and restart). The badge beside **Alerts**, and the overview's Alerts
+      tile, count it within 10 seconds; the section lists it newest first,
+      with *Needs staff* or *Setting*, when it was said and the contract it
+      names (which opens its view). Restart the resource: it is still there,
+      and the same line again says *said 2 times* rather than listing it twice
+- [ ] **Acknowledge** on one alert, and **Acknowledge all shown**, each turn
+      brass on the first click and act on the second; the alert moves to
+      **Acknowledged** with your name and the time, the badge goes down, and
+      the **Logs** have an `admin_alerts_acknowledged` row. On the
+      `command`-only account neither button is there and **Send a test alert**
+      is greyed out
+- [ ] On the account without `crimson.identity`, an alert naming an anonymous
+      contract (void one whose ending raises, say) reads *the client* and
+      *Anonymous*, never a citizen id, licence or the client's name; on the
+      `crimson.identity` account it reads whole
+- [ ] Discord: with no webhook set the Alerts section says so and nothing is
+      posted. `set crimson_hitman_alert_webhook "<a test channel's webhook>"`
+      in the server console, then **Send a test alert**: one post arrives
+      within about 10 seconds, and the section says where it posts (never the
+      address). Make three alerts within a few seconds: they arrive as one
+      post. No post names a citizen id, a licence, a character name or a link,
+      and none pings anybody. Turn **Post alerts to Discord** off in Features:
+      nothing more is posted. Turn it back on, set the convar to a webhook you
+      deleted in Discord and send a test alert: about 30 seconds later the
+      section says a post was given up
+      after 3 tries (HTTP 404), and the alerts are still listed. Check
+      `resmon` while this runs: the resource stays at its idle figure between
+      posts (estimate; confirm on your server)
 - [ ] Nothing anywhere in the panel names a command: no `/ch-…`, no
       `/hitmanadmin`, in any section, tooltip, empty list, answer or refusal
       (an answer that sends you on names the section or button instead, *see

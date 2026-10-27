@@ -1306,6 +1306,35 @@ Config.Admin = {
 }
 
 --------------------------------------------------------------------------
+-- Alerts
+--------------------------------------------------------------------------
+
+--- Every line the server console prints whatever Config.Debug says (money
+--- at risk or left for staff, a stuck escrow line, an item in the review
+--- queue, a write that failed, a money job that keeps failing, the start
+--- refusing or recovering, and each setting that needs attention) is also
+--- kept as an alert: in the admin panel's Alerts section, until staff
+--- acknowledge it, and in the store, so it survives a restart (json and
+--- mysql). The same line again is counted on the alert, not listed twice.
+--- At most 500 are kept: past that the oldest acknowledged go first, and
+--- one nobody has acknowledged is never removed within 30 days of the last
+--- time it was said (only a loop filling 5,000 would).
+Config.Alerts = {
+    --- Post each alert to a Discord channel as well. The webhook is set in
+    --- server.cfg, never here: this file is sent to every player's game.
+    ---   set crimson_hitman_alert_webhook "https://discord.com/api/webhooks/..."
+    --- `set`, never `setr`: setr sends the value to every player as well.
+    --- Without it the staff webhook (crimson_hitman_webhook, under Audit) is
+    --- used; with neither, nothing is posted. At most one post every 10
+    --- seconds, carrying what came in meanwhile, ten alerts a post and how
+    --- many more. The text is scrubbed as for staff without the identity ACE,
+    --- and more: no citizen id, account, character name or link leaves the
+    --- server. A post Discord refuses is tried twice more, then given up; the
+    --- admin panel says so. Also in the admin panel's Features.
+    ToDiscord = true,
+}
+
+--------------------------------------------------------------------------
 -- Diagnostics
 --------------------------------------------------------------------------
 

@@ -519,6 +519,13 @@ ul, ol { padding: 0; list-style: none; }
 .rv-form { display: flex; flex-direction: column; gap: 0.55rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); }
 .rv-form > .seg { align-self: flex-start; }
 
+/* ---------- alerts ---------- */
+
+.al { display: flex; flex-direction: column; gap: 0.5rem; }
+.al.is-open { border-color: var(--gold-line); }
+.al .card-head .chip:first-child { margin-left: 0; }
+.al-text { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+
 /* ---------- players ---------- */
 
 .person { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; }

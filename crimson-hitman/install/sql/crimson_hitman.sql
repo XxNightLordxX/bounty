@@ -289,6 +289,21 @@ CREATE TABLE IF NOT EXISTS crimson_settings (
     set_at INT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- The admin panel's alerts: every line the console printed whatever
+-- Config.Debug said, the same line again counted on it, until staff
+-- acknowledge it.
+CREATE TABLE IF NOT EXISTS crimson_alerts (
+    id VARCHAR(32) PRIMARY KEY,
+    level VARCHAR(16) NOT NULL,
+    text TEXT NOT NULL,
+    contract_id VARCHAR(64),
+    first_at INT NOT NULL,
+    last_at INT NOT NULL,
+    occurrences INT NOT NULL DEFAULT 1,
+    acknowledged_by VARCHAR(64),
+    acknowledged_at INT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

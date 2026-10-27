@@ -11,6 +11,12 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Alerts:** every line the server console prints whatever `Config.Debug`
+  says (money at risk or left for staff, a write that failed, a job that keeps
+  failing, each setting that needs attention) is kept as an alert in the admin
+  panel's new **Alerts** section, across restarts, until staff acknowledge it,
+  and posted to Discord when a webhook is set, scrubbed of every identity (see
+  *Admin panel* and *Alerts in Discord*).
 - **Renamed** to `crimson-hitman` (the app: **Crimson-Hitman**), with hitman
   wording everywhere a player or admin reads it.
 - **Live transfer only** (`Config.Completion.Fulfilment = 'alive'`, as
@@ -156,8 +162,8 @@ Nothing to import either way. The tables are
 `crimson_contracts`, `crimson_escrow`, `crimson_hitmen`, `crimson_amendments`,
 `crimson_messages`, `crimson_ledger`, `crimson_pending`, `crimson_stats`,
 `crimson_audit`, `crimson_reveals`, `crimson_mutes`, `crimson_photos`,
-`crimson_review`, `crimson_settings` (what staff changed from the admin panel)
-and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+`crimson_review`, `crimson_settings` (what staff changed from the admin panel),
+`crimson_alerts` (the admin panel's alerts) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
 engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
@@ -172,7 +178,8 @@ columns `crimson_escrow.deliver_raises`, `deliver_before`, `deliver_arrived`,
 `'either'`), `advised_posted_at` and `advised_hitmen` (what the law
 enforcement advisory said of each contract, which the whitelisted-job view
 shows; NULL where no bulletin went), and the tables `crimson_review` (the
-review queue) and `crimson_settings` (the admin panel's settings): import
+review queue), `crimson_settings` (the admin panel's settings) and
+`crimson_alerts` (the admin panel's alerts): import
 `install/sql/crimson_hitman.sql`, or create them as a user that may. It also
 adds three indexes, which an existing database gets at its next start (about
 three seconds per million audit rows, with writes going on) or, for a user
@@ -1213,6 +1220,32 @@ warning at startup and the URL is not used: it has already been sent to
 every player, so regenerate it in Discord and move the new one to
 `server.cfg`.
 
+**Alerts in Discord.** The admin panel's alerts (see *Admin panel*) are posted
+to a webhook of their own when one is set, the same way:
+
+```
+set crimson_hitman_alert_webhook "https://discord.com/api/webhooks/..."
+```
+
+`set`, never `setr`, and never in `config.lua`. Without it they go to the staff
+webhook (`crimson_hitman_webhook`); with neither, nothing is posted. Both are
+read at each post, so one set from the server console works at once.
+`Config.Alerts.ToDiscord` (on as shipped, and in the panel's Features as *Post
+alerts to Discord*) turns the posting off; alerts waiting to be posted are then
+dropped, and nothing said while it is off is posted later. At most one post
+every 10 seconds, carrying everything said since (the same alert again counted
+on its line, *(x3)*), at most ten alerts a post and *…and N more* for the rest,
+which the panel still lists. The text is scrubbed as for staff without
+`crimson.identity`, and more, because Discord is outside the server: every
+citizen id and account, every name of a party to the contract it names (not
+only an anonymous one), every link, and a database error's values are left
+out, and an `@` never pings anybody. A post Discord refuses (or does not
+answer) is tried again 10 and then 20 seconds later, or after the wait a 429
+asks for, and given up after three tries; the panel's Alerts section says so,
+with how many alerts were not posted. Posting runs in timers of its own: a line
+printed on a money path never waits for it. **Send a test alert**, in the
+Alerts section, checks the channel.
+
 On the phone, tapping the build line at the bottom of the Ledger tab five times
 opens a diagnostics panel showing the page's recent requests and faults.
 
@@ -1252,6 +1285,13 @@ among what the diagnosis says wants doing. In game, players' F8 consoles show
 nothing from this resource but a staff command's own answer; `Config.Debug` on
 also prints the client's own notes there (an lb-phone export missing, say).
 
+Every **Always** line and every setting that needs attention is also kept as
+an alert, as it is said: the admin panel's **Alerts** section lists them until
+staff acknowledge them, across restarts, and posts them to Discord where a
+webhook is set (see *Admin panel* and *Alerts in Discord*). Keeping one never
+waits on the store or on Discord: the line is printed first, and an alert the
+store will not take stays in memory and is written by the next try.
+
 `Config.Debug` is in the admin panel's Features (*Debug output in the server
 console*) and kept across restarts like every other setting there: it is read
 at every line, so it takes effect at once. The lines a start prints before the
@@ -1280,8 +1320,8 @@ next request.
 
 | Permission | What it opens |
 |---|---|
-| `crimson.admin` (`Config.Admin.Ace`), or one of `Config.Admin.ExtraAces` | Opening the panel, and every section that reads: the overview, contracts and their detail, Stuck escrow, the review queue, the audit log, players, the settings (to look at), the diagnosis |
-| `crimson.admin` itself | Everything that writes: void, settle, resolve a review item, change or reset a setting, the timer refresh, flushing the log |
+| `crimson.admin` (`Config.Admin.Ace`), or one of `Config.Admin.ExtraAces` | Opening the panel, and every section that reads: the overview, contracts and their detail, Stuck escrow, the review queue, the alerts, the audit log, players, the settings (to look at), the diagnosis |
+| `crimson.admin` itself | Everything that writes: void, settle, resolve a review item, acknowledge an alert, send a test alert, change or reset a setting, the timer refresh, flushing the log |
 | `crimson.identity` (`Config.Admin.IdentityAce`) as well | Who is behind an anonymous client or hitman, anywhere in the panel; every citizen id; finding a player's rows in the log; whois |
 
 Without `crimson.identity` an anonymous party is shown as *Anonymous*, every
@@ -1319,10 +1359,11 @@ flushing the log is refused, in the commands' own words.
 
 | Section | What it shows | What you can do |
 |---|---|---|
-| **Overview** | Contracts by state (counted by the store, one `GROUP BY` on mysql); operatives on contracts now, and how many contracts they hold (a contract two of them hold counts once); money held in escrow by account, and items and weapons held; owed deliveries (lines, players, and how many are in a retry queue); the lines waiting for staff, headed by the ones left for you to settle, with the ones that need nothing (queued since, or an ending settling itself) said apart, and a button to **Stuck escrow**; open review items; kill photos waiting, kept and served, with their size; the storage mode (with a warning in `memory` mode, which keeps nothing across a restart), the rule new contracts are placed under and the recovery state; the slowest maintenance jobs; what the diagnosis says wants doing, the settings that need attention among it, and **Run it**, which runs it; how many settings changed from the panel are in force, and how many the store holds that were not applied. After a recovery that failed, the waiting lines say so and that the resource needs a restart; a listing that could not be read says that. A state chip lists the contracts in that state alone, whatever was typed in Contracts before. Refreshes itself every `Config.Admin.PanelRefreshSeconds` (10) while open | — |
+| **Overview** | Contracts by state (counted by the store, one `GROUP BY` on mysql); operatives on contracts now, and how many contracts they hold (a contract two of them hold counts once); money held in escrow by account, and items and weapons held; owed deliveries (lines, players, and how many are in a retry queue); the lines waiting for staff, headed by the ones left for you to settle, with the ones that need nothing (queued since, or an ending settling itself) said apart, and a button to **Stuck escrow**; open review items; open alerts, with a button to **Alerts**; kill photos waiting, kept and served, with their size; the storage mode (with a warning in `memory` mode, which keeps nothing across a restart), the rule new contracts are placed under and the recovery state; the slowest maintenance jobs; what the diagnosis says wants doing, the settings that need attention among it, and **Run it**, which runs it; how many settings changed from the panel are in force, and how many the store holds that were not applied. After a recovery that failed, the waiting lines say so and that the resource needs a restart; a listing that could not be read says that. A state chip lists the contracts in that state alone, whatever was typed in Contracts before. Refreshes itself every `Config.Admin.PanelRefreshSeconds` (10) while open | — |
 | **Contracts** | Search by contract id, citizen id or name, and filter by state, completion rule and date; `Config.Admin.PanelPageSize` (25) a page, newest first. The detail: terms, payouts, every escrow line with its state and what it owes and what arrived, the operatives with what each has at stake now (their stake lines not yet settled), open proposals, the lines `/ch-stuck` lists for it with what settles each, and its audit timeline. A contract id with escrow and no contract record (one never stored) opens as its lines alone, with what settles each, so every line the overview counts as left for you can be settled here | **Void** with a reason, as `/ch-void`; **settle** a listed stuck line `pay`, `pay <amount>`, `return` or `delivered`, as `/ch-settle`, with only the buttons the server accepts for that line (only **Pay** for one nothing of which was given). Both answer in the commands' exact words |
 | **Stuck escrow** | Every escrow line waiting for staff, as `/ch-stuck` lists it (the badge beside it counts the ones left for you to settle): what each holds, whom it is owed to, why it waits and whether its arrival is known, each naming its contract, which opens its view; and how many items wait in the review queue, with a button to it. Nothing is listed while the server is recovering from a restart, and after a recovery that failed it says so. Read again after a settle in a contract's view opened from it, when that view closes, and at each overview refresh while it is on screen | **Settle** each line `pay`, `pay <amount>`, `return`, `return <citizenid>` or `delivered`, as `/ch-settle`, with two clicks, each line offering only what the server accepts for it (only **Pay** for one nothing of which was given, **Return to** for one owed to a citizen id no character has); its answer stays beside it and the list is read again |
 | **Needs review** | The review queue's open items with what is known and what the store says now, and the latest resolved ones with how, by whom and when. One being resolved says what was decided and by whom; one the store has not taken yet is drawn with its form off until it has | **Refund**, **pay** or **dismiss** (with a note), as `/ch-review`: given once, however often it is asked. **Finish as decided** for one a resolution stopped part-way, and nothing else |
+| **Alerts** | Every line the server console printed whatever `Config.Debug` says (money at risk or left for staff, a stuck or parked escrow line, an item opened in the review queue, a write that failed or read back wrong, a job that keeps failing, the start refusing or recovering, the raise summaries) and every setting that needs attention, as an alert: open ones newest first, or the acknowledged ones apart, the newest 100 at a time. Each says what was said (a block of lines, such as `BOOT RECOVERY FAILED` and the lines under it, is one alert), whether it needs staff or is a setting, when it was first and last said and how many times (the same line again, its numbers aside, is counted on the open alert rather than listed twice), the contract it names (which opens its view), and who acknowledged it and when. Its text is scrubbed for staff without `crimson.identity` as every other view is, and a staff command in it is put as the section that does it. The badge beside it, and the overview's **Alerts** tile, count the open ones. Kept in the store your server runs (`data/records.json`, the `crimson_alerts` table, or memory), so they survive a restart: at most 500, the oldest acknowledged pruned first, and an unacknowledged one never within 30 days of the last time it was said (only a loop filling 5,000 would). Also where posting to Discord stands: off, no webhook set, or which webhook (never its address), the last post, and a post given up after three tries with how many alerts it carried. Read again at each overview refresh while it is on screen | **Acknowledge** one, or **Acknowledge all shown**, each with two clicks: a write, audited (`admin_alerts_acknowledged`, with how many and which), and rate-limited as every write is; it works while recovery holds other writes back. A line said again after its alert was acknowledged opens a new one. **Send a test alert** puts one in the next post to Discord (`admin_alert_test`, sent or not) |
 | **Logs** | The audit log, newest first, a page at a time, filtered by kind, part of the action, contract id, citizen id (with `crimson.identity`) and time. Read from whichever store keeps it (the json day files, the `crimson_audit` table, or memory); a page follows on from the last even when old rows age out in between. A contract id or citizen id box is marked, and asks nothing, until it holds a whole one | — |
 | **Players** | By server id or citizen id (in any case: it is read as the server keeps it): their contracts (as `/ch-contracts`), their record (with `crimson.identity`), what they are owed and whether it is queued for them, and how many notices wait for their next login. A citizen id nobody in the city has and nothing you may see names answers *not found* | **Whois** on a contract, with `crimson.identity` |
 | **Features, limits & settings** | Every on/off switch in `config.lua`, grouped by section, with a line on what it does and what turning it off does to things already under way, and the two multi-choice features (`Config.Completion.Fulfilment`, `Config.Completion.PhotoStorage`). Then the limits: every number in `Config.Limits`, the anonymity fees and their account, the informant's price, the stake ceilings, the handover countdown, radius and health floor, buyout pricing, the targeting radii and page sizes, `Config.Ledger.PhotoRetentionDays`, the advisory job lists and every rate limit. Each with its value now, what `config.lua` says, and whether the value comes from `config.lua` or the panel. Every rate limit says what it gates (the background ones, death, headshots and the handover countdown, are refused without a word to the player). A value the start would refuse is refused in its words, once, with the key to change first; a warning the start gives about a value (the nearby list on, say) is said with the change. A row the store holds for a key this version does not list is shown read-only, with why | **Change** one, **reset** one, **reset all** (offered whenever the store holds a row, applied or not). The same value again changes nothing and tells nobody. Lowering a photo retention, or making a rate limit stricter, takes two clicks, the first saying what the second does; anything typed after the first arms it again. The rate limits the app cannot work without have a floor: `load` at least 6 held and a refill of one every 5 seconds, `progress` one a second, `death` 2 held |
@@ -1351,13 +1392,13 @@ writes `admin_panel_contract`.
 
 **Using the page.** The panel is sized for a game window 1280 to 1920 pixels
 wide, and still works at 1024. It opens on the overview, with the open review
-items, the lines left for you to settle and the settings changed from the panel
-counted beside their sections. A contract opens in a drawer over the list,
+items, the lines left for you to settle, the open alerts and the settings
+changed from the panel counted beside their sections. A contract opens in a drawer over the list,
 with what you can do to it first: void, whois, and each stuck line's settle
 buttons. Anything that moves money or cannot be undone (void, settle, resolve,
 reset, the timer refresh, and lowering `Config.Ledger.PhotoRetentionDays`,
-which deletes the unopened kill photos past the new age at the next sweep)
-takes two clicks: the first turns the button brass and says what the second
+which deletes the unopened kill photos past the new age at the next sweep),
+and acknowledging an alert, take two clicks: the first turns the button brass and says what the second
 does, and it disarms itself after three seconds. Enter in the photo age's box
 only arms its Save; it never lowers it. The server's answer is shown in its
 exact words where you asked, and as a toast in the corner; a review item you
@@ -1531,7 +1572,7 @@ resource (`GetParentResourceName()`):
 | op | Needs | `data` sent | `data` answered |
 |---|---|---|---|
 | `access` | read | — | `{ canWrite, canIdentify, pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version }` (no command names: the page is buttons only) |
-| `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering; `leftForStaff` counts the lines something settles by hand, `total` every line listed)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
+| `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering; `leftForStaff` counts the lines something settles by hand, `total` every line listed)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, alerts = { open }, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
 | `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
 | `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid }` |
 | `void` | write | `{ id, reason? }` | — (`message` is `/ch-void`'s answer, in the panel's words) |
@@ -1549,6 +1590,9 @@ resource (`GetParentResourceName()`):
 | `refresh` | write | — | `{ lines }` |
 | `diag` | read | `{ subject? }` (a server id) | `{ lines }` |
 | `flush` | write | — | `{ written }` |
+| `alerts` | read | `{ state = 'open'\|'acknowledged' }` | `{ state, rows = [{ id, level = 'always'\|'problem', text, contract, count, first_at, last_at, acknowledged_by, acknowledged_at }]` (newest first, at most `limit`; `text` scrubbed without `crimson.identity`)`, open, acknowledged, limit, discord = { on, webhook = 'alert'\|'staff'\|nil, waiting, posting, posted, lastOkAt, lastFail = { at, tries, status, alerts, test } } }` (never a webhook's address) |
+| `ackAlerts` | write | `{ ids = [id] }` (at most 100) | `{ done, already, missing }`; audited `admin_alerts_acknowledged` when it acknowledged any |
+| `testAlert` | write | — | `{ seconds }`; refused `no_webhook` or `discord_off`. Audited `admin_alert_test` either way |
 
 `line` (an escrow line) is `{ id, contract, slot, portion, source, amount?,
 item, quantity, state, owed_to, releasing_to, taken_from, staker, settled_to,
@@ -1575,7 +1619,8 @@ click for, and `ignored` is why a value the store holds was not applied at start
 
 | Convar | How | What |
 |---|---|---|
-| `crimson_hitman_webhook` | `set` in `server.cfg`, never `setr` | The staff Discord webhook (optional) |
+| `crimson_hitman_webhook` | `set` in `server.cfg`, never `setr` | The staff Discord webhook (optional); the admin panel's alerts go there too when the alert webhook is not set |
+| `crimson_hitman_alert_webhook` | `set` in `server.cfg`, never `setr` | The Discord webhook the admin panel's alerts are posted to (optional) |
 | `crimson_hitman_new_store` | `set crimson_hitman_new_store 1` in the console, once | `json` mode: start an empty store on purpose (see *Updating*) |
 | `web_baseUrl` | read | The public address kill photos are served from when `Config.Completion.PhotoPublicUrl` is unset |
 | `inventory:accounts` | read (`ox_inventory`'s, default `["money"]`) | Items that are money and so are refused as goods |
@@ -1644,6 +1689,7 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 | A value is refused in the admin panel with a sentence about another setting | It is checked against everything else in force, as the start would check it: a deadline past the lifetime, a least buyout above the most. Change the other one first |
 | `/ch-diag` shows `photo hosts: 0`, or kill photos are refused as "not on this server's allow list" | `'host'` storage only. Add your phone's upload host to `Config.Completion.ExtraPhotoHosts` (a bare domain), and check that lb-phone's own camera upload works |
 | Save to Photos keeps the photo in the app instead | `'server'` storage needs a public https address: set `Config.Completion.PhotoPublicUrl` or `web_baseUrl`, and add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. `/ch-diag` says which address it uses and whether it reaches this resource |
+| Alerts are not posted to Discord | Set `crimson_hitman_alert_webhook` (or `crimson_hitman_webhook`) in `server.cfg` with `set`, never `setr`, and check that **Post alerts to Discord** (`Config.Alerts.ToDiscord`) is on. The admin panel's **Alerts** section says which webhook it uses (never its address) and whether a post was given up after three tries, with Discord's answer; **Send a test alert** there checks the channel |
 | The startup warning says `Config.Audit.Webhook` is ignored | The URL in `config.lua` has already been sent to every player. Regenerate it in Discord and set the new one in `server.cfg` with `set crimson_hitman_webhook "..."` (never `setr`) |
 | `failed to start: mysql mode cannot start: the database is missing what it needs` | Your database user may not create or alter tables, and something is missing. The lines under it name each table, column, index or engine change, with the database's own reason (error 1142 is a missing privilege). Import `install/sql/crimson_hitman.sql` as a user that may create tables, run the `ALTER TABLE` statements it prints as one that may alter them, or grant this user `CREATE`, `ALTER` and `INDEX` on the database; then `ensure crimson-hitman` |
 | `/ch-settle` answers *ending unfinished; it settles itself within a minute*, and `/ch-stuck` lists the line the same way | An expiry, void, cancel or buyout raised an error (the console has it) after closing the contract and before handing that line over. Nothing for you to do: the maintenance tick finishes the ending as a restart would (a hitman's stake by why the contract ended, the rest back to the client) and says `contract … had closed with escrow its ending never handed over` (in the console with `Config.Debug` on, and in `/ch-diag` either way). If the console instead says `finishing the ending of contract … raised` on every pass, fix that cause; a restart finishes it too |

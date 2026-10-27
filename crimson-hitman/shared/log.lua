@@ -27,6 +27,13 @@
 --- Log.console is a staff command's own answer, printed as it is to the
 --- console that asked: the owner wants that whatever Debug says.
 ---
+--- Every Log.always line and every Log.problem is also handed, as it is
+--- said, to the admin panel's Alerts on the server (server/alerts.lua,
+--- Log.onAlert), which keeps it across restarts and posts it to Discord.
+--- Lines said before it is listening (the start's own checks) wait here
+--- for it. Handing one over only puts it in memory: it never waits on a
+--- store or a webhook, whatever path printed it.
+---
 --- Debug is read at every line, so switching it from the admin panel takes
 --- effect at the next line printed.
 
@@ -60,6 +67,12 @@ local seq = 0          -- the order lines were kept in, across both lists
 local raisedAt = {}    -- [name] = os.time() Log.raised last printed under it
 local heldBack = {}    -- [name] = how many raised under it since, kept and not printed
 local starts = 0       -- which start this is, so a wait an earlier one set says nothing
+local sink = nil       -- function(kind, text, at): the server's Alerts, once it listens
+local unheard = {}     -- { kind, text, at }[] lines said before it did, oldest first
+
+--- Lines kept for the Alerts until it listens. A start says a few; the cap
+--- is only so a loop before it can never grow this.
+Log.ALERTS_WAITING = 200
 
 --- How long Log.raised waits before printing under the same name again.
 --- An app request is one a player can send again as fast as its allowance
@@ -93,6 +106,22 @@ end
 --- The one print in the resource.
 local function emit(text)
     print(PREFIX .. text)
+end
+
+--- Hand a line printed whatever Debug says to the Alerts, or keep it for
+--- them until they listen. Only on the server (the client has no clock and
+--- no Alerts). Never raises into the caller: a line that could not be kept
+--- as an alert is still printed and kept for the diagnosis.
+---@param kind string 'always' | 'problem'
+---@param text string
+local function toAlerts(kind, text)
+    local at = now()
+    if not at then return end
+    if sink then
+        pcall(sink, kind, text, at)
+    elseif #unheard < Log.ALERTS_WAITING then
+        unheard[#unheard + 1] = { kind = kind, text = text, at = at }
+    end
 end
 
 --- Keep a line for the diagnosis, in `list` (recent or loud) bounded to
@@ -142,6 +171,7 @@ function Log.always(text)
     text = Log.plain(text)
     emit(text)
     keep(text, loud, Log.KEPT_ALWAYS)
+    toAlerts('always', text)
 end
 
 --- Say how many raises under `name` were held back since the last line
@@ -210,6 +240,7 @@ function Log.problem(text, count)
     end
     local entry = { text = text, count = math.max(1, math.floor(tonumber(count) or 1)), printed = false }
     problems[#problems + 1] = entry
+    toAlerts('problem', text)
     if Log.debugOn() then
         emit(text)
         entry.printed = true
@@ -259,12 +290,28 @@ function Log.console(line)
     print(Log.plain(line))
 end
 
---- A start begins: what an earlier one found and said is forgotten.
+--- A start begins: what an earlier one found and said is forgotten. The
+--- Alerts of the last start stop listening; this start's lines wait for
+--- this start's (Log.onAlert).
 function Log.beginStart()
     problems, boot, recent, loud, raisedAt, heldBack = {}, {}, {}, {}, {}, {}
     bootLeft = 0
     starts = starts + 1
     reported, booting = false, true
+    sink = nil
+end
+
+--- Where every line printed whatever Debug says goes besides the console:
+--- the server's Alerts (server/alerts.lua). Each line said before this is
+--- handed over now, oldest first, with the time it was said.
+---@param fn function(kind: string, text: string, at: integer)
+function Log.onAlert(fn)
+    sink = fn
+    local waiting = unheard
+    unheard = {}
+    for i = 1, #waiting do
+        pcall(fn, waiting[i].kind, waiting[i].text, waiting[i].at)
+    end
 end
 
 --- The start is over: lines from here on are kept as the newest few.
