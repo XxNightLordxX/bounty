@@ -25,7 +25,7 @@ local BATCH_ROWS = 200
 
 --- A stop while the database is not answering (mysql) cannot hand the queue
 --- to oxmysql: a statement it cannot send is never run and never comes back
---- (OXMYSQL.md §6, §7), and every queued row, financial ones among them, was
+--- (docs/oxmysql.md §6, §7), and every queued row, financial ones among them, was
 --- lost on the restart staff make for an outage. So the queue goes to
 --- FXServer's KVP store instead, `auditKept:<mode>:<n>`, KEPT_CHUNK rows a
 --- key, and the next start in that mode puts it back at the front of the

@@ -2630,6 +2630,46 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 38. Every document a comment cites is in the repository
+--------------------------------------------------------------------------
+--
+-- The harness's and the store's claims about oxmysql cited OXMYSQL.md, a
+-- file that was never committed, so a maintainer could check none of them.
+-- They cite docs/oxmysql.md now. Every `docs/<name>.md` named in the
+-- server, client, shared code and the tests (harness included) has to exist,
+-- and a bare OXMYSQL.md is not cited at all.
+
+do
+    local cited = {}
+    for _, path in ipairs(files) do cited[#cited + 1] = path end
+    for _, path in ipairs(walk('crimson-hitman/tests')) do
+        -- Not this file, which names both to say what it looks for.
+        if not path:find('static_check%.lua$') then cited[#cited + 1] = path end
+    end
+    local probe = ('see docs/nothing-here.md §1'):match('(docs/[%w_%-]+%.md)')
+    if probe ~= 'docs/nothing-here.md' or read(probe) then
+        failures[#failures + 1] = 'the cited-document check no longer reads a docs/ path out of '
+            .. 'its own sample, or the sample file exists, so a clean run of it means nothing'
+    end
+    for _, path in ipairs(cited) do
+        local src = read(path) or ''
+        local seen = {}
+        for doc in src:gmatch('(docs/[%w_%-]+%.md)') do
+            if not seen[doc] and doc ~= 'docs/nothing-here.md' then
+                seen[doc] = true
+                if not read(doc) then
+                    failures[#failures + 1] = ('%s cites %s, which is not in the repository'):format(path, doc)
+                end
+            end
+        end
+        if src:find('OXMYSQL.md', 1, true) then
+            failures[#failures + 1] = ('%s cites OXMYSQL.md, which is not in the repository; cite '
+                .. 'docs/oxmysql.md'):format(path)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

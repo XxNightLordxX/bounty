@@ -1795,8 +1795,10 @@ function StartCrimsonHitman()
             .. 'automatically.')
         Log.always('  Restore those files from a backup and restart to '
             .. 'recover them,')
-        Log.always('  or settle them by hand and remove their ids from '
-            .. 'data/store.json.')
+        Log.always('  or settle them by hand, stop the server, remove their '
+            .. 'ids from data/store.json')
+        Log.always('  and move data/contracts/<id>.json and any .new, .old or '
+            .. '.torn copy of it out of that folder.')
         Log.always('  This resource started without them rather than '
             .. 'not at all.')
         Log.always('============================================')
@@ -1855,7 +1857,16 @@ function Recover()
             goto continue
         end
 
-        if lastAlive and not contract.paused_since
+        -- Not one already overdue when the server went: its deadline had
+        -- gone while the clock ran, and nobody being away since stops it
+        -- (expireOne's overdue). Paused from the heartbeat, the expiry
+        -- pass could no longer see it was overdue, and a party away until
+        -- the lifetime turned the expiry into one that hands the hitman
+        -- back a stake they had lost. The first pass after the start
+        -- expires it, or waits while a kill made in time is finished.
+        local overdue = contract.deadline_at ~= nil and lastAlive ~= nil
+            and contract.deadline_at < lastAlive
+        if lastAlive and not contract.paused_since and not overdue
             and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED
                  or contract.state == CH.STATE.COMPLETING) then
             if Storage.startPause(contract.id, lastAlive) then
@@ -2303,10 +2314,18 @@ function MarkPresenceChanged()
     presenceChanged = true
 end
 
---- Called when a contract is created or resolved: either can move the
---- earliest deadline, and a new contract must not wait out a skip.
+--- How many times MarkContractsChanged has been called. A pass reads it at
+--- its start: one called while the pass ran (a deadline moved at one of
+--- its awaits) leaves the next pass due at once, rather than overwritten
+--- by a soonest worked out from the deadline as the pass read it.
+local contractsChanged = 0
+
+--- Called when a contract is created or resolved, or its deadline moved:
+--- each can move the earliest deadline, and a new contract must not wait
+--- out a skip.
 function MarkContractsChanged()
     nextDue = 0
+    contractsChanged = contractsChanged + 1
 end
 
 --- When the expiry pass last said that it could not update a contract, by
@@ -2468,6 +2487,7 @@ function ExpireContracts()
     local now = os.time()
     if not presenceChanged and now < nextDue then return 0 end
     presenceChanged = false
+    local changedAtStart = contractsChanged
 
     -- Live contracts only, which is all the pass acts on. A read that
     -- raised forgot whatever woke this pass (a logoff, a sentence) until
@@ -2507,8 +2527,10 @@ function ExpireContracts()
     end
 
     -- One second past the earliest deadline, so the pass that wakes for it
-    -- finds it genuinely overdue rather than exactly due.
-    nextDue = pass.soonest + 1
+    -- finds it genuinely overdue rather than exactly due. Unless a contract
+    -- changed while this pass ran: a deadline moved after the pass had read
+    -- it is not in pass.soonest, so the next tick looks again.
+    nextDue = contractsChanged == changedAtStart and pass.soonest + 1 or 0
     return pass.resolved
 end
 

@@ -1136,6 +1136,28 @@ async function main() {
 
   /* ---- needs review ---- */
   await (async function () {
+    // Kept without a good's metadata, which was too big for the store.
+    const answer = reviews();
+    answer.data.items[1].items = [
+      { id: 'ct00000002:4', source: 'item', item: 'lockpick', quantity: 2, metadata_omitted: true },
+      { id: 'ct00000002:5', source: 'weapon', item: 'WEAPON_PISTOL', quantity: 1 }];
+    const app = boot(standardServer({ reviews: answer }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('reviews');
+    await settled();
+    it('says which goods were kept without their metadata, before anybody gives them', function () {
+      const card = app.text(app.byId('rv-rv00000002'));
+      has(card, '2 × lockpick (without its metadata)');
+      has(card, 'WEAPON_PISTOL (weapon)');
+      lacks(card, 'WEAPON_PISTOL (weapon) (without', 'the weapon kept whole says nothing');
+      has(card, '1 of its goods were kept without their metadata');
+      lacks(app.text(app.byId('rv-rv00000001')), 'without their metadata', 'nor does an item that kept all of it');
+    });
+    clean(app, 'reviews, metadata left out');
+  })();
+
+  await (async function () {
     const server = standardServer();
     const app = boot(server);
     app.open(ADMIN);
@@ -1800,6 +1822,25 @@ async function main() {
   await (async function () {
     const answer = player();
     answer.data.playtime = { hours: 0, grandfathered: true, counted: true, counting: false, floor: 5,
+      from: 'tracker' };
+    const app = boot(standardServer({ player: answer }));
+    app.open(READER);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('says a character from before counts as having played enough where the tracker is what the rule reads', function () {
+      has(app.main(), 'they count as having played enough, whatever the hours say');
+      lacks(app.main(), 'not these hours');
+    });
+    clean(app, 'playtime, grandfathered');
+  })();
+
+  await (async function () {
+    const answer = player();
+    answer.data.playtime = { hours: 0, grandfathered: true, counted: true, counting: false, floor: 5,
       from: 'metadata' };
     const app = boot(standardServer({ player: answer }));
     app.open(READER);
@@ -1809,9 +1850,11 @@ async function main() {
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
     await settled();
-    it('says a character from before counts as having played enough, and where the rule reads elsewhere', function () {
-      has(app.main(), 'they count as having played enough, whatever the hours say');
+    it('where the rule reads elsewhere, says so and nothing about these hours deciding', function () {
       has(app.main(), 'The new-player rule reads their QBox metadata for them, not these hours.');
+      lacks(app.main(), 'played enough');
+      lacks(app.main(), 'Too new to be named');
+      lacks(app.main(), 'Enough to be named');
     });
     it('read-only staff see Set and Reset disabled', function () {
       eq(app.button('Set hours', app.byId('main')).disabled, true);

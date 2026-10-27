@@ -1158,8 +1158,12 @@ function Bridges.installCommands(modules)
         if (tonumber(item.amount) or 0) > 0 then
             what[#what + 1] = describeLine({ source = item.account or 'cash', amount = item.amount })
         end
+        local bare = 0
         for _, entry in ipairs(type(item.items) == 'table' and item.items or {}) do
-            if type(entry) == 'table' then what[#what + 1] = describeLine(entry) end
+            if type(entry) == 'table' then
+                what[#what + 1] = describeLine(entry)
+                if entry.metadata_omitted == true then bare = bare + 1 end
+            end
         end
         local parties = {}
         for _, party in ipairs(item.parties or {}) do
@@ -1170,6 +1174,11 @@ function Bridges.installCommands(modules)
             #parties > 0 and table.concat(parties, ', ') or 'no party recorded',
             item.created_at and ('  (' .. os.date('%Y-%m-%d %H:%M', item.created_at) .. ')') or ''))
         if item.about then reply(src, '    ' .. item.about) end
+        if bare > 0 then
+            reply(src, ('    %d of its goods were kept without their metadata (too big to keep): '
+                .. 'given back, they come without their serial, registration, attachments or '
+                .. 'what was inside'):format(bare))
+        end
 
         local known = {}
         for key, value in pairs(type(item.known) == 'table' and item.known or {}) do

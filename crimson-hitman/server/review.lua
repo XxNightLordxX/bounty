@@ -266,22 +266,37 @@ local function build(spec, id)
 
     -- On mysql the goods go into one TEXT column (Storage.MAX_TEXT_BYTES).
     -- An item too big for it was never written, kept only in this process
-    -- and lost at the next restart. Kept without the goods' metadata
-    -- instead: the ids, sources, names and counts staff decide by are
-    -- all still there, and lookNow reads only the ids.
+    -- and lost at the next restart. Kept with the biggest goods' metadata
+    -- left out instead, one at a time until it fits: a note or a container's
+    -- contents goes, and a weapon's serial, registration and attachments
+    -- beside it stay, since a refund or a pay gives the goods back from
+    -- this record (goodsOf). Each one left out says so (metadata_omitted),
+    -- and staff are told before and after they give it. The ids, sources,
+    -- names and counts are all still there, and lookNow reads only the ids.
     local items = spec.items
     local limit = Storage.MAX_TEXT_BYTES
     if limit and type(items) == 'table' then
-        local encoded, text = pcall(json.encode, items)
-        if not encoded or type(text) ~= 'string' or #text > limit then
-            local trimmed = {}
+        local function size(value)
+            local encoded, text = pcall(json.encode, value)
+            return (encoded and type(text) == 'string') and #text or math.huge
+        end
+        if size(items) > limit then
+            local trimmed, heavy, weight = {}, {}, {}
             for i, entry in ipairs(items) do
-                local copy = copyOf(entry)
-                if type(copy) == 'table' and copy.metadata ~= nil then
-                    copy.metadata = nil
-                    copy.metadata_omitted = true
+                trimmed[i] = copyOf(entry)
+                if type(trimmed[i]) == 'table' and trimmed[i].metadata ~= nil then
+                    heavy[#heavy + 1] = i
+                    weight[i] = size(trimmed[i].metadata)
                 end
-                trimmed[i] = copy
+            end
+            table.sort(heavy, function(a, b)
+                if weight[a] ~= weight[b] then return weight[a] > weight[b] end
+                return a < b
+            end)
+            for _, i in ipairs(heavy) do
+                if size(trimmed) <= limit then break end
+                trimmed[i].metadata = nil
+                trimmed[i].metadata_omitted = true
             end
             items = trimmed
         end
@@ -591,6 +606,8 @@ local function goodsOf(item, present)
                 quantity = entry.source == CH.SOURCE.WEAPON and 1
                     or math.max(1, math.floor(tonumber(entry.quantity) or 1)),
                 metadata = copyOf(entry.metadata),
+                -- Kept without it (build): given back without it too.
+                bare = entry.metadata_omitted == true or nil,
             }
         end
     end
@@ -688,6 +705,9 @@ local function carryOut(item, plan)
     local contractId = item.contract_id or item.id
 
     for _, entry in ipairs(plan.lines or {}) do
+        -- Goods the record kept without their metadata (build), counted for
+        -- the answer staff are given.
+        if entry.bare then result.bare = (result.bare or 0) + 1 end
         local line = Storage.readEscrowLine(entry.id)
         if not line then
             line = {
@@ -855,7 +875,7 @@ end
 ---@param opts table|nil { strict = true }: an item left part-way is finished only by a nil decision
 ---@return boolean ok
 ---@return string|nil err
----@return any detail on success { action, settled, pending, parked, continued } or
+---@return any detail on success { action, settled, pending, parked, bare, continued } or
 --- { action = 'settled', note, ignored }
 function Review.resolve(id, decision, staff, opts)
     id = Util.toId(id)

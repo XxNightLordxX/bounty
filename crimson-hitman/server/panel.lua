@@ -1273,7 +1273,11 @@ H.setPlaytime = function(src, data)
         seconds == 0 and ('%s\'s counted playtime is reset to 0 h (it was %s).'):format(name, hoursText(before))
             or ('%s\'s counted playtime is now %s (it was %s).'):format(name, hoursText(after), hoursText(before)),
     }
-    if view and view.grandfathered then
+    -- Grandfathered counts only where the tracker is what the rule reads
+    -- (Identity.playtimeHours): an export or QBox metadata answering for
+    -- them decides by its own hours, as /ch-diag says.
+    local tracked = view and (view.from == nil or view.from == 'tracker')
+    if tracked and view.grandfathered then
         parts[#parts + 1] = 'They are grandfathered (from before the tracker), so they count as having '
             .. 'played enough whatever their hours say.'
     end
@@ -1411,7 +1415,9 @@ end
 --- many of each there are, and where posting to Discord stands (whether a
 --- webhook is set, never its address). The text scrubbed for staff without
 --- IdentityAce as every other view is (Panel.scrubText), and with each staff
---- command's name put as the panel's own place for it.
+--- command's name put as the panel's own place for it. Who acknowledged one
+--- is a staff member's citizen id, shown only with IdentityAce, as the Logs
+--- view shows whoever acted.
 H.alerts = function(src, data)
     local Alerts = deps.alerts
     if not Alerts then return false, 'unavailable', 'Alerts are not running on this server yet.' end
@@ -1426,7 +1432,9 @@ H.alerts = function(src, data)
             first_at = a.first_at, last_at = a.last_at,
             text = deps.admin.panelWords(Panel.scrubText(a.text, canIdentify, a.contract_id, false,
                 parties)),
-            acknowledged_by = a.acknowledged_by, acknowledged_at = a.acknowledged_at,
+            acknowledged_by = canIdentify and a.acknowledged_by
+                or (a.acknowledged_by ~= nil and 'a staff member' or nil),
+            acknowledged_at = a.acknowledged_at,
         }
     end
     return true, nil, nil, {

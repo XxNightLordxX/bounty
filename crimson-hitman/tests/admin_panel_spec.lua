@@ -1187,6 +1187,16 @@ describe('a player\'s playtime in the admin panel', function()
 
         local grandfathered = ask(6, 'setPlaytime', { subject = 2, hours = 1 })
         truthy(grandfathered.message:find('They are grandfathered', 1, true), grandfathered.message)
+
+        -- Two hours in their QBox metadata: that is what the rule reads for
+        -- them, and grandfathered by the count decides nothing.
+        Env.players[2].PlayerData.metadata.playtime = 120
+        local elsewhere = ask(6, 'setPlaytime', { subject = 2, hours = 1 })
+        Env.players[2].PlayerData.metadata.playtime = nil
+        eq(elsewhere.data.playtime.from, 'metadata')
+        falsy(elsewhere.message:find('grandfathered', 1, true),
+            'not told they count as having played enough: ' .. elsewhere.message)
+        truthy(elsewhere.message:find('reads their QBox metadata for them', 1, true), elsewhere.message)
     end)
 
     it('needs crimson.admin itself, and takes only a number of hours for somebody who exists', function()

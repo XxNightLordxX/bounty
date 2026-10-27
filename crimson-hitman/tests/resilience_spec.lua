@@ -201,7 +201,7 @@ end)
 --- The harness's own outage: a database that stops answering, and one that
 --- answers after the caller stopped waiting (tests/harness/mysql_exec.lua).
 --- Later suites hold the store to both, so these hold the harness to what
---- oxmysql does (OXMYSQL.md §6): an await on a database that is gone is
+--- oxmysql does (docs/oxmysql.md §6): an await on a database that is gone is
 --- never answered and parks only its own thread; a statement already sent
 --- can still land after its caller gave up on it.
 describe('the harness can leave an await unanswered, or answer it late', function()

@@ -40,21 +40,27 @@ whole `.new` or `.old` beside it, puts that back, keeps a torn one as
 `<file>.torn`, and says so in the console; only where there is no whole copy
 does it stop or set the contract aside as described above. A `.new` or `.old`
 beside a good file is a write that never finished, and is left alone, with
-one exception: a whole `store.json.new` at least as new as `store.json` (its
-`seq` no lower) is the index a new contract was being named in when the
-server stopped, so it is used and put in place, and the console says so. On
+one exception: a whole `store.json.new` written after `store.json` (its
+`generation`, a count of the index's writes, is higher) is the index a new
+contract was being named in when the server stopped, so it is used and put in
+place, and the console says so. One at the same count is the same index, or
+one you edited `store.json` away from, and is not taken. On
 a server that cannot rename files here, each is written in place after its
 whole `.new` copy, which then stays beside it for a start to put back, and
 the console says so once.
 
 A start also lists `contracts/` (where the server build can list a folder).
-A contract's file that `store.json` does not name and that holds escrow not
-yet settled, or a contract still running, is what a crash between writing a
-new contract and naming it leaves: it is taken back in, and the console
-names it. Any other file there that the index does not name (a finished
-contract a prune had not yet removed) is left exactly where it is; nothing
-here is ever deleted for not being named. To drop a contract for good, take
-its id out of `store.json` and move its file out of `contracts/` too.
+A contract's file that `store.json` does not name, that was written after
+`store.json` while no index had named it yet (the file says so), and that
+holds escrow not yet settled or a contract still running, is what a crash
+between writing a new contract and naming it leaves: it is taken back in, and
+the console names it. Any other file there that the index does not name (a
+finished contract a prune had not yet removed, a stale `.old` copy, or a
+contract taken off `store.json`) is left exactly where it is and never read;
+nothing here is ever deleted for not being named. To drop a contract for
+good, stop the server, take its id out of `store.json`, and move
+`contracts/<id>.json` and any `.new`, `.old` or `.torn` copy beside it out of
+`contracts/`, so nothing is left that could be mistaken for it.
 
 A contract file that could not be written (one held open by a backup tool,
 an antivirus or an editor) is kept in memory and tried again at every flush,

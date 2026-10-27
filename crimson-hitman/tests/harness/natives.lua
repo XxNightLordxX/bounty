@@ -498,7 +498,7 @@ Natives.promise = {
 --- Env.parked until the promise settles, and Env.runTimers or Env.advance
 --- resume it then, as the scheduler resumes a thread on a later tick; one
 --- that never settles is never resumed, which is a database that stopped
---- answering (OXMYSQL.md §6). Pending outside a coroutine nothing could
+--- answering (docs/oxmysql.md §6). Pending outside a coroutine nothing could
 --- ever resume, so it raises: a test of an outage runs the handler in
 --- Env.spawn.
 function Natives.await(p)

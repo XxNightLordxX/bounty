@@ -999,11 +999,14 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
                     and ' What was typed was not used: the record says what was taken.' or '')
         end
         return ('Resolved: %d line(s) given, %d owed and given while they are in '
-            .. 'the city or at their next login, %d left for %s (giving raised). %s')
+            .. 'the city or at their next login, %d left for %s (giving raised). %s%s')
             :format(r.settled or 0, r.pending or 0, r.parked or 0,
                 panel and 'Stuck escrow' or ('/' .. tostring(names.stuck)),
                 r.continued and 'It had been decided before a stop and was finished as decided, '
-                    .. 'not as asked now.' or '')
+                    .. 'not as asked now. ' or '',
+                (tonumber(r.bare) or 0) > 0 and ('%d of the goods went without the metadata they '
+                    .. 'were taken with, which was too big to keep: a serial, registration, '
+                    .. 'attachments or what was inside is not as it was.'):format(r.bare) or '')
     end
     local why = {
         [CH.ERR.NOT_FOUND] = 'No review item has that id.',

@@ -583,6 +583,49 @@ describe('the expiry pass past a contract the store refuses', function()
     end)
 end)
 
+--- W079: a deadline moved while the pass ran (at one of its awaits, on
+--- mysql) was overwritten at its end by the soonest it had worked out from
+--- the deadline as it read it, and the contract ran on past its new one.
+describe('a deadline moved while the expiry pass runs', function()
+    it('wakes the next pass, so the new deadline is kept', function()
+        local main, s = bootMain()
+        Config.Limits.MaxActiveContractsPerTarget = 5
+        Config.Limits.MaxActiveContractsPerCreator = 5
+        local f = fixture(s)
+        local a = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        Env.addPlayer({ source = 19, citizenid = 'CREATOR2', license = 'license:c2',
+            cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+        local b = s.contracts.create(s.identity.resolve(19), { targetCid = 'TARGET01', reason = 'y',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(a and b, 'two contracts')
+
+        local live, read = s.storage.liveContracts, s.storage.readContract
+        s.storage.liveContracts = function()
+            local rows = live()
+            table.sort(rows, function(x, y) return x.id == a.id and y.id ~= a.id end)
+            return rows
+        end
+        -- The client shortens the first one while the pass reads the second.
+        local revised, why
+        s.storage.readContract = function(id, ...)
+            if id == b.id and revised == nil then
+                revised, why = s.contracts.revise(f.creator, a.id, { deadlineSeconds = 300 })
+            end
+            return read(id, ...)
+        end
+        main.markPresenceChanged()
+        main.expire()
+        s.storage.liveContracts, s.storage.readContract = live, read
+        truthy(revised, 'the revise landed: ' .. tostring(why))
+
+        local due = s.storage.readContract(a.id).deadline_at
+        Env.advance(due - os.time() + 2)
+        main.expire()
+        eq(s.storage.readContract(a.id).state, CH.STATE.EXPIRED, 'expired at the first pass after its new deadline')
+    end)
+end)
+
 describe('a party gone in the seconds after the deadline, as this resource ships', function()
     local Shipped = require('crimson-hitman.tests.harness.shipped')
 

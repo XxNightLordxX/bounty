@@ -1014,6 +1014,45 @@ describe('an item for staff that would not fit its column', function()
         eq(s.review.retryUnwritten(), 0, 'nothing left waiting')
     end)
 
+    --- Every good's metadata went once the list was too big, a weapon's
+    --- hundred bytes of serial and registration with the 40 KB notes, and
+    --- a refund then gave the weapon back as a new one, with nothing said.
+    it('mysql: leaves out the biggest metadata only, and says what went back without it', function()
+        local s = stackOn('mysql')
+        local weapon = { serial = 'SER123', registered = 'Vic Marlowe', durability = 12,
+                         components = { 'suppressor' } }
+        local id = s.review.open({
+            kind = 'escrow_take_unverified', contract_id = 'ct00000044',
+            cids = { from = 'CREATOR1' },
+            items = {
+                { id = 'ct00000044:1', source = 'item', item = 'lockpick', quantity = 1,
+                  metadata = { note = ('n'):rep(40000) } },
+                { id = 'ct00000044:2', source = 'weapon', item = 'WEAPON_PISTOL', quantity = 1,
+                  metadata = weapon },
+                { id = 'ct00000044:3', source = 'item', item = 'radio', quantity = 1,
+                  metadata = { note = ('r'):rep(40000) } },
+            },
+        })
+        local item = s.storage.readReview(id)
+        truthy(item, 'written')
+        eq(item.items[1].metadata_omitted, true, 'one of the two big ones left out')
+        eq(item.items[2].metadata.serial, 'SER123', 'the weapon\'s own kept')
+        eq(item.items[2].metadata_omitted, nil)
+        eq(#item.items[3].metadata.note, 40000, 'and the other big one, once the list fits')
+
+        local ok, err, detail = s.review.resolve(id, { action = 'refund', who = 'from', goods = true }, 'x')
+        truthy(ok, tostring(err))
+        eq(detail.bare, 1, 'one good went back without its metadata')
+        local answer = s.admin.reviewAnswer(id, ok, err, detail)
+        truthy(answer:find('1 of the goods went without the metadata', 1, true), answer)
+        local pistol
+        for _, stack in ipairs(Env.players[1]._inventory) do
+            if stack.name == 'WEAPON_PISTOL' then pistol = stack end
+        end
+        truthy(pistol and pistol.metadata and pistol.metadata.serial == 'SER123',
+            'the pistol back with its serial')
+    end)
+
     it('json: keeps the metadata whole', function()
         local s = stackOn('json')
         local id = s.review.open({

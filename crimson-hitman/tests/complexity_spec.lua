@@ -1009,7 +1009,7 @@ describe('complexity: the prune and a money write, in json and memory', function
         end
     end)
 
-    it('json: a money write writes every dirty contract file without walking every message', function()
+    it('json: a money write writes its own contract file, the flush the rest, without walking every message', function()
         local store = filled('json', 300, 100, CH.STATE.ACTIVE, nil)
         truthy(store.save(true))
         -- Each changed by a message, which waits for the capped flush.
@@ -1024,12 +1024,19 @@ describe('complexity: the prune and a money write, in json and memory', function
             if file:find('^data/contracts/') then written = written + 1 end
         end
         local ok, err = pcall(store.setReason, 'ctbusy00001', 'changed')
+        truthy(ok, tostring(err))
+        -- W160: one file inside the player's request, not 300. The index
+        -- names every one of them already, so none is a file it names that
+        -- is not on disk.
+        eq(written, 1, 'the money one alone')
+        eq(json.decode(Natives.files['data/contracts/ctbusy00001.json']).contract.reason, 'changed')
+        written = 0
+        truthy(store.flush())
+        eq(written, Config.Database.Json.MaxDirtyShardsPerFlush or 25, 'the flush takes its share')
+        truthy(store.save(true))
         Natives.saveFile = nil
         restore()
-        truthy(ok, tostring(err))
-        -- Decided: a money write still writes every dirty file with it, so
-        -- each file stays as the index written at the same moment knows it.
-        eq(written, 300, 'every dirty contract file, the money one with them')
+        eq(written, 299, 'and the rest are written all the same')
         eq(reads(), 0, 'each gathered from its own messages, not a walk of all 30,300')
         local shard = json.decode(Natives.files['data/contracts/ctbusy00150.json'])
         local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0

@@ -192,7 +192,7 @@ Util.DB_ERROR_MAX = 300
 --- A database error short enough to keep on a record and to print, with
 --- none of the values the statement was sent.
 ---
---- oxmysql's await raises its whole message (OXMYSQL.md §5): the statement,
+--- oxmysql's await raises its whole message (docs/oxmysql.md §5): the statement,
 --- then every parameter as JSON on a line of its own, then the server's own
 --- words. The parameters are players' data (citizen ids, character names, a
 --- reason, an item's whole metadata), and a review item kept that whole

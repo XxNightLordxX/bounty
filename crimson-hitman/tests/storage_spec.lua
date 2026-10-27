@@ -1043,7 +1043,7 @@ describe('the mysql executor refuses a statement it cannot read', function()
     end)
 end)
 
---- MariaDB 10.11 runs oxmysql's connections in strict mode (OXMYSQL.md
+--- MariaDB 10.11 runs oxmysql's connections in strict mode (docs/oxmysql.md
 --- §5): a value its column cannot hold is refused, not cut or wrapped. The
 --- executor stored anything, so a paused_ms past INT, money past INT and
 --- item metadata past TEXT never failed a test, and three fixtures above
@@ -1164,6 +1164,28 @@ describe('the mysql executor refuses what strict MariaDB refuses', function()
             { query = INSERT, values = { 'b', 1, 'x', 'm' } },
         }), true)
         eq(#Exec.run('SELECT * FROM t', {}), 2)
+    end)
+
+    --- A process killed part-way through a transaction (restart_spec wraps
+    --- Exec.run to raise after its statement) commits none of it, and its
+    --- caller dies with it rather than reading a refusal.
+    it('raises what is not a refusal inside a transaction, and keeps none of it', function()
+        loaded()
+        local run, seen = Exec.run, 0
+        Exec.run = function(...)
+            local result = run(...)
+            seen = seen + 1
+            if seen == 2 then error('process killed', 0) end
+            return result
+        end
+        local ok, err = pcall(MySQL.transaction.await, {
+            { query = INSERT, values = { 'a', 1, 'x', 'm' } },
+            { query = INSERT, values = { 'b', 1, 'x', 'm' } },
+        })
+        Exec.run = run
+        falsy(ok, 'answered as a refusal instead')
+        eq(err, 'process killed')
+        eq(#Exec.run('SELECT * FROM t', {}), 0, 'nothing of it committed')
     end)
 
     it('raises nothing for a direct call the database refuses, and never answers it', function()
@@ -2671,19 +2693,33 @@ describe('json sharding', function()
                      { Config.Database.Json, 'SyncOnFinancialWrite', false } }, function()
             for i = 1, 6 do store.writeContract(contract('ct' .. i)) end
 
+            -- New ones whatever the budget: the index written with them names
+            -- them, and a crash after it would set aside every one not there.
             store.flush()
-            local after = 0
+            local named = 0
             for i = 1, 6 do
-                if Natives.files['data/contracts/ct' .. i .. '.json'] then after = after + 1 end
+                if Natives.files['data/contracts/ct' .. i .. '.json'] then named = named + 1 end
             end
-            eq(after, 2, 'one flush writes at most its budget')
+            eq(named, 6, 'a contract the index is about to name is written with it')
+
+            local function changed()
+                local n = 0
+                for i = 1, 6 do
+                    local shard = json.decode(Natives.files['data/contracts/ct' .. i .. '.json'])
+                    if shard.contract.reason == 'changed' then n = n + 1 end
+                end
+                return n
+            end
+            for i = 1, 6 do
+                local c = store.readContract('ct' .. i)
+                c.reason = 'changed'
+                store.writeContract(c)
+            end
+            store.flush()
+            eq(changed(), 2, 'one flush writes at most its budget of the others')
 
             store.close()
-            local final = 0
-            for i = 1, 6 do
-                if Natives.files['data/contracts/ct' .. i .. '.json'] then final = final + 1 end
-            end
-            eq(final, 6, 'a shutdown writes everything regardless')
+            eq(changed(), 6, 'a shutdown writes everything regardless')
         end)
     end)
 
@@ -3810,7 +3846,7 @@ describe('the json audit log', function()
 end)
 
 --- S15, S16, S17: oxmysql never answers a statement it could not get a
---- connection for (OXMYSQL.md §6), and a thread waiting on it was never
+--- connection for (docs/oxmysql.md §6), and a thread waiting on it was never
 --- resumed. Every statement is raced against
 --- Config.Database.QueryTimeoutSeconds now, and a probe confirms an outage
 --- before the store stops sending (server/storage/mysql.lua).

@@ -456,7 +456,10 @@ describe('the Alerts section', function()
         local acked = ask(7, 'alerts', { state = 'acknowledged' })
         eq(#acked.data.rows, 1)
         eq(acked.data.rows[1].text, 'first line')
-        eq(acked.data.rows[1].acknowledged_by, 'ADMIN001')
+        eq(acked.data.rows[1].acknowledged_by, 'a staff member',
+            'a reader without the identity ACE is not told whose citizen id acknowledged it')
+        eq(ask(8, 'alerts', { state = 'acknowledged' }).data.rows[1].acknowledged_by, 'ADMIN001',
+            'one with it is')
         eq(acked.data.open, 1)
     end)
 

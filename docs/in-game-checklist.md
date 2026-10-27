@@ -353,6 +353,11 @@ in your database before the first start of this version.
       `admin_playtime_set` rows with the hours before and after. A staff
       member with only an extra ACE sees both buttons disabled; one without
       `crimson.identity` can still use them
+- [ ] Only where `Config.Immunity.PlaytimeProvider` is set (or QBox metadata
+      carries a playtime figure): the card and the **Set hours** answer say
+      *… reads your playtime export (or their QBox metadata) for them, not
+      these hours.* and nothing else about whether they have played enough,
+      grandfathered or not
 - [ ] Log the new character out and back in, then `restart crimson-hitman`:
       the hours are where they were (within a minute), and do not grow by the
       time the resource was stopped. In `json` mode `data/playtime.json` holds
@@ -992,10 +997,11 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       and the same line again says *said 2 times* rather than listing it twice
 - [ ] **Acknowledge** on one alert, and **Acknowledge all shown**, each turn
       brass on the first click and act on the second; the alert moves to
-      **Acknowledged** with your name and the time, the badge goes down, and
-      the **Logs** have an `admin_alerts_acknowledged` row. On the
-      `command`-only account neither button is there and **Send a test alert**
-      is greyed out
+      **Acknowledged** with your citizen id and the time, the badge goes
+      down, and the **Logs** have an `admin_alerts_acknowledged` row. On the
+      `command`-only account neither button is there, **Send a test alert**
+      is greyed out, and an acknowledged alert says *a staff member* rather
+      than whose citizen id acknowledged it
 - [ ] On the account without `crimson.identity`, an alert naming an anonymous
       contract (void one whose ending raises, say) reads *the client* and
       *Anonymous*, never a citizen id, licence or the client's name; on the

@@ -1,6 +1,6 @@
 --- Two handlers interleaved at every database await, on mysql.
 ---
---- On a live server every oxmysql await yields its coroutine (OXMYSQL.md
+--- On a live server every oxmysql await yields its coroutine (docs/oxmysql.md
 --- §7), and anything else in the resource may run before it resumes: other
 --- net events, the tick, a command. The executor in mysql_exec.lua answers
 --- at once, so a suite never sees that. This boots the real server/main.lua
@@ -22,8 +22,10 @@
 --- stuck: no line `releasing`, no contract `completing`, no busy key, no
 --- line in flight, no claim counted running.
 ---
---- Ported from the scratchpad probe that found the mysql races
---- (sql/interleave/lib.lua). Nothing in here ships to the server.
+--- Each scenario's second request is landed before and after every await
+--- its first one makes, never the other way round: a pairing that matters
+--- both ways is written twice (interleave_spec's accept x buyout and buyout
+--- x accept). Nothing in here ships to the server.
 
 local Exec = require('crimson-hitman.tests.harness.mysql_exec')
 

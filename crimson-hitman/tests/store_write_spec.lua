@@ -809,6 +809,127 @@ describe('a write the server stopped part-way', function()
 end)
 
 --------------------------------------------------------------------------
+-- A contract taken off the index on purpose
+--------------------------------------------------------------------------
+--
+-- The scan of contracts/ for a new contract's file the index had yet to
+-- name (W158) took back in any file holding money or a running contract.
+-- A contract pruned with a stale .old left beside it, or one staff took off
+-- store.json by hand, came back at the next start, and a cancel then
+-- refunded its money a second time.
+
+describe('a contract taken off the index on purpose', function()
+    local FILE = 'data/contracts/ctgone01.json'
+
+    local function reopen()
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        Env.console = {}
+        local store = require('crimson-hitman.server.storage.json')
+        local ok, err = pcall(store.open)
+        truthy(ok, tostring(err))
+        return store
+    end
+
+    --- A running contract holding 5000, written and named. `first` is its
+    --- file as first written, before any index named it.
+    local function placed()
+        local store = freshStore()
+        store.writeContract({ id = 'ctgone01', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        local first = Natives.files[FILE]
+        store.writeEscrow('ctgone01', { { id = 'ctgone01:1', contract_id = 'ctgone01', slot = 1,
+            portion = 'baseline', source = 'cash', amount = 5000, state = CH.ESCROW_STATE.HELD } })
+        truthy(store.save(true))
+        return store, first
+    end
+
+    local function dropById()
+        local index = json.decode(Natives.files['data/store.json'])
+        local kept = {}
+        for _, id in ipairs(index.contractIds) do
+            if id ~= 'ctgone01' then kept[#kept + 1] = id end
+        end
+        index.contractIds = kept
+        Natives.files['data/store.json'] = json.encode(index)
+    end
+
+    local function takenBack()
+        return table.concat(Env.console, '\n'):find('taken back in', 1, true) ~= nil
+    end
+
+    it('pruned, its copies go with it, and a stale .old is never taken back in', function()
+        local store, first = placed()
+        local c = store.readContract('ctgone01')
+        c.state, c.resolved_at = CH.STATE.CANCELLED, os.time() - 31 * 86400
+        store.writeContract(c)
+        truthy(store.claimEscrowLine('ctgone01:1', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        truthy(store.settleEscrowLine('ctgone01:1', 'C'))
+        Natives.files[FILE .. '.old'] = first
+        Natives.files[FILE .. '.torn'] = '{"contract":'
+        store.prune()
+        truthy(store.save(true))
+        eq(store.readContract('ctgone01'), nil, 'pruned')
+        eq(Natives.files[FILE], nil)
+        eq(Natives.files[FILE .. '.old'], nil, 'its .old with it')
+        eq(Natives.files[FILE .. '.torn'], nil, 'and a torn one set aside')
+
+        -- An .old a remove could not take (an antivirus holding it), as the
+        -- contract was while it was running and held the money.
+        Natives.files[FILE .. '.old'] = first
+        local again = reopen()
+        eq(again.readContract('ctgone01'), nil, 'not back as running')
+        falsy(takenBack(), table.concat(Env.console, '\n'))
+        eq(again.inspect().contracts, 0, 'nor counted by a mode switch')
+    end)
+
+    it('taken off store.json by hand with its file left in contracts/, stays off', function()
+        local store = placed()
+        store.close()
+        dropById()
+        local again = reopen()
+        eq(again.readContract('ctgone01'), nil, 'staff dropped it, and it stays dropped')
+        falsy(takenBack(), table.concat(Env.console, '\n'))
+        truthy(Natives.files[FILE], 'its file left where it is')
+        again.close()
+        falsy((Natives.files['data/store.json'] or ''):find('ctgone01', 1, true),
+            'and the index does not name it again')
+    end)
+
+    it('taken off by hand while its file is only as first written, before any index named it', function()
+        local store, first = placed()
+        store.close()
+        dropById()
+        Natives.files[FILE] = first
+        local again = reopen()
+        eq(again.readContract('ctgone01'), nil,
+            'an index named it after that file was written, so it is not a new one')
+        falsy(takenBack(), table.concat(Env.console, '\n'))
+    end)
+
+    --- Where renames are refused every file keeps a whole .new beside it,
+    --- store.json's at the same count as store.json. Taken as newer, it put
+    --- back an id staff had taken out, and said the server stopped mid-write.
+    it('on a server that cannot rename, a hand edit of store.json is kept', function()
+        local store = freshStore()
+        Natives.renameRefused = true
+        store.writeContract({ id = 'ctgone01', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        store.writeEscrow('ctgone01', { { id = 'ctgone01:1', contract_id = 'ctgone01', slot = 1,
+            portion = 'baseline', source = 'cash', amount = 5000, state = CH.ESCROW_STATE.HELD } })
+        store.close()
+        truthy(Natives.files['data/store.json.new'], 'the copy stays beside it')
+        dropById()
+        Natives.files[FILE] = nil
+        local again = reopen()
+        Natives.renameRefused = nil
+        eq(again.readContract('ctgone01'), nil, 'the edit stands')
+        falsy(table.concat(Env.console, '\n'):find('newer of the two', 1, true),
+            'and nothing says the server stopped mid-write: ' .. table.concat(Env.console, '\n'))
+        falsy(takenBack(), 'nor is it taken back from its own .new')
+    end)
+end)
+
+--------------------------------------------------------------------------
 -- An abandon a store call stopped part-way
 --------------------------------------------------------------------------
 --

@@ -696,6 +696,35 @@ describe('server downtime and the deadline', function()
         end)
     end
 
+    --- W077 at boot: a contract already overdue at the last heartbeat (the
+    --- pass held off while a kill was finished, or a refused ending waiting
+    --- for its retry) was paused from that heartbeat, which hid that it was
+    --- overdue; with the client away until the lifetime, the lifetime ended
+    --- it and handed the hitman back the stake they had lost.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': one overdue when the server went expires at the first pass, client away or not', function()
+            local _, s, _, c = nearlyDue(mode)
+            local hitmanBefore = money(3)
+            Env.advance(s.storage.readContract(c.id).deadline_at - os.time() + 5)
+            -- Alive five seconds past the deadline, the pass not yet round.
+            s.storage.heartbeat(os.time())
+
+            local creator = Env.players[1]
+            Env.removePlayer(1)
+            Env.advance(30)
+            local main2, s2 = restart(mode, s)
+            eq(s2.storage.readContract(c.id).paused_since, nil, mode .. ': not paused from the heartbeat')
+            main2.markPresenceChanged()
+            main2.tick()
+            local after = s2.storage.readContract(c.id)
+            eq(after.state, CH.STATE.EXPIRED, mode .. ': expired with the client still away')
+            eq(after.resolution, 'expired', mode .. ': as overdue, not as the lifetime')
+            eq(money(3), hitmanBefore, mode .. ': and the stake is not handed back')
+            Env.players[1] = creator
+            Env.byCitizen['CREATOR1'] = 1
+        end)
+    end
+
     --- heartbeat.json was rewritten in place every tick, the file written
     --- most often. A crash that left it empty left the start with no idea
     --- when the server went down: the downtime was charged to the deadline,
@@ -4790,7 +4819,7 @@ describe('a payment\'s recording write that never went out, then a restart', fun
     end
 
     --- Nothing after the write runs at all here: the await never answers (a
-    --- database gone mid-run, OXMYSQL.md §6) and staff restart the resource.
+    --- database gone mid-run, docs/oxmysql.md §6) and staff restart the resource.
     --- Only the record kept before the write was sent says what was taken.
     it('mysql: a create whose escrow write never answers is settled by the next start', function()
         local _, s = boot('mysql')

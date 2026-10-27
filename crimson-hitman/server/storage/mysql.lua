@@ -9,7 +9,7 @@ local Log = CrimsonBoot.requireShared('log')
 local MySQLStore = {}
 
 --- Every statement here waits on another process, which may never answer
---- (OXMYSQL.md §6). The review queue reads this to keep the item a payment's
+--- (docs/oxmysql.md §6). The review queue reads this to keep the item a payment's
 --- recording write would open in resource KVP before that write is sent
 --- (Review.prepare), so a restart while it waits loses no record of money
 --- already taken.
@@ -22,7 +22,7 @@ local seq = 0
 --------------------------------------------------------------------------
 
 --- Once oxmysql's pool exists, a statement that cannot get a connection is
---- never answered at all (OXMYSQL.md §6), and a thread waiting on it is
+--- never answered at all (docs/oxmysql.md §6), and a thread waiting on it is
 --- never resumed, so no pcall around it ever returns. An outage of a second
 --- stopped the handover loop, the condition sampler and the maintenance
 --- tick until a restart, left every request that was waiting holding its
@@ -50,7 +50,7 @@ local NO_ANSWER = 'crimson-hitman: the database did not answer within '
 local NOT_SENT = 'crimson-hitman: not sent, the database is not answering'
 
 --- Words the driver uses for a connection lost under a statement: the
---- statement may or may not have committed (OXMYSQL.md §6), so for a caller
+--- statement may or may not have committed (docs/oxmysql.md §6), so for a caller
 --- it is the same as no answer.
 local LOST = { 'Connection lost', 'ECONNRESET', 'PROTOCOL_CONNECTION_LOST' }
 
@@ -68,7 +68,7 @@ local waiting = {}             -- [promise] = { since = Util.monotonicMs(), what
 
 --- A statement's first 60 characters, whitespace squashed, or what a
 --- transaction is: what the console and /ch-diag name it by. Never its
---- parameters (OXMYSQL.md §12.7): they carry citizen ids and names.
+--- parameters (docs/oxmysql.md §12.7): they carry citizen ids and names.
 ---@param sql string|table
 ---@return string
 local function words(sql)
@@ -1148,7 +1148,7 @@ end
 --- the database does not answer it, with a console line every
 --- OPEN_SAY_EVERY seconds. During a full server start oxmysql's pool may
 --- not exist yet, and every statement then waits for its next connection
---- try, every 30 s (OXMYSQL.md §6). This start used to wait on that first
+--- try, every 30 s (docs/oxmysql.md §6). This start used to wait on that first
 --- statement for ever, silently, with no handler registered, and stayed
 --- dead after the database came back. Any other error raises as before.
 local OPEN_RETRY_MS, OPEN_SAY_EVERY = 5000, 30
@@ -1368,7 +1368,7 @@ end
 --- A compare-and-set, so the record the server writes again after the first
 --- write went unanswered (server/review.lua's deciders), or the first landing
 --- late, never lands on a contract another buyout has queued or one that has
---- closed. Matched rows, as oxmysql's update answers them (OXMYSQL.md §3): a
+--- closed. Matched rows, as oxmysql's update answers them (docs/oxmysql.md §3): a
 --- row already holding this buyout counts, so "already ours" is true.
 ---@return boolean recorded
 function MySQLStore.recordBailout(id, fields)
@@ -1420,7 +1420,7 @@ end
 --- Set only on a contract a hitman holds, and only when it last changed no
 --- later than `notBefore`: one change every Meeting.EVERY_SECONDS, kept by
 --- the statement itself, so two requests read at the same moment cannot
---- both land. Matched rows, as oxmysql's update answers them (OXMYSQL.md
+--- both land. Matched rows, as oxmysql's update answers them (docs/oxmysql.md
 --- §3): the same point set again counts.
 ---@return boolean set
 function MySQLStore.setMeeting(id, x, y, at, notBefore)

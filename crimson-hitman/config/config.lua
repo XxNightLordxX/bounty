@@ -1202,10 +1202,13 @@ Config.Database = {
         --- rather than a rewrite of the whole store — but a burst of
         --- activity should not turn one flush into a stall either. Anything
         --- over the budget is written on the next flush, and a shutdown
-        --- writes all of it regardless, as does a money write while
-        --- SyncOnFinancialWrite is on, so every file stays as the index
-        --- written with it knows it. A file the disk refuses is skipped and
-        --- tried again at the next flush; the others are still written.
+        --- writes all of it regardless. A contract new since the index was
+        --- last written is always written, budget or not, so the index never
+        --- names a file that is not there. A money write while
+        --- SyncOnFinancialWrite is on writes only the contract it changed
+        --- (and any new one), never waiting on the others. A file the disk
+        --- refuses is skipped and tried again at the next flush; the others
+        --- are still written.
         MaxDirtyShardsPerFlush = 25,
     },
 }

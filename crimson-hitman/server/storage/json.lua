@@ -83,6 +83,24 @@ local recordsOnDisk = false
 --- and the index is the only record of which files exist.
 local shardIds = {}
 
+--- How many times an index has been built: carried in store.json as
+--- `generation`, read back at each start, and one more for every index
+--- written. A start takes a whole store.json.new over store.json only where
+--- its count is higher (newerIndex), and takes back a contract file the
+--- index does not name only where that file was written after the index on
+--- disk, while no index had named it yet (adoptable).
+local generation = 0
+
+--- The contract ids the index on disk names: the one this start read, or
+--- the last one written. A contract file written while its id is not in it
+--- carries `unindexed = generation` (shardOf).
+local indexedIds = {}
+
+--- Contracts a money write changed whose file is not on disk yet. A money
+--- write writes these, and any contract the index on disk does not name
+--- yet, rather than every changed file (JsonStore.save).
+local urgentShards = {}
+
 --- Contracts the index names but whose file could not be read.
 ---
 --- Kept, rather than forgotten: the id is the only handle anybody has on
@@ -195,10 +213,11 @@ local escrowBy, hitmenBy = {}, {}
 --- db.messages holds them, kept as each is written, trimmed or pruned.
 ---
 --- shardOf walked every message in the store for each shard it wrote, and a
---- money write writes every dirty shard at once (SyncOnFinancialWrite): with
---- 300 contracts dirtied by a message each over 30,000 messages, one coin
---- moving walked them all 300 times, about a second inside the request that
---- moved it. The prune did the same once per contract it removed.
+--- money write wrote every dirty shard at once (SyncOnFinancialWrite; it
+--- writes only its own now, JsonStore.save): with 300 contracts dirtied by a
+--- message each over 30,000 messages, one coin moving walked them all 300
+--- times, about a second inside the request that moved it. The prune did the
+--- same once per contract it removed.
 local messagesBy = {}
 
 local function indexMessage(m)
@@ -264,6 +283,9 @@ local function shardOf(contractId)
     for key, row in pairs(db.mutes) do
         if row.contract_id == contractId then shard.mutes[key] = row end
     end
+    -- Written before any index on disk named it: a start that finds it with
+    -- an index no newer than this takes it back in (adoptable).
+    if not indexedIds[contractId] then shard.unindexed = generation end
 
     return shard
 end
@@ -645,13 +667,20 @@ local function buildIndex()
     -- resort a start has for dating the downtime before it where the
     -- heartbeat file did not survive (JsonStore.lastHeartbeat).
     index.saved_at = os.time()
+    -- Which index this is (generation). Not saved_at, whose second is too
+    -- coarse: two indexes written in one second are told apart by this.
+    generation = generation + 1
+    index.generation = generation
     return index
 end
 
 --- Write the index, and then what waited on it: every day it lists may
 --- now have its file written, and every file it no longer lists may go.
 local function writeIndex()
-    if not writeFile(path(), buildIndex()) then return false end
+    local index = buildIndex()
+    if not writeFile(path(), index) then return false end
+    indexedIds = {}
+    for i = 1, #index.contractIds do indexedIds[index.contractIds[i]] = true end
     for day in pairs(auditLog.lines) do auditLog.named[day] = true end
     unlinkPending()
     return true
@@ -946,7 +975,7 @@ function JsonStore.assertWritable()
     return true
 end
 
---- A whole store.json.new beside a whole store.json, and at least as new.
+--- A whole store.json.new beside a whole store.json, and newer.
 ---
 --- A new contract is written as its file first and then the index naming
 --- it, through store.json.new renamed over store.json (writeRaw). A server
@@ -954,9 +983,15 @@ end
 --- whole, beside the one that did not, and the start kept the old one:
 --- the contract, its escrow and the client's money were gone, with nothing
 --- said. Every whole file is written as its .new before anything moves, so
---- a whole .new is the newer of the two, or the same file where renames are
---- refused (and then nothing differs). `seq` only goes up, so one lower
---- than the index's is a copy something else left and is not taken.
+--- a whole .new written after store.json is the index that rename was for.
+---
+--- Newer only by its count (generation), strictly. Where renames are refused
+--- the .new is the same index as store.json and stays beside it, so one
+--- taken at the same count undid every hand edit of store.json at the next
+--- start (an id taken out came back) and said the server had stopped mid
+--- write. Between two indexes from before the count, only a higher `seq`
+--- says the copy is newer; at the same one the index stands, and a new
+--- contract's file is still taken back in by the scan of contracts/.
 ---@param raw string store.json as read, whole
 ---@return string|nil fresh the copy's text, where it is to be used
 local function newerIndex(raw)
@@ -964,14 +999,22 @@ local function newerIndex(raw)
     if fresh == nil or fresh == '' or fresh == raw then return nil end
     local copy, current = decodeTable(fresh), decodeTable(raw)
     if not (copy and current and type(copy.contractIds) == 'table') then return nil end
-    if (tonumber(copy.seq) or 0) < (tonumber(current.seq) or 0) then return nil end
+    local copyCount, currentCount = tonumber(copy.generation), tonumber(current.generation)
+    if copyCount or currentCount then
+        -- One written by a version before the count is the older of the two.
+        if not copyCount or (currentCount and copyCount <= currentCount) then return nil end
+        return fresh
+    end
+    if (tonumber(copy.seq) or 0) <= (tonumber(current.seq) or 0) then return nil end
     return fresh
 end
 
 --- The contract files in contracts/ that `named` does not name, by id: a
---- file of its own, or only its whole copy (<id>.json.new or .old). Empty
---- where this server cannot list a folder (io.readdir), as photos'
---- sweepFiles finds it.
+--- file of its own, or only its whole copy (<id>.json.new). Not one with only
+--- a <id>.json.old: that is the file as it was before a later write of it
+--- (moveOver), and never the only whole copy of a contract no index has
+--- named yet. Empty where this server cannot list a folder (io.readdir), as
+--- photos' sweepFiles finds it.
 ---@param named table<string, boolean>
 ---@return string[] ids
 local function unnamedShards(named)
@@ -983,7 +1026,7 @@ local function unnamedShards(named)
     pcall(function()
         for name in listing:lines() do
             local id = type(name) == 'string' and (name:match('^([%w_%-]+)%.json$')
-                or name:match('^([%w_%-]+)%.json%.new$') or name:match('^([%w_%-]+)%.json%.old$'))
+                or name:match('^([%w_%-]+)%.json%.new$'))
             if id and not named[id] and not seen[id] then
                 seen[id] = true
                 ids[#ids + 1] = id
@@ -995,15 +1038,14 @@ local function unnamedShards(named)
     return ids
 end
 
---- One contract file as a start reads it: the file, or else its last whole
---- copy (read only, nothing moved).
+--- A contract file the index does not name, as a start reads it: the file,
+--- or else its whole .new copy (read only, nothing moved). Never its .old,
+--- which is the file before a write that came after it (unnamedShards).
 local function readShard(id)
     local file = shardPath(id)
     if not file then return nil end
-    local shard = decodeTable(LoadResourceFile(resource, file))
-    if shard then return shard end
-    local _, copy = recoverFile(file, decodeTable, false)
-    return copy
+    return decodeTable(LoadResourceFile(resource, file))
+        or decodeTable(LoadResourceFile(resource, file .. NEW))
 end
 
 --- Whether a contract file the index does not name has to be taken back
@@ -1019,6 +1061,26 @@ local function holdsMoneyOrRuns(shard, id)
         if type(line) == 'table' and line.state ~= CH.ESCROW_STATE.SETTLED then return true end
     end
     return false
+end
+
+--- Whether a contract file the index on disk does not name is taken back in:
+--- written while no index had named it (`unindexed`, shardOf) and after the
+--- index on disk was (its count no lower than that index's), and holding
+--- money or a running contract. That is exactly what a server stopped
+--- between writing a new contract's file and the index naming it leaves.
+---
+--- Any other is a contract some earlier index named and a later one does
+--- not: pruned, or taken off store.json by hand, which is how staff drop one
+--- for good. Taking those back in too, as a plain scan of contracts/ did,
+--- brought a cancelled contract back from a stale copy and refunded it a
+--- second time, and undid every contract staff had dropped. A file from a
+--- version before the count carries no mark and is never taken back in.
+---@param index table the index this start read
+local function adoptable(shard, id, index)
+    if type(shard) ~= 'table' then return false end
+    local writtenAt = tonumber(shard.unindexed)
+    if not writtenAt or writtenAt < (tonumber(index.generation) or 0) then return false end
+    return holdsMoneyOrRuns(shard, id)
 end
 
 --- What this start read that says when the server was last running, for a
@@ -1095,6 +1157,7 @@ function JsonStore.open()
         db = json.decode(json.encode(EMPTY))
         escrowBy, hitmenBy, messagesBy = {}, {}, {}
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
+        generation, indexedIds, urgentShards = 0, {}, {}
         recordsDirty, recordsOnDisk, alertsDirty = true, false, false
         auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
         JsonStore.save(true)
@@ -1112,6 +1175,11 @@ function JsonStore.open()
     db = json.decode(json.encode(EMPTY))
     dirtyShards, shardIds, quarantined = {}, {}, {}
     recordsDirty, recordsOnDisk, alertsDirty = false, false, false
+    -- The index on disk: which it is, and which contracts it names.
+    generation, indexedIds, urgentShards = tonumber(decoded.generation) or 0, {}, {}
+    for _, id in ipairs(type(decoded.contractIds) == 'table' and decoded.contractIds or {}) do
+        indexedIds[tostring(id)] = true
+    end
     for key, value in pairs(decoded) do
         -- The audit log is read from its own files, below, and the records
         -- from theirs. `records` is only the index saying that file exists.
@@ -1203,16 +1271,18 @@ function JsonStore.open()
         -- A contract file the index does not name: a server stopped after a
         -- new contract's file was whole and before an index naming it was
         -- (newerIndex covers the copy that was whole; this the one that was
-        -- not). Nothing else would ever read it, so one holding money or a
-        -- running contract is taken back in; any other is a finished one a
-        -- prune had not yet removed, said once and left where it is, never
-        -- deleted.
+        -- not). Nothing else would ever read it, so one written since this
+        -- index, before any index named it, and holding money or a running
+        -- contract is taken back in (adoptable). Any other is one an earlier
+        -- index named, pruned or taken off store.json by hand, or a finished
+        -- one a prune had not yet removed: said once and left where it is,
+        -- never deleted, never read again.
         local named = {}
         for i = 1, #decoded.contractIds do named[tostring(decoded.contractIds[i])] = true end
         local adopted, left = {}, {}
         for _, id in ipairs(unnamedShards(named)) do
             local shard = readShard(id)
-            if holdsMoneyOrRuns(shard, id) then
+            if adoptable(shard, id, decoded) then
                 absorb(shard)
                 shardIds[id], dirtyShards[id] = true, true
                 indexDirty, dirty = true, true
@@ -1228,8 +1298,9 @@ function JsonStore.open()
                 :format(#adopted, directory(), path(), table.concat(adopted, ', ')))
         end
         if #left > 0 then
-            Log.debug(('%d contract file(s) in %s/contracts/ are not named in %s and hold no '
-                .. 'money; left as they are: %s.')
+            Log.debug(('%d contract file(s) in %s/contracts/ are not named in %s and are not a '
+                .. 'new contract the index had yet to name (pruned, taken off it by hand, or '
+                .. 'holding nothing); left as they are and not read: %s.')
                 :format(#left, directory(), path(), table.concat(left, ', ')))
         end
 
@@ -1413,11 +1484,11 @@ function JsonStore.inspect()
         end
     end
     -- And a contract file the index does not name that a start would take
-    -- back in (W158): money there is money here.
+    -- back in (W158, adoptable): money there is money here.
     if type(index.contractIds) == 'table' then
         for _, id in ipairs(unnamedShards(named)) do
             local shard = readShard(id)
-            if holdsMoneyOrRuns(shard, id) then
+            if adoptable(shard, id, index) then
                 out.contracts = out.contracts + 1
                 held(id, function() return shard.contract end, shard.escrow, shard.hitmen)
             end
@@ -1476,6 +1547,15 @@ end
 --- MaxDirtyShardsPerFlush of them and leaves the rest for the next one, so a
 --- burst of activity cannot turn one flush into an unbounded stall.
 ---
+--- `money` is a money write's save (touch): the contract files money writes
+--- changed (urgentShards) and every changed one the index on disk does not
+--- name yet, then the index and the records, and nothing else. It used to
+--- write every changed file, so one coin moving after 275 contracts had a
+--- message each wrote 275 files inside the player's request. The others are
+--- the flush's. And the index never names a file that is not on disk: one
+--- it does not name yet is written by every save, budget or not, since the
+--- index written with it names it.
+---
 --- Not the audit log: a financial write calls this, and the log waits for
 --- the flush (JsonStore.flush, JsonStore.close).
 ---
@@ -1488,35 +1568,39 @@ end
 --- unwritten answers false, with the first file it could not write.
 ---@return boolean saved nothing it was asked to write was left unwritten
 ---@return string|nil file the first file that could not be written
-function JsonStore.save(force)
+function JsonStore.save(force, money)
     if not db then return false end
     -- Nothing changed, so nothing is left unwritten.
     if not force and not dirty then return true end
 
-    local budget = force and math.huge
+    local budget = (force and not money) and math.huge
         or (Config.Database.Json.MaxDirtyShardsPerFlush or 25)
     local written, failed = 0, {}
 
     for id in pairs(dirtyShards) do
-        if written >= budget then break end
-
-        local file = shardPath(id)
-        if not file then
-            -- Not a shape this store mints, so not something to name a file
-            -- after. Dropped rather than written.
-            dirtyShards[id] = nil
-        elseif writeFile(file, shardOf(id), true) then
-            -- The index is not marked for this. A contract it does not name
-            -- yet marked it when it was touched (touch); one it already
-            -- names has nothing new to say there. Marking it here rewrote
-            -- the index on every money write, which is the write that used
-            -- to carry the whole ledger.
-            dirtyShards[id] = nil
-            written = written + 1
-        else
-            -- Left dirty deliberately: a shard that did not land is retried
-            -- on the next flush rather than forgotten. And the walk goes on.
-            failed[#failed + 1] = id
+        -- Never left out of an index naming it (any write of the index), nor
+        -- out of the money write that changed it.
+        local must = not indexedIds[id] or (money and urgentShards[id])
+        if must or (not money and written < budget) then
+            local file = shardPath(id)
+            if not file then
+                -- Not a shape this store mints, so not something to name a
+                -- file after. Dropped rather than written.
+                dirtyShards[id], urgentShards[id] = nil, nil
+            elseif writeFile(file, shardOf(id), true) then
+                -- The index is not marked for this. A contract it does not
+                -- name yet marked it when it was touched (touch); one it
+                -- already names has nothing new to say there. Marking it here
+                -- rewrote the index on every money write, which is the write
+                -- that used to carry the whole ledger.
+                dirtyShards[id], urgentShards[id] = nil, nil
+                written = written + 1
+            else
+                -- Left dirty deliberately: a shard that did not land is
+                -- retried on the next flush rather than forgotten. And the
+                -- walk goes on.
+                failed[#failed + 1] = id
+            end
         end
     end
     local failedFile = failed[1] and shardPath(failed[1]) or nil
@@ -1561,6 +1645,7 @@ local function touch(financial, contractId)
     dirty = true
     if contractId then
         dirtyShards[contractId] = true
+        if financial then urgentShards[contractId] = true end
         if not shardIds[contractId] then
             shardIds[contractId] = true
             -- A contract the index does not list is a file nothing will ever
@@ -1571,7 +1656,7 @@ local function touch(financial, contractId)
         recordsDirty = true
     end
     if financial and Config.Database.Json.SyncOnFinancialWrite then
-        JsonStore.save(true)
+        JsonStore.save(true, true)
     end
 end
 
@@ -1679,7 +1764,7 @@ function JsonStore.prune()
         -- leaves a file nothing reads rather than an index entry pointing
         -- at a file that is gone.
         shardIds[id] = nil
-        dirtyShards[id] = nil
+        dirtyShards[id], urgentShards[id] = nil, nil
         -- Through the resource's own folder. SaveResourceFile resolves a
         -- path against the resource; os.remove resolves it against the
         -- server process's working directory, which is the server-data
@@ -1689,9 +1774,13 @@ function JsonStore.prune()
         local file = shardPath(id)
         if file then
             pendingUnlinks[#pendingUnlinks + 1] = file
-            -- And a copy a server that refuses renames keeps beside it
-            -- (writeRaw), which nothing would read again either.
+            -- And every copy beside it, which nothing would read again
+            -- either: the .new a server that refuses renames keeps
+            -- (writeRaw), the .old a Windows swap could not remove
+            -- (moveOver), and a torn one set aside (recoverFile).
             pendingUnlinks[#pendingUnlinks + 1] = file .. NEW
+            pendingUnlinks[#pendingUnlinks + 1] = file .. OLD
+            pendingUnlinks[#pendingUnlinks + 1] = file .. '.torn'
         end
     end
 

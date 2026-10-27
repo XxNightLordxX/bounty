@@ -218,6 +218,11 @@
     return h('span.chip', { class: 'state ' + cls }, STATE_LABEL[state] || state || '—');
   }
 
+  /** How many of a review item's goods were kept without their metadata. */
+  function bareGoods(item) {
+    return asList(item && item.items).filter(function (g) { return g && g.metadata_omitted === true; }).length;
+  }
+
   /** What an escrow line or a stuck line holds, in words. */
   function holds(line) {
     if (!line) return '—';
@@ -1571,6 +1576,9 @@
           h('span.sub', 'opened ' + when(item.created_at))),
         item.about ? h('p.about', String(item.about)) : null,
         item.unwritten ? h('p.note.is-warn', 'Not in the store yet: the server keeps it in memory until the store takes it.') : null,
+        bareGoods(item) ? h('p.note.is-warn', num(bareGoods(item)) + ' of its goods were kept without their metadata, '
+          + 'which was too big to keep. Refund or Pay gives them back without it: no serial, registration, '
+          + 'attachments or what was inside.') : null,
         item.settles && item.state === 'open' && !item.unwritten
           ? h('p.note', 'The server settles this itself from its own record once the database answers. '
             + 'Refund or Pay settles it the same way now; what is typed is not used.') : null,
@@ -1582,7 +1590,9 @@
             'data-id': String(item.contract) }, String(item.contract)) : '—'),
           h('dt', 'Amount'), h('dd', item.amount != null ? money(item.amount) + (item.account ? ' ' + item.account : '') : '—'),
           asList(item.items).length ? h('dt', 'Goods') : null,
-          asList(item.items).length ? h('dd', asList(item.items).map(function (g) { return holds(g); }).join(', ')) : null,
+          asList(item.items).length ? h('dd', asList(item.items).map(function (g) {
+            return holds(g) + (g && g.metadata_omitted === true ? ' (without its metadata)' : '');
+          }).join(', ')) : null,
           h('dt', 'Involved'), h('dd', asList(item.parties).length ? asList(item.parties).map(function (p) {
             return h('span.party', h('b', String(p.role)), ' ' + String(p.who || '—'));
           }) : '—'),
@@ -2073,7 +2083,12 @@
     var hours = Number(pt.hours) || 0;
     var from = pt.grandfathered === true ? 'Yes' : pt.grandfathered === false ? 'No' : 'Not decided';
     var about;
+    /* Grandfathered, and these hours against the floor, decide only where the
+       tracker is what the rule reads: an export or QBox metadata answering
+       for them decides by its own hours. */
+    var elsewhere = pt.from === 'provider' || pt.from === 'metadata';
     if (pt.unread) about = 'Their counted time could not be read from the store just now.';
+    else if (elsewhere) about = null;
     else if (pt.grandfathered === true) about = 'They were on the server before the count started, so they count as '
       + 'having played enough, whatever the hours say.';
     else if (pt.grandfathered === false) about = hours < floor
@@ -2089,7 +2104,7 @@
         tile('Counted here', h('p.big', pt.unread ? '—' : num(hours) + ' h')),
         tile('Needed to be a target', h('p.big', num(floor) + ' h')),
         tile('From before the count', h('p.big.is-word', from))),
-      h('p.sub', about),
+      about ? h('p.sub', about) : null,
       rule ? h('p.note', rule) : null,
       h('div.toolbar',
         field('pl.hours', { id: 'pl-hours', type: 'number', min: '0', max: '100000', step: '0.5',
