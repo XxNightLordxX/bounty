@@ -371,6 +371,11 @@ describe('what this suite really covered', function()
         -- Its Notify me toggle, for the same players.
         whitelistedViewAlerts = 'whitelisted_view_spec ("Notify me on the view"), through the '
             .. 'net event',
+        -- The handover's meeting point, on an alive-only contract, which no
+        -- journey here places (the suite's contracts are placed 'either').
+        setMeeting      = 'meeting_spec ("who sets it"), through the net event',
+        clearMeeting    = 'meeting_spec ("when the placer clears it"), through the net event',
+        meetingWaypoint = 'meeting_spec ("their Set GPS alone gets where"), through the net event',
     }
 
     it('got an ok from every handler the server registers', function()

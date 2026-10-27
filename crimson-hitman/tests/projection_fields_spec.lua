@@ -97,6 +97,11 @@ local CONDITIONAL = {
     -- dot on Message. The hitman's alone (the creator's is per operative,
     -- under hitmen), and only once a message from the other side exists.
     lastMessageAt    = 'hitman-only, and only once the other side has written',
+    -- The handover's meeting point (server/meeting.lua): on the placer's
+    -- card of an alive-only contract a hitman holds, and an active hitman's
+    -- once one is set, while Config.Kidnap.MeetingPoint is on; never on the
+    -- board (meeting_spec, "who is shown it" and "the switch").
+    meetingSet       = 'creator and active hitmen only, on an alive-only contract a hitman holds',
 }
 
 --- Which roles see a contract at all, and through which projection call.

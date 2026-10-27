@@ -1117,6 +1117,10 @@ describe('app pushes', function()
         -- Once the target has been shown it: inside the wait nothing tells
         -- them it exists (anonymity_spec).
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        -- The alert pushed their open On me as it went (Notify's sendAlert,
+        -- W038), and the push floor holds a second push back behind it. A
+        -- buyout is bought after the alert, not in the same second as it.
+        Env.advance(Config.Notifications.PushMinIntervalSeconds)
         Env.clientEvents = {}
         truthy(s.bailout.buy(f.target, c.id))
 

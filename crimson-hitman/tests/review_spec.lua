@@ -746,7 +746,10 @@ describe('payments the store did not confirm, settled by the server', function()
         eq(bankOf(2) + Env.players[2].PlayerData.money.cash, before - paid, 'nothing refunded yet')
 
         -- It ends without the buyout: a closed contract's record never lands.
-        truthy(s.storage.compareSetContractState(c.id, CH.STATE.COMPLETING, CH.STATE.COMPLETED))
+        -- Ended through the resource, which pays the hitman what it holds:
+        -- the state written into the store by hand left its reward held on a
+        -- closed contract, owed to nobody (tests/invariants.lua).
+        truthy(s.contracts.resolve(c.id, CH.STATE.COMPLETED, f.hitman.cid, nil, 'completed'))
         eq(s.review.decide(), 1)
         eq(bankOf(2) + Env.players[2].PlayerData.money.cash, before, 'refunded')
         eq(s.storage.readReview(item.id).state, 'resolved')

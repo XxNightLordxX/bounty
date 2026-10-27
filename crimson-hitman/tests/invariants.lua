@@ -141,6 +141,19 @@ end
 
 local watched = {}
 
+--- The watched stores anything called since the last at-rest audit.
+---
+--- Every stack the suite builds is a new store (newStack reloads
+--- storage.memory), and each was audited at rest after every test that
+--- followed it: thousands of stores no later test touches, read again after
+--- each of thousands of tests. That made the run quadratic in the size of
+--- the suite: a four-minute suite had not finished in fifteen under the
+--- monitor, and takes under seven this way. A store nothing called during
+--- a test cannot have changed in it, so only the ones something did call
+--- are audited; every function on a store marks it, a read included, so a
+--- write this file does not wrap is not missed.
+local touched = {}
+
 --- Wrap every write on every backend, so the monitor runs wherever the
 --- suite happens to be pointed.
 local WRITES = {
@@ -151,6 +164,14 @@ local WRITES = {
 
 local function monitor(store, name)
     watched[#watched + 1] = store
+    for key, real in pairs(store) do
+        if type(real) == 'function' then
+            store[key] = function(...)
+                touched[store] = true
+                return real(...)
+            end
+        end
+    end
     for _, fn in ipairs(WRITES) do
         local real = store[fn]
         if type(real) == 'function' then
@@ -187,7 +208,11 @@ setmetatable(_G, {
             rawset(t, key, function(name, fn)
                 current = name
                 value(name, fn)
-                for _, store in ipairs(watched) do pcall(auditAtRest, store) end
+                for _, store in ipairs(watched) do
+                    if touched[store] then pcall(auditAtRest, store) end
+                end
+                -- Cleared after, since the audit's own reads mark them too.
+                for store in pairs(touched) do touched[store] = nil end
             end)
             return
         end

@@ -50,8 +50,11 @@ end
 --- escrow, the hitman rows and the audit trail are all genuinely what that
 --- state looks like. A hand-written row would let a cell pass against a
 --- shape the resource cannot actually produce.
-local function inState(state)
+local function inState(state, rule)
     local s = newStack()
+    -- The rule the contract is placed under (Config.Completion.Fulfilment),
+    -- where a row needs one other than the suite's.
+    if rule then Config.Completion.Fulfilment = rule end
     local f = fixture(s)
     Env.players[1].PlayerData.money.bank = 400000
     Env.players[2].PlayerData.money.bank = 400000
@@ -266,6 +269,15 @@ local ACTIONS = {
       refusals = { not_participant = true, not_found = true, invalid_input = true,
                    bad_state = true, no_handover = true },
       why = 'asking about a countdown that is not running is a question, not a fault' },
+
+    -- The handover's meeting point (server/meeting.lua), on an alive-only
+    -- contract, set by its placer where they stand.
+    { name = 'setMeeting', source = 1, fulfilment = 'alive',
+      setup = function() Env.players[1]._coords = { x = 1234.0, y = -568.0, z = 30.0 } end,
+      payload = function(c) return { id = c.id, x = 1234.0, y = -568.0, z = 30.0 } end,
+      allowed = { [CH.STATE.ACCEPTED] = true },
+      refusals = { bad_state = true, meeting_no_hitman = true },
+      why = 'a meeting point is for a handover a hitman holding the contract can still make' },
 }
 
 describe('every action against every contract state', function()
@@ -275,7 +287,7 @@ describe('every action against every contract state', function()
                 or (action.allowed ~= nil and action.allowed[state] == true)
 
             it(('%s on a %s contract'):format(action.name, state), function()
-                local s, f, c = inState(state)
+                local s, f, c = inState(state, action.fulfilment)
                 -- What a row needs of the config, set after the stack resets it.
                 if action.setup then action.setup(s) end
                 local before = snapshot(s, c)
@@ -348,6 +360,10 @@ describe('the grid covers the whole action surface', function()
         -- a choice of the caller's own.
         whitelistedView = true,
         whitelistedViewAlerts = true,
+        -- These act on the meeting point, not on the contract's state: it is
+        -- set only while a hitman holds an open contract (setMeeting's row
+        -- above) and taken off at every ending (meeting_spec, "when it goes").
+        clearMeeting = true, meetingWaypoint = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

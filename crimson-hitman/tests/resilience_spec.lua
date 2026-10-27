@@ -149,14 +149,17 @@ describe('a phone build with no word filter', function()
         local s = newStack()
         local f = fixture(s)
         withoutFilter(function()
-            local c, err = s.contracts.create(f.creator, {
+            local c, err, refusal = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'come to discord.gg/whatever',
                 mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } },
             })
             falsy(c, 'the pattern denylist is this resource\'s own and does '
                 .. 'not depend on the phone')
-            eq(err, CH.ERR.INVALID_INPUT)
+            -- A reason refused for what it says answers reason_refused with
+            -- the rule it broke (server/contracts.lua reasonFor, W010).
+            eq(err, CH.ERR.REASON_REFUSED)
+            eq(refusal and refusal.rule, 'pattern', 'refused by the denylist, not the phone')
         end)
     end)
 
@@ -184,13 +187,14 @@ describe('a phone build with no word filter', function()
     it('still refuses what the phone refuses, where the phone is there', function()
         local s = newStack()
         local f = fixture(s)
-        local c, err = s.contracts.create(f.creator, {
+        local c, err, refusal = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'you absolute slur',
             mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } },
         })
         falsy(c, 'a build that has the filter must still use it')
-        eq(err, CH.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.REASON_REFUSED)
+        eq(refusal and refusal.rule, 'phone', 'refused by the phone\'s own filter')
     end)
 end)
 

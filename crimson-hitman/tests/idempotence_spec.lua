@@ -996,6 +996,13 @@ describe('what this file leaves out', function()
         whitelistedView = true,
         whitelistedViewAlerts = 'the same choice again is answered as it is, and written and '
             .. 'audited once (whitelisted_view_spec, "Notify me on the view")',
+        -- The handover's meeting point (meeting_spec).
+        setMeeting = 'a second set inside 30 seconds is refused as meeting_too_soon and changes '
+            .. 'nothing; after them it moves the point ("how often it changes")',
+        clearMeeting = 'a second clear finds no point and says so, as no_meeting ("when the '
+            .. 'placer clears it")',
+        -- Set GPS: a read.
+        meetingWaypoint = true,
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

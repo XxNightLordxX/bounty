@@ -129,10 +129,13 @@ end
 ---           outright once somebody is working (cancel, revise, withdraw).
 ---   far     somebody else's entirely, so `otherHitman` is a real hitman
 ---           rather than a stranger wearing the label.
----@param opts table|nil { anonymous = boolean }
+---@param opts table|nil { anonymous = boolean, fulfilment = string|nil }
 local function world(opts)
     opts = opts or {}
     local s = newStack()
+    -- The rule its contracts are placed under (Config.Completion.Fulfilment),
+    -- where a row needs one other than the suite's.
+    if opts.fulfilment then Config.Completion.Fulfilment = opts.fulfilment end
 
     for _, who in pairs(CAST) do
         Env.addPlayer({
@@ -151,10 +154,13 @@ local function world(opts)
     local who = {}
     for name, entry in pairs(CAST) do who[name] = s.identity.resolve(entry.source) end
 
+    -- No bonus on an alive-only contract: the whole reward is for the live
+    -- delivery, and a bonus named on one is refused (no_bonus).
     local held = s.contracts.create(who.creator, {
         targetCid = CAST.target.cid, reason = 'Unpaid debt',
         mode = CH.MODE.COMPETITIVE,
-        reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+        reward = { baseline = { cash = 5000 },
+                   bonus = opts.fulfilment ~= CH.FULFILMENT_RULE.ALIVE and { cash = 2500 } or nil },
         bailoutAmount = 15000,
         anonymous = opts.anonymous or nil,
     })
@@ -693,6 +699,58 @@ MATRIX.muteThread = {
 MATRIX.endCall = { payload = {}, expect = ANYONE,
     why = 'hangs up the caller own call and names no contract' }
 
+-- The handover's meeting point (server/meeting.lua) ----------------------
+--
+-- Only on an alive-only contract, so these rows place theirs under that
+-- rule. Everybody stands where the placer does: a caller somewhere else
+-- would be refused for the distance rather than for who they are.
+
+local function allAtScene()
+    for _, who in pairs(CAST) do
+        Env.players[who.source]._coords = { x = SCENE.x, y = SCENE.y, z = SCENE.z }
+    end
+end
+
+--- The placer's point on the held contract, set through the module and
+--- left past the once-every-30-seconds rule, so a clear is not refused for
+--- coming too soon.
+local function meetingPointSet(w)
+    allAtScene()
+    truthy(w.s.meeting.set(w.who.creator,
+        { id = w.held.id, x = SCENE.x, y = SCENE.y, z = SCENE.z }),
+        'the arrangement has to leave a meeting point')
+    Env.advance(w.s.meeting.EVERY_SECONDS)
+end
+
+-- not_found for everybody else, the placer's own contract or none: telling
+-- the two apart would say which ids are somebody's.
+MATRIX.setMeeting = {
+    fulfilment = 'alive',
+    arrange = allAtScene,
+    payload = function(w, role, contract)
+        return { id = contract.id, x = SCENE.x, y = SCENE.y, z = SCENE.z }
+    end,
+    expect = only('creator', CH.ERR.NOT_FOUND),
+    why = 'the meeting point is set by the person who placed the contract, where they stand',
+}
+
+MATRIX.clearMeeting = {
+    fulfilment = 'alive',
+    arrange = meetingPointSet,
+    payload = function(w, role, contract) return { id = contract.id } end,
+    expect = only('creator', CH.ERR.NOT_FOUND),
+    why = 'the placer alone takes their meeting point off',
+}
+
+MATRIX.meetingWaypoint = {
+    fulfilment = 'alive',
+    arrange = meetingPointSet,
+    payload = function(w, role, contract) return { id = contract.id } end,
+    expect = only('hitman', CH.ERR.NOT_FOUND),
+    why = 'where to meet is for the hitman holding the contract; nobody else, '
+       .. 'the placer included, is told where',
+}
+
 -- The two events the victim's own client fires --------------------------
 --
 -- These reply to nobody, so they have no permit/refuse cell. What they do
@@ -1078,7 +1136,7 @@ local function runRow(name)
 
     for _, pass in ipairs(PASSES) do
         for _, role in ipairs(ROLES) do
-            local w = world(pass.opts)
+            local w = world({ anonymous = pass.opts.anonymous, fulfilment = entry.fulfilment })
             local contract, cast = castFor(w, entry.contract)
             if entry.arrange then entry.arrange(w) end
 
