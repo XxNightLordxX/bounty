@@ -994,6 +994,23 @@ local function hasPayload(reply)
     return reply.data ~= nil and reply.data ~= false
 end
 
+--- A barred job's refusal carries what bars them (Identity.gate: their own
+--- job, and whether they hold it rather than work it, W002), and nothing
+--- else: no contract, no wallet, nobody else.
+local function onlyWhatBarsThem(reply)
+    if type(reply.data) ~= 'table' then return not hasPayload(reply) end
+    for key, value in pairs(reply.data) do
+        if key == 'job' then
+            if type(value) ~= 'string' then return false end
+        elseif key == 'held' then
+            if type(value) ~= 'boolean' then return false end
+        else
+            return false
+        end
+    end
+    return true
+end
+
 --- Was this what the cell said it would be?
 local function verdictHolds(expected, reply)
     if reply == nil then return false, 'no reply at all' end
@@ -1154,7 +1171,7 @@ describe('a player on a whitelisted job', function()
                     wrong[#wrong + 1] = name .. ' refused them with ' .. tostring(reply and reply.err)
                 end
             elseif not reply or reply.ok or reply.err ~= CH.ERR.BLACKLISTED_JOB
-                or hasPayload(reply) then
+                or not onlyWhatBarsThem(reply) then
                 wrong[#wrong + 1] = ('%s answered %s'):format(name, reply and (reply.ok
                     and 'ok' or ('%s with %s'):format(tostring(reply.err),
                         hasPayload(reply) and 'data' or 'nothing')) or 'nothing')
@@ -1188,7 +1205,7 @@ describe('a player on a whitelisted job', function()
         Config.WhitelistedView.Enabled = false
         local view = call('whitelistedView', OFFICER.source, {})
         eq(view.err, CH.ERR.BLACKLISTED_JOB)
-        falsy(hasPayload(view))
+        truthy(onlyWhatBarsThem(view), 'nothing but what bars them')
         local buyout = call('bailout', OFFICER.source, { id = w.mine.id })
         eq(buyout.err, CH.ERR.BLACKLISTED_JOB, 'and the buyout goes back to the command alone')
         eq(w.s.storage.readContract(w.mine.id).state, CH.STATE.ACTIVE)
@@ -1513,20 +1530,26 @@ describe('the events registered outside the app gate', function()
         eq(told[1], 3, 'and it is the one who asked')
     end)
 
-    it('never lets whoAmI carry anything but a yes or no', function()
-        -- It is the access decision, and the access decision is a boolean.
-        -- Anything else on this payload is something a player learned by
-        -- asking a question about themselves.
+    it('never lets whoAmI carry anything but a yes or no, and which screen', function()
+        -- It is the access decision, and the access decision is a boolean,
+        -- with the screen it shows them (W167): one of three words about
+        -- themselves. Anything else on this payload is something a player
+        -- learned by asking a question about themselves.
         local s = wired()
         Env.clientEvents = {}
         fire('whoAmI', 3)
+        local seen = 0
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:access' then
+                seen = seen + 1
                 eq(type(event.args[1]), 'boolean',
                     'the access answer must be a boolean and nothing else')
-                eq(#event.args, 1, 'and must carry nothing beside it')
+                truthy(event.args[2] == 'full' or event.args[2] == 'whitelisted'
+                    or event.args[2] == 'closed', 'a screen: ' .. tostring(event.args[2]))
+                eq(#event.args, 2, 'and must carry nothing beside them')
             end
         end
+        eq(seen, 1)
     end)
 
     it('does not throw when a stranger fires any of them', function()

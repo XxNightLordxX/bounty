@@ -1713,6 +1713,16 @@ function StartCrimsonHitman()
     reindexed('the waits before targets are told of new contracts', function()
         notify.rearm(Storage.liveContracts())
     end, 'a contract placed just before it is shown to its target at once, unannounced')
+    -- Acceptance bulletins off at this start (config.lua, or the admin
+    -- panel's setting applied above): what the whitelisted-job view says of
+    -- each live contract's hitmen is unknown until one says it again
+    -- (Notify.forgetAcceptances), as when staff turn them off.
+    if not Util.advises('accepted') then
+        reindexed('what the whitelisted-job view says of taken contracts', function()
+            notify.forgetAcceptances(Storage.liveContracts())
+        end, 'a contract on an officer taken while acceptance bulletins are off may be listed '
+            .. 'as open once they are back on')
+    end
     -- Reviews the last shutdown left part-way resolved, finished as staff
     -- decided them, now recovery has put back what their lines left.
     local reviewed, reviewErr = pcall(review.recover)

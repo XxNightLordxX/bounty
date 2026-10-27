@@ -584,7 +584,10 @@ function Notify.rearm(contracts)
     for _, contract in ipairs(contracts or {}) do
         local placed = tonumber(contract.created_at) or 0
         -- What a bulletin already said of it dated it for the officer.
-        local bulletin = contract.advised_posted_at ~= nil or contract.advised_hitmen ~= nil
+        -- A count of hitmen only where a bulletin carried one: an unknown
+        -- one (ACCEPTANCE_UNKNOWN) is no bulletin.
+        local bulletin = contract.advised_posted_at ~= nil
+            or (tonumber(contract.advised_hitmen) or 0) > 0
         if Notify.advisedTarget(contract) or bulletin then
             -- Shown at once when it was placed, and their bulletin or their
             -- alert went then.
@@ -1231,6 +1234,33 @@ end
 --- Whether officers are told at this stage; see Util.advises.
 Notify.advises = Util.advises
 
+--- What a contract keeps as its acceptance bulletins' count
+--- (advised_hitmen) once whether it was taken is unknown: it was live
+--- while acceptance bulletins were off. The whitelisted-job view shows it
+--- neither open nor taken until a bulletin says its count.
+Notify.ACCEPTANCE_UNKNOWN = -1
+
+--- Acceptance bulletins have stopped (Util.advises('accepted') is false):
+--- turned off from the admin panel, or off at this start. Every live
+--- contract the view would otherwise call open (a posting bulletin and no
+--- acceptance one) is marked unknown, so one taken while they are off is
+--- not listed as open once they are back on. All of them, whether taken
+--- or not: marking only the one taken would say which. One no posting
+--- bulletin went out for is never called open, so it is left as it is.
+---@param contracts table[] the live contracts (Storage.liveContracts)
+---@return integer marked
+function Notify.forgetAcceptances(contracts)
+    if not Storage then return 0 end
+    local marked = 0
+    for _, contract in ipairs(contracts or {}) do
+        if contract.advised_hitmen == nil and contract.advised_posted_at ~= nil then
+            Storage.setAdvised(contract.id, { advised_hitmen = Notify.ACCEPTANCE_UNKNOWN })
+            marked = marked + 1
+        end
+    end
+    return marked
+end
+
 ---@param operative string|nil the hitman whose acceptance this is
 function Notify.advisory(contract, stage, activeHitmen, operative)
     if not Notify.advises(stage) then return end
@@ -1256,6 +1286,11 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     if Storage then
         local said = stage == 'posted' and { advised_posted_at = os.time() }
             or { advised_hitmen = math.max(1, math.floor(tonumber(activeHitmen) or 1)) }
+        -- Posted while acceptance bulletins are off: whether it is taken is
+        -- unknown from the start (Notify.forgetAcceptances), not open.
+        if stage == 'posted' and not Notify.advises('accepted') then
+            said.advised_hitmen = Notify.ACCEPTANCE_UNKNOWN
+        end
         local okSaid, errSaid = pcall(Storage.setAdvised, contract.id, said)
         if not okSaid then
             Log.always(('could not keep what the advisory said of contract %s: %s')
@@ -1296,8 +1331,10 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
         end
     end
 
-    -- The targeted officer cannot open the app to check for themselves, so
-    -- they are told directly whatever the paranoid-alert setting says.
+    -- The targeted officer is told directly whatever the paranoid-alert
+    -- setting says: with the whitelisted-job view off they cannot open the
+    -- app to check for themselves, and with it on (as shipped) this is what
+    -- tells them to look.
     -- "Your department" only where their job is one the advisory goes to: a
     -- medic or a lawyer was told their department had been advised, and
     -- nobody in it was.

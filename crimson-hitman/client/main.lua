@@ -95,6 +95,13 @@ end
 --- join before the phone is ever opened.
 local accessAllowed = nil
 
+--- Which screen the server last said the app shows this player: 'full',
+--- 'whitelisted' (the whitelisted-job view) or 'closed'. nil until told.
+--- Handed to the page as it opens (crimson:accessMode), so a player on the
+--- view is asked for its one read first rather than the app's three, which
+--- the server refuses them and writes down as refused.
+local accessMode = nil
+
 --- Take the app back off the phone.
 ---
 --- A player who takes a barred job mid-session has it installed already, so
@@ -308,9 +315,18 @@ end
 --- the client asks. The client never decides this for itself: the job
 --- blacklist is the server's config and a client that could answer it could
 --- grant itself the app.
-RegisterNetEvent('crimson-hitman:access', function(allowed)
+RegisterNetEvent('crimson-hitman:access', function(allowed, mode)
     accessAllowed = allowed == true
+    accessMode = (mode == 'full' or mode == 'whitelisted' or mode == 'closed') and mode or nil
     CreateThread(App.reconcile)
+end)
+
+--- The page asking, as it opens, which screen the server said is this
+--- player's. Answered here, from what the server last said, and nothing
+--- is asked of the server: the server checks every request the page then
+--- makes whatever this says.
+RegisterNUICallback('crimson:accessMode', function(_, cb)
+    cb({ ok = true, event = 'accessMode', data = { mode = accessMode } })
 end)
 
 --- Settings staff changed from the admin panel that this game reads too,

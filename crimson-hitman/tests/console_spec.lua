@@ -489,12 +489,18 @@ describe('a raise in something that moves money, with Config.Debug off', functio
     it('is printed from the buyout command', function()
         local _, s = boot('memory')
         local f = fixture(s)
-        placed(s, f)
+        local c = placed(s, f)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         Env.console = {}
-        s.bailout.available = function() error('buyout went wrong') end
-        Env.commands[Config.Bailout.Command](2, {})
+        s.bailout.buy = function() error('buyout went wrong') end
+        Env.commands[Config.Bailout.Command](2, { c.id })
         eq(said(('[crimson-hitman] /%s run by player 2 raised: '):format(Config.Bailout.Command)), 1,
             console())
+        -- A read that raised moved nothing: with Debug on only.
+        Env.console = {}
+        s.bailout.onTarget = function() error('listing went wrong') end
+        Env.commands[Config.Bailout.Command](2, {})
+        eq(console(), '', 'the listing moved no money')
     end)
 
     it('names only requests there are', function()

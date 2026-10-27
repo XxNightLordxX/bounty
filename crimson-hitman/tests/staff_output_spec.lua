@@ -1008,3 +1008,198 @@ describe('a staff command refused', function()
         falsy(said:find('Not authorised', 1, true), 'a read is theirs: ' .. said)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- The players' buyout command (Config.Bailout.Command, /cleanse)
+--------------------------------------------------------------------------
+
+describe('the buyout command\'s answers', function()
+    --- A contract on TARGET01 (source 2) with a price, past the wait before
+    --- they are shown it; taken by the hitman first where `accept` says.
+    local function priced(s, f, accept)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(c, 'placing it: ' .. tostring(err))
+        if accept then truthy(s.contracts.accept(f.hitman, c.id, false)) end
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        return c
+    end
+
+    local function chat(out)
+        local lines = {}
+        for _, event in ipairs(out.chat) do lines[#lines + 1] = event.args[1].args[2] end
+        return table.concat(lines, '\n')
+    end
+
+    local NOT_THE_LAST = 'Closing this one does not mean nobody else is after you.'
+
+    it('W044: lists a contract with no price, and is an all-clear only when nothing is out', function()
+        local s, f = stack()
+        local c = place(s, f)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        local said = chat(run(2, 'bailout'))
+        falsy(said:find('Nothing is out on you', 1, true), said)
+        truthy(said:find(c.id .. '  no buyout offered', 1, true), said)
+        falsy(said:find('Buy one out', 1, true), 'nothing here can be bought: ' .. said)
+        said = chat(run(2, 'bailout', { c.id }))
+        truthy(said:find('did not put a price on closing it', 1, true), said)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
+        eq(chat(run(1, 'bailout')), 'Nothing is out on you.', 'the creator has nothing on them')
+
+        -- A price set, and buyouts turned off since: listed, and said so.
+        local s2, f2 = stack()
+        local offered = priced(s2, f2)
+        withConfig({ { Config.Bailout, 'Enabled', false } }, function()
+            said = chat(run(2, 'bailout'))
+            truthy(said:find(offered.id .. '  buyouts are off', 1, true), said)
+            truthy(chat(run(2, 'bailout', { offered.id })):find('does not offer buyouts', 1, true))
+        end)
+    end)
+
+    it('W180: says a paid buyout waiting on a hitman leaves them a target, and an instant one closed', function()
+        local s, f = stack()
+        Env.players[2].PlayerData.money.bank = 100000
+        local queued = priced(s, f, true)
+        local said = chat(run(2, 'bailout', { queued.id }))
+        truthy(said:find('^Paid%. It closes in '), said)
+        truthy(said:find('You are still a target until then; if a hitman finishes first, your money '
+            .. 'comes back.', 1, true), said)
+        truthy(said:find(NOT_THE_LAST, 1, true), 'W039: ' .. said)
+        said = chat(run(2, 'bailout'))
+        truthy(said:find('paid; you are still a target until it closes', 1, true), said)
+        said = chat(run(2, 'bailout', { queued.id }))
+        truthy(said:find('You are still a target until it closes', 1, true), 'already paid: ' .. said)
+
+        local s2, f2 = stack()
+        Env.players[2].PlayerData.money.bank = 100000
+        local instant = priced(s2, f2)
+        said = chat(run(2, 'bailout', { instant.id }))
+        eq(said, 'Paid. Contract closed. ' .. NOT_THE_LAST)
+        eq(s2.storage.readContract(instant.id).state, CH.STATE.BAILED_OUT)
+    end)
+
+    it('W180: says the price comes whole from one account, and words a lock or a busy contract', function()
+        local s, f = stack()
+        local c = priced(s, f)
+        Env.players[2].PlayerData.money.bank = 10000
+        Env.players[2].PlayerData.money.cash = 10000
+        local said = chat(run(2, 'bailout', { c.id }))
+        eq(said, 'Could not buy it out: your bank or your cash has to cover the full $15,000 on its '
+            .. 'own; it is never split.')
+        local buy = s.bailout.buy
+        for code, words in pairs({ [CH.ERR.LOCKED] = 'someone got there first.',
+                                   [CH.ERR.BUSY] = 'that was busy for a moment. Try again.' }) do
+            s.bailout.buy = function() return false, code end
+            eq(chat(run(2, 'bailout', { c.id })), 'Could not buy it out: ' .. words)
+        end
+        s.bailout.buy = buy
+    end)
+
+    it('W047: says the server is starting, or failed to start, before it reads anything', function()
+        local s, f = stack()
+        local c = priced(s, f)
+        local onTarget = s.bailout.onTarget
+        s.bailout.onTarget = function() error('read during recovery') end
+        s.app.ready, s.app.recoveryFailed = false, true
+        for _, args in ipairs({ {}, { c.id } }) do
+            local said = chat(run(2, 'bailout', args))
+            truthy(said:find('contract system failed to start', 1, true), said)
+        end
+        s.app.recoveryFailed = false
+        truthy(chat(run(2, 'bailout')):find('still starting', 1, true))
+        s.app.ready = true
+        s.bailout.onTarget = onTarget
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
+    end)
+
+    it('W181: answers a raise in player words, gives the allowance back and writes the audit row', function()
+        local s, f = stack()
+        Env.players[2].PlayerData.money.bank = 100000
+        local c = priced(s, f)
+        local buy = s.bailout.buy
+        s.bailout.buy = function() error('connection lost') end
+        local said = chat(run(2, 'bailout', { c.id }))
+        eq(said, 'Something broke on the server, not on your end. If anything was taken it has '
+            .. 'been returned or left for staff.')
+        eq(rows(s, 'error_cleanse'), 1, 'audited as the app\'s handler audits error_bailout')
+        s.bailout.buy = buy
+        said = chat(run(2, 'bailout', { c.id }))
+        falsy(said:find('Slow down', 1, true), 'the allowance came back: ' .. said)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
+    end)
+
+    it('W182: tells a player with no character loaded why nothing happened', function()
+        stack()
+        local out = run(10, 'bailout')
+        eq(chat(out), 'Load a character first: this buys out a contract on your character.')
+        eq(out.chat[1].target, 10)
+    end)
+
+    it('W179: is there, answering in chat, with the staff tools off and the app closed to them', function()
+        local s = newStack()
+        local f = fixture(s, { targetJob = { name = 'police', type = 'leo', onduty = true } })
+        Config.Admin.Enabled = false
+        Config.WhitelistedView.Enabled = false
+        s.bridges.install(s)
+        truthy(Env.commands[Config.Bailout.Command], 'registered whatever the staff switch says')
+        falsy(Env.commands[Config.Admin.Commands.stuck], 'while the staff commands are not')
+        Env.players[2].PlayerData.money.bank = 100000
+        local c = priced(s, f)
+        local out = run(2, 'bailout')
+        truthy(chat(out):find(c.id .. '  $15,000', 1, true), chat(out))
+        eq(out.events, 0, 'nothing for an app that is not on their phone')
+        truthy(chat(run(2, 'bailout', { c.id })):find('^Paid'))
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
+    end)
+end)
+
+describe('a staff command waiting on the store', function()
+    --- W185: lines are gathered by the thread a command runs on. On mysql
+    --- every read yields, and another command from the same player can run
+    --- meanwhile; a shared key would mix the two answers.
+    it('keeps two commands from one player apart, each in its own batch', function()
+        local s, f = stack()
+        local c = place(s, f, { accept = true })
+        local read, waited = s.storage.readContract, false
+        s.storage.readContract = function(...)
+            if not waited and coroutine.isyieldable() then
+                waited = true
+                coroutine.yield('await')
+            end
+            return read(...)
+        end
+        Env.clientEvents = {}
+        local a = coroutine.create(Env.commands[Config.Admin.Commands.timeline])
+        truthy(coroutine.resume(a, 6, { c.id }))
+        eq(coroutine.status(a), 'suspended', 'the timeline is waiting on the store')
+        local b = coroutine.create(Env.commands[Config.Admin.Commands.stuck])
+        truthy(coroutine.resume(b, 6, {}))
+        truthy(coroutine.resume(a))
+        s.storage.readContract = read
+
+        local batches = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:commandOutput' then
+                batches[#batches + 1] = table.concat(event.args[1], '\n')
+            end
+        end
+        eq(#batches, 2)
+        eq(batches[1], 'No interrupted releases.', 'the second command\'s answer alone')
+        truthy(batches[2]:find(c.id, 1, true), batches[2])
+        falsy(batches[2]:find('No interrupted releases.', 1, true), 'and none of it in the first\'s')
+    end)
+
+    it('sends what a command that raised had said, and then says it raised', function()
+        local s = stack()
+        s.admin.timeline = function()
+            return { contract = { id = 'ct00000001', state = 'active', creator = 'client',
+                target = 'target', created_at = 0 }, escrow = {} }
+        end
+        local out = run(6, 'timeline', { 'ct00000001' })
+        eq(#out.f8, 3, table.concat(out.f8, '|'))
+        truthy(out.f8[1]:find('ct00000001  active', 1, true), out.f8[1])
+        eq(out.f8[3], 'That raised an error on the server; the diagnosis lists it.')
+    end)
+end)

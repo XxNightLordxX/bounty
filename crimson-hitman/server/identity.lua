@@ -441,14 +441,28 @@ function Identity.isJailed(actor)
     return dx * dx + dy * dy <= zone.radius * zone.radius
 end
 
+--- What a refusal for a barred job carries: the job, and whether it is one
+--- they hold rather than work, so the page can say which and that quitting
+--- it gives the app back. Their own job, which nothing else on the page
+--- hides from them.
+---@param actor table
+---@return table|nil { job, held }
+local function barredData(actor)
+    local job, held = Identity.barredBy(actor)
+    if not job then return nil end
+    return { job = job, held = held == true }
+end
+
 --- Resolve and gate in one call. Every net event handler starts with this.
 ---@param source number
 ---@return table|nil actor
 ---@return string|nil err
+---@return table|nil refusal what bars them (barredData)
 function Identity.gate(source)
     local actor, err = Identity.resolve(source)
     if not actor then return nil, err end
-    if Identity.isBarred(actor) then return nil, CH.ERR.BLACKLISTED_JOB end
+    local barred = barredData(actor)
+    if barred then return nil, CH.ERR.BLACKLISTED_JOB, barred end
     return actor
 end
 
@@ -481,18 +495,19 @@ end
 ---@param access string 'view' | 'target' | 'report'
 ---@return table|nil actor
 ---@return string|nil err
+---@return table|nil refusal what bars them, on a BLACKLISTED_JOB
 function Identity.gateFor(source, access)
     local actor, err = Identity.resolve(source)
     if not actor then return nil, err end
-    local barred = Identity.isBarred(actor)
+    local barred = barredData(actor)
     if access == 'view' then
         if not barred then return nil, CH.ERR.NOT_WHITELISTED end
-        if not Identity.whitelistedViewOn() then return nil, CH.ERR.BLACKLISTED_JOB end
+        if not Identity.whitelistedViewOn() then return nil, CH.ERR.BLACKLISTED_JOB, barred end
         return actor
     end
     if barred and not ((access == 'target' or access == 'report')
         and Identity.whitelistedViewOn()) then
-        return nil, CH.ERR.BLACKLISTED_JOB
+        return nil, CH.ERR.BLACKLISTED_JOB, barred
     end
     return actor
 end

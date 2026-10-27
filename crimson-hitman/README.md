@@ -140,7 +140,9 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
    their head included, though their only answer to it (*On me*, the buyout)
    is in the app. Set `Config.App.DefaultInstalled = true` to put it on
    every eligible phone instead (lb-phone then does not let them remove it).
-   Barred jobs never see it either way.
+   Barred jobs get it the same way, opening to the whitelisted-job view's one
+   screen, while that view is on (as shipped); with it off they never see it
+   (see *Access*).
 
 The config ships in `json` mode: everything lives in files under
 `crimson-hitman/data/` (`store.json`, `records.json`, `contracts/`, the
@@ -833,8 +835,21 @@ contract out and its premium was paid, and otherwise left for staff in the
 review queue.
 Players on a whitelisted job — law enforcement, EMS and the rest — have the
 same button on the whitelisted-job view (see *Access*), and anyone can use
-`/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out); all
-three go through the same server path. Either
+`/cleanse` and `/cleanse <id>`; all three go through the same server path.
+`/cleanse` lists every contract on them that On me would show, with its
+price, *no buyout offered* where none was set, *buyouts are off* while
+they are, or that it is paid and they are still a target until it closes;
+it says *Nothing is out on you.* only when there is none. `/cleanse <id>`
+buys one of those out and answers as the app does: *Paid. It closes in about
+2 minutes. You are still a target until then; if a hitman finishes first,
+your money comes back.* with a hitman on it, *Paid. Contract closed.*
+otherwise, and that the price comes whole from the bank or the cash, never
+split. Every buyout, in the app or by the command, adds *Closing this one
+does not mean nobody else is after you.* A command that raises answers
+*Something broke on the server, not on your end*, gives back the
+one-a-minute purchase allowance and writes an `error_cleanse` row. It is
+there whatever `Config.Admin.Enabled` says: it is a player's tool, not a
+staff one. Either
 side can pay an informant to unmask one hitman: offered only while the buyer
 has a purchase left on that contract, and to the target only while an
 operative is on it (their card already shows how many); the dialog says when
@@ -919,7 +934,10 @@ was posted (to the five minutes), where a posting bulletin went out and while
 `OnAccept` ones go out: taken by the count the latest acceptance bulletin
 carried (each operative who takes it up is one bulletin, and one walking away
 is not announced, so the count does not drop for it), or open where a posting
-bulletin went and no acceptance one has since. And, beside when it was posted
+bulletin went and no acceptance one has since, with acceptance bulletins going
+out all the while: a contract live while they were off (switched off in the
+admin panel, or off at a start) is shown neither open nor taken until an
+acceptance bulletin gives its count. And, beside when it was posted
 and only there, when it runs out at the latest (*Runs out within 47h*). With
 only acceptance bulletins going out, a contract is listed once one has, with
 neither. When it runs out is the contract's lifetime
@@ -967,10 +985,19 @@ the server finishes an ending that stopped part-way. An officer is an officer by
 hold (`qbx_core` multi-job, `sc-multijob`): switching to a second job for the
 evening neither opens the whole app to them (they keep the whitelisted-job
 view) nor takes them off the protected list.
-With the whitelisted-job view off, a player barred by a job they hold but
-are not working is told which one on their phone, since a department boss can
-hire somebody through the MDT without asking them; quitting it from their job
-menu gives the app back.
+A player barred by a job they hold but are not working (an officer who
+switched to a civilian job, or somebody a department boss hired through the
+MDT) is told which one on their phone, once for each job and again on their
+next character's login: with the view on, *The app only shows the
+whitelisted-job screen while you hold the police job. Quit it from your job
+menu for the whole app.*, and the view's banner names the job too; with it
+off, *Closed to you while you hold the police job. Quit it from your job menu
+to use it again.*, which is also what the app says on every tab, with no *Try
+again*, where `Config.HideAppFromBlockedJobs` is off and the icon stays. The
+view has a **Refresh** button: nothing pushes a colleague's contract moving
+to it, which would tell every officer when it was placed or taken. An
+ordinary open of the view asks the server for the view alone (the player's
+game says which screen is theirs), so it writes no refused-request row.
 
 ---
 
@@ -1129,7 +1156,7 @@ one notice on your screen (*Printed to your F8 console*) for when you typed it
 in chat. Run from the server console, every one prints there, whatever
 `Config.Debug` says. The players' buyout command (`Config.Bailout.Command`,
 `/cleanse`) is not a staff command: it answers the player in chat, as it always
-has.
+has, and is registered whatever `Config.Admin.Enabled` says.
 
 All work from the server console except `/hitmanadmin`, which opens a page in
 game. In game they need the `crimson.admin` ACE
@@ -1595,14 +1622,14 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 
 | Issue | Solution |
 |---|---|
-| A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) never see it. `/ch-diag <player id>` says why it is not showing for them |
+| A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) have it only for the whitelisted-job view's one screen (`Config.WhitelistedView.Enabled`, on as shipped); with the view off they never see it (or see it answering nothing, with `Config.HideAppFromBlockedJobs` off), and a job they hold but are not working is named on their phone. `/ch-diag <player id>` says why it is not showing for them |
 | A kill does not complete a contract, or there is no Verify kill | As shipped, `Config.Completion.Fulfilment` is `'alive'`: contracts are completed only by bringing the target alive to the person who placed the contract, who has to be there for the handover, and a kill never completes one (the server answers `kill_not_allowed`). Set it to `'either'` to let kills complete contracts placed from then on; ones already placed keep their rule. `/ch-diag` says which is in use |
 | Buy informant data says *The informant is still asking around after a restart* | The server forgets who has been near a target when it restarts, so for `Config.Informant.ProximityWindowMinutes` (10) after a start, informant data on a contract placed before it is refused, and nothing is charged. Wait the minutes it says. Turning `Config.Informant.RequireProximity` off removes the wait, and lets the informant name any hitman on the contract |
 | A staff command typed in chat seems to answer nothing | It answers in your F8 console, never in chat: press F8. A notice on your screen says *Printed to your F8 console* |
 | The console prints `N setting(s) need attention` at start | `config.lua` has settings the start read as something else, or lacks some. Run `ch-diag` in F8 or the server console, or open the admin panel's **Tools** and **Run the diagnosis**: *settings that need attention* lists each in full. Or set `Config.Debug = true` to have the start print each |
 | The console says nothing at all, not even that it started | That is the shipped `Config.Debug = false`: a sound start says nothing. `ch-diag` lists what it would have said |
 | A staff command answers "Not authorised" in game | Grant the ACE in `server.cfg`: `add_ace group.admin crimson.admin allow`. `crimson.identity` (for `/ch-whois`) is for fewer people: grant it to one identifier (`add_ace identifier.license:<their licence> crimson.identity allow`) or a group of its own, not `group.admin`. The answer names the command refused and how to run it from the server console, which never refuses; staff whose `Config.Admin.ExtraAces` opens the read-only tools are told a command that changes money or unmasks needs the ACE itself |
-| The console printed `BOOT RECOVERY FAILED`, and `/ch-settle`, `/ch-void` and `/ch-stuck` answer *Recovery failed at the last start* | Boot recovery raised an error (the text after `BOOT RECOVERY FAILED:` says what), so what the last shutdown left part-way is not settled. Rather than act on it, the resource keeps the app, the login payouts, the maintenance tick and those commands closed until it is restarted; players running `/cleanse <id>` are told the server's contract system failed to start and staff have been told, and so is everyone who opens the app, on every tab, with no *Try again* (it answers `recovery_failed`). Fix the cause (a database that refused the query, say), then restart the resource (`restart crimson-hitman`): the next start runs recovery again. Where the banner says *the database stopped answering during recovery*, restart once `/ch-diag` says `database: answering`. A stop while recovery is failed or still running leaves the last heartbeat as it was, so the time the app was closed is not charged to any deadline |
+| The console printed `BOOT RECOVERY FAILED`, and `/ch-settle`, `/ch-void` and `/ch-stuck` answer *Recovery failed at the last start* | Boot recovery raised an error (the text after `BOOT RECOVERY FAILED:` says what), so what the last shutdown left part-way is not settled. Rather than act on it, the resource keeps the app, the login payouts, the maintenance tick and those commands closed until it is restarted; players running `/cleanse`, with an id or without, are told the server's contract system failed to start and staff have been told, before anything is read, and so is everyone who opens the app, on every tab, with no *Try again* (it answers `recovery_failed`). Fix the cause (a database that refused the query, say), then restart the resource (`restart crimson-hitman`): the next start runs recovery again. Where the banner says *the database stopped answering during recovery*, restart once `/ch-diag` says `database: answering`. A stop while recovery is failed or still running leaves the last heartbeat as it was, so the time the app was closed is not charged to any deadline |
 | The app says *The server's records did not answer in time* | `mysql` mode: the database was unreachable, or a statement was held longer than `Config.Database.QueryTimeoutSeconds` (a backup taken with `--lock-tables`, say). `/ch-diag` says whether it answers now. A payment that request was making is settled by the server once it does, and the player is told; see *When the database stops answering* |
 | The console keeps printing `[crimson-hitman] still waiting after ...s for ... resource(s) to start` | The lines under it name `qbx_core` or `ox_inventory`, which is not started or runs under another name. Start it under that name; a renamed or forked copy never matches |
 | The app stopped answering after you restarted `qbx_core`, `ox_inventory` or `oxmysql` | FiveM stops this resource with them and does not start it again. Run `ensure crimson-hitman` |

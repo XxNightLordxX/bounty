@@ -44,9 +44,9 @@ describe('the real boot path', function()
 
     it('wires the app, which every handler depends on', function()
         local main, modules = boot()
-        -- App.canUseApp reaches through deps. Uninitialised it throws on a
-        -- nil index, which is what the harness's own wiring used to hide.
-        local ok = pcall(function() return modules.app.canUseApp(1) end)
+        -- App.ratelimitRefused reaches through deps. Uninitialised it throws
+        -- on a nil index, which is what the harness's own wiring used to hide.
+        local ok = pcall(function() return modules.app.ratelimitRefused('BOOTSPEC', 'load') end)
         truthy(ok, 'the app must be initialised by start()')
     end)
 

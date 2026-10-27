@@ -3678,6 +3678,10 @@
       : 'about ' + durationText(Math.ceil(seconds / 60));
   }
 
+  /* What every buyout says, in its dialog and once paid (spec §14.40):
+     closing one contract is not a promise that none other is out. */
+  var NOT_THE_LAST = 'Closing this one does not mean nobody else is after you.';
+
   function bailout(contract) {
     var amount = money(contract.bailoutAmount);
     /* Which pocket it comes from, said before they agree: the server takes
@@ -3698,7 +3702,9 @@
           + (wait && Number(contract.hitmenActive) > 0
             ? 'A hitman is already on you and gets ' + wait + ' more to finish it. '
               + 'If they do, your ' + amount + ' comes back.'
-            : 'If nobody has taken it yet, it closes at once.'),
+            : 'If nobody has taken it yet, it closes at once.')
+          // §14.40: another may be out, inside its wait and not shown yet.
+          + ' ' + NOT_THE_LAST,
         function () {
           // Through `once`, so the button is disabled for the round trip: up
           // to half a million, and a second tap sent a second request.
@@ -3719,10 +3725,10 @@
               // it since the dialog opened.
               var queued = !!(r.data && r.data.queued);
               var waited = buyoutWait(Number(settings().buyoutDelaySeconds) || 0);
-              say(queued
+              say((queued
                 ? 'Paid. It closes in ' + (waited || 'a moment')
                   + '. You are still a target until then.'
-                : 'Paid. Contract closed.', 'ok');
+                : 'Paid. Contract closed.') + ' ' + NOT_THE_LAST, 'ok');
               // Held until the card is read again, so Buy out does not come
               // back live on a contract that is paid for.
               return refresh();
@@ -5488,10 +5494,23 @@
   }
 
   /* A refusal no retry from this page can change: the server's boot
-     recovery failed, and it answers nothing until staff restart it. A Try
-     again beside it was a button that could never work. */
+     recovery failed, and it answers nothing until staff restart it; or the
+     app is closed to a job they have, which only quitting it changes. A Try
+     again beside either was a button that could never work. */
   function finalRefusal(code) {
-    return code === 'recovery_failed';
+    return code === 'recovery_failed' || code === 'blacklisted_job';
+  }
+
+  /* Why the app is closed to them, from the refusal: a job they hold but
+     are not working is named, with how to get the app back, as their phone
+     was told (the server's explainHeld). */
+  function barredText(r) {
+    var data = r && r.data;
+    if (data && data.held && data.job) {
+      return 'Closed to you while you hold the ' + data.job + ' job. Quit it from your '
+        + 'job menu to use it again.';
+    }
+    return ERRORS.blacklisted_job;
   }
 
   /* The card that goes where the missing thing should be while the answer
@@ -5606,9 +5625,21 @@
     var shared = data.colleagues !== undefined && data.colleagues !== null;
     var others = asList(data.colleagues);
 
-    view.appendChild(el('div', 'notice ok', 'You\u2019re on a whitelisted job, so this app '
-      + (shared ? 'only shows contracts on you and on other whitelisted-job members.'
-        : 'only shows contracts on you.')));
+    var shows = shared ? 'only shows contracts on you and on other whitelisted-job members.'
+      : 'only shows contracts on you.';
+    // Naming the job that puts them here when they hold it rather than
+    // work it (a boss can hire anybody), with how to get the whole app back.
+    view.appendChild(el('div', 'notice ok', data.heldJob
+      ? 'You hold the ' + data.heldJob + ' job, a whitelisted one, so this app ' + shows
+        + ' Quit it from your job menu for the whole app.'
+      : 'You\u2019re on a whitelisted job, so this app ' + shows));
+    // Its one way to ask again while open: nothing pushes a colleague's
+    // contract moving to this screen, since that would date it for every
+    // officer. Through the same allowance as every read.
+    var again = el('div', 'row actions');
+    again.appendChild(actionButton('ghost ico i-refresh', 'Refresh', 'jobview:refresh',
+      'Refreshing\u2026', function () { return readJobView({ keep: true }); }));
+    view.appendChild(again);
     if (!mine.length && !others.length) {
       view.appendChild(el('div', 'empty', shared
         ? 'No contracts on you or other whitelisted-job members.' : 'No contracts on you.'));
@@ -8011,6 +8042,7 @@
     state.loadFinal[section] = finalRefusal(r.err);
     state.loadFailed[section] = (r.err === 'rate_limited' && r.data && r.data.retryAfter)
       ? 'Asked too fast. Try again ' + retryIn(r.data.retryAfter) + '.'
+      : r.err === 'blacklisted_job' ? barredText(r)
       : (ERRORS[r.err] || 'Something went wrong.');
     redraw();
     return false;
@@ -8199,12 +8231,18 @@
     return refresh();
   }
 
-  function readJobView() {
+  /* `opts.keep`: asked from the screen's Refresh, so a refusal to ask
+     again so soon says how long to wait and leaves what is shown. */
+  function readJobView(opts) {
     var isCurrent = newestLoad('jobview');
     return post('whitelistedView', {}).then(function (r) {
       if (!isCurrent()) { return; }
       // They have left the job: the whole app is theirs again.
       if (!r.ok && r.err === 'not_whitelisted') { return leaveJobView(); }
+      if (opts && opts.keep && !r.ok && r.err === 'rate_limited' && state.loaded.jobview) {
+        return say('Asked too fast. Try again ' + retryIn(r.data && r.data.retryAfter) + '.',
+          'caution');
+      }
       if (!loadResult('jobview', r)) { return; }
       takeJobView(r.data);
       redrawFor(['jobview']);
@@ -8224,11 +8262,14 @@
         return;
       }
       // No view for them either: the app is closed to their job, as it
-      // always was, and each section says so where its contents would be.
-      var why = (r.err === 'not_whitelisted' || r.err === 'blacklisted_job' || !r.err)
-        ? ERRORS.blacklisted_job : (ERRORS[r.err] || ERRORS.blacklisted_job);
+      // always was, and each section says so where its contents would be,
+      // naming a job they hold, with no Try again (finalRefusal): only
+      // quitting the job changes the answer.
+      var why = r.err === 'blacklisted_job' ? barredText(r)
+        : (r.err === 'not_whitelisted' || !r.err)
+          ? ERRORS.blacklisted_job : (ERRORS[r.err] || ERRORS.blacklisted_job);
       ['board', 'mine', 'ledger'].forEach(function (section) {
-        state.loadFinal[section] = false;
+        state.loadFinal[section] = finalRefusal(r.err);
         state.loadFailed[section] = why;
       });
       redraw();
@@ -8473,6 +8514,21 @@
   Diag.install();
 
   render();
-  refresh();
+  /* Which screen the server said is theirs, from their own game (it keeps
+     the last answer: crimson:accessMode), before the first read. A player
+     on the whitelisted-job view is asked for its one read, not the app's
+     three: each of those is refused them, and the server writes a refusal
+     down as somebody probing what is not theirs. Unknown, or anything
+     else, is the whole app, whose reads find the view as they always did. */
+  post('accessMode', {}).then(function (r) {
+    var mode = r && r.ok && r.data && r.data.mode;
+    if (mode === 'whitelisted' && state.mode !== 'whitelisted') {
+      state.mode = 'whitelisted';
+      state.tab = 'jobview';
+      markMode();
+      render();
+    }
+    return refresh();
+  });
 
 })();

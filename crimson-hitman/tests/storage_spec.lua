@@ -3238,6 +3238,17 @@ describe('what the advisory said of a contract', function()
         end
     end)
 
+    --- V01: a contract live while acceptance bulletins were off keeps an
+    --- unknown count (Notify.ACCEPTANCE_UNKNOWN), below every real one.
+    it('keeps an unknown acceptance count as it is, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctadv4'))
+            truthy(b.store.setAdvised('ctadv4', { advised_posted_at = 1800000100, advised_hitmen = -1 }),
+                b.name)
+            eq(tonumber(b.store.readContract('ctadv4').advised_hitmen), -1, b.name)
+        end
+    end)
+
     it('is absent where no bulletin went, in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ctadv2'))

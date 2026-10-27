@@ -64,7 +64,9 @@ Config.HideAppFromBlockedJobs = true
 --- location, a photo or the reward. On a contract on them they also get
 --- the buyout a civilian target gets in On me, through the same server path
 --- as that button and /cleanse. Nothing else in the app answers them but the page's own fault
---- report. A job change moves a player in or out of it at once.
+--- report. A job change moves a player in or out of it at once. One there
+--- by a job they hold but are not working is told which, and how to get
+--- the whole app back.
 Config.WhitelistedView = {
     Enabled = true,     -- true = whitelisted jobs get that one screen; false = the app is closed to them, as HideAppFromBlockedJobs says
 }
@@ -214,7 +216,9 @@ Config.Bailout = {
     ProcessingDelaySeconds = 120,
     --- Bailout is blocked while the target is dead or in last stand.
     BlockWhileIncapacitated = true,
-    --- A command for players who cannot open the app at all (§7.5).
+    --- A command for players who cannot open the app at all (§7.5). It
+    --- lists every contract on them that On me would show, priced or not,
+    --- and is there whatever Admin.Enabled says: it is not a staff tool.
     ---
     --- Law enforcement and EMS are barred from the app by §2, so an officer
     --- with a contract on them had no way to buy it out — the one mechanic
@@ -856,7 +860,8 @@ Config.Advisory = {
     UseDispatch = true,
     DispatchPriority = 1,
     --- The targeted officer is always told, whatever the paranoid-alert
-    --- setting says — they cannot open the app to check for themselves.
+    --- setting says: with the whitelisted-job view off they cannot open the
+    --- app to check for themselves, and with it on this tells them to look.
     --- "Your department has been advised" only where their job receives the
     --- advisory (the Recipient lists); otherwise "Law enforcement has been
     --- advised". Kept for their next login if they are away. Off, they are
@@ -877,7 +882,8 @@ Config.Advisory = {
     --- acceptances shares one id per contract. What each bulletin said is
     --- kept on the contract, and that is what the whitelisted-job view
     --- shows: a stage turned off and on again does not list what went
-    --- unannounced while it was off.
+    --- unannounced while it was off, and a contract live while acceptance
+    --- bulletins were off is shown neither open nor taken until one says.
     OnCreate = true,
     OnAccept = true,
     WarnCreator = true,

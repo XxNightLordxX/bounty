@@ -99,8 +99,12 @@ function Bailout.finishing(contractId, cutoff)
     return false
 end
 
---- Contracts the caller may buy out — those naming them as target.
-function Bailout.available(actor)
+--- Every live contract on the caller that they may be shown, with its
+--- buyout price, 0 where none was set: what /cleanse lists. Only from
+--- these does it say "Nothing is out on you.", so a contract with no price
+--- is never an all-clear (On me and the whitelisted-job view list it too).
+---@return table[] { id, amount, queued }
+function Bailout.onTarget(actor)
     local out = {}
     -- The indexed lookup, which is the question this is asking: contracts
     -- naming this player as target. It used to read and hydrate every
@@ -115,12 +119,26 @@ function Bailout.available(actor)
         -- Not inside the alert's wait (Notify.shownToTarget), as On me does
         -- not: listed at once, a target polling this dated the placement.
         if (c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED)
-            and (c.bailout_amount or 0) > 0 and Notify.shownToTarget(c) then
+            and Notify.shownToTarget(c) then
             out[#out + 1] = {
-                id = c.id, amount = c.bailout_amount,
+                id = c.id, amount = tonumber(c.bailout_amount) or 0,
                 queued = c.bailout_queued_at ~= nil,
             }
         end
+    end
+    return out
+end
+
+--- Contracts the caller may buy out: those of Bailout.onTarget with a
+--- price. The purchase filter /cleanse applies before Bailout.buy, which
+--- checks it all again; `shown` is onTarget's answer when the caller has
+--- it already, so the store is read once.
+---@param shown table[]|nil
+function Bailout.available(actor, shown)
+    local out = {}
+    shown = shown or Bailout.onTarget(actor)
+    for i = 1, #shown do
+        if shown[i].amount > 0 then out[#out + 1] = shown[i] end
     end
     return out
 end

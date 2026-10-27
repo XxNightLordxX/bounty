@@ -369,7 +369,10 @@ async function main() {
     });
 
     it('asks the server for exactly the three things it needs on open', function () {
-      const names = app.sent.map(function (s) { return s.name; }).sort();
+      // Less which screen is theirs, which their own game answers
+      // (crimson:accessMode) and the server is never asked.
+      const names = app.sent.map(function (s) { return s.name; })
+        .filter(function (n) { return n !== 'accessMode'; }).sort();
       eq(names.join(','), 'ledger,list,mine');
     });
 
@@ -10774,6 +10777,88 @@ async function main() {
         'asked once, not once per refusal');
     });
     drewCleanly(leaving); drewCleanly(joining); drewCleanly(closed);
+  })();
+
+  /* ---------- players the app is closed to (group 14) ---------- */
+
+  await (async function barredPlayers() {
+    // W167: their game says which screen is theirs before the first read.
+    let viewReads = 0;
+    const opened = boot({
+      accessMode: { ok: true, data: { mode: 'whitelisted' } },
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      bailout: { ok: true, data: { queued: true } },
+      whitelistedView: function () {
+        viewReads += 1;
+        return viewReads === 3
+          ? { ok: false, err: 'rate_limited', data: { retryAfter: 20 } }
+          : jobView({ heldJob: 'police' });
+      }
+    });
+    await settle(); await settle(); await settle();
+    it('W167: asks a player on the view for its read alone, and none the server refuses them', function () {
+      const asked = opened.sent.map(function (r) { return r.name; });
+      eq(asked.join(','), 'accessMode,whitelistedView', asked.join(','));
+    });
+    it('W166: names a job they hold that puts them on the view, and how to get the app back', function () {
+      const text = opened.view.textContent;
+      truthy(text.indexOf('You hold the police job, a whitelisted one, so this app only shows '
+        + 'contracts on you and on other whitelisted-job members. Quit it from your job menu '
+        + 'for the whole app.') !== -1, text);
+    });
+
+    // W169: nothing pushes a colleague's contract moving here.
+    let before = opened.sent.length;
+    click(opened, 'Refresh');
+    await settle(); await settle(); await settle();
+    it('W169: reads the view again from its Refresh', function () {
+      eq(opened.sent.slice(before).map(function (r) { return r.name; }).join(','), 'whitelistedView');
+    });
+    click(opened, 'Refresh');
+    await settle(); await settle(); await settle();
+    it('W169: says how long to wait when asked too fast, and keeps what it shows', function () {
+      truthy(opened.notice().indexOf('Asked too fast. Try again in 20 seconds.') !== -1,
+        opened.notice());
+      truthy(opened.view.textContent.indexOf('Olive Ward') !== -1, opened.view.textContent);
+    });
+
+    // W039: the buyout says another may be out.
+    click(opened, 'Buy out — $15,000');
+    it('W039: says in the buyout dialog that closing one is not the last', function () {
+      truthy(opened.view.textContent.indexOf('Closing this one does not mean nobody else is '
+        + 'after you.') !== -1, opened.view.textContent);
+    });
+    click(opened, 'Pay $15,000');
+    await settle(); await settle(); await settle();
+    it('W039: and once it is paid', function () {
+      truthy(opened.notice().indexOf('You are still a target until then. Closing this one does '
+        + 'not mean nobody else is after you.') !== -1, opened.notice());
+    });
+    drewCleanly(opened);
+
+    // W002: the view off and hiding off: the icon stays and answers nothing.
+    const held = { ok: false, err: 'blacklisted_job', data: { job: 'police', held: true } };
+    const closed = boot({ list: held, mine: held, ledger: held, whitelistedView: held });
+    await settle(); await settle(); await settle();
+    it('W002: names the job they hold and how to get the app back, with no Try again', function () {
+      const text = closed.view.textContent;
+      truthy(text.indexOf('Closed to you while you hold the police job. Quit it from your job '
+        + 'menu to use it again.') !== -1, text);
+      eq(closed.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+      }).length, 0, 'asking again changes nothing until they quit it');
+    });
+    const working = { ok: false, err: 'blacklisted_job', data: { job: 'Police', held: false } };
+    const officer = boot({ list: working, mine: working, ledger: working, whitelistedView: working });
+    await settle(); await settle(); await settle();
+    it('W002: says the app is not for the job they are working, with no Try again either', function () {
+      const text = officer.view.textContent;
+      truthy(text.indexOf('This app is not for you.') !== -1, text);
+      eq(officer.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+      }).length, 0);
+    });
+    drewCleanly(closed); drewCleanly(officer);
   })();
 
   /* ---------- what the page shows is what is charged (group 10) ---------- */

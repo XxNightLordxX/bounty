@@ -414,6 +414,60 @@ describe('app access', function()
         eq(#Natives.calls.notifications, 0, 'once, not on every pass')
     end)
 
+    --- W001: logged in on the job that bars them, which needs no word (it
+    --- is the one they are working), then switched to a civilian one for
+    --- the evening with sc-multijob: still barred by the one they hold, and
+    --- the "already barred" answer kept that quiet, on this login and on
+    --- every later one on the same connection.
+    it('tells an officer who switches to a civilian job which job they hold bars them, once', function()
+        local s = newStack()
+        Config.WhitelistedView.Enabled = false
+        s.bridges.install(s)
+        Env.addPlayer({ source = 62, citizenid = 'SWITCH62', license = 'license:s62',
+            job = { name = 'sast', type = 'leo', onduty = true },
+            jobs = { sast = 2, mechanic = 0 } })
+        local function told()
+            local out = {}
+            for _, note in ipairs(Natives.calls.notifications) do
+                if tostring(note.content):find('hold the sast job', 1, true) then out[#out + 1] = note end
+            end
+            return #out
+        end
+        Natives.calls.notifications = {}
+        s.bridges.tellAccess(62)
+        eq(#Natives.calls.notifications, 0, 'the job they are working needs no word')
+
+        local mechanic = { name = 'mechanic', type = 'mechanic', onduty = true }
+        Env.players[62].PlayerData.job = mechanic
+        Env.events['local:QBCore:Server:OnJobUpdate'](62, mechanic)
+        eq(told(), 1, 'switched to a civilian job and still barred, by sast')
+        s.bridges.refreshAccess()
+        s.bridges.refreshAccess()
+        eq(told(), 1, 'once, not on every pass')
+
+        -- A character switch on the same source: the next login is its own.
+        Env.events['local:QBCore:Server:OnPlayerUnload'](62)
+        Env.events['local:qbx_core:server:playerLoggedOut'](62)
+        s.bridges.tellAccess(62)
+        eq(told(), 2, 'told again on the next character\'s login')
+    end)
+
+    --- W003 with W001: a switch staff set that moves nobody's answer tells
+    --- nobody anything again.
+    it('does not tell a held-barred player again when an access switch moves nothing for them', function()
+        local s = newStack()
+        Config.WhitelistedView.Enabled = false
+        s.bridges.install(s)
+        Env.addPlayer({ source = 63, citizenid = 'HIRED063', license = 'license:h63',
+            job = { name = 'mechanic', type = 'mechanic', onduty = true },
+            jobs = { mechanic = 0, police = 0 } })
+        s.bridges.tellAccess(63)
+        Natives.calls.notifications = {}
+        truthy(s.settings.set('HideAppFromBlockedJobs', false, 'ADMIN001'))
+        truthy(s.settings.set('HideAppFromBlockedJobs', true, 'ADMIN001'))
+        eq(#Natives.calls.notifications, 0, 'told once already, for the same job')
+    end)
+
     it('admits somebody whose other jobs are all civilian', function()
         local s = newStack()
         Env.addPlayer({ source = 58, citizenid = 'SWITCH05', license = 'license:sw5',

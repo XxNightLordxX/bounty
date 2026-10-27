@@ -1138,6 +1138,29 @@ describe('a job that is barred from the app', function()
         eq(registrations(), 1, 'an allowed player must get the app')
     end)
 
+    --- W167: the page could not know which screen was theirs, so an
+    --- officer's every open asked for the board, Mine and the ledger, and
+    --- the server wrote each refusal down as probing. The server says the
+    --- screen with the answer; the client hands it to the page as it opens,
+    --- asking the server nothing.
+    it('hands the page the screen the server said is theirs, asking the server nothing', function()
+        ready()
+        local answered, answer = Client.nuiCall('crimson:accessMode', {})
+        truthy(answered, 'answered at once, even before the server has said')
+        eq(answer.ok, true)
+        eq(answer.data.mode, nil, 'unknown until told')
+        Client.fire('crimson-hitman:access', true, 'whitelisted')
+        Client.toServer = {}
+        answered, answer = Client.nuiCall('crimson:accessMode', {})
+        eq(answer.data.mode, 'whitelisted')
+        eq(#Client.toServer, 0, 'nothing asked of the server')
+        Client.fire('crimson-hitman:access', true, 'full')
+        eq(select(2, Client.nuiCall('crimson:accessMode', {})).data.mode, 'full')
+        Client.fire('crimson-hitman:access', true, 'something else')
+        eq(select(2, Client.nuiCall('crimson:accessMode', {})).data.mode, nil,
+            'only a screen there is')
+    end)
+
     it('takes it back when they go on duty mid-session', function()
         ready()
         Client.fire('crimson-hitman:access', true)

@@ -6,6 +6,7 @@
 --- depended on exactly one of these, and nothing else would have noticed.
 
 local Log = CrimsonBoot.requireShared('log')
+local Util = CrimsonBoot.requireShared('util')
 
 local Bridges = {}
 
@@ -133,6 +134,15 @@ local lastAccess = {}
 --- (the whitelisted-job view, Config.WhitelistedView) or 'closed' (barred,
 --- with the view off). Forgotten with lastAccess.
 local lastMode = {}
+
+--- The job a player holds but is not working that they were last told
+--- closes the app to them (Identity.barredBy's `held`), so they are told
+--- once for each job, whatever the answer was before and however they
+--- arrived at it: logged in as an officer and then switched to a civilian
+--- job, or hired into a barred job by somebody else. Forgotten with
+--- lastAccess, and when the character goes (a switch on the same source is
+--- somebody else's first time).
+local lastHeld = {}
 
 --- How many sources it is holding an answer for. Bounded by who is
 --- connected, not by who has ever connected: this table is written on every
@@ -410,30 +420,48 @@ function Bridges.install(modules)
     -- With the whitelisted-job view on (Config.WhitelistedView, as shipped)
     -- a barred player keeps the app, and it shows them one read-only screen:
     -- the gate still refuses them everything else.
-    --- The app going away because of a job the player holds but is not
-    --- working. They may not have taken it themselves (a department boss
-    --- can hire anybody through the MDT), so they are told which job it is
-    --- and how to get the app back, once, when it goes.
-    local function explainHeld(actor, was)
-        if was == false then return end
-        local job, held = modules.identity.barredBy(actor)
-        if not job or not held then return end
-        modules.notify.toCitizen(actor.cid, 'Crimson-Hitman',
-            ('Closed to you while you hold the %s job. Quit it from your job '
-            .. 'menu to use it again.'):format(job), { bypassBudget = true })
+    --- The app closing to a player, or shrinking to the whitelisted-job
+    --- view, because of a job they hold but are not working. They may not
+    --- have taken it themselves (a department boss can hire anybody through
+    --- the MDT), and an officer who switches to a civilian job for the
+    --- evening expects the app, so they are told which job it is and how to
+    --- get the whole app back: once for each job (lastHeld), whatever they
+    --- were told or shown before. A job they are working is not explained:
+    --- they know which one that is.
+    ---@param src number
+    ---@param mode string 'full' | 'whitelisted' | 'closed'
+    ---@param job string|nil what bars them (Identity.barredBy)
+    ---@param held boolean|nil a job they hold rather than the one they work
+    local function explainHeld(src, actor, mode, job, held)
+        if not job or not held then
+            lastHeld[src] = nil
+            return
+        end
+        if lastHeld[src] == job then return end
+        lastHeld[src] = job
+        local words = mode == 'whitelisted'
+            and ('The app only shows the whitelisted-job screen while you hold the %s job. '
+                .. 'Quit it from your job menu for the whole app.')
+            or ('Closed to you while you hold the %s job. Quit it from your job '
+                .. 'menu to use it again.')
+        modules.notify.toCitizen(actor.cid, 'Crimson-Hitman', words:format(job),
+            { bypassBudget = true })
     end
 
     --- Whether a player may have the app on their phone, and which screen
     --- it shows them. A player the app bars has it, with the one read-only
     --- screen, while the whitelisted-job view is on
     --- (Config.WhitelistedView); HideAppFromBlockedJobs decides only while
-    --- it is off.
+    --- it is off. With what bars them, for explainHeld.
     ---@return boolean allowed
     ---@return string mode 'full' | 'whitelisted' | 'closed'
+    ---@return string|nil job
+    ---@return boolean|nil held
     local function accessOf(actor)
-        if not modules.identity.isBarred(actor) then return true, 'full' end
-        if modules.identity.whitelistedViewOn() then return true, 'whitelisted' end
-        return Config.HideAppFromBlockedJobs == false, 'closed'
+        local job, held = modules.identity.barredBy(actor)
+        if not job then return true, 'full' end
+        if modules.identity.whitelistedViewOn() then return true, 'whitelisted', job, held end
+        return Config.HideAppFromBlockedJobs == false, 'closed', job, held
     end
 
     --- A job change that moves a player between the app and the
@@ -463,10 +491,13 @@ function Bridges.install(modules)
         -- Known from here on, whichever way they arrived (see refreshAccess).
         connect(src, actor.cid)
 
-        local allowed, mode = accessOf(actor)
-        if not allowed then explainHeld(actor, lastAccess[src]) end
+        local allowed, mode, job, held = accessOf(actor)
+        explainHeld(src, actor, mode, job, held)
         lastAccess[src] = allowed
-        TriggerClientEvent('crimson-hitman:access', src, allowed)
+        -- With the screen it shows them, which their client hands the page
+        -- as it opens: a player on the view is asked for the view's read
+        -- first, not the app's three reads the gate refuses (and audits).
+        TriggerClientEvent('crimson-hitman:access', src, allowed, mode)
         tellMode(src, mode)
     end
 
@@ -504,11 +535,13 @@ function Bridges.install(modules)
                     -- away and the contract expired the moment they came
                     -- back, their hitman's stake with it.
                     connect(src, actor.cid)
-                    local allowed, mode = accessOf(actor)
-                    if lastAccess[src] ~= allowed then
-                        if not allowed then explainHeld(actor, lastAccess[src]) end
+                    local allowed, mode, job, held = accessOf(actor)
+                    explainHeld(src, actor, mode, job, held)
+                    -- The screen too: the view and the whole app are both
+                    -- `allowed`, and the client keeps which for the page.
+                    if lastAccess[src] ~= allowed or lastMode[src] ~= mode then
                         lastAccess[src] = allowed
-                        TriggerClientEvent('crimson-hitman:access', src, allowed)
+                        TriggerClientEvent('crimson-hitman:access', src, allowed, mode)
                     end
                     tellMode(src, mode)
                 end
@@ -524,6 +557,15 @@ function Bridges.install(modules)
         for src in pairs(lastMode) do
             if not seen[src] then lastMode[src] = nil end
         end
+        for src in pairs(lastHeld) do
+            if not seen[src] then lastHeld[src] = nil end
+        end
+    end
+
+    --- What was said to a source, forgotten: the character there has gone,
+    --- and whoever is next there is told afresh.
+    local function forgetAccess(src)
+        lastAccess[src], lastMode[src], lastHeld[src] = nil, nil, nil
     end
 
     -- Asked for by the client when it starts, so a client that loaded after
@@ -594,6 +636,7 @@ function Bridges.install(modules)
         end
         connect(src, nil)
         forgetReady(src)
+        forgetAccess(src)
         -- A photo on its way to them is not any more, whoever gets this
         -- server id next.
         if modules.app.forgetSource then modules.app.forgetSource(src) end
@@ -642,6 +685,9 @@ function Bridges.install(modules)
         connect(src, nil)
         -- A pass scheduled for the character that went is not the next one's.
         forgetReady(src)
+        -- Nor what they were told about the app: the next character's login
+        -- is its own first time, a held job that bars it included.
+        forgetAccess(src)
         if loggedOut then loggingOut[src] = nil else loggingOut[src] = cid end
         -- What their client said about their mask was said for the
         -- character that has gone; the next one says it again.
@@ -742,8 +788,21 @@ function Bridges.install(modules)
             end
             if key == 'HideAppFromBlockedJobs' or key == 'BlockOffDuty'
                 or key == 'WhitelistedView.Enabled' then
-                for src in pairs(lastAccess) do lastAccess[src] = nil end
+                -- Whoever's answer or screen moved is told, and a held job
+                -- is explained once (lastHeld): nothing is wiped first, so
+                -- a switch that moves nobody tells nobody anything again.
                 Bridges.refreshAccess()
+            elseif (key == 'Advisory.Enabled' or key == 'Advisory.OnAccept')
+                and not modules.notify.advises('accepted') and modules.notify.forgetAcceptances then
+                -- Acceptance bulletins stopped: what the whitelisted-job
+                -- view says of each live contract's hitmen is unknown from
+                -- here until a bulletin says it again, so a contract taken
+                -- meanwhile is not listed as open once they are back on.
+                local ok, err = pcall(modules.notify.forgetAcceptances, modules.storage.liveContracts())
+                if not ok then
+                    Log.always(('could not mark what the whitelisted-job view says of taken '
+                        .. 'contracts as unknown: %s'):format(Util.dbError(err)))
+                end
             elseif (key == 'Completion.PhotoStorage' or key == 'Completion.KillPhotos')
                 and modules.photo then
                 if Config.Completion.KillPhotos == true and Config.Completion.PhotoStorage == 'host' then
@@ -770,6 +829,9 @@ function Bridges.install(modules)
         end
     end
 
+    -- The players' buyout command first, and whatever the staff tools
+    -- switch says: it is not one of them.
+    Bridges.installBuyoutCommand(modules)
     Bridges.installCommands(modules)
     return true
 end
@@ -1401,126 +1463,6 @@ function Bridges.installCommands(modules)
         end, true, true)
     end
 
-    --- What /cleanse says for each refusal, where the app's words do not
-    --- reach because the app is closed to the player running it.
-    local CLEANSE_REFUSALS = {
-        [CH.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
-        [CH.ERR.NO_BUYOUT_PRICE] = 'the person who placed it did not put a price on closing it.',
-        [CH.ERR.BUYOUT_PENDING] = 'you have already paid; it closes shortly.',
-        [CH.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
-        [CH.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
-        [CH.ERR.INSUFFICIENT] = 'you do not have that much.',
-        [CH.ERR.ALREADY_SETTLED] = 'that contract has already closed.',
-        [CH.ERR.NOT_FOUND] = 'no contract on you has that id.',
-        [CH.ERR.NOT_PARTICIPANT] = 'that contract is not on you.',
-        [CH.ERR.INVALID_INPUT] = 'that is not a contract id.',
-    }
-
-    -- Buying out a contract on yourself, for players the app is closed to.
-    --
-    -- Law enforcement and EMS are barred from the app by §2, so an officer
-    -- with a contract on them had no way to reach the one mechanic the
-    -- target of a contract is supposed to have. Not ACE-gated — anyone may
-    -- run it — because it only ever acts on a contract naming the caller,
-    -- and every check the app's button passes is applied here too.
-    --
-    -- Registered whether or not buyouts are on, and refused while they are
-    -- off: Config.Bailout.Enabled can be turned on from the admin panel, and
-    -- a command registered only at a start with it on never came back.
-    --
-    -- Its answer goes to the player in chat, as it always has. It is a
-    -- player's command, not staff's (Config.Admin.Commands alone answer in
-    -- F8): mostly an officer or a medic the app is closed to, who looks for
-    -- the answer where they typed it, and whose phone may show no notice
-    -- from an app it does not have.
-    if Config.Bailout.Command then
-        local function answer(src, line)
-            line = plain(line)
-            if src == 0 then return Log.console(line) end
-            TriggerClientEvent('chat:addMessage', src, { args = { 'CRIMSON', line } })
-        end
-        local function cleanse(src, args)
-            if src == 0 then
-                return answer(src, 'This is for a player buying out a contract on themselves.')
-            end
-            if not Config.Bailout.Enabled then
-                return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
-            end
-
-            local actor = modules.identity.resolve(src)
-            if not actor then return end
-
-            -- Deliberately past the app's job gate: being barred from the
-            -- app is the reason this exists.
-            --
-            -- Two allowances, for two things. Every run of the command reads
-            -- the store, so every run spends from `load` — the budget the app
-            -- itself reads on — which bounds a player hammering it: a command
-            -- does not pass the net-event flood guard the app's requests do.
-            -- The one-a-minute `bailout` allowance is for a purchase, and
-            -- only a purchase spends it. It used to be spent by the listing,
-            -- so running /cleanse, reading the id it printed and doing
-            -- exactly what it said was refused as "Slow down."
-            local function slowDown(bucket)
-                local wait = modules.ratelimit.retryAfter(actor, bucket) or 0
-                return answer(src, wait > 0
-                    and ('Slow down. Try again in %d second(s).'):format(wait)
-                    or 'Slow down.')
-            end
-            if not modules.ratelimit.check(actor, 'load') then return slowDown('load') end
-
-            local open = modules.bailout.available(actor)
-            if #open == 0 then
-                return answer(src, 'Nothing is out on you.')
-            end
-
-            if not args[1] then
-                answer(src, ('%d contract(s) on you can be bought out:'):format(#open))
-                for i = 1, #open do
-                    answer(src, ('  %s  $%d%s'):format(open[i].id, open[i].amount,
-                        open[i].queued and '  (already paid, closing shortly)' or ''))
-                end
-                return answer(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
-            end
-
-            -- Not while boot recovery runs (App.ready), like every app request.
-            -- Nor ever, once it has raised (App.recoveryFailed): the gate stays
-            -- shut until a restart, so a moment changes nothing, and the
-            -- console has told staff (BOOT RECOVERY FAILED).
-            if modules.app and modules.app.ready == false then
-                if modules.app.recoveryFailed then
-                    return answer(src, 'The server\'s contract system failed to start, and staff have '
-                        .. 'been told. Nothing was charged.')
-                end
-                return answer(src, 'The server is still starting. Try again in a moment.')
-            end
-            if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
-
-            local ok, err = modules.bailout.buy(actor, args[1])
-            if not ok then
-                -- Nothing was bought, so the purchase allowance goes back,
-                -- as the app's own handler does. And in words: the command
-                -- printed the raw code, "Could not buy it out: incapacitated".
-                modules.ratelimit.refund(actor, 'bailout')
-                return answer(src, 'Could not buy it out: '
-                    .. (CLEANSE_REFUSALS[err] or tostring(err)))
-            end
-            answer(src, 'Paid. The contract closes shortly.')
-        end
-        RegisterCommand(Config.Bailout.Command, function(src, args)
-            local ok, err = pcall(cleanse, src, args or {})
-            if not ok then
-                -- A buyout takes the premium before it records it, so one
-                -- that raised may have charged part of it: printed whatever
-                -- Config.Debug says, as an app request's would be.
-                Log.raised('command ' .. Config.Bailout.Command, ('/%s run by player %s raised: %s')
-                    :format(Config.Bailout.Command, tostring(src), tostring(err)))
-                answer(src, 'That raised an error on the server; staff can see what in the '
-                    .. 'diagnosis.')
-            end
-        end, false)
-    end
-
     -- The admin panel. Opening it reads, so the gate is the one the read
     -- commands use (Ace, or one of ExtraAces); every request the page makes
     -- afterwards is checked again on the server (Panel.handle), and
@@ -1557,6 +1499,247 @@ function Bridges.installCommands(modules)
         end
     end, true)
 
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The players' buyout command
+--------------------------------------------------------------------------
+
+--- A wait in the words the app uses for one (ui/app.js, retryIn).
+---@param seconds number
+---@return string
+local function waitWords(seconds)
+    local s = math.ceil(tonumber(seconds) or 0)
+    if not (s > 0) then return 'in a moment' end
+    if s < 60 then return ('in %d second%s'):format(s, s == 1 and '' or 's') end
+    local m = math.ceil(s / 60)
+    return ('in about %d minute%s'):format(m, m == 1 and '' or 's')
+end
+
+--- Dollars as the app writes them: $15,000.
+local function dollars(amount)
+    local digits = tostring(math.floor(math.abs(tonumber(amount) or 0)))
+    return '$' .. digits:reverse():gsub('(%d%d%d)', '%1,'):reverse():gsub('^,', '')
+end
+
+--- What /cleanse says for each refusal, in the words the app's buyout
+--- uses, since the app may be closed to the player running it.
+local STILL_A_TARGET = 'You are still a target until it closes; if a hitman finishes first, '
+    .. 'your money comes back.'
+local CLEANSE_REFUSALS = {
+    [CH.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
+    [CH.ERR.NO_BUYOUT_PRICE] = 'the person who placed it did not put a price on closing it.',
+    [CH.ERR.BUYOUT_PENDING] = 'you have already paid. ' .. STILL_A_TARGET,
+    [CH.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
+    [CH.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
+    [CH.ERR.INSUFFICIENT] = 'your bank or your cash has to cover the full price on its own; '
+        .. 'it is never split.',
+    [CH.ERR.ALREADY_SETTLED] = 'that contract has already closed.',
+    [CH.ERR.NOT_FOUND] = 'no contract on you has that id.',
+    [CH.ERR.NOT_PARTICIPANT] = 'that contract is not on you.',
+    [CH.ERR.INVALID_INPUT] = 'that is not a contract id.',
+    [CH.ERR.LOCKED] = 'someone got there first.',
+    [CH.ERR.BUSY] = 'that was busy for a moment. Try again.',
+}
+
+--- The sentence §14.40 has every buyout end on: this contract closing is
+--- not the city's last.
+local NOT_THE_LAST = 'Closing this one does not mean nobody else is after you.'
+
+--- Register the players' buyout command (Config.Bailout.Command, /cleanse).
+---
+--- Its own, not one of the staff commands: registered whatever
+--- Config.Admin.Enabled says. Turning the staff tools off removed it with
+--- them, and with the whitelisted-job view off an officer with a contract
+--- on them had no buyout at all, and nothing said so.
+---@param modules table
+---@return boolean registered
+function Bridges.installBuyoutCommand(modules)
+    if not Config.Bailout.Command then return false end
+
+    -- Buying out a contract on yourself, for players the app is closed to.
+    --
+    -- Law enforcement and EMS are barred from the app by §2, so an officer
+    -- with a contract on them had no way to reach the one mechanic the
+    -- target of a contract is supposed to have. Not ACE-gated — anyone may
+    -- run it — because it only ever acts on a contract naming the caller,
+    -- and every check the app's button passes is applied here too.
+    --
+    -- Registered whether or not buyouts are on, and refused while they are
+    -- off: Config.Bailout.Enabled can be turned on from the admin panel, and
+    -- a command registered only at a start with it on never came back.
+    --
+    -- Its answer goes to the player in chat, as it always has. It is a
+    -- player's command, not staff's (Config.Admin.Commands alone answer in
+    -- F8): mostly an officer or a medic the app is closed to, who looks for
+    -- the answer where they typed it, and whose phone may show no notice
+    -- from an app it does not have.
+    local function answer(src, line)
+        line = plain(line)
+        if src == 0 then return Log.console(line) end
+        TriggerClientEvent('chat:addMessage', src, { args = { 'CRIMSON', line } })
+    end
+
+    --- Every live contract on them they may be shown, priced or not: an
+    --- all-clear only when there is none.
+    local function list(src, shown)
+        local buyouts = Config.Bailout.Enabled == true
+        if #shown == 0 then
+            return answer(src, buyouts and 'Nothing is out on you.'
+                or 'Nothing is out on you. This server does not offer buyouts.')
+        end
+        local buyable = 0
+        answer(src, ('%d contract(s) out on you:'):format(#shown))
+        for i = 1, #shown do
+            local entry, how = shown[i], nil
+            if entry.queued then
+                how = ('%s  paid; you are still a target until it closes'):format(dollars(entry.amount))
+            elseif entry.amount <= 0 then
+                how = 'no buyout offered'
+            elseif not buyouts then
+                how = 'buyouts are off'
+            else
+                how = dollars(entry.amount)
+                buyable = buyable + 1
+            end
+            answer(src, ('  %s  %s'):format(entry.id, how))
+        end
+        if buyable > 0 then
+            answer(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
+        end
+    end
+
+    local function cleanse(src, args)
+        if src == 0 then
+            return answer(src, 'This is for a player buying out a contract on themselves.')
+        end
+        local actor = modules.identity.resolve(src)
+        if not actor then
+            return answer(src, 'Load a character first: this buys out a contract on your character.')
+        end
+
+        -- Not while boot recovery runs (App.ready), like every app request,
+        -- and before anything is read: a store recovery has not finished
+        -- with answers wrongly, or not at all. Nor ever, once it has raised
+        -- (App.recoveryFailed): the gate stays shut until a restart, so a
+        -- moment changes nothing, and the console has told staff (BOOT
+        -- RECOVERY FAILED).
+        if modules.app and modules.app.ready == false then
+            if modules.app.recoveryFailed then
+                return answer(src, 'The server\'s contract system failed to start, and staff have '
+                    .. 'been told. Nothing was charged.')
+            end
+            return answer(src, 'The server is still starting. Try again in a moment.')
+        end
+
+        -- Deliberately past the app's job gate: being barred from the
+        -- app is the reason this exists.
+        --
+        -- Two allowances, for two things. Every run of the command reads
+        -- the store, so every run spends from `load` — the budget the app
+        -- itself reads on — which bounds a player hammering it: a command
+        -- does not pass the net-event flood guard the app's requests do.
+        -- The one-a-minute `bailout` allowance is for a purchase, and
+        -- only a purchase spends it. It used to be spent by the listing,
+        -- so running /cleanse, reading the id it printed and doing
+        -- exactly what it said was refused as "Slow down."
+        local function slowDown(bucket)
+            local wait = modules.ratelimit.retryAfter(actor, bucket) or 0
+            return answer(src, wait > 0 and ('Slow down. Try again %s.'):format(waitWords(wait))
+                or 'Slow down.')
+        end
+        if not modules.ratelimit.check(actor, 'load') then return slowDown('load') end
+
+        local shown = modules.bailout.onTarget(actor)
+        if not args[1] then return list(src, shown) end
+
+        if not Config.Bailout.Enabled then
+            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
+        end
+        -- Only one it lists: a contract still inside its wait is not
+        -- theirs to know of, so not to buy either.
+        local id = Util.toId(args[1])
+        if not id then
+            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.INVALID_INPUT])
+        end
+        local listed
+        for i = 1, #shown do
+            if shown[i].id == id then listed = shown[i] end
+        end
+        if not listed then
+            return answer(src, #shown == 0 and 'Nothing is out on you.'
+                or ('Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.NOT_FOUND]))
+        end
+        -- Paid already, as the listing says: no allowance spent on asking.
+        if listed.queued then
+            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BUYOUT_PENDING])
+        end
+        local buyable = false
+        for _, entry in ipairs(modules.bailout.available(actor, shown)) do
+            if entry.id == id then buyable = true end
+        end
+        if not buyable then
+            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.NO_BUYOUT_PRICE])
+        end
+
+        if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
+
+        -- As the app's handler runs it: a raise is answered, the
+        -- allowance goes back, and the audit has it.
+        local ran, ok, err, third = pcall(modules.bailout.buy, actor, id)
+        if not ran then
+            modules.ratelimit.refund(actor, 'bailout')
+            if modules.audit then
+                modules.audit.rejected('error_cleanse', actor.cid, id, { error = Util.dbError(ok) })
+            end
+            -- A buyout takes the premium before it records it, so one
+            -- that raised may have charged part of it: printed whatever
+            -- Config.Debug says, as an app request's would be.
+            Log.raised('command ' .. Config.Bailout.Command, ('/%s run by player %s raised: %s')
+                :format(Config.Bailout.Command, tostring(src), Util.dbError(ok)))
+            if modules.storage and modules.storage.timedOut and modules.storage.timedOut(ok) then
+                return answer(src, 'The server\'s records did not answer in time. Run /'
+                    .. Config.Bailout.Command .. ' before you try again: the payment may still '
+                    .. 'go through.')
+            end
+            return answer(src, 'Something broke on the server, not on your end. If anything was '
+                .. 'taken it has been returned or left for staff.')
+        end
+        if not ok then
+            -- Nothing was bought, so the purchase allowance goes back,
+            -- as the app's own handler does. And in words: the command
+            -- printed the raw code, "Could not buy it out: incapacitated".
+            modules.ratelimit.refund(actor, 'bailout')
+            if err == CH.ERR.INSUFFICIENT and type(third) == 'table' and tonumber(third.need) then
+                return answer(src, ('Could not buy it out: your bank or your cash has to cover the '
+                    .. 'full %s on its own; it is never split.'):format(dollars(third.need)))
+            end
+            return answer(src, 'Could not buy it out: ' .. (CLEANSE_REFUSALS[err] or tostring(err)))
+        end
+        -- Whether it closed now or waits on a hitman, as the app says it:
+        -- "closes shortly" while somebody can still finish it is the target
+        -- walking into the open thinking they are safe.
+        if third == true then
+            local delay = tonumber(Config.Bailout.ProcessingDelaySeconds) or 0
+            local wait = delay < 60 and 'in under a minute' or waitWords(delay)
+            return answer(src, ('Paid. It closes %s. You are still a target until then; if a '
+                .. 'hitman finishes first, your money comes back. %s'):format(wait, NOT_THE_LAST))
+        end
+        answer(src, 'Paid. Contract closed. ' .. NOT_THE_LAST)
+    end
+
+    RegisterCommand(Config.Bailout.Command, function(src, args)
+        local ok, err = pcall(cleanse, src, args or {})
+        if not ok then
+            -- A read that raised (the listing, the gate's framework read):
+            -- nothing was bought. Said for the console, and to the player
+            -- in their words, not staff's.
+            Log.debug(('/%s run by player %s raised: %s')
+                :format(Config.Bailout.Command, tostring(src), Util.dbError(err)))
+            answer(src, 'Something broke on the server, not on your end. Nothing was charged.')
+        end
+    end, false)
     return true
 end
 

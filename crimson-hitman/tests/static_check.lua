@@ -709,10 +709,6 @@ do
     --- Functions that exist for the suite rather than for the resource, and
     --- what each one lets a test see.
     local SEAMS = {
-        ['App.canUseApp']              = 'whether a player may ACT, which is a '
-            .. 'different question from whether they may SEE the app — that one '
-            .. 'is Bridges.tellAccess, and the two disagree by design when '
-            .. 'Config.HideAppFromBlockedJobs is off',
         ['Audit.droppedCount']         = 'how many audit rows the queue shed at capacity',
         ['Bailout.queuedCount']        = 'how many buyouts are waiting out their delay',
         ['Bridges.accessMemoSize']     = 'that the access memo does not grow without bound',

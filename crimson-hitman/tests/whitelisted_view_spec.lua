@@ -514,18 +514,50 @@ describe('the colleagues\' list', function()
         eq(entry.secondsLeft, nil, 'nor when it runs out, which would date it as well')
     end)
 
-    it('does not call taken what no acceptance bulletin announced, when they are back on', function()
+    --- V01: and not open either. "No acceptance bulletin since it was
+    --- posted" is open only where they went out all the while: taken while
+    --- they were off, it was listed "Open — no hitman yet" with a hitman on
+    --- it. Every live contract is marked unknown when they stop, taken or
+    --- not, so the mark says nothing of which was taken.
+    it('calls neither taken nor open a contract live while acceptance bulletins were off', function()
         local w = world()
-        local _, second = more(w)
+        local placer, second = more(w)
         Natives.calls.notifications = {}
-        Config.Advisory.OnAccept = false
+        truthy(w.s.settings.set('Advisory.OnAccept', false, 'ADMIN001'))
         truthy(w.s.contracts.accept(second, w.offline.id, true), 'taken while they were off')
-        Config.Advisory.OnAccept = true
+        -- And one placed while they are off, which nobody takes.
+        local quiet = w.place('OFFICER5', nil, placer)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        truthy(w.s.settings.set('Advisory.OnAccept', true, 'ADMIN001'))
         eq(#bulletins('THREAT ADVISORY — ACTIVE'), 0, 'no acceptance bulletin went out')
-        local entry = byName(view(11))['Oona Fell']
+        local entries = byName(view(11))
+        local entry = entries['Oona Fell']
         truthy(entry, 'listed: a posting bulletin went')
-        falsy(entry.state == 'taken', 'not taken, which no bulletin said')
-        eq(entry.hitmenActive, 0, 'posted, and no acceptance announced since')
+        eq(entry.state, nil, 'not taken, which no bulletin said, nor open, which it is not')
+        eq(entry.hitmenActive, nil)
+        truthy(entry.postedAt, 'posted, which a bulletin did say')
+        eq(entries['Fay Lowe'].state, nil, 'one placed while they were off is not called open either')
+        eq(entries['Fay Lowe'].hitmenActive, nil)
+
+        -- The next acceptance bulletin says its count again.
+        truthy(w.s.contracts.accept(second, quiet.id, true))
+        eq(byName(view(11))['Fay Lowe'].hitmenActive, 1)
+    end)
+
+    it('marks them unknown at a start with acceptance bulletins off, as when staff turn them off', function()
+        local w = world()
+        local notify = w.s.notify
+        Config.Advisory.OnAccept = false
+        eq(notify.forgetAcceptances(w.s.storage.liveContracts()), 2,
+            'the two no acceptance bulletin had counted')
+        Config.Advisory.OnAccept = true
+        local entries = byName(view(11))
+        eq(entries['Colin Hart'].hitmenActive, 1, 'a count a bulletin said is kept')
+        eq(entries['Oona Fell'].hitmenActive, nil)
+        local main = read_file('crimson-hitman/server/main.lua')
+        truthy(main:find("if not Util.advises('accepted') then", 1, true)
+            and main:find('notify.forgetAcceptances(Storage.liveContracts())', 1, true),
+            'the start marks them when acceptance bulletins are off')
     end)
 
     --- Every acceptance bulletin carries the count holding it then. Counted
@@ -1013,5 +1045,86 @@ describe('Config.WhitelistedView', function()
         eq(entry.group, 'Access')
         eq(s.settings.entry('HideAppFromBlockedJobs').unless, 'WhitelistedView.Enabled',
             'and hiding the app says it does not apply beside it')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- What a player the app is closed to is told
+--------------------------------------------------------------------------
+
+describe('a player barred by a job they hold', function()
+    --- The notices their phone was sent naming a job.
+    local function told(job)
+        local out = {}
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.content):find('hold the ' .. job .. ' job', 1, true) then
+                out[#out + 1] = tostring(note.content)
+            end
+        end
+        return out
+    end
+
+    --- W166: with the view on, a mechanic hired into the police by somebody
+    --- else lost the board, Mine, Place and the ledger without a word, and
+    --- the banner named no job.
+    it('is told, in the view\'s words, which job puts them there, and the view names it', function()
+        world({ job = CIVILIAN })
+        Natives.calls.notifications = {}
+        Env.players[11].PlayerData.jobs = { unemployed = 0, police = 0 }
+        Env.events['local:QBCore:Server:OnJobUpdate'](11, CIVILIAN)
+        local said = told('police')
+        eq(#said, 1, 'told once')
+        eq(said[1], 'The app only shows the whitelisted-job screen while you hold the police job. '
+            .. 'Quit it from your job menu for the whole app.')
+        eq(view(11).heldJob, 'police', 'the banner names it')
+        Env.players[11].PlayerData.job = POLICE
+        eq(view(11).heldJob, nil, 'not the job they are working: they know that one')
+    end)
+
+    --- W002: with the view off and hiding off they keep an icon that answers
+    --- nothing, and were never told why: allowed to see it, so nothing was
+    --- explained, and every refusal was a bare code.
+    it('is told which job with the view and hiding off, and every refusal names it', function()
+        world({ job = CIVILIAN })
+        Config.WhitelistedView.Enabled = false
+        Config.HideAppFromBlockedJobs = false
+        Natives.calls.notifications = {}
+        Env.players[11].PlayerData.jobs = { unemployed = 0, police = 0 }
+        Env.events['local:QBCore:Server:OnJobUpdate'](11, CIVILIAN)
+        eq(#told('police'), 1, 'told, though the icon stays')
+        for _, name in ipairs({ 'list', 'whitelistedView' }) do
+            local reply = call(name, 11, {})
+            eq(reply.err, CH.ERR.BLACKLISTED_JOB, name)
+            eq(reply.data and reply.data.job, 'police', name .. ': which job')
+            eq(reply.data and reply.data.held, true, name .. ': one they hold')
+        end
+    end)
+
+    --- W167: the page could not know its screen, so every open by an
+    --- officer asked for the board, Mine and the ledger first, and each
+    --- refusal was written down as somebody probing what is not theirs.
+    it('is told which screen is theirs, so an ordinary open asks only for the view', function()
+        local w = world()
+        Env.clientEvents = {}
+        _G.source = 11
+        Env.events['crimson-hitman:whoAmI']({})
+        _G.source = nil
+        local mode
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:access' and event.target == 11 then
+                eq(event.args[1], true)
+                mode = event.args[2]
+            end
+        end
+        eq(mode, 'whitelisted', 'the screen goes with the answer')
+        w.s.audit.flush()
+        local before = #(w.s.storage.auditByAction('gate_list', 200) or {})
+        for _ = 1, 3 do
+            view(11)
+            Env.advance(30)
+        end
+        w.s.audit.flush()
+        eq(#(w.s.storage.auditByAction('gate_list', 200) or {}), before, 'no refusal written down')
+        eq(#(w.s.storage.auditByAction('gate_whitelistedView', 200) or {}), 0)
     end)
 end)

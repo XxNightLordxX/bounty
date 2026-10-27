@@ -2093,13 +2093,13 @@ describe('a player the app is closed to can still buy out', function()
         truthy(c, 'a contract on an officer')
 
         Env.commands = {}
-        require('crimson-hitman.server.bridges').installCommands(s)
+        require('crimson-hitman.server.bridges').installBuyoutCommand(s)
         return s, f, c
     end
 
     it('is barred from the app in the first place', function()
         local s, f, c = officer()
-        falsy(s.app.canUseApp(2), 'the job gate is why this command exists')
+        falsy(s.identity.gate(2), 'the job gate is why this command exists')
     end)
 
     it('lists what is out on them', function()
@@ -2110,7 +2110,7 @@ describe('a player the app is closed to can still buy out', function()
         local said = ''
         for _, line in ipairs(Env.chat) do said = said .. line.text .. '\n' end
         truthy(said:find(c.id, 1, true), 'the contract: ' .. said)
-        truthy(said:find('15000', 1, true), 'and what it costs')
+        truthy(said:find('$15,000', 1, true), 'and what it costs, as the app writes it: ' .. said)
     end)
 
     it('buys it out', function()
@@ -2178,7 +2178,11 @@ describe('a player the app is closed to can still buy out', function()
         local said = ''
         for _, line in ipairs(Env.chat) do said = said .. line.text end
         falsy(said:find('insufficient_funds', 1, true), said)
-        truthy(said:find('do not have that much', 1, true), said)
+        -- W180: as the app says it. The whole price from one account, never
+        -- split, so "you do not have that much" was wrong for somebody
+        -- holding more than it across the two.
+        truthy(said:find('bank or your cash has to cover the full $15,000 on its own', 1, true), said)
+        truthy(said:find('never split', 1, true), said)
     end)
 
     it('is throttled when it is hammered, allowance refunds or not', function()
@@ -2330,7 +2334,12 @@ describe('the rewardOptions handler', function()
         local reply = call('rewardOptions', 1)
         falsy(reply.ok, 'the job gate applies to this handler like every other')
         eq(reply.err, CH.ERR.BLACKLISTED_JOB)
-        falsy(reply.data)
+        -- Only what bars them, their own job (W002), and none of the wallet.
+        for key in pairs(reply.data or {}) do
+            truthy(key == 'job' or key == 'held', 'the refusal carries ' .. tostring(key))
+        end
+        eq(reply.data and reply.data.job, 'police')
+        eq(reply.data and reply.data.held, false, 'the job they are working')
     end)
 
     it('is rate limited', function()

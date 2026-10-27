@@ -704,7 +704,8 @@ end
 --- taken once they were back on. When it was posted only where a posting
 --- bulletin went; taken by the count the latest acceptance bulletin carried
 --- (one walking away is not announced, so it is not shown either), or open
---- where a posting one went and no acceptance one has. When it runs out only
+--- where a posting one went and no acceptance one has, with acceptance ones
+--- going out all the while (neither, after a time they were off). When it runs out only
 --- with when it was posted: the lifetime runs from the end of the five
 --- minutes it was placed in and is the same for every contract, so the time
 --- left gives the posted time back.
@@ -717,8 +718,18 @@ local function whitelistedEntry(contract, job, advised)
     local posted, active = tonumber(contract.created_at), nil
     if advised then
         posted = advised.posted and tonumber(contract.advised_posted_at) or nil
-        active = advised.accepted
-            and (tonumber(contract.advised_hitmen) or (posted and 0)) or nil
+        -- Open only where acceptance bulletins went out for its whole life
+        -- since it was posted: a contract live while they were off is
+        -- marked unknown (Notify.forgetAcceptances) until a bulletin says
+        -- its count, and is shown neither open nor taken.
+        local said = tonumber(contract.advised_hitmen)
+        if advised.accepted then
+            if said == nil then
+                active = posted and 0 or nil
+            elseif said >= 0 then
+                active = said
+            end
+        end
     else
         active = 0
         local hitmen = Storage.readHitmen(contract.id)
@@ -760,11 +771,16 @@ end
 --- carries it to a civilian target: the price, whether one can be bought,
 --- and a buyout already paid with how long the hitman on it still has. Its
 --- id goes with it, for the buyout and nothing else; a colleague's does not.
+---
+--- And, where a job they hold but are not working is what puts them here,
+--- that job (`heldJob`), for the banner to name with how to get the whole
+--- app back: their own job, which nothing on the page hides from them.
 ---@param viewerCid string
 ---@param viewerJob table|nil the job the viewer is working, which decides
 --- whether the advisory reaches them
----@return table { onYou = entry[], colleagues = entry[]|nil, settings = table }
-function Projection.whitelistedView(viewerCid, viewerJob)
+---@param heldJob string|nil the held job that bars them (Identity.barredBy)
+---@return table { onYou = entry[], colleagues = entry[]|nil, settings = table, heldJob = string|nil }
+function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
     local onYou, colleagues = {}, nil
 
     local naming = Storage.contractsNaming(viewerCid)
@@ -817,6 +833,7 @@ function Projection.whitelistedView(viewerCid, viewerJob)
     return {
         onYou = onYou,
         colleagues = colleagues,
+        heldJob = type(heldJob) == 'string' and heldJob or nil,
         -- What the buyout dialog reads, which the page otherwise takes from
         -- the board it is never sent here.
         settings = {

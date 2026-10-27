@@ -152,11 +152,14 @@ A staff account that can adjust money and spawn items makes this much faster.
       take it (no bulletin goes out); turn it back on: the SAST character's
       entry is back, and the other officer's contract is not listed at all
 - [ ] The same with only **When accepted** off while a hitman takes a
-      contract on an officer: turned back on, that entry says *Open — no
-      hitman yet*, as the bulletins did, not *Taken by …*. With only **When
-      posted** off while one is placed, it is listed once a hitman takes it,
-      saying *Taken by 1 hitman* with neither *Posted …* nor *Runs out
-      within …*
+      contract on an officer: turned back on, that entry says neither *Open —
+      no hitman yet* nor *Taken by …* (no bulletin said either) until the
+      next hitman takes it, when it says *Taken by 1 hitman*. A contract
+      placed while it was off says neither too. Restart with
+      `Config.Advisory.OnAccept = false` in config.lua and back: the same. With
+      only **When posted** off while one is placed, it is listed once a hitman
+      takes it, saying *Taken by 1 hitman* with neither *Posted …* nor *Runs
+      out within …*
 - [ ] The SAST character taps **Buy out**: it asks first (two taps), the
       price is the one On me would show a civilian, then *Paid. It closes in
       about 2 minutes. You are still a target until then.*, the entry says
@@ -164,9 +167,28 @@ A staff account that can adjust money and spawn items makes this much faster.
       gone and the placer has their escrow and the premium
 - [ ] The same bought out from the floor (downed): refused, *Not from the
       floor. Get up first.* With buyouts off in the panel, no button
-- [ ] `/cleanse` still lists it and buys it out exactly as the button does
+- [ ] `/cleanse` still lists it and buys it out exactly as the button does.
+      Place a second contract on them with no buyout price: `/cleanse` lists
+      it as *no buyout offered* (never *Nothing is out on you.*), and
+      `/cleanse <its id>` says the person who placed it did not put a price on
+      closing it
+- [ ] With a hitman on it, `/cleanse <id>` says *Paid. It closes in about 2
+      minutes. You are still a target until then; if a hitman finishes first,
+      your money comes back.* With $10,000 in the bank and $10,000 cash
+      against a $15,000 price it says the bank or the cash has to cover the
+      full $15,000 on its own. The buyout dialog and every *Paid* reply, in the
+      app and in chat, end *Closing this one does not mean nobody else is after
+      you.*
 - [ ] A SAST officer who switches their primary job to a civilian one with
-      `sc-multijob` (F9) keeps the view and nothing more
+      `sc-multijob` (F9) keeps the view and nothing more, and their phone
+      says once *The app only shows the whitelisted-job screen while you hold
+      the sast job. Quit it from your job menu for the whole app.*; the view's
+      banner says *You hold the sast job, a whitelisted one, …*. Switching
+      back to SAST and out again, or a tick later, says nothing more; relog to
+      a character that holds a barred job it is not working: told again
+- [ ] On the view, **Refresh** reads it again (a colleague's contract placed
+      meanwhile appears). Tapped again at once, it says how many seconds to
+      wait and the screen stays as it was
 - [ ] Take SAST off that character's jobs altogether with the app open: it
       changes to the whole app (Board, Mine, Place, On Me, Ledger) at once,
       or within about ten seconds if no job event arrives (the maintenance
@@ -180,14 +202,23 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] Run `ch-diag <the SAST character's id>` in F8 with their app open: the
       report runs `whitelistedView`, says the answer follows here, and their
       app's log prints in your F8 a moment later
-- [ ] Nothing appears in console when a whitelisted player opens the app
+- [ ] Nothing appears in console when a whitelisted player opens the app, and
+      the admin panel's **Logs** gain no *rejected* `gate_list` row for it
 
 ### 2b. The view switched off
 
 - [ ] Admin panel, Features, Access: turn **Whitelisted-job view** off. An
       open view says *This app is not for you.* and, with **Hide the app from
       barred jobs** on, the app leaves their phone at once (a held job is
-      named on their phone)
+      named on their phone, if it was not named already)
+- [ ] With **Hide the app from barred jobs** off too, a character barred by a
+      job they hold but are not working opens the app to *Closed to you while
+      you hold the police job. Quit it from your job menu to use it again.* on
+      every tab, with no **Try again**. One working the barred job reads *This
+      app is not for you.*, also with no **Try again**
+- [ ] Set `Config.Admin.Enabled = false` and restart: `/cleanse` still lists
+      and buys out a contract on an officer, in chat, while every staff
+      command is gone
 - [ ] **Hide the app from barred jobs** says it does not apply while the view
       is on, and applies again once it is off
 - [ ] Restart the resource: the view is still off; turn it back on and the

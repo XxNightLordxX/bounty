@@ -407,14 +407,20 @@ local function handler(name, action, fn, access, exempt)
         -- the handler's own pcall — so it used to take the whole net event
         -- with it and leave the request with no reply at all. The page waits
         -- fifteen seconds on every request it sends.
-        local gateOk, actor, err
+        -- What a player may do. Whether they see the app at all, and which
+        -- screen of it, is pushed to their game by Bridges.tellAccess and
+        -- Bridges.refreshAccess. A refusal for a barred job carries which
+        -- job and whether they hold it rather than work it (Identity.gate),
+        -- so the page can say what closes the app and that quitting it gives
+        -- it back.
+        local gateOk, actor, err, refusal
         if access then
-            gateOk, actor, err = pcall(deps.identity.gateFor, src, access)
+            gateOk, actor, err, refusal = pcall(deps.identity.gateFor, src, access)
         else
-            gateOk, actor, err = pcall(deps.identity.gate, src)
+            gateOk, actor, err, refusal = pcall(deps.identity.gate, src)
         end
         if not gateOk then
-            actor, err = nil, CH.ERR.NO_PLAYER
+            actor, err, refusal = nil, CH.ERR.NO_PLAYER, nil
         end
 
         if not actor then
@@ -425,7 +431,7 @@ local function handler(name, action, fn, access, exempt)
             if shouldLogGate(src) then
                 deps.audit.rejected('gate_' .. name, nil, nil, { source = src, reason = err })
             end
-            return App.reply(src, name, false, err, nil,
+            return App.reply(src, name, false, err, type(refusal) == 'table' and refusal or nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
@@ -639,7 +645,10 @@ function App.register()
     -- handler here ('view'): only a player the app bars may ask, and only
     -- while the view is on. Rate-limited with the other reads.
     handler('whitelistedView', 'load', function(actor)
-        return deps.projection.whitelistedView(actor.cid, actor.job)
+        -- With the job that puts them here when they hold it rather than
+        -- work it, for the banner to name.
+        local job, held = deps.identity.barredBy(actor)
+        return deps.projection.whitelistedView(actor.cid, actor.job, held and job or nil)
     end, 'view')
 
     -- The rows as the page is shown them (Ledger.entries), not as stored:
@@ -1846,13 +1855,6 @@ function App.clearPlayerHandles(cid)
     for handle, entry in pairs(targetHandles) do
         if entry.searcher == cid or entry.target == cid then dropHandle(handle) end
     end
-end
-
---- Whether a player may see the app at all. lb-phone asks this before it
---- shows the icon; the answer is re-checked on every event regardless.
-function App.canUseApp(src)
-    local actor = deps.identity.gate(src)
-    return actor ~= nil
 end
 
 return App
