@@ -15,6 +15,7 @@ local CHANGED = {
     ['Debug'] = { false, true },
     ['Kidnap.RequireCoercion'] = { true, false },
     ['Diagnostics.SlowJobMs'] = { 5, 25 },
+    ['Database.Mode'] = { 'json', 'mysql' },
 }
 
 --- A config file's text run on its own, into a table of its own.
@@ -101,8 +102,8 @@ describe('the configuration as one short file', function()
         local lines = select(2, text:gsub('\n', '')) + 1
         truthy(lines < 500, 'config.lua is ' .. lines .. ' lines')
         local at = 0
-        for _, title in ipairs({ 'ACCESS', 'COMPLETION AND HANDOVERS', 'REWARDS AND LIMITS', 'BUYOUTS',
-            'TARGETING', 'NOTIFICATIONS', 'ADMIN PANEL', 'ADVANCED', 'DEBUG' }) do
+        for _, title in ipairs({ 'DEBUG AND STORAGE', 'ACCESS', 'COMPLETION AND HANDOVERS', 'REWARDS AND LIMITS',
+            'BUYOUTS', 'TARGETING', 'NOTIFICATIONS', 'ADMIN PANEL', 'ADVANCED' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')
             at = found

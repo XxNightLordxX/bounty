@@ -16,6 +16,27 @@
 Config = Config or {}
 
 -- ============================================================================
+--                             DEBUG AND STORAGE
+-- ============================================================================
+-- The two settings checked first: the console output, and where contracts
+-- and money are kept. Switching storage mode starts empty in the new one
+-- and refuses to start while the old one still holds money (README).
+
+Config.Debug = true  -- debug lines in the server console and F8; false = only what needs you
+
+Config.Database = {
+    Mode                = 'mysql', -- 'json' | 'mysql' | 'memory' (testing only)
+    AllowModeSwitch     = false,   -- start even though the old mode still holds money
+    QueryTimeoutSeconds = 10,      -- mysql: seconds a statement may go unanswered; 0 = forever
+    Json                = {
+        Directory              = 'data',  -- folder inside the resource
+        SyncOnFinancialWrite   = true,    -- write money changes to disk at once
+        WarnContractCount      = 2000,    -- warn above this many contracts
+        MaxDirtyShardsPerFlush = 25,      -- contract files one ordinary flush writes
+    },
+}
+
+-- ============================================================================
 --                                   ACCESS
 -- ============================================================================
 -- Who may open the app. Law enforcement, EMS, fire and legal jobs are barred,
@@ -306,18 +327,6 @@ Config.Alerts = {
 -- Storage, logging, rate limits and timings. The shipped values suit most
 -- servers; read the README before changing any of them.
 
-Config.Database = {
-    Mode                = 'json',  -- 'json' | 'mysql' | 'memory' (testing only)
-    AllowModeSwitch     = false,   -- start even though the old mode still holds money
-    QueryTimeoutSeconds = 10,      -- mysql: seconds a statement may go unanswered; 0 = forever
-    Json                = {
-        Directory              = 'data',  -- folder inside the resource
-        SyncOnFinancialWrite   = true,    -- write money changes to disk at once
-        WarnContractCount      = 2000,    -- warn above this many contracts
-        MaxDirtyShardsPerFlush = 25,      -- contract files one ordinary flush writes
-    },
-}
-
 Config.PendingEscrow = {
     MaxRetriesPerLogin = 5,     -- owed payouts one retry pass tries
     LoginRetryDelayMs  = 5000,  -- wait after a login before paying what is owed
@@ -421,11 +430,5 @@ Config.Mugshot.MaxImageBytes          = 98304  -- largest headshot accepted
 Config.Mugshot.AllowedMime            = { -- headshot image types accepted
     ['image/png'] = true, ['image/jpeg'] = true, ['image/webp'] = true,
 }
-
--- ============================================================================
---                                   DEBUG
--- ============================================================================
-
-Config.Debug = true  -- debug lines in the server console and F8; false = only what needs you
 
 return Config

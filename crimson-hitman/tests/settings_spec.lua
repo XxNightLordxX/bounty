@@ -576,7 +576,7 @@ describe('settings changed from the panel, across a restart', function()
                 _G.print = real
                 eq(applied, 0)
                 eq(Config.Bailout.MinMultiplier, 1, 'config.lua\'s value is used')
-                eq(Config.Database.Mode, 'json', 'and nothing read-only is touched')
+                eq(Config.Database.Mode, 'mysql', 'and nothing read-only is touched')
                 truthy(table.concat(printed, '\n'):find('not applied', 1, true))
                 local skipped = 0
                 for _, row in ipairs(settings.active()) do
