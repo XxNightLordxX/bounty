@@ -1265,8 +1265,10 @@ function App.register()
     -- Amendments --------------------------------------------------------
 
     handler('addEscrow', 'amend', function(actor, payload)
-        local ok, err = deps.amendments.addEscrow(actor, payload.id, payload.reward)
-        if not ok then return false, err end
+        -- A refusal's third names the source switched off, or the most
+        -- payouts taken (Escrow.validate).
+        local ok, err, refusal = deps.amendments.addEscrow(actor, payload.id, payload.reward)
+        if not ok then return false, err, refusal end
         return true
     end)
 
@@ -1328,15 +1330,19 @@ function App.register()
 
     -- No bucket here: Comms.send owns the message throttle, and applying it
     -- in both places charged two tokens per message.
+    -- A refusal says how long to wait, or that the message was empty: the
+    -- page said a bare "Slow down." here, the one request with no bucket of
+    -- its own in the wrapper to carry the wait.
     handler('sendMessage', nil, function(actor, payload)
-        local ok, err = deps.comms.send(actor, payload.id, payload.thread, payload.body)
-        if not ok then return false, err end
+        local ok, err, refusal = deps.comms.send(actor, payload.id, payload.thread, payload.body)
+        if not ok then return false, err, refusal end
         return true
     end)
 
     handler('requestCall', 'message', function(actor, payload)
         local ok, err, result = deps.comms.requestCall(actor, payload.id, payload.thread)
-        if not ok then return false, err end
+        -- A refusal's third is whose number a call would show (call_unmasked).
+        if not ok then return false, err, result end
         -- Whether a call is actually ringing or the other party has merely
         -- been asked to call back. The app says which; implying a call is
         -- connecting when none is, is the worst of the three outcomes.

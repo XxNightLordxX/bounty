@@ -104,9 +104,12 @@ describe('reward sources, switched from the panel', function()
         local held = place(s, f)
         truthy(held)
         turn(s, 'Sources.cash.enabled', false)
-        local refused, err = place(s, f, { target = 'HITMAN01' })
+        local refused, err, refusal = place(s, f, { target = 'HITMAN01' })
         falsy(refused, 'a new contract paying cash')
-        eq(err, CH.ERR.INVALID_REWARD)
+        -- Said as that source switched off, by name: "That reward does not
+        -- add up." blamed figures that did (W096).
+        eq(err, CH.ERR.SOURCE_DISABLED)
+        eq(refusal and refusal.source, 'cash')
         truthy(place(s, f, { target = 'HITMAN01', reward = { baseline = { bank = 4000 } } }),
             'other sources still work')
 

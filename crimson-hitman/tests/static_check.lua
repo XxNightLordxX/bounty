@@ -2601,6 +2601,35 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 37. Every request the page calls money is one the server handles
+--------------------------------------------------------------------------
+--
+-- A request that can move money and runs out of the page's wait is told
+-- "No answer yet. It may still go through" rather than "Try again"
+-- (ui/app.js MONEY_EVENTS): trying again placed and paid for a second
+-- contract. A name in that list the server does not handle is a typo, and
+-- the request it meant is told to try again.
+
+do
+    local appSrc = read('crimson-hitman/server/app.lua') or ''
+    local block = uiSrc:match('var MONEY_EVENTS%s*=%s*(%b{})') or ''
+    local names = {}
+    for name in block:gmatch('([%a_][%w_]*)%s*:') do names[#names + 1] = name end
+    if #names < 8 then
+        failures[#failures + 1] = ('the money-request check read %d names from ui/app.js '
+            .. 'MONEY_EVENTS; it is read by pattern, so this is the parser having stopped '
+            .. 'matching'):format(#names)
+    end
+    for _, name in ipairs(names) do
+        if not appSrc:find("handler%('" .. name .. "'") then
+            failures[#failures + 1] = ('ui/app.js MONEY_EVENTS names %s, which server/app.lua '
+                .. 'has no handler for, so the request it meant is told to try again after a '
+                .. 'timeout that may still pay'):format(name)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

@@ -342,6 +342,9 @@ function Escrow.namesOwner(actor, lines)
     return false
 end
 
+--- The lines a reward would hold, or nil and why. The third is the number
+--- of payouts on success, and on a refusal what it says beyond its code:
+--- { source } for SOURCE_DISABLED, { max } for SLOTS_OVER.
 function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue)
     if type(spec) ~= 'table' then return nil, CH.ERR.INVALID_REWARD end
 
@@ -349,17 +352,25 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
     if slots == nil then
         slots = { { baseline = spec.baseline, bonus = spec.bonus } }
     end
-    if type(slots) ~= 'table' or #slots < 1 or #slots > Config.Limits.MaxPayoutSlots then
-        return nil, CH.ERR.INVALID_REWARD
+    if type(slots) ~= 'table' or #slots < 1 then return nil, CH.ERR.INVALID_REWARD end
+    -- Its own code, with the ceiling: lowered from the panel while a form
+    -- with more payouts was open, "That reward does not add up." was said
+    -- of a reward that did, every time it was sent.
+    if #slots > Config.Limits.MaxPayoutSlots then
+        return nil, CH.ERR.SLOTS_OVER, { max = Config.Limits.MaxPayoutSlots }
     end
 
     local lines = {}
     local moneyTotal = 0
     local slotIndex = 0
 
+    -- A source switched off says which, with its own code: turned off from
+    -- the panel while the form that offered it was open, the refusal was
+    -- "That reward does not add up." and the form went on offering it.
     local function addMoney(portion, source, rawAmount)
         local rule = Config.Sources[source]
-        if not rule or not rule.enabled then return CH.ERR.INVALID_REWARD end
+        if not rule then return CH.ERR.INVALID_REWARD end
+        if not rule.enabled then return CH.ERR.SOURCE_DISABLED, { source = source } end
         local amount = Util.toPositive(rawAmount, rule.max)
         if not amount then return CH.ERR.INVALID_REWARD end
 
@@ -410,7 +421,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         -- operator who turned item escrow off still had it work for anyone
         -- sending the payload by hand. A config switch that only the UI
         -- honours is not a switch.
-        if not sourceEnabled('item') then return CH.ERR.INVALID_REWARD end
+        if not sourceEnabled('item') then return CH.ERR.SOURCE_DISABLED, { source = 'item' } end
         if #list > Config.Sources.item.maxStacks then return CH.ERR.INVALID_REWARD end
 
         for i = 1, #list do
@@ -490,7 +501,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
     local function addWeapons(portion, list)
         if list == nil then return nil end
         if type(list) ~= 'table' then return CH.ERR.INVALID_REWARD end
-        if not sourceEnabled('weapon') then return CH.ERR.INVALID_REWARD end
+        if not sourceEnabled('weapon') then return CH.ERR.SOURCE_DISABLED, { source = 'weapon' } end
         if #list > Config.Sources.weapon.max then return CH.ERR.INVALID_REWARD end
 
         for i = 1, #list do
@@ -569,14 +580,14 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
                     -- rejection made every submission from a form that sends
                     -- all its fields fail, which is every form.
                     if part[source] ~= nil and part[source] ~= 0 and part[source] ~= '0' then
-                        local err = addMoney(portion, source, part[source])
-                        if err then return nil, err end
+                        local err, refusal = addMoney(portion, source, part[source])
+                        if err then return nil, err, refusal end
                     end
                 end
-                local err = addItems(portion, part.items)
-                if err then return nil, err end
-                err = addWeapons(portion, part.weapons)
-                if err then return nil, err end
+                local err, refusal = addItems(portion, part.items)
+                if err then return nil, err, refusal end
+                err, refusal = addWeapons(portion, part.weapons)
+                if err then return nil, err, refusal end
             end
         end
 

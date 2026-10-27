@@ -546,12 +546,14 @@ describe('collections as the owner chooses them (Config.Limits.MaxPayoutSlots)',
 
             Env.addPlayer({ source = 4, citizenid = 'TARGET04', license = 'license:t4',
                 firstname = 'Ola', lastname = 'Berg' })
-            local twice, err = s.contracts.create(f.creator, {
+            local twice, err, refusal = s.contracts.create(f.creator, {
                 targetCid = 'TARGET04', reason = 'x',
                 reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } },
             })
             falsy(twice, 'a second collection is not offered at 1')
-            eq(err, CH.ERR.INVALID_REWARD)
+            -- With the ceiling, for a form left open as it came down (W096).
+            eq(err, CH.ERR.SLOTS_OVER)
+            eq(refusal and refusal.max, 1)
         end)
     end)
 

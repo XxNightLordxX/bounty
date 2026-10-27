@@ -246,8 +246,8 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec)
     -- rather than each top-up on its own.
     local worth = Escrow.moneyValue(contractId)
 
-    local lines, err = Escrow.validate(actor, rewardSpec, nil, held, worth)
-    if not lines then return false, err end
+    local lines, err, refusal = Escrow.validate(actor, rewardSpec, nil, held, worth)
+    if not lines then return false, err, refusal end
     -- As at creation: a contract that pays only for a live delivery takes
     -- no bonus of its own. Added to the reward, the same thing is paid on
     -- the same delivery.
@@ -677,8 +677,8 @@ proposeUnlocked = function(actor, contractId, kind, payload)
     -- Only the fields this amendment kind actually uses are kept, each
     -- coerced. Storing the client's table verbatim would persist unbounded
     -- attacker-chosen data in a row nothing ever deletes.
-    local clean, payloadErr = Amendments.sanitize(kind, payload, actor)
-    if not clean then return nil, payloadErr end
+    local clean, payloadErr, payloadRefusal = Amendments.sanitize(kind, payload, actor)
+    if not clean then return nil, payloadErr, payloadRefusal end
 
     local fits, fitErr, refusal = checkAgainst(contract, kind, clean)
     if not fits then return nil, fitErr, refusal end
@@ -835,11 +835,11 @@ function Amendments.sanitize(kind, payload, actor)
         if Config.Reason.Mode ~= 'freetext' and Config.Reason.Mode ~= 'preset' then
             return nil, CH.ERR.INVALID_INPUT
         end
-        local reason, reasonErr = Contracts.reasonFor(actor or {}, {
+        local reason, reasonErr, reasonRule = Contracts.reasonFor(actor or {}, {
             reason = payload.reason, reasonPreset = payload.reasonPreset,
         })
         if reasonErr or not reason or reason == '' then
-            return nil, reasonErr or CH.ERR.INVALID_INPUT
+            return nil, reasonErr or CH.ERR.INVALID_INPUT, reasonRule
         end
         clean.reason = reason
 

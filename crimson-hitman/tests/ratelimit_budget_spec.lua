@@ -332,3 +332,110 @@ describe('what a player doing ordinary things spends', function()
             .. 'nobody chose: ' .. table.concat(names, ', '))
     end)
 end)
+
+--- The idle sweep took ten minutes idle to mean refilled, and the panel
+--- takes a refill window of up to an hour: a spent bucket on such a rule was
+--- dropped at ten minutes and came back full fifty minutes before the wait
+--- the player was told (W200).
+describe('the idle sweep', function()
+    it('keeps a spent bucket its own rule has not refilled', function()
+        local s = newStack()
+        local f = fixture(s)
+        withConfig({ { Config.Cooldowns, 'informant', { per = 3600, burst = 1 } } }, function()
+            truthy(s.ratelimit.check(f.creator, 'informant'))
+            Env.advance(601)
+            eq(s.ratelimit.sweep(), 0, 'a bucket most of an hour from full is not dropped')
+            local wait = s.ratelimit.retryAfter(f.creator, 'informant')
+            truthy(wait >= 2998 and wait <= 3000, 'and still says most of an hour: ' .. wait)
+            falsy(s.ratelimit.check(f.creator, 'informant'), 'which still stands')
+
+            Env.advance(3600)
+            eq(s.ratelimit.sweep(), 1, 'full again under its own rule, it goes')
+            truthy(s.ratelimit.check(f.creator, 'informant'))
+        end)
+    end)
+end)
+
+--- What a player-facing bucket does when staff change it from the panel
+--- while players are using it (W203). Nothing pinned it: which allowance a
+--- bucket already part spent is held to, how long the refusal says to wait,
+--- and what a reset gives back.
+describe('a bucket changed from the panel while it is in use', function()
+    local function seeded()
+        local s = newStack()
+        s.app.init(s)
+        local f = fixture(s)
+        return s, f
+    end
+
+    it('holds a part-spent bucket to a lowered allowance at once, and lets go on reset', function()
+        local s = seeded()
+        for i = 1, 12 do truthy(call('ledger', 1).ok, 'read ' .. i .. ' of the shipped twenty') end
+
+        -- Lowered from the panel to its floor: six held, one every five seconds.
+        truthy(s.settings.set('Cooldowns.load.burst', 6, 'STAFF'))
+        truthy(s.settings.set('Cooldowns.load.per', 30, 'STAFF'))
+        for i = 1, 6 do
+            truthy(call('ledger', 1).ok, 'the eight left are held to six: read ' .. i)
+        end
+        local refused = call('ledger', 1)
+        eq(refused.err, CH.ERR.RATE_LIMITED, 'the seventh is past the new allowance')
+        eq(refused.data and refused.data.retryAfter, math.max(1, math.ceil(1 / (6 / 30))),
+            'and waits as long as one read takes to come back under the new rule')
+
+        truthy(s.settings.reset('Cooldowns.load.burst', 'STAFF'))
+        truthy(s.settings.reset('Cooldowns.load.per', 'STAFF'))
+        Env.advance(1)
+        truthy(call('ledger', 1).ok, 'the shipped refill is back at once')
+    end)
+
+    it('says how long a lowered progress bucket holds a running handover back', function()
+        local s = seeded()
+        -- A countdown running for this hitman.
+        s.kidnap.progress = function() return { elapsed = 3, required = 30 } end
+        -- The least the panel takes: one a second, held one.
+        truthy(s.settings.set('Cooldowns.progress.burst', 1, 'STAFF'))
+        truthy(s.settings.set('Cooldowns.progress.per', 1, 'STAFF'))
+        truthy(call('kidnapProgress', 3, { id = 'ct00000001' }).ok, 'the first poll is answered')
+        local second = call('kidnapProgress', 3, { id = 'ct00000001' })
+        eq(second.err, CH.ERR.RATE_LIMITED, 'a second inside the same second is a throttle')
+        eq(second.data and second.data.retryAfter, 1,
+            'which says one second, so the page waits it out rather than ending the bar')
+        Env.advance(1)
+        truthy(call('kidnapProgress', 3, { id = 'ct00000001' }).ok, 'and the next second is answered')
+    end)
+
+    --- Comms.send owns the message bucket, so the wrapper's wait was never
+    --- attached and the page said a bare "Slow down." (W119, W201).
+    it('says how long a message refused for the rate must wait', function()
+        local s, f = seeded()
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.settings.set('Cooldowns.message.burst', 1, 'STAFF'))
+        truthy(s.settings.set('Cooldowns.message.per', 3600, 'STAFF'))
+        truthy(call('sendMessage', 3, { id = c.id, body = 'At the docks.' }).ok)
+        local refused = call('sendMessage', 3, { id = c.id, body = 'Waiting.' })
+        eq(refused.err, CH.ERR.RATE_LIMITED)
+        eq(refused.data and refused.data.retryAfter, 3600)
+    end)
+
+    it('lets a death and the revive after it through at the lowest death bucket', function()
+        local s = seeded()
+        truthy(s.settings.set('Cooldowns.death.burst', 2, 'STAFF'))
+        truthy(s.settings.set('Cooldowns.death.per', 3600, 'STAFF'))
+        local reached = {}
+        s.death.onVictimReport = function() reached[#reached + 1] = 'died' end
+        s.death.onRevivedVerified = function() reached[#reached + 1] = 'revived' end
+
+        _G.source = 2
+        Env.events['crimson-hitman:iDied'](3)
+        Env.events['crimson-hitman:iRevived']()
+        Env.events['crimson-hitman:iDied'](3)
+        _G.source = nil
+        eq(table.concat(reached, ','), 'died,revived',
+            'the revive that starts their respawn protection is never the one refused')
+    end)
+end)

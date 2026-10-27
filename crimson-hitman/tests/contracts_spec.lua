@@ -1135,7 +1135,8 @@ describe('a reason over the length limit', function()
             reward = { baseline = { cash = 1000 } },
         })
         falsy(c, 'placed with its reason cut short')
-        eq(err, CH.ERR.INVALID_INPUT)
+        -- Said as the reason, too long (W010).
+        eq(err, CH.ERR.REASON_REFUSED)
     end)
 
     it('is taken at exactly the limit, counted in characters', function()
@@ -1184,7 +1185,7 @@ describe('a reason past what mysql mode\'s column holds', function()
             reward = { baseline = { cash = 1000 } },
         })
         falsy(c)
-        eq(err, CH.ERR.INVALID_INPUT, 'the reason rules\' answer, not the store\'s bad_state')
+        eq(err, CH.ERR.REASON_REFUSED, 'the reason rules\' answer, not the store\'s bad_state')
         eq(Env.players[1].PlayerData.money.cash, 100000, 'nothing was taken')
 
         c, err = s.contracts.create(f.creator, {

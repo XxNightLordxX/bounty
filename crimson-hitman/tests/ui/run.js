@@ -4704,6 +4704,9 @@ async function main() {
       eq(String(live(free, 'reason').maxLength), '140');
     });
 
+    // With something in it: a freetext server refuses an empty reason, and
+    // the form says so before sending (W010).
+    live(free, 'reason').value = 'Unpaid debt';
     const freeSent = await submit(free);
 
     it('sends no preset index off a preset server', function () {
@@ -11102,6 +11105,352 @@ async function main() {
       truthy(dialog.indexOf('This contract is on someone in emergency services.') !== -1, dialog);
     });
     drewCleanly(ledger); drewCleanly(unflagged); drewCleanly(medic);
+  })();
+
+  /* ---------- What the page says it knows (G8) ----------
+     Timeouts on money, rate limits, refusals on the forms and the board, and
+     the relay: each of these said less than the server knew, or the wrong
+     thing. */
+  await (async function pageSaysWhatItKnows() {
+    function boardWith(settings, contracts) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: contracts || [],
+        settings: Object.assign({ minQueryLength: 4 }, settings || {}) } };
+    }
+    const WALLET = { ok: true, data: { cash: 100000, bank: 50000, dirty: 20000, caps: { slots: 1 } } };
+    async function placeForm(over, settings) {
+      const app = boot(Object.assign({
+        list: boardWith(settings), mine: MINE, ledger: LEDGER, rewardOptions: WALLET,
+        searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Dana Reyes', protected: false }] }
+      }, over || {}));
+      await settle(); await settle();
+      tab(app, 'place');
+      await settle(); await settle();
+      return app;
+    }
+    async function placeIt(app, reason) {
+      app.document.getElementById('target-handle').value = 'tg00000001';
+      const box = app.document.getElementById('reason');
+      if (box) { box.value = reason; }
+      app.document.getElementById('slot-cash-1').value = '5000';
+      click(app, 'Place contract');
+      await settle(); await settle(); await settle();
+      return app.sent.filter(function (x) { return x.name === 'create'; });
+    }
+    function asked(app, name) {
+      return app.sent.filter(function (x) { return x.name === name; }).length;
+    }
+    function firePush(app, reason) {
+      app.sandbox.window._message({ data: { type: 'push', reason: reason } });
+      const due = app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; });
+      if (due.length) { due[due.length - 1].fn(); }
+    }
+
+    /* S19: a place that ran out of the wait may still have been placed and
+       paid for, and "Try again" placed and paid for a second one. */
+    const timed = await placeForm({ create: { ok: false, err: 'timeout', event: 'create' } });
+    await placeIt(timed, 'Unpaid debt');
+    const listTimed = boot({ list: { ok: false, err: 'timeout', event: 'list' }, mine: MINE,
+      ledger: LEDGER });
+    await settle(); await settle();
+    it('says a money request out of time may still go through, and a read to try again', function () {
+      eq(timed.notice(), 'No answer yet. It may still go through: look before you try again.');
+      truthy(listTimed.view.textContent.indexOf('No answer. Try again.') !== -1,
+        'a read moved nothing: ' + listTimed.view.textContent);
+    });
+
+    // The answer that lands after it has the page read everything again.
+    const late = await placeForm({});
+    const lateBefore = { list: asked(late, 'list'), mine: asked(late, 'mine'),
+      ledger: asked(late, 'ledger'), wallet: asked(late, 'rewardOptions') };
+    firePush(late, 'late');
+    await settle(); await settle(); await settle();
+    it('reads everything again when a request it gave up on is answered late', function () {
+      eq(asked(late, 'list') - lateBefore.list, 1, 'the board');
+      eq(asked(late, 'mine') - lateBefore.mine, 1, 'Mine, where a late contract shows');
+      eq(asked(late, 'ledger') - lateBefore.ledger, 1, 'the ledger');
+      eq(asked(late, 'rewardOptions') - lateBefore.wallet, 1, 'and the wallet it was paid from');
+    });
+
+    /* W198: a rate-limited poll is a throttle, not the end of the handover. */
+    const holding = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    holding.role = 'hitman';
+    holding.myAlias = 'Operative #1';
+    holding.kidnapProgress = { elapsed: 4, required: 30, graceLeft: 3000, graceTotal: 3000 };
+    const replies = [
+      { ok: true, data: { elapsed: 5, required: 30, graceLeft: 3000, graceTotal: 3000 } },
+      { ok: false, err: 'rate_limited', data: { retryAfter: 30 } }
+    ];
+    const polled = boot({
+      list: boardWith(), mine: { ok: true, data: { created: [], accepted: [holding], onMe: [] } },
+      ledger: LEDGER,
+      kidnapProgress: function () { return replies.shift() || { ok: false, err: 'no_handover' }; }
+    });
+    await settle(); await settle();
+    tab(polled, 'mine');
+    await settle(); await settle();
+    const poll = polled.timers.filter(function (t) { return t.repeating && t.ms === 1000 && !t.cleared; });
+    const tick = poll[poll.length - 1];
+    tick.fn(); await settle(); await settle();
+    const readsBefore = asked(polled, 'list') + asked(polled, 'mine') + asked(polled, 'ledger');
+    tick.fn(); await settle(); await settle();
+    const pollsAfterLimit = asked(polled, 'kidnapProgress');
+    tick.fn(); await settle(); await settle();
+    it('keeps the bar through a rate-limited poll, reads nothing and says nothing', function () {
+      falsy(tick.cleared, 'the poller is still running');
+      truthy(polled.view.textContent.indexOf('5s of 30s') !== -1,
+        'the bar stays where it was: ' + polled.view.textContent);
+      falsy(polled.notice().indexOf('Slow down') !== -1, polled.notice());
+      eq(asked(polled, 'list') + asked(polled, 'mine') + asked(polled, 'ledger'), readsBefore,
+        'nothing read again for a throttle');
+      eq(asked(polled, 'kidnapProgress'), pollsAfterLimit,
+        'and the next poll waits out the wait the server named');
+    });
+
+    /* W201: one wording for every wait, in minutes where it is minutes. */
+    const HELD = {
+      id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
+      state: 'accepted', role: 'hitman', mode: 'exclusive',
+      reward: { total: 5000 }, canDeliver: true, hitmen: []
+    };
+    const arming = boot({
+      list: boardWith(), mine: { ok: true, data: { created: [], accepted: [HELD], onMe: [] } },
+      ledger: LEDGER, armKidnap: { ok: false, err: 'rate_limited', data: { retryAfter: 300 } }
+    });
+    await settle(); await settle();
+    tab(arming, 'mine');
+    await settle(); await settle();
+    click(arming, 'Deliver alive');
+    await settle();
+    const slowBoard = boot({ list: { ok: false, err: 'rate_limited', data: { retryAfter: 3600 } },
+      mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    const slowWallet = await placeForm({
+      rewardOptions: { ok: false, err: 'rate_limited', data: { retryAfter: 120 } } });
+    it('says how long a rate limit lasts, in minutes where it is minutes', function () {
+      truthy(arming.notice().indexOf('about 5 minutes') !== -1, 'arming: ' + arming.notice());
+      truthy(slowBoard.view.textContent.indexOf('Try again in about 60 minutes.') !== -1,
+        'the board: ' + slowBoard.view.textContent);
+      falsy(slowBoard.view.textContent.indexOf('3600 seconds') !== -1);
+      truthy(slowWallet.view.textContent.indexOf('Try again in about 2 minutes.') !== -1,
+        'the wallet: ' + slowWallet.view.textContent);
+    });
+
+    /* W010: an empty reason caught on the form, and a refused one by its rule. */
+    const blank = await placeForm({ create: { ok: true, data: {} } }, { reasonMode: 'freetext' });
+    const blankSent = await placeIt(blank, '   ');
+    const digits = await placeForm({
+      create: { ok: false, err: 'reason_refused', data: { rule: 'digits' } } },
+      { reasonMode: 'freetext' });
+    await placeIt(digits, 'Owes me 1500000');
+    it('says a reason is missing before sending, and which rule a refused one broke', function () {
+      eq(blankSent.length, 0, 'nothing sent for an empty reason');
+      eq(blank.notice(), 'Give a reason for the contract.');
+      truthy(digits.notice().indexOf('digits') !== -1, digits.notice());
+      falsy(digits.notice().indexOf('Check what you entered') !== -1);
+    });
+
+    /* W021: inside the stake window the card says so, and a refused Accept
+       reads the board again. */
+    const tight = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    tight.penaltyAmount = 2000;
+    tight.secondsLeft = 600;
+    const windowed = boot({ list: boardWith({ stakeWindowMinutes: 30 }, [tight]),
+      mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    const lockedOut = boot({ list: boardWith({}, [BOARD.data.contracts[0]]), mine: MINE,
+      ledger: LEDGER, accept: { ok: false, err: 'locked' } });
+    await settle(); await settle();
+    const listsBefore = asked(lockedOut, 'list');
+    click(lockedOut, 'Accept contract');
+    await settle();
+    click(lockedOut, 'Under my name');
+    await settle(); await settle();
+    it('says a staked card is inside the stake window, and re-reads after locked', function () {
+      truthy(windowed.view.textContent.indexOf('Too little time left to stake on this one.') !== -1,
+        windowed.view.textContent);
+      falsy(windowed.view.all().some(function (b) {
+        return b.tagName === 'BUTTON' && b.textContent === 'Accept contract';
+      }), 'no Accept the server can only refuse');
+      eq(asked(lockedOut, 'list') - listsBefore, 1, 'the stale card is read again');
+    });
+
+    /* W096: a source switched off mid-form is named, and the wallet read again. */
+    const switched = await placeForm({
+      create: { ok: false, err: 'source_disabled', data: { source: 'dirty' } } });
+    const walletBefore = asked(switched, 'rewardOptions');
+    await placeIt(switched, 'Unpaid debt');
+    it('names a source switched off and reads the wallet again', function () {
+      truthy(switched.notice().indexOf('dirty money') !== -1, switched.notice());
+      eq(asked(switched, 'rewardOptions') - walletBefore, 1, 'what can be put up, read again');
+    });
+
+    // And the payout ceiling come down to one, with payouts on the form.
+    let ceiling = 3;
+    const lowered = await placeForm({ rewardOptions: function () {
+      return { ok: true, data: { cash: 100000, bank: 50000, dirty: 0, caps: { slots: ceiling } } };
+    } });
+    const count = lowered.document.getElementById('slots-count');
+    count.value = '3';
+    count.onchange();
+    await settle();
+    ceiling = 1;
+    firePush(lowered, 'settings');
+    await settle(); await settle(); await settle();
+    it('says payouts 2 and 3 went when the ceiling came down to one', function () {
+      eq(lowered.notice(),
+        'This server now takes one payout per contract; payouts 2 and 3 were removed.');
+    });
+
+    /* The relay. */
+    const caller = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    caller.role = 'hitman';
+    caller.myAlias = 'Operative #1';
+    function relay(over, settings) {
+      return boot(Object.assign({
+        list: boardWith(Object.assign({ calls: true }, settings || {})),
+        mine: { ok: true, data: { created: [], accepted: [caller], onMe: [] } },
+        ledger: LEDGER,
+        readThread: { ok: true, data: [] },
+        requestCall: { ok: true, data: { placed: true } },
+        endCall: { ok: true, data: { ended: true } }
+      }, over || {}));
+    }
+    async function inThread(app) {
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      click(app, 'Message');
+      await settle(); await settle();
+    }
+
+    // W114: the contract closes mid-call and takes the thread with it.
+    let closed = false;
+    const closing = relay({ readThread: function () {
+      return closed ? { ok: false, err: 'already_settled' } : { ok: true, data: [] };
+    } });
+    await inThread(closing);
+    closing.document.getElementById('thread-call').onclick();
+    await settle(); await settle();
+    closed = true;
+    firePush(closing, 'completed');
+    await settle(); await settle(); await settle();
+    const barHang = closing.view.all().filter(function (n) { return n._id === 'call-hangup'; })[0];
+    if (barHang) { barHang.onclick(); await settle(); await settle(); }
+    it('keeps Hang up on screen after the contract closes mid-call', function () {
+      truthy(asked(closing, 'readThread') >= 2, 'the thread was read again');
+      truthy(barHang, 'a Hang up outside the thread: ' + closing.view.textContent);
+      eq(asked(closing, 'endCall'), 1, 'and it ends the call');
+    });
+
+    // W115: calls switched off mid-call leave Hang up in the thread.
+    let callsOn = true;
+    const switchedOff = relay({ list: function () {
+      return boardWith({ calls: callsOn });
+    } });
+    await inThread(switchedOff);
+    switchedOff.document.getElementById('thread-call').onclick();
+    await settle(); await settle();
+    callsOn = false;
+    firePush(switchedOff, 'settings');
+    await settle(); await settle(); await settle();
+    it('keeps Hang up in the thread after calls are switched off', function () {
+      truthy(switchedOff.view.all().some(function (n) { return n._id === 'thread-hangup'; }),
+        switchedOff.view.textContent);
+    });
+
+    // W118: a double tap places one call; on a call already, Hang up.
+    let answer;
+    const tapped = relay({ requestCall: function () {
+      return new Promise(function (resolve) { answer = resolve; });
+    } });
+    await inThread(tapped);
+    tapped.document.getElementById('thread-call').onclick();
+    await settle();
+    const busy = tapped.view.all().filter(function (n) { return n._id === 'thread-call'; })[0];
+    if (busy && busy.onclick) { busy.onclick(); }
+    await settle();
+    if (answer) { answer({ ok: false, err: 'already_in_call' }); }
+    await settle(); await settle(); await settle();
+    it('sends one call for a double tap, and offers Hang up on a call already', function () {
+      eq(asked(tapped, 'requestCall'), 1);
+      truthy(busy && busy.textContent === 'Calling…', 'the button says it is asking');
+      truthy(tapped.view.all().some(function (n) { return n._id === 'thread-hangup'; }),
+        tapped.view.textContent);
+    });
+
+    // W117: no Call where a party is anonymous and the phone cannot mask.
+    caller.creatorAnonymous = true;
+    const unmaskable = relay({}, { canMask: false });
+    await inThread(unmaskable);
+    const maskable = relay({}, { canMask: true });
+    await inThread(maskable);
+    delete caller.creatorAnonymous;
+    it('draws no Call where the phone cannot hide an anonymous party', function () {
+      falsy(unmaskable.view.all().some(function (n) { return n._id === 'thread-call'; }),
+        'a Call that can only be refused');
+      truthy(maskable.view.all().some(function (n) { return n._id === 'thread-call'; }));
+    });
+
+    // W119: a refused message says why, and how long a limit lasts.
+    const filtered = relay({ sendMessage: { ok: false, err: 'message_refused' } });
+    await inThread(filtered);
+    const box = filtered.document.getElementById('compose-input');
+    box.value = 'you slur';
+    box.oninput();
+    box.onkeydown({ key: 'Enter' });
+    await settle(); await settle();
+    const throttled = relay({ sendMessage: { ok: false, err: 'rate_limited',
+      data: { retryAfter: 3600 } } });
+    await inThread(throttled);
+    const box2 = throttled.document.getElementById('compose-input');
+    box2.value = 'Where are you?';
+    box2.oninput();
+    box2.onkeydown({ key: 'Enter' });
+    await settle(); await settle();
+    it('says a word was not allowed, and how long a message limit lasts', function () {
+      eq(filtered.notice(), 'A word in that message is not allowed here. Your draft is kept.');
+      truthy(throttled.notice().indexOf('about 60 minutes') !== -1, throttled.notice());
+    });
+
+    // W120: an unread dot, gone once read, kept on the phone.
+    const stored = {};
+    const storage = {
+      getItem: function (k) { return stored[k] === undefined ? null : stored[k]; },
+      setItem: function (k, v) { stored[k] = String(v); }
+    };
+    const unreadCard = JSON.parse(JSON.stringify(caller));
+    unreadCard.lastMessageAt = 1000;
+    const dotted = boot({
+      list: boardWith(), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [unreadCard], onMe: [] } },
+      readThread: { ok: true, data: [{ alias: 'The person who placed it', body: 'Docks.',
+        at: 1000, mine: false }] }
+    }, { localStorage: storage });
+    await settle(); await settle();
+    tab(dotted, 'mine');
+    await settle(); await settle();
+    function messageButton(app) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Message';
+      })[0];
+    }
+    const before = messageButton(dotted);
+    const dottedBefore = !!before && before.classList.contains('has-unread');
+    before.onclick();
+    await settle(); await settle();
+    click(dotted, 'Back');
+    await settle(); await settle();
+    const after = messageButton(dotted);
+    it('marks Message with an unread dot until the thread is read', function () {
+      truthy(dottedBefore, 'a message newer than this phone last read');
+      falsy(after && after.classList.contains('has-unread'), 'read now');
+      truthy(String(stored['crimson-hitman:threads-read'] || '').indexOf('1000') !== -1,
+        'kept on this phone: ' + JSON.stringify(stored));
+    });
+
+    [timed, listTimed, late, polled, arming, slowBoard, slowWallet, blank, digits, windowed,
+     lockedOut, switched, lowered, closing, switchedOff, tapped, unmaskable, maskable, filtered,
+     throttled, dotted].forEach(function (app) { drewCleanly(app); });
   })();
 
   console.log('');

@@ -760,6 +760,25 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
 }
 /* An odd one out takes the whole last row rather than leaving a hole. */
 .more > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+/* The Hang up above every screen but the thread while a call placed from
+   the app is live (app.js, callBar). */
+.call-bar {
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+/* Message or Threads with a message newer than this phone last read of the
+   thread (app.js, unreadIn): a dot after the label. */
+.has-unread::after {
+  content: '';
+  flex: none;
+  width: 0.5rem; height: 0.5rem;
+  margin-left: 0.4rem;
+  border-radius: 50%;
+  background: var(--crimson-bright);
+}
 /* A hitman's Abandon goes last, on a line of its own, where a thumb reaching
    for Message or Propose change does not land on it by accident. Moved by
    `order` rather than in the page, so the buttons are still built in the

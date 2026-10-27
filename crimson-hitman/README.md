@@ -850,13 +850,39 @@ other is (`Config.Relay`; switching it off removes messaging and calls
 entirely). A call to an anonymous party asks them to call back rather than
 ringing them, since a phone that rings only when its owner is in the city
 would say whether they are. Calls go through lb-phone's `CreateCall` export
-with the caller's alias shown, and are hung up from the thread. On a phone
-build without it the Call button is not drawn, and when both sides are
-anonymous neither can ring the other: they use messages. Either side can
+with the caller's alias shown, and are hung up with **Hang up**: in the
+thread, and above every other screen while the call lasts, so a contract
+that closes mid-call, or calls switched off from the panel, never leaves the
+caller unable to put the phone down. On a phone build without it the Call
+button is not drawn, and when both sides are anonymous neither can ring the
+other: they use messages. With `Config.Relay.RequireMaskingForAnonymous` on
+(as shipped) and a phone that cannot hide the caller's number, no call is
+placed to or from an anonymous party and nobody is asked to call back: the
+page draws no Call on such a thread. Call is held while it is asked, so a
+double tap places one call, and a player already on a call is offered Hang
+up instead. Either side can
 Mute a thread from its header: their phone stops ringing for its messages,
 which still arrive and show in the thread, while contract updates still
 ring. The mute is theirs alone, is kept across restarts, and the other side
-cannot tell.
+cannot tell. **Message** and **Threads** carry a dot while a thread has a
+message from the other side newer than that phone last read of it (kept on
+the phone only), and a player who was away when a message came gets one
+*New message about your contract on …* notice at their next login, one per
+contract and none for a muted thread. A message refused for a word the
+phone does not allow says so and keeps the draft, and one refused for the
+rate says how long to wait.
+
+**What the page says when it cannot know.** A request that can move money
+(placing, accepting, a buyout, a withdrawal, verifying a kill and the like)
+that gets no answer within the page's fifteen seconds is told *No answer
+yet. It may still go through: look before you try again.*, not "Try again":
+the server can still finish it. If its answer then arrives, the page reads
+everything again on its own. Every refusal for the rate says how long to
+wait, in minutes where it is minutes, and a handover's countdown carries on
+through one. A reason the server will not take says which rule it broke
+(too many digits, a link or @handle, a word the phone refuses), and a
+reward source or payout count switched off from the panel while the Place
+form was open is named, and the form is read again.
 
 **Access.** The app is criminal-only. Every job in `Config.BlockedJobTypes`
 or `Config.BlockedJobNames` is barred from it (police, sheriff, SAST, FIB,

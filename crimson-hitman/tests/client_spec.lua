@@ -309,6 +309,38 @@ describe('the client handed something it did not expect', function()
                 'a reply reaches the page once, as its answer')
         end
     end)
+
+    --- A database held longer than the page's fifteen-second wait (S19): the
+    --- server answered after the page had said "No answer", and the answer
+    --- was dropped, so a contract placed and paid for showed nowhere until
+    --- something else moved the page. It now has the page read everything
+    --- again, once, and runs no callback a second time.
+    it('refreshes the page once when a request it gave up on is answered late', function()
+        Env.reset()
+        Client.boot()
+
+        Client.nuiCall('crimson:create', {})
+        local asked = Client.toServer[#Client.toServer]
+        local rid = asked.args[1] and asked.args[1].__rid
+        Client.runTimeouts()
+        eq(Client.answer and Client.answer.err, 'timeout')
+        eq(Client.answer.event, 'create', 'named, for the page to word a money request apart')
+
+        Client.phone = {}
+        local late = { rid = rid, event = 'create', ok = true, data = {} }
+        Client.fire('crimson-hitman:result', late)
+        Client.fire('crimson-hitman:result', late)
+        local pushes = 0
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SendCustomAppMessage' and call.message
+                and call.message.type == 'push' then
+                eq(call.message.reason, 'late')
+                pushes = pushes + 1
+            end
+        end
+        eq(pushes, 1, 'one push for the answer, however often it lands')
+        eq(Client.answerCount, 1, 'and the page was answered once, by the timeout')
+    end)
 end)
 
 describe('the camera, on a phone that dies mid-upload', function()

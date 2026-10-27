@@ -458,8 +458,22 @@
        when the server sends it. */
     informant_warming: 'The informant is still asking around after a restart. '
       + 'Try again in a few minutes.',
+    // Whose number it would be is said by failText where the server says.
     call_unmasked: 'They are staying anonymous, and a call from this phone '
       + 'would show their number. Send a message instead.',
+    // On a call already (a second tap, or a call never hung up): the thread
+    // shows Hang up instead of Call.
+    already_in_call: 'You are on a call already. Hang up first.',
+    /* A reward source, or the payout ceiling, changed from the admin panel
+       while the form was open. failText names which; the Place form reads
+       what is on offer again. */
+    source_disabled: 'This server no longer takes that kind of reward. Nothing was taken.',
+    slots_over: 'This server now takes fewer payouts per contract. Nothing was taken.',
+    // failText says which rule (reasonRefusedText).
+    reason_refused: 'This server will not take that reason. Word it differently.',
+    // The phone's word filter, or nothing left once cleaned. The draft is
+    // kept (sendMessage clears it only on success).
+    message_refused: 'A word in that message is not allowed here. Your draft is kept.',
     limit_reached: 'You are holding too many contracts.',
     /* A different rule entirely, and it used to share the message above —
        which told a hitman holding nothing that they were holding too much,
@@ -672,6 +686,53 @@
     timeout: 'No answer. Try again.',
     unreachable: 'No answer. Try again.'
   };
+
+  /* The requests that can move money, each a handler in server/app.lua
+     (tests/static_check.lua, rule 37). One that runs out of the wait may
+     still go through: the server can answer after it, and "Try again" placed
+     and paid for a second contract. The answer that lands late has the page
+     read everything again (the 'late' push). */
+  var MONEY_EVENTS = {
+    create: true, accept: true, cancel: true, withdrawReward: true, abandon: true,
+    bailout: true, informant: true, addEscrow: true, improve: true,
+    respondAmendment: true, submitPhoto: true, verifyKill: true
+  };
+
+  /* What each reward source is called when a refusal names it. */
+  var SOURCE_WORDS = { cash: 'cash', bank: 'bank money', dirty: 'dirty money',
+                       item: 'items', weapon: 'weapons' };
+
+  /* A reason refused for what it says, by the rule it broke (the server's
+     reason_refused). The Place form and Edit say the same. */
+  function reasonRefusedText(data) {
+    var rule = data && data.rule;
+    if (rule === 'empty') { return 'Give a reason for the contract.'; }
+    if (rule === 'length') { return 'That reason is too long. Make it shorter.'; }
+    if (rule === 'digits') {
+      return 'That reason has more digits in it than this server takes. Write amounts '
+        + 'in words, or leave them out.';
+    }
+    if (rule === 'pattern') {
+      return 'This server will not take a link or an @handle in a reason. Word it differently.';
+    }
+    if (rule === 'phone') {
+      return 'A word in that reason is not allowed here. Word it differently.';
+    }
+    return ERRORS.reason_refused;
+  }
+
+  /* How long a wait is, in the words every refusal that carries one uses:
+     "in 7 seconds", "in about 2 minutes", or "in a moment" where the server
+     sent none. One wording for all of them: the wallet and the target list
+     said "in a moment" of an hour, and the board's failure card "3600
+     seconds". */
+  function retryIn(seconds) {
+    var s = Math.ceil(Number(seconds) || 0);
+    if (!(s > 0)) { return 'in a moment'; }
+    if (s < 60) { return 'in ' + s + ' second' + (s === 1 ? '' : 's'); }
+    var m = Math.ceil(s / 60);
+    return 'in about ' + m + ' minute' + (m === 1 ? '' : 's');
+  }
 
   /* ---------- dialogs ----------
      FiveM's NUI is a CEF browser with no dialog handler: window.confirm and
@@ -1472,14 +1533,45 @@
     // would read as a failure.
     if (result.err in ERRORS && ERRORS[result.err] === null) return null;
 
+    // A request that can move money, out of time: it may still go through,
+    // and "Try again" paid twice. Anything else that timed out moved nothing.
+    if (result.err === 'timeout' && MONEY_EVENTS[result.event] === true) {
+      return 'No answer yet. It may still go through: look before you try again.';
+    }
+
     // A wait the player can act on. "Slow down" alone reads as a broken
     // button, because tapping again says exactly the same thing.
     if (result.err === 'rate_limited' && result.data && result.data.retryAfter) {
-        var wait = result.data.retryAfter;
-        return wait >= 60
-          ? 'Slow down — try again in about ' + Math.ceil(wait / 60) + ' minute'
-            + (wait >= 120 ? 's' : '') + '.'
-          : 'Slow down — try again in ' + wait + ' second' + (wait === 1 ? '' : 's') + '.';
+      return 'Slow down \u2014 try again ' + retryIn(result.data.retryAfter) + '.';
+    }
+
+    // A reason refused for what it says, by the rule it broke: a form full
+    // of money fields said only "Check what you entered."
+    if (result.err === 'reason_refused') { return reasonRefusedText(result.data); }
+
+    // A reward source staff switched off while the form was open, by name.
+    if (result.err === 'source_disabled' && result.data && SOURCE_WORDS[result.data.source]) {
+      return 'This server no longer takes ' + SOURCE_WORDS[result.data.source]
+        + ' in a reward. Nothing was taken.';
+    }
+    // And the payout ceiling, lowered the same way.
+    if (result.err === 'slots_over' && result.data && Number(result.data.max) > 0) {
+      var most = Number(result.data.max);
+      return most === 1
+        ? 'This server now takes one payout per contract. Nothing was taken.'
+        : 'This server now takes at most ' + most + ' payouts per contract. Nothing was taken.';
+    }
+
+    // A message that was not sent for what it says, with the draft kept.
+    if (result.err === 'message_refused' && result.data && result.data.empty) {
+      return 'There is nothing in that message to send.';
+    }
+
+    // Whose number a call would show, said the right way round: "they are
+    // staying anonymous" was said to a named caller whose own number it was.
+    if (result.err === 'call_unmasked' && result.data && result.data.anonymous === 'you') {
+      return 'You are staying anonymous, and a call from this phone would show your '
+        + 'number. Send a message instead.';
     }
 
     // Held for seconds: the same request is still being worked on, waiting
@@ -2079,6 +2171,16 @@
     if (contract.mode !== 'exclusive' && cap > 0 && active >= cap) {
       return 'Full. It comes back open if an operative drops out.';
     }
+    /* Staked, with less time left than the server lets a stake be taken
+       with (Penalty.MinWindowMinutes): Accept was drawn and refused every
+       time as too_little_time, and the card said nothing. The same sum as
+       the server's, from the clock it sent. */
+    var stakeWindow = Number(settings().stakeWindowMinutes) || 0;
+    var left = secondsLeftOf(contract);
+    if (Number(contract.penaltyAmount) > 0 && stakeWindow > 0 && left !== null
+        && left < stakeWindow * 60) {
+      return 'Too little time left to stake on this one.';
+    }
     return null;
   }
 
@@ -2190,9 +2292,13 @@
       // Not drawn at all on a server with the relay switched off: every
       // message sent from it would be refused.
       if (settings().relay !== false) {
-        more.appendChild(actionButton('ghost ico i-message', 'Message',
+        var message = actionButton('ghost ico i-message', 'Message',
           'thread:' + contract.id, 'Opening\u2026',
-          function () { return openThread(contract, null); }));
+          function () { return openThread(contract, null); });
+        // A dot for a message newer than this phone last read.
+        message.classList.toggle('has-unread',
+          unreadIn(threadKey(contract, null), contract.lastMessageAt));
+        more.appendChild(message);
       }
 
       var quit = el('button', 'ghost ico i-exit is-destructive', 'Abandon');
@@ -2280,9 +2386,15 @@
       // Same shape, same reason: {} has no .length, so this read as "no
       // hitmen" whether or not there were any.
       if (asList(contract.hitmen).length && settings().relay !== false) {
-        more.appendChild(actionButton('ghost ico i-message', 'Threads',
+        var threadsButton = actionButton('ghost ico i-message', 'Threads',
           'threads:' + contract.id, 'Opening\u2026',
-          function () { return openThreads(contract); }));
+          function () { return openThreads(contract); });
+        // A dot when any operative's thread has a message newer than this
+        // phone last read of it.
+        threadsButton.classList.toggle('has-unread', asList(contract.hitmen).some(function (h) {
+          return h && unreadIn(threadKey(contract, { alias: h.alias }), h.lastMessageAt);
+        }));
+        more.appendChild(threadsButton);
       }
 
       var extend = el('button', 'ghost ico i-clock', 'Extend deadline');
@@ -2726,8 +2838,13 @@
           // Likewise a card that is out of date in some other way: closed,
           // taken, or already theirs. The board is only as fresh as its last
           // read, and leaving the stale card up invites the same tap again.
+          // And one somebody else took (locked), one that is gone, one this
+          // hitman was taken off, and one inside the stake window: each left
+          // Accept live on a card the server could only refuse again.
           if (r.err === 'terms_changed' || r.err === 'already_settled'
-              || r.err === 'contract_full' || r.err === 'already_holding') {
+              || r.err === 'contract_full' || r.err === 'already_holding'
+              || r.err === 'too_little_time' || r.err === 'locked'
+              || r.err === 'not_found' || r.err === 'hold_released') {
             refresh();
           }
           // How much, and from where (§14.18: "naming the shortfall").
@@ -3341,6 +3458,8 @@
             + 'placed this contract must be in the city and ' + nearPlacer() + '.',
           limit_reached: 'Too many handovers in progress. Try shortly.'
         };
+        // With how long, which the reply carries (failText).
+        if (r.err === 'rate_limited') { return fail(r); }
         return say(reasons[r.err] || ERRORS[r.err] || 'Cannot start the handover.');
       }
       say('Hold position.', 'caution');
@@ -3402,6 +3521,8 @@
     }
     var deadline = allowance();
     var timer;
+    // Until when polls are held back after a rate limit (below).
+    var holdUntil = 0;
 
     timer = countdownTimer = setInterval(function () {
       if (Date.now() > deadline) {
@@ -3410,6 +3531,7 @@
         refresh();
         return;
       }
+      if (Date.now() < holdUntil) { return; }
 
       post('kidnapProgress', { id: id }).then(function (r) {
         /* A reply to a poll this page has since stopped — the hitman walked
@@ -3427,6 +3549,17 @@
           endCountdown(id);
           handoverEnded(r.data);
           refresh();
+          return;
+        }
+        /* A throttle, not an ending: the handover runs on the server
+           whatever this poll heard. It was read as the end, so the bar
+           went, "Slow down." was said, everything was read again, and the
+           next Mine read started the poll that was refused again. The bar
+           stays as it was, nothing is said or read, and polls wait out the
+           wait the server named. */
+        if (!r.ok && r.err === 'rate_limited') {
+          holdUntil = Date.now() + (Number(r.data && r.data.retryAfter) || 1) * 1000;
+          deadline = Math.max(deadline, holdUntil + 30000);
           return;
         }
         if (!r.ok || !r.data || r.data.elapsed === undefined) {
@@ -4509,7 +4642,7 @@
         state.reward.data = r.data;
       } else {
         state.reward.failed = (r.err === 'rate_limited')
-          ? 'Asked too fast. Try again in a moment.'
+          ? 'Asked too fast. Try again ' + retryIn(r.data && r.data.retryAfter) + '.'
           : 'Could not read what this contract is holding.';
       }
       redraw();
@@ -5013,6 +5146,52 @@
       && threadKey(open.contract, open.thread) === threadKey(contract, thread);
   }
 
+  /* When this phone last read each thread, by threadKey: the server's time
+     of the newest message from the other side it showed. The only sign of
+     a new message was the phone's notice, which a muted thread, a full
+     budget or being away never sent, so a client told "use Message to agree
+     where to meet" had nothing to say a message had come. Kept on this
+     phone only, a convenience for this viewer: nothing about it goes to the
+     server, and every read and write of storage is guarded, since it can
+     be missing or refused. Without it, the dots last as long as the page. */
+  var READ_KEY = 'crimson-hitman:threads-read';
+  var READ_KEPT = 200;
+  var readTimes = null;
+
+  function threadsRead() {
+    if (readTimes) { return readTimes; }
+    readTimes = {};
+    try {
+      var raw = window.localStorage && window.localStorage.getItem(READ_KEY);
+      var parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === 'object') { readTimes = parsed; }
+    } catch (err) { /* read nothing: every thread with a message shows a dot */ }
+    return readTimes;
+  }
+
+  function markRead(key, at) {
+    var newest = Number(at) || 0;
+    var times = threadsRead();
+    if (!(newest > 0) || (Number(times[key]) || 0) >= newest) { return; }
+    times[key] = newest;
+    // The oldest go first once there are more than are worth keeping.
+    var keys = Object.keys(times);
+    if (keys.length > READ_KEPT) {
+      keys.sort(function (a, b) { return (Number(times[a]) || 0) - (Number(times[b]) || 0); });
+      keys.slice(0, keys.length - READ_KEPT).forEach(function (k) { delete times[k]; });
+    }
+    try {
+      if (window.localStorage) { window.localStorage.setItem(READ_KEY, JSON.stringify(times)); }
+    } catch (err) { /* kept for this page only */ }
+  }
+
+  /* Whether a thread has a message from the other side newer than this
+     phone last read of it. */
+  function unreadIn(key, lastMessageAt) {
+    var at = Number(lastMessageAt) || 0;
+    return at > 0 && at > (Number(threadsRead()[key]) || 0);
+  }
+
   /* What a thread that can no longer be read means, in words. The shared
      table says "That is not yours." for not_participant, which is what the
      creator of a contract that has just closed was told on every push,
@@ -5085,6 +5264,12 @@
         // with no entry to carry it. A bare list is the messages alone.
         var data = r.data || [];
         var list = Array.isArray(data) ? data : asList(data.messages);
+        // Read, up to the newest message from the other side shown here.
+        var newest = 0;
+        list.forEach(function (m) {
+          if (m && !m.mine && Number(m.at) > newest) { newest = Number(m.at); }
+        });
+        markRead(threadKey(contract, thread), newest);
         // The keyboard stays up through the redraw: render() sees to it.
         state.thread = { contract: contract, thread: thread,
                          messages: list, draft: keep,
@@ -5135,9 +5320,11 @@
         detail: threads.length + ' operatives are on this contract. Each has '
           + 'a thread of their own, and none of them can see the others.',
         options: threads.map(function (thread) {
+          var fresh = unreadIn(threadKey(contract, thread), thread.lastMessageAt);
           return {
             label: thread.alias || 'Operative',
-            note: thread.name || null,
+            note: [thread.name, fresh ? 'New message' : null].filter(Boolean).join(' \u00b7 ')
+              || null,
             run: function () { openThread(contract, thread); }
           };
         })
@@ -5164,11 +5351,18 @@
     var t = state.thread;
     if (!t) { return; }
 
-    post('requestCall', {
+    return post('requestCall', {
       id: t.contract.id,
       thread: t.thread ? t.thread.handle : null
     }).then(function (r) {
-      if (!r.ok) { return fail(r); }
+      if (!r.ok) {
+        // On a call already: Hang up is what this thread offers now.
+        if (r.err === 'already_in_call') {
+          state.call = threadKey(t.contract, t.thread);
+          redraw();
+        }
+        return fail(r);
+      }
       // Say which actually happened. Telling the player a call is
       // connecting when none is would be worse than any of the others.
       if (r.data && r.data.placed) {
@@ -5214,11 +5408,24 @@
     });
   }
 
+  /* The Hang up drawn above every screen but the thread while a call placed
+     from here is live (draw). */
+  function callBar() {
+    var bar = el('div', 'row call-bar');
+    bar.appendChild(el('div', 'hint', 'You are on a call placed from this app.'));
+    var hang = el('button', 'ghost ico i-xcircle', 'Hang up');
+    hang.id = 'call-hangup';
+    hang.onclick = function () { endCall(); };
+    bar.appendChild(hang);
+    return bar;
+  }
+
   function endCall() {
     post('endCall', {}).then(function (r) {
       if (!r.ok) { return fail(r); }
       state.call = null;
-      if (state.tab === 'thread') { render(); }
+      // Whatever is open: Hang up is drawn on every screen while a call is.
+      redraw();
       // Over already — the other side hung up or never answered — is said
       // as it is, rather than claiming this ended it.
       say(r.data && r.data.ended ? 'Call ended.' : 'The call had already ended.', 'ok');
@@ -5654,21 +5861,31 @@
       && (t.contract.role === 'hitman'
         ? t.contract.myAnonymous === true
         : !!(t.thread && !t.thread.name));
-    if (settings().calls && !bothAnonymous) {
-      if (state.call === threadKey(t.contract, t.thread)) {
-        // lb-phone draws no call screen for a call placed from here — its
-        // CreateCall is built for payphones — so this is the only way the
-        // caller can put the phone down.
-        var hang = el('button', 'ghost ico i-xcircle', 'Hang up');
-        hang.id = 'thread-hangup';
-        hang.onclick = function () { endCall(); };
-        row.appendChild(hang);
-      } else {
-        var call = el('button', 'ghost ico i-phone', 'Call');
-        call.id = 'thread-call';
-        call.onclick = function () { requestCall(); };
-        row.appendChild(call);
-      }
+    // Nor where either side is anonymous and the phone cannot hide the
+    // number as the server requires (settings().canMask): every Call there
+    // was refused, and a call asked of the other side sent them to a Call
+    // that was refused too.
+    var anyAnonymous = t.contract.creatorAnonymous === true
+      || (t.contract.role === 'hitman' ? t.contract.myAnonymous === true
+        : !(t.thread && t.thread.name));
+    if (state.call === threadKey(t.contract, t.thread)) {
+      // lb-phone draws no call screen for a call placed from here — its
+      // CreateCall is built for payphones — so this is the only way the
+      // caller can put the phone down. Whatever the settings say now: calls
+      // switched off mid-call took the button away, and with it the call's
+      // only end.
+      var hang = el('button', 'ghost ico i-xcircle', 'Hang up');
+      hang.id = 'thread-hangup';
+      hang.onclick = function () { endCall(); };
+      row.appendChild(hang);
+    } else if (settings().calls && !bothAnonymous
+        && !(anyAnonymous && settings().canMask === false)) {
+      // Held while it is asked, so a double tap places one call, not two.
+      var call = actionButton('ghost ico i-phone', 'Call',
+        'call:' + threadKey(t.contract, t.thread), 'Calling\u2026',
+        function () { return requestCall(); });
+      call.id = 'thread-call';
+      row.appendChild(call);
     }
 
     // Silences this thread's ring on this phone only. Words rather than an
@@ -5815,7 +6032,8 @@
             // Not "Money still works" where nothing does: the server's
             // boot recovery failed, and placing is refused too.
             state.walletFailed = (r.err === 'rate_limited')
-              ? { text: 'Reading your pockets too fast. Try again in a moment.' }
+              ? { text: 'Reading your pockets too fast. Try again '
+                  + retryIn(r.data && r.data.retryAfter) + '.' }
               : finalRefusal(r.err)
                 ? { text: ERRORS[r.err], final: true }
                 : { text: 'Could not read what you are carrying.',
@@ -6111,6 +6329,14 @@
       var field = document.getElementById('slots-count');
       if (field) { field.value = String(count); }
       if (note) { note.textContent = 'This server allows at most ' + count + ' payouts.'; }
+      /* At one there is no count field to say it beside, and payouts 2 and
+         up went with whatever was staged on them and no word. Said as a
+         notice instead. */
+      if (count === 1) {
+        say('This server now takes one payout per contract; '
+          + (typed === 2 ? 'payout 2 was' : typed === 3 ? 'payouts 2 and 3 were'
+            : 'payouts 2 to ' + typed + ' were') + ' removed.', 'caution');
+      }
     } else if (note) {
       note.textContent = '';
     }
@@ -6759,6 +6985,15 @@
     // meant the first submit always failed and the second submitted nothing.
     var target = state.draft.target || document.getElementById('target-handle').value;
     if (!target) return say('Choose a target.');
+    // A server that takes free text refuses an empty reason. Said here, by
+    // the field, rather than after a round trip as "Check what you
+    // entered." on a form full of money fields. Where the server said so:
+    // one that did not is answered by its own refusal.
+    var reasonBox = document.getElementById('reason');
+    if (settings().reasonMode === 'freetext'
+        && !String(state.draft.reason || (reasonBox && reasonBox.value) || '').trim()) {
+      return say(reasonRefusedText({ rule: 'empty' }));
+    }
 
     var count = payoutCount();
     var moneyFields = ['bonus', 'bailout', 'penalty'];
@@ -7014,6 +7249,23 @@
             + 'may have changed since you opened this form. They have been read '
             + 'again; check the amounts.');
           return render();
+        }
+        /* The reward rules moved under the form: a source switched off or
+           fewer payouts taken, from the admin panel while it was open. It
+           said "That reward does not add up." and kept offering the same
+           thing. What can be put up is read again (and anything staged
+           dropped, since it was picked under the old rules) before it is
+           said; the server names the source or the ceiling where it knows. */
+        if (r.err === 'invalid_reward' || r.err === 'source_disabled'
+            || r.err === 'slots_over') {
+          state.wallet = null;
+          state.walletFailed = null;
+          if (stagedAnything()) { state.picked = {}; }
+          render();
+          return say(r.err === 'invalid_reward'
+            ? 'That reward does not fit this server\u2019s rules. They may have changed '
+              + 'since you opened this form, so it has been read again: check the reward.'
+            : failText(r) + ' The form has been read again.');
         }
         // The limit is on contracts placed, counted across the account's
         // characters. "You are holding too many contracts" was said to a
@@ -7410,7 +7662,7 @@
     function refused(r) {
       browse.data = null;
       browse.refusal = r.err === 'rate_limited'
-        ? 'Looking too fast. Try again in a moment.'
+        ? 'Looking too fast. Try again ' + retryIn(r.data && r.data.retryAfter) + '.'
         // Named for the same reason as the wallet failure above: the code
         // is what an admin needs and the player is the one who can see it.
         : 'Could not read who is online (' + (r.err || 'no reply') + ').';
@@ -7665,6 +7917,12 @@
       return;
     }
 
+    // A call placed from here, on every screen but its thread (which has its
+    // own Hang up). lb-phone draws no call screen for it, and a contract
+    // that closed mid-call took its thread away, and the only Hang up with
+    // it: the caller stayed on the line until the other side hung up.
+    if (state.call && state.tab !== 'thread') { view.appendChild(callBar()); }
+
     ({
       board: viewBoard, mine: viewMine, place: viewPlace,
       onme: viewOnMe, ledger: viewLedger, thread: viewThread,
@@ -7752,8 +8010,7 @@
     }
     state.loadFinal[section] = finalRefusal(r.err);
     state.loadFailed[section] = (r.err === 'rate_limited' && r.data && r.data.retryAfter)
-      ? 'Asked too fast. Try again in ' + r.data.retryAfter + ' second'
-        + (r.data.retryAfter === 1 ? '' : 's') + '.'
+      ? 'Asked too fast. Try again ' + retryIn(r.data.retryAfter) + '.'
       : (ERRORS[r.err] || 'Something went wrong.');
     redraw();
     return false;
@@ -8047,6 +8304,8 @@
   var pushTimer = null;
   // A settings push waiting in that debounce (see the push handler).
   var settingsPushed = false;
+  // And a late answer's (the same).
+  var latePushed = false;
 
   // A refusal stays up until the player does something else. Captured, so
   // it is cleared before the tap's own handler runs and can raise the next.
@@ -8137,6 +8396,13 @@
          not drop it. */
       if (data.reason === 'settings') { settingsPushed = true; }
 
+      /* An answer to a request this page was told had timed out (the client
+         remembers those for two minutes). Whatever it did, everything is
+         read again, whatever tab is open: a contract placed after "No
+         answer yet" shows under Mine, and on the Place form the wallet it
+         was paid from is read again. */
+      if (data.reason === 'late') { latePushed = true; }
+
       // Debounced: a contract settling pushes the creator, the target and
       // every hitman, and several of those can land in the same tick. One
       // refresh is three requests, so a push per party would be a burst per
@@ -8148,6 +8414,15 @@
         if (settingsPushed) {
           settingsPushed = false;
           wanted.board = true;
+          if (state.tab === 'place') {
+            state.wallet = null;
+            state.walletFailed = null;
+            redraw();
+          }
+        }
+        if (latePushed) {
+          latePushed = false;
+          wanted = { board: true, mine: true, ledger: true };
           if (state.tab === 'place') {
             state.wallet = null;
             state.walletFailed = null;

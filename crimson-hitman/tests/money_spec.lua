@@ -615,9 +615,9 @@ describe('what the form is told a server will accept', function()
         Config.Sources.dirty.enabled = was
 
         falsy(c, 'the server really does refuse it')
-        eq(err, CH.ERR.INVALID_REWARD,
-            'and the message the player gets blames the amount, which is why '
-            .. 'the form must not offer the source in the first place')
+        -- Named as the source switched off, so a form left open as it went
+        -- says that rather than blaming the amount (W096).
+        eq(err, CH.ERR.SOURCE_DISABLED)
     end)
 end)
 

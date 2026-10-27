@@ -93,6 +93,10 @@ local CONDITIONAL = {
     -- A handle for a face that has been rendered. Nil until the target's own
     -- client has answered, which asking is what schedules.
     targetImageId    = 'present once a headshot exists to point at',
+    -- When the other side last wrote in the hitman's thread, for the unread
+    -- dot on Message. The hitman's alone (the creator's is per operative,
+    -- under hitmen), and only once a message from the other side exists.
+    lastMessageAt    = 'hitman-only, and only once the other side has written',
 }
 
 --- Which roles see a contract at all, and through which projection call.

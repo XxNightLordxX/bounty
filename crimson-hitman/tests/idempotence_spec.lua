@@ -979,7 +979,8 @@ describe('what this file leaves out', function()
         revise    = 'editing a contract to the same values twice leaves the '
             .. 'same values',
         sendMessage = 'two messages is two messages',
-        requestCall = 'asking twice rings twice, and the relay rate-limits it',
+        requestCall = 'asking again once the first call is over rings again; asking while '
+            .. 'it is live is refused as already_in_call (interaction_spec)',
         endCall = 'hanging up twice: the second finds no call and says so',
         requestPhotoToken = 'a second token deliberately invalidates the '
             .. 'first, so a hitman cannot bank them',

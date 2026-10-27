@@ -218,6 +218,14 @@ A staff account that can adjust money and spawn items makes this much faster.
       cash, bank, dirty money (`black_money`), an item, a weapon
 - [ ] The weapon leaves your inventory **with its attachments**
 - [ ] A contract you cannot afford is refused and charges nothing
+- [ ] Tap **Place contract** with the reason empty: *Give a reason for the
+      contract.* and nothing is sent. With the reason *Owes me 1500000*: the
+      refusal says the reason has more digits than the server takes, not
+      *Check what you entered*
+- [ ] With the Place form open, switch **Dirty money** off in the admin panel
+      and place one paying dirty money: *This server no longer takes dirty
+      money in a reward. Nothing was taken. The form has been read again.*,
+      and the form no longer offers it
 - [ ] The contract appears on the board for a third character
 - [ ] A second contract from the same player on the same target, on any
       character, is refused: *You already have a contract out on them.*
@@ -259,6 +267,10 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] Four hitmen can all accept a 3-payout contract
 - [ ] After the first claim, the board shows payout 2's reward
 - [ ] After the third claim the contract closes and the fourth hitman gets nothing
+- [ ] With a 3-payout Place form open, set the setting back to 1 in the
+      panel: within a moment the form shows one reward and says *This
+      server now takes one payout per contract; payouts 2 and 3 were
+      removed.*
 - [ ] Place a 3-payout contract, then set the setting back to 1 in the panel:
       the contract still shows "Payout 1 of 3", pays all three collections,
       and its client can still give the last one back (**Propose change →
@@ -536,6 +548,11 @@ uploads, and with neither. Restart the resource between them.
 - [ ] Downing the target mid-countdown fails the delivery
 - [ ] A cuffed, conscious target under 20% health is refused as "too badly
       hurt", not "alive and conscious"; patched up, the handover arms
+- [ ] Set the `progress` rate limit to 1 held, 1 a second in the panel and run
+      a handover: the bar never vanishes, nothing says *Slow down*, and it
+      ends with *Delivered* as before
+- [ ] A staked contract with less time left than the stake window shows *Too
+      little time left to stake on this one* on the board instead of Accept
 
 ## 7. Law enforcement advisory
 
@@ -651,6 +668,22 @@ uploads, and with neither. Restart the resource between them.
       again: the client is told *Contract accepted* once
 - [ ] Neither sees the other's real name when anonymous
 - [ ] On a competitive contract, hitmen cannot see each other's threads
+- [ ] Log the client off, have the hitman send two messages, log the client
+      back in: one *New message about your contract on …* notice, and a dot
+      on **Message**/**Threads** that goes once the thread is opened. Mute
+      the thread first and nothing is kept
+- [ ] Send a message with a word lb-phone blacklists: *A word in that message
+      is not allowed here. Your draft is kept.* Set the `message` rate limit
+      to 1 an hour in the panel and send two: the second says *about 60
+      minutes*
+- [ ] Place a call, then complete the contract (or switch **Calls** off in
+      the panel) mid-call: **Hang up** is still there (above the screen once
+      the thread has closed) and ends the call
+- [ ] Double-tap **Call**: one call rings, and the button says *Calling…*
+      while it is asked
+- [ ] On a phone build that cannot hide caller id, with
+      **Never unmask a caller** on: no Call is drawn on a thread with an
+      anonymous party, and nobody receives *wants to speak with you*
 
 ## 10. Amendments
 

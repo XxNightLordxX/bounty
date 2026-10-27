@@ -899,9 +899,11 @@ ConfigDefaults.Relay = {
     --- and anything that does not match that shape needs a shim resource.
     CallExport = nil,
 
-    --- Refuse to place a call at all when the other party is anonymous and
-    --- the phone cannot suppress caller identity. Leave this on: the
-    --- alternative is revealing a number somebody paid to hide.
+    --- Refuse a call at all when either party is anonymous and the phone
+    --- cannot suppress caller identity, and ask nobody to call back (the app
+    --- draws no Call on such a thread). Leave this on: off, the call is
+    --- placed from the anonymous party's own number, which shows it to the
+    --- other side.
     RequireMaskingForAnonymous = true,
 }
 

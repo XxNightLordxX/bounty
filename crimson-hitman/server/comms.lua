@@ -39,10 +39,18 @@ local Storage, Identity, Audit, Notify, RateLimit
 local handles = {}
 local handleSeq = 0
 
+--- When each party last wrote in a thread, by thread id: { [cid] = os.time() }.
+--- Read once from the store the first time a thread is asked about, then
+--- kept up by each send, so the cards that mark an unread thread cost no
+--- read of the store per refresh. Only times already shown in the thread
+--- itself, to the people in it. Dropped with the contract or the hitman.
+local lastWrote = {}
+
 function Comms.init(deps)
     Storage, Identity, Audit, Notify, RateLimit =
         deps.storage, deps.identity, deps.audit, deps.notify, deps.ratelimit
     handles = {}
+    lastWrote = {}
 end
 
 --- Mint (or reuse) a handle that stands in for a hitman on one contract, for
@@ -76,6 +84,10 @@ function Comms.clearContract(contractId)
     for handle, entry in pairs(handles) do
         if entry.contractId == contractId then handles[handle] = nil end
     end
+    local prefix = contractId .. '|'
+    for id in pairs(lastWrote) do
+        if id:sub(1, #prefix) == prefix then lastWrote[id] = nil end
+    end
 end
 
 --- A player has gone: the handles they were given go with them.
@@ -100,6 +112,7 @@ function Comms.clearHitman(contractId, hitmanCid)
             handles[handle] = nil
         end
     end
+    lastWrote[contractId .. '|' .. hitmanCid] = nil
 end
 
 --- What a hitman sees the person who placed the contract called: in the
@@ -160,35 +173,80 @@ function Comms.context(actor, contractId, threadHandle)
     return nil, CH.ERR.NOT_PARTICIPANT
 end
 
+local function noteMessage(threadId, cid, at)
+    local thread = lastWrote[threadId]
+    if thread then thread[cid] = math.max(thread[cid] or 0, at) end
+end
+
+--- When the newest message in a thread written by somebody other than the
+--- viewer arrived, or nil for none: the page draws an unread dot against
+--- when it last read the thread. A message the viewer sent never marks it.
+---@param contractId string
+---@param hitmanCid string the hitman the thread is with
+---@param viewerCid string
+---@return integer|nil
+function Comms.lastMessageAt(contractId, hitmanCid, viewerCid)
+    local id = threadId(contractId, hitmanCid)
+    local thread = lastWrote[id]
+    if not thread then
+        thread = {}
+        local rows = Storage.readMessages(contractId, id) or {}
+        for i = 1, #rows do
+            local from, at = rows[i].from_cid, tonumber(rows[i].sent_at)
+            if from and at then thread[from] = math.max(thread[from] or 0, at) end
+        end
+        lastWrote[id] = thread
+    end
+    local newest
+    for cid, at in pairs(thread) do
+        if cid ~= viewerCid and (not newest or at > newest) then newest = at end
+    end
+    return newest
+end
+
 --- Send a message into a contract thread.
 ---@return boolean ok
 ---@return string|nil err
+---@return table|nil refusal { retryAfter } when rate limited, { empty } when refused for being empty
 function Comms.send(actor, contractId, threadHandle, rawBody)
     if not Config.Relay.Enabled then return false, CH.ERR.RELAY_OFF end
 
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
 
-    -- This module owns the message bucket, so every caller is throttled and
-    -- a message never costs two tokens.
-    if not RateLimit.check(actor, 'message') then return false, CH.ERR.RATE_LIMITED end
-
+    -- What it says is checked before the bucket is spent: a message refused
+    -- for its words did no work, and every other refused request gets its
+    -- token back. A blank one spent a token with nothing to give it back,
+    -- so after a lowered bucket one blank message locked the player out of
+    -- messages, calls and mute together.
+    if type(rawBody) ~= 'string' then return false, CH.ERR.INVALID_INPUT end
     local body = Util.sanitizeText(rawBody, Config.Relay.MaxLength)
-    if not body then return false, CH.ERR.INVALID_INPUT end
+    if not body then return false, CH.ERR.MESSAGE_REFUSED, { empty = true } end
 
     if phoneRefuses(actor.source, body) then
         Audit.rejected('relay_blacklisted_word', actor.cid, contractId, {})
-        return false, CH.ERR.INVALID_INPUT
+        return false, CH.ERR.MESSAGE_REFUSED
     end
 
+    -- This module owns the message bucket, so every caller is throttled and
+    -- a message never costs two tokens. With the wait, which the handler's
+    -- own bucket check would have sent: it has none for this request.
+    if not RateLimit.check(actor, 'message') then
+        local wait = RateLimit.retryAfter(actor, 'message')
+        return false, CH.ERR.RATE_LIMITED, wait > 0 and { retryAfter = wait } or nil
+    end
+
+    local sentAt = os.time()
     Storage.writeMessage({
         contract_id = contractId,
         thread_id   = ctx.threadId,
         from_cid    = actor.cid,     -- server-side only, for the audit trail
         from_alias  = ctx.alias,     -- the only identity the other side sees
         body        = body,
-        sent_at     = os.time(),
+        sent_at     = sentAt,
     })
+
+    noteMessage(ctx.threadId, actor.cid, sentAt)
 
     local recipient = ctx.role == 'creator' and ctx.hitmanCid or ctx.contract.creator_cid
     -- Not a ring when they muted this thread (§11.4). The message is kept
@@ -197,8 +255,17 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     -- budget all the same so the sender cannot tell (Notify.toCitizen).
     -- That budget is the relay's own: a conversation, muted or not, no
     -- longer uses up the one contract notices are sent from.
+    local muted = Storage.readMute(ctx.threadId, recipient) == true
     Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body),
-        { relay = true, muted = Storage.readMute(ctx.threadId, recipient) == true })
+        { relay = true, muted = muted })
+    -- Away, the ring went nowhere and nothing waited for them: a client
+    -- told by the hitman where to meet had no sign a message had come. One
+    -- notice is kept for their next login, one per contract however many
+    -- arrive, and never for a thread they muted. The sender is told the
+    -- same either way.
+    if not muted and not Identity.byCitizenId(recipient) then
+        Notify.keepMessageNotice(recipient, ctx.contract)
+    end
     -- And the thread, if they have it open: a buzz does not change a page,
     -- so two people in the same conversation never saw each other's replies.
     Notify.push(recipient, 'message')
@@ -297,6 +364,9 @@ function Comms.threads(actor, contractId)
                     -- A hitman's real name appears only when they chose to
                     -- be seen; their citizen id never appears at all.
                     name   = (not h.anon) and h.hitman_name or nil,
+                    -- For the unread dot: the newest message to this viewer,
+                    -- already in the thread they can open.
+                    lastMessageAt = Comms.lastMessageAt(contract.id, h.hitman_cid, actor.cid),
                 }
             end
         end
@@ -305,7 +375,8 @@ function Comms.threads(actor, contractId)
 
     local hitman = Storage.readHitman(contract.id, actor.cid)
     if hitman and hitman.state == 'active' then
-        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = PLACER_ALIAS } }
+        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = PLACER_ALIAS,
+                   lastMessageAt = Comms.lastMessageAt(contract.id, actor.cid, actor.cid) } }
     end
 
     return {}
@@ -342,9 +413,24 @@ function Comms.requestCall(actor, contractId, threadHandle)
     end
     otherAnon, selfAnon = otherAnon == true, selfAnon == true
 
-    if otherAnon and not Comms.maskingAvailable() then
-        return false, CH.ERR.CALL_UNMASKED
+    -- Either side, as the switch says (Relay.RequireMaskingForAnonymous).
+    -- Only the callee's side was checked here, whatever the switch said, so
+    -- turning it off changed one direction alone; and an anonymous caller
+    -- on a phone that cannot mask had the other party asked to call back,
+    -- to a Call that could only be refused. Neither side is asked for
+    -- anything, as with both_anonymous: refused, with whose number it is.
+    if (otherAnon or selfAnon) and Config.Relay.RequireMaskingForAnonymous
+        and not Comms.maskingAvailable() then
+        return false, CH.ERR.CALL_UNMASKED, { anonymous = selfAnon and 'you' or 'them' }
     end
+
+    -- On a call already: the second tap of a double tap, or a call never
+    -- hung up. A second CreateCall rang the other party twice, and Hang up
+    -- ended one of them. The page shows Hang up on this.
+    local asked, inCall = pcall(function()
+        return exports['lb-phone']:IsInCall(actor.source)
+    end)
+    if asked and inCall then return false, CH.ERR.ALREADY_IN_CALL end
 
     local recipient = ctx.role == 'creator' and ctx.hitmanCid or ctx.contract.creator_cid
 
@@ -352,9 +438,8 @@ function Comms.requestCall(actor, contractId, threadHandle)
     -- telling the other party somebody wants to talk. Whether it can is
     -- probed once, not assumed (Comms.callPlacer).
     --
-    -- An anonymous caller on a phone that cannot mask is not refused: the
-    -- other party is asked to call back instead, which reveals nothing, and
-    -- placeCall declines to dial for exactly that case.
+    -- An anonymous caller on a phone that cannot mask was refused above
+    -- where the switch says so; with it off, the call is placed as it is.
     --
     -- Never a live call TO an anonymous party. A call rings only if they are
     -- in the city, so the caller learned whether they were — the one thing
@@ -432,13 +517,14 @@ end
 --- contract, because a contract that closes mid-call must not leave the
 --- caller unable to put the phone down, and it can only end the caller's
 --- own call.
+---
+--- Whatever the relay and call switches say: they stop new calls, and
+--- turned off mid-call they left the caller with no way to put the phone
+--- down. Ending one's own call needs neither.
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil result { ended = boolean }
 function Comms.endCall(actor)
-    if not Config.Relay.Enabled then return false, CH.ERR.RELAY_OFF end
-    if not Config.Relay.AllowMaskedCalls then return false, CH.ERR.CALLS_OFF end
-
     local ok, inCall = pcall(function()
         return exports['lb-phone']:IsInCall(actor.source)
     end)
@@ -549,6 +635,16 @@ end
 function Comms.canCall()
     return Config.Relay.Enabled == true and Config.Relay.AllowMaskedCalls == true
         and Comms.callPlacer() ~= nil
+end
+
+--- Whether a call with an anonymous party on it can be made as this server
+--- requires: the phone hides the number, or the server does not ask it to
+--- (Relay.RequireMaskingForAnonymous off). The page draws no Call on such a
+--- thread otherwise, since requestCall can only refuse it. The same for
+--- every player: it is about the phone build, not about anybody.
+---@return boolean
+function Comms.canMask()
+    return Config.Relay.RequireMaskingForAnonymous ~= true or Comms.maskingAvailable()
 end
 
 --- Ring the other party's phone.

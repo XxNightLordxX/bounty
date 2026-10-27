@@ -180,12 +180,12 @@ describe('editing a contract nobody has taken', function()
     describe('cleaning the new reason the way the first one was cleaned', function()
         --- What create refuses, expressed once, so the two cannot drift.
         local REFUSED = {
-            { 'a link',            'pay me at https://example.com' },
-            { 'a discord invite',  'come to discord.gg/whatever' },
-            { 'a bare host',       'see www.example.com for details' },
-            { 'an @ handle',       'message @someone about it' },
-            { 'a word the phone blacklists', 'you absolute slur' },
-            { 'too many digits',   'call 5551234567 now' },
+            { 'a link',            'pay me at https://example.com', 'pattern' },
+            { 'a discord invite',  'come to discord.gg/whatever', 'pattern' },
+            { 'a bare host',       'see www.example.com for details', 'pattern' },
+            { 'an @ handle',       'message @someone about it', 'pattern' },
+            { 'a word the phone blacklists', 'you absolute slur', 'phone' },
+            { 'too many digits',   'call 5551234567 now', 'digits' },
         }
 
         for _, case in ipairs(REFUSED) do
@@ -195,17 +195,26 @@ describe('editing a contract nobody has taken', function()
 
                 -- The same string through the front door, to prove this is a
                 -- rule and not just something revise happens to dislike.
-                local made = s.contracts.create(f.creator, {
-                    targetCid = 'TARGET01', reason = case[2],
+                -- On somebody with no contract on them yet: on TARGET01,
+                -- which the fixture already holds one on, it was refused as
+                -- same_target_active whatever the reason said.
+                local made, madeErr, madeWhy = s.contracts.create(f.creator, {
+                    targetCid = 'HITMAN01', reason = case[2],
                     mode = CH.MODE.EXCLUSIVE,
                     reward = { baseline = { cash = 1000 } },
                 })
                 falsy(made, 'the fixture is wrong: create allows ' .. case[1])
+                -- The Place form is told which rule, as Edit is.
+                eq(madeErr, CH.ERR.REASON_REFUSED)
+                eq(madeWhy and madeWhy.rule, case[3])
 
                 local before = s.storage.readContract(c.id).reason
-                local ok, err = s.contracts.revise(f.creator, c.id, { reason = case[2] })
+                local ok, err, refusal = s.contracts.revise(f.creator, c.id, { reason = case[2] })
                 falsy(ok, 'the Edit button let ' .. case[1] .. ' onto the board')
-                eq(err, CH.ERR.INVALID_INPUT)
+                -- Said as the reason and the rule it broke, not "check what
+                -- you entered" (W010).
+                eq(err, CH.ERR.REASON_REFUSED)
+                eq(refusal and refusal.rule, case[3])
                 eq(s.storage.readContract(c.id).reason, before, 'and left it alone')
             end)
         end

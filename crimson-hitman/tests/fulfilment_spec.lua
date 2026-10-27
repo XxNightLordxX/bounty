@@ -709,7 +709,8 @@ describe('the shipped switches, from the Place form to paid', function()
         local forged = call('create', 1, { target = handle, reason = 'Unpaid debt',
             mode = 'competitive', penaltyAmount = 1000,
             reward = { slots = { { baseline = { cash = 5000 } }, { baseline = { cash = 5000 } } } } })
-        eq(forged.err, CH.ERR.INVALID_REWARD, 'a second collection is refused')
+        eq(forged.err, CH.ERR.SLOTS_OVER, 'a second collection is refused')
+        eq(forged.data and forged.data.max, 1, 'with the most this server takes')
         eq(money(1), creatorBefore, 'and nothing was taken for it')
 
         local placed = answered('create', 1, { target = handle, reason = 'Unpaid debt',

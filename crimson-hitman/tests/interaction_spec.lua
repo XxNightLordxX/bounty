@@ -517,7 +517,81 @@ describe('masked relay', function()
         local threads = s.comms.threads(f.creator, c.id)
         local ok, err = s.comms.send(f.creator, c.id, threads[1].handle, 'you slur person')
         falsy(ok)
-        eq(err, CH.ERR.INVALID_INPUT)
+        -- Its own code, so the page can say a word was not allowed (W119).
+        eq(err, CH.ERR.MESSAGE_REFUSED)
+    end)
+
+    --- A message refused for what it says did no work, so it spends nothing
+    --- (W202). It spent the bucket's token first and nothing gave it back:
+    --- on a lowered bucket one blank message locked the player out of
+    --- messages, calls and mute together, with a bare "Slow down.".
+    it('spends nothing on a message refused for what it says, and says how long a limit lasts', function()
+        local s, f, c = seeded()
+        withConfig({ { Config.Cooldowns, 'message', { per = 3600, burst = 1 } } }, function()
+            local ok, err, why = s.comms.send(f.hitman, c.id, nil, '   ')
+            falsy(ok)
+            eq(err, CH.ERR.MESSAGE_REFUSED, 'nothing left in it once cleaned')
+            eq(why and why.empty, true)
+            ok, err = s.comms.send(f.hitman, c.id, nil, 'you slur')
+            falsy(ok)
+            eq(err, CH.ERR.MESSAGE_REFUSED, 'a word the phone refuses')
+            truthy(s.comms.send(f.hitman, c.id, nil, 'Where are you?'),
+                'the one message the bucket holds is still there')
+            local again, limited, wait = s.comms.send(f.hitman, c.id, nil, 'Hello?')
+            falsy(again)
+            eq(limited, CH.ERR.RATE_LIMITED)
+            -- With the wait, which the page says (W119, W201).
+            eq(wait and wait.retryAfter, 3600)
+        end)
+    end)
+
+    --- A recipient who was away had nothing telling them a message came
+    --- (W120): the ring went nowhere and nothing was kept for them.
+    it('keeps one notice for a recipient who is away, and none for a muted thread', function()
+        local s, f, c = seeded()
+        Env.removePlayer(1)
+        local here = { s.comms.send(f.hitman, c.id, nil, 'At the docks.') }
+        truthy(s.comms.send(f.hitman, c.id, nil, 'Waiting.'))
+        local count, titles = s.notify.waitingFor('CREATOR1')
+        eq(count, 1, 'one per contract, however many came')
+        eq(titles[1], 'Contract message')
+
+        -- The sender is told the same either way: nothing says whether the
+        -- recipient was in the city.
+        local s2, f2, c2 = seeded()
+        local present = { s2.comms.send(f2.hitman, c2.id, nil, 'At the docks.') }
+        eq(#here, #present)
+        eq(here[1], present[1])
+        eq(s2.notify.waitingFor('CREATOR1'), 0, 'nothing kept for somebody here')
+
+        -- Muted, nothing is kept: the mute is theirs.
+        local s3, f3, c3 = seeded()
+        local handle = s3.comms.threads(f3.creator, c3.id)[1].handle
+        truthy(s3.comms.mute(f3.creator, c3.id, handle, true))
+        Env.removePlayer(1)
+        truthy(s3.comms.send(f3.hitman, c3.id, nil, 'At the docks.'))
+        eq(s3.notify.waitingFor('CREATOR1'), 0)
+    end)
+
+    --- The unread dot's one input (W120): the newest message from the other
+    --- side, never one of the viewer's own.
+    it('tells each side when the other last wrote, never its own', function()
+        local s, f, c = seeded()
+        local handle = s.comms.threads(f.creator, c.id)[1].handle
+        eq(s.projection.contract(s.storage.readContract(c.id), f.hitman.cid).lastMessageAt, nil,
+            'nothing written yet')
+        truthy(s.comms.send(f.hitman, c.id, nil, 'Ready.'))
+        local wrote = os.time()
+        eq(s.projection.contract(s.storage.readContract(c.id), f.hitman.cid).lastMessageAt, nil,
+            'their own message is not unread to them')
+        local card = s.projection.contract(s.storage.readContract(c.id), f.creator.cid)
+        eq(card.hitmen[1].lastMessageAt, wrote, 'the creator sees when the operative wrote')
+        eq(s.comms.threads(f.creator, c.id)[1].lastMessageAt, wrote)
+
+        Env.advance(30)
+        truthy(s.comms.send(f.creator, c.id, handle, 'Go.'))
+        eq(s.projection.contract(s.storage.readContract(c.id), f.hitman.cid).lastMessageAt,
+            wrote + 30)
     end)
 
     it('rate limits message spam', function()
@@ -564,12 +638,14 @@ describe('amendment payloads are bounded', function()
             { kind = CH.AMENDMENT.SHORTEN_DEADLINE, payload = { seconds = 'soon' } },
             { kind = CH.AMENDMENT.SHORTEN_DEADLINE, payload = {} },
             { kind = CH.AMENDMENT.CHANGE_MODE, payload = { mode = 'whatever' } },
-            { kind = CH.AMENDMENT.CHANGE_REASON, payload = { reason = '' } },
+            -- A reason is refused for what it says, with the rule (W010).
+            { kind = CH.AMENDMENT.CHANGE_REASON, payload = { reason = '' },
+              err = CH.ERR.REASON_REFUSED },
             { kind = CH.AMENDMENT.REDUCE_REWARD, payload = { slot = -1 } },
         }) do
             local proposal, err = s.amendments.propose(f.creator, c.id, bad.kind, bad.payload)
             falsy(proposal, 'accepted a malformed payload for ' .. bad.kind)
-            eq(err, CH.ERR.INVALID_INPUT)
+            eq(err, bad.err or CH.ERR.INVALID_INPUT)
         end
     end)
 
@@ -1631,6 +1707,78 @@ describe('masked calls', function()
         eq(#ended, 1)
 
         phone.IsInCall, phone.EndCall = nil, nil
+    end)
+
+    --- Switched off mid-call, the caller could not put the phone down
+    --- (W115): ending one's own call needs neither switch.
+    it('hangs up whatever the relay and call switches say', function()
+        local s, f = threaded()
+        local phone = exports['lb-phone']
+        local ended = 0
+        phone.IsInCall = function() return true end
+        phone.EndCall = function() ended = ended + 1 end
+        for _, switch in ipairs({ 'Enabled', 'AllowMaskedCalls' }) do
+            withConfig({ { Config.Relay, switch, false } }, function()
+                local ok, err, result = s.comms.endCall(f.hitman)
+                truthy(ok, switch .. ' off: ' .. tostring(err))
+                eq(result.ended, true)
+            end)
+        end
+        eq(ended, 2)
+        phone.IsInCall, phone.EndCall = nil, nil
+    end)
+
+    --- A double tap placed two live calls (W118).
+    it('places no second call while the caller is on one', function()
+        local phone = exports['lb-phone']
+        local made, live = 0, false
+        phone.CreateCall = function() made = made + 1 live = true return 42 end
+        phone.IsInCall = function() return live end
+        local s, f, c = threaded()
+        local ok, err, result = s.comms.requestCall(f.hitman, c.id, nil)
+        truthy(ok, tostring(err))
+        eq(result.placed, true)
+        local again, againErr = s.comms.requestCall(f.hitman, c.id, nil)
+        falsy(again)
+        eq(againErr, CH.ERR.ALREADY_IN_CALL)
+        eq(made, 1, 'one call, not two')
+        phone.CreateCall, phone.IsInCall = nil, nil
+        s.comms.resetCallCache()
+    end)
+
+    --- RequireMaskingForAnonymous was half read (W117): the call to an
+    --- anonymous party was refused whatever it said, and one from an
+    --- anonymous party asked the other side to call back, to a Call that
+    --- could only be refused.
+    it('reads the masking switch both ways, and asks nobody to call back', function()
+        local phone = exports['lb-phone']
+        phone.CreateCall = function() return 42 end
+        withConfig({ { Natives, 'phoneConfig', { AnonymousCalls = false } } }, function()
+            local s, f, c = threaded({ anonCreator = true })
+            s.comms.resetMaskingCache()
+            local handle = s.comms.threads(f.creator, c.id)[1].handle
+            Natives.calls.notifications = {}
+            local ok, err, why = s.comms.requestCall(f.creator, c.id, handle)
+            falsy(ok, 'an anonymous caller on a phone that cannot mask')
+            eq(err, CH.ERR.CALL_UNMASKED)
+            eq(why and why.anonymous, 'you', 'their own number, said the right way round')
+            eq(#Natives.calls.notifications, 0, 'nobody asked to call back')
+
+            local named, namedErr, namedWhy = s.comms.requestCall(f.hitman, c.id, nil)
+            falsy(named)
+            eq(namedErr, CH.ERR.CALL_UNMASKED)
+            eq(namedWhy and namedWhy.anonymous, 'them')
+            eq(s.projection.listing(f.hitman.cid, 1).settings.canMask, false,
+                'and the page is told, so it draws no Call')
+
+            withConfig({ { Config.Relay, 'RequireMaskingForAnonymous', false } }, function()
+                local allowed, allowedErr = s.comms.requestCall(f.hitman, c.id, nil)
+                truthy(allowed, 'switched off, it is not refused: ' .. tostring(allowedErr))
+                eq(s.projection.listing(f.hitman.cid, 1).settings.canMask, true)
+            end)
+            s.comms.resetMaskingCache()
+        end)
+        phone.CreateCall = nil
     end)
 
     it('is refused entirely when calls are switched off', function()

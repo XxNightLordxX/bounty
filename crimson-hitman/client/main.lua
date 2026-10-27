@@ -12,6 +12,16 @@ local App = {}
 --- other's callbacks and show the wrong results.
 local pending = {}
 local requestSeq = 0
+
+--- Requests the page has already been told timed out, for two minutes
+--- after: [id] = true. The server can still answer one (a database held
+--- longer than the fifteen-second wait), and that answer was dropped, so
+--- a contract placed and paid for after "No answer" never showed until
+--- something else moved the page. Such an answer now refreshes it.
+local late = {}
+
+--- How long a timed-out request is remembered, in milliseconds.
+local LATE_MS = 120000
 local appReady = false
 
 --------------------------------------------------------------------------
@@ -385,6 +395,8 @@ function App.request(event, payload, cb, opts)
         SetTimeout(opts and opts.timeoutMs or 15000, function()
             if pending[id] then
                 pending[id] = nil
+                late[id] = true
+                SetTimeout(LATE_MS, function() late[id] = nil end)
                 cb({ ok = false, err = 'timeout', event = event })
             end
         end)
@@ -438,6 +450,16 @@ RegisterNetEvent('crimson-hitman:result', function(result)
     if cb then
         pending[result.rid] = nil
         cb(result)
+    elseif result.rid and late[result.rid] then
+        -- Answered after the page was told it timed out: the page is
+        -- nudged to read everything again, as a push does, and the answer
+        -- itself goes no further. Once: a second copy finds nothing here.
+        late[result.rid] = nil
+        phone('SendCustomAppMessage', function()
+            exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
+                type = 'push', reason = 'late',
+            })
+        end)
     end
 
     -- Nothing goes to the page from here. Every reply it uses reaches it

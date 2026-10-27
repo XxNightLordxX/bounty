@@ -96,7 +96,8 @@ function RateLimit.check(who, action)
     local ms = now()
 
     if not bucket then
-        buckets[key] = { tokens = rule.burst - 1, last = ms }
+        -- With its action, so the sweep can read the rule it refills under.
+        buckets[key] = { tokens = rule.burst - 1, last = ms, action = action }
         return true
     end
 
@@ -161,13 +162,23 @@ function RateLimit.resetAll()
     return removed
 end
 
+--- Only a bucket that would be full again under its own rule. Ten minutes
+--- idle was taken to mean refilled, and the panel takes a refill window of
+--- up to an hour: a spent bucket on such a rule was dropped at ten minutes
+--- and the player handed a full one, fifty minutes before the wait they
+--- were told. Dropping a full bucket changes nothing, since a new one
+--- starts full.
 function RateLimit.sweep()
     local ms = now()
     local removed = 0
     for key, bucket in pairs(buckets) do
         if ms - bucket.last > 600000 then
-            buckets[key] = nil
-            removed = removed + 1
+            local rule = ruleFor(bucket.action)
+            local elapsed = (ms - bucket.last) / 1000
+            if bucket.tokens + elapsed * (rule.burst / rule.per) >= rule.burst then
+                buckets[key] = nil
+                removed = removed + 1
+            end
         end
     end
     return removed

@@ -249,10 +249,15 @@ CH.ERR = {
     --- operative". Refused uncharged for everyone, whoever has been seen,
     --- with { minutes } until it is sold again.
     INFORMANT_WARMING    = 'informant_warming',
-    --- A call would show a number the other party paid to keep hidden, and
-    --- this phone build cannot mask it, so it is not placed (§11.3). It was
-    --- BAD_STATE, which says nothing about why or what to do instead.
+    --- A call would show a number an anonymous party paid to keep hidden,
+    --- this phone build cannot mask it, and Relay.RequireMaskingForAnonymous
+    --- is on, so it is not placed and nobody is asked to call back (§11.3).
+    --- Sent with { anonymous = 'you' | 'them' }: whose number it would be.
+    --- It was BAD_STATE, which says nothing about why or what to do instead.
     CALL_UNMASKED        = 'call_unmasked',
+    --- The caller is on a call already: a second tap before the first
+    --- answered, or a call they have not hung up. Nothing was dialled.
+    ALREADY_IN_CALL      = 'already_in_call',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',
@@ -314,6 +319,23 @@ CH.ERR = {
     TOO_LITTLE_TIME  = 'too_little_time',
     INSUFFICIENT     = 'insufficient_funds',
     INVALID_REWARD   = 'invalid_reward',
+    --- A reward source (cash, bank, dirty money, items, weapons) is switched
+    --- off, from the admin panel or config.lua, while the form that offered
+    --- it was open. Sent with { source }. Not invalid_reward, which is
+    --- worded as figures that do not add up.
+    SOURCE_DISABLED  = 'source_disabled',
+    --- More payouts than Config.Limits.MaxPayoutSlots, lowered while the
+    --- form was open. Sent with { max }.
+    SLOTS_OVER       = 'slots_over',
+    --- The reason is refused for what it says (Config.Reason): empty, too
+    --- long, too many digits, a pattern the server bans (a link, an
+    --- @handle), or a word the phone refuses. Sent with { rule = 'empty' |
+    --- 'length' | 'digits' | 'pattern' | 'phone' }. It was invalid_input,
+    --- "Check what you entered.", on a form full of money fields.
+    REASON_REFUSED   = 'reason_refused',
+    --- A message stopped by the phone's word filter, or with nothing left in
+    --- it once cleaned (then sent with { empty = true }). Nothing was sent.
+    MESSAGE_REFUSED  = 'message_refused',
     --- The reward is worth less in money than Config.Limits.MinContractReward,
     --- or would be once this much of it was taken back out. Sent with
     --- { min = n } so the page can say the figure. Not invalid_reward, which

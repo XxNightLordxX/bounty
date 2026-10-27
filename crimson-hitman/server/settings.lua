@@ -265,7 +265,8 @@ local CATALOGUE = {
           .. 'sent while it is off.' },
     { key = 'Relay.AllowMaskedCalls', section = 'features', group = 'Messages and calls',
       kind = 'switch', label = 'Calls', about = 'Calls between the parties through lb-phone.',
-      inflight = 'A call already ringing is left alone; new ones are refused.' },
+      inflight = 'A call already ringing is left alone, and its caller can still hang it up '
+          .. 'from the app; new ones are refused.' },
     { key = 'Relay.RequireMaskingForAnonymous', section = 'features', group = 'Messages and calls',
       kind = 'switch', label = 'Never unmask a caller',
       about = 'No call to or from an anonymous party on a phone that cannot hide the number.',

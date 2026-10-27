@@ -780,6 +780,30 @@ end
 --- idle release, an agreed change that ended a contract or was refused.
 Notify.tellOrKeep = tellOrKeep
 
+--- One "New message" kept for a player who was away when a message on
+--- their contract came (Comms.send), however many come: one per contract,
+--- the newest in place of the one before. Never the message itself, which
+--- they read in the thread, and never who sent it. Dropped with the
+--- contract (Notify.clearContract): its thread closes with it, and a notice
+--- sending them to a conversation that is gone would be a dead end.
+---@param cid string
+---@param contract table
+function Notify.keepMessageNotice(cid, contract)
+    if not cid or type(contract) ~= 'table' or not contract.id then return end
+    local list = waiting[cid] or {}
+    for i = #list, 1, -1 do
+        if list[i].message and list[i].contract_id == contract.id then table.remove(list, i) end
+    end
+    if #list >= WAITING_CAP then table.remove(list, 1) end
+    list[#list + 1] = {
+        title = 'Contract message',
+        content = ('New message about your contract on %s. Open it from Mine.')
+            :format(contract.target_name or 'your target'),
+        contract_id = contract.id, message = true,
+    }
+    waiting[cid] = list
+end
+
 --- How many notices wait for a player's next login, and their titles, for
 --- the admin panel's player view. Titles only: the text can name a
 --- contract's other parties, and the panel shows those under its own rules.
@@ -1324,6 +1348,14 @@ end
 function Notify.clearContract(contractId, contract)
     revealAt[contractId] = nil
     told[contractId] = nil
+    -- A kept "New message" about it (Notify.keepMessageNotice): its thread
+    -- has closed.
+    for cid, list in pairs(waiting) do
+        for i = #list, 1, -1 do
+            if list[i].message and list[i].contract_id == contractId then table.remove(list, i) end
+        end
+        if #list == 0 then waiting[cid] = nil end
+    end
     -- An alert still waiting goes only while a contract it stands for is
     -- still out. With none left it never goes (and no cooldown was started:
     -- that starts when it is sent). With some left, it goes at the earliest

@@ -844,8 +844,13 @@ end
 --- whose operator had switched free text off. The comment there claimed
 --- the opposite: "a second way in must not be a way past".
 ---
+--- A free-text reason refused for what it says answers REASON_REFUSED with
+--- the rule it broke, so the page can say which: it was INVALID_INPUT,
+--- "Check what you entered.", on a form full of money fields.
+---
 ---@return string|nil reason  '' where the server stores none
 ---@return string|nil err
+---@return table|nil refusal { rule = 'empty' | 'length' | 'digits' | 'pattern' | 'phone' }
 local function reasonFor(actor, req)
     local mode = Config.Reason.Mode
 
@@ -861,15 +866,20 @@ local function reasonFor(actor, req)
     -- told from one that fits: refused, never cut (§14.30). The page's box
     -- stops at the limit, so only a request made by hand is ever over it —
     -- and a cut one was placed and paid for saying something else.
+    if req.reason ~= nil and type(req.reason) ~= 'string' then return nil, CH.ERR.INVALID_INPUT end
     local reason = Util.sanitizeText(req.reason, Config.Reason.MaxLength + 1)
-    if not reason then return nil, CH.ERR.INVALID_INPUT end
-    if utf8.len(reason) > Config.Reason.MaxLength then return nil, CH.ERR.INVALID_INPUT end
-    if Util.digitCount(reason) > Config.Reason.MaxDigits then return nil, CH.ERR.INVALID_INPUT end
+    if not reason then return nil, CH.ERR.REASON_REFUSED, { rule = 'empty' } end
+    if utf8.len(reason) > Config.Reason.MaxLength then
+        return nil, CH.ERR.REASON_REFUSED, { rule = 'length' }
+    end
+    if Util.digitCount(reason) > Config.Reason.MaxDigits then
+        return nil, CH.ERR.REASON_REFUSED, { rule = 'digits' }
+    end
     for _, pattern in ipairs(Config.Reason.PatternDenylist) do
-        if reason:lower():find(pattern) then return nil, CH.ERR.INVALID_INPUT end
+        if reason:lower():find(pattern) then return nil, CH.ERR.REASON_REFUSED, { rule = 'pattern' } end
     end
     if phoneRefuses(actor.source, reason) then
-        return nil, CH.ERR.INVALID_INPUT
+        return nil, CH.ERR.REASON_REFUSED, { rule = 'phone' }
     end
     return reason
 end
@@ -938,8 +948,8 @@ local function createUnlocked(actor, req, targetActor)
             { category = Identity.protectedCategory(protectingJob) }
     end
 
-    local reason, reasonErr = reasonFor(actor, req)
-    if reasonErr then return nil, reasonErr end
+    local reason, reasonErr, reasonRule = reasonFor(actor, req)
+    if reasonErr then return nil, reasonErr, reasonRule end
 
     local mode = req.mode == CH.MODE.COMPETITIVE and CH.MODE.COMPETITIVE or CH.MODE.EXCLUSIVE
 
@@ -970,7 +980,9 @@ local function createUnlocked(actor, req, targetActor)
     -- cannot promise a live-delivery premium they have not surrendered.
     local lines, slotCount
     lines, err, slotCount = Escrow.validate(actor, req.reward, bonusPercent)
-    if not lines then return nil, err end
+    -- Refused, the third is what the refusal says: the source switched off,
+    -- or the most payouts this server takes now.
+    if not lines then return nil, err, slotCount end
     -- And goods or money named as a bonus of their own are refused, not
     -- quietly made part of the reward: the creator said "only if alive" of
     -- something, and on this contract that is all of it. Nothing has been
@@ -3026,8 +3038,8 @@ local function reviseUnlocked(actor, contractId, changes)
     if changes.reason ~= nil or changes.reasonPreset ~= nil then
         -- Through the same function placing one goes through, so the two
         -- cannot drift apart again.
-        local reason, reasonErr = reasonFor(actor, changes)
-        if reasonErr then return false, reasonErr end
+        local reason, reasonErr, reasonRule = reasonFor(actor, changes)
+        if reasonErr then return false, reasonErr, reasonRule end
 
         -- Where the server stores no reason there is nothing here to
         -- change. The app's Edit dialog sends the field whatever the mode

@@ -260,6 +260,10 @@ function Projection.contract(contract, viewerCid)
                     record = Progression and (h.anon
                         and { standing = Progression.record(h.hitman_cid).standing }
                         or Progression.record(h.hitman_cid)) or nil,
+                    -- The newest message from them in their thread, for the
+                    -- unread dot on Threads: a time already in that thread.
+                    lastMessageAt = Comms and Config.Relay.Enabled
+                        and Comms.lastMessageAt(contract.id, h.hitman_cid, viewerCid) or nil,
                 }
             end
         end
@@ -270,6 +274,10 @@ function Projection.contract(contract, viewerCid)
         -- anonymously" from the button pressed, not from what was recorded.
         out.myAnonymous = mine and mine.anon == true or false
         out.myClaims = mine and mine.claims or 0
+        -- The newest message to them in their thread, for the unread dot on
+        -- Message: a time already in that thread.
+        out.lastMessageAt = Comms and Config.Relay.Enabled
+            and Comms.lastMessageAt(contract.id, viewerCid, viewerCid) or nil
         if Kidnap then
             out.kidnapProgress = Kidnap.progress(contract.id, viewerCid)
         end
@@ -395,6 +403,10 @@ local function buildListing(viewerCid, page)
             -- server where nothing can place a call: a button there could
             -- only send requests the other side had no way to answer.
             calls = Comms ~= nil and Comms.canCall(),
+            -- Whether a call with an anonymous party on it can be made as
+            -- the server requires (Comms.canMask). Off, the page draws no
+            -- Call on such a thread: it could only be refused.
+            canMask = Comms == nil or Comms.canMask(),
             -- Whether messaging exists at all. Absent, the page drew Message
             -- and Threads on a server with the relay switched off, and every
             -- message was refused.
@@ -896,7 +908,7 @@ Projection.ALLOWED_KEYS = {
     creator = { bailoutAmount = true, hitmen = true, valueHeld = true,
                 informantAnswer = true, informantLeft = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
-                buyoutClosesIn = true },
+                buyoutClosesIn = true, lastMessageAt = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true,
                 informantLeft = true },

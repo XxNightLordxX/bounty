@@ -1011,11 +1011,13 @@ describe('the authority is the server, not the picker', function()
         local f = fixture(s)
         withConfig({ { Config.Sources.item, 'enabled', false } }, function()
             eq(#s.app.escrowableItems(f.creator), 0, 'the picker offers nothing')
-            local lines, err = s.escrow.validate(f.creator, {
+            local lines, err, refusal = s.escrow.validate(f.creator, {
                 baseline = { items = { { name = 'lockpick', count = 1 } } },
             })
             falsy(lines, 'and a payload sent by hand is refused too')
-            eq(err, CH.ERR.INVALID_REWARD)
+            -- Said as the source switched off, by name (the page words it).
+            eq(err, CH.ERR.SOURCE_DISABLED)
+            eq(refusal and refusal.source, 'item')
         end)
     end)
 
@@ -1024,11 +1026,12 @@ describe('the authority is the server, not the picker', function()
         local f = fixture(s)
         withConfig({ { Config.Sources.weapon, 'enabled', false } }, function()
             eq(#s.app.escrowableWeapons(f.creator), 0)
-            local lines, err = s.escrow.validate(f.creator, {
+            local lines, err, refusal = s.escrow.validate(f.creator, {
                 baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } },
             })
             falsy(lines, 'a switch only the UI honours is not a switch')
-            eq(err, CH.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.SOURCE_DISABLED)
+            eq(refusal and refusal.source, 'weapon')
         end)
     end)
 
