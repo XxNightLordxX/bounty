@@ -799,3 +799,43 @@ describe('kill photos off, from the first start', function()
         truthy(text:find('photo hosts:', 1, true), text)
     end)
 end)
+
+--- W149: a setting changed from the panel pushes reason 'settings' to every
+--- open app, so each page reads the settings it draws by again (its fees,
+--- prices and switches). Nothing pinned it, which is how the Place form
+--- came to keep the old fees unnoticed.
+describe('a setting changed from the panel, on every open app', function()
+    local function pushes(target)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:push' and (target == nil or event.target == target) then
+                out[#out + 1] = event.args[1] and event.args[1].reason
+            end
+        end
+        return out
+    end
+
+    it('pushes every online player to read their settings again, for a server-only key', function()
+        local s = newStack()
+        s.app.init(s)
+        s.bridges.install(s)
+        fixture(s)
+        Env.clientEvents = {}
+        turn(s, 'Bailout.Enabled', false)
+        for _, src in ipairs({ 1, 2, 3 }) do
+            eq(table.concat(pushes(src), ','), 'settings', 'player ' .. src)
+        end
+    end)
+
+    it('is not replaced by the next push while the floor holds it', function()
+        local s = newStack()
+        fixture(s)
+        Env.clientEvents = {}
+        truthy(s.notify.push('CREATOR1', 'accepted'), 'the first goes at once')
+        falsy(s.notify.push('CREATOR1', 'settings'), 'held by the floor')
+        s.notify.push('CREATOR1', 'accepted', 'ct00000001')
+        Env.advance((Config.Notifications.PushMinIntervalSeconds or 1) + 1)
+        eq(table.concat(pushes(1), ','), 'accepted,settings',
+            'replaced, the page read no settings and kept the old fees')
+    end)
+end)

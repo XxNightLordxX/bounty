@@ -82,11 +82,18 @@ end
 --- long as it would have (Informant.answerFor). Turning the informant off
 --- refuses new purchases (Informant.buy); hiding what was paid for took
 --- from the target what Config.Informant.Cost had bought.
-local function informantAnswer(contractId, viewerCid)
-    if not Informant then return nil end
-    local answer = Informant.answerFor(contractId, viewerCid)
-    if type(answer) ~= 'table' then return nil end
-    return answer.name or answer.description
+---
+--- With it, how many purchases the viewer has left on the contract, where
+--- the server runs informants: their own count, so their card can drop the
+--- button once none are left and say when this is the last.
+---@return string|nil answer
+---@return integer|nil left
+local function informantFor(contractId, viewerCid)
+    if not Informant then return nil, nil end
+    local answer, left = Informant.answerFor(contractId, viewerCid)
+    if Config.Informant.Enabled ~= true then left = nil end
+    if type(answer) ~= 'table' then return nil, left end
+    return answer.name or answer.description, left
 end
 
 --- A single contract, projected for one viewer.
@@ -143,6 +150,12 @@ function Projection.contract(contract, viewerCid)
             return Mugshot.handleFor(contract.target_cid)
         end)() or nil,
         targetProtected = contract.target_protected or false,
+        -- What kind of protected job ('law', 'emergency', 'legal', 'other'),
+        -- so the page words a medic as a medic: every protected target was
+        -- "a sworn officer". The kind of job only, never which force, and
+        -- only where the flag above is already set.
+        targetProtectedAs = contract.target_protected
+            and Identity.protectedCategory(contract.target_job) or nil,
         deadline      = contract.deadline_at,
         -- The clock as the server reads it, the same sum stakeTimeRefusal
         -- makes. deadline_at stands still while a contract is paused and is
@@ -229,7 +242,7 @@ function Projection.contract(contract, viewerCid)
         -- contract may be worth: the add-to-reward box offered amounts the
         -- server could only refuse, as a reward that did not add up.
         out.valueHeld = Escrow.moneyValue(contract.id)
-        out.informantAnswer = informantAnswer(contract.id, viewerCid)
+        out.informantAnswer, out.informantLeft = informantFor(contract.id, viewerCid)
         -- The creator learns how many operatives are on it, never who they
         -- are, unless a hitman chose to be seen.
         out.hitmen = {}
@@ -296,7 +309,7 @@ function Projection.contract(contract, viewerCid)
             out.bailoutSecondsLeft = math.max(0, contract.bailout_queued_at
                 + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
         end
-        out.informantAnswer = informantAnswer(contract.id, viewerCid)
+        out.informantAnswer, out.informantLeft = informantFor(contract.id, viewerCid)
     end
 
     return out
@@ -866,16 +879,17 @@ Projection.ALLOWED_KEYS = {
         fulfilment = true,
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         hitmenActive = true, hitmenMax = true, targetName = true,
-        targetProtected = true, deadline = true, secondsLeft = true,
+        targetProtected = true, targetProtectedAs = true, deadline = true, secondsLeft = true,
         clockStopped = true, role = true,
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },
     creator = { bailoutAmount = true, hitmen = true, valueHeld = true,
-                informantAnswer = true },
+                informantAnswer = true, informantLeft = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
-                bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true },
+                bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true,
+                informantLeft = true },
     public  = { barred = true },
 }
 

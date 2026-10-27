@@ -295,12 +295,14 @@ describe('what a player doing ordinary things spends', function()
         -- refunds the token and the second one is never the refusal this
         -- test is about. That refund is why the assertion below cannot be
         -- written as "if it happened to be refused".
-        local first = call('informant', 1, { id = c.id })
+        -- With the price quoted, as the page sends it.
+        local quoted = { cost = Config.Informant.Cost, account = Config.Informant.Account }
+        local first = call('informant', 1, { id = c.id, shown = quoted })
         truthy(first, 'the handler must answer')
         truthy(first.ok, 'the first purchase has to succeed for the bucket to '
             .. 'be spent, but it said ' .. tostring(first.err))
 
-        local second = call('informant', 1, { id = c.id })
+        local second = call('informant', 1, { id = c.id, shown = quoted })
         truthy(second, 'and answer again')
         eq(second.err, CH.ERR.RATE_LIMITED,
             'a second purchase inside the five-minute window has to be refused')

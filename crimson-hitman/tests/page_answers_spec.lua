@@ -288,7 +288,8 @@ describe('a refusal that says what was missing', function()
         local c = staked(s, f, 2000)
         local money = Env.players[3].PlayerData.money
         money.bank, money.cash = 500, 5000
-        local reply = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 })
+        local reply = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000,
+            shown = { hitmanFee = 1000, feeAccount = 'bank' } })
         eq(reply.err, CH.ERR.INSUFFICIENT)
         eq(reply.data and reply.data.part, 'fee')
         eq(reply.data.need, 1000)
@@ -306,19 +307,22 @@ describe('a refusal that says what was missing', function()
         local c = staked(s, f, 2000)
         local money = Env.players[3].PlayerData.money
         money.bank, money.cash = 1500, 1500
-        local first = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 })
+        local first = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000,
+            shown = { hitmanFee = 1000, feeAccount = 'bank' } })
         eq(first.data and first.data.part, 'stake')
         eq(first.data.fee, 1000)
         eq(first.data.feeAccount, 'bank')
 
         money.bank, money.cash = 3000, 0
         Env.advance(30)
-        truthy(call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 }).ok)
+        truthy(call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000,
+            shown = { hitmanFee = 1000, feeAccount = 'bank' } }).ok)
         truthy(s.contracts.abandon(f.hitman, c.id))
 
         money.bank, money.cash = 1500, 1500
         Env.advance(30)
-        local again = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 })
+        local again = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000,
+            shown = { hitmanFee = 1000, feeAccount = 'bank' } })
         eq(again.err, CH.ERR.INSUFFICIENT)
         eq(again.data and again.data.part, 'stake')
         eq(again.data.fee, 0, 'anonymity here was paid for on the first stint')

@@ -579,7 +579,12 @@ MATRIX.bailout = {
 }
 
 MATRIX.informant = {
-    payload = function(w, role, contract) return { id = contract.id } end,
+    -- With the price quoted, as the page sends it: a price not quoted is
+    -- refused before anything is asked (Informant.buy).
+    payload = function(w, role, contract)
+        return { id = contract.id,
+                 shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }
+    end,
     -- Both ends of the deal may buy, and nobody else: the creator to see who
     -- is working for them, the target to see who is coming (§6.1).
     expect = { creator = ALLOW, target = ALLOW, hitman = NOT_PARTY,

@@ -1426,3 +1426,91 @@ describe('the creator\'s anonymity fee, charged once the contract is placed', fu
         eq(unpaid[1].detail.account, 'bank')
     end)
 end)
+
+--- W143, W018: the anonymity fee a page showed is the fee charged, on
+--- placing and on accepting, as the stake already is (§14.18). A fee raised
+--- from the admin panel while the form or the dialog was open was charged
+--- without ever being shown. Refused before anything is taken, with the
+--- figure now; with the figure shown, charged once and named in the reply.
+describe('the anonymity fee a page showed', function()
+    local function call(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        Env.clientEvents = {}
+        _G.source = src
+        fire(payload or {})
+        _G.source = nil
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then return event.args[1] end
+        end
+        return nil
+    end
+    local function bank(src) return Env.players[src].PlayerData.money.bank end
+    local function handle(s)
+        local found = s.app.handlers.searchTargets(s.identity.resolve(1), { query = 'Reyes' })
+        return found and found[1] and found[1].handle
+    end
+    local function placing(target, shown)
+        return { target = target, reason = 'x', anonymous = true, shown = shown,
+                 reward = { slots = { { baseline = { cash = 5000 } } } } }
+    end
+
+    it('refuses a creator fee that moved since the form showed it, and takes nothing', function()
+        local s = newStack()
+        fixture(s)
+        Config.Anonymity.CreatorFee, Config.Anonymity.FeeAccount = 2500, 'bank'
+        local before = bank(1)
+        local reply = call('create', 1, placing(handle(s), { creatorFee = 0, feeAccount = 'bank' }))
+        eq(reply and reply.err, CH.ERR.TERMS_CHANGED)
+        eq(reply.data and reply.data.creatorFee, 2500, 'with the fee now')
+        eq(reply.data.feeAccount, 'bank')
+        eq(bank(1), before, 'nothing taken')
+        eq(#s.storage.liveContracts(), 0, 'nothing placed')
+
+        Env.advance(61)
+        local placed = call('create', 1, placing(handle(s), { creatorFee = 2500, feeAccount = 'bank' }))
+        truthy(placed and placed.ok, tostring(placed and placed.err))
+        eq(before - bank(1), 2500, 'the fee shown, once')
+        eq(placed.data.charged and placed.data.charged.fee, 2500, 'and named in the reply')
+    end)
+
+    it('needs no echo where placing anonymously is free', function()
+        local s = newStack()
+        fixture(s)
+        Config.Anonymity.CreatorFee = 0
+        local reply = call('create', 1, placing(handle(s), nil))
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        falsy(reply.data.charged, 'nothing charged, nothing named')
+    end)
+
+    it('refuses a hitman fee that moved since the dialog showed it, and takes nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
+        truthy(c)
+        Config.Anonymity.HitmanFee, Config.Anonymity.FeeAccount = 1000, 'bank'
+        local before = bank(3)
+        local reply = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 0,
+            shown = { hitmanFee = 0, feeAccount = 'bank' } })
+        eq(reply and reply.err, CH.ERR.TERMS_CHANGED)
+        eq(reply.data and reply.data.fee, 1000, 'with the fee now')
+        eq(bank(3), before, 'nothing taken')
+        eq(#s.storage.readHitmen(c.id), 0, 'and no row written')
+
+        local taken = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 0,
+            shown = { hitmanFee = 1000, feeAccount = 'bank' } })
+        truthy(taken and taken.ok, tostring(taken and taken.err))
+        eq(before - bank(3), 1000, 'the fee shown, once')
+        eq(taken.data.charged and taken.data.charged.fee, 1000, 'and named in the reply')
+    end)
+
+    it('needs no echo where taking one anonymously is free', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } })
+        Config.Anonymity.HitmanFee = 0
+        local reply = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 0 })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+    end)
+end)

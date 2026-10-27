@@ -163,22 +163,29 @@ local buyUnlocked
 --- landing in between found no record and was charged again for the same
 --- sticky reveal, counted once. A second purchase while one is running is
 --- refused as busy, before anything is read or charged.
+---@param shown table|nil the page's echo of the price it quoted, { cost,
+--- account }; nil for a caller that is not a page, which quoted nothing
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil data
-function Informant.buy(actor, contractId)
+function Informant.buy(actor, contractId, shown)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     -- Turned off, from the admin panel or config.lua: new purchases only.
     -- A name already bought stays shown.
     if not Config.Informant.Enabled then return false, CH.ERR.FEATURE_OFF end
     -- Unkeyed only where no contracts module was wired in (Informant.init).
-    if not Contracts then return buyUnlocked(actor, contractId) end
+    if not Contracts then return buyUnlocked(actor, contractId, shown) end
     return Contracts.serialized({ 'informant:' .. contractId .. ':' .. tostring(actor.cid) },
-        buyUnlocked, actor, contractId)
+        buyUnlocked, actor, contractId, shown)
 end
 
-buyUnlocked = function(actor, contractId)
+buyUnlocked = function(actor, contractId, shown)
+    -- The price, read once: the figure checked against the quote below is
+    -- the figure charged, whatever the admin panel does in the awaits.
+    local cost = math.floor(tonumber(Config.Informant.Cost) or 0)
+    local account = Config.Informant.Account
+
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if not authorised(contract, actor) then return false, CH.ERR.NOT_PARTICIPANT end
@@ -213,6 +220,17 @@ buyUnlocked = function(actor, contractId)
         return false, CH.ERR.LIMIT_REACHED
     end
 
+    -- The price the dialog quoted is the price charged, as the stake is on
+    -- accepting: a price raised from the admin panel while the dialog was
+    -- open was taken in full on the one purchase never refunded. Only where
+    -- something is charged, and before anything is.
+    if shown ~= nil and cost > 0 then
+        local quoted = type(shown) == 'table' and shown or {}
+        if tonumber(quoted.cost) ~= cost or quoted.account ~= account then
+            return false, CH.ERR.TERMS_CHANGED, { cost = cost, account = account }
+        end
+    end
+
     -- Just after a restart, nothing is sold that the restart made worthless.
     local wait = warming(contract)
     if wait > 0 then
@@ -235,8 +253,6 @@ buyUnlocked = function(actor, contractId)
         return false, CH.ERR.ALREADY_SETTLED
     end
 
-    local cost = Config.Informant.Cost
-    local account = Config.Informant.Account
     -- Balance read first: RemoveMoney answers true on an empty bank, which
     -- is the account this ships pointed at.
     if not Util.charge(actor.player, account, cost) then
@@ -295,6 +311,15 @@ buyUnlocked = function(actor, contractId)
     return true, nil, answer
 end
 
+--- A record's answer, while its reroll lock lasts; nil after.
+local function lockedAnswer(record)
+    if not record then return nil end
+    if (os.time() - record.at) >= (Config.Informant.RerollLockMinutes or 0) * 60 then
+        return nil
+    end
+    return record.answer
+end
+
 --- The answer this buyer was last given on this contract, for their card.
 ---
 --- The stored answer, never a fresh look, so carrying it on every read says
@@ -309,14 +334,18 @@ end
 --- and somebody else had taken it, and a target acting on it watched the
 --- wrong person. Bounded by time alone: asking whether that hitman is still
 --- on it would make the card a free presence and departure oracle.
+---
+--- With it, from the same read of their record, how many purchases they have
+--- left on this contract, for their own card. The card drew Buy informant
+--- data after the last purchase allowed, quoted the full price, and said
+--- nothing more could be bought only once the player had agreed to pay.
+--- Their own count, so it says nothing about anybody else.
 ---@return table|nil answer { name } or { description }
+---@return integer left
 function Informant.answerFor(contractId, cid)
     local record = recordFor(contractId, cid)
-    if not record then return nil end
-    if (os.time() - record.at) >= (Config.Informant.RerollLockMinutes or 0) * 60 then
-        return nil
-    end
-    return record.answer
+    local most = math.floor(tonumber(Config.Informant.MaxPurchasesPerContract) or 0)
+    return lockedAnswer(record), math.max(0, most - (record and record.purchases or 0))
 end
 
 --- What the buyer is shown.

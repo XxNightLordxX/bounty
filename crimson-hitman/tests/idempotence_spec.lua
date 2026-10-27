@@ -251,6 +251,26 @@ describe('accepting twice', function()
                 'one acceptance is one fee')
         end)
     end)
+
+    --- W022: the fee went by the truthiness of `anonymous` while the row
+    --- and the audit went by `== true`, so 1, 'true' or even 'false' was
+    --- charged for anonymity and recorded under a name.
+    for _, sent in ipairs({ 'false', 1, 'true' }) do
+        it(('charges nothing for an anonymous of %s, and records them named'):format(tostring(sent)),
+            function()
+                local s = newStack()
+                local f = fixture(s)
+                withConfig({ { Config.Anonymity, 'HitmanFee', 1000 },
+                             { Config.Anonymity, 'FeeAccount', 'bank' } }, function()
+                    local c = place(s, f.creator)
+                    local reply = call('accept', 3, { id = c.id, anonymous = sent, penaltyAmount = 0,
+                        shown = { hitmanFee = 1000, feeAccount = 'bank' } })
+                    truthy(reply and reply.ok, tostring(reply and reply.err))
+                    eq(Env.players[3].PlayerData.money.bank, 5000, 'no fee for a name')
+                    eq(s.storage.readHitman(c.id, 'HITMAN01').anon, false, 'recorded named')
+                end)
+            end)
+    end
 end)
 
 --------------------------------------------------------------------------

@@ -876,9 +876,62 @@ end
 --- server whose operator had switched free text off.
 Contracts.reasonFor = reasonFor
 
+--- Whether what the Place form showed is what placing it charges and
+--- agrees to now (§14.18, as the stake is on accepting).
+---
+--- The fee and the rule are server settings the admin panel changes while a
+--- form is open, and the server charged and placed under whatever they said
+--- at the tap: a fee raised mid-form was taken without ever being shown,
+--- and a contract shown as live-delivery-only was placed so a kill paid it.
+--- `shown` is the page's echo; nil is a caller that is not a page (a test,
+--- a staff path), which shows nothing and is held to nothing. A missing
+--- figure is a difference only where something is charged: with the
+--- shipped fee of 0 there is nothing to bind.
+---@param req table the create request, with `shown`
+---@param rule string the rule a contract placed now gets
+---@param fee integer the creator fee charged now
+---@param feeAccount string
+---@return string|nil err
+---@return table|nil terms the figures now, for the page
+local function shownTermsRefusal(req, rule, fee, feeAccount)
+    if req.shown == nil then return nil end
+    local shown = type(req.shown) == 'table' and req.shown or {}
+    local terms = { creatorFee = fee, feeAccount = feeAccount, fulfilment = rule }
+    if req.anonymous == true and fee > 0
+        and (tonumber(shown.creatorFee) ~= fee or shown.feeAccount ~= feeAccount) then
+        return CH.ERR.TERMS_CHANGED, terms
+    end
+    if type(shown.fulfilment) == 'string' and shown.fulfilment ~= rule then
+        return CH.ERR.RULE_CHANGED, terms
+    end
+    return nil
+end
+
 local function createUnlocked(actor, req, targetActor)
+    -- What it costs and how it is completed, read once, before anything
+    -- else: the echo is checked against them, and the fee charged and the
+    -- rule stored below are these same figures, whatever the panel does in
+    -- the awaits between.
+    local rule = Util.placingRule()
+    local creatorFee = math.floor(tonumber(Config.Anonymity.CreatorFee) or 0)
+    local feeAccount = Config.Anonymity.FeeAccount or 'bank'
+    local termsErr, terms = shownTermsRefusal(req, rule, creatorFee, feeAccount)
+    if termsErr then return nil, termsErr, terms end
+
     local ok, err, refusal = Contracts.canCreate(actor, targetActor)
     if not ok then return nil, err, refusal end
+
+    -- A target in a protected job, warned about only where the page was
+    -- shown that they hold one: picked before they took it, the creator
+    -- placed a contract on an officer, and every officer was told, with no
+    -- warning ever on screen. Not where such targets are refused outright
+    -- (canCreate, above), nor where the server warns nobody.
+    local protectingJob = Identity.protectedBy(targetActor)
+    if protectingJob and req.shown ~= nil and Config.Advisory.WarnCreator ~= false
+        and not (type(req.shown) == 'table' and req.shown.protectedAck == true) then
+        return nil, CH.ERR.TARGET_NOW_PROTECTED,
+            { category = Identity.protectedCategory(protectingJob) }
+    end
 
     local reason, reasonErr = reasonFor(actor, req)
     if reasonErr then return nil, reasonErr end
@@ -903,8 +956,8 @@ local function createUnlocked(actor, req, targetActor)
     -- kept on the contract: the setting changing later changes nothing a
     -- hitman has already taken on. Live transfer only pays the whole reward
     -- on delivery, so there is nothing to pay on top of it: the percentage
-    -- is dropped, as the form that hides it would send.
-    local rule = Util.placingRule()
+    -- is dropped, as the form that hides it would send. The rule read at
+    -- the top, the one the page's echo was checked against.
     local aliveOnly = rule == CH.FULFILMENT_RULE.ALIVE
     if aliveOnly then bonusPercent = 0 end
 
@@ -933,9 +986,12 @@ local function createUnlocked(actor, req, targetActor)
     local tooSmall, floor = Contracts.belowMinReward(worth)
     if tooSmall then return nil, tooSmall, floor end
     -- An item reaches the hitman with its metadata, and some of it names
-    -- the client: an anonymous one is refused it rather than unmasked.
-    if req.anonymous == true and Escrow.namesOwner(actor, lines) then
-        return nil, CH.ERR.ITEM_NAMES_OWNER
+    -- the client: an anonymous one is refused it rather than unmasked. The
+    -- item is named, so a creator with several staged knows which to take
+    -- out; it is their own.
+    if req.anonymous == true then
+        local named, item = Escrow.namesOwner(actor, lines)
+        if named then return nil, CH.ERR.ITEM_NAMES_OWNER, { item = item } end
     end
 
     local bailout, bailoutErr = Contracts.clampBailout(req.bailoutAmount, lines)
@@ -960,7 +1016,6 @@ local function createUnlocked(actor, req, targetActor)
     end
 
     local now = os.time()
-    local protectingJob = Identity.protectedBy(targetActor)
     local contract = {
         id            = contractId,
         creator_cid   = actor.cid,
@@ -1014,14 +1069,14 @@ local function createUnlocked(actor, req, targetActor)
     -- named the fee. Player money is never taken for a contract that does
     -- not exist.
     --
-    -- The figure and the account are read once, here, never again after
-    -- placement (both can be changed from the admin panel meanwhile), and a
-    -- creator who cannot cover the fee and what the escrow takes from that
-    -- account is refused before anything is taken.
+    -- The figure and the account are the ones read at the top, which the
+    -- page's echo was checked against, never read again (both can be
+    -- changed from the admin panel meanwhile), and a creator who cannot
+    -- cover the fee and what the escrow takes from that account is refused
+    -- before anything is taken.
     local feeDue
-    local creatorFee = math.floor(tonumber(Config.Anonymity.CreatorFee) or 0)
     if contract.anon_creator and creatorFee > 0 then
-        local account = Config.Anonymity.FeeAccount or 'bank'
+        local account = feeAccount
         local drawn = 0
         for i = 1, #lines do
             if lines[i].source == account then drawn = drawn + (tonumber(lines[i].amount) or 0) end
@@ -1056,8 +1111,10 @@ local function createUnlocked(actor, req, targetActor)
     -- The fee, now the contract exists. A balance spent in the moment since
     -- the check leaves it placed and anonymous, unpaid, and says so: the
     -- server's fee lost, never a player's money.
+    local charged
     if feeDue then
         if Util.charge(actor.player, feeDue.account, feeDue.amount) then
+            charged = { fee = feeDue.amount, account = feeDue.account }
             Audit.financial('anonymity_fee', actor.cid, contract.id,
                 { amount = feeDue.amount, account = feeDue.account, role = 'creator' })
         else
@@ -1080,7 +1137,8 @@ local function createUnlocked(actor, req, targetActor)
     -- expiry pass is allowed to skip ahead when it believes nothing is due.
     if Contracts.onChanged then Contracts.onChanged() end
 
-    return contract
+    -- And what was charged for anonymity, for the confirmation to say.
+    return contract, nil, charged
 end
 
 --- Place a contract, one at a time per creator and per target.
@@ -1095,7 +1153,8 @@ end
 --- create while one is running is refused as busy, with how long.
 ---@return table|nil contract
 ---@return string|nil err
----@return table|nil refusal what the page is told beyond the code
+---@return table|nil refusal what the page is told beyond the code; on
+--- success, the anonymity fee charged ({ fee, account }), or nil for none
 function Contracts.create(actor, req)
     local targetActor = Identity.byCitizenId(req.targetCid)
     local keys = { 'creator:' .. tostring(actor.account or actor.cid) }
@@ -1170,12 +1229,20 @@ end
 --- Accept a contract. Conditional write: in exclusive mode the ACTIVE →
 --- ACCEPTED transition is what reserves it, so two hitmen racing produce
 --- exactly one winner (§14.34).
----@param opts table|nil { disclosed = n } the stake the page had on screen
+---@param opts table|nil { disclosed = n } the stake the page had on screen,
+--- and `shown`, { hitmanFee, feeAccount }, the anonymity fee it showed
 ---@return boolean ok
 ---@return string|nil err
----@return table|nil refusal on insufficient_funds what was short, and on
---- limit_reached the most a hitman may hold; on success, their hitman row
+---@return table|nil refusal on insufficient_funds what was short, on
+--- limit_reached the most a hitman may hold, and on terms_changed the fee
+--- now; on success, their hitman row
+---@return table|nil charged on success, the anonymity fee taken { fee, account }
 local function acceptUnlocked(actor, contractId, anonymous, opts)
+    -- One reading of it, for the fee, the renamed check and the row alike:
+    -- the fee was charged on its truthiness (1, 'true', even 'false') while
+    -- the row and the audit recorded a name.
+    anonymous = anonymous == true
+
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
 
@@ -1355,9 +1422,21 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- the second fee was refused a contract they were already anonymous on.
     -- A refused row is not a stint, so it has paid for nothing.
     local feeAccount = Config.Anonymity.FeeAccount or 'bank'
+    local hitmanFee = math.floor(tonumber(Config.Anonymity.HitmanFee) or 0)
     local paidBefore = stint and previousAnon == true
-    local fee = (anonymous and not paidBefore and (Config.Anonymity.HitmanFee or 0) > 0)
-        and Config.Anonymity.HitmanFee or 0
+    local fee = (anonymous and not paidBefore and hitmanFee > 0) and hitmanFee or 0
+
+    -- And the fee is one the dialog showed, as the stake is
+    -- (stakeWasDisclosed): one raised from the admin panel while the dialog
+    -- was open was charged without being shown. Only where one is charged,
+    -- and only for a page (checkDisclosure), which echoes the figure and
+    -- the account it showed. Refused before anything is taken.
+    if fee > 0 and opts and opts.checkDisclosure then
+        local shown = type(opts.shown) == 'table' and opts.shown or {}
+        if tonumber(shown.hitmanFee) ~= fee or shown.feeAccount ~= feeAccount then
+            return false, CH.ERR.TERMS_CHANGED, { fee = fee, feeAccount = feeAccount }
+        end
+    end
 
     -- The failure penalty is staked here, at acceptance, or not at all: a
     -- penalty that is only charged after a failure is a penalty the hitman
@@ -1640,7 +1719,8 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     Audit.action('contract_accepted', actor.cid, contractId, { anonymous = record.anon })
     Notify.contractAccepted(contract, record, activeCount + 1)
 
-    return true, nil, record
+    -- And what anonymity cost, for the page's notice to say.
+    return true, nil, record, fee > 0 and { fee = fee, account = feeAccount } or nil
 end
 
 --- Accept a contract, one acceptance at a time per contract and per player.

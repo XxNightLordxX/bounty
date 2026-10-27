@@ -249,8 +249,11 @@ local function deliver(cid, reason, ids, all)
         -- A message re-reads only the thread on the page, and anything else
         -- re-reads the thread as well. So a message held behind an
         -- acceptance must not take its place: the creator's card never
-        -- showed the new operative.
-        elseif not (reason == 'message' and held.reason ~= 'message') then
+        -- showed the new operative. Nor anything but a job change behind a
+        -- settings change, which is the one that has the page read the
+        -- settings again: replaced, the page kept the old fees and prices.
+        elseif not (reason == 'message' and held.reason ~= 'message')
+            and not (held.reason == 'settings' and reason ~= 'access') then
             held.reason = reason
         end
         -- One push stands for the whole burst, so it is about every
@@ -974,10 +977,15 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
 
     -- The targeted officer cannot open the app to check for themselves, so
     -- they are told directly whatever the paranoid-alert setting says.
+    -- "Your department" only where their job is one the advisory goes to: a
+    -- medic or a lawyer was told their department had been advised, and
+    -- nobody in it was.
     if Config.Advisory.AlwaysAlertTarget then
+        local told = Identity.protectedCategory(contract.target_job) == 'law'
+            and 'Your department has been advised.' or 'Law enforcement has been advised.'
         Notify.toCitizen(contract.target_cid, title,
             stage == 'posted'
-                and 'A contract has been placed on you. Your department has been advised.'
+                and ('A contract has been placed on you. ' .. told)
                 or  ('The contract on you has been accepted. %d operative%s active.')
                         :format(activeHitmen or 1, (activeHitmen or 1) == 1 and ' is' or 's are'),
             { bypassBudget = true })

@@ -192,10 +192,12 @@ describe('being told why a target is off limits', function()
         return nil
     end
 
+    -- With the protected-job warning agreed to, as the page sends it once
+    -- the creator has seen it (Contracts.create refuses one never shown).
     local function tryPlace(s, handle)
         return call('create', 1, {
             target = handle, reason = 'Owes me', mode = CH.MODE.COMPETITIVE,
-            reward = { baseline = { cash = 5000 } },
+            reward = { baseline = { cash = 5000 } }, shown = { protectedAck = true },
         })
     end
 

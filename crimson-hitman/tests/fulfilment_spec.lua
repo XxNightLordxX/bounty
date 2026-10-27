@@ -765,4 +765,33 @@ describe('the shipped switches, from the Place form to paid', function()
         falsy(again, 'the target was just delivered')
         eq(err, CH.ERR.TARGET_RECENTLY_ON)
     end)
+
+    --- W097, W012: the form said a kill does not complete one, staff
+    --- switched the rule to 'either' before the tap, and the contract was
+    --- placed so a kill paid its whole reward. Refused, with the rule now,
+    --- and nothing taken.
+    it('refuses a contract whose rule changed while the form was open', function()
+        local s = Shipped.newStack()
+        fixture(s)
+        local shown = answered('rewardOptions', 1, {}).caps.fulfilment
+        eq(shown, 'alive')
+        local handle
+        for _, row in ipairs(answered('browseTargets', 1, { scope = 'online', page = 1 }).people or {}) do
+            if row.name == 'Dana Reyes' then handle = row.handle end
+        end
+        truthy(handle)
+
+        Config.Completion.Fulfilment = 'either'
+        local before = money(1)
+        local refused = call('create', 1, { target = handle, reason = 'Unpaid debt',
+            reward = { slots = { { baseline = { cash = 5000 } } } }, shown = { fulfilment = shown } })
+        eq(refused.err, CH.ERR.RULE_CHANGED)
+        eq(refused.data and refused.data.fulfilment, 'either', 'with the rule now')
+        eq(money(1), before, 'nothing taken')
+        eq(#s.storage.liveContracts(), 0, 'nothing placed')
+
+        local placed = answered('create', 1, { target = handle, reason = 'Unpaid debt',
+            reward = { slots = { { baseline = { cash = 5000 } } } }, shown = { fulfilment = 'either' } })
+        eq(s.storage.readContract(placed.id).fulfilment_rule, 'either', 'placed under the rule shown')
+    end)
 end)

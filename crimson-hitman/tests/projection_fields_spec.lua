@@ -77,6 +77,10 @@ local CONDITIONAL = {
     -- The viewer's own informant answer, so only once they have bought one,
     -- and only while the reroll lock lasts.
     informantAnswer  = 'creator or target, and only inside the reroll lock after buying',
+    -- The viewer's own purchases left, where the server runs informants.
+    informantLeft    = 'creator or target, and only where informants run',
+    -- The kind of protected job, only where the target holds one.
+    targetProtectedAs = 'present only when targetProtected is',
     -- Exactly one of these two, never both: when the creator chose anonymity
     -- no key carrying their name exists on the payload at all.
     creatorAnonymous = 'present only when the creator chose anonymity',
@@ -268,6 +272,50 @@ describe('the fields whose presence is a rule', function()
         truthy(hitmanView, 'the hitman should see what they took')
         falsy(hitmanView.hitmen,
             'and a hitman must not be told who they are competing with')
+    end)
+
+    it('counts the viewer\'s own informant purchases left, on their own card only', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
+        truthy(c)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        local most = Config.Informant.MaxPurchasesPerContract
+        eq((s.projection.mine(f.creator.cid) or {})[1].informantLeft, most, 'the creator, none spent')
+        eq((s.projection.onMe(f.target.cid) or {})[1].informantLeft, most, 'the target')
+        falsy(boardRow(s, f.hitman).informantLeft, 'nobody else')
+
+        Env.players[2].PlayerData.money.bank = 400000
+        truthy(s.informant.buy(f.target, c.id))
+        eq((s.projection.onMe(f.target.cid) or {})[1].informantLeft, most - 1,
+            'one spent is one fewer, on their own card')
+        eq((s.projection.mine(f.creator.cid) or {})[1].informantLeft, most,
+            'and nobody else\'s count moves')
+
+        Config.Informant.Enabled = false
+        falsy((s.projection.onMe(f.target.cid) or {})[1].informantLeft, 'none where none are sold')
+    end)
+
+    -- W055: every protected target was "a sworn officer". The kind of job,
+    -- never which force, and only where the flag is already set.
+    it('says what kind of protected job, only for a protected target', function()
+        for _, case in ipairs({
+            { job = nil, kind = nil },
+            { job = { name = 'ambulance', type = 'ems' }, kind = 'emergency' },
+            { job = { name = 'police', type = 'leo' }, kind = 'law' },
+            { job = { name = 'lawyer' }, kind = 'legal' },
+        }) do
+            local s = newStack()
+            local f = fixture(s, { targetJob = case.job })
+            Env.players[1].PlayerData.money.bank = 400000
+            truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01',
+                reason = 'x', reward = { baseline = { cash = 5000 } } }))
+            local row = boardRow(s, f.hitman)
+            eq(row.targetProtectedAs, case.kind, tostring(case.job and case.job.name))
+            eq(row.targetProtected, case.kind ~= nil)
+        end
     end)
 
     it('carries a face handle once there is a face to point at', function()

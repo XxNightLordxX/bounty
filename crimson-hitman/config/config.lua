@@ -146,7 +146,10 @@ Config.Anonymity = {
     --- Charged once the contract is placed, at the figure read when the
     --- create began; a create that fails takes none. A creator who cannot
     --- cover it on top of what the reward takes from FeeAccount is refused
-    --- before anything is taken.
+    --- before anything is taken. Both fees are charged as the app showed
+    --- them: it sends back the fee and account it showed, and one changed
+    --- from the admin panel since is refused, nothing taken, with the fee
+    --- now. The confirmation names what was charged.
     CreatorFee = 0,          -- flat fee, 0 = free
     HitmanFee  = 0,
     FeeAccount = 'bank',     -- 'cash' | 'bank'
@@ -843,10 +846,17 @@ Config.Advisory = {
     DispatchPriority = 1,
     --- The targeted officer is always told, whatever the paranoid-alert
     --- setting says — they cannot open the app to check for themselves.
+    --- "Your department has been advised" only where their job receives the
+    --- advisory (the Recipient lists); otherwise "Law enforcement has been
+    --- advised".
     AlwaysAlertTarget = true,
     --- Warn the creator before escrow is taken, and the hitman before they
-    --- accept, that the target is law enforcement. The listing also carries a
-    --- permanent flag. Nobody puts a hit on a cop by accident.
+    --- accept, that the target holds a protected job, by its kind (law
+    --- enforcement, emergency services, legal). A target who took one after
+    --- being picked is refused until the creator has seen the warning.
+    --- FlagListing marks the card itself (its chip, its notice and its
+    --- styling); off, nothing on the card says so. Nobody puts a hit on a
+    --- cop by accident.
     --- Advisories fire when the contract is posted and again when each
     --- operative accepts, carrying the running count, so one contract raises
     --- one acceptance bulletin per operative who takes it up. One who walks
@@ -929,6 +939,9 @@ Config.Amendments = {
 
 Config.Informant = {
     Enabled = true,
+    --- The price the dialog quotes is the price charged: one changed from
+    --- the admin panel since is refused, nothing taken, with the price now.
+    --- 0 is free, and the app says so.
     Cost = 25000,
     Account = 'bank',
     RevealMode = 'name',        -- 'name' | 'description'

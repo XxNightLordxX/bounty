@@ -2690,9 +2690,22 @@ async function main() {
         'the warning: ' + app.view.textContent);
     });
 
+    /* W057: with the advisory on, as shipped, the warning stated a fact
+       under a "Yes" button and never asked the question. It asks, every
+       time, and its button says what it does. */
+    it('asks the question under the warning, with a button that says what it does', function () {
+      truthy(app.view.textContent.indexOf('Place a contract on them anyway?') !== -1,
+        'the question: ' + app.view.textContent);
+      truthy(app.view.textContent.indexOf('every officer on duty') !== -1,
+        'and what placing it does: ' + app.view.textContent);
+      falsy(app.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Yes';
+      }), 'no bare Yes');
+    });
+
     // Confirm it, the way a player does.
     const yes = app.view.all().filter(function (n) {
-      return n.tagName === 'BUTTON' && n.textContent === 'Yes';
+      return n.tagName === 'BUTTON' && n.textContent === 'Place it';
     })[0];
     truthy(yes, 'a way to confirm');
     if (yes) { yes.onclick(); await settle(); await settle(); }
@@ -2701,6 +2714,12 @@ async function main() {
       truthy(submission, 'confirming must submit, not rebuild an empty form');
       eq(submission.reason, 'Unpaid debt', 'with what was typed');
       eq(submission.reward.slots[0].baseline.cash, 5000, 'and what was funded');
+    });
+
+    // W058: the agreement goes with it, so a target who took a protected
+    // job after being picked is refused until the warning has been seen.
+    it('sends the warning\'s acknowledgement with the contract', function () {
+      eq(submission && submission.shown && submission.shown.protectedAck, true);
     });
   })();
 
@@ -4013,14 +4032,14 @@ async function main() {
     });
 
     /* The target's own card offers it too, and had the same button. */
-    async function onMeWith(settings) {
+    async function onMeWith(settings, card) {
       const app = boot({
         list: board(settings),
-        mine: { ok: true, data: { created: [], accepted: [], onMe: [{
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [Object.assign({
           id: 'ct00000002', target: 'You', reason: 'Unpaid debt',
           state: 'active', role: 'target', mode: 'exclusive',
-          reward: { total: 5000 }, bailoutAmount: 15000, hitmen: []
-        }] } },
+          reward: { total: 5000 }, bailoutAmount: 15000, hitmen: [], hitmenActive: 1
+        }, card || {})] } },
         ledger: LEDGER
       });
       await settle(); await settle();
@@ -4045,6 +4064,52 @@ async function main() {
       truthy(targetWithInformants.view.all().some(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
       }), 'a target buying data on who is following them is the feature');
+    });
+
+    /* W063: with nobody on the contract the purchase can only answer
+       "Unknown operative", and is charged. The card already shows how many
+       operatives there are, so hiding it says nothing new. */
+    const nobodyOnIt = await onMeWith({}, { hitmenActive: 0 });
+    it('does not offer it on a target card nobody has taken', function () {
+      falsy(nobodyOnIt.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), nobodyOnIt.view.textContent);
+    });
+
+    /* W066: the viewer's own purchases left. Spent, the button went on
+       quoting the full price; one left, nothing said it was the last. */
+    const spentOut = await onMeWith({}, { informantLeft: 0 });
+    it('drops the button once no purchase is left', function () {
+      falsy(spentOut.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), spentOut.view.textContent);
+    });
+    const lastOne = await onMeWith({}, { informantLeft: 1 });
+    click(lastOne, 'Buy informant data');
+    it('says when this is the last one', function () {
+      truthy(lastOne.view.textContent.indexOf('This is your last one on this contract.') !== -1,
+        lastOne.view.textContent);
+    });
+
+    /* W065: a price of 0 from the panel was described as a fee. */
+    const free = await onMeWith({ informant: { cost: 0, account: 'bank', maxPerContract: 2 } });
+    click(free, 'Buy informant data');
+    it('says a free informant is free', function () {
+      const text = free.view.textContent;
+      truthy(text.indexOf('It is free on this server.') !== -1, text);
+      falsy(text.indexOf('It costs') !== -1, 'not a fee: ' + text);
+    });
+
+    /* W061/W143: the price quoted goes back with the purchase, and a price
+       that moved since is refused, said and read again. */
+    const quoted = await onMeWith({ informant: { cost: 25000, account: 'bank', maxPerContract: 2 } });
+    click(quoted, 'Buy informant data');
+    click(quoted, 'Yes');
+    await settle(); await settle();
+    const purchase = quoted.sent.filter(function (x) { return x.name === 'informant'; })[0];
+    it('sends the price it quoted with the purchase', function () {
+      truthy(purchase, 'a purchase was sent');
+      eq(JSON.stringify(purchase.body.shown), JSON.stringify({ cost: 25000, account: 'bank' }));
     });
 
     const withInformants = await onMine({}, {
@@ -4794,19 +4859,29 @@ async function main() {
         'and says that accepting will: ' + onAccept.view.textContent);
     });
 
-    /* Only the posting bulletin runs: told already, not told again. */
+    /* W056: only the posting bulletin runs. Whether it went for this
+       contract is not something today's switch says (it may have been off
+       when this one was placed), so nothing past is claimed: only what
+       accepting does, which here is nothing more. */
     const onPost = await onOfficer({ advisory: { posted: true, accepted: false } });
+    it('claims no past bulletin on the board', function () {
+      falsy(/advised/.test(onPost.view.textContent), onPost.view.textContent);
+      truthy(/sworn officer/.test(onPost.view.textContent), 'still flagged');
+    });
     onPost.view.all().filter(function (n) {
       return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
     })[0].onclick();
-    it('says officers were told when the posting bulletin went', function () {
-      truthy(/already been advised/.test(onPost.view.textContent), onPost.view.textContent);
+    it('nor in the hitman\'s warning', function () {
+      falsy(/advised/.test(onPost.view.textContent), onPost.view.textContent);
       falsy(/Accepting alerts/.test(onPost.view.textContent), onPost.view.textContent);
+      truthy(/Accept anyway\?/.test(onPost.view.textContent), onPost.view.textContent);
     });
 
     const advisedBoard = await onOfficer({ advisory: { posted: true, accepted: true } });
-    it('still says so where they are', function () {
-      truthy(/advised/.test(advisedBoard.view.textContent), advisedBoard.view.textContent);
+    it('says on the board what accepting it does', function () {
+      truthy(/Accepting it alerts every officer on duty/.test(advisedBoard.view.textContent),
+        advisedBoard.view.textContent);
+      falsy(/has been advised/.test(advisedBoard.view.textContent), advisedBoard.view.textContent);
     });
 
     const anon = await accepting({}, { ok: true, data: { myAnonymous: true } });
@@ -5650,7 +5725,7 @@ async function main() {
           created: [Object.assign({}, CONTRACTS[0], { role: 'creator', hitmen: [] })],
           accepted: [Object.assign({}, CONTRACTS[1], { role: 'hitman' })],
           onMe: [Object.assign({}, CONTRACTS[0], { role: 'target', id: 'ct00000003',
-            bailoutAmount: 15000 })] } },
+            bailoutAmount: 15000, hitmenActive: 1 })] } },
         ledger: LEDGER,
         rewardOptions: { ok: true, data: {
           cash: 100000, bank: 50000, dirty: 2000, inventoryRead: true,
@@ -10614,6 +10689,337 @@ async function main() {
         'asked once, not once per refusal');
     });
     drewCleanly(leaving); drewCleanly(joining); drewCleanly(closed);
+  })();
+
+  /* ---------- what the page shows is what is charged (group 10) ---------- */
+
+  /* W149, W143: a setting changed from the admin panel pushes reason
+     'settings' to every open app. The settings every tab draws by come
+     with the board's listing, and that push read the listing on the Board
+     tab only: on Place, On me, Mine and the Ledger the page kept the old
+     fees while the server charged the new ones. */
+  await (async function settingsPushReadsTheListing() {
+    let fee = 0;
+    function listing() {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { minQueryLength: 3,
+                    anonymityFees: { creator: fee, hitman: 0, account: 'bank' } } } };
+    }
+    const app = boot({
+      list: listing, mine: MINE, ledger: LEDGER,
+      rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 0, caps: { slots: 1 } } },
+      browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } }
+    });
+    await settle(); await settle();
+
+    async function pushedOn(name) {
+      tab(app, name);
+      await settle(); await settle();
+      const before = app.sent.length;
+      app.sandbox.window._message({ data: { type: 'push', reason: 'settings' } });
+      const due = app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; });
+      due[due.length - 1].fn();
+      await settle(); await settle(); await settle();
+      return app.sent.slice(before).map(function (r) { return r.name; }).sort();
+    }
+
+    const read = {};
+    for (const name of ['ledger', 'mine', 'onme']) { read[name] = await pushedOn(name); }
+    fee = 7500;
+    read.place = await pushedOn('place');
+    it('reads the listing on a settings push whatever tab is open', function () {
+      drewCleanly(app, 'settings pushes on every tab');
+      eq(JSON.stringify(read.ledger), JSON.stringify(['ledger', 'list']), 'the ledger');
+      eq(JSON.stringify(read.mine), JSON.stringify(['ledger', 'list', 'mine']), 'Mine');
+      eq(JSON.stringify(read.onme), JSON.stringify(['list', 'mine']), 'On me');
+      truthy(read.place.indexOf('list') !== -1, 'the Place form: ' + read.place);
+      truthy(read.place.indexOf('rewardOptions') !== -1,
+        'with the wallet, which carries the payouts, sources and caps: ' + read.place);
+    });
+    it('shows a fee raised mid-form before anything is placed', function () {
+      truthy(app.view.textContent.indexOf('(costs $7,500 from your bank)') !== -1,
+        app.view.textContent);
+    });
+  })();
+
+  /* W143, W097, W058, W011, W102: the Place form sends back what it
+     showed, and says what the server did with it. */
+  await (async function placingIsBinding() {
+    function listing(settings) {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      b.data.settings = Object.assign({}, b.data.settings, settings || {});
+      return b;
+    }
+    async function formWith(over, settings, wallet) {
+      const app = placeForm(Object.assign({
+        list: listing(Object.assign({ fulfilment: 'alive',
+          anonymityFees: { creator: 2500, hitman: 0, account: 'cash' } }, settings || {})),
+        rewardOptions: { ok: true, data: Object.assign({}, GOODS, wallet || {}) }
+      }, over || {}));
+      await settle(); await settle();
+      tab(app, 'place');
+      await settle(); await settle();
+      app.document.getElementById('target-handle').value = 'tg00000001';
+      pick(app, 'reason', 'Unpaid debt');
+      return app;
+    }
+    function tickAnonymous(app) {
+      const box = app.document.getElementById('anon');
+      box.checked = true;
+      box.onclick();
+    }
+
+    const sent = await formWith();
+    pick(sent, 'slot-cash-1', 5000);
+    tickAnonymous(sent);
+    press(sent, 'place-submit');
+    await settle(); await settle();
+    it('sends back the fee, its account and the rule it showed', function () {
+      const body = sent.submitted();
+      truthy(body, 'placed');
+      eq(JSON.stringify(body.shown), JSON.stringify({ creatorFee: 2500, feeAccount: 'cash',
+        fulfilment: 'alive', protectedAck: false }));
+    });
+
+    const moved = await formWith({ create: { ok: false, err: 'terms_changed',
+      data: { creatorFee: 9000, feeAccount: 'cash', fulfilment: 'alive' } } });
+    pick(moved, 'slot-cash-1', 5000);
+    tickAnonymous(moved);
+    const listsBefore = moved.sent.filter(function (r) { return r.name === 'list'; }).length;
+    press(moved, 'place-submit');
+    await settle(); await settle(); await settle();
+    it('says the fee now and reads the settings again when it moved', function () {
+      truthy(moved.notice().indexOf('$9,000') !== -1, moved.notice());
+      truthy(moved.notice().indexOf('Nothing was taken') !== -1, moved.notice());
+      truthy(moved.sent.filter(function (r) { return r.name === 'list'; }).length > listsBefore,
+        'the listing is read again');
+    });
+
+    const ruled = await formWith({ create: { ok: false, err: 'rule_changed',
+      data: { creatorFee: 0, feeAccount: 'bank', fulfilment: 'either' } } });
+    pick(ruled, 'slot-cash-1', 5000);
+    press(ruled, 'place-submit');
+    await settle(); await settle(); await settle();
+    it('says which way the rule went when it changed under the form', function () {
+      truthy(ruled.notice().indexOf('a kill completes one') !== -1, ruled.notice());
+    });
+
+    const placed = await formWith({ create: { ok: true, data: { fulfilment: 'either',
+      penaltyAmount: 0, charged: { fee: 2500, account: 'cash' } } } });
+    pick(placed, 'slot-cash-1', 5000);
+    pick(placed, 'penalty', 1000);
+    tickAnonymous(placed);
+    press(placed, 'place-submit');
+    await settle(); await settle();
+    it('names the fee charged, the rule where it differs, and a stake that was dropped', function () {
+      const said = placed.notice();
+      truthy(said.indexOf('Placing it anonymously cost $2,500 from your cash.') !== -1, said);
+      truthy(said.indexOf('A kill completes it as well as a live handover.') !== -1, said);
+      truthy(said.indexOf('No stake was set') !== -1, said);
+    });
+
+    const dirtyOnly = await formWith({}, {}, { dirty: 50000 });
+    pick(dirtyOnly, 'slot-dirty-1', 5000);
+    pick(dirtyOnly, 'penalty', 2000);
+    press(dirtyOnly, 'place-submit');
+    await settle();
+    it('refuses a stake on a reward with no cash or bank, before sending it', function () {
+      falsy(dirtyOnly.submitted(), 'nothing sent');
+      truthy(dirtyOnly.notice().indexOf('cannot carry a stake') !== -1, dirtyOnly.notice());
+    });
+
+    const NAMING = { items: [
+      { name: 'carkey', label: 'Car key', count: 1, namesOwner: true },
+      { name: 'lockpick', label: 'Lockpick', count: 5 }
+    ] };
+    const keyed = await formWith({}, {}, NAMING);
+    const optionsNamed = function (app) {
+      return app.document.getElementById('slot-item-1').children
+        .filter(function (o) { return o.value === 'carkey'; })[0];
+    };
+    const openKey = optionsNamed(keyed);
+    tickAnonymous(keyed);
+    await settle();
+    const heldBack = optionsNamed(keyed);
+    it('holds back an item that names its owner while placing anonymously', function () {
+      truthy(openKey && !openKey.disabled, 'offered on a named contract');
+      truthy(heldBack && heldBack.disabled, 'held back once anonymous');
+      truthy(heldBack.textContent.indexOf('carries your name') !== -1, heldBack.textContent);
+    });
+
+    const refusedItem = await formWith({ create: { ok: false, err: 'item_names_owner',
+      data: { item: 'carkey' } } }, {}, NAMING);
+    pick(refusedItem, 'slot-cash-1', 5000);
+    tickAnonymous(refusedItem);
+    press(refusedItem, 'place-submit');
+    await settle(); await settle();
+    it('names the item when the server refuses one for naming its owner', function () {
+      truthy(refusedItem.notice().indexOf('Car key carries your name') !== -1,
+        refusedItem.notice());
+    });
+
+    // W058: picked before they took a protected job.
+    const turned = await formWith({ create: { ok: false, err: 'target_now_protected',
+      data: { category: 'emergency' } } });
+    pick(turned, 'slot-cash-1', 5000);
+    press(turned, 'place-submit');
+    await settle(); await settle();
+    it('shows the warning when the target took a protected job after being picked', function () {
+      const text = turned.view.textContent;
+      truthy(text.indexOf('That target works in emergency services.') !== -1, text);
+      truthy(text.indexOf('Place a contract on them anyway?') !== -1, text);
+    });
+
+    drewCleanly(sent); drewCleanly(moved); drewCleanly(placed); drewCleanly(keyed);
+    drewCleanly(turned);
+  })();
+
+  /* W098, W099: a source switched off on its own said so nowhere. */
+  await (async function placeFormSaysWhatIsOff() {
+    const app = placeForm({ rewardOptions: { ok: true, data: Object.assign({}, GOODS, {
+      items: [], caps: Object.assign({}, GOODS.caps, { dirtyEnabled: false, itemsEnabled: false,
+        minValue: 1000 })
+    }) } });
+    await settle(); await settle();
+    tab(app, 'place');
+    await settle(); await settle();
+    const text = app.view.textContent;
+    it('says which money source is off, and leaves it out of the minimum', function () {
+      truthy(text.indexOf('This server does not take dirty money as a reward.') !== -1, text);
+      falsy(/dirty money (across|in the reward)/.test(text), text);
+      truthy(text.indexOf('cash and bank') !== -1, text);
+    });
+    it('says items are off while a weapon is still offered', function () {
+      truthy(app.document.getElementById('slot-weapon-1'), 'the weapon picker');
+      truthy(text.indexOf('This server does not take items as a reward.') !== -1, text);
+    });
+  })();
+
+  /* W018, W022: the hitman's fee is sent back and named. */
+  await (async function acceptingIsBinding() {
+    let accepted = null;
+    let fee = 1000;
+    function listing() {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      b.data.settings = Object.assign({}, b.data.settings,
+        { anonymityFees: { creator: 0, hitman: fee, account: 'bank' } });
+      return b;
+    }
+    const app = boot({ list: listing, mine: MINE, ledger: LEDGER,
+      accept: function (body) {
+        accepted = body;
+        return { ok: true, data: { myAnonymous: true, charged: { fee: 2500, account: 'bank' } } };
+      } });
+    await settle(); await settle();
+    click(app, 'Accept contract');
+    const shownFirst = app.view.textContent;
+    // Raised from the panel while the dialog is open.
+    fee = 2500;
+    app.sandbox.window._message({ data: { type: 'push', reason: 'settings' } });
+    const due = app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; });
+    due[due.length - 1].fn();
+    await settle(); await settle(); await settle();
+    const shownAfter = app.view.textContent;
+    click(app, 'Anonymously');
+    await settle(); await settle();
+    it('draws the open dialog again with a fee raised while it was open', function () {
+      truthy(shownFirst.indexOf('$1,000') !== -1, shownFirst);
+      truthy(shownAfter.indexOf('$2,500') !== -1, shownAfter);
+    });
+    it('sends back the fee and the account the dialog showed', function () {
+      truthy(accepted, 'accepted');
+      eq(JSON.stringify(accepted.shown), JSON.stringify({ hitmanFee: 2500, feeAccount: 'bank' }));
+    });
+    it('names the fee charged in the notice', function () {
+      truthy(app.notice().indexOf('Anonymity cost $2,500 from your bank.') !== -1, app.notice());
+    });
+
+    const refused = boot({ list: listing, mine: MINE, ledger: LEDGER,
+      accept: { ok: false, err: 'terms_changed', data: { fee: 4000, feeAccount: 'cash' } } });
+    await settle(); await settle();
+    click(refused, 'Accept contract');
+    click(refused, 'Anonymously');
+    await settle(); await settle();
+    it('says the fee now when it moved before the tap', function () {
+      truthy(refused.notice().indexOf('$4,000 from your cash') !== -1, refused.notice());
+    });
+    drewCleanly(app); drewCleanly(refused);
+  })();
+
+  /* A11: the how-to on a hitman's card, while a handover runs on the
+     radius it was armed with, says that radius, not the one set since. */
+  await (async function howToSaysTheArmedRadius() {
+    const mine = { ok: true, data: { created: [], accepted: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive', fulfilment: 'alive',
+      state: 'accepted', reward: { baseline: 5000 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 1, hitmenMax: 1,
+      targetName: 'Dana Reyes', role: 'hitman', creatorName: 'Vic Marlowe',
+      deadline: Math.floor(Date.now() / 1000) + 7200,
+      kidnapProgress: { elapsed: 4, required: 30, graceLeft: 3000, graceTotal: 3000, radius: 12 }
+    }], onMe: [] } };
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { kidnap: { radius: 50, seconds: 30 }, fulfilment: 'alive' } } },
+      mine: mine, ledger: LEDGER,
+      kidnapProgress: { ok: true, data: { elapsed: 5, required: 30, graceLeft: 3000,
+        graceTotal: 3000, radius: 12 } }
+    });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle(); await settle();
+    const text = app.view.textContent;
+    it('says the armed radius in the how-to while the countdown runs', function () {
+      truthy(text.indexOf('get within 12 m of that person') !== -1, text);
+      falsy(text.indexOf('within 50 m') !== -1, 'the radius set since: ' + text);
+    });
+    drewCleanly(app);
+  })();
+
+  /* W100, W054, W055: the Ledger's counters, the switch that flags the
+     listing, and the kind of protected job. */
+  await (async function countersFlagsAndKinds() {
+    const ledger = boot({ list: BOARD, mine: MINE, ledger: { ok: true, data: { entries: [],
+      record: { completed: 4, failed: 3, placed: 2, survived: 1, rate: 57, standing: 'Unproven' } } } });
+    await settle(); await settle();
+    tab(ledger, 'ledger');
+    await settle(); await settle();
+    it('shows what the success rate is worked out from', function () {
+      truthy(ledger.view.textContent.indexOf('3 abandoned or lost') !== -1,
+        ledger.view.textContent);
+    });
+
+    function officerBoard(settings, kind) {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      b.data.settings = Object.assign({}, b.data.settings, settings || {});
+      b.data.contracts[0].targetProtected = true;
+      if (kind) { b.data.contracts[0].targetProtectedAs = kind; }
+      return b;
+    }
+    const unflagged = boot({ list: officerBoard({ flagListing: false }, 'law'), mine: MINE,
+      ledger: LEDGER });
+    await settle(); await settle();
+    it('marks nothing on the card where the listing is not flagged', function () {
+      const cards = unflagged.view.all().filter(function (n) {
+        return n._className && n._className.split(' ').indexOf('card') !== -1;
+      });
+      falsy(cards.some(function (n) { return n._className.indexOf('is-protected') !== -1; }),
+        'the protected styling');
+      falsy(/sworn officer/.test(unflagged.view.textContent), unflagged.view.textContent);
+    });
+
+    const medic = boot({ list: officerBoard({}, 'emergency'), mine: MINE, ledger: LEDGER,
+      accept: { ok: true, data: {} } });
+    await settle(); await settle();
+    const card = medic.view.textContent;
+    click(medic, 'Accept contract');
+    const dialog = medic.view.textContent;
+    it('words a medic as emergency services, not a sworn officer', function () {
+      truthy(card.indexOf('Emergency services') !== -1, card);
+      truthy(card.indexOf('This target works in emergency services.') !== -1, card);
+      falsy(/sworn officer|Law enforcement/.test(card), card);
+      truthy(dialog.indexOf('This contract is on someone in emergency services.') !== -1, dialog);
+    });
+    drewCleanly(ledger); drewCleanly(unflagged); drewCleanly(medic);
   })();
 
   console.log('');

@@ -298,7 +298,18 @@ CH.ERR = {
     --- tapped and forfeits to the creator if the hitman later walks away or
     --- runs out of clock, so charging a figure the player did not agree to
     --- is the one repricing that cannot be undone by refreshing (§14.18).
+    --- The same for every other charge a page shows before it is agreed to:
+    --- the anonymity fee on placing and on accepting, and the informant's
+    --- price. Sent with the figures charged now, so the page can say them.
     TERMS_CHANGED    = 'terms_changed',
+    --- How a contract placed now is completed (Completion.Fulfilment) is not
+    --- what the Place form showed: changed from the admin panel while it was
+    --- open. Sent with { fulfilment }. Refused before anything is taken.
+    RULE_CHANGED     = 'rule_changed',
+    --- The target holds a protected job the creator was never warned about
+    --- (Advisory.WarnCreator): they took it after being picked. Sent with
+    --- { category }. Refused before anything is taken.
+    TARGET_NOW_PROTECTED = 'target_now_protected',
     -- A staked contract too close to its deadline to be worth the stake.
     TOO_LITTLE_TIME  = 'too_little_time',
     INSUFFICIENT     = 'insufficient_funds',

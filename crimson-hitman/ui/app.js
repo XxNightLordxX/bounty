@@ -468,6 +468,15 @@
        player cannot undo by looking again. */
     terms_changed: 'The stake or the deadline on this contract changed while you '
       + 'were looking at it. Refreshing now — check the new terms before you take it.',
+    /* How a contract placed now is completed changed from the admin panel
+       while the Place form was open. failText says which way when the
+       server sends it. Nothing was taken. */
+    rule_changed: 'This server now places contracts differently. Nothing was taken. '
+      + 'Check the form and place it again.',
+    /* The target took a protected job after being picked, so the warning
+       was never shown. Nothing was taken; submitContract shows it now. */
+    target_now_protected: 'That target now works in a protected job. Nothing was taken. '
+      + 'Read the warning and place it again if you still want to.',
     too_little_time: 'This contract runs out too soon to stake on. Taking it now '
       + 'would hand your stake to the person who placed it before you could work it.',
     target_protected: 'That target cannot be listed right now.',
@@ -1504,7 +1513,46 @@
     // instead, with the server's own distance and hold.
     if (result.err === 'kill_not_allowed') { return aliveOnlyRefusal(); }
 
+    // A fee or a price that moved while it was on screen: the figure now.
+    if (result.err === 'terms_changed') {
+      var moved = feeMovedText(result.data);
+      if (moved) { return moved; }
+    }
+    // And the rule a contract is placed under, which way it went.
+    if (result.err === 'rule_changed' && result.data
+        && typeof result.data.fulfilment === 'string') {
+      return 'This server now places contracts differently: '
+        + (result.data.fulfilment === 'either'
+          ? 'a kill completes one as well as a live handover.'
+          : 'they only pay when the target is brought to you alive, and a kill does '
+            + 'not complete one.')
+        + ' Nothing was taken. Check the form and place it again.';
+    }
+
     return ERRORS[result.err] || 'Something went wrong.';
+  }
+
+  /* What a charge is now, when a refusal says it moved while it was on
+     screen: the anonymity fee on placing or on accepting, or the
+     informant's price. Each was charged at whatever the admin panel had
+     just set, without ever being shown; now it is refused, and said. */
+  function feeMovedText(data) {
+    var d = data || {};
+    function from(account) { return account === 'cash' ? 'your cash' : 'your bank'; }
+    if (typeof d.creatorFee === 'number') {
+      return 'Placing anonymously now costs ' + money(d.creatorFee) + ' from '
+        + from(d.feeAccount) + '. Nothing was taken. The form shows the new figure; '
+        + 'place it again if that is fine.';
+    }
+    if (typeof d.fee === 'number') {
+      return 'Taking it anonymously now costs ' + money(d.fee) + ' from '
+        + from(d.feeAccount) + '. Nothing was taken. Check the new figure before you take it.';
+    }
+    if (typeof d.cost === 'number') {
+      return 'The informant now costs ' + money(d.cost) + ' from ' + from(d.account)
+        + '. Nothing was taken. Ask again if that is fine.';
+    }
+    return null;
   }
 
   /* The least a contract may be worth in money, in the words every place
@@ -1519,8 +1567,23 @@
      contract can be collected more than once (Config.Limits.MaxPayoutSlots):
      at 1, as shipped, the form says nothing about further collections. */
   function moneyCounted() {
-    return 'cash, bank and dirty money '
+    return moneyTaken() + ' '
       + (slotCeiling() > 1 ? 'across every payout.' : 'in the reward.');
+  }
+
+  /* The money sources this server takes, as words: "cash, bank and dirty
+     money", less any switched off (the wallet's caps). The minimum named
+     dirty money on a server that had turned it off. All three until the
+     wallet has said. */
+  function moneyTaken() {
+    var caps = (state.wallet && state.wallet.caps) || {};
+    var names = [];
+    if (caps.cashEnabled !== false) { names.push('cash'); }
+    if (caps.bankEnabled !== false) { names.push('bank'); }
+    if (caps.dirtyEnabled !== false) { names.push('dirty money'); }
+    if (!names.length) { return 'money'; }
+    return names.length === 1 ? names[0]
+      : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
   }
 
   /* ---------- actions already running ----------------------------------
@@ -1705,7 +1768,11 @@
   /* ---------- contract card ---------- */
 
   function card(contract, context) {
-    var node = el('div', 'card' + (contract.targetProtected ? ' is-protected' : ''));
+    // Marked as a protected target only where the server flags the listing
+    // (Advisory.FlagListing): off, the chip went and the gold notice and the
+    // styling stayed, so the switch did half of what it says.
+    var flagged = contract.targetProtected && settings().flagListing !== false;
+    var node = el('div', 'card' + (flagged ? ' is-protected' : ''));
 
     /* A name with a word too long to share a line with the stamp — a
        double-barrelled surname, a handle with no spaces in it — gets the
@@ -1912,8 +1979,8 @@
       meta.appendChild(chip(contract.creatorAnonymous ? 'Placed anonymously'
         : 'Placed by ' + contract.creatorName, null, 'i-briefcase'));
     }
-    if (contract.targetProtected && settings().flagListing !== false) {
-      meta.appendChild(chip('Law enforcement', 'warn', 'i-shield'));
+    if (flagged) {
+      meta.appendChild(chip(protectedWords(contract.targetProtectedAs).chip, 'warn', 'i-shield'));
     }
     node.appendChild(meta);
 
@@ -1926,9 +1993,14 @@
         'Informant: ' + contract.informantAnswer));
     }
 
-    if (contract.targetProtected && context === 'board') {
-      node.appendChild(el('div', 'notice gold', 'This target is a sworn officer.'
-        + (advised('posted') ? ' Their department has been advised.' : '')));
+    // What accepting it does, under the switches now. "Their department has
+    // been advised" read today's switch, not whether a bulletin went for
+    // this contract, and was said of medics and lawyers, whose departments
+    // nobody tells.
+    if (flagged && context === 'board') {
+      node.appendChild(el('div', 'notice gold', 'This target '
+        + protectedWords(contract.targetProtectedAs).is + '.'
+        + (advised('accepted') ? ' Accepting it alerts every officer on duty.' : '')));
     }
 
     // The placer's half of a live handover, on their own card once it is
@@ -2181,7 +2253,9 @@
       // client's purchase only ever draws an anonymous one, so with none it
       // bought a certain "nobody" on the one purchase never refunded.
       var anyAnonymous = asList(contract.hitmen).some(function (h) { return !h.name; });
-      if (settings().informant && anyAnonymous) { more.appendChild(informantButton(contract)); }
+      if (informantOffered(contract) && anyAnonymous) {
+        more.appendChild(informantButton(contract));
+      }
 
       // Same shape, same reason: {} has no .length, so this read as "no
       // hitmen" whether or not there were any.
@@ -2229,7 +2303,12 @@
 
     if (contract.role === 'target') {
       appendBuyout(row, contract);
-      if (settings().informant) { more.appendChild(informantButton(contract)); }
+      // Only with somebody on it. With nobody, the purchase could only
+      // answer "Unknown operative", and was charged; the card already says
+      // how many operatives there are, so hiding it says nothing new.
+      if (informantOffered(contract) && Number(contract.hitmenActive) > 0) {
+        more.appendChild(informantButton(contract));
+      }
       return withMore();
     }
 
@@ -2583,7 +2662,10 @@
   }
 
   function acceptContract(contract) {
-    var feeAccount = (settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank';
+    var feeAccount = anonymityAccount();
+    // The fee the dialog shows, kept with it and sent back with the tap:
+    // the server refuses rather than charges a fee that has moved since.
+    var shownFee = anonymityFee('hitman');
 
     function take(anonymous) {
       // Through `once`, keyed as the board's button is drawn, so the button
@@ -2598,7 +2680,9 @@
         penaltyAmount: contract.penaltyAmount || 0,
         // And the deadline, which the stake is forfeit to: brought forward
         // since it was shown, the server refuses rather than takes the stake.
-        deadline: contract.deadline
+        deadline: contract.deadline,
+        // And the anonymity fee and its account, as the dialog said them.
+        shown: { hitmanFee: shownFee, feeAccount: feeAccount }
       }).then(function (r) {
         if (!r.ok) {
           // Told and shown. A message saying the figure changed, with the
@@ -2661,7 +2745,13 @@
         // back under it, and was told "accepted, anonymously".
         var recorded = r.data && typeof r.data.myAnonymous === 'boolean'
           ? r.data.myAnonymous : anonymous;
-        say(recorded ? 'Contract accepted, anonymously.'
+        // And what anonymity cost, as the server took it: nothing on a
+        // contract whose anonymity this hitman already paid for.
+        var charged = (r.data && r.data.charged) || {};
+        var cost = Number(charged.fee) > 0
+          ? ' Anonymity cost ' + money(Number(charged.fee)) + ' from your '
+            + (charged.account === 'cash' ? 'cash' : 'bank') + '.' : '';
+        say(recorded ? 'Contract accepted, anonymously.' + cost
           : anonymous ? 'Contract accepted under your name: the person who placed it '
             + 'already knows you on this one.'
           : 'Contract accepted.', 'ok');
@@ -2674,6 +2764,8 @@
     }
 
     function chooseAnonymity() {
+      feeAccount = anonymityAccount();
+      shownFee = anonymityFee('hitman');
       state.dialog = {
         kind: 'choice',
         question: 'Take this one anonymously?',
@@ -2687,8 +2779,8 @@
             ? ' This contract only pays when you bring the target, alive, to the '
               + 'person who placed it. Killing them does not count.'
             : '')
-          + (anonymityFee('hitman') > 0
-            ? ' Anonymity costs ' + money(anonymityFee('hitman')) + ' from your '
+          + (shownFee > 0
+            ? ' Anonymity costs ' + money(shownFee) + ' from your '
               + feeAccount + '.'
             : '')
           // Taken whole from one account, which nothing said until a
@@ -2707,23 +2799,23 @@
         options: [
           { label: 'Anonymously', primary: true, run: function () { take(true); } },
           { label: 'Under my name', run: function () { take(false); } }
-        ]
+        ],
+        // Drawn again from the settings when they change while it is open
+        // (readBoard), so the fee it shows, and sends back, is the fee now.
+        redo: chooseAnonymity
       };
       render();
     }
 
     if (contract.targetProtected && settings().warnHitman !== false) {
-      // Each stage said only where it happens: the posting bulletin has
-      // already gone, the acceptance one goes when they tap. The dialog
-      // said "already advised" on the strength of the acceptance bulletin,
-      // which had not been sent, and said nothing where only the posting
-      // one had.
+      // Only what accepting does, under the switches now. "Law enforcement
+      // has already been advised" read today's switch, not whether a
+      // bulletin went for this contract.
       var told = [];
-      if (advised('posted')) { told.push('Law enforcement has already been advised about it.'); }
       if (advised('accepted')) { told.push('Accepting alerts every officer on duty that someone is coming.'); }
       told.push('Accept anyway?');
-      ask('This contract is on a sworn officer.', told.join(' '),
-          chooseAnonymity);
+      ask('This contract is on ' + protectedWords(contract.targetProtectedAs).noun + '.',
+          told.join(' '), chooseAnonymity);
       return;
     }
     chooseAnonymity();
@@ -2744,15 +2836,20 @@
     // is said, since a kill still happens: they come back, and the contract
     // is still open. And to whom: "the client" named nobody a new hitman
     // knew, on the one rule this server is run on.
+    // While a handover runs, the distance it was armed with: it keeps that
+    // one whatever the server is set to since, and the card told the hitman
+    // the new one.
+    var armed = runningRadius(contract);
     if (aliveOnly(contract)) {
-      return el('div', 'hint', deliverAliveSteps() + placerLine(contract));
+      return el('div', 'hint', deliverAliveSteps(armed) + placerLine(contract));
     }
     var record = state.ledger && state.ledger.record;
     if (!record || record.completed !== 0) { return null; }
     // A contract a kill can finish too keeps the words it had.
     var kidnap = settings().kidnap || {};
+    var within = metres(armed);
     var deliver = 'restrain them or get them into your vehicle, bring them '
-      + (kidnap.radius ? 'within ' + kidnap.radius + ' m of' : 'to')
+      + (within ? 'within ' + within + ' m of' : 'to')
       + ' the client, tap Deliver alive and hold '
       + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : 'until it finishes.');
     // With kill photos off (settings().killPhotos) nothing is photographed:
@@ -2793,9 +2890,21 @@
       : 'right there with you and the target';
   }
 
-  // What a hitman does to finish a contract only a live handover completes.
-  function deliverAliveSteps() {
-    var m = metres();
+  /* The radius of a handover running on this contract, as its countdown
+     reports it (progress.radius), or null when none is running: the live
+     poll's, or the snapshot the card came with, as the countdown bar
+     draws. */
+  function runningRadius(contract) {
+    var running = state.progress[contract.id]
+      || (countdownOver[contract.id] === undefined ? contract.kidnapProgress : null);
+    var r = running && Number(running.radius);
+    return r > 0 ? r : null;
+  }
+
+  // What a hitman does to finish a contract only a live handover completes:
+  // within `radius` (a running countdown's), or the server's where none is.
+  function deliverAliveSteps(radius) {
+    var m = metres(radius);
     var seconds = Number((settings().kidnap || {}).seconds);
     return 'Bring them in alive: cuff them or get them into your vehicle, take them '
       + 'to the person who placed this contract, '
@@ -3453,6 +3562,17 @@
         }, { yes: 'Pay ' + amount });
   }
 
+  /* Whether this card offers informant data: where the server runs
+     informants, and while this player has a purchase left on it (their own
+     count, the projection's informantLeft). Spent, the button stayed, quoted
+     the full price, and said nothing more could be bought only once the
+     player had agreed to pay. */
+  function informantOffered(contract) {
+    if (!settings().informant) { return false; }
+    var left = contract.informantLeft;
+    return left === undefined || left === null || Number(left) > 0;
+  }
+
   /* Buy informant data, disabled while a purchase is in flight: the one
      purchase that is never refunded, and the button stayed live through
      the round trip. */
@@ -3476,17 +3596,24 @@
 
     // What it costs, said before they agree to pay it. The dialog used to
     // call it "expensive" and leave the player to find the figure out by
-    // spending it — on a purchase that is deliberately not refunded.
-    var price = rules && rules.cost
-      ? money(rules.cost) + ' from your ' + (rules.account === 'cash' ? 'cash' : 'bank')
-      : 'a fee';
-
-    var detail = 'It costs ' + price + ', taken now, whether or not it turns '
-      + 'anything up.';
+    // spending it — on a purchase that is deliberately not refunded. Kept,
+    // and sent back with the purchase: a price that has moved since is
+    // refused rather than charged.
+    var shown = { cost: Number(rules.cost) || 0,
+                  account: rules.account === 'cash' ? 'cash' : 'bank' };
+    // Free is said as free. A cost of 0 fell to the words for a missing
+    // figure, and a free purchase was described as a paid one.
+    var detail = rules.cost === 0
+      ? 'It is free on this server.'
+      : 'It costs ' + (Number(rules.cost) > 0
+        ? money(rules.cost) + ' from your ' + shown.account : 'a fee')
+        + ', taken now, whether or not it turns anything up.';
     // How many times this contract can be asked at all. The cap is already
     // sent; without it a player has no idea they are on their last one, and
-    // finds out by spending it.
-    if (rules && rules.maxPerContract) {
+    // finds out by spending it. Their own count says which this is.
+    if (Number(contract.informantLeft) === 1) {
+      detail += ' This is your last one on this contract.';
+    } else if (rules && rules.maxPerContract) {
       detail += ' An informant will answer about one contract '
         + rules.maxPerContract
         + (rules.maxPerContract === 1 ? ' time in total.' : ' times in total.');
@@ -3512,13 +3639,25 @@
         + ', the informant repeats that answer at no charge.';
     }
 
-    ask('Buy informant data?', detail, function () { doBuyInformant(contract); });
+    ask('Buy informant data?', detail, function () { doBuyInformant(contract, shown); });
+    // Drawn again from the settings when they change while it is open
+    // (readBoard), so the price it quotes, and sends back, is the price now.
+    // Closed instead where the informant has been switched off meanwhile.
+    if (state.dialog) {
+      state.dialog.redo = function () { state.dialog = null; buyInformant(contract); };
+    }
   }
 
-  function doBuyInformant(contract) {
+  function doBuyInformant(contract, shown) {
     once('informant:' + contract.id, function () {
-    return post('informant', { id: contract.id }).then(function (r) {
+    return post('informant', { id: contract.id, shown: shown }).then(function (r) {
       if (!r.ok) {
+        // The price moved since it was quoted: said, and the settings read
+        // again, so the next quote is the price now. Nothing was taken.
+        if (r.err === 'terms_changed') {
+          fail(r);
+          return refresh({ board: true });
+        }
         // limit_reached means something else entirely here, and the shared
         // message for it — "You are holding too many contracts" — described
         // a rule that has nothing to do with this purchase.
@@ -5305,6 +5444,11 @@
       // three buttons, and the numbers were the smallest thing in them.
       var stats = el('div', 'stats');
       stats.appendChild(tally(record.completed, 'completed'));
+      // What the success rate is worked out from beside it: the rate was
+      // drawn and the contracts that brought it down were not.
+      if (typeof record.failed === 'number') {
+        stats.appendChild(tally(record.failed, 'abandoned or lost'));
+      }
       stats.appendChild(tally(record.placed, 'placed'));
       stats.appendChild(tally(record.survived, 'survived'));
       if (record.rate !== undefined && record.rate !== null) {
@@ -5845,7 +5989,9 @@
     anon.onclick = function () {
       state.draft.anon = anon.checked;
       clock.textContent = clockHint();
-      showPlaceTotal();
+      // The item pickers hold back what names its owner while it is ticked;
+      // renderSlots brings the total up to date too.
+      renderSlots();
     };
     // A label, so the words toggle it too. The box on its own is a twenty
     // pixel target on a phone screen, which is a coin toss.
@@ -5854,7 +6000,8 @@
     toggle.htmlFor = 'anon';
     toggle.appendChild(anon);
     toggle.appendChild(el('span', null, 'Place anonymously'
-      + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator')) + ')' : '')));
+      + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator'))
+        + ' from your ' + anonymityAccount() + ')' : '')));
     terms.appendChild(toggle);
     form.appendChild(terms);
 
@@ -5987,6 +6134,15 @@
 
       if (offered > 0) {
         slot.appendChild(split);
+        // A source switched off on its own said so nowhere: its field and
+        // its balance just went. Said once, under the first payout.
+        var off = ['cash', 'bank', 'dirty'].filter(function (source) {
+          return caps[source + 'Enabled'] === false;
+        }).map(function (source) { return SOURCE_LABELS[source].toLowerCase(); });
+        if (off.length && i === 1) {
+          slot.appendChild(el('div', 'hint', 'This server does not take '
+            + off.join(' or ') + ' as a reward.'));
+        }
       } else {
         slot.appendChild(el('div', 'hint',
           'This server does not take money as a reward. Items and weapons '
@@ -6119,6 +6275,12 @@
 
     if (items.length === 0 && weapons.length === 0) {
       wrap.appendChild(el('div', 'hint', goodsAbsenceReason(wallet, caps)));
+    } else if (caps.itemsEnabled === false || caps.weaponsEnabled === false) {
+      // One of the two switched off while the other is offered: the
+      // missing picker read as an app that failed to read the pockets.
+      wrap.appendChild(el('div', 'hint', caps.itemsEnabled === false
+        ? 'This server does not take items as a reward.'
+        : 'This server does not take weapons as a reward.'));
     }
     return wrap;
   }
@@ -6141,8 +6303,14 @@
       return 'This server does not take weapons as a reward, and you are not '
         + 'carrying anything else that can be put up.';
     }
+    // Only the money this server takes, and none where it takes none.
+    var taken = moneyTaken();
+    if (taken === 'money') {
+      return 'You are not carrying anything that can be put up as a reward.';
+    }
     return 'You are not carrying anything that can be put up as a reward. '
-      + 'Cash, bank and dirty money above still work.';
+      + taken.charAt(0).toUpperCase() + taken.slice(1) + ' above still '
+      + (taken.indexOf(' and ') === -1 ? 'works.' : 'work.');
   }
 
   var SOURCE_LABELS = { cash: 'Cash', bank: 'Bank', dirty: 'Dirty money' };
@@ -6195,6 +6363,10 @@
     // How much of each is still unspoken for, so the quantity field can be
     // bounded to it and the row can say so.
     var spare = {};
+    // A stack that says whose it is (namesOwner) cannot go on a contract
+    // placed anonymously: held back while that is ticked, and said why,
+    // rather than the whole contract refused without naming it.
+    var naming = {};
     items.forEach(function (item) {
       var free = item.count - allocatedItem(item.name);
       if (free <= 0) { return; }
@@ -6202,6 +6374,11 @@
       var option = document.createElement('option');
       option.value = item.name;
       option.textContent = item.label + '  \u00b7  ' + free + ' spare';
+      if (item.namesOwner && placingAnonymously()) {
+        naming[item.name] = true;
+        option.disabled = true;
+        option.textContent = item.label + '  \u00b7  carries your name';
+      }
       choose.appendChild(option);
     });
     if (choose.children.length === 0) { return el('div', 'hint', 'Nothing spare left to add.'); }
@@ -6240,6 +6417,10 @@
       // becomes a silent refusal.
       var wanted = (free <= 1) ? 1 : (parseInt(count.value, 10) || 0);
       if (!name || wanted <= 0) { return say('Choose an item and how many.'); }
+      if (naming[name]) {
+        return say(labelOf(items, name) + ' carries your name or number, so it cannot go '
+          + 'on a contract placed anonymously.');
+      }
 
       var caps = state.wallet.caps || {};
       // The half the pick goes into. The server bounds each half on its
@@ -6507,6 +6688,25 @@
       text += ' The ' + moved.join(' and the ') + (moved.length > 1 ? ' were' : ' was')
         + ' moved to the nearest amount this reward allows.';
     }
+    // A stake asked for and none placed: the reward cannot carry one.
+    if (asked.penalty > 0 && placed.penaltyAmount === 0) {
+      text += ' No stake was set: this reward cannot carry one.';
+    }
+
+    // What anonymity cost, as the server took it (the reply's `charged`).
+    var charged = placed.charged || {};
+    if (Number(charged.fee) > 0) {
+      text += ' Placing it anonymously cost ' + money(Number(charged.fee)) + ' from your '
+        + (charged.account === 'cash' ? 'cash' : 'bank') + '.';
+    }
+
+    // How it is completed, where that is not what the form said.
+    if (typeof placed.fulfilment === 'string'
+        && (placed.fulfilment !== 'either') !== (asked.aliveOnly === true)) {
+      text += placed.fulfilment === 'either'
+        ? ' A kill completes it as well as a live handover.'
+        : ' It only pays when the target is brought to you alive.';
+    }
 
     var seconds = Number(placed.secondsLeft);
     var minutes = seconds > 0 ? Math.ceil(seconds / 60)
@@ -6623,6 +6823,22 @@
     if (num('bailout') > 0 && totals.cash + totals.bank === 0) {
       return say(ERRORS.buyout_needs_clean);
     }
+    // And a stake is held to a share of the same clean money, so on a
+    // reward with none it can only be nothing: the server placed it with
+    // none, and the confirmation did not say so.
+    if (num('penalty') > 0 && totals.cash + totals.bank === 0) {
+      return say('A hitman\'s stake is held against the cash and bank in the reward, '
+        + 'and this one has none, so it cannot carry a stake. Add cash or bank, or set '
+        + 'the stake to 0.');
+    }
+    // Something staged that says whose it is, on a contract placed
+    // anonymously: the server refuses the whole contract for it.
+    var named = placingAnonymously() ? stagedNamingOwner() : null;
+    if (named) {
+      return say(itemLabel(named) + ' carries your name or number, and the hitman would '
+        + 'be handed it as it is, which would give you away. Take it out, or place the '
+        + 'contract under your name.');
+    }
     var maxLines = (state.wallet && state.wallet.caps && state.wallet.caps.maxLines) || Infinity;
     if (lines > maxLines) {
       return say('This contract holds ' + lines + ' separate rewards and this '
@@ -6631,22 +6847,31 @@
           : 'Take some of the items and weapons back out.'));
     }
 
+    // Asked, every time: with a bulletin on it stated a fact under a Yes
+    // button and never asked the question.
     var protectedTarget = state.draft.targetProtected === true;
     if (protectedTarget && settings().warnCreator !== false && !state.leoConfirmed) {
-      ask('That target is a sworn officer.',
-          advised('posted')
-            ? 'Placing this will alert every officer on duty, by phone and over dispatch.'
+      ask('That target ' + protectedWords(state.draft.targetProtectedAs).is + '.',
+          (advised('posted')
+            ? 'Placing this will alert every officer on duty, by phone and over dispatch. '
             : advised('accepted')
-              ? 'Officers on duty will be alerted when someone accepts it.'
-              : 'Place a contract on them anyway?',
-          function () { state.leoConfirmed = true; submitContract(); });
+              ? 'Officers on duty will be alerted when someone accepts it. '
+              : '')
+            + 'Place a contract on them anyway?',
+          function () { state.leoConfirmed = true; submitContract(); },
+          { yes: 'Place it', no: 'Cancel' });
       return;
     }
+    // Agreed to (or never asked, where the server warns nobody): sent with
+    // the contract, and a target who took a protected job after being
+    // picked is refused until the warning has been seen.
+    var protectedAck = protectedTarget && state.leoConfirmed === true;
     state.leoConfirmed = false;
 
     // Kept for the confirmation: the draft is cleared once it is placed.
     var held = takenText(composed);
-    var asked = { bailout: num('bailout'), penalty: num('penalty') };
+    var asked = { bailout: num('bailout'), penalty: num('penalty'),
+                  aliveOnly: placingAliveOnly() };
 
     // Guarded here rather than at the top of the function: everything above
     // is client-side validation that answers instantly, and locking the
@@ -6664,9 +6889,51 @@
       bonusPercent: bonusPercent(),
       bailoutAmount: num('bailout'),
       penaltyAmount: num('penalty'),
-      anonymous: state.draft.anon === true
+      anonymous: state.draft.anon === true,
+      // What this form showed, sent back so the server charges and places
+      // nothing it did not: the anonymity fee and its account, how the
+      // contract is completed, and whether the protected-job warning was
+      // agreed to. Refused, not charged, where one has moved since.
+      shown: {
+        creatorFee: anonymityFee('creator'),
+        feeAccount: anonymityAccount(),
+        fulfilment: placingRule(),
+        protectedAck: protectedAck
+      }
     }).then(function (r) {
       if (!r.ok) {
+        /* A fee or the rule changed from the admin panel while the form was
+           open. Nothing was taken. Said, and the settings read again, which
+           redraws the form with the new figure before it is placed again. */
+        if (r.err === 'terms_changed' || r.err === 'rule_changed') {
+          fail(r);
+          if (r.err === 'rule_changed') { state.wallet = null; state.walletFailed = null; }
+          refresh({ board: true });
+          return render();
+        }
+        /* They took a protected job after being picked: the warning the
+           form never showed is shown now, and the list is read again so it
+           marks them. */
+        if (r.err === 'target_now_protected') {
+          state.draft.targetProtected = true;
+          state.draft.targetProtectedAs = r.data && r.data.category;
+          state.browse.data = null;
+          state.browse.pending = null;
+          state.browse.refusal = null;
+          fail(r);
+          // Asked at once where this page knows the server warns. Where it
+          // read otherwise its settings are stale: read again, and asked on
+          // the next tap, rather than sent again unasked.
+          if (settings().warnCreator !== false) { return submitContract(); }
+          refresh({ board: true });
+          return render();
+        }
+        // The item the server found naming its owner, by name.
+        if (r.err === 'item_names_owner' && r.data && r.data.item) {
+          return say(itemLabel(r.data.item) + ' carries your name or number, and the hitman '
+            + 'would be handed it as it is, which would give you away. Take it out, or '
+            + 'place the contract under your name.');
+        }
         // The wallet is read once when the tab opens, so a staged weapon's
         // inventory slot can be stale by the time it is submitted. The
         // server refuses rather than substituting a different one — right,
@@ -6691,6 +6958,7 @@
           delete state.draft.target;
           delete state.draft.targetName;
           delete state.draft.targetProtected;
+          delete state.draft.targetProtectedAs;
           state.browse.data = null;
           state.browse.pending = null;
           state.browse.refusal = null;
@@ -6792,11 +7060,45 @@
     return input;
   }
 
+  /* A protected target's kind of job, in words: the projection's
+     targetProtectedAs and the picker's protectedAs ('law', 'emergency',
+     'legal', 'other'). Every protected target was "a sworn officer" of "law
+     enforcement", the medic and the lawyer too. A server that sends no kind
+     protected law enforcement only. */
+  var PROTECTED_WORDS = {
+    law: { chip: 'Law enforcement', tag: 'Law', is: 'is a sworn officer',
+           noun: 'a sworn officer' },
+    emergency: { chip: 'Emergency services', tag: 'EMS', is: 'works in emergency services',
+                 noun: 'someone in emergency services' },
+    legal: { chip: 'Legal', tag: 'Legal', is: 'works in the legal system',
+             noun: 'someone in the legal system' },
+    other: { chip: 'Protected job', tag: 'Protected', is: 'works in a protected job',
+             noun: 'someone in a protected job' }
+  };
+
+  function protectedWords(kind) {
+    if (kind === undefined || kind === null) { return PROTECTED_WORDS.law; }
+    return PROTECTED_WORDS[kind] || PROTECTED_WORDS.other;
+  }
+
   /* Whether officers are told at this stage ('posted' or 'accepted'). A
      server that does not say is taken to, which is how it always read. */
   function advised(stage) {
     var a = settings().advisory;
     return !a || a[stage] !== false;
+  }
+
+  /* How a contract placed now is completed ('alive' or 'either'), as this
+     page has it: the board's settings, or the wallet's caps where the board
+     has not said. Undefined where neither has: a server from before the
+     rule. Echoed with a placement, so it is placed under the rule shown. */
+  function placingRule() {
+    var rule = settings().fulfilment;
+    if (rule === undefined || rule === null) {
+      var caps = state.wallet && state.wallet.caps;
+      rule = caps && caps.fulfilment;
+    }
+    return typeof rule === 'string' ? rule : undefined;
   }
 
   /* Whether a contract pays only for delivering its target alive: a term
@@ -6818,12 +7120,8 @@
      with the board's read failed, the form went on offering a kidnapping
      bonus on a server that places none, and said it had taken one. */
   function placingAliveOnly() {
-    var rule = settings().fulfilment;
-    if (rule === undefined || rule === null) {
-      var caps = state.wallet && state.wallet.caps;
-      rule = caps && caps.fulfilment;
-    }
-    return rule !== undefined && rule !== null && rule !== 'either';
+    var rule = placingRule();
+    return rule !== undefined && rule !== 'either';
   }
 
   /* What choosing anonymity costs, from the server's settings; 0 where it
@@ -6832,6 +7130,32 @@
     var fees = settings().anonymityFees;
     var fee = fees && fees[role];
     return typeof fee === 'number' && fee > 0 ? fee : 0;
+  }
+
+  // And the account it comes from: the bank, unless the server says cash.
+  function anonymityAccount() {
+    return (settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank';
+  }
+
+  // Whether the Place form is set to place anonymously.
+  function placingAnonymously() { return state.draft.anon === true; }
+
+  /* The first item staged on any payout whose stack says whose it is (the
+     wallet's namesOwner, Escrow.namesOwner on the server), or null. */
+  function stagedNamingOwner() {
+    var naming = {};
+    asList(state.wallet && state.wallet.items).forEach(function (item) {
+      if (item && item.namesOwner) { naming[item.name] = true; }
+    });
+    var found = null;
+    Object.keys(state.picked).forEach(function (index) {
+      stagedHalves(state.picked[index]).forEach(function (half) {
+        Object.keys(half.items).forEach(function (name) {
+          if (!found && naming[name]) { found = name; }
+        });
+      });
+    });
+    return found;
   }
 
   function labelled(text, control) {
@@ -7128,7 +7452,9 @@
       pick.appendChild(name);
 
       var tags = el('span', 'person-tags');
-      if (person.protected) { tags.appendChild(el('span', 'chip warn ico i-shield', 'Law')); }
+      if (person.protected) {
+        tags.appendChild(el('span', 'chip warn ico i-shield', protectedWords(person.protectedAs).tag));
+      }
       // A band, never the figure: "under 20m" (app.lua, NEARBY_BAND).
       if (person.metres !== undefined && person.metres !== null) {
         tags.appendChild(el('span', 'chip ico i-pin', 'under ' + person.metres + 'm'));
@@ -7140,6 +7466,7 @@
         handle.dataset.protected = person.protected ? 'true' : 'false';
         state.draft.target = person.handle;
         state.draft.targetProtected = person.protected === true;
+        state.draft.targetProtectedAs = person.protectedAs;
         state.draft.targetName = person.name;
         // The chosen name stays visible rather than the list vanishing, so
         // the player can see who they picked and change their mind.
@@ -7156,9 +7483,9 @@
         };
         results.appendChild(change);
         if (person.protected) {
-          say('That is a sworn officer.'
-            + (advised('posted') ? ' Placing this will alert their department.'
-              : advised('accepted') ? ' Their department is told when someone accepts.' : ''),
+          say('That person ' + protectedWords(person.protectedAs).is + '.'
+            + (advised('posted') ? ' Placing this alerts every officer on duty.'
+              : advised('accepted') ? ' Officers on duty are told when someone accepts it.' : ''),
             'caution');
         }
       };
@@ -7437,11 +7764,16 @@
           return refresh();
         }
         // The Place form shows the server's settings, which come with the
-        // board, and nothing else of it.
+        // board, and nothing else of it. An open dialog that quotes one (a
+        // fee, a price) is drawn again from them, so what it shows is what
+        // its tap is charged.
         var settingsWere = JSON.stringify(settings());
         state.board = r.data;
         stampClocks(r.data.contracts);
-        if (JSON.stringify(settings()) !== settingsWere) { redraw(); } else { redrawFor(['board']); }
+        if (JSON.stringify(settings()) !== settingsWere) {
+          if (state.dialog && typeof state.dialog.redo === 'function') { state.dialog.redo(); }
+          redraw();
+        } else { redrawFor(['board']); }
       });
     }
 
@@ -7674,6 +8006,8 @@
   // each reply triggers another refresh, and the app buries itself within
   // seconds. Only an unsolicited push is acted on.
   var pushTimer = null;
+  // A settings push waiting in that debounce (see the push handler).
+  var settingsPushed = false;
 
   // A refusal stays up until the player does something else. Captured, so
   // it is cleared before the tap's own handler runs and can raise the next.
@@ -7752,12 +8086,37 @@
         openThread(state.thread.contract, state.thread.thread, { reread: true });
       }
 
+      /* A setting changed from the admin panel. The settings every tab
+         draws by — fees, prices, the rule, the switches — come with the
+         board's listing, which a push read only on the Board tab: Place, On
+         me, Mine and the Ledger kept the old ones, and the server charged
+         the new. So the listing is read whatever is open. On the Place form
+         the wallet is read again too, which carries the payout count, the
+         money sources that are on and the caps; the last payout ceiling is
+         kept meanwhile, as opening the tab keeps it. Kept until the
+         debounced refresh, so a push landing after it in the same burst does
+         not drop it. */
+      if (data.reason === 'settings') { settingsPushed = true; }
+
       // Debounced: a contract settling pushes the creator, the target and
       // every hitman, and several of those can land in the same tick. One
       // refresh is three requests, so a push per party would be a burst per
       // event.
       if (pushTimer) { clearTimeout(pushTimer); }
-      pushTimer = setTimeout(function () { pushTimer = null; refresh(shownNow()); }, 250);
+      pushTimer = setTimeout(function () {
+        pushTimer = null;
+        var wanted = shownNow();
+        if (settingsPushed) {
+          settingsPushed = false;
+          wanted.board = true;
+          if (state.tab === 'place') {
+            state.wallet = null;
+            state.walletFailed = null;
+            redraw();
+          }
+        }
+        refresh(wanted);
+      }, 250);
       return;
     }
 

@@ -814,6 +814,43 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] With `Config.Anonymity.CreatorFee` set, place an anonymous contract:
       the fee leaves the fee account only once the contract is on the board.
       Place one you cannot cover with the fee on top: refused, nothing taken
+- [ ] What the page shows is what is charged. With the Place form open, raise
+      the creator fee in the panel: within a second the form's **Place
+      anonymously** shows the new fee (from your bank or cash), with no tab
+      change. Raise it again and place before the form redraws: *Placing
+      anonymously now costs …*, nothing taken; place again and the
+      confirmation names the fee charged. The same with the hitman fee and
+      an accept dialog open (the dialog redraws with the new fee; a tap on
+      the old one says the fee now and takes nothing), and with the
+      informant's price and its dialog. With the price at 0 the dialog says
+      *It is free on this server*
+- [ ] With the Place form open, switch **How contracts are completed** to
+      *either* in the panel and place before the form redraws: *This server
+      now places contracts differently: a kill completes one …*, nothing taken
+- [ ] Pick a civilian on the Place form, give them the `police` job, then
+      place: *That target now works in a protected job*, nothing taken, and
+      the warning asks *Place a contract on them anyway?* with **Place it**
+      and **Cancel**; **Place it** places it
+- [ ] An EMS target: the board card, the hitman's warning and the creator's
+      warning say *emergency services*, never *sworn officer*; the medic is
+      told *Law enforcement has been advised*, an officer target *Your
+      department has been advised*. Turn **Flag the listing** off: the card
+      has no chip, no gold notice and no protected styling
+- [ ] Informant data on a target card with no operative on it: no **Buy
+      informant data**. Buy the last one allowed: the dialog says *This is
+      your last one on this contract*, and afterwards the button is gone
+- [ ] Turn dirty money off in the panel: the Place form says *This server
+      does not take dirty money as a reward*, and the minimum names only cash
+      and bank. Turn items off while carrying a pistol: *This server does not
+      take items as a reward* above the weapon picker
+- [ ] A reward of dirty money only with a stake typed: the form refuses the
+      stake before sending anything. Carry a car key with your name on it and
+      tick **Place anonymously**: the key is held back in the item picker
+      (*carries your name*)
+- [ ] A hitman with abandoned contracts: their **Ledger** shows *abandoned or
+      lost* beside completed, placed and survived
+- [ ] Start a handover, then widen the handover radius in the panel: the
+      card's how-to still says the radius the countdown was armed with
 - [ ] Switch `Config.Database.Mode` with an item still open in the review
       queue: the start refuses and names it (id, kind, contract, money);
       resolve it in the old mode, then switch

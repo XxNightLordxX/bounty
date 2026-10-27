@@ -641,6 +641,7 @@ function App.register()
             if candidate.cid ~= actor.cid
                 and not deps.identity.sameAccount(candidate.account, actor.account)
                 and candidate.name:lower():find(needle, 1, true) then
+                local protecting = deps.identity.protectedBy(candidate)
                 out[#out + 1] = {
                     handle = App.mintTargetHandle(actor.cid, candidate.cid),
                     name = candidate.name,
@@ -648,7 +649,10 @@ function App.register()
                     -- nobody places a contract on an officer unaware (§7.5).
                     -- Which force they serve is not: that would make search
                     -- a roster of who is on duty tonight.
-                    protected = deps.identity.isProtected(candidate),
+                    protected = protecting ~= nil,
+                    -- The kind of job only ('law', 'emergency', 'legal'), so a
+                    -- medic is not warned about as a sworn officer.
+                    protectedAs = protecting and deps.identity.protectedCategory(protecting) or nil,
                 }
                 if #out >= Config.Targeting.MaxResults then break end
             end
@@ -751,12 +755,15 @@ function App.register()
         local people = {}
         for i = first, math.min(first + perPage - 1, total) do
             local entry = found[i]
+            local protecting = deps.identity.protectedBy(entry.actor)
             people[#people + 1] = {
                 handle = App.mintTargetHandle(actor.cid, entry.actor.cid),
                 name = entry.actor.name,
                 -- Whether the target is law enforcement is disclosed, so
-                -- nobody places a contract on an officer unaware (§7.5).
-                protected = deps.identity.isProtected(entry.actor),
+                -- nobody places a contract on an officer unaware (§7.5),
+                -- with the kind of job, as search sends it.
+                protected = protecting ~= nil,
+                protectedAs = protecting and deps.identity.protectedCategory(protecting) or nil,
                 -- The far edge of their band, "under 20m": enough to tell
                 -- two people with the same name apart. It was the distance
                 -- to the metre, and asked again every second it tracked a
@@ -880,9 +887,19 @@ function App.register()
             bailoutAmount = payload.bailoutAmount,
             penaltyAmount = payload.penaltyAmount,
             anonymous     = payload.anonymous,
+            -- What the form showed: the anonymity fee and its account, the
+            -- rule, and whether the protected-job warning was agreed to.
+            -- Refused before anything is taken where a charge or the rule
+            -- differs, or the warning was never shown (Contracts.create). A
+            -- page that sends none sent a figure of nothing.
+            shown         = type(payload.shown) == 'table' and payload.shown or {},
         })
         if not contract then return false, err, refusal end
-        return deps.projection.contract(contract, actor.cid)
+        local reply = deps.projection.contract(contract, actor.cid)
+        -- On success the third is the anonymity fee taken, for the
+        -- confirmation to name.
+        if reply and refusal then reply.charged = refusal end
+        return reply
     end)
 
     handler('accept', 'accept', function(actor, payload)
@@ -897,12 +914,17 @@ function App.register()
         -- The third is what a refusal says beyond its code: what the hitman
         -- was short of, or how many they may hold. Never on success, where
         -- it is their hitman row.
-        local ok, err, refusal = deps.contracts.accept(actor, payload.id, payload.anonymous,
+        -- `shown` is the anonymity fee and its account the dialog showed,
+        -- refused rather than charged where it is not the fee now.
+        local ok, err, refusal, charged = deps.contracts.accept(actor, payload.id, payload.anonymous,
             { checkDisclosure = true, disclosed = payload.penaltyAmount,
-              shownDeadline = tonumber(payload.deadline) })
+              shownDeadline = tonumber(payload.deadline), shown = payload.shown })
         if not ok then return false, err, refusal end
         local contract = deps.storage.readContract(Util.toId(payload.id))
-        return deps.projection.contract(contract, actor.cid)
+        local reply = deps.projection.contract(contract, actor.cid)
+        -- What anonymity cost, for the notice to name.
+        if reply and charged then reply.charged = charged end
+        return reply
     end)
 
     -- Taking a contract back down, and changing one nobody has taken.
@@ -1195,8 +1217,11 @@ function App.register()
 
     handler('informant', 'informant', function(actor, payload)
         -- On a refusal the third says more than the code: how long a busy
-        -- key has been held, or the minutes until it is sold again.
-        local ok, err, data = deps.informant.buy(actor, payload.id)
+        -- key has been held, the minutes until it is sold again, or the
+        -- price now. `shown` is the price the dialog quoted, and a price
+        -- that moved since is refused rather than charged.
+        local ok, err, data = deps.informant.buy(actor, payload.id,
+            type(payload.shown) == 'table' and payload.shown or {})
         if not ok then return false, err, data end
         return data
     end)
@@ -1641,6 +1666,14 @@ function App.escrowableItems(actor, carried)
                 order[#order + 1] = totals[name]
             end
             totals[name].count = totals[name].count + (slot.count or 1)
+            -- A stack whose metadata names its owner (Escrow.namesOwner) is
+            -- offered, since a named contract hands it over as it is, and
+            -- marked, so the form can hold it back while "Place anonymously"
+            -- is ticked rather than the whole contract being refused.
+            if not totals[name].namesOwner and deps.escrow.namesOwner(actor,
+                { { source = CH.SOURCE.ITEM, item = name, metadata = slot.metadata } }) then
+                totals[name].namesOwner = true
+            end
         end
     end
 

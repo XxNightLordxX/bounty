@@ -596,3 +596,84 @@ describe('taking the threat off the MDT whatever the settings say now', function
         truthy(said:find('$100 stake has been returned', 1, true), said)
     end)
 end)
+
+--- W058, W055: what the creator is warned about, and what the target is told.
+describe('a target in a protected job', function()
+    local function call(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        Env.clientEvents = {}
+        _G.source = src
+        fire(payload or {})
+        _G.source = nil
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then return event.args[1] end
+        end
+        return nil
+    end
+
+    --- Picked as a civilian and hired by the police before the tap: the page
+    --- never showed the warning, and the contract was placed and announced
+    --- to every officer. Refused until the warning has been agreed to.
+    it('is refused, uncharged, when they took the job after being picked', function()
+        local s, f = seeded()
+        local found = s.app.handlers.searchTargets(s.identity.resolve(1), { query = 'Reyes' })
+        local handle = found and found[1] and found[1].handle
+        falsy(found[1].protected, 'a civilian when the list was read')
+        Env.players[f.target.source].PlayerData.job = leoJob('police')
+
+        local before = Env.players[1].PlayerData.money.bank + Env.players[1].PlayerData.money.cash
+        local refused = call('create', 1, { target = handle, reason = 'x',
+            reward = { slots = { { baseline = { cash = 1000 } } } }, shown = {} })
+        eq(refused and refused.err, CH.ERR.TARGET_NOW_PROTECTED)
+        eq(refused.data and refused.data.category, 'law', 'with the kind of job, for the warning')
+        eq(Env.players[1].PlayerData.money.bank + Env.players[1].PlayerData.money.cash, before,
+            'nothing taken')
+        eq(countNotifications('THREAT ADVISORY'), 0, 'and nobody told')
+
+        Env.advance(61)
+        local placed = call('create', 1, { target = handle, reason = 'x',
+            reward = { slots = { { baseline = { cash = 1000 } } } }, shown = { protectedAck = true } })
+        truthy(placed and placed.ok, tostring(placed and placed.err))
+        eq(s.storage.readContract(placed.data.id).target_protected, true)
+    end)
+
+    it('is not asked about where the server warns nobody', function()
+        local s, f = seeded(leoJob('police'))
+        Config.Advisory.WarnCreator = false
+        local found = s.app.handlers.searchTargets(s.identity.resolve(1), { query = 'Reyes' })
+        local placed = call('create', 1, { target = found[1].handle, reason = 'x',
+            reward = { slots = { { baseline = { cash = 1000 } } } }, shown = {} })
+        truthy(placed and placed.ok, tostring(placed and placed.err))
+    end)
+
+    --- A medic was told "Your department has been advised", and only law
+    --- enforcement ever is.
+    it('tells the target who was advised, by the job they hold', function()
+        for _, case in ipairs({
+            { job = { name = 'ambulance', type = 'ems', onduty = true },
+              said = 'Law enforcement has been advised.' },
+            { job = leoJob('police'), said = 'Your department has been advised.' },
+        }) do
+            local s, f = seeded(case.job)
+            Env.clientEvents = {}
+            truthy(s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+            }))
+            local told = {}
+            for _, event in ipairs(Env.clientEvents) do
+                if Natives.isNotice(event) and event.target == f.target.source then
+                    told[#told + 1] = tostring(event.args[1].content)
+                end
+            end
+            told = table.concat(told, ' | ')
+            truthy(told:find(case.said, 1, true), case.job.name .. ': ' .. told)
+        end
+    end)
+
+    it('is offered in the picker with the kind of job', function()
+        local s = seeded({ name = 'ambulance', type = 'ems', onduty = true })
+        local found = s.app.handlers.searchTargets(s.identity.resolve(1), { query = 'Reyes' })
+        truthy(found[1].protected)
+        eq(found[1].protectedAs, 'emergency')
+    end)
+end)

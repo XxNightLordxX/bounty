@@ -374,7 +374,7 @@ restart only once it says `database: answering`. For backups use
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who the app is barred to: the whitelisted jobs. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit. With the whitelisted-job view on they see its one screen and nothing else (see *Access*) |
 | `Config.WhitelistedView.Enabled` | The whitelisted-job view (`true`, as shipped): players on a job the app bars open it to one read-only screen, the contracts on them and (for those the advisory reaches) on other whitelisted-job members, and the buyout on their own. `false` closes the app to them as before, and `Config.HideAppFromBlockedJobs` then decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features, kept across restarts |
 | `Config.HideAppFromBlockedJobs` | Whether a barred player's phone shows the app at all (`true`, as shipped: hidden). Applies only while the whitelisted-job view is off; with it on they have the app, showing that one screen, and the admin panel marks this as not applying |
-| `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry. `TriggerJobNames` ships with every name in `Config.BlockedJobNames`, so a barred job whose type `qbx_core` leaves out still counts; a barred job in neither trigger list is warned about at startup |
+| `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry. `TriggerJobNames` ships with every name in `Config.BlockedJobNames`, so a barred job whose type `qbx_core` leaves out still counts; a barred job in neither trigger list is warned about at startup. The app words a protected target by the kind of job (law enforcement, emergency services, legal), never as a sworn officer unless they are one, and says only what placing or accepting will do under the switches now. `FlagListing` marks the card itself (its chip, its notice and its styling). The target's own notice says *Your department has been advised* only where their job receives the advisory, and *Law enforcement has been advised* otherwise |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
 | `Config.Limits.MaxPayoutSlots` | How many times one contract can be collected: `1` (as shipped; each contract is collected once), `2` or `3`. At 1 the Place form shows no extra-collection controls at all; at 2 or 3 the creator chooses how many, each funded and escrowed up front. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup; the admin panel takes 1 to 3. Contracts already placed keep the number they were placed with, and can still give their last collection back |
 | `Config.Limits.MinContractReward` | The least a new contract's reward may be worth in money (1000 as shipped; `0` turns it off): cash, bank and dirty money summed across every payout, the kidnapping bonus included. Items and weapons do not count, since nothing prices them. A contract worth less is refused (`reward_too_small`) and the app says the figure, on the Place form before anything is typed and in the refusal; a reward cannot be taken back out below it either, by Withdraw part or by giving back a payout. Without it two one-dollar contracts from two accounts fill a target's `Config.Limits.MaxActiveContractsPerTarget` and nobody else can list them until both close. Anything that is not a whole number of dollars is read as 1000, and one above `Config.MaxContractValue` is held to it, with a warning at startup |
@@ -801,7 +801,11 @@ Players on a whitelisted job — law enforcement, EMS and the rest — have the
 same button on the whitelisted-job view (see *Access*), and anyone can use
 `/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out); all
 three go through the same server path. Either
-side can pay an informant to unmask one hitman. The server forgets who has
+side can pay an informant to unmask one hitman: offered only while the buyer
+has a purchase left on that contract, and to the target only while an
+operative is on it (their card already shows how many); the dialog says when
+it is the last one, and that it is free where `Config.Informant.Cost` is 0.
+The server forgets who has
 been near a target when it restarts, so for
 `Config.Informant.ProximityWindowMinutes` after a start (with
 `Config.Informant.RequireProximity` on) informant data on a contract placed
@@ -929,6 +933,17 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   taken none. A balance spent in that moment leaves the contract placed and
   anonymous with the fee unpaid (`anonymity_fee_unpaid` in the log), which
   costs the server its fee and never a player their money.
+- **What the page shows is what is charged.** The Place form, the accept
+  dialog and the informant dialog send back what they showed: the anonymity
+  fee and its account, the informant's price, and how a contract placed now
+  is completed (`Config.Completion.Fulfilment`). One changed from the admin
+  panel since is refused before anything is taken (`terms_changed`,
+  `rule_changed`), with the figure or the rule now, and the page says so and
+  draws it again. A fee of 0, as shipped, binds nothing. Any setting changed
+  from the panel also has every open app read the settings again, whatever
+  tab it is on, and redraw an open form or dialog. A target who took a
+  protected job after being picked is refused (`target_now_protected`) until
+  the creator has seen the warning (`Config.Advisory.WarnCreator`).
 - **A payment the database did not confirm is settled by the server.** When
   the write that records money just taken (a reward, a stake, a top-up, a
   bonus raise, a buyout) gets no answer and the store will not say whether it

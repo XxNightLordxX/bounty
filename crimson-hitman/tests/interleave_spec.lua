@@ -481,8 +481,12 @@ describe('the same races at every await on mysql', function()
                     m.death.watchTargets(m.storage.allContracts())
                     return main, m, x
                 end,
-                first = function(_, x) return tap('informant', 2, 905, { id = x.c.id }) end,
-                second = function(_, x) return tap('informant', 2, 906, { id = x.c.id }) end,
+                -- With the price quoted, as the page sends it: unquoted,
+                -- both are refused before anything is read.
+                first = function(_, x) return tap('informant', 2, 905, { id = x.c.id,
+                    shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }) end,
+                second = function(_, x) return tap('informant', 2, 906, { id = x.c.id,
+                    shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }) end,
             },
             {
                 -- The target already carries one of the two it may.

@@ -379,6 +379,32 @@ function Identity.protectedBy(actor)
     return nil
 end
 
+--- Job types and names that are not law enforcement, by what they are.
+local EMERGENCY_JOBS = { ems = true, fire = true, ambulance = true, firefighter = true, medical = true }
+local LEGAL_JOBS = { doj = true, lawyer = true, judge = true, attorney = true, legal = true }
+
+--- What kind of protected job this is, for the words the page and the
+--- target's own notice use: 'law' (a job the advisory goes to), 'emergency'
+--- (EMS and fire), 'legal' (the DOJ and lawyers), or 'other' for a job
+--- added to the trigger lists that is none of these. A medic was called a
+--- sworn officer and told their department had been advised, when only law
+--- enforcement is told. The kind of job only, never which force.
+---@param job table|string|nil a job table, or the job name a contract keeps (target_job)
+---@return string
+function Identity.protectedCategory(job)
+    if type(job) == 'string' then
+        local definition = jobDefinition(job)
+        job = { name = job, type = definition and definition.type or nil }
+    end
+    if type(job) ~= 'table' then return 'other' end
+    if Identity.isAdvisoryRecipient(job) then return 'law' end
+    local jobType = job.type and tostring(job.type):lower() or ''
+    local name = job.name and tostring(job.name):lower() or ''
+    if EMERGENCY_JOBS[jobType] or EMERGENCY_JOBS[name] then return 'emergency' end
+    if LEGAL_JOBS[jobType] or LEGAL_JOBS[name] then return 'legal' end
+    return 'other'
+end
+
 --- Whether a player's record holds a sentence ('injail' metadata above 0),
 --- wherever they are standing. Not whether they are in prison: that is
 --- Identity.isJailed, which also needs them inside the prison grounds.

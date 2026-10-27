@@ -303,6 +303,7 @@ local OWNER_KEYS = {
 ---@param actor table the client
 ---@param lines table[] from Escrow.validate
 ---@return boolean
+---@return string|nil item the first item that does, by name
 function Escrow.namesOwner(actor, lines)
     local needles = {}
     local function want(value)
@@ -336,7 +337,7 @@ function Escrow.namesOwner(actor, lines)
 
     for i = 1, #(lines or {}) do
         local line = lines[i]
-        if line.source == CH.SOURCE.ITEM and carries(line.metadata, 1) then return true end
+        if line.source == CH.SOURCE.ITEM and carries(line.metadata, 1) then return true, line.item end
     end
     return false
 end

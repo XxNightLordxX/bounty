@@ -806,6 +806,22 @@ describe('goods from an anonymous client, two worlds apart', function()
             falsy(row.name == 'identification', 'offered: ' .. row.name)
         end
     end)
+
+    --- W102: offered like anything else, then the whole anonymous contract
+    --- refused without saying which item. Marked in the picker, so the form
+    --- can hold it back, and named in the refusal.
+    it('marks a stack that names its owner, and names it when it is refused', function()
+        local s, actor = client('Vic', 'Marlowe', 'CREATOR1')
+        local marked = {}
+        for _, row in ipairs(s.app.escrowableItems(actor)) do marked[row.name] = row.namesOwner end
+        eq(marked.carkey, true, 'a key with its owner on it')
+        falsy(marked.lockpick, 'a lockpick names nobody')
+
+        local c, err, refusal = place(s, actor, 'carkey', true)
+        falsy(c)
+        eq(err, CH.ERR.ITEM_NAMES_OWNER)
+        eq(refusal and refusal.item, 'carkey', 'the item, by name')
+    end)
 end)
 
 --------------------------------------------------------------------------
@@ -891,6 +907,40 @@ describe('informant data the target pays for', function()
         falsy(ok)
         eq(err, CH.ERR.ALREADY_SETTLED)
         eq(spent(), 0, 'nothing taken')
+    end)
+
+    --- W061, W143: the price the dialog quoted is the price charged. One
+    --- raised from the admin panel while it was open was taken in full, on
+    --- the one purchase never refunded.
+    it('refuses a price that moved since it was quoted, and takes nothing', function()
+        local s, f, c = tracked()
+        local quoted, account = Config.Informant.Cost, Config.Informant.Account
+        Config.Informant.Cost = quoted * 2
+        local reply = call('informant', 2, { id = c.id, shown = { cost = quoted, account = account } })
+        eq(reply and reply.err, CH.ERR.TERMS_CHANGED)
+        eq(reply.data and reply.data.cost, quoted * 2, 'with the price now')
+        eq(spent(), 0, 'nothing taken')
+
+        Env.advance(Config.Cooldowns.informant.per + 1)
+        local paid = call('informant', 2, { id = c.id, shown = { cost = quoted * 2, account = account } })
+        truthy(paid and paid.ok, tostring(paid and paid.err))
+        eq(spent(), quoted * 2, 'the price quoted, once')
+
+        -- Asked again inside the reroll lock: the same answer, free, whatever
+        -- the price is now, so nothing is refused for it.
+        Config.Informant.Cost = quoted * 3
+        Env.advance(Config.Cooldowns.informant.per + 1)
+        local again = call('informant', 2, { id = c.id, shown = { cost = quoted * 2, account = account } })
+        truthy(again and again.ok, tostring(again and again.err))
+        eq(spent(), quoted * 2, 'and the repeat costs nothing')
+    end)
+
+    it('needs no quote where nothing is charged', function()
+        local s, f, c = tracked()
+        Config.Informant.Cost = 0
+        local reply = call('informant', 2, { id = c.id })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        eq(spent(), 0)
     end)
 
     --- Two operatives seen on the target and one of them gone from the city:
