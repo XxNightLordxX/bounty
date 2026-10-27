@@ -343,6 +343,9 @@ buyUnlocked = function(actor, contractId, shown)
     if row.target_told and Notify.locationTipped then
         pcall(Notify.locationTipped, contract, LocationTip.TARGET_TITLE, LocationTip.TARGET_TEXT)
     end
+    -- A member of a whitelisted job: law enforcement is told a hitman is
+    -- closing in (Config.Advisory.OnLocationTip). Never who, never where.
+    if Notify.tipAdvisory then pcall(Notify.tipAdvisory, contract) end
 
     return {
         secondsLeft = show, expiresAt = row.expires_at,
@@ -423,6 +426,20 @@ function LocationTip.toldAt(contractId)
             local bought = tonumber(row.bought_at)
             if bought and (not at or bought > at) then at = bought end
         end
+    end
+    return at
+end
+
+--- When a tip was last bought on this contract, whoever bought it, for the
+--- whitelisted-job view's colleagues' list; nil where none was. Never by
+--- whom, nor where.
+---@param contractId string
+---@return integer|nil
+function LocationTip.lastBoughtAt(contractId)
+    local at
+    for _, row in ipairs(rowsFor(contractId)) do
+        local bought = tonumber(row.bought_at)
+        if bought and (not at or bought > at) then at = bought end
     end
     return at
 end

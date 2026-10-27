@@ -831,6 +831,12 @@ end
 local function colleagueEntry(contract, advised)
     local member, job = Identity.whitelistedTarget(contract)
     local entry = member and whitelistedEntry(contract, job, advised)
+    -- A hitman bought an informant tip on them, and a bulletin said so
+    -- (Notify.tipAdvisory): when, rounded as postedAt is. Never who or where.
+    if entry and advised.tip and LocationTip and LocationTip.lastBoughtAt then
+        local at = LocationTip.lastBoughtAt(contract.id)
+        entry.tipAdvisedAt = at and (at - (at % Util.CLOCK_STEP)) or nil
+    end
     -- Only where a bulletin said something of it.
     if entry and (entry.postedAt or entry.hitmenActive) then return entry end
     return nil
@@ -842,7 +848,8 @@ end
 ---@param viewerJob table|nil
 ---@return table|nil { posted = boolean, accepted = boolean }
 local function advisedFor(viewerJob)
-    local advised = { posted = Util.advises('posted'), accepted = Util.advises('accepted') }
+    local advised = { posted = Util.advises('posted'), accepted = Util.advises('accepted'),
+                      tip = Util.advises('tip') }
     if Identity.isAdvisoryRecipient(viewerJob) and (advised.posted or advised.accepted) then
         return advised
     end
@@ -980,7 +987,7 @@ end
 --- the viewer.
 Projection.WHITELISTED_KEYS = {
     entry = { targetName = true, targetJob = true, postedAt = true, state = true,
-              hitmenActive = true, secondsLeft = true },
+              hitmenActive = true, secondsLeft = true, tipAdvisedAt = true },
     own   = { id = true, bailoutAmount = true, bailoutAvailable = true,
               bailoutPaid = true, bailoutSecondsLeft = true, tippedAt = true },
 }

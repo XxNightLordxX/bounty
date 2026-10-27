@@ -38,6 +38,7 @@ local ADDED = {
         CooldownMinutes = 10, MaxPurchasesPerContract = 3, NotifyTarget = true,
     },
     ['Cooldowns.locationTip'] = { per = 60, burst = 2 },
+    ['Advisory.OnLocationTip'] = true,
 }
 
 --- A config file's text run on its own, into a table of its own.

@@ -283,7 +283,7 @@ Util.CLOCK_STEP = 300
 function Util.advises(stage)
     local advisory = Config and Config.Advisory
     if type(advisory) ~= 'table' or advisory.Enabled ~= true then return false end
-    local key = stage == 'posted' and 'OnCreate' or 'OnAccept'
+    local key = (stage == 'posted' and 'OnCreate') or (stage == 'tip' and 'OnLocationTip') or 'OnAccept'
     return advisory[key] ~= false
 end
 

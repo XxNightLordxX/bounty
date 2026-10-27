@@ -1634,6 +1634,46 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     return recipients
 end
 
+--- A hitman has bought an informant tip (server/locationtip.lua) on a
+--- member of a whitelisted job: law enforcement is told somebody is closing
+--- in, on their phones and over sc-dispatch. Never which hitman, never the
+--- area or any position, and nothing for a civilian target. The targeted
+--- officer is not sent it: the tip's own notice has told them.
+---@param contract table
+---@return integer recipients
+function Notify.tipAdvisory(contract)
+    if type(contract) ~= 'table' or contract.target_protected ~= true then return 0 end
+    if not Notify.advises('tip') then return 0 end
+    local rank = contract.target_job and (contract.target_job:upper() .. ' ') or ''
+    local title = 'THREAT ADVISORY — TIP'
+    local content = ("A hitman has been tipped off about %s%s's location and is closing in.")
+        :format(rank, tostring(contract.target_name))
+
+    local recipients = 0
+    local online = Identity.online()
+    for i = 1, #online do
+        local actor = online[i]
+        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job) then
+            Notify.toCitizen(actor.cid, title, content, { bypassBudget = true })
+            recipients = recipients + 1
+        end
+    end
+
+    if Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
+        pcall(function()
+            exports['sc-dispatch']:AddNotification({
+                title = title,
+                message = content,
+                priority = Config.Advisory.DispatchPriority,
+                caller = 'Criminal Intelligence',
+                job_table = dispatchJobs(),
+                unique_id = 'ch-' .. contract.id .. '-tip',
+            })
+        end)
+    end
+    return recipients
+end
+
 --- Release a player's notification budget when they disconnect, so the
 --- table cannot grow across a long uptime.
 function Notify.clearPlayer(cid)
@@ -1705,7 +1745,7 @@ function Notify.clearContract(contractId, contract)
     -- waits on the database, and this is the end of a settlement.
     if contract and contract.target_protected and GetResourceState('sc-dispatch') == 'started' then
         local jobs = dispatchJobs()
-        for _, stage in ipairs({ 'posted', 'accepted' }) do
+        for _, stage in ipairs({ 'posted', 'accepted', 'tip' }) do
             local uid = 'ch-' .. contractId .. '-' .. stage
             CreateThread(function()
                 pcall(function() exports['sc-dispatch']:ClearNotification(uid, jobs) end)

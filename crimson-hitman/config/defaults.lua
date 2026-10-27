@@ -297,6 +297,7 @@ ConfigDefaults.Advisory = {
     AlwaysAlertTarget = true,                           -- the targeted officer is always told
     OnCreate          = true,                           -- a bulletin when a contract is placed
     OnAccept          = true,                           -- and when each hitman accepts
+    OnLocationTip     = true,                           -- and when a hitman buys an informant tip
     WarnCreator       = true,                           -- warn the placer before escrow is taken
     WarnHitman        = true,                           -- warn the hitman before they accept
     FlagListing       = true,                           -- mark the card on the board

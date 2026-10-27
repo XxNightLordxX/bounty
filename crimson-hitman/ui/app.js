@@ -6237,6 +6237,17 @@
       if (entry.tippedAt) { row.appendChild(tipToldNotice(entry.tippedAt)); }
       appendBuyout(row, entry);
       node.appendChild(row);
+    } else if (entry.tipAdvisedAt) {
+      // The bulletin said a hitman bought an informant tip on them: when,
+      // never who or where.
+      var tip = el('div', 'tip-told');
+      tip.appendChild(el('div', 'tip-state ico i-eye', 'A hitman has a tip on their location.'));
+      var tipWhen = agoText(entry.tipAdvisedAt);
+      if (tipWhen) {
+        tip.appendChild(el('div', 'hint', 'Tipped off ' + tipWhen.charAt(0).toLowerCase()
+          + tipWhen.slice(1) + '.'));
+      }
+      node.appendChild(tip);
     }
     return node;
   }

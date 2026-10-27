@@ -845,3 +845,107 @@ describe('informant tips in the admin panel', function()
         eq(buy(3, c).err, CH.ERR.FEATURE_OFF, 'switched off at once')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Law enforcement told when the target is on a whitelisted job
+--------------------------------------------------------------------------
+
+describe('an informant tip on a member of a whitelisted job', function()
+    local OFFICER = { name = 'police', type = 'leo', onduty = true }
+
+    --- A contract on an officer, held by the hitman, with a colleague online.
+    local function onOfficer()
+        local s, f, c = taken({ targetJob = { name = 'sheriff', type = 'leo', onduty = true } })
+        Env.addPlayer({ source = 20, citizenid = 'OFFICER1', license = 'license:o1',
+            job = OFFICER, firstname = 'Ada', lastname = 'Kane' })
+        return s, f, c
+    end
+
+    local function tipBulletins()
+        local out = {}
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.title):find('TIP', 1, true) then out[#out + 1] = note end
+        end
+        return out
+    end
+
+    local function tipDispatches()
+        local out = {}
+        for _, call in ipairs(Natives.calls.dispatch) do
+            if tostring(call.unique_id):find('-tip', 1, true) then out[#out + 1] = call end
+        end
+        return out
+    end
+
+    it('tells law enforcement and dispatch a hitman is closing in, never who or where', function()
+        local s, _, c = onOfficer()
+        steadyDraw(s)
+        truthy(buy(3, c).ok, 'bought')
+        local notes = tipBulletins()
+        eq(#notes, 1, 'the colleague is told, not the targeted officer again')
+        truthy(notes[1].content:find('has been tipped off about', 1, true))
+        truthy(notes[1].content:find('closing in', 1, true))
+        truthy(notes[1].content:find(c.target_name, 1, true), 'names the target')
+        local calls = tipDispatches()
+        eq(#calls, 1, 'one dispatch call')
+        eq(calls[1].unique_id, 'ch-' .. c.id .. '-tip')
+        local said = dump(notes) .. ' ' .. dump(calls)
+        for _, hidden in ipairs({ 'HITMAN01', 'license:ccc', '1200', '-800', 'radius' }) do
+            falsy(said:find(hidden, 1, true), 'never carries ' .. hidden)
+        end
+        local hitman = Env.players[3].PlayerData.charinfo
+        falsy(said:find(hitman.lastname, 1, true), 'never the hitman\'s name')
+    end)
+
+    it('says nothing to law enforcement for a civilian target', function()
+        local _, _, c = taken()
+        Env.addPlayer({ source = 20, citizenid = 'OFFICER1', license = 'license:o1',
+            job = OFFICER, firstname = 'Ada', lastname = 'Kane' })
+        truthy(buy(3, c).ok)
+        eq(#tipBulletins(), 0)
+        eq(#tipDispatches(), 0)
+    end)
+
+    it('sends none with OnLocationTip off, or with the advisory off', function()
+        for _, off in ipairs({ 'OnLocationTip', 'Enabled' }) do
+            local _, _, c = onOfficer()
+            Config.Advisory[off] = false
+            truthy(buy(3, c).ok, 'bought with ' .. off .. ' off')
+            eq(#tipBulletins(), 0, off .. ' off: no bulletin')
+            eq(#tipDispatches(), 0, off .. ' off: no dispatch')
+            Config.Advisory[off] = true
+        end
+    end)
+
+    it('shows on a colleague\'s whitelisted-job view, with when and nothing more', function()
+        local s, _, c = onOfficer()
+        eq(s.projection.whitelistedView('OFFICER1', OFFICER).colleagues[1].tipAdvisedAt, nil,
+            'nothing before a tip')
+        truthy(buy(3, c).ok)
+        local entry = s.projection.whitelistedView('OFFICER1', OFFICER).colleagues[1]
+        truthy(entry, 'listed')
+        eq(entry.tipAdvisedAt, os.time() - (os.time() % CrimsonBoot.requireShared('util').CLOCK_STEP))
+        for k in pairs(entry) do
+            truthy(s.projection.WHITELISTED_KEYS.entry[k], 'a key the view may carry: ' .. k)
+        end
+        Config.Advisory.OnLocationTip = false
+        eq(s.projection.whitelistedView('OFFICER1', OFFICER).colleagues[1].tipAdvisedAt, nil,
+            'not while those bulletins are off')
+        Config.Advisory.OnLocationTip = true
+    end)
+
+    it('is a panel switch, and its dispatch call is cleared with the contract', function()
+        local s, _, c = onOfficer()
+        truthy(s.settings.set('Advisory.OnLocationTip', false, 'ADMIN001'))
+        eq(Config.Advisory.OnLocationTip, false)
+        truthy(s.settings.set('Advisory.OnLocationTip', true, 'ADMIN001'))
+        truthy(buy(3, c).ok)
+        Natives.calls.dispatchCleared = {}
+        local before = #Env.threads
+        s.notify.clearContract(c.id, s.storage.readContract(c.id))
+        for i = before + 1, #Env.threads do Env.threads[i]() end
+        local cleared = {}
+        for _, call in ipairs(Natives.calls.dispatchCleared) do cleared[call.uid] = true end
+        truthy(cleared['ch-' .. c.id .. '-tip'], 'the tip bulletin comes off the MDT')
+    end)
+end)
