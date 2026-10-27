@@ -132,6 +132,9 @@ local DEFAULTS = {
     Immunity = {
         MinTargetPlaytimeHours = 5,
         MinTargetSessionMinutes = 10,
+        -- The built-in playtime tracker's grace, where qbx_core's players
+        -- table cannot be read (server/playtime.lua).
+        GrandfatherDays = 3,
     },
     --- The safety switches. Each was added to a section operators already
     --- had, and each is read as a plain truth test, so on a config taken
@@ -955,7 +958,7 @@ local function validateConfig(quiet)
         warn[#warn + 1] = ('Immunity.PlaytimeProvider has to be { resource = '
             .. '\'<resource>\', export = \'<function>\' }, an export returning total '
             .. 'minutes played; it is %s, so it is ignored and playtime is read '
-            .. 'from QBox metadata'):format(type(provider) == 'table'
+            .. 'from QBox metadata, or else counted by this resource'):format(type(provider) == 'table'
                 and 'missing its resource or export' or ('a ' .. type(provider)))
         Config.Immunity.PlaytimeProvider = nil
     end
@@ -978,14 +981,13 @@ local function validateConfig(quiet)
         Config.Kidnap.RestraintProvider = nil
     end
 
-    -- A note, not a problem: it is how the shipped config works (QBox's own
-    -- playtime metadata), and it changes nothing. Said with Config.Debug,
-    -- and kept for the diagnosis; never counted as a setting to fix.
-    if (tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0) > 0
-        and not (Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource) then
-        notes[#notes + 1] = ('Immunity.MinTargetPlaytimeHours is %d but no PlaytimeProvider is set; ' ..
-            'the rule applies only where QBox metadata carries a playtime figure')
-            :format(Config.Immunity.MinTargetPlaytimeHours)
+    -- The built-in playtime tracker's grace, read only where qbx_core's
+    -- players table cannot be (server/playtime.lua). Days, 0 or more.
+    local grace = Config.Immunity.GrandfatherDays
+    if type(grace) ~= 'number' or grace ~= grace or grace < 0 or grace == math.huge then
+        warn[#warn + 1] = ('Immunity.GrandfatherDays is %s; expected 0 or more days. Using 3.')
+            :format(tostring(grace))
+        Config.Immunity.GrandfatherDays = 3
     end
 
     if not Config.Kidnap.RequireCoercion then
@@ -1562,6 +1564,7 @@ function StartCrimsonHitman()
     local panel      = CrimsonBoot.require('server.panel')
     local alerts     = CrimsonBoot.require('server.alerts')
     local meeting    = CrimsonBoot.require('server.meeting')
+    local playtime   = CrimsonBoot.require('server.playtime')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1603,6 +1606,9 @@ function StartCrimsonHitman()
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
+    -- The built-in playtime tracker, the new-player rule's last answer
+    -- (Identity.playtimeHours). Nothing is read until the tick's first pass.
+    playtime.init({ storage = Storage, identity = identity })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -1622,6 +1628,9 @@ function StartCrimsonHitman()
         alerts = alerts,
         -- The handover's meeting point, for the app's requests.
         meeting = meeting,
+        -- Each character's time in the city, counted on the tick, at a
+        -- login and a drop, and at the stop.
+        playtime = playtime,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2070,6 +2079,8 @@ local WRITE_JOBS = {
     ['audit.flush'] = true, ['storage.flush'] = true, ['storage.heartbeat'] = true,
     -- The review queue's items the store would not take when they opened.
     ['review.retryUnwritten'] = true,
+    -- The playtime counted since the last pass, kept for the next one.
+    ['playtime.pass'] = true,
 }
 
 --- Jobs whose failure is money at risk or left stuck: a buyout the target
@@ -2254,6 +2265,9 @@ function Tick()
     -- A closed contract whose ending raised before it handed its escrow
     -- over: finished as the next start would (Contracts.finishEndings).
     if modules.contracts.finishEndings then job('contracts.finishEndings', FinishEndings) end
+    -- Everybody's time in the city, counted once a minute and written in one
+    -- batch; before the flush, which writes json's file of it.
+    if modules.playtime then job('playtime.pass', modules.playtime.pass) end
     -- When this process was last known to be running, so the next boot can
     -- tell how long nobody could play. See Recover.
     if Storage.heartbeat then job('storage.heartbeat', Storage.heartbeat, os.time()) end
@@ -2512,6 +2526,9 @@ AddEventHandler('onResourceStop', function(name)
     modules.audit.flush(true)
     -- The alerts not yet in the store, the same way (Alerts.flush).
     if modules.alerts then pcall(modules.alerts.flush, true) end
+    -- Everybody's time in the city counted up to now and handed over the
+    -- same way, before the close writes json's file (Playtime.stop).
+    if modules.playtime then pcall(modules.playtime.stop) end
 
     -- Memory mode: release every open escrow before the tables vanish.
     if Config.Database.Mode == 'memory' then

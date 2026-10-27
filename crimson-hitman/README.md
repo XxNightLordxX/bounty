@@ -11,6 +11,15 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Playtime counted here:** the new-player floor
+  (`Config.Immunity.MinTargetPlaytimeHours`, 5 hours as shipped) works on
+  `qbx_core`, which keeps no playtime of its own. The resource counts each
+  character's time in the city itself, once a minute and at every logout and
+  stop, and keeps it in its store. Characters that existed before it first
+  started are grandfathered, told by their number in `qbx_core`'s `players`
+  table, so your players are not suddenly protected. Staff see a character's
+  counted hours in the admin panel's **Players** and in `/ch-diag`, and can set
+  or reset them (see *New players and playtime*).
 - **Meeting point for the handover** (`Config.Kidnap.MeetingPoint`, shipped
   on): on an alive-only contract a hitman holds, the person who placed it can
   tap **Set meeting point here** on their card, where they are standing, and
@@ -173,7 +182,8 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 The config ships in `json` mode: everything lives in files under
 `crimson-hitman/data/` (`store.json`, `records.json`, `contracts/`, the
-`audit-<day>.jsonl` log and `photos/`), which is what to back up. In `mysql`
+`audit-<day>.jsonl` log, `playtime.json` and `photos/`), which is what to back
+up. In `mysql`
 mode the tables are created automatically on first start, as `utf8mb4` so an
 emoji in a reason or a non-Latin character name is kept whatever the
 database defaults to (a table an older version made is converted at start),
@@ -185,7 +195,8 @@ Nothing to import either way. The tables are
 `crimson_audit`, `crimson_reveals`, `crimson_mutes`, `crimson_photos`,
 `crimson_review`, `crimson_settings` (what staff changed from the admin panel),
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (who turned
-on the whitelisted-job view's Notify me) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+on the whitelisted-job view's Notify me), `crimson_playtime` (each character's
+counted playtime) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
 engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
@@ -201,8 +212,9 @@ columns `crimson_escrow.deliver_raises`, `deliver_before`, `deliver_arrived`,
 enforcement advisory said of each contract, which the whitelisted-job view
 shows; NULL where no bulletin went), and the tables `crimson_review` (the
 review queue), `crimson_settings` (the admin panel's settings),
-`crimson_alerts` (the admin panel's alerts) and `crimson_view_alerts` (the
-whitelisted-job view's Notify me): import
+`crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (the
+whitelisted-job view's Notify me) and `crimson_playtime` (the playtime counted
+here): import
 `install/sql/crimson_hitman.sql`, or create them as a user that may. It also
 adds three indexes, which an existing database gets at its next start (about
 three seconds per million audit rows, with writes going on) or, for a user
@@ -414,6 +426,8 @@ restart only once it says `database: answering`. For backups use
 | `Config.Limits.MaxPayoutSlots` | How many times one contract can be collected: `1` (as shipped; each contract is collected once), `2` or `3`. At 1 the Place form shows no extra-collection controls at all; at 2 or 3 the creator chooses how many, each funded and escrowed up front. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup; the admin panel takes 1 to 3. Contracts already placed keep the number they were placed with, and can still give their last collection back |
 | `Config.Limits.MinContractReward` | The least a new contract's reward may be worth in money (1000 as shipped; `0` turns it off): cash, bank and dirty money summed across every payout, the kidnapping bonus included. Items and weapons do not count, since nothing prices them. A contract worth less is refused (`reward_too_small`) and the app says the figure, on the Place form before anything is typed and in the refusal; a reward cannot be taken back out below it either, by Withdraw part or by giving back a payout. Without it two one-dollar contracts from two accounts fill a target's `Config.Limits.MaxActiveContractsPerTarget` and nobody else can list them until both close. Anything that is not a whole number of dollars is read as 1000, and one above `Config.MaxContractValue` is held to it, with a warning at startup |
 | `Config.Immunity` | Playtime and session floors that protect new players from being farmed |
+| `Config.Immunity.MinTargetPlaytimeHours` | Hours a character must have played before anybody can name them as a target (5, as shipped; `0` turns it off): until then the app answers *They are too new to the city to be a target yet.* This resource counts them itself unless `Config.Immunity.PlaytimeProvider` (an export answering minutes) or a playtime figure in QBox metadata answers; `qbx_core` 1.24 keeps none. Characters that existed before the count first started are grandfathered: counted as having played enough. See *New players and playtime* |
+| `Config.Immunity.GrandfatherDays` | Read only where `qbx_core`'s `players` table cannot be read when the count first starts (3 days, as shipped): then every character first seen in that many days after the first start is grandfathered instead, and **a brand-new character made in those days is not protected**. With `qbx_core`'s table (the usual case) it is not used. Anything that is not 0 or more days is read as 3, with a warning at startup |
 | `Config.Targeting.AllowBrowseAll` / `AllowNearby` | How a client finds a target. Browsing everyone online is on (a roster of names, no positions). The nearby list is **off**: on, it puts names to the unmasked people around a player, through walls, and boot warns while it is (see *Placing a contract*) |
 | `Config.Notifications.ParanoidAlertJitter` | How long (1 to 10 minutes, drawn per contract) a new contract is kept from its target: their alert, their On me tab, `/cleanse` and the request for their headshot all wait for it, so none of them dates the placement |
 | `Config.Mugshot.Enabled` | Target headshots on the board (`true`, as shipped). Off, no headshot is ever asked of a target's game, one a client sends anyway is refused before it is read, none is kept, and every card shows the usual placeholder. Anything but `true` or `false` is read as `false`, with a warning at startup |
@@ -1107,6 +1121,51 @@ to it, which would tell every officer when it was placed or taken. An
 ordinary open of the view asks the server for the view alone (the player's
 game says which screen is theirs), so it writes no refused-request row.
 
+**New players and playtime.** A character who has played less than
+`Config.Immunity.MinTargetPlaytimeHours` (5) cannot be named as a target: the
+app answers *They are too new to the city to be a target yet.* (`target_too_new`). Where the hours come from, in order: the export
+in `Config.Immunity.PlaytimeProvider` if you set one; a playtime figure in the
+character's QBox metadata (`metadata.playtime`, in minutes) where your build
+keeps one, which `qbx_core` 1.24 does not; otherwise this resource's own count.
+It counts each character's time in the city by citizen id: from their login,
+or from the first pass after a start when they were already in, to their
+logout, disconnect or character switch, or the resource stopping. It counts on
+the maintenance tick once a minute, at each drop and at the stop, each time
+from where the last count ended, so no stretch is counted twice; the time the
+resource is stopped is not counted, and a crash loses at most the minute since
+the last count. It writes what changed in one batch a minute, never once a
+player: `data/playtime.json` in `json` mode, `crimson_playtime` in `mysql` mode,
+and nowhere in `memory` mode, which forgets it at every stop.
+
+Your players are not suddenly protected. `qbx_core` numbers every character it
+saves (`players.id`, an `AUTO_INCREMENT` that only grows, `qbx_core.sql` in
+1.24) and keeps no creation date, so the first time the count starts it records
+the highest number there, once (in `crimson_meta`, or `playtime.json`). A
+character numbered at or under it existed before and is **grandfathered**:
+counted as having played enough whatever their hours say. A character numbered
+after it, or one `qbx_core` has not saved yet, is new. It reads that table
+through `oxmysql`, which `qbx_core` always has, in `json` mode too, and only
+reads it: two `SELECT`s, the highest number once and each character's own once.
+Where that table cannot be read at the first start (a framework without it),
+characters first seen in the `Config.Immunity.GrandfatherDays` (3) days after
+it are grandfathered instead, a brand-new character made in those days
+included; the console says so once, as a setting that needs attention. Each
+character is decided once, the first time the count sees them in the city, and
+until then (a database that is not answering yet) nothing answers for them and
+the playtime rule is skipped for them: an unknown figure never protects
+anybody, and never refuses everybody either.
+
+Staff see a character's counted hours, the floor and whether they are
+grandfathered in the admin panel's **Players** (to every reader) and in
+`/ch-diag <player id>`, which also says what the rule reads for them. **Set
+hours** and **Reset to 0** there change one character's counted hours, each
+with two clicks: a write (`crimson.admin` itself, the write allowance), not
+`crimson.identity`, since they name the player as you looked them up, and
+audited (`admin_playtime_set`, with the hours before and after). A
+grandfathered character stays grandfathered whatever their hours are set to,
+and the answer says so; where an export or metadata answers for them, setting
+the counted hours changes nothing the rule reads, and the answer says that too.
+
 ---
 
 ## What stops it being abused
@@ -1233,7 +1292,8 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   new contract only when their alert's wait is over. Headshots are asked for
   and accepted only where `MugShotBase64` runs on the server; the kill photo
   is taken with the rear camera only.
-- **New players are protected.** Playtime and session floors, post-respawn
+- **New players are protected.** Playtime (counted here, with players from
+  before grandfathered: see *New players and playtime*) and session floors, post-respawn
   immunity, per-target contract caps and re-listing cooldowns. Those caps
   cannot be filled for a dollar: a contract has to be worth at least
   `Config.Limits.MinContractReward` in money, and stays so. Nor by one
@@ -1372,7 +1432,7 @@ line this resource prints is one of three kinds.
 |---|---|---|
 | **Always** | Whatever `Config.Debug` says | Refusing to start (`FATAL`, `failed to start`, waiting for `qbx_core` or `ox_inventory`); money at risk or left for staff (a review item opened, a stuck or parked escrow line, an ending or a handover claim that raised, a claim that raised part-way and how the tick finished it, a ledger write that raised after a payout, an app request, staff command, admin panel write or `/cleanse` that moves money and raised, each request or command once every five minutes, and when they are up one line saying how many more raised under it meanwhile (*request cancel raised 2 more time(s) …; run ch-diag …*), `BOOT RECOVERY FAILED`, contracts that could not be loaded, starting over money another storage mode holds, a maintenance job that moves money failing: the buyout queue, expiry, owed payouts, unfinished endings, claims that raised, placements and acceptances left part-way, idle holds, or the tick as a whole); a write that failed or read back wrong (a `json` file that could not be written, was torn or is missing, contract files left in memory because they could not be written, once every five minutes, a newer index copy used or a contract file the index did not name taken back in, the downtime dated from something other than the heartbeat, a kill photo that could not be written or reads back short, the audit or storage flush failing, a contract the expiry pass could not update, once every ten minutes for each while the pass goes on with the others and tries it again within a minute, or one the timer refresh could not); in `mysql` mode, from a year before 2038-01-19, that the tables' times run out then. A job that fails on every tick is printed once every five minutes, each failure in between counted in the diagnosis |
 | **Settings that need attention** | One line at the end of a start with `Config.Debug` off: `[crimson-hitman] N setting(s) need attention; run ch-diag (F8 or the server console) or open /hitmanadmin to see them`, and nothing when there are none. Each in full with it on | Every startup warning about `config.lua` (a value read as the nearest it may be, a setting your config lacks, counted once for each, an integration you configured that is not running, an admin panel setting not applied). One found later (an empty photo host list on the first tick) says the line again with the new count |
-| **Everything else** | Only with `Config.Debug` on | The integration list, start progress (`started in json mode`), finished migrations, photo sweeps, photo host list changes, slow maintenance jobs and failing ones that move no money, a read the app or a staff command asked for that raised, the settings changed from the panel in force, the `json` size advice, page faults players' phones report (marked *page stack from …*, with colour codes taken out), notes (memory mode, the playtime rule reading QBox metadata) |
+| **Everything else** | Only with `Config.Debug` on | The integration list, start progress (`started in json mode`), finished migrations, photo sweeps, photo host list changes, slow maintenance jobs and failing ones that move no money, a read the app or a staff command asked for that raised, the settings changed from the panel in force, the `json` size advice, page faults players' phones report (marked *page stack from …*, with colour codes taken out), the playtime count starting and a character it could not decide yet, notes (memory mode) |
 
 Nothing is lost: `ch-diag` (in F8 or the server console) and **Run the
 diagnosis** in the admin panel list the settings that need attention in full,
@@ -1474,7 +1534,7 @@ flushing the log is refused, in the commands' own words.
 | **Alerts** | Every line the server console printed whatever `Config.Debug` says (money at risk or left for staff, a stuck or parked escrow line, an item opened in the review queue, a write that failed or read back wrong, a job that keeps failing, the start refusing or recovering, the raise summaries) and every setting that needs attention, as an alert: open ones newest first, or the acknowledged ones apart, the newest 100 at a time. Each says what was said (a block of lines, such as `BOOT RECOVERY FAILED` and the lines under it, is one alert), whether it needs staff or is a setting, when it was first and last said and how many times (the same line again, its numbers aside, is counted on the open alert rather than listed twice), the contract it names (which opens its view), and who acknowledged it and when. Its text is scrubbed for staff without `crimson.identity` as every other view is, and a staff command in it is put as the section that does it. The badge beside it, and the overview's **Alerts** tile, count the open ones. Kept in the store your server runs (`data/records.json`, the `crimson_alerts` table, or memory), so they survive a restart: at most 500, the oldest acknowledged pruned first, and an unacknowledged one never within 30 days of the last time it was said (only a loop filling 5,000 would). Also where posting to Discord stands: off, no webhook set, or which webhook (never its address), the last post, and a post given up after three tries with how many alerts it carried. Read again at each overview refresh while it is on screen | **Acknowledge** one, or **Acknowledge all shown**, each with two clicks: a write, audited (`admin_alerts_acknowledged`, with how many and which), and rate-limited as every write is; it works while recovery holds other writes back. A line said again after its alert was acknowledged opens a new one. **Send a test alert** puts one in the next post to Discord (`admin_alert_test`, sent or not) |
 | **Console** | What this resource said in the server console since its last start, as the server keeps it (`shared/log.lua`): the settings that need attention found at start, everything the start said (and, past 120 lines, how many more), and the newest forty lines since and the newest forty printed whatever Debug says, newest first, each marked *Always* (printed whatever `Config.Debug` says), *Problem* (a setting that needs attention) or *Debug* (printed only with it on), with when it was last said and how many times (the same line again is counted on it). Says whether Debug output is on. Kept in memory, so a restart begins it again. Its lines are scrubbed for staff without `crimson.identity` exactly as the Alerts are, and a staff command in them is put as the section that does it. Nobody, `crimson.identity` or not, sees a webhook's address, the value of a secret convar (`crimson_hitman_webhook`, `crimson_hitman_alert_webhook`, `mysql_connection_string`), a password, or the values a database statement was sent: a web address keeps only its host, and a database error the server's words and the start of the statement. Read again at each overview refresh while it is on screen, and drawn again only when a line changed | Filter by kind (**All**, **Always**, **Problems**, **Debug**) and by text, as you type; **Refresh**; **Copy** puts the lines shown on the clipboard as plain text, in the order shown, with their kinds, times and counts. Nothing here writes |
 | **Logs** | The audit log, newest first, a page at a time, filtered by kind, part of the action, contract id, citizen id (with `crimson.identity`) and time. Read from whichever store keeps it (the json day files, the `crimson_audit` table, or memory); a page follows on from the last even when old rows age out in between. A contract id or citizen id box is marked, and asks nothing, until it holds a whole one | — |
-| **Players** | By server id or citizen id (in any case: it is read as the server keeps it): their contracts (as `/ch-contracts`), their record (with `crimson.identity`), what they are owed and whether it is queued for them, and how many notices wait for their next login. A citizen id nobody in the city has and nothing you may see names answers *not found* | **Whois** on a contract, with `crimson.identity` |
+| **Players** | By server id or citizen id (in any case: it is read as the server keeps it): their contracts (as `/ch-contracts`), their record (with `crimson.identity`), what they are owed and whether it is queued for them, how many notices wait for their next login, and their **Playtime**: the hours counted here, the floor, whether they are grandfathered (from before the count) and, where an export or QBox metadata answers for them instead, that the rule reads that. A citizen id nobody in the city has and nothing you may see names answers *not found* | **Whois** on a contract, with `crimson.identity`. **Set hours** and **Reset to 0** under Playtime, each with two clicks: a write (`crimson.admin` itself), not `crimson.identity`, audited (`admin_playtime_set`); a citizen id no character has is refused (see *New players and playtime*) |
 | **Features, limits & settings** | Every on/off switch in `config.lua`, grouped by section, with a line on what it does and what turning it off does to things already under way, and the two multi-choice features (`Config.Completion.Fulfilment`, `Config.Completion.PhotoStorage`). Then the limits: every number in `Config.Limits`, the anonymity fees and their account, the informant's price, the stake ceilings, the handover countdown, radius and health floor, buyout pricing, the targeting radii and page sizes, `Config.Ledger.PhotoRetentionDays`, the advisory job lists and every rate limit. Each with its value now, what `config.lua` says, and whether the value comes from `config.lua` or the panel. Every rate limit says what it gates (the background ones, death, headshots and the handover countdown, are refused without a word to the player). A value the start would refuse is refused in its words, once, with the key to change first; a warning the start gives about a value (the nearby list on, say) is said with the change. A row the store holds for a key this version does not list is shown read-only, with why. Under **Kill photos**, while they are off and the store still holds kill photos from before (records, whatever became of each photo): how many, how many have a file on this server, how many were on lb-phone's image host and how many are open on a phone right now | **Change** one, **reset** one, **reset all** (offered whenever the store holds a row, applied or not). **Remove the N kill photos kept from before**, with two clicks, the second naming the count: every record is deleted on your store (memory, `data/records.json` or `crimson_photos`); a photo kept on this server (`'server'` storage) has its file in `data/photos/` deleted; one on lb-phone's image host (`'host'` storage) is only forgotten, since the host gives a resource no way to delete it, so the picture stays there (delete it on the host if it must go); one open on a phone right now is left to that view and removed when it closes, however it closes (Delete, or time running out; *Keep in the app* answers that it is gone), never while it is shown. A write (`crimson.admin` itself, the write allowance), audited (`admin_photos_removed`, with how many and how many files and links), refused while kill photos are on, and safe to run again: it removes what is left, or nothing. A view still open across a restart is not remembered: it closes as usual, and the button offers the record again. The same value again changes nothing and tells nobody. Lowering a photo retention, or making a rate limit stricter, takes two clicks, the first saying what the second does; anything typed after the first arms it again. The rate limits the app cannot work without have a floor: `load` at least 6 held and a refill of one every 5 seconds, `progress` one a second, `death` 2 held |
 | **Tools** | — | **Bring timers forward** (`/ch-refresh`, test servers), **Run the diagnosis** and read it (`/ch-diag`, with the settings that need attention and what the console said), **Flush the audit log** (its answer says when the store did not save, and which file it could not write) |
 
@@ -1770,7 +1830,8 @@ cleared with `ClearNotification` when a contract on an officer ends, whatever
 `sc-blackmarket` (`AddTrust(citizenid, amount)` on a completed contract,
 `Config.Progression`), `MugShotBase64` (`GetMugShotBase64` on the client, for
 headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
-`Config.Immunity.PlaytimeProvider` (minutes played by citizen id).
+`Config.Immunity.PlaytimeProvider` (minutes played by citizen id; without it
+the playtime is counted here, see *New players and playtime*).
 
 ---
 
@@ -1778,6 +1839,7 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 
 | Issue | Solution |
 |---|---|
+| A new character can be named as a target, or an old one cannot | Run `/ch-diag <player id>`: under *playtime* it says what the rule reads for them (an export, QBox metadata or the count here), the hours, and whether they are grandfathered. A character counted here is decided within a minute of being in the city; until then the rule is skipped for them. Correct one character's hours in the admin panel's **Players**. Where it says `qbx_core`'s players table could not be read, characters were grandfathered by `Config.Immunity.GrandfatherDays` instead, new ones made in those days included |
 | A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) have it only for the whitelisted-job view's one screen (`Config.WhitelistedView.Enabled`, on as shipped); with the view off they never see it (or see it answering nothing, with `Config.HideAppFromBlockedJobs` off), and a job they hold but are not working is named on their phone. `/ch-diag <player id>` says why it is not showing for them |
 | A kill does not complete a contract, or there is no Verify kill | As shipped, `Config.Completion.Fulfilment` is `'alive'`: contracts are completed only by bringing the target alive to the person who placed the contract, who has to be there for the handover, and a kill never completes one (the server answers `kill_not_allowed`). Set it to `'either'` to let kills complete contracts placed from then on; ones already placed keep their rule. `/ch-diag` says which is in use |
 | Buy informant data says *The informant is still asking around after a restart* | The server forgets who has been near a target when it restarts, so for `Config.Informant.ProximityWindowMinutes` (10) after a start, informant data on a contract placed before it is refused, and nothing is charged. Wait the minutes it says. Turning `Config.Informant.RequireProximity` off removes the wait, and lets the informant name any hitman on the contract |
@@ -1816,9 +1878,9 @@ has been run in game by this build.
 
 | Resource | Needed | Known to work |
 |---|---|---|
-| `qbx_core` | Required (manifest dependency) | 1.24.0, checked against: `GetPlayer`, `GetPlayerByCitizenId`, `GetMetadata`, `GetJob`, `Save`, `Player.Functions.GetMoney` / `AddMoney` / `RemoveMoney`, the login and logout events, `modules/playerdata.lua` |
+| `qbx_core` | Required (manifest dependency) | 1.24.0, checked against: `GetPlayer`, `GetPlayerByCitizenId`, `GetMetadata`, `GetJob`, `Save`, `Player.Functions.GetMoney` / `AddMoney` / `RemoveMoney`, the login and logout events, `modules/playerdata.lua`, and the `players` table's `id` and `citizenid` (`qbx_core.sql`), read for the playtime count |
 | `ox_inventory` | Required (manifest dependency) | 2.48.0, checked against |
-| `oxmysql` | Required in every mode: the manifest loads `@oxmysql/lib/MySQL.lua` (`qbx_core` needs it anyway) | 2.14.3, checked against |
+| `oxmysql` | Required in every mode: the manifest loads `@oxmysql/lib/MySQL.lua` (`qbx_core` needs it anyway), and the playtime count reads `qbx_core`'s `players` table through it in `json` mode too | 2.14.3, checked against |
 | `lb-phone` | Required for the app; not a manifest dependency | 2.8.0, the version this was built against (escrowed: exports from its documentation) |
 | MariaDB or MySQL | `mysql` mode only | MariaDB 10.11.14, run against: tables made, imported, migrated and refused as described in *Install*; MySQL 8 by the reserved-word and collation checks only |
 | `ox_lib` | Not used directly; `qbx_core` needs it | 3.40.3, beside `qbx_core` 1.24.0 |

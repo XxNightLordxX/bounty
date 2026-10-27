@@ -62,6 +62,15 @@ local recordsDirty = false
 --- way out of a money path that failed, and must not slow the next one.
 local alertsDirty = false
 
+--- The playtime the built-in tracker counts (server/playtime.lua), and
+--- when it first started: { since, players_id, rows = { [cid] = row } },
+--- read from playtime.json the first time it is asked for. A file of its
+--- own, written by the flush and the close only: it changes once a minute
+--- while anybody is in the city, and records.json, which holds the ledger,
+--- is far too big to rewrite that often.
+local playtime = nil
+local playtimeDirty = false
+
 --- Whether records.json is known to be on disk: read at this start, or
 --- written since. The index says so (`records = true`), so a later start
 --- that finds the file missing knows it is missing rather than not yet
@@ -1024,6 +1033,8 @@ local lastKnown = {}
 --- the index names and cannot be read — that is one contract's money
 --- missing, which is not something to start up and hope about.
 function JsonStore.open()
+    -- Read again from its own file when it is next asked for.
+    playtime, playtimeDirty = nil, false
     -- Read twice, as a shard is, before believing there is no index.
     local raw = LoadResourceFile(resource, path())
     if raw == nil or raw == '' then raw = LoadResourceFile(resource, path()) end
@@ -1729,20 +1740,95 @@ end
 --- first file that is not (the admin panel names it).
 ---@return boolean saved
 ---@return string|nil file
+local function playtimePath()
+    return directory() .. '/playtime.json'
+end
+
+--- The tracker's file, read once. Missing is a tracker that has not started
+--- on this store yet. Torn, its last whole write is put back (recoverFile);
+--- with none, the torn one is kept as playtime.json.torn, said, and the
+--- tracker starts again from nothing: counted time is not money, and
+--- refusing to start over it would stop every contract.
+local function playtimeData()
+    if playtime then return playtime end
+    local raw = LoadResourceFile(resource, playtimePath())
+    local decoded = decodeTable(raw)
+    if not decoded then
+        local _, copy = recoverFile(playtimePath(), decodeTable, true, raw)
+        decoded = copy
+    end
+    if not decoded and type(raw) == 'string' and raw ~= '' then
+        SaveResourceFile(resource, playtimePath() .. '.torn', raw, -1)
+        Log.always(('%s could not be read and there is no whole copy of it; it is kept as %s.torn, '
+            .. 'and playtime is counted again from nothing, as at its first start.')
+            :format(playtimePath(), playtimePath()))
+    end
+    decoded = decoded or {}
+    playtime = {
+        since = tonumber(decoded.since),
+        players_id = tonumber(decoded.players_id),
+        rows = type(decoded.rows) == 'table' and decoded.rows or {},
+    }
+    return playtime
+end
+
+--- Write the tracker's file whole, when something in it changed.
+---@return boolean written
+---@return string|nil file the file, when it could not be written
+local function savePlaytime()
+    if not playtimeDirty or not playtime then return true end
+    if not writeFile(playtimePath(), playtime) then return false, playtimePath() end
+    playtimeDirty = false
+    return true
+end
+
 function JsonStore.flush()
     -- The alerts changed since the records were written, which only this
     -- and the close take in (alertsDirty).
     if alertsDirty then dirty, recordsDirty = true, true end
     local ok, file = JsonStore.save(false)
     local logged, day = saveAudit()
-    return ok and logged, file or day
+    local counted, playtimeFile = savePlaytime()
+    return ok and logged and counted, file or day or playtimeFile
 end
 
 function JsonStore.close()
     if alertsDirty then dirty, recordsDirty = true, true end
     local ok, file = JsonStore.save(true)
     local logged, day = saveAudit()
-    return ok and logged, file or day
+    local counted, playtimeFile = savePlaytime()
+    return ok and logged and counted, file or day or playtimeFile
+end
+
+--------------------------------------------------------------------------
+-- Playtime
+--------------------------------------------------------------------------
+
+--- See the memory backend. In playtime.json, written by the next flush or
+--- the close, never by a money write's save.
+function JsonStore.readPlaytime(cid)
+    local row = playtimeData().rows[cid]
+    return type(row) == 'table' and Util.copy(row) or nil
+end
+
+function JsonStore.writePlaytime(rows)
+    local data = playtimeData()
+    for i = 1, #rows do data.rows[rows[i].cid] = Util.copy(rows[i]) end
+    playtimeDirty = true
+    return true
+end
+
+function JsonStore.readPlaytimeInstall()
+    local data = playtimeData()
+    if not data.since then return nil end
+    return { since = data.since, players_id = data.players_id }
+end
+
+function JsonStore.writePlaytimeInstall(since, playersId)
+    local data = playtimeData()
+    data.since, data.players_id = since, playersId
+    playtimeDirty = true
+    return true
 end
 
 --- What one buyer's informant purchases on one contract have bought; see the

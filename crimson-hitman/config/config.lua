@@ -448,21 +448,45 @@ Config.Cooldowns = {
 --------------------------------------------------------------------------
 
 Config.Immunity = {
+    --- Hours a character must have played before anybody can name them as a
+    --- target (until then the app says they are too new to the city to be a
+    --- target yet). 0 turns the rule off. Counted by
+    --- this resource itself unless PlaytimeProvider below answers. A
+    --- character that existed before the count first started is
+    --- grandfathered: counted as having played enough. Staff see a
+    --- character's counted hours, and can set or reset them, in the admin
+    --- panel under Players.
     MinTargetPlaytimeHours   = 5,
     MinTargetSessionMinutes  = 10,
     PostRespawnSeconds       = 300,
     AfterBailoutSeconds      = 3600,
-    --- Where total playtime comes from. Leave nil to read QBox character
-    --- metadata (metadata.playtime, in minutes). To use another script, give
-    --- its resource and export, e.g.
+    --- Where total playtime comes from. Leave nil (as shipped) and this
+    --- resource counts it: each character's time in the city, once a minute
+    --- and at every logout and resource stop, kept in its store
+    --- (data/playtime.json in json mode, crimson_playtime in mysql mode;
+    --- memory mode forgets it at a stop). A figure in QBox character
+    --- metadata (metadata.playtime, in minutes) is read first where a build
+    --- keeps one; qbx_core 1.24 does not. To use another script instead,
+    --- give its resource and export, e.g.
     ---   PlaytimeProvider = { resource = 'my_playtime', export = 'GetMinutes' },
     --- It is called as exports.my_playtime:GetMinutes(citizenid) and must
     --- return TOTAL MINUTES played, as a number. An export that answers in
     --- hours or seconds makes the playtime floor wrong for everyone. If the
-    --- call errors or returns a non-number, metadata is used instead. If
-    --- nothing can answer, the playtime rule is skipped and the resource says
-    --- so at startup — it does not silently refuse everyone.
+    --- call errors or returns a non-number, metadata and then this
+    --- resource's own count are used instead. Where nothing can answer yet,
+    --- the playtime rule is skipped for that character: it never silently
+    --- refuses everyone.
     PlaytimeProvider = nil,
+    --- Days, 0 or more. Used only where qbx_core's players table cannot be
+    --- read when the count first starts (a framework without it). With that
+    --- table this resource tells which characters existed before it was
+    --- installed by their number there, and this is not used. Without it,
+    --- every character first seen in this many days after the first start
+    --- is grandfathered instead, so players already on the server are not
+    --- suddenly protected. A brand-new character made in those days is
+    --- grandfathered too, so it is NOT protected as a new player. 0
+    --- grandfathers nobody.
+    GrandfatherDays = 3,
 }
 
 --------------------------------------------------------------------------

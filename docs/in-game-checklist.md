@@ -327,6 +327,44 @@ placer, all online.
       reduced — and adding still works
 - [ ] Nothing on that screen is cut off, and its buttons clear the tab bar
 
+## 3b. New players and playtime (as shipped)
+
+`qbx_core` 1.24 keeps no playtime, so the resource counts it
+(`Config.Immunity.MinTargetPlaytimeHours`, 5). Note `SELECT MAX(id) FROM players`
+in your database before the first start of this version.
+
+- [ ] Within a minute of the first start, `ch-diag` says under *playtime*:
+      `tracker: counting since <time>; characters numbered up to N in
+      qbx_core's players table are from before it and grandfathered.`, with N
+      the number you noted
+- [ ] An existing character with nothing counted yet: `/ch-diag <their player
+      id>` says `grandfathered: yes, from before the tracker` and `fair game by
+      playtime: grandfathered`, and a contract on them can be placed once they
+      have been in the city for `MinTargetSessionMinutes` (10)
+- [ ] Make a brand-new character and stay in the city with it for 10 minutes:
+      a contract on them is refused with *They are too new to the city to be a
+      target yet.*; `/ch-diag <their id>` says `grandfathered: no`, with the
+      hours counted so far, which grow while they stay
+- [ ] Admin panel, **Players**, look the new character up by player id: the
+      **Playtime** card shows the hours counted, *5 h* needed and *From before
+      the count: No*. Type 6 and press **Set hours** twice: *… counted playtime
+      is now 6 h (it was … h).*, and a contract on them can now be placed.
+      **Reset to 0** twice: refused again. **Logs** shows two
+      `admin_playtime_set` rows with the hours before and after. A staff
+      member with only an extra ACE sees both buttons disabled; one without
+      `crimson.identity` can still use them
+- [ ] Log the new character out and back in, then `restart crimson-hitman`:
+      the hours are where they were (within a minute), and do not grow by the
+      time the resource was stopped. In `json` mode `data/playtime.json` holds
+      their row; in `mysql` mode `crimson_playtime` does
+- [ ] With 30 or more players online, `/ch-diag` never lists `playtime.pass`
+      among the slow maintenance jobs (estimate: well under a millisecond a
+      minute on `json`; measure yours)
+- [ ] (Only on a framework without `qbx_core`'s `players` table.) The first
+      start counts one setting that needs attention, naming
+      `Config.Immunity.GrandfatherDays`: characters first seen in those days are
+      grandfathered, a new one made in them too
+
 ## 4. Payouts
 
 `Config.Limits.MaxPayoutSlots` ships as 1: each contract is collected once.

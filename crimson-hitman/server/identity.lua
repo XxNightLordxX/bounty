@@ -116,21 +116,40 @@ function Identity.sessionMinutes(cid)
     return math.floor((os.time() - began.at) / 60)
 end
 
---- Total playtime in hours, from whichever provider the server configures.
+--- The built-in playtime tracker (server/playtime.lua), set by its init.
+local playtime = nil
+
+---@param t table|nil
+function Identity.setTracker(t)
+    playtime = t
+end
+
+--- Total playtime in hours, and what answered: the export the server
+--- configures, else a figure in the character's QBox metadata, which some
+--- builds keep (qbx_core 1.24 does not), else the built-in tracker. The
+--- third value is the tracker's: whether the character existed before it
+--- first started, which counts as having played enough.
 --- Returns nil when nothing can answer, which callers must treat as
 --- "unknown" rather than "zero".
+---@return number|nil hours
+---@return string|nil from 'provider' | 'metadata' | 'tracker'
+---@return boolean|nil grandfathered
 function Identity.playtimeHours(actor)
     local provider = Config.Immunity.PlaytimeProvider
     if provider and provider.resource and GetResourceState(provider.resource) == 'started' then
         local ok, minutes = pcall(function()
             return exports[provider.resource][provider.export](nil, actor.cid)
         end)
-        if ok and type(minutes) == 'number' then return minutes / 60 end
+        if ok and type(minutes) == 'number' then return minutes / 60, 'provider' end
     end
 
-    -- QBox keeps playtime in character metadata on most builds.
     local meta = actor.player and actor.player.PlayerData and actor.player.PlayerData.metadata
-    if meta and type(meta.playtime) == 'number' then return meta.playtime / 60 end
+    if meta and type(meta.playtime) == 'number' then return meta.playtime / 60, 'metadata' end
+
+    if playtime then
+        local hours, grandfathered = playtime.answer(actor.cid)
+        if hours ~= nil then return hours, 'tracker', grandfathered end
+    end
 
     return nil
 end

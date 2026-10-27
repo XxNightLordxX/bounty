@@ -231,7 +231,9 @@ function serverStub() {
       stats: { completed: 52, failed: 3, placed: 9, survived: 4, rate: 94, standing: 'Notorious' },
       owed: [{ id: 'ct10000005:2', contract: 'ct10000005', source: 'bank', amount: 1250000, state: 'held', owes: 1250000,
         queued: true }],
-      pending: 2, notices: { count: 2, titles: ['Contract closed', REASON] } } },
+      pending: 2, notices: { count: 2, titles: ['Contract closed', REASON] },
+      playtime: { hours: 1234.5, grandfathered: false, counted: true, counting: true, floor: 5,
+        from: 'provider' } } },
     settings: { ok: true, data: settings },
     diag: { ok: true, data: { lines: (function () {
       const out = ['--- crimson-hitman diagnosis'];

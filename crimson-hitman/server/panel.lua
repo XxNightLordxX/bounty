@@ -38,7 +38,7 @@ local OPS = {
     console = READ,
     void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
     resetSettings = WRITE, refresh = WRITE, flush = WRITE, ackAlerts = WRITE, testAlert = WRITE,
-    removePhotos = WRITE,
+    removePhotos = WRITE, setPlaytime = WRITE,
     whois = IDENTITY,
 }
 
@@ -1094,6 +1094,38 @@ H.logs = function(src, data)
     return true, nil, nil, { rows = out, next = next_ }
 end
 
+--- Who a lookup names: a player id (somebody in the city) or a citizen id
+--- typed (anybody). nil, the error and what to say, for neither.
+---@return table|nil who { cid, actor, typed }
+---@return string|nil err
+---@return string|nil message
+local function playerSubject(subject)
+    local serverId = (type(subject) == 'number' or (type(subject) == 'string'
+        and subject:match('^%d+$') and #subject <= 6)) and wholeNumber(subject, 1, 65535) or nil
+    if serverId then
+        local actor = deps.identity.resolve(serverId)
+        if not actor then
+            return nil, CH.ERR.NOT_FOUND, 'Nobody with that player id is online. Give their citizen id instead.'
+        end
+        return { cid = actor.cid, actor = actor }
+    end
+    local cid = typedCitizenId(subject)
+    if not cid then return nil, CH.ERR.INVALID_INPUT, 'Give a player id or a citizen id.' end
+    return { cid = cid, actor = deps.identity.byCitizenId(cid), typed = true }
+end
+
+--- A character's playtime as the panel shows it: what the built-in tracker
+--- counted (Playtime.view), the floor, and what the rule reads for them
+--- (Identity.playtimeHours: an export, QBox metadata, or the tracker).
+local function playtimeView(cid, actor)
+    if not deps.playtime then return nil end
+    local view = deps.playtime.view(cid)
+    local _, from = deps.identity.playtimeHours(actor or { cid = cid })
+    view.from = from
+    view.floor = tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0
+    return view
+end
+
 --- One player: their contracts as /ch-contracts lists them, their record,
 --- what they are owed, and the notices kept for their next login.
 ---
@@ -1113,22 +1145,9 @@ end
 H.player = function(src, data)
     local Storage = deps.storage
     local canIdentify = identifies(src)
-    local subject = data.subject
-    local cid, actor, typedCid
-    local serverId = (type(subject) == 'number' or (type(subject) == 'string'
-        and subject:match('^%d+$') and #subject <= 6)) and wholeNumber(subject, 1, 65535) or nil
-    if serverId then
-        actor = deps.identity.resolve(serverId)
-        if not actor then
-            return false, CH.ERR.NOT_FOUND, 'Nobody with that player id is online. Give their citizen id instead.'
-        end
-        cid = actor.cid
-    else
-        cid = typedCitizenId(subject)
-        if not cid then return false, CH.ERR.INVALID_INPUT, 'Give a player id or a citizen id.' end
-        typedCid = true
-        actor = deps.identity.byCitizenId(cid)
-    end
+    local who, whoErr, whoMessage = playerSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local cid, actor, typedCid = who.cid, who.actor, who.typed
 
     local contracts = deps.admin.contractsOf(src, cid) or {}
 
@@ -1197,7 +1216,76 @@ H.player = function(src, data)
         stats = stats,
         owed = owed, pending = pending,
         notices = { count = notices, titles = titles },
+        -- Hours counted here and whether they are grandfathered: nothing
+        -- about any contract, so shown to every reader of the panel.
+        playtime = playtimeView(cid, actor),
     }
+end
+
+--- Hours with one decimal, as staff read them.
+local function hoursText(hours)
+    local whole = math.floor(hours)
+    if whole == hours then return tostring(whole) .. ' h' end
+    return ('%.1f h'):format(hours)
+end
+
+--- Set or reset one character's counted playtime (Players, under the
+--- lookup). A write: the ACE itself, the write allowance, and a row in the
+--- log with what it was and what it is now. Not IdentityAce: staff name the
+--- player as they looked them up, and nothing here says who they are.
+H.setPlaytime = function(src, data)
+    if not deps.playtime then
+        return false, 'unavailable', 'Playtime is not counted on this server.'
+    end
+    local hours = tonumber(data.hours)
+    if not hours or hours ~= hours or hours < 0 or hours > 100000 then
+        return false, CH.ERR.INVALID_INPUT, 'Hours are a number from 0 to 100000.'
+    end
+    local who, whoErr, whoMessage = playerSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local cid, actor = who.cid, who.actor
+    -- A citizen id typed that no character has: refused, not a row made for
+    -- somebody who does not exist.
+    if not actor and deps.identity.characterExists(cid) == false
+        and not deps.playtime.view(cid).counted then
+        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character '
+            .. 'has it. Check how it is spelt.'
+    end
+    -- To a tenth of an hour, as the panel shows hours, so what it says it
+    -- set is what it set.
+    local tenths = math.floor(hours * 10 + 0.5)
+    local seconds = tenths * 360
+    local set, before, written = pcall(deps.playtime.set, cid, seconds)
+    if not set then
+        Log.debug(('the admin panel could not read %s\'s counted playtime: %s')
+            :format(cid, Util.dbError(before)))
+        local unanswered = deps.storage.timedOut and deps.storage.timedOut(before)
+        return false, unanswered and CH.ERR.DB_TIMEOUT or CH.ERR.SERVER_ERROR,
+            'Not changed: their counted time could not be read from the store. Try again in a moment.'
+    end
+    local after = tenths / 10
+    deps.audit.staff('admin_playtime_set', staffOf(src), nil,
+        { subject = cid, hours = after, before = before, reset = seconds == 0 or nil })
+
+    local view = playtimeView(cid, actor)
+    local name = actor and actor.name or (who.typed and cid) or 'This character'
+    local parts = {
+        seconds == 0 and ('%s\'s counted playtime is reset to 0 h (it was %s).'):format(name, hoursText(before))
+            or ('%s\'s counted playtime is now %s (it was %s).'):format(name, hoursText(after), hoursText(before)),
+    }
+    if view and view.grandfathered then
+        parts[#parts + 1] = 'They are grandfathered (from before the tracker), so they count as having '
+            .. 'played enough whatever their hours say.'
+    end
+    if view and view.from == 'provider' then
+        parts[#parts + 1] = 'The playtime rule reads your playtime export for them, not these hours.'
+    elseif view and view.from == 'metadata' then
+        parts[#parts + 1] = 'The playtime rule reads their QBox metadata for them, not these hours.'
+    end
+    if not written then
+        parts[#parts + 1] = 'The store did not take it yet; it is written with the next pass, within a minute.'
+    end
+    return true, nil, table.concat(parts, ' '), { playtime = view }
 end
 
 H.whois = function(src, data)

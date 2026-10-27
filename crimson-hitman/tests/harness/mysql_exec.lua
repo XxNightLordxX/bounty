@@ -126,6 +126,10 @@ local function coerce(tableName, column, value)
     local kind = declared and declared.columns[column]
     if not kind then return nil end
     if kind == 'bool' then
+        -- NULL stays NULL: oxmysql's typeCast hands a NULL TINYINT(1) back
+        -- as nil (typeCast.ts: `value === null ? null : value === '1'`),
+        -- not false. A nullable one (crimson_playtime.grandfathered) uses it.
+        if value == nil then return nil end
         local on = value == true or (tonumber(value) or 0) ~= 0
         if Exec.booleans then return on end
         return on and 1 or 0

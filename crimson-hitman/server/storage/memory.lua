@@ -47,6 +47,7 @@ function Memory.open()
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
         photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
+        playtime = {},
     }
     return true
 end
@@ -1514,6 +1515,46 @@ function Memory.setViewAlerts(cid, on, at)
     else
         db.viewAlerts[cid] = nil
     end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Playtime
+--------------------------------------------------------------------------
+
+--- How long each character has been in the city, as the built-in tracker
+--- counts it (server/playtime.lua), by citizen id: { cid, played_seconds,
+--- grandfathered (true, false, or nil while undecided), first_seen,
+--- updated_at }. The tracker keeps them in memory and writes each one whole,
+--- what changed since its last pass in one batch, so the store only keeps
+--- and hands back. Here only until the resource stops.
+---@param cid string
+---@return table|nil row
+function Memory.readPlaytime(cid)
+    local row = (db.playtime or {})[cid]
+    return row and Util.copy(row) or nil
+end
+
+---@param rows table[] each one whole
+function Memory.writePlaytime(rows)
+    db.playtime = db.playtime or {}
+    for i = 1, #rows do db.playtime[rows[i].cid] = Util.copy(rows[i]) end
+    return true
+end
+
+--- When the tracker first started on this store, and the highest number in
+--- qbx_core's players table then, nil where that table could not be read:
+--- { since, players_id }, or nil before its first start.
+---@return table|nil
+function Memory.readPlaytimeInstall()
+    if not db.playtimeSince then return nil end
+    return { since = db.playtimeSince, players_id = db.playtimePlayersId }
+end
+
+---@param since integer os.time() of the tracker's first start
+---@param playersId integer|nil
+function Memory.writePlaytimeInstall(since, playersId)
+    db.playtimeSince, db.playtimePlayersId = since, playersId
     return true
 end
 

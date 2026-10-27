@@ -17,7 +17,7 @@ local Log = CrimsonBoot.requireShared('log')
 local Admin = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death, Photo
-local Informant, Kidnap, Mugshot, Photos, Timing, Review, Settings
+local Informant, Kidnap, Mugshot, Photos, Timing, Review, Settings, Playtime
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -52,6 +52,8 @@ function Admin.init(deps)
     if Review and Review.useResolver then Review.useResolver(Admin.knownCitizenId) end
     -- What staff changed from the admin panel, which the diagnosis lists.
     Settings = deps.settings
+    -- The built-in playtime tracker, which the diagnosis reports.
+    Playtime = deps.playtime
 end
 
 --- How many of the slowest maintenance jobs the diagnosis lists.
@@ -1933,6 +1935,76 @@ end
 ---@param opts table|nil { panel = true }: worded for the admin panel, which
 --- has no commands in it, so the report names its sections and buttons
 ---@return string[] lines
+--- A moment as the diagnosis prints it.
+local function utcText(at)
+    return os.date('!%Y-%m-%d %H:%M UTC', math.floor(tonumber(at) or 0))
+end
+
+--- Hours to one decimal, a whole number without one.
+local function hoursText(hours)
+    local tenths = math.floor((tonumber(hours) or 0) * 10 + 0.5)
+    if tenths % 10 == 0 then return ('%d h'):format(tenths // 10) end
+    return ('%.1f h'):format(tenths / 10)
+end
+
+--- The new-player rule's hours, for the diagnosis: what answers them, the
+--- built-in tracker's state (server/playtime.lua), and for the player named
+--- what it counted and whether they are from before it.
+---@param say function
+---@param actor table|nil
+local function sayPlaytime(say, actor)
+    local floor = tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0
+    local provider = Config.Immunity.PlaytimeProvider
+    local from = 'QBox metadata where a character has a playtime figure, else the built-in tracker'
+    if provider and provider.resource then
+        from = ('%s\'s %s export (%s), else QBox metadata, else the built-in tracker')
+            :format(provider.resource, tostring(provider.export), GetResourceState(provider.resource))
+    end
+    say(('playtime: a target needs %s hour(s) played; read from %s'):format(tostring(floor), from))
+    if Playtime then
+        local state = Playtime.state()
+        if not state.since then
+            say('  tracker: not started yet. Its first pass, within a minute of the start, records '
+                .. 'which characters are from before it; until then the rule is skipped for anybody '
+                .. 'it has not decided.')
+        elseif state.grace then
+            local days = tonumber(Config.Immunity.GrandfatherDays) or 0
+            say(('  tracker: counting since %s. qbx_core\'s players table could not be read then, so '
+                .. 'characters first seen before %s (Config.Immunity.GrandfatherDays) are '
+                .. 'grandfathered, a brand-new one among them.')
+                :format(utcText(state.since), utcText(state.since + days * 86400)))
+        else
+            say(('  tracker: counting since %s; characters numbered up to %d in qbx_core\'s players '
+                .. 'table are from before it and grandfathered.')
+                :format(utcText(state.since), state.playersId))
+        end
+        say(('  %d character(s) counted now, %d row(s) waiting to be written')
+            :format(state.counting, state.unwritten))
+    end
+    if not actor then return end
+
+    local hours, answered, grandfathered = Identity.playtimeHours(actor)
+    local view = Playtime and Playtime.view(actor.cid) or nil
+    if view and view.unread then
+        say('  this player: their counted time could not be read from the store')
+    elseif view then
+        local decided = view.grandfathered == true and 'yes, from before the tracker'
+            or view.grandfathered == false and 'no' or 'not decided yet'
+        say(('  this player: %s counted by the tracker; grandfathered: %s')
+            :format(hoursText(view.hours), decided))
+    end
+    if hours == nil then
+        say('  -> nothing answers for them yet, so the playtime rule is skipped for them')
+    elseif answered == 'tracker' and grandfathered then
+        say('  -> fair game by playtime: grandfathered')
+    else
+        local source = answered == 'provider' and 'the export' or answered == 'metadata'
+            and 'QBox metadata' or 'the tracker'
+        say(('  -> %s, from %s: %s'):format(hoursText(hours), source, hours < floor
+            and 'protected as too new to be a target' or 'fair game by playtime'))
+    end
+end
+
 function Admin.diagnose(source, subjectId, later, opts)
     local panel = type(opts) == 'table' and opts.panel == true
     local out = {}
@@ -2245,6 +2317,9 @@ function Admin.diagnose(source, subjectId, later, opts)
         pcall(Audit.staff, 'admin_diagnose', callerCid(tonumber(source) or 0), nil,
             { subject = actor and actor.cid or nil, named = actor == nil and true or nil })
     end
+
+    -- Playtime --------------------------------------------------------------
+    sayPlaytime(say, actor)
 
     -- Targeting -----------------------------------------------------------
     say(('browse all: %s   nearby: %s   min query: %s'):format(
@@ -2937,8 +3012,9 @@ function Admin.refreshTimers(src)
             .. 'session window(s) cleared.')
             :format(counts.informant, counts.rearm, counts.mugshots, counts.respawn,
                     counts.sessions),
-        ('The one wait left is total playtime (%s hours), which is read from your '
-            .. 'framework and is not this resource\'s to move.')
+        ('The one wait left is total playtime (%s hours), which this refresh leaves alone. '
+            .. 'Where the built-in tracker answers for a character, their counted hours can be '
+            .. 'set under Players in the admin panel.')
             :format(tostring(Config.Immunity.MinTargetPlaytimeHours)),
         'Purchase and slot COUNTS are untouched, and no countdown was advanced.',
     }

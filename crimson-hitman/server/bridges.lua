@@ -99,6 +99,8 @@ function Bridges.onPlayerDropped(modules, cid)
     end
 
     modules.identity.endSession(cid)
+    -- Their time in the city counted up to now (Playtime.leave).
+    if modules.playtime then modules.playtime.leave(cid) end
     modules.ratelimit.clear(cid)
     modules.death.clearPlayer(cid)
     modules.photo.clearPlayer(cid)
@@ -359,6 +361,10 @@ function Bridges.install(modules)
             -- client can fire, and restarting the clock on it made the
             -- sender "just arrived" — immune to every claim — on demand.
             modules.identity.confirmSession(actor.cid, untrusted)
+            -- Their time in the city counted from now. Starting a count
+            -- for a character already counted changes nothing, so the net
+            -- event fired again buys nothing either (Playtime.arrive).
+            if modules.playtime then modules.playtime.arrive(actor.cid) end
         end
         return actor
     end

@@ -1515,3 +1515,173 @@ describe('the anonymity fee a page showed', function()
         truthy(reply and reply.ok, tostring(reply and reply.err))
     end)
 end)
+
+--- The built-in playtime tracker (server/playtime.lua), the new-player
+--- rule's answer on a server whose framework keeps no playtime: qbx_core
+--- 1.24 keeps none in its metadata, so the floor did nothing at all there.
+describe('the built-in playtime tracker', function()
+    local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+
+    --- qbx_core's players table as the tracker reads it, through oxmysql:
+    --- each character's number, which only grows.
+    local function qbxPlayers(numbers)
+        Exec.install(Natives)
+        Natives.resourceStates.oxmysql = 'started'
+        if numbers then
+            Exec.run('CREATE TABLE IF NOT EXISTS players (citizenid VARCHAR(50) PRIMARY KEY, id INT NOT NULL)')
+            for cid, id in pairs(numbers) do
+                Exec.run('INSERT INTO players (citizenid, id) VALUES (?, ?)', { cid, id })
+            end
+        end
+    end
+
+    --- The usual three, on a server whose metadata carries no playtime, with
+    --- the tracker's first pass run: everybody here numbered at or under
+    --- `top` in qbx_core's table was here before it.
+    local function tracked(numbers)
+        local s = newStack()
+        local f = fixture(s)
+        for src = 1, 3 do Env.players[src].PlayerData.metadata.playtime = nil end
+        qbxPlayers(numbers)
+        s.playtime.pass()
+        return s, f
+    end
+
+    --- A character made after the tracker first started.
+    local function newcomer(s, number)
+        Env.addPlayer({ source = 4, citizenid = 'NEWBIE01', license = 'license:ddd',
+            cash = 100, bank = 100, firstname = 'Nell', lastname = 'Newer' })
+        Env.players[4].PlayerData.metadata.playtime = nil
+        if number then Exec.run('INSERT INTO players (citizenid, id) VALUES (?, ?)', { 'NEWBIE01', number }) end
+        return s.identity.resolve(4)
+    end
+
+    local function place(s, f, target)
+        return s.contracts.create(f.creator, { targetCid = target, reason = 'x', reward = baseReward() })
+    end
+
+    it('counts each character\'s time on every pass, and refuses a new one under the floor until it is reached', function()
+        local s, f = tracked({ CREATOR1 = 1, TARGET01 = 2, HITMAN01 = 3 })
+        newcomer(s, 4)
+        Env.advance(60)
+        s.playtime.pass()
+        local view = s.playtime.view('NEWBIE01')
+        eq(view.grandfathered, false, 'numbered after the first start: new')
+        eq(view.hours, 0, 'first seen at this pass, counted from it')
+
+        local contract, err = place(s, f, 'NEWBIE01')
+        falsy(contract, 'a character with no time played is not fair game')
+        eq(err, CH.ERR.TARGET_TOO_NEW, 'with the refusal the floor has always given')
+
+        -- Four passes an hour apart, and half an hour more: counted on each.
+        for _ = 1, 4 do
+            Env.advance(3600)
+            s.playtime.pass()
+        end
+        eq(s.storage.readPlaytime('NEWBIE01').played_seconds, 4 * 3600, 'written on every pass')
+        eq(select(2, place(s, f, 'NEWBIE01')), CH.ERR.TARGET_TOO_NEW, 'four hours is under five')
+
+        Env.advance(1800)
+        s.playtime.pass()
+        Env.advance(1799)
+        eq(s.playtime.view('NEWBIE01').hours, 5, 'the stretch since the last pass is read too')
+        falsy(place(s, f, 'NEWBIE01'), 'one second short of five hours')
+        Env.advance(2)
+        truthy(place(s, f, 'NEWBIE01'), 'and fair game once the count reaches the floor')
+    end)
+
+    it('counts a pass that comes late, and a drop between passes, each second once', function()
+        local s = tracked({ CREATOR1 = 1, TARGET01 = 2, HITMAN01 = 3 })
+        newcomer(s, 4)
+        Env.advance(20)
+        s.playtime.arrive('NEWBIE01')
+        s.playtime.arrive('NEWBIE01')
+        Env.advance(40)
+        s.playtime.pass()
+        eq(s.storage.readPlaytime('NEWBIE01').played_seconds, 40, 'from their login, not from the next pass')
+        Env.advance(45)
+        eq(s.playtime.pass(), 0, 'no second pass inside the minute')
+        Env.advance(20)
+        s.playtime.leave('NEWBIE01')
+        s.playtime.leave('NEWBIE01')
+        Env.removePlayer(4)
+        Env.advance(600)
+        s.playtime.pass()
+        eq(s.storage.readPlaytime('NEWBIE01').played_seconds, 105, 'up to the drop, once, and nothing after it')
+    end)
+
+    it('grandfathers every character numbered before its first start, and nobody after', function()
+        local s, f = tracked({ CREATOR1 = 1, TARGET01 = 2, HITMAN01 = 3 })
+        eq(s.playtime.view('TARGET01').grandfathered, true)
+        eq(s.playtime.view('TARGET01').hours, 0, 'nothing counted for them yet')
+        truthy(place(s, f, 'TARGET01'), 'a player from before is not suddenly protected')
+        eq(s.storage.readPlaytimeInstall().players_id, 3, 'the highest number, recorded once')
+
+        Exec.run('INSERT INTO players (citizenid, id) VALUES (?, ?)', { 'LATER001', 9 })
+        newcomer(s, 7)
+        Env.advance(60)
+        s.playtime.pass()
+        eq(s.playtime.view('NEWBIE01').grandfathered, false, 'numbered after it')
+        eq(select(2, place(s, f, 'NEWBIE01')), CH.ERR.TARGET_TOO_NEW)
+        eq(s.storage.readPlaytimeInstall().players_id, 3, 'and never recorded again')
+    end)
+
+    it('takes a character qbx_core has not saved yet for a new one', function()
+        local s, f = tracked({ CREATOR1 = 1, TARGET01 = 2, HITMAN01 = 3 })
+        newcomer(s, nil)
+        Env.advance(60)
+        s.playtime.pass()
+        eq(s.playtime.view('NEWBIE01').grandfathered, false)
+        eq(select(2, place(s, f, 'NEWBIE01')), CH.ERR.TARGET_TOO_NEW)
+    end)
+
+    it('grandfathers by the days after its first start where qbx_core\'s table cannot be read', function()
+        local s, f = tracked(nil)
+        eq(s.storage.readPlaytimeInstall().players_id, nil, 'no number to go by')
+        eq(s.playtime.view('TARGET01').grandfathered, true, 'seen in the first days')
+        truthy(place(s, f, 'TARGET01'))
+        local said = table.concat(require('crimson-hitman.shared.log').view().problems, ' | ')
+        truthy(said:find('a brand-new one among them', 1, true), 'said, as a setting to look at: ' .. said)
+        truthy(s.playtime.state().grace, 'and the diagnosis can say so')
+
+        Env.advance(Config.Immunity.GrandfatherDays * 86400 + 60)
+        newcomer(s, nil)
+        s.playtime.pass()
+        eq(s.playtime.view('NEWBIE01').grandfathered, false, 'first seen after them')
+        eq(select(2, place(s, f, 'NEWBIE01')), CH.ERR.TARGET_TOO_NEW)
+    end)
+
+    it('has no answer, and skips the rule, until it can decide', function()
+        local s, f = tracked({ CREATOR1 = 1, TARGET01 = 2, HITMAN01 = 3 })
+        newcomer(s, 4)
+        local contract, err = place(s, f, 'NEWBIE01')
+        truthy(contract, 'not decided before the next pass: unknown, not too new: ' .. tostring(err))
+        eq(select(2, s.identity.playtimeHours(s.identity.resolve(4))), nil, 'nothing answered')
+    end)
+
+    it('lets a configured export win over its own count', function()
+        local s, f = tracked({ CREATOR1 = 1, TARGET01 = 2, HITMAN01 = 3 })
+        newcomer(s, 4)
+        Env.advance(60)
+        s.playtime.pass()
+        eq(select(2, place(s, f, 'NEWBIE01')), CH.ERR.TARGET_TOO_NEW, 'the count says new')
+
+        rawset(exports, 'my_playtime', { GetMinutes = function(_, cid)
+            return cid == 'NEWBIE01' and 600 or 60
+        end })
+        local ok, failure = pcall(withConfig, {
+            { Config.Immunity, 'PlaytimeProvider', { resource = 'my_playtime', export = 'GetMinutes' } },
+            { Natives.resourceStates, 'my_playtime', 'started' },
+        }, function()
+            local hours, from = s.identity.playtimeHours(s.identity.resolve(4))
+            eq(hours, 10)
+            eq(from, 'provider')
+            truthy(place(s, f, 'NEWBIE01'), 'ten hours by the export')
+            local contract, err = place(s, f, 'TARGET01')
+            falsy(contract, 'grandfathered by the count, one hour by the export: the export wins')
+            eq(err, CH.ERR.TARGET_TOO_NEW)
+        end)
+        rawset(exports, 'my_playtime', nil)
+        if not ok then error(failure, 0) end
+    end)
+end)

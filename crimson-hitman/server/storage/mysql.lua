@@ -614,6 +614,20 @@ local SCHEMA = {
         cid VARCHAR(32) PRIMARY KEY,
         set_at INT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- How long each character has been in the city, as the built-in
+    -- playtime tracker counts it (server/playtime.lua), by citizen id, in
+    -- seconds. `grandfathered` is whether they existed before the tracker
+    -- first started, NULL until that is decided. Written whole, the rows
+    -- that changed since the last pass in one transaction a minute. Created
+    -- on an existing database by the CREATE TABLE IF NOT EXISTS at the next
+    -- start, like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_playtime (
+        cid VARCHAR(32) PRIMARY KEY,
+        played_seconds INT NOT NULL DEFAULT 0,
+        grandfathered TINYINT(1),
+        first_seen INT NOT NULL,
+        updated_at INT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -809,8 +823,9 @@ end
 --- crimson_meta) was moved to InnoDB, rebuilt in utf8mb4 and given columns
 --- before the start refused, on "Multiple primary key", as a missing grant.
 --- Every table here has had the same key column since it was first made
---- (id; cid for crimson_stats and crimson_view_alerts; setting_key;
---- meta_key), so a table without it as its key is somebody else's.
+--- (id; cid for crimson_stats, crimson_view_alerts and crimson_playtime;
+--- setting_key; meta_key), so a table without it as its key is somebody
+--- else's.
 ---@param engines table<string, string> tablesPresent()
 ---@param cache table columnsOf's
 ---@return table[] { table, key }
@@ -2919,6 +2934,121 @@ function MySQLStore.setViewAlerts(cid, on, at)
         db.query('DELETE FROM crimson_view_alerts WHERE cid = ?', { cid })
     end
     return true
+end
+
+--------------------------------------------------------------------------
+-- Playtime
+--------------------------------------------------------------------------
+
+--- See the memory backend. grandfathered is a TINYINT(1), which oxmysql
+--- hands back as true or false and a driver without its typeCast as 0 or
+--- 1; NULL, not decided yet, stays nil.
+function MySQLStore.readPlaytime(cid)
+    local row = (db.query('SELECT * FROM crimson_playtime WHERE cid = ?', { cid }) or {})[1]
+    if not row then return nil end
+    row.played_seconds = tonumber(row.played_seconds) or 0
+    if row.grandfathered ~= nil then row.grandfathered = flag(row.grandfathered) end
+    row.first_seen, row.updated_at = tonumber(row.first_seen), tonumber(row.updated_at)
+    return row
+end
+
+local PLAYTIME_UPSERT = [[
+    INSERT INTO crimson_playtime (cid, played_seconds, grandfathered, first_seen, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE played_seconds = VALUES(played_seconds),
+        grandfathered = VALUES(grandfathered), updated_at = VALUES(updated_at)
+]]
+
+--- The rows as one transaction: one statement a row, one round trip a pass.
+local function playtimeBatch(rows)
+    local queries = {}
+    for i = 1, #rows do
+        local row = rows[i]
+        local grandfathered = nil
+        if row.grandfathered ~= nil then grandfathered = row.grandfathered and 1 or 0 end
+        queries[i] = { query = PLAYTIME_UPSERT, values = { row.cid, row.played_seconds,
+            grandfathered, row.first_seen, row.updated_at } }
+    end
+    return queries
+end
+
+--- Every figure written is the whole count, never an amount to add: a
+--- batch tried again after one that went unanswered counts nothing twice.
+function MySQLStore.writePlaytime(rows)
+    if #rows == 0 then return true end
+    if db.transaction(playtimeBatch(rows)) == false then
+        error('crimson-hitman: the playtime batch was not written (the transaction answered false)', 0)
+    end
+    return true
+end
+
+--- At a stop, handed over without waiting, as the alerts are
+--- (writeAlertNoWait): waiting there yields the stop handler for good.
+function MySQLStore.writePlaytimeNoWait(rows)
+    if #rows == 0 then return true end
+    MySQL.transaction(playtimeBatch(rows))
+    return true
+end
+
+--- Two rows of crimson_meta: when the tracker first started, and the
+--- highest number in qbx_core's players table then, the second left out
+--- where that table could not be read. Written together, so a start never
+--- finds one without the other.
+function MySQLStore.readPlaytimeInstall()
+    local rows = db.query([[
+        SELECT meta_key, meta_value FROM crimson_meta
+        WHERE meta_key IN ('playtime_since', 'playtime_players_id')
+    ]]) or {}
+    local out = {}
+    for i = 1, #rows do
+        if rows[i].meta_key == 'playtime_since' then out.since = tonumber(rows[i].meta_value) end
+        if rows[i].meta_key == 'playtime_players_id' then out.players_id = tonumber(rows[i].meta_value) end
+    end
+    return out.since and out or nil
+end
+
+local META_UPSERT = [[
+    INSERT INTO crimson_meta (meta_key, meta_value) VALUES (?, ?)
+    ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+]]
+
+function MySQLStore.writePlaytimeInstall(since, playersId)
+    local queries = { { query = META_UPSERT, values = { 'playtime_since', since } } }
+    if playersId then
+        queries[2] = { query = META_UPSERT, values = { 'playtime_players_id', playersId } }
+    end
+    if db.transaction(queries) == false then
+        error('crimson-hitman: when the playtime tracker started was not written', 0)
+    end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- qbx_core's players table, for the playtime tracker
+--------------------------------------------------------------------------
+--
+-- qbx_core (qbx_core.sql, 1.24) numbers every character it saves with
+-- players.id, an AUTO_INCREMENT that only grows, and keeps no creation date
+-- (last_updated changes on every save). So a character whose number is at
+-- or under the highest one there was when the tracker first started existed
+-- before it. Read in any storage mode, json and memory too: qbx_core always
+-- has oxmysql. Only these two statements, both reads, and never a write to
+-- a table this resource does not own.
+
+--- The highest number qbx_core's players table holds; 0 when it holds none.
+---@return integer
+function MySQLStore.playersTopId()
+    local row = (db.query('SELECT MAX(id) AS highest FROM players') or {})[1]
+    return row and math.tointeger(tonumber(row.highest) or 0) or 0
+end
+
+--- One character's number there, or nil where it has no row for them: a
+--- character qbx_core has not saved yet, which is a new one.
+---@param cid string
+---@return integer|nil
+function MySQLStore.playerNumber(cid)
+    local row = (db.query('SELECT id FROM players WHERE citizenid = ?', { cid }) or {})[1]
+    return row and math.tointeger(tonumber(row.id) or 0) or nil
 end
 
 function MySQLStore.heartbeat(at)

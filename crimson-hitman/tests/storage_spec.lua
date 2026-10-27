@@ -2764,6 +2764,61 @@ describe('the whitelisted-job view\'s Notify me, in every backend', function()
     end)
 end)
 
+--- The built-in playtime tracker's rows (server/playtime.lua): each written
+--- whole, read back as it was written, undecided kept apart from no, and
+--- when it first started kept once, with or without qbx_core's number.
+describe('playtime, in every backend', function()
+    it('keeps each character\'s counted time and when the tracker first started', function()
+        for _, b in ipairs(backends()) do
+            local m = b.store
+            eq(m.readPlaytime('TARGET01'), nil, b.name .. ': nothing counted yet')
+            eq(m.readPlaytimeInstall(), nil, b.name .. ': not started yet')
+            truthy(m.writePlaytime({
+                { cid = 'TARGET01', played_seconds = 3600, grandfathered = nil, first_seen = 1000, updated_at = 1060 },
+                { cid = 'HITMAN01', played_seconds = 60, grandfathered = true, first_seen = 1000, updated_at = 1060 },
+            }), b.name)
+            local row = m.readPlaytime('TARGET01')
+            eq(row.played_seconds, 3600, b.name)
+            eq(row.grandfathered, nil, b.name .. ': not decided is not no')
+            eq(row.first_seen, 1000, b.name)
+            eq(m.readPlaytime('HITMAN01').grandfathered, true, b.name)
+            truthy(m.writePlaytime({
+                { cid = 'TARGET01', played_seconds = 7200, grandfathered = false, first_seen = 1000, updated_at = 1120 },
+            }), b.name)
+            row = m.readPlaytime('TARGET01')
+            eq(row.played_seconds, 7200, b.name .. ': the whole figure, written over')
+            eq(row.grandfathered, false, b.name)
+            eq(m.readPlaytime('HITMAN01').played_seconds, 60, b.name .. ': the others left alone')
+
+            truthy(m.writePlaytimeInstall(1000, 42), b.name)
+            local since = m.readPlaytimeInstall()
+            eq(since.since, 1000, b.name)
+            eq(since.players_id, 42, b.name)
+        end
+    end)
+
+    it('keeps them across a reopen on json and mysql, the first start without a number too', function()
+        local stores = backends()
+        for _, b in ipairs(stores) do
+            if b.name ~= 'memory' then
+                b.store.writePlaytime({ { cid = 'TARGET01', played_seconds = 90, first_seen = 5, updated_at = 6 } })
+                b.store.writePlaytimeInstall(5, nil)
+                b.store.flush()
+            end
+        end
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        for _, path in ipairs({ 'json', 'mysql' }) do
+            local m = require('crimson-hitman.server.storage.' .. path)
+            m.open()
+            eq(m.readPlaytime('TARGET01').played_seconds, 90, path .. ': lost to the reopen')
+            eq(m.readPlaytimeInstall().since, 5, path)
+            eq(m.readPlaytimeInstall().players_id, nil, path .. ': no number where there was none')
+        end
+        truthy(Natives.files['data/playtime.json'], 'json: a file of its own, not records.json')
+    end)
+end)
+
 --- The SQL an owner can import by hand is the SQL mysql mode runs.
 ---
 --- install/sql/crimson_hitman.sql is for a database user that may not
@@ -2803,7 +2858,7 @@ describe('the install SQL', function()
         local shipped = statements(handle:read('a'))
         handle:close()
 
-        eq(#ran, 17, 'the seventeen crimson_* tables')
+        eq(#ran, 18, 'the eighteen crimson_* tables')
         eq(#shipped, #ran, 'one statement for every table')
         for i = 1, #ran do
             eq(shipped[i], ran[i], 'statement ' .. i .. ' as mysql mode runs it')
@@ -2937,6 +2992,18 @@ describe('every mysql statement is executable', function()
             function() m.setViewAlerts('OFFICER1', true, 1) end,
             function() m.readViewAlerts('OFFICER1') end,
             function() m.setViewAlerts('OFFICER1', false, 2) end,
+            function() m.writePlaytime({ { cid = 'TARGET01', played_seconds = 60, first_seen = 1, updated_at = 2 } }) end,
+            function() m.writePlaytime({ { cid = 'TARGET01', played_seconds = 120, grandfathered = true, first_seen = 1, updated_at = 3 } }) end,
+            function() m.writePlaytimeNoWait({ { cid = 'TARGET01', played_seconds = 180, grandfathered = false, first_seen = 1, updated_at = 4 } }) end,
+            function() m.readPlaytime('TARGET01') end,
+            function() m.writePlaytimeInstall(1, 3) end,
+            function() m.writePlaytimeInstall(1, nil) end,
+            function() m.readPlaytimeInstall() end,
+            function()
+                Exec.run('CREATE TABLE IF NOT EXISTS players (citizenid VARCHAR(50) PRIMARY KEY, id INT NOT NULL)')
+                Exec.run('INSERT INTO players (citizenid, id) VALUES (?, ?)', { 'TARGET01', 2 })
+                assert(m.playersTopId() == 2 and m.playerNumber('TARGET01') == 2 and m.playerNumber('NOBODY01') == nil)
+            end,
             function() m.writeSetting('Bailout.Enabled', false, 'STAFF01', 1) end,
             function() m.writeSetting('Advisory.TriggerJobNames', { 'fib', 'sast' }, 'STAFF01', 2) end,
             function() m.readSettings() end,

@@ -580,8 +580,10 @@ function Contracts.isImmune(targetActor, opts)
         end
     end
 
-    local hours = Identity.playtimeHours(targetActor)
-    if hours ~= nil and hours < Config.Immunity.MinTargetPlaytimeHours then
+    -- A character from before the built-in tracker first started counts as
+    -- having played enough, whatever it has counted for them since.
+    local hours, _, grandfathered = Identity.playtimeHours(targetActor)
+    if hours ~= nil and not grandfathered and hours < Config.Immunity.MinTargetPlaytimeHours then
         return true, CH.ERR.TARGET_TOO_NEW
     end
 

@@ -13,7 +13,7 @@ local Exec = require('crimson-hitman.tests.harness.mysql_exec')
 local READS = { 'access', 'overview', 'contracts', 'contract', 'reviews', 'logs', 'player',
                 'settings', 'diag' }
 local WRITES = { 'void', 'settle', 'resolve', 'setSetting', 'resetSetting', 'resetSettings',
-                 'refresh', 'flush' }
+                 'refresh', 'flush', 'setPlaytime' }
 local ALL = {}
 for _, op in ipairs(READS) do ALL[#ALL + 1] = op end
 for _, op in ipairs(WRITES) do ALL[#ALL + 1] = op end
@@ -1108,6 +1108,112 @@ describe('a player in the admin panel', function()
         eq(typed.data.player.cid, 'TARGET01', 'the server\'s form of what was typed')
         eq(typed.data.player.online, true)
         eq(#typed.data.contracts, 1)
+    end)
+end)
+
+--- A character's playtime in the panel: the hours the built-in tracker
+--- counted and whether they are from before it, shown in the lookup and the
+--- diagnosis, and set or reset from there by staff who may write.
+describe('a player\'s playtime in the admin panel', function()
+    --- The stack, on a server whose metadata keeps no playtime, with
+    --- qbx_core's players table numbering the three as from before the
+    --- tracker and a fourth character made after it.
+    local function tracked()
+        local s, f = stack()
+        Exec.install(Natives)
+        Natives.resourceStates.oxmysql = 'started'
+        Exec.run('CREATE TABLE IF NOT EXISTS players (citizenid VARCHAR(50) PRIMARY KEY, id INT NOT NULL)')
+        for i, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HITMAN01' }) do
+            Exec.run('INSERT INTO players (citizenid, id) VALUES (?, ?)', { cid, i })
+        end
+        s.playtime.pass()
+        Env.addPlayer({ source = 4, citizenid = 'NEWBIE01', license = 'license:ddd',
+            firstname = 'Nell', lastname = 'Newer' })
+        Exec.run('INSERT INTO players (citizenid, id) VALUES (?, ?)', { 'NEWBIE01', 9 })
+        for src = 1, 4 do Env.players[src].PlayerData.metadata.playtime = nil end
+        Env.advance(90)
+        s.playtime.pass()
+        return s, f
+    end
+
+    it('shows the hours counted and whether they are from before the count, to any reader', function()
+        local s = tracked()
+        local newer = ask(7, 'player', { subject = 4 }).data.playtime
+        eq(newer.hours, 0, 'first seen at the last pass')
+        eq(newer.grandfathered, false)
+        eq(newer.floor, 5)
+        eq(newer.from, 'tracker', 'what the rule reads for them')
+        eq(newer.counting, true)
+        local older = ask(7, 'player', { subject = 2 }).data.playtime
+        eq(older.hours, 0.0)
+        eq(older.grandfathered, true, 'numbered before the first start')
+        Env.players[2].PlayerData.metadata.playtime = 600
+        eq(ask(7, 'player', { subject = 2 }).data.playtime.from, 'metadata', 'said where the rule reads metadata')
+        truthy(s.storage.readPlaytime('NEWBIE01'))
+    end)
+
+    it('is set and reset by crimson.admin without the identity ACE, on the record, and the rule follows', function()
+        local s, f = tracked()
+        local refused = s.contracts.create(f.creator, { targetCid = 'NEWBIE01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } })
+        falsy(refused, 'new, and under the floor')
+
+        local set = ask(6, 'setPlaytime', { subject = 4, hours = 6 })
+        eq(set.ok, true, tostring(set.message))
+        eq(set.message, 'Nell Newer\'s counted playtime is now 6 h (it was 0 h).')
+        eq(set.data.playtime.hours, 6)
+        eq(s.storage.readPlaytime('NEWBIE01').played_seconds, 6 * 3600, 'written at once')
+        eq(ask(6, 'player', { subject = 4 }).data.playtime.hours, 6, 'and shown')
+        truthy(s.contracts.create(f.creator, { targetCid = 'NEWBIE01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } }), 'six hours is enough')
+
+        local reset = ask(6, 'setPlaytime', { subject = 'NEWBIE01', hours = 0 })
+        eq(reset.ok, true, tostring(reset.message))
+        eq(reset.message, 'Nell Newer\'s counted playtime is reset to 0 h (it was 6 h).',
+            'named as in the city, though looked up by citizen id')
+        eq(s.storage.readPlaytime('NEWBIE01').played_seconds, 0)
+
+        local rows = stored(s, 'admin_playtime_set')
+        eq(#rows, 2, 'each one on the record')
+        local seen = {}
+        for _, row in ipairs(rows) do
+            eq(row.actor_cid, 'ADMIN001', 'by whom')
+            eq(row.detail.subject, 'NEWBIE01', 'about whom')
+            seen[row.detail.hours] = row.detail
+        end
+        eq(seen[6].before, 0)
+        eq(seen[0].before, 6)
+        eq(seen[0].reset, true)
+
+        local grandfathered = ask(6, 'setPlaytime', { subject = 2, hours = 1 })
+        truthy(grandfathered.message:find('They are grandfathered', 1, true), grandfathered.message)
+    end)
+
+    it('needs crimson.admin itself, and takes only a number of hours for somebody who exists', function()
+        local s = tracked()
+        eq(ask(7, 'setPlaytime', { subject = 4, hours = 6 }).err, 'not_allowed', 'an extra ACE only reads')
+        eq(ask(3, 'setPlaytime', { subject = 4, hours = 6 }).err, 'not_allowed', 'a player does nothing')
+        for _, bad in ipairs({ -1, 'six', 100001, 0 / 0, {} }) do
+            eq(ask(6, 'setPlaytime', { subject = 4, hours = bad }).err, CH.ERR.INVALID_INPUT, tostring(bad))
+        end
+        eq(ask(6, 'setPlaytime', { subject = 99, hours = 1 }).err, CH.ERR.NOT_FOUND)
+        eq(ask(6, 'setPlaytime', { subject = 'NOBODY99', hours = 1 }).err, CH.ERR.NOT_FOUND,
+            'no row is made for a character nobody has')
+        eq(s.storage.readPlaytime('NOBODY99'), nil)
+        eq(s.storage.readPlaytime('NEWBIE01').played_seconds, 0, 'nothing refused was written')
+        eq(#stored(s, 'admin_playtime_set'), 0)
+    end)
+
+    it('is in the diagnosis, for the server and for the player named', function()
+        tracked()
+        local lines = table.concat(ask(6, 'diag', { subject = 4 }).data.lines, '\n')
+        truthy(lines:find('playtime: a target needs 5 hour(s) played', 1, true), lines)
+        truthy(lines:find('characters numbered up to 3 in qbx_core', 1, true), lines)
+        truthy(lines:find('this player: 0 h counted by the tracker; grandfathered: no', 1, true), lines)
+        truthy(lines:find('protected as too new to be a target', 1, true), lines)
+        local older = table.concat(ask(6, 'diag', { subject = 2 }).data.lines, '\n')
+        truthy(older:find('grandfathered: yes, from before the tracker', 1, true), older)
+        truthy(older:find('fair game by playtime: grandfathered', 1, true), older)
     end)
 end)
 

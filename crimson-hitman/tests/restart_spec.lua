@@ -185,6 +185,52 @@ describe('Notify me on the whitelisted-job view across a restart', function()
     end
 end)
 
+--- The built-in playtime tracker across a drop, a stop and a restart: every
+--- second a character spent in the city counted once, on the maintenance
+--- tick, at the drop and at the stop, and the time the resource was stopped
+--- not at all.
+describe('playtime across a drop, a stop and a restart', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': counts each stretch once, and none of the downtime', function()
+            if mode == 'json' then Exec.install(Natives) end
+            local main, s = boot(mode)
+            -- qbx_core's players table, empty at the first start: everybody
+            -- here after it is new, so nobody is grandfathered.
+            Natives.resourceStates.oxmysql = 'started'
+            Exec.run('CREATE TABLE IF NOT EXISTS players (citizenid VARCHAR(50) PRIMARY KEY, id INT NOT NULL)')
+            fixture(s)
+            main.tick()
+            Env.advance(60)
+            main.tick()
+            -- A login event again, as any client can fire it: changes nothing.
+            _G.source = 2
+            Env.events['QBCore:Server:OnPlayerLoaded']()
+            _G.source = nil
+            Env.advance(30)
+            _G.source = 3
+            Env.handlers['playerDropped']()
+            _G.source = nil
+            Env.removePlayer(3)
+            Env.advance(20)
+            Env.handlers['onResourceStop'](GetCurrentResourceName())
+            eq(s.storage.readPlaytime('HITMAN01').played_seconds, 90, mode .. ': up to the drop')
+            eq(s.storage.readPlaytime('TARGET01').played_seconds, 110, mode .. ': up to the stop')
+
+            -- Down for five minutes; the same disk, the players back.
+            Env.advance(300)
+            local main2, after = restart(mode, s)
+            main2.tick()
+            Env.advance(60)
+            main2.tick()
+            eq(after.storage.readPlaytime('TARGET01').played_seconds, 170,
+                mode .. ': counted again from the start, the downtime and nothing twice')
+            eq(after.storage.readPlaytime('HITMAN01').played_seconds, 90, mode .. ': still away')
+            eq(after.playtime.view('TARGET01').grandfathered, false, mode .. ': decided once, kept')
+            eq(after.storage.readPlaytimeInstall().players_id, 0, mode .. ': the first start\'s number')
+        end)
+    end
+end)
+
 --- W067: an agreed change the process died applying. Left open, the next
 --- Agree applied it a second time; it is closed as 'unknown' at the start,
 --- and both sides are told to look at the contract.

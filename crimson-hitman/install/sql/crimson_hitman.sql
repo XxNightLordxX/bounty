@@ -319,6 +319,19 @@ CREATE TABLE IF NOT EXISTS crimson_view_alerts (
     set_at INT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- How long each character has been in the city, as the built-in playtime
+-- tracker counts it, in seconds, and whether they existed before it first
+-- started (NULL until that is decided). When it first started, and the
+-- highest number in qbx_core's players table then, are two rows of
+-- crimson_meta (playtime_since, playtime_players_id).
+CREATE TABLE IF NOT EXISTS crimson_playtime (
+    cid VARCHAR(32) PRIMARY KEY,
+    played_seconds INT NOT NULL DEFAULT 0,
+    grandfathered TINYINT(1),
+    first_seen INT NOT NULL,
+    updated_at INT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

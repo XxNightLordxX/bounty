@@ -294,7 +294,7 @@
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
-    players: { data: null, whois: {} },
+    players: { data: null, whois: {}, subject: null, playtime: null },
     settings: { data: null, tab: 'features', answers: {}, photos: null },
     tools: { refresh: null, diag: null, flush: null }
   };
@@ -2052,12 +2052,51 @@
     var subject = trim(S.forms['pl.q']);
     if (!subject) { toast('Give a player id or a citizen id.', 'error'); return Promise.resolve(); }
     S.players.whois = {};
+    S.players.playtime = null;
     return ask('player', { subject: subject.slice(0, 64) }, 'player').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); S.players.data = { error: words(reply) }; }
       else S.players.data = reply.data || {};
+      // Set and Reset name the player as this lookup did, whatever is typed
+      // in the box afterwards.
+      S.players.subject = reply.ok ? subject.slice(0, 64) : null;
       if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
     });
+  }
+
+  /** The hours the server counted for them, whether they were on the server
+      before the count started, and Set or Reset. What the new-player rule
+      reads for them is said where it is not these hours. */
+  function playtimeCard(pt) {
+    if (!pt) return null;
+    var floor = Number(pt.floor) || 0;
+    var hours = Number(pt.hours) || 0;
+    var from = pt.grandfathered === true ? 'Yes' : pt.grandfathered === false ? 'No' : 'Not decided';
+    var about;
+    if (pt.unread) about = 'Their counted time could not be read from the store just now.';
+    else if (pt.grandfathered === true) about = 'They were on the server before the count started, so they count as '
+      + 'having played enough, whatever the hours say.';
+    else if (pt.grandfathered === false) about = hours < floor
+      ? 'Too new to be named as a target until the count reaches ' + num(floor) + ' h.'
+      : 'Enough to be named as a target.';
+    else if (!pt.counted) about = 'Nothing counted yet. Counting starts the next time they are in the city.';
+    else about = 'Whether they were on the server before the count started is decided within a minute of them '
+      + 'being in the city.';
+    var rule = pt.from === 'provider' ? 'The new-player rule reads your playtime export for them, not these hours.'
+      : pt.from === 'metadata' ? 'The new-player rule reads their QBox metadata for them, not these hours.' : null;
+    return card('Playtime', frag(
+      h('div.tiles.is-compact',
+        tile('Counted here', h('p.big', pt.unread ? '—' : num(hours) + ' h')),
+        tile('Needed to be a target', h('p.big', num(floor) + ' h')),
+        tile('From before the count', h('p.big.is-word', from))),
+      h('p.sub', about),
+      rule ? h('p.note', rule) : null,
+      h('div.toolbar',
+        field('pl.hours', { id: 'pl-hours', type: 'number', min: '0', max: '100000', step: '0.5',
+          placeholder: 'Hours', 'aria-label': 'Counted hours' }),
+        writeBtn('', 'pl-playtime-set', {}, 'Set hours', 'Click again to set', 'clock', true),
+        writeBtn('.is-ghost', 'pl-playtime-reset', {}, 'Reset to 0', 'Click again to reset', 'arrow-rotate-left', true)),
+      answerBox(S.players.playtime)), '', h('span.sub', pt.counting ? 'in the city: counting' : 'not counting'));
   }
 
   function playerBody() {
@@ -2085,6 +2124,7 @@
         tile('Standing', h('p.big.is-word', String(stats.standing || '—'))))
         : h('p.note', 'Their record is not shown: it counts contracts placed and taken anonymously too, '
           + 'which only the identity ACE may see.'),
+      playtimeCard(d.playtime),
       h('div.cols',
         card('Owed to them', owed.length ? h('div.table-wrap', h('table.grid',
           h('thead', h('tr', h('th', 'Line'), h('th', 'Contract'), h('th', 'Holds'), h('th', 'State'),
@@ -2815,6 +2855,34 @@
 
   ACTIONS['pl-lookup'] = function () { loadPlayer(); };
 
+  /** Set one character's counted hours, two clicks, naming them as the
+      lookup did. The card shows what the server answered. */
+  function setPlaytime(node, hours) {
+    if (!S.players.subject || !confirmed(node)) return;
+    write('setPlaytime', { subject: S.players.subject, hours: hours }, 'playtime', node).then(function (reply) {
+      if (!reply) return;
+      S.players.playtime = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok && reply.data && reply.data.playtime && S.players.data) {
+        S.players.data.playtime = reply.data.playtime;
+        delete S.forms['pl.hours'];
+      }
+      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+    });
+  }
+  ACTIONS['pl-playtime-set'] = function (node) {
+    var raw = trim(S.forms['pl.hours']);
+    var hours = Number(raw);
+    if (raw === '' || !isFinite(hours) || hours < 0 || hours > 100000) {
+      disarm();
+      S.players.playtime = { ok: false, text: 'Hours are a number from 0 to 100000.' };
+      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+      return;
+    }
+    setPlaytime(node, hours);
+  };
+  ACTIONS['pl-playtime-reset'] = function (node) { setPlaytime(node, 0); };
+
   ACTIONS['st-tab'] = function (node) {
     S.settings.tab = node.getAttribute('data-value') || 'features';
     disarm();
@@ -3038,6 +3106,8 @@
     S.logs.open = {};
     S.players.data = null;
     S.players.whois = {};
+    S.players.subject = null;
+    S.players.playtime = null;
     S.settings.data = null;
     S.settings.answers = {};
     S.settings.photos = null;

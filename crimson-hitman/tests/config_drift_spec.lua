@@ -1738,6 +1738,53 @@ describe('a playtime provider in the wrong shape', function()
     end)
 end)
 
+--- The playtime rule has an answer of its own now (server/playtime.lua),
+--- so the start no longer says the floor does nothing without a provider,
+--- and the tracker's grace (Immunity.GrandfatherDays) is held to 0 or more
+--- days, and filled in for a config from before it.
+describe('the playtime floor on the shipped config', function()
+    local function validate(grace)
+        newStack()
+        local main = require('server.main')
+        Config.Debug = true
+        Config.Immunity.GrandfatherDays = grace
+        Env.console = {}
+        local ok, err = pcall(main.validateConfig)
+        local after = Config.Immunity.GrandfatherDays
+        resetConfig()
+        return ok, err, table.concat(Env.console, ' | '), after
+    end
+
+    it('does not say the floor does nothing with no provider set', function()
+        local ok, err, told = validate(3)
+        truthy(ok, tostring(err))
+        falsy(told:find('no PlaytimeProvider is set', 1, true), told)
+        falsy(told:find('GrandfatherDays', 1, true), 'the shipped 3 is fine: ' .. told)
+    end)
+
+    it('reads a grace that is not 0 or more days as the shipped 3, and says so', function()
+        for _, bad in ipairs({ -1, 'three', 0 / 0 }) do
+            local ok, err, told, after = validate(bad)
+            truthy(ok, tostring(err))
+            truthy(told:find('Immunity.GrandfatherDays is', 1, true), told)
+            eq(after, 3, tostring(bad))
+        end
+        local _, _, told, after = validate(0)
+        eq(after, 0, '0 grandfathers nobody, and is kept')
+        falsy(told:find('GrandfatherDays', 1, true), told)
+    end)
+
+    it('fills it in for a config from before it', function()
+        newStack()
+        local main = require('server.main')
+        Config.Immunity.GrandfatherDays = nil
+        main.applyConfigDefaults(true)
+        local filled = Config.Immunity.GrandfatherDays
+        resetConfig()
+        eq(filled, 3)
+    end)
+end)
+
 --- Config.Limits.MinContractReward, added to a Limits section every
 --- operator already has.
 describe('the least a contract may be worth, on any config', function()

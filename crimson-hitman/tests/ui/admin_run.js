@@ -268,7 +268,8 @@ function player() {
     owed: [{ id: 'ct00000005:2', contract: 'ct00000005', source: 'cash', amount: 700, state: 'held',
              owes: 700, queued: true, parked: false }],
     pending: 1,
-    notices: { count: 2, titles: ['Contract closed', XSS] }
+    notices: { count: 2, titles: ['Contract closed', XSS] },
+    playtime: { hours: 1.5, grandfathered: false, counted: true, counting: true, floor: 5, from: 'tracker' }
   } };
 }
 
@@ -349,7 +350,12 @@ function standardServer(extra) {
       data: { keys: 2 } },
     refresh: { ok: true, message: 'Timers brought forward.', data: { lines: ['3 contract deadline(s) checked', 'cooldowns cleared'] } },
     diag: { ok: true, data: { lines: ['--- crimson-hitman diagnosis', 'storage: json', 'photo hosts: 0 -> add one'] } },
-    flush: { ok: true, message: 'Audit log flushed: 4 row(s) written.', data: { written: 4 } }
+    flush: { ok: true, message: 'Audit log flushed: 4 row(s) written.', data: { written: 4 } },
+    setPlaytime: function (data) {
+      return { ok: true, message: 'Dana Reyes\'s counted playtime is now ' + data.hours + ' h (it was 1.5 h).',
+        data: { playtime: { hours: data.hours, grandfathered: false, counted: true, counting: true, floor: 5,
+          from: 'tracker' } } };
+    }
   }, extra || {});
 }
 
@@ -1739,6 +1745,79 @@ async function main() {
       has(app.main(), '1 delivery pending', 'what may be shown still is');
     });
     clean(app, 'no record');
+  })();
+
+  /* ---- a player's playtime ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('shows the hours counted, what is needed and whether they are from before the count', function () {
+      const text = app.main();
+      has(text, 'Playtime');
+      has(text, '1.5 h');
+      has(text, 'Needed to be a target');
+      has(text, 'From before the count');
+      has(text, 'Too new to be named as a target until the count reaches 5 h.');
+      has(text, 'in the city: counting');
+    });
+    app.type(app.byId('pl-q'), 'SOMEONE2');
+    app.type(app.byId('pl-hours'), '6');
+    app.click(app.button('Set hours'));
+    await settled();
+    it('takes two clicks to set, and sends nothing on the first', function () {
+      eq(app.requests('setPlaytime').length, 0);
+    });
+    app.click(app.button('Set hours'));
+    await settled();
+    it('sends the hours for the player as they were looked up, not what the box says now', function () {
+      eq(app.last('setPlaytime').data, { subject: '12', hours: 6 });
+      has(app.main(), 'Dana Reyes\'s counted playtime is now 6 h (it was 1.5 h).');
+      has(app.main(), 'Enough to be named as a target.', 'the card shows what the server answered');
+    });
+    app.click(app.button('Reset to 0'));
+    app.click(app.button('Reset to 0'));
+    await settled();
+    it('resets to 0 with two clicks', function () {
+      eq(app.last('setPlaytime').data, { subject: '12', hours: 0 });
+    });
+    const before = app.requests('setPlaytime').length;
+    app.type(app.byId('pl-hours'), '-3');
+    app.click(app.button('Set hours'));
+    await settled();
+    it('refuses hours that are not 0 or more, saying so and sending nothing', function () {
+      eq(app.requests('setPlaytime').length, before);
+      has(app.main(), 'Hours are a number from 0 to 100000.');
+    });
+    clean(app, 'playtime');
+  })();
+
+  await (async function () {
+    const answer = player();
+    answer.data.playtime = { hours: 0, grandfathered: true, counted: true, counting: false, floor: 5,
+      from: 'metadata' };
+    const app = boot(standardServer({ player: answer }));
+    app.open(READER);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('says a character from before counts as having played enough, and where the rule reads elsewhere', function () {
+      has(app.main(), 'they count as having played enough, whatever the hours say');
+      has(app.main(), 'The new-player rule reads their QBox metadata for them, not these hours.');
+    });
+    it('read-only staff see Set and Reset disabled', function () {
+      eq(app.button('Set hours', app.byId('main')).disabled, true);
+      eq(app.button('Reset to 0', app.byId('main')).disabled, true);
+    });
+    clean(app, 'playtime, read only');
   })();
 
   /* ---- features, limits & settings ---- */

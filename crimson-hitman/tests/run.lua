@@ -280,6 +280,7 @@ function _G.newCopyingStack()
     stack.settings.init({ storage = copying, audit = stack.audit,
                           check = require('crimson-hitman.server.main').checkCandidate })
     stack.meeting.init({ storage = copying, notify = stack.notify, audit = stack.audit })
+    stack.playtime.init({ storage = copying, identity = stack.identity })
 
     stack.storage = copying
     return stack
@@ -337,6 +338,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.timing'] = nil
     package.loaded['crimson-hitman.server.alerts'] = nil
     package.loaded['crimson-hitman.server.meeting'] = nil
+    package.loaded['crimson-hitman.server.playtime'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -366,6 +368,7 @@ function _G.newStack()
     local timing     = require('crimson-hitman.server.timing')
     local alerts     = require('crimson-hitman.server.alerts')
     local meeting    = require('crimson-hitman.server.meeting')
+    local playtime   = require('crimson-hitman.server.playtime')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -410,6 +413,7 @@ function _G.newStack()
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify })
     meeting.init({ storage = storage, notify = notify, audit = audit })
+    playtime.init({ storage = storage, identity = identity })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was
@@ -432,6 +436,8 @@ function _G.newStack()
         alerts = alerts,
         -- The handover's meeting point.
         meeting = meeting,
+        -- The built-in playtime tracker.
+        playtime = playtime,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -445,7 +451,7 @@ function _G.newStack()
         ledger = ledger, death = death, photo = photo, bridges = bridges,
         mugshot = mugshot, progression = progression, app = app, admin = admin,
         photos = photos, review = review, settings = settings, panel = panel, timing = timing,
-        alerts = alerts, meeting = meeting,
+        alerts = alerts, meeting = meeting, playtime = playtime,
     }
 end
 
