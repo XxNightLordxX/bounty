@@ -1320,6 +1320,13 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
 }
 .notice.ok::before { color: var(--ink-dim); }
 .notice-slot .notice.ok { background: #221e1a; }
+/* On hold by staff (server/freeze.lua): brass, as a caution is, with a
+   lock. Words a player can only wait out, never a refusal of theirs. */
+.notice.hold {
+  border-color: var(--gold-line); background: rgba(207, 169, 98, 0.08); color: #ead3a4;
+  --icon: var(--svg-lock);
+}
+.notice.hold::before { color: var(--gold); }
 .card > .notice { margin-top: 0.8rem; }
 
 /* Nothing here, said quietly, under a faint seal. */

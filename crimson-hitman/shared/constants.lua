@@ -295,6 +295,12 @@ CH.ERR = {
     --- No meeting point is set on this contract now: cleared by the placer,
     --- or taken off when the last hitman left.
     NO_MEETING           = 'no_meeting',
+    --- Staff have put a party to this contract on hold from the admin panel
+    --- (server/freeze.lua): its clocks are stopped and nothing on it is
+    --- taken, paid, refunded or moved until they release it. Also a frozen
+    --- player placing or taking a contract, and a contract placed on one.
+    --- Never says which party: to the player it is only "on hold by staff".
+    CONTRACT_FROZEN      = 'contract_frozen',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

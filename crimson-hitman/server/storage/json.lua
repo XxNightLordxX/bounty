@@ -26,6 +26,7 @@ local EMPTY = {
     photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
     locationTips = {},
     placerInformants = {},
+    freezes = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -54,7 +55,7 @@ local indexDirty = false
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
-                  'alerts', 'viewAlerts', 'locationTips', 'placerInformants' }
+                  'alerts', 'viewAlerts', 'locationTips', 'placerInformants', 'freezes' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -2243,6 +2244,37 @@ function JsonStore.setViewAlerts(cid, on, at)
     else
         db.viewAlerts[cid] = nil
     end
+    touch(true)
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Staff freezes
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, and written at once, as a
+--- setting staff change is: a freeze is staff's word that nothing on the
+--- player's contracts moves, and a crash must not take it back.
+function JsonStore.readFreezes()
+    local out = {}
+    for _, row in pairs(db.freezes or {}) do
+        out[#out + 1] = { cid = row.cid, name = row.name, reason = row.reason,
+                          by_cid = row.by_cid, frozen_at = tonumber(row.frozen_at) }
+    end
+    table.sort(out, function(a, b) return tostring(a.cid) < tostring(b.cid) end)
+    return out
+end
+
+function JsonStore.writeFreeze(row)
+    db.freezes = db.freezes or {}
+    db.freezes[row.cid] = { cid = row.cid, name = row.name, reason = row.reason,
+                            by_cid = row.by_cid, frozen_at = row.frozen_at }
+    touch(true)
+    return true
+end
+
+function JsonStore.deleteFreeze(cid)
+    if db.freezes then db.freezes[cid] = nil end
     touch(true)
     return true
 end

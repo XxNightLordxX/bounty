@@ -298,6 +298,8 @@ targetBuy = function(actor, contractId, shown, pick)
     -- The target's, and only the target's: the placer has an informant of
     -- their own (Informant.placerBuy).
     if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
+    -- On hold by staff (server/freeze.lua): nothing is charged.
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if shielded(contract, actor) then return false, CH.ERR.INFORMANT_PROTECTED end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
 
@@ -538,6 +540,8 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
     -- on it or its target.
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if Identity.isBarred and Identity.isBarred(actor) then return false, CH.ERR.BLACKLISTED_JOB end
+    -- On hold by staff (server/freeze.lua): nothing is charged.
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
 
     local row = operativeFor(contractId, pick)

@@ -9,7 +9,7 @@ local Log = CrimsonBoot.requireShared('log')
 
 local Contracts = {}
 
-local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger
+local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger, Freeze
 
 --- What settles a take, or a contract row, the store would not confirm
 --- (server/review.lua's deciders); defined with the code they finish.
@@ -29,6 +29,9 @@ function Contracts.init(deps)
     -- Where money no rule here can settle is left for staff
     -- (server/review.lua).
     Review      = deps.review
+    -- The players staff have put on hold (server/freeze.lua): nothing on a
+    -- contract one of them is party to moves until they are released.
+    Freeze      = deps.freeze
     -- And the two kinds the server settles itself once the store answers,
     -- from the whole record the item carries (S12).
     if Review and Review.DECIDERS then
@@ -38,6 +41,24 @@ function Contracts.init(deps)
 end
 
 local LIVE_STATES = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true, [CH.STATE.COMPLETING] = true }
+
+--- Whether staff have put this contract on hold: a party to it frozen from
+--- the admin panel (server/freeze.lua). Every path that would accept,
+--- complete, pay, refund, amend or end it asks, after it has checked who is
+--- asking, so a stranger is never told a contract is on hold.
+---@param contract table|nil
+---@param hitmen table[]|nil
+---@return boolean
+function Contracts.heldByStaff(contract, hitmen)
+    return Freeze ~= nil and Freeze.holds(contract, hitmen)
+end
+
+--- Whether staff have frozen this player.
+---@param cid string|nil
+---@return boolean
+function Contracts.frozenPlayer(cid)
+    return Freeze ~= nil and Freeze.of(cid) ~= nil
+end
 
 --- Whether a hitman row is on the contract: holding it, or part-way
 --- through an acceptance that has not been confirmed yet. 'joining' is a
@@ -957,6 +978,12 @@ local function createUnlocked(actor, req, targetActor)
     local termsErr, terms = shownTermsRefusal(req, rule, creatorFee, feeAccount)
     if termsErr then return nil, termsErr, terms end
 
+    -- Staff have put the placer, or the person named, on hold. Before
+    -- anything is charged.
+    if Contracts.frozenPlayer(actor.cid) or Contracts.frozenPlayer(req.targetCid) then
+        return nil, CH.ERR.CONTRACT_FROZEN
+    end
+
     local ok, err, refusal = Contracts.canCreate(actor, targetActor)
     if not ok then return nil, err, refusal end
 
@@ -1303,6 +1330,11 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         -- here that really is momentary.
         if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
         return false, CH.ERR.BAD_STATE
+    end
+
+    -- On hold by staff, or the hitman is: nothing is taken.
+    if Contracts.frozenPlayer(actor.cid) or Contracts.heldByStaff(contract) then
+        return false, CH.ERR.CONTRACT_FROZEN
     end
 
     -- Past its deadline with the clock running, or past its lifetime, it is
@@ -2104,6 +2136,8 @@ local function walkAway(actor, contractId)
 
     local hitman = Storage.readHitman(contractId, actor.cid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
+    -- On hold by staff: their stake stays where it is.
+    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
 
     -- Only an active row of a contract still open (Storage.abandonHitman).
     -- Both reads above are awaits on mysql, and a claim, a void, an expiry
@@ -2276,6 +2310,8 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     if not contract or contract.state ~= CH.STATE.ACCEPTED then return false end
     local current = Storage.readHitman(contractId, hitman.hitman_cid)
     if not current or current.state ~= 'active' then return false end
+    -- On hold by staff: nobody is released and no stake moves.
+    if Contracts.heldByStaff(contract) then return false end
 
     -- Read before anything moves, so the notices can name the figure.
     local stake = heldStakes(contractId)[current.hitman_cid] or 0
@@ -2714,6 +2750,9 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     local hitman = Storage.readHitman(contractId, hitmanCid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
 
+    -- On hold by staff: no completion and no payout.
+    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+
     -- The same hitman may not collect two slots back to back; without this a
     -- multi-slot contract is a respawn-camping machine (§3.5).
     if Contracts.slotCoolingDown(hitman) then
@@ -2984,6 +3023,7 @@ local function cancelUnlocked(actor, contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if heldByAnyone(contractId) then return false, CH.ERR.CONTRACT_TAKEN end
 
     -- Read before it closes. An operative who took it and walked away is not
@@ -3067,6 +3107,7 @@ local function reviseUnlocked(actor, contractId, changes)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if heldByAnyone(contractId) then return false, CH.ERR.CONTRACT_TAKEN end
 
     -- Held as values, never written onto `contract`: on the memory store it
@@ -3195,6 +3236,7 @@ local function withdrawRewardUnlocked(actor, contractId, lineIds)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if heldByAnyone(contractId) then return false, CH.ERR.CONTRACT_TAKEN end
 
     -- Bounded before anything is read: a client naming ten thousand ids
@@ -3487,6 +3529,11 @@ local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+    -- On hold by staff: no ending moves its money, whoever asks. Only a
+    -- staff void, which is staff's own decision about it.
+    if terminal ~= CH.STATE.VOIDED and Contracts.heldByStaff(contract) then
+        return false, CH.ERR.CONTRACT_FROZEN
+    end
 
     local moved
     if opts and opts.dueAt and terminal == CH.STATE.EXPIRED then

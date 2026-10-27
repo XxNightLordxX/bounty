@@ -13,12 +13,15 @@ local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant,
 --- Informant tips (server/locationtip.lua): a hitman's own, on their card,
 --- and when the target was told, on theirs.
 local LocationTip
+--- Staff freezes (server/freeze.lua): whether a contract is on hold.
+local Freeze
 
 function Projection.init(deps)
     Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify =
         deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
         deps.comms, deps.informant, deps.notify
     LocationTip = deps.locationTip
+    Freeze = deps.freeze
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -106,6 +109,7 @@ end
 function Projection.contract(contract, viewerCid)
     local role = roleOf(contract, viewerCid)
     local hitmen = Storage.readHitmen(contract.id)
+    local heldSince = Freeze and Freeze.heldSince(contract, hitmen) or nil
 
     local activeHitmen = 0
     for i = 1, #hitmen do
@@ -172,6 +176,9 @@ function Projection.contract(contract, viewerCid)
             and math.max(0, contract.deadline_at - (contract.paused_since or os.time()))
             or nil,
         clockStopped  = contract.paused_since ~= nil,
+        -- Staff have put it on hold (server/freeze.lua). The same one word
+        -- to every viewer, never which party or why: true or absent.
+        onHold        = heldSince ~= nil or nil,
         role          = role,
         -- What accepting costs, to everyone who can see the contract.
         --
@@ -336,8 +343,11 @@ function Projection.contract(contract, viewerCid)
         -- for every contract on them whether the client is named or not —
         -- keying it on that would tell them which.
         out.clockStopped = nil
+        -- On hold, read at the moment the hold began: what this card said
+        -- then, standing still. Never from the pause, which may have begun
+        -- earlier for a named client logging off.
         out.secondsLeft = contract.deadline_at
-            and math.max(0, contract.deadline_at - os.time()) or nil
+            and math.max(0, contract.deadline_at - (heldSince or os.time())) or nil
         out.bailoutAmount = contract.bailout_amount
         -- Both questions, not one. A price stored before the owner switched
         -- buyouts off stays on the row, and the switch was read only when
@@ -1057,7 +1067,7 @@ Projection.ALLOWED_KEYS = {
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         hitmenActive = true, hitmenMax = true, targetName = true,
         targetProtected = true, targetProtectedAs = true, deadline = true, secondsLeft = true,
-        clockStopped = true, role = true,
+        clockStopped = true, role = true, onHold = true,
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },

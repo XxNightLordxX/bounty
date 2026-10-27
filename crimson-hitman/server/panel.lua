@@ -39,6 +39,10 @@ local OPS = {
     void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
     resetSettings = WRITE, refresh = WRITE, flush = WRITE, ackAlerts = WRITE, testAlert = WRITE,
     removePhotos = WRITE, setPlaytime = WRITE,
+    -- Staff freezes (server/freeze.lua): the list is a read; freezing and
+    -- releasing move no money and stop nothing for good, and are writes as
+    -- void and settle are.
+    frozen = READ, freeze = WRITE, unfreeze = WRITE,
     whois = IDENTITY,
 }
 
@@ -76,7 +80,7 @@ Panel.OPS = OPS
 --- after a recovery that failed.
 local WAITS_FOR_RECOVERY = {
     void = true, settle = true, resolve = true, setSetting = true, resetSetting = true,
-    resetSettings = true, refresh = true,
+    resetSettings = true, refresh = true, freeze = true, unfreeze = true,
 }
 
 --- How long one overview is shared between requests. Each open panel asks
@@ -112,10 +116,16 @@ local LOG_ROWS_MAX = 100
 --- most (Acknowledge all shown).
 local ALERT_ROWS = 100
 
+--- The handles the frozen list gives its rows, so Unfreeze there names a
+--- player without the page holding their citizen id: [ref] = cid, and the
+--- reverse. Kept for the life of the process.
+local freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
+
 function Panel.init(d)
     deps = d
     overviewCache, contractsCache = nil, nil
     deniedLogged = {}
+    freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
 end
 
 --- Every contract the store keeps, read at most once per OVERVIEW_SECONDS.
@@ -723,7 +733,34 @@ local function buildOverview()
     end
     out.overrides, out.notApplied = overrides, notApplied
     out.auditQueued = deps.audit.pending()
+    -- Players staff have put on hold (server/freeze.lua): a count only.
+    out.frozen = { players = deps.freeze and deps.freeze.count() or 0 }
     return out
+end
+
+--- Who a staff member may be shown has put a contract on hold: its frozen
+--- parties (server/freeze.lua), each as their place on it, leaving out an
+--- anonymous one for staff without IdentityAce. Empty is shown as not
+--- frozen at all: a badge on a contract whose visible parties are none of
+--- them frozen said that its anonymous party was the player just frozen.
+---@return string[]|nil places, nil when none may be shown
+local function frozenShown(contract, hitmen, canIdentify)
+    local parties = deps.freeze and deps.freeze.partiesOf(contract, hitmen)
+    if not parties then return nil end
+    local aliases = {}
+    for _, hitman in ipairs(hitmen or deps.storage.readHitmen(contract.id) or {}) do
+        aliases[hitman.hitman_cid] = hitman.alias
+    end
+    local out = {}
+    for _, party in ipairs(parties) do
+        if canIdentify or not party.anonymous then
+            out[#out + 1] = party.role == 'target' and 'the target'
+                or party.role == 'client' and 'the client'
+                or ('operative %s'):format(tostring(aliases[party.cid] or '?'))
+        end
+    end
+    table.sort(out)
+    return #out > 0 and out or nil
 end
 
 --------------------------------------------------------------------------
@@ -732,6 +769,8 @@ end
 
 --- One function per op: (src, data) -> ok, err, message, data.
 local H = {}
+
+local freezeView
 
 H.access = function(src)
     return true, nil, nil, accessFor(src)
@@ -828,6 +867,7 @@ H.contracts = function(src, data)
                 or contract.creator_name,
             anonymous = contract.anon_creator == true,
             slots = contract.payout_slots, claimed = contract.slots_claimed,
+            frozen = frozenShown(contract, nil, canIdentify) ~= nil or nil,
         }
     end
 
@@ -964,6 +1004,9 @@ H.contract = function(src, data)
         escrow = escrow, hitmen = operatives, amendments = amendments,
         timeline = timeline, stuck = stuck,
         canVoid = not CH.TERMINAL[contract.state],
+        -- On hold by staff (server/freeze.lua), with which of its parties
+        -- this staff member may be told.
+        frozen = frozenShown(contract, hitmen, canIdentify),
     }
 end
 
@@ -1146,6 +1189,13 @@ local function playtimeView(cid, actor)
     return view
 end
 
+--- Whether a player is frozen, as the panel shows it, or nil.
+freezeView = function(cid, canIdentify)
+    local row = deps.freeze and deps.freeze.of(cid)
+    if not row then return nil end
+    return { since = row.frozen_at, reason = row.reason, by = canIdentify and row.by_cid or nil }
+end
+
 --- One player: their contracts as /ch-contracts lists them, their record,
 --- what they are owed, and the notices kept for their next login.
 ---
@@ -1203,6 +1253,15 @@ H.player = function(src, data)
     end
     local stats = canIdentify and deps.progression.record(cid) or nil
 
+    -- Which of the contracts shown are on hold, by the same rule the list
+    -- of contracts follows.
+    if deps.freeze and deps.freeze.count() > 0 then
+        for _, row in ipairs(contracts) do
+            local contract = Storage.readContract(row.id)
+            row.frozen = contract and frozenShown(contract, nil, canIdentify) ~= nil or nil
+        end
+    end
+
     -- A name for somebody offline, from a contract that names them openly.
     local name = actor and actor.name or nil
     if not name then
@@ -1239,7 +1298,84 @@ H.player = function(src, data)
         -- Hours counted here and whether they are grandfathered: nothing
         -- about any contract, so shown to every reader of the panel.
         playtime = playtimeView(cid, actor),
+        -- Whether staff have put them on hold (server/freeze.lua). Who did,
+        -- a staff member's citizen id, only with IdentityAce.
+        frozen = freezeView(cid, canIdentify),
     }
+end
+
+--- Freezing and releasing a player (server/freeze.lua), from Players.
+--- Writes, needing the ACE itself, as void and settle do; each is audited
+--- by the freeze itself (freeze_player, unfreeze_player). Not IdentityAce:
+--- staff name the player as they looked them up, and nothing here says
+--- which contracts are theirs.
+
+--- A handle for a frozen player's row in the list.
+local function freezeRef(cid)
+    local ref = freezeRefOf[cid]
+    if not ref then
+        freezeRefSeq = freezeRefSeq + 1
+        ref = 'f' .. freezeRefSeq
+        freezeRefOf[cid], freezeRefs[ref] = ref, cid
+    end
+    return ref
+end
+
+H.frozen = function(src)
+    local canIdentify = identifies(src)
+    local rows = {}
+    for _, row in ipairs(deps.freeze and deps.freeze.list() or {}) do
+        local actor = deps.identity.byCitizenId(row.cid)
+        rows[#rows + 1] = {
+            ref = freezeRef(row.cid), name = (actor and actor.name) or row.name,
+            cid = canIdentify and row.cid or nil, online = actor ~= nil,
+            since = row.frozen_at, reason = row.reason,
+            by = canIdentify and row.by_cid or nil,
+        }
+    end
+    return true, nil, nil, { rows = rows }
+end
+
+H.freeze = function(src, data)
+    if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
+    local reason = shortText(data.reason, 120)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    local who, whoErr, whoMessage = playerSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local cid, actor = who.cid, who.actor
+    if not actor and deps.identity.characterExists(cid) == false
+        and #(deps.storage.contractsInvolving(cid) or {}) == 0 then
+        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character '
+            .. 'has it. Check how it is spelt.'
+    end
+    local name = actor and actor.name or (who.typed and cid) or nil
+    local ok, err = deps.freeze.freeze(staffOf(src), cid, reason, name)
+    if not ok then
+        if err == 'already_frozen' then return false, err, 'They are already frozen.' end
+        return false, err, 'Not frozen: the store did not take it. Try again in a moment.'
+    end
+    return true, nil, ('%s is frozen. Every live contract they are party to is on hold until you '
+        .. 'unfreeze them; nothing on those contracts moves meanwhile.')
+        :format(name or 'They'), { frozen = freezeView(cid, identifies(src)) }
+end
+
+H.unfreeze = function(src, data)
+    if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
+    local cid
+    if data.ref ~= nil then
+        cid = type(data.ref) == 'string' and freezeRefs[data.ref:sub(1, 16)] or nil
+        if not cid then return false, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
+    else
+        local who, whoErr, whoMessage = playerSubject(data.subject)
+        if not who then return false, whoErr, whoMessage end
+        cid = who.cid
+    end
+    local ok, err = deps.freeze.unfreeze(staffOf(src), cid, shortText(data.reason, 120))
+    if not ok then
+        if err == 'not_frozen' then return false, err, 'They are not frozen.' end
+        return false, err, 'Not unfrozen: the store did not take it. Try again in a moment.'
+    end
+    return true, nil, 'Unfrozen. Their contracts run again, with the time on hold given back.'
 end
 
 --- Hours with one decimal, as staff read them.

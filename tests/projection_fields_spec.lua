@@ -65,6 +65,9 @@ local CONDITIONAL = {
     -- it starts. The creator's own contract, and every acceptance and walk-
     -- away was told to them as it happened.
     everTaken = 'creator-only',
+    -- Only on a contract staff have put on hold (server/freeze.lua): its
+    -- absence is a contract running as usual.
+    onHold = 'only while staff hold the contract',
     -- Only on a contract the viewer is the target of. Its absence elsewhere
     -- is the rule, not a gap.
     bailoutAvailable = 'target-only',

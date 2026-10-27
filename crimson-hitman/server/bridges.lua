@@ -117,7 +117,11 @@ function Bridges.onPlayerDropped(modules, cid)
         local contracts = modules.storage.allContracts()
         for i = 1, #contracts do
             local c = contracts[i]
-            if c.creator_cid == cid and c.state == CH.STATE.ACTIVE then
+            -- Not one staff have put on hold (server/freeze.lua): it stays
+            -- as it is, and the stop's refund returns it if nobody
+            -- releases it first.
+            if c.creator_cid == cid and c.state == CH.STATE.ACTIVE
+                and not modules.contracts.heldByStaff(c) then
                 modules.contracts.resolve(c.id, CH.STATE.CANCELLED, cid, nil,
                     'creator_disconnected_memory_mode')
             end
@@ -1565,6 +1569,7 @@ local CLEANSE_REFUSALS = {
     [CH.ERR.INVALID_INPUT] = 'that is not a contract id.',
     [CH.ERR.LOCKED] = 'someone got there first.',
     [CH.ERR.BUSY] = 'that was busy for a moment. Try again.',
+    [CH.ERR.CONTRACT_FROZEN] = 'this contract is on hold by staff.',
 }
 
 --- The sentence §14.40 has every buyout end on: this contract closing is

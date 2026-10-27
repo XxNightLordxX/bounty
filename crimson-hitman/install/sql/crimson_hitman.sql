@@ -363,6 +363,16 @@ CREATE TABLE IF NOT EXISTS crimson_location_tips (
     INDEX idx_tip_buyer (buyer_cid, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- The players staff have put on hold from the admin panel: a row is the
+-- freeze, and unfreezing deletes it. There is no timer.
+CREATE TABLE IF NOT EXISTS crimson_freezes (
+    cid VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(128),
+    reason VARCHAR(255),
+    by_cid VARCHAR(64),
+    frozen_at INT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

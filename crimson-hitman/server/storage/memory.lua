@@ -47,7 +47,7 @@ function Memory.open()
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
         photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
-        playtime = {}, locationTips = {}, placerInformants = {},
+        playtime = {}, locationTips = {}, placerInformants = {}, freezes = {},
     }
     return true
 end
@@ -1613,6 +1613,40 @@ function Memory.setViewAlerts(cid, on, at)
     else
         db.viewAlerts[cid] = nil
     end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Staff freezes
+--------------------------------------------------------------------------
+
+--- The players staff have put on hold from the admin panel
+--- (server/freeze.lua), by citizen id: { cid, name, reason, by_cid,
+--- frozen_at }. A row is the freeze, and unfreezing removes it; there is no
+--- timer. Read whole once at the start and kept by the module; written at
+--- once on every change.
+---@return table[]
+function Memory.readFreezes()
+    local out = {}
+    for _, row in pairs(db.freezes or {}) do
+        out[#out + 1] = { cid = row.cid, name = row.name, reason = row.reason,
+                          by_cid = row.by_cid, frozen_at = row.frozen_at }
+    end
+    table.sort(out, function(a, b) return tostring(a.cid) < tostring(b.cid) end)
+    return out
+end
+
+---@param row table { cid, name, reason, by_cid, frozen_at }
+function Memory.writeFreeze(row)
+    db.freezes = db.freezes or {}
+    db.freezes[row.cid] = { cid = row.cid, name = row.name, reason = row.reason,
+                            by_cid = row.by_cid, frozen_at = row.frozen_at }
+    return true
+end
+
+---@param cid string
+function Memory.deleteFreeze(cid)
+    if db.freezes then db.freezes[cid] = nil end
     return true
 end
 

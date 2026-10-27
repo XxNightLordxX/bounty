@@ -2717,6 +2717,114 @@ async function main() {
     clean(app, 'never stored');
   })();
 
+  /* ---- staff freeze: Freeze and Unfreeze under Players ---- */
+  await (async function () {
+    let frozen = null;
+    const server = standardServer({
+      player: function () {
+        const reply = player();
+        reply.data.frozen = frozen;
+        if (frozen) reply.data.contracts[0].frozen = true;
+        return reply;
+      },
+      frozen: function () {
+        return { ok: true, data: { rows: frozen ? [{ ref: 'f1', name: 'Dana Reyes', online: true,
+          since: NOW - 60, reason: 'RP dispute' }] : [] } };
+      },
+      freeze: function (data) {
+        frozen = { since: NOW, reason: data.reason };
+        return { ok: true, message: 'Dana Reyes is frozen.', data: { frozen: frozen } };
+      },
+      unfreeze: function () {
+        frozen = null;
+        return { ok: true, message: 'Unfrozen. Their contracts run again, with the time on hold given back.' };
+      },
+      contracts: contracts({ rows: [contractRow(1, { frozen: true }), contractRow(2)] }),
+      overview: overview({ frozen: { players: 2 } }),
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    it('counts frozen players on the overview', function () {
+      has(app.main(), 'Frozen players');
+      has(app.text(app.byId('ov-frozen')), '2');
+    });
+    app.nav('contracts');
+    await settled();
+    it('badges a frozen contract in the list, and only that one', function () {
+      eq(app.$$('.is-frozen').length, 1);
+    });
+    app.nav('players');
+    await settled();
+    it('asks for the frozen list when Players opens', function () {
+      truthy(app.requests('frozen').length >= 1, 'asked');
+      has(app.main(), 'Nobody is frozen.');
+    });
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('offers Freeze, with a reason field, on the player looked up', function () {
+      truthy(app.button('Freeze'), 'Freeze');
+      truthy(app.byId('pl-freeze-reason'), 'the reason field');
+      eq(app.$$('button').filter(function (b) { return b.getAttribute('data-act') === 'pl-unfreeze'; }).length, 0,
+        'Unfreeze before they are frozen');
+    });
+    app.click(app.button('Freeze'));
+    await settled();
+    it('refuses a freeze with no reason, sending nothing', function () {
+      eq(app.requests('freeze').length, 0);
+      has(app.main(), 'Give a reason');
+    });
+    app.type(app.byId('pl-freeze-reason'), 'RP dispute');
+    app.click(app.button('Freeze'));
+    await settled();
+    it('takes two clicks to freeze, and sends nothing on the first', function () {
+      eq(app.requests('freeze').length, 0);
+    });
+    app.click(app.button('Freeze'));
+    await settled();
+    it('freezes the player as they were looked up, with the reason', function () {
+      eq(app.last('freeze').data, { subject: '12', reason: 'RP dispute' });
+      has(app.main(), 'Dana Reyes is frozen.');
+      truthy(app.button('Unfreeze'), 'Unfreeze once frozen');
+      truthy(app.$$('.is-frozen').length >= 1, 'the Frozen badge');
+      has(app.main(), 'Frozen players');
+    });
+    app.click(app.button('Unfreeze'));
+    await settled();
+    it('takes two clicks to unfreeze', function () {
+      eq(app.requests('unfreeze').length, 0);
+    });
+    app.click(app.button('Unfreeze'));
+    await settled();
+    it('unfreezes, and offers Freeze again', function () {
+      eq(app.last('unfreeze').data.subject, '12');
+      has(app.main(), 'Unfrozen.');
+      truthy(app.button('Freeze'), 'Freeze again');
+    });
+    clean(app, 'freeze');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ frozen: { ok: true, data: { rows: [] } } }));
+    app.open(READER);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('a reader is shown Freeze disabled, and it sends nothing', function () {
+      const button = app.button('Freeze');
+      truthy(button, 'drawn');
+      truthy(button.disabled, 'disabled for a reader');
+      app.click(button);
+      app.click(button);
+      eq(app.requests('freeze').length, 0);
+    });
+    clean(app, 'freeze reader');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

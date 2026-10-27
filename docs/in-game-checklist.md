@@ -1294,6 +1294,14 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       off again: the diagnosis no longer lists *no photo upload host*.
       Run `/ch-diag <id>` five times with that player's app open: their own
       fault is still listed first, and the logs it asked for are not faults
+- [ ] Staff freeze: look up the target of a taken contract, give a reason and
+      click **Freeze** twice. Their phone says their contracts are on hold, the
+      hitman's card says **On hold** with the clock standing still, and
+      Verify kill, Deliver alive, the buyout and Withdraw each answer *This
+      contract is on hold by staff.* with no money moved. Wait five minutes,
+      click **Unfreeze** twice: the clock shows the same time left as before
+      the freeze, and `freeze_player` / `unfreeze_player` rows are in the log.
+      Restart the resource while frozen: still frozen after
 - [ ] `resmon` with the panel open stays under 0.35ms, and back near idle once
       it is closed (the Escape watch runs every frame only while it is open)
 

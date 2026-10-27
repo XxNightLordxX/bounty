@@ -454,6 +454,9 @@
       + 'for a moment and try again.',
     meeting_too_soon: 'The meeting point was changed a moment ago. Try again shortly.',
     no_meeting: 'No meeting point is set on this contract now.',
+    // Staff put the contract on hold (server/freeze.lua). Plain, and never
+    // which party it is about. Nothing was taken.
+    contract_frozen: 'This contract is on hold by staff.',
     // The informant tip (server/locationtip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',
@@ -2100,6 +2103,12 @@
     var clock = clockChip(contract);
     if (clock) { meta.appendChild(clock); }
 
+    // Staff have put it on hold. One word, the same for every party, never
+    // which of them or why; the note says what it means for them.
+    if (contract.onHold) {
+      meta.appendChild(chip('On hold', 'warn', 'i-lock'));
+    }
+
     meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive',
       null, contract.mode === 'competitive' ? 'i-flag' : 'i-lock'));
 
@@ -2180,6 +2189,11 @@
       meta.appendChild(chip(protectedWords(contract.targetProtectedAs).chip, 'warn', 'i-shield'));
     }
     node.appendChild(meta);
+
+    // On hold by staff: plain, and nothing about which party or why.
+    if (contract.onHold) {
+      node.appendChild(el('div', 'notice hold', 'This contract is on hold by staff.'));
+    }
 
     // What this player's informant found out, kept by the server with the
     // purchase: the target's on their On me card, the placer's on Mine.
@@ -4644,7 +4658,7 @@
       if (!contract.deadline) { return null; }
       return contract.deadline - Math.floor(Date.now() / 1000);
     }
-    if (contract.clockStopped || !contract.clockReadAt) { return Number(read); }
+    if (contract.clockStopped || contract.onHold || !contract.clockReadAt) { return Number(read); }
     return Number(read) - Math.floor((Date.now() - contract.clockReadAt) / 1000);
   }
 
@@ -4675,6 +4689,10 @@
     if (seconds === null) { return null; }
     if (seconds <= 0) { return { text: 'Due now', warn: true }; }
     var left = durationText(Math.ceil(seconds / 60));
+    // On hold by staff: the clock stands still until they release it.
+    if (contract.onHold) {
+      return { text: 'On hold · ' + left + ' left', warn: false };
+    }
     if (contract.clockStopped) {
       return { text: 'Clock stopped · ' + left + ' left', warn: false };
     }

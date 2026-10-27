@@ -253,6 +253,8 @@ ul, ol { padding: 0; list-style: none; }
 .chip.is-void { color: var(--rose); }
 .chip.is-warn { color: var(--gold); background: var(--gold-soft); border-color: var(--gold-line); }
 .chip.is-anon { color: var(--ink-dim); font-style: italic; }
+/* A player staff froze, and the contracts on hold through them (server/freeze.lua). */
+.chip.is-frozen { margin-left: 6px; white-space: nowrap; }
 .chip.is-panel { color: var(--blue); border-color: rgba(157, 180, 208, 0.35); }
 .chip.is-error { color: #f3b3bb; border-color: rgba(239, 61, 83, 0.45); }
 .chip.kind-financial { color: var(--gold); }

@@ -266,6 +266,10 @@ buyUnlocked = function(actor, contractId, shown)
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
         return false, CH.ERR.ALREADY_SETTLED
     end
+    -- On hold by staff (server/freeze.lua): nothing is charged.
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
+        return false, CH.ERR.CONTRACT_FROZEN
+    end
 
     local now = os.time()
     local count, newest = boughtBy(contractId, actor.cid, now)

@@ -1651,6 +1651,7 @@ function StartCrimsonHitman()
     local meeting    = CrimsonBoot.require('server.meeting')
     local playtime   = CrimsonBoot.require('server.playtime')
     local locationTip = CrimsonBoot.require('server.locationtip')
+    local freeze     = CrimsonBoot.require('server.freeze')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1667,7 +1668,7 @@ function StartCrimsonHitman()
     progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
                      audit = audit, notify = notify, progression = progression,
-                     death = death, review = review, ledger = ledger })
+                     death = death, review = review, ledger = ledger, freeze = freeze })
     photos.init({ storage = Storage, audit = audit })
     ledger.init({ storage = Storage, photos = photos, notify = notify })
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
@@ -1692,7 +1693,9 @@ function StartCrimsonHitman()
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify,
-                      locationTip = locationTip })
+                      locationTip = locationTip, freeze = freeze })
+    -- Staff freezes (server/freeze.lua): read from the store once, here.
+    freeze.init({ storage = Storage, audit = audit, notify = notify, kidnap = kidnap })
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
@@ -1724,6 +1727,9 @@ function StartCrimsonHitman()
         -- Each character's time in the city, counted on the tick, at a
         -- login and a drop, and at the stop.
         playtime = playtime,
+        -- The players staff have put on hold, for the expiry pass and the
+        -- admin panel.
+        freeze = freeze,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2513,6 +2519,21 @@ end
 local function expireOne(contract, now, pass)
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return end
     local verdict = judge(contract, now, pass)
+
+    -- On hold by staff (server/freeze.lua): neither clock runs, and nothing
+    -- ends it, its lifetime included. The deadline is stopped by the pause
+    -- every contract has (the freeze starts it; this only makes sure, after
+    -- a restart that found it running), and the lifetime is given back the
+    -- time on hold when it is released. One whose deadline had already gone
+    -- with the clock running stays as late as it was, and ends once it is
+    -- released.
+    if modules.freeze and modules.freeze.holds(contract) then
+        if not contract.paused_since and not verdict.overdue
+            and Storage.startPause(contract.id, now) then
+            contract.paused_since = now
+        end
+        return
+    end
 
     -- Read again before acting on it. The list above was read once, and
     -- every write and every resolve for the contracts before this one is

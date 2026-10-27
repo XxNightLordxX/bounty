@@ -11,6 +11,13 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Staff freeze**: from **Players** in the admin panel, staff with
+  `crimson.admin` can freeze a player for a staff situation or an RP dispute.
+  Every live contract they are party to (as the target, the placer or an
+  operative) goes on hold: its deadline and lifetime stop, nothing on it is
+  accepted, paid, bought out, amended, cancelled or expired, and no money
+  moves. **Unfreeze** gives the time on hold back to the second. See *Staff
+  freeze* under *Admin panel*.
 - **Informant tip for hitmen** (`Config.LocationTip`): a hitman who has
   accepted a live contract can buy, for $25,000 from the bank, the rough area
   its target was in at that moment: a red circle 700 m across on their map
@@ -237,7 +244,8 @@ look-ups), `crimson_mutes`, `crimson_photos`,
 `crimson_review`, `crimson_settings` (what staff changed from the admin panel),
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (who turned
 on the whitelisted-job view's Notify me), `crimson_playtime` (each character's
-counted playtime), `crimson_location_tips` (the informant tips hitmen bought)
+counted playtime), `crimson_location_tips` (the informant tips hitmen bought),
+`crimson_freezes` (the players staff have frozen from the admin panel)
 and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
@@ -255,8 +263,8 @@ enforcement advisory said of each contract, which the whitelisted-job view
 shows; NULL where no bulletin went), and the tables `crimson_review` (the
 review queue), `crimson_settings` (the admin panel's settings),
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (the
-whitelisted-job view's Notify me) and `crimson_playtime` (the playtime counted
-here): import
+whitelisted-job view's Notify me), `crimson_playtime` (the playtime counted
+here) and `crimson_freezes` (the players staff have frozen): import
 `install/sql/crimson_hitman.sql`, or create them as a user that may. It also
 adds three indexes, which an existing database gets at its next start (about
 three seconds per million audit rows, with writes going on) or, for a user
@@ -1896,6 +1904,38 @@ one.
 `crimson.admin` itself, *identity* `crimson.identity` as well; opening the
 panel at all needs *read*. `/ch-timeline` leaves no audit row; its button
 writes `admin_panel_contract`.
+
+### Staff freeze
+
+Look a player up under **Players**, type a reason and click **Freeze** twice.
+It is a *write* (`crimson.admin` itself), like **Void contract**, and is
+audited as `freeze_player` (your citizen id, theirs and the reason); the
+release is `unfreeze_player`. There is no slash command and no timer: a freeze
+ends only when you click **Unfreeze** on their lookup, or on their row under
+**Frozen players**. It is kept by the store (`data/records.json` on json,
+the `crimson_freezes` table on mysql), so it survives a restart.
+
+While they are frozen, every live contract (active or accepted) they are the
+target, the placer or an active operative of is **on hold**:
+
+- its deadline stops, the way it does when a party logs off, and so does its
+  lifetime; on release the time on hold is added back to both, to the second;
+- nothing on it happens: no acceptance, completion, payout, handover, buyout,
+  informant, informant tip, amendment, cancel with refund or expiry. Each is
+  refused as `contract_frozen`, *This contract is on hold by staff.*, and
+  nothing is charged, refunded or moved. A buyout already paid waits until
+  the release. **Void contract** still works: it is your own decision;
+- they cannot place or take a contract, and nobody can place one on them.
+
+The frozen player's phone says *Staff have put your contracts on hold.* (and
+*Your contracts are no longer on hold.*); every other party of each contract
+is told *This contract is on hold by staff.* and its release, the same words
+whoever caused it, and their card says **On hold** with no reason. Nothing
+says which party is frozen. In the panel, the overview counts frozen players,
+and a contract on hold carries a **Frozen** badge in Contracts and on the
+player's lookup; without `crimson.identity`, a contract held only through an
+anonymous party carries none, so the badge never says that the player you
+froze is behind an anonymous client or operative.
 
 **Using the page.** The panel is sized for a game window 1280 to 1920 pixels
 wide, and still works at 1024. It opens on the overview, with the open review

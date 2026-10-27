@@ -190,6 +190,10 @@ function Kidnap.arm(contractId, hitmanCid)
     local hitman = Storage.readHitman(contractId, hitmanCid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
 
+    -- On hold by staff (server/freeze.lua): the payout at the end would be
+    -- refused, so nobody is held for it.
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+
     -- The wait between payouts, for the same reason as the immunity check
     -- below: the claim at the end would be refused either way. It is ten
     -- minutes as shipped and a countdown is thirty seconds, so a hitman who

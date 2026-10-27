@@ -1826,6 +1826,7 @@ do
         ['crimson_settings.setting_key']      = 'the primary key: which setting it is',
         ['crimson_alerts.id']                 = 'the primary key: which alert it is',
         ['crimson_view_alerts.cid']           = 'the primary key: whose choice it is',
+        ['crimson_freezes.cid']               = 'the primary key: who is frozen',
         ['crimson_playtime.cid']              = 'the primary key: whose time it is',
         ['crimson_playtime.first_seen']       = 'when the tracker first saw them, written once',
         ['crimson_escrow.id']                 = 'the primary key',

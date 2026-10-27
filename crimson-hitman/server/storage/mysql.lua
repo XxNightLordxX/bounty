@@ -667,6 +667,18 @@ local SCHEMA = {
         INDEX idx_tip_contract (contract_id),
         INDEX idx_tip_buyer (buyer_cid, expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- The players staff have put on hold from the admin panel
+    -- (server/freeze.lua), by citizen id: a row is the freeze, and
+    -- unfreezing deletes it. There is no timer. Created on an existing
+    -- database by the CREATE TABLE IF NOT EXISTS at the next start, like any
+    -- table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_freezes (
+        cid VARCHAR(32) PRIMARY KEY,
+        name VARCHAR(128),
+        reason VARCHAR(255),
+        by_cid VARCHAR(64),
+        frozen_at INT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -862,7 +874,8 @@ end
 --- crimson_meta) was moved to InnoDB, rebuilt in utf8mb4 and given columns
 --- before the start refused, on "Multiple primary key", as a missing grant.
 --- Every table here has had the same key column since it was first made
---- (id; cid for crimson_stats, crimson_view_alerts and crimson_playtime;
+--- (id; cid for crimson_stats, crimson_view_alerts, crimson_playtime and
+--- crimson_freezes;
 --- setting_key; meta_key), so a table without it as its key is somebody
 --- else's.
 ---@param engines table<string, string> tablesPresent()
@@ -3043,6 +3056,37 @@ function MySQLStore.setViewAlerts(cid, on, at)
     else
         db.query('DELETE FROM crimson_view_alerts WHERE cid = ?', { cid })
     end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Staff freezes
+--------------------------------------------------------------------------
+
+--- See the memory backend. Read whole once at the start; a handful of rows.
+function MySQLStore.readFreezes()
+    local rows = db.query('SELECT cid, name, reason, by_cid, frozen_at FROM crimson_freezes') or {}
+    local out = {}
+    for i = 1, #rows do
+        local row = rows[i]
+        out[#out + 1] = { cid = row.cid, name = row.name, reason = row.reason,
+                          by_cid = row.by_cid, frozen_at = tonumber(row.frozen_at) }
+    end
+    table.sort(out, function(a, b) return tostring(a.cid) < tostring(b.cid) end)
+    return out
+end
+
+function MySQLStore.writeFreeze(row)
+    db.query([[
+        INSERT INTO crimson_freezes (cid, name, reason, by_cid, frozen_at) VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE name = VALUES(name), reason = VALUES(reason),
+            by_cid = VALUES(by_cid), frozen_at = VALUES(frozen_at)
+    ]], { row.cid, row.name, row.reason, row.by_cid, row.frozen_at })
+    return true
+end
+
+function MySQLStore.deleteFreeze(cid)
+    db.query('DELETE FROM crimson_freezes WHERE cid = ?', { cid })
     return true
 end
 

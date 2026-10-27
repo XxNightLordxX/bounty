@@ -273,7 +273,7 @@
       open), and the panel closes on it, as the README says it does. */
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
-                   alerts: true, console: true };
+                   alerts: true, console: true, frozen: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -299,7 +299,7 @@
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
-    players: { data: null, whois: {}, subject: null, playtime: null },
+    players: { data: null, whois: {}, subject: null, playtime: null, freeze: null, frozen: null },
     settings: { data: null, tab: 'features', answers: {}, photos: null },
     tools: { refresh: null, diag: null, flush: null }
   };
@@ -839,6 +839,7 @@
 
     var reviewsOpen = o.reviews ? Number(o.reviews.open) || 0 : 0;
     var alertsOpen = o.alerts ? Number(o.alerts.open) || 0 : 0;
+    var frozenCount = o.frozen ? Number(o.frozen.players) || 0 : 0;
 
     return frag(
       h('div.tiles',
@@ -857,6 +858,11 @@
           h('p.sub', num(owed.players) + ' player' + (Number(owed.players) === 1 ? '' : 's') + ' · '
             + num(owed.queued) + ' line' + (Number(owed.queued) === 1 ? '' : 's') + ' in a retry queue'))),
         tile('Waiting for staff', stuckBody, forYou > 0 ? '.is-warn' : ''),
+        tile('Frozen players', frag(
+          h('p.big' + (frozenCount > 0 ? '.is-warn' : ''), { id: 'ov-frozen' }, num(frozenCount)),
+          h('p.sub', 'player' + (frozenCount === 1 ? '' : 's') + ' whose contracts are on hold'),
+          btn('.is-small', 'section', { 'data-section': 'players' }, 'Open Players', 'arrow-right')),
+          frozenCount > 0 ? '.is-warn' : ''),
         tile('Needs review', frag(
           h('p.big' + (reviewsOpen > 0 ? '.is-warn' : ''), num(reviewsOpen)),
           h('p.sub', 'open item' + (reviewsOpen === 1 ? '' : 's') + ' in the review queue'),
@@ -1007,7 +1013,8 @@
           : (row.deadline_at ? 'due ' + ago(row.deadline_at) : '—');
         return h('tr.row', { 'data-act': 'contract', 'data-id': String(row.id), tabindex: '0',
           title: 'Open contract ' + row.id },
-          h('td.mono.nowrap', String(row.id)), h('td', stateChip(row.state)),
+          h('td.mono.nowrap', String(row.id)), h('td', stateChip(row.state),
+            row.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
           h('td.nowrap', RULE_LABEL[row.rule] || String(row.rule || '—')),
           h('td.name', String(row.target || '—')),
           h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || 'Anonymous'))
@@ -1247,7 +1254,9 @@
     var head = h('header.drawer-head',
       h('div.drawer-title', h('h2', 'Contract ', h('span.mono', id)),
         d && d.contract ? stateChip(d.contract.state) : null,
-        d && d.contract ? h('span.chip', RULE_LABEL[d.contract.rule] || String(d.contract.rule || '')) : null),
+        d && d.contract ? h('span.chip', RULE_LABEL[d.contract.rule] || String(d.contract.rule || '')) : null,
+        d && d.frozen ? h('span.chip.is-warn.is-frozen', { title: 'On hold: frozen by staff ('
+          + asList(d.frozen).join(', ') + ')' }, 'Frozen') : null),
       btn('.is-ghost', 'drawer-close', { 'aria-label': 'Close the contract' }, 'Close', 'xmark'));
     if (!d) {
       return frag(head, answerBox(S.drawer.answer), S.drawer.answer ? null : loading('Reading the contract…'));
@@ -2063,6 +2072,7 @@
     if (!subject) { toast('Give a player id or a citizen id.', 'error'); return Promise.resolve(); }
     S.players.whois = {};
     S.players.playtime = null;
+    S.players.freeze = null;
     return ask('player', { subject: subject.slice(0, 64) }, 'player').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); S.players.data = { error: words(reply) }; }
@@ -2114,6 +2124,47 @@
       answerBox(S.players.playtime)), '', h('span.sub', pt.counting ? 'in the city: counting' : 'not counting'));
   }
 
+  /** Freeze or Unfreeze, under the lookup: a reason, and two clicks. While
+      frozen, every live contract they are party to is on hold, paused and
+      untouched, until they are unfrozen. */
+  function freezeCard(frozen) {
+    var form = h('div.toolbar',
+      field('pl.freezeReason', { id: 'pl-freeze-reason', class: 'is-grow', maxlength: '120',
+        placeholder: frozen ? 'Reason for unfreezing (kept in the log)' : 'Reason for the freeze (kept in the log)',
+        'aria-label': frozen ? 'Reason for unfreezing' : 'Reason for the freeze' }),
+      frozen
+        ? writeBtn('', 'pl-unfreeze', {}, 'Unfreeze', 'Click again to unfreeze', 'play')
+        : writeBtn('.is-danger', 'pl-freeze', {}, 'Freeze', 'Click again to freeze', 'snowflake'));
+    var about = frozen
+      ? frag(h('p.sub', 'Frozen ' + ago(frozen.since) + (frozen.reason ? ': ' + String(frozen.reason) : '')
+          + (frozen.by ? ' · by ' + String(frozen.by) : '')),
+        h('p.note', 'Every live contract they are party to is on hold: its clocks stopped, and nothing '
+          + 'on it is accepted, paid, refunded or ended. Unfreeze gives the time on hold back.'))
+      : h('p.note', 'Freezing puts every live contract they are party to on hold, as the target, the '
+          + 'client or an operative: its clocks stop and nothing on it moves until you unfreeze them. '
+          + 'Players are told only that it is on hold by staff.');
+    return card('Freeze', frag(about, form, answerBox(S.players.freeze)), '',
+      frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null);
+  }
+
+  /** Every player staff have frozen, with Unfreeze on each row. */
+  function frozenListCard() {
+    var list = S.players.frozen;
+    if (!list) return null;
+    var rows = asList(list.rows);
+    return card('Frozen players', rows.length ? h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', 'Player'), h('th', 'Since'), h('th', 'Reason'), h('th', ''))),
+      h('tbody', rows.map(function (row) {
+        return h('tr',
+          h('td.name', String(row.name || 'No name on record'), row.cid ? h('span.cid', String(row.cid)) : null,
+            h('span.chip.is-warn.is-frozen', 'Frozen')),
+          h('td.nowrap', { title: when(row.since) }, ago(row.since)),
+          h('td', String(row.reason || '—')),
+          h('td', writeBtn('.is-small', 'pl-unfreeze-row', { 'data-ref': String(row.ref) }, 'Unfreeze',
+            'Click again to unfreeze', 'play')));
+      })))) : empty('Nobody is frozen.'), '', h('span.sub', num(rows.length)));
+  }
+
   function playerBody() {
     var d = S.players.data;
     if (!d) return empty('Look somebody up by their player id (in the city) or their citizen id (anybody).');
@@ -2127,7 +2178,9 @@
       h('div.person',
         h('h2', String(p.name || 'No name on record')),
         p.cid ? h('span.cid', String(p.cid)) : h('span.chip', 'citizen id hidden'),
-        p.online ? h('span.chip.is-live', 'in the city · player ' + String(p.server)) : h('span.chip', 'offline')),
+        p.online ? h('span.chip.is-live', 'in the city · player ' + String(p.server)) : h('span.chip', 'offline'),
+        d.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
+      freezeCard(d.frozen),
       // Sent only to staff with the identity ACE: the counters hold what was
       // placed and taken anonymously too, and nothing says which.
       stats ? h('div.tiles.is-compact',
@@ -2165,7 +2218,7 @@
           var who = S.players.whois[id];
           return frag(h('tr',
             h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': id }, id)),
-            h('td', stateChip(row.state)),
+            h('td', stateChip(row.state), row.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
             h('td', String(row.role || '—'), row.anonymous ? h('span.chip.is-anon', 'anonymous') : null),
             h('td.name', String(row.target || '—')), h('td', when(row.created_at)),
             h('td', String(row.resolution || '—')),
@@ -2187,9 +2240,17 @@
         ? 'You see every contract they were party to, anonymous ones included. Each lookup is on the record.'
         : 'Contracts they placed or took anonymously are left out, with what they are owed, the deliveries '
           + 'and the notices on them, and so is their record, which counts them.'),
-      h('div.stack', { id: 'pl-result' }, playerBody()));
+      h('div.stack', { id: 'pl-result' }, playerBody()),
+      h('div.stack', { id: 'pl-frozen' }, frozenListCard()));
   };
-  LOAD.players = function () {};
+  function loadFrozen() {
+    return ask('frozen', {}, 'frozen').then(function (reply) {
+      if (!reply || !reply.ok) return;
+      S.players.frozen = reply.data || {};
+      if (S.section === 'players') setHtml(byId('pl-frozen'), frozenListCard());
+    });
+  }
+  LOAD.players = function () { loadFrozen(); };
 
   /* ---- features, limits & settings ---- */
 
@@ -2898,6 +2959,51 @@
   };
   ACTIONS['pl-playtime-reset'] = function (node) { setPlaytime(node, 0); };
 
+  /** Freeze or unfreeze the player looked up, two clicks, with the reason. */
+  function freezeWrite(op, data, node) {
+    var sent = op === 'freeze' ? write('freeze', data, 'freeze', node) : write('unfreeze', data, 'freeze', node);
+    sent.then(function (reply) {
+      if (!reply) return;
+      S.players.freeze = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) {
+        delete S.forms['pl.freezeReason'];
+        if (S.players.data && !S.players.data.error && data.subject === S.players.subject) {
+          S.players.data.frozen = op === 'freeze' ? (reply.data && reply.data.frozen) || { since: nowSeconds() } : null;
+        }
+        loadFrozen();
+      }
+      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+    });
+  }
+  ACTIONS['pl-freeze'] = function (node) {
+    if (!S.players.subject) return;
+    var reason = trim(S.forms['pl.freezeReason']);
+    if (!reason) {
+      disarm();
+      S.players.freeze = { ok: false, text: 'Give a reason: it goes on the record.' };
+      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+      return;
+    }
+    if (!confirmed(node)) return;
+    freezeWrite('freeze', { subject: S.players.subject, reason: reason.slice(0, 120) }, node);
+  };
+  ACTIONS['pl-unfreeze'] = function (node) {
+    if (!S.players.subject || !confirmed(node)) return;
+    freezeWrite('unfreeze', { subject: S.players.subject,
+      reason: trim(S.forms['pl.freezeReason']).slice(0, 120) }, node);
+  };
+  ACTIONS['pl-unfreeze-row'] = function (node) {
+    var ref = node.getAttribute('data-ref');
+    if (!ref || !confirmed(node)) return;
+    write('unfreeze', { ref: ref }, 'freeze', node).then(function (reply) {
+      if (!reply) return;
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok && S.players.data && S.players.data.frozen) loadPlayer();
+      loadFrozen();
+    });
+  };
+
   ACTIONS['st-tab'] = function (node) {
     S.settings.tab = node.getAttribute('data-value') || 'features';
     disarm();
@@ -3123,6 +3229,8 @@
     S.players.whois = {};
     S.players.subject = null;
     S.players.playtime = null;
+    S.players.freeze = null;
+    S.players.frozen = null;
     S.settings.data = null;
     S.settings.answers = {};
     S.settings.photos = null;

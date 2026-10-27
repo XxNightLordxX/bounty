@@ -9461,6 +9461,73 @@ async function main() {
     })();
   })();
 
+  /* On hold by staff (server/freeze.lua): every party's card says On hold,
+     the same plain words, and the clock stands still. Nothing on it says
+     which party, or why. */
+  await (async function cardsShowOnHold() {
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.contracts[0].onHold = true;
+    board.data.contracts[0].secondsLeft = 5400;
+    const mine = { ok: true, data: {
+      created: [],
+      accepted: [{
+        id: 'ct00000003', reason: 'Debt', mode: 'competitive', state: 'accepted',
+        reward: { baseline: 10000 }, slots: 1, currentSlot: 1,
+        hitmenActive: 1, hitmenMax: 5, targetName: 'Rico Alvarez', role: 'hitman',
+        penaltyAmount: 1000, myAlias: 'Operative #1', myAnonymous: true,
+        secondsLeft: 600, clockStopped: true, onHold: true
+      }],
+      onMe: [{
+        id: 'ct00000004', reason: 'Debt', mode: 'exclusive', state: 'accepted',
+        reward: { baseline: 2000 }, slots: 1, currentSlot: 1, hitmenActive: 1,
+        targetName: 'Sam Hale', role: 'target', secondsLeft: 1200, onHold: true,
+        creatorAnonymous: true
+      }]
+    } };
+    const app = boot({ list: board, mine: mine, ledger: LEDGER });
+    await settle(); await settle();
+    it('marks a board card On hold, with the plain words', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('On hold') !== -1, text);
+      truthy(text.indexOf('This contract is on hold by staff.') !== -1, text);
+      truthy(text.indexOf('On hold · 1h 30m left') !== -1, text);
+    });
+    tab(app, 'mine');
+    await settle(); await settle();
+    const shown = app.view.textContent;
+    it('marks the hitman\'s card On hold, the clock standing still', function () {
+      truthy(shown.indexOf('On hold · 10 minutes left') !== -1, shown);
+      truthy(shown.indexOf('This contract is on hold by staff.') !== -1, shown);
+      falsy(/frozen|placer|client is/i.test(shown.replace('Clock stopped', '')), 'says which party: ' + shown);
+    });
+    const ticker = app.timers.filter(function (t) { return t.repeating && t.ms === 30000; })[0];
+    it('does not count an on-hold clock down', function () {
+      truthy(ticker, 'a clock ticker');
+      // Ten minutes on, on the page's own clock.
+      const PageDate = require('vm').runInContext('Date', app.sandbox);
+      const realNow = PageDate.now;
+      PageDate.now = function () { return realNow.call(PageDate) + 600000; };
+      try {
+        ticker.fn();
+        truthy(app.view.textContent.indexOf('On hold · 10 minutes left') !== -1, app.view.textContent);
+      } finally {
+        PageDate.now = realNow;
+      }
+    });
+    tab(app, 'onme');
+    await settle(); await settle();
+    it('marks the target\'s card On hold too, in the same words', function () {
+      const onMe = app.view.textContent;
+      truthy(onMe.indexOf('On hold · 20 minutes left') !== -1, onMe);
+      truthy(onMe.indexOf('This contract is on hold by staff.') !== -1, onMe);
+      falsy(onMe.indexOf('Lapses in') !== -1, 'the target\'s clock counts down on hold: ' + onMe);
+    });
+    it('words a refusal on hold plainly', function () {
+      const source = require('fs').readFileSync(APP, 'utf8');
+      truthy(/contract_frozen: 'This contract is on hold by staff\.'/.test(source), 'the page has words for it');
+    });
+  })();
+
   /* The time left, on the card, from the server's own reading.
 
      No card showed it: a staked hitman could not see when their stake

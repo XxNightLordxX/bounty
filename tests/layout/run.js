@@ -157,6 +157,9 @@ function serverStub() {
   // button that buys one. Measured at phone width with the rest.
   taken[0].locationTip = { left: 2, secondsLeft: 600, cooldownSeconds: 600 };
   taken[1].locationTip = { left: 3 };
+  // On hold by staff (server/freeze.lua): the chip, the clock's words and
+  // the notice under the meta, on the most crowded hitman card there is.
+  taken[0].onHold = true;
   // The placer's informant on that card, with an operative to ask about;
   // and on another, drawn disabled with why under it (every operative there
   // took it under their name), so both are measured at every width.
@@ -601,6 +604,31 @@ async function main() {
   it('cuts nothing off on the contracts you placed and took', function () {
     truthy(mineClipped.length === 0,
       mineClipped.length + ' element(s) clipped: ' + mineClipped.slice(0, 4).join(' | '));
+  });
+
+  const onHold = await page.evaluate(function () {
+    const notice = document.querySelector('.card .notice.hold');
+    if (!notice) return null;
+    const card = notice.closest('.card');
+    const n = notice.getBoundingClientRect(), c = card.getBoundingClientRect();
+    const chip = Array.prototype.slice.call(card.querySelectorAll('.chip')).filter(function (el) {
+      return el.textContent === 'On hold';
+    })[0];
+    const k = chip ? chip.getBoundingClientRect() : null;
+    return {
+      inside: n.left >= c.left - 1 && n.right <= c.right + 1,
+      chipInside: !!k && k.left >= c.left - 1 && k.right <= c.right + 1,
+      height: n.height,
+      pageScroll: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+
+  it('draws an on-hold card whole at phone width: its notice and chip inside it, no sideways scroll', function () {
+    truthy(onHold, 'no on-hold notice drawn on the card');
+    truthy(onHold.inside, 'the on-hold notice runs outside its card');
+    truthy(onHold.chipInside, 'the On hold chip runs outside its card');
+    truthy(onHold.height >= 16, 'the on-hold notice is ' + onHold.height + 'px tall');
+    truthy(onHold.pageScroll <= 0, 'the page scrolls sideways by ' + onHold.pageScroll + 'px');
   });
 
   const mineButtons = await page.evaluate(function () {

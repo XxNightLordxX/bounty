@@ -288,6 +288,8 @@ buyUnlocked = function(actor, contractId)
     end
     if (contract.bailout_amount or 0) <= 0 then return false, CH.ERR.NO_BUYOUT_PRICE end
     if contract.bailout_queued_at then return false, CH.ERR.BUYOUT_PENDING end
+    -- On hold by staff (server/freeze.lua): nothing is charged.
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
 
     -- A target cannot buy their way out from the floor mid-fight.
     if Config.Bailout.BlockWhileIncapacitated then
@@ -956,7 +958,10 @@ function Bailout.processQueue()
 
     for i = 1, #pending do
         local contract = pending[i]
-        if os.time() - contract.bailout_queued_at >= Config.Bailout.ProcessingDelaySeconds then
+        -- One paid before the contract went on hold waits for its release
+        -- (server/freeze.lua): nothing on it settles meanwhile.
+        local held = Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract)
+        if not held and os.time() - contract.bailout_queued_at >= Config.Bailout.ProcessingDelaySeconds then
             local ran, ok = pcall(Bailout.settle, contract.id, contract.bailout_paid_amount,
                 contract.bailout_paid_by, contract.bailout_paid_account, { retryable = true })
             if not ran then
