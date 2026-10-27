@@ -40,6 +40,11 @@ local overrides = {}
 --- [key] = { value, by, at, why }
 local ignored = {}
 
+--- Keys a change raised on and could not be read back for: the store may
+--- or may not hold what was written, and the diagnosis says so until a
+--- change to the key, or the next start, settles it. [key] = { why, by, at }
+local unknown = {}
+
 --- Called with (key, entry) after a key changes live; set by Bridges.install,
 --- which knows who to tell (the access refresh, the photo host list).
 Settings.onChanged = nil
@@ -56,6 +61,16 @@ local AT_USE = 'Read each time it is used, so it applies to the next check, incl
     .. 'contracts already placed.'
 local CAP = 'Lowering it below what is in use now never cancels anything: it only refuses '
     .. 'new ones over it.'
+
+--- Beside both restraints. With a restraint required and neither counting
+--- (and no restraint resource), every handover was refused as 'not
+--- restrained', even with the target cuffed in the hitman's car: on 'alive'
+--- no contract could complete, and each ran to its deadline with its
+--- hitman's stake forfeited. The start turns handcuffs back on; this
+--- refuses the click that would do it, in the start's words.
+local ONE_RESTRAINT = 'While Target must be restrained is on, one of the two restraints (or a '
+    .. 'restraint resource, Config.Kidnap.RestraintProvider) has to count: with neither, no '
+    .. 'handover could ever complete, so the last one is not turned off from here.'
 
 --- What the panel says beside a key whose `unless` switch is on.
 local UNLESS_ON = {
@@ -175,11 +190,11 @@ local CATALOGUE = {
       about = 'Cuffed, or in the hitman\'s own vehicle, for the whole countdown.',
       inflight = AT_USE .. ' A countdown already running is checked by it on its next sample.' },
     { key = 'Kidnap.Coercion.handcuffed', section = 'features', group = 'Handovers', kind = 'switch',
-      label = 'Handcuffs count as restraint', about = 'QBox \'ishandcuffed\' metadata.',
+      label = 'Handcuffs count as restraint', about = 'QBox \'ishandcuffed\' metadata. ' .. ONE_RESTRAINT,
       inflight = AT_USE },
     { key = 'Kidnap.Coercion.passengerOfHitman', section = 'features', group = 'Handovers',
       kind = 'switch', label = 'The hitman\'s vehicle counts as restraint',
-      about = 'The target riding in the hitman\'s vehicle.', inflight = AT_USE },
+      about = 'The target riding in the hitman\'s vehicle. ' .. ONE_RESTRAINT, inflight = AT_USE },
 
     { key = 'Penalty.RequireDisclosureOnAccept', section = 'features', group = 'Stakes',
       kind = 'switch', label = 'Accept must echo the stake shown',
@@ -345,8 +360,11 @@ local CATALOGUE = {
     { key = 'Limits.MaxActiveContractsPerTarget', section = 'limits', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts on one target',
       inflight = CAP },
+    -- Never above the most a contract may be worth (Config.MaxContractValue,
+    -- config.lua's only): offered up to 100,000,000, anything over that was
+    -- refused, in words that said the start would use the ceiling instead.
     { key = 'Limits.MinContractReward', section = 'limits', group = 'Contract limits',
-      kind = 'number', integer = true, min = 0, max = 100000000,
+      kind = 'number', integer = true, min = 0, max = 100000000, ceiling = 'MaxContractValue',
       label = 'Least a reward may be worth ($, 0 off)', inflight = CAP },
     { key = 'Limits.MaxHitmenPerContract', section = 'limits', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 50, label = 'Operatives on one contract',
@@ -472,6 +490,58 @@ local BUCKETS = {
     'image', 'diagnostic', 'admin', 'adminWrite',
 }
 
+--- What each bucket gates: the buttons and events a player is refused once
+--- it is spent. The rows said only '<bucket>: requests held', and one click
+--- of 'load' from 20 to 1 refused every Board, Mine and Ledger read for an
+--- hour. The background ones are refused without a word to anybody.
+local BUCKET_ABOUT = {
+    load = 'Every read the app makes of its own state: Board, Mine, On me, the Ledger, proposals, '
+        .. 'threads and the whitelisted-job view, and the buyout command\'s list. Opening the app '
+        .. 'is four of these at once, and every refresh two more.',
+    search = 'Browsing and searching names on the Place form.',
+    wallet = 'Reading what the client carries, once per Place form.',
+    create = 'Placing a contract.',
+    accept = 'Accepting, abandoning and cancelling a contract, and arming a handover.',
+    amend = 'Proposals and the answers to them, revising, improving and adding to a reward, and '
+        .. 'taking part of it back.',
+    informant = 'Buying a name from the informant.',
+    bailout = 'Buying out a contract, in the app and with the buyout command.',
+    photo = 'Asking to photograph a kill, and Verify kill.',
+    photoSubmit = 'Sending a kill photo.',
+    photoView = 'Opening a kill photo from the Ledger.',
+    photoDecide = 'Saving or deleting a kill photo just opened.',
+    message = 'Placing and ending a call, and muting a thread.',
+    progress = 'In the background: the handover countdown the app asks for once a second while a '
+        .. 'handover runs. Refused without a word: the countdown stops moving on the page.',
+    death = 'In the background: death and revive reports from players\' games. Refused without a '
+        .. 'word: a death or a revive not recorded, so a target just up can be listed at once.',
+    mugshot = 'In the background: the headshots players\' games send, and their word that a face '
+        .. 'changed. Refused without a word to the player (the log keeps one row a minute): '
+        .. 'faces on the board stay old or missing.',
+    image = 'Fetching a headshot the board was given a reference to.',
+    diagnostic = 'Fault reports players\' apps send. The log staff ask for with the diagnosis '
+        .. 'never spends it.',
+}
+
+--- The least the buckets the app cannot work without may be set to from
+--- here. Set from config.lua, a value below them is the owner's to choose;
+--- one click here could otherwise stop the app opening, or stop a handover
+--- running, for everyone at once.
+local BUCKET_FLOORS = {
+    load = { burst = 6, rate = 1 / 5,
+             needs = 'at least 6 requests held and a refill of at least one every 5 seconds',
+             why = 'opening the app sends four reads at once (the board, Mine, the Ledger and the '
+                 .. 'view), so below that the app cannot open' },
+    progress = { rate = 1, needs = 'a refill of at least one a second',
+                 why = 'a running handover asks for its countdown once a second' },
+    death = { burst = 2, needs = 'at least 2 requests held',
+              why = 'a death and the revive after it are a report each' },
+}
+
+--- What a stricter value does, said beside the second click: %s the value.
+local BUCKET_STRICTER = '%s: players are refused sooner, and wait longer for it to refill. '
+    .. 'What this gates (above) answers "slow down" until it does.'
+
 --- The panel's own buckets, which every request it makes spends (Panel.handle).
 --- Changeable here, one request an hour was accepted, kept and applied at
 --- every start, and the page's own overview refresh spent it: the reset that
@@ -482,18 +552,30 @@ local PANEL_BUCKET_READONLY = 'The staff panel\'s own allowance, which every req
     .. 'spends: set too low from here it would refuse the very request that puts it back, at '
     .. 'every start. Set it in config.lua.'
 
+--- Each bucket's two rows. `stricter` is the way a value refuses players
+--- sooner (a longer refill window, fewer requests held), which takes two
+--- clicks with `strict` said beside the second, as `destroys` does.
 for _, bucket in ipairs(BUCKETS) do
     local panel = PANEL_BUCKETS[bucket]
+    local gates = BUCKET_ABOUT[bucket]
     CATALOGUE[#CATALOGUE + 1] = {
         key = 'Cooldowns.' .. bucket .. '.per', section = panel and 'readonly' or 'limits',
         group = panel and 'Staff' or 'Rate limits',
         kind = 'number', min = 0.5, max = 3600, label = bucket .. ': refill window (s)',
+        about = gates and (gates .. ' A full allowance refills over this many seconds: '
+            .. 'longer is stricter.') or nil,
+        stricter = not panel and 'up' or nil,
+        strict = not panel and ('A refill window of ' .. BUCKET_STRICTER) or nil,
         inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
     CATALOGUE[#CATALOGUE + 1] = {
         key = 'Cooldowns.' .. bucket .. '.burst', section = panel and 'readonly' or 'limits',
         group = panel and 'Staff' or 'Rate limits',
         kind = 'number', integer = true, min = 1, max = 200, label = bucket .. ': requests held',
+        about = gates and (gates .. ' How many it allows at once. It also sets the refill rate '
+            .. '(this many per refill window), so fewer is stricter both ways.') or nil,
+        stricter = not panel and 'down' or nil,
+        strict = not panel and ('Holding ' .. BUCKET_STRICTER) or nil,
         inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
 end
@@ -590,6 +672,70 @@ end
 
 local LIST_MAX, NAME_MAX = 50, 32
 
+--- The most a number key takes now: its own max, or less where another
+--- setting caps it (`ceiling`, a key read from the config in force).
+---@param entry table
+---@return number|nil
+function Settings.maxOf(entry)
+    local ceiling = entry.ceiling and tonumber(read(Config, entry.ceiling))
+    if ceiling and (not entry.max or ceiling < entry.max) then return ceiling end
+    return entry.max
+end
+
+--- Whether a start-up line names a key: in full, or by its last part where
+--- no other key on the list ends in it ('MinMultiplier', not 'Enabled').
+local lastParts = {}
+for i = 1, #CATALOGUE do
+    local last = CATALOGUE[i].key:match('([%w_]+)$')
+    lastParts[last] = (lastParts[last] or 0) + 1
+end
+local function names(line, key)
+    line = tostring(line)
+    if line:find(key, 1, true) then return true end
+    local last = key:match('([%w_]+)$')
+    return lastParts[last] == 1 and #last >= 8 and line:find(last, 1, true) ~= nil
+end
+
+--- A start-up line as the reason a change is refused: what it says without
+--- the start's own correction ("Using the lifetime."), which the panel does
+--- not make, and naming the key once. Read as "Not changed: <key> <line>
+--- Using X..", it said both that nothing changed and that something else
+--- was used, and not what to do. `other` is the key to change first.
+---@param key string
+---@param line string
+---@param other string|nil
+---@return string
+local function refusal(key, line, other)
+    local text = tostring(line):gsub('[%.;]%s+[Uu]sing .*$', ''):gsub('[%s%.]+$', '')
+    if not names(text, key) then text = key .. ' ' .. text end
+    if other and other ~= key then text = ('%s. Change %s first'):format(text, other) end
+    return text
+end
+
+--- Why a change would leave a bucket the app cannot work without below its
+--- floor (BUCKET_FLOORS), or nil. Only for the keys being changed, and not
+--- for one put back to what config.lua says.
+---@param changes table [key] = value
+---@param candidate table the config with the changes in it
+---@return string|nil
+local function belowFloor(changes, candidate)
+    for key, value in pairs(changes) do
+        local bucket = key:match('^Cooldowns%.([%w_]+)%.%a+$')
+        local floor = bucket and BUCKET_FLOORS[bucket]
+        if floor and not same(value, defaults[key]) then
+            local rule = read(candidate, 'Cooldowns.' .. bucket)
+            local per = type(rule) == 'table' and tonumber(rule.per)
+            local burst = type(rule) == 'table' and tonumber(rule.burst)
+            if per and burst and per > 0 and ((floor.burst and burst < floor.burst)
+                or (floor.rate and burst / per < floor.rate)) then
+                return ('%s would leave %s below what it needs, %s: %s'):format(key, bucket,
+                    floor.needs, floor.why)
+            end
+        end
+    end
+    return nil
+end
+
 --- A value the panel sent, in the type and range the key takes, or nil
 --- and why not. Nothing here trusts what the page sent: a number arrives
 --- as a number or as digits, a switch as a boolean, a list as job names.
@@ -615,8 +761,9 @@ local function normalise(entry, raw)
             if math.floor(n) ~= n then return nil, 'has to be a whole number' end
             n = math.tointeger(n) or n
         end
-        if (entry.min and n < entry.min) or (entry.max and n > entry.max) then
-            return nil, ('has to be from %s to %s'):format(tostring(entry.min), tostring(entry.max))
+        local max = Settings.maxOf(entry)
+        if (entry.min and n < entry.min) or (max and n > max) then
+            return nil, ('has to be from %s to %s'):format(tostring(entry.min), tostring(max))
         end
         return n
     end
@@ -648,17 +795,34 @@ end
 --- Refused when the checks would refuse to start on it, or would quietly
 --- change any key the panel shows: a value they correct at start is one
 --- that would not mean what staff set it to. Their own words are the reason.
+---
+--- A bucket the app cannot work without is held to its floor as well
+--- (BUCKET_FLOORS). What passes answers, third, the start's warnings: they
+--- refuse nothing, and staff are told the ones that name a key changed.
 ---@param changes table [key] = value as the panel shows it
 ---@return boolean ok
 ---@return string|nil reason
+---@return string[]|nil warn on success, every warning the checks gave
+---@return string|nil other on refusal, another key the checks would change
 local function fits(changes)
-    if not Check then return true end
+    if not Check then return true, nil, {} end
     local candidate = copyOf(Config)
     for key, value in pairs(changes) do write(candidate, key, stored(byKey[key], value)) end
+    local floor = belowFloor(changes, candidate)
+    if floor then return false, floor end
     local ok, fatal, warn = Check(candidate)
     fatal, warn = fatal or {}, warn or {}
     if not ok or #fatal > 0 then
-        return false, tostring(fatal[1] or 'the start-up checks refuse it')
+        local line = tostring(fatal[1] or 'the start-up checks refuse it')
+        -- Another key the line names, to change first.
+        local other
+        for _, entry in ipairs(CATALOGUE) do
+            if not other and not entry.readonly and changes[entry.key] == nil
+                and names(line, entry.key) then
+                other = entry.key
+            end
+        end
+        return false, line, nil, other
     end
     for _, entry in ipairs(CATALOGUE) do
         if not entry.readonly then
@@ -666,17 +830,15 @@ local function fits(changes)
             if wanted == nil then wanted = current(entry) end
             local got = shown(entry, read(candidate, entry.key))
             if not same(got, wanted) then
-                local name = entry.key:match('([%w_]+)$')
                 for _, line in ipairs(warn) do
-                    if line:find(entry.key, 1, true) or line:find(name, 1, true) then
-                        return false, line
-                    end
+                    if names(line, entry.key) then return false, line, nil, entry.key end
                 end
-                return false, ('the start-up checks would change Config.%s'):format(entry.key)
+                return false, ('would make the start-up checks change Config.%s'):format(entry.key),
+                    nil, entry.key
             end
         end
     end
-    return true
+    return true, nil, warn
 end
 
 --- A value for a key, checked as the start-up checks would check it.
@@ -684,16 +846,22 @@ end
 ---@param raw any
 ---@return any value as the panel shows it, or nil
 ---@return string|nil err 'not_allowed' | 'read_only' | 'invalid_value'
----@return string|nil why
+---@return string|nil why a sentence that names the key, without its full stop
+---@return string[]|nil warnings with a value: the start's warnings that name
+--- the key, which refuse nothing and were said nowhere (W145)
 function Settings.check(key, raw)
     local entry = type(key) == 'string' and byKey[key] or nil
     if not entry then return nil, 'not_allowed', 'not a setting the panel may change' end
     if entry.readonly then return nil, 'read_only', entry.readonly end
     local value, why = normalise(entry, raw)
-    if value == nil then return nil, 'invalid_value', why end
-    local ok, reason = fits({ [key] = value })
-    if not ok then return nil, 'invalid_value', reason end
-    return value
+    if value == nil then return nil, 'invalid_value', refusal(key, why) end
+    local ok, reason, warn, other = fits({ [key] = value })
+    if not ok then return nil, 'invalid_value', refusal(key, reason, other) end
+    local said = {}
+    for _, line in ipairs(warn or {}) do
+        if names(line, key) then said[#said + 1] = line end
+    end
+    return value, nil, nil, said
 end
 
 --------------------------------------------------------------------------
@@ -724,7 +892,7 @@ end
 
 function Settings.init(deps)
     Storage, Audit, Check = deps.storage, deps.audit, deps.check
-    overrides, ignored = {}, {}
+    overrides, ignored, unknown = {}, {}, {}
     saving = false
     -- What config.lua says, as the start-up checks left it. Taken here so a
     -- stack that never boots still knows what a reset puts back.
@@ -765,11 +933,70 @@ local function changed(entry)
     if Settings.onChanged then pcall(Settings.onChanged, entry.key, entry) end
 end
 
+--- Whether a write that raised landed after all, read back from the store
+--- as the money paths read theirs: true when the store holds `expected`
+--- for the key (nothing at all, for a delete), false when it does not, and
+--- nil, with why, when the read raised too. A commit followed by a dropped
+--- connection raises, and "Nothing changed" said then left config.lua's
+--- value in force over a row the next start applied.
+---@param key string
+---@param expected any the value written, or nil for a delete
+---@return boolean|nil landed
+---@return string|nil why
+local function landed(key, expected)
+    local ok, rows = pcall(Storage.readSettings)
+    if not ok or type(rows) ~= 'table' then return nil, Util.dbError(rows) end
+    local row = rows[key]
+    if expected == nil then return row == nil end
+    return type(row) == 'table' and same(row.value, expected)
+end
+
+--- A key the store may or may not hold the change for, kept for the
+--- diagnosis (Settings.active) until a change to it, or the next start.
+local function markUnknown(key, why, staff)
+    unknown[key] = { why = tostring(why), by = staff, at = os.time() }
+    Log.always(('the admin panel change to %s raised in the store, and reading it back raised '
+        .. 'too (%s): the store may or may not hold it. It is not in force; set or reset it again '
+        .. 'once the store answers.'):format(key, tostring(why)))
+end
+
+--- What follows a change the store has kept: the audit row, the log
+--- written, and whoever needs telling. Each in its own pcall: one that
+--- raised after the commit answered the change as an error, with no row
+--- and nobody told, though it was in force and kept.
+local function committed(entry, action, actorCid, detail)
+    local okAudit, auditErr = pcall(Audit.staff, action, actorCid, nil, detail)
+    if not okAudit then
+        Log.always(('the admin panel %s is in force and kept, but its audit row raised: %s')
+            :format(detail.key and ('change to ' .. tostring(detail.key)) or 'reset of every setting',
+                tostring(auditErr)))
+    end
+    flushNow()
+    if entry then
+        local okTold, toldErr = pcall(changed, entry)
+        if not okTold then
+            Log.debug(('players\' games were not told of the change to %s: %s')
+                :format(entry.key, tostring(toldErr)))
+        end
+    end
+end
+
 local function setKey(key, raw, staff, actorCid)
-    local value, err, why = Settings.check(key, raw)
+    local value, err, why, warnings = Settings.check(key, raw)
     if value == nil then return false, err, why end
     local entry = byKey[key]
     local old = current(entry)
+
+    -- The value in force already: nothing written, recorded or told. Set
+    -- again from a stale page, a switch to what it was re-sent every
+    -- barred player the 'Closed to you' notice and every phone its access.
+    -- Not for a key the store holds something else for (not applied, or
+    -- not known): writing it is what settles that row.
+    if same(value, old) and not ignored[key] and not unknown[key] then
+        return true, nil, { key = key, value = copyOf(value), old = old, unchanged = true,
+                            source = overrides[key] and 'panel' or 'config', warnings = warnings }
+    end
+
     local backToConfig = same(value, defaults[key])
     local at = os.time()
 
@@ -780,7 +1007,16 @@ local function setKey(key, raw, staff, actorCid)
         wrote, writeErr = pcall(Storage.writeSetting, key, copyOf(value), staff, at)
     end
     if not wrote then
-        return false, 'store_failed', Util.dbError(writeErr)
+        local expected = nil
+        if not backToConfig then expected = value end
+        local kept, readErr = landed(key, expected)
+        if kept == nil then
+            markUnknown(key, readErr, staff)
+            return false, 'store_unknown', Util.dbError(writeErr)
+        end
+        if not kept then return false, 'store_failed', Util.dbError(writeErr) end
+        Log.debug(('the admin panel change to %s raised in the store (%s), and the store holds it: '
+            .. 'applied'):format(key, Util.dbError(writeErr)))
     end
 
     write(Config, key, stored(entry, value))
@@ -789,16 +1025,14 @@ local function setKey(key, raw, staff, actorCid)
     else
         overrides[key] = { value = copyOf(value), by = staff, at = at }
     end
-    ignored[key] = nil
+    ignored[key], unknown[key] = nil, nil
 
-    Audit.staff('admin_setting_changed', actorCid, nil, {
+    committed(entry, 'admin_setting_changed', actorCid, {
         key = key, old = old, new = copyOf(value), by = staff,
         source = backToConfig and 'config' or 'panel',
     })
-    flushNow()
-    changed(entry)
     return true, nil, { key = key, value = copyOf(value), old = old,
-                        source = backToConfig and 'config' or 'panel' }
+                        source = backToConfig and 'config' or 'panel', warnings = warnings }
 end
 
 --- Change a key live and keep it over config.lua.
@@ -819,33 +1053,44 @@ end
 --- One key back to what config.lua says. A key read-only now whose stored
 --- value was not applied at start (one changeable before, say) has its row
 --- taken away all the same: nothing in force changes, and it stops being
---- listed as not applied.
+--- listed as not applied. So does a row for a key the catalogue does not
+--- list at all (one from another version), which every start said to reset
+--- in the panel and the panel had no row for.
 local function resetKey(key, staff, actorCid)
     local entry = type(key) == 'string' and byKey[key] or nil
-    if not entry then return false, 'not_allowed', 'not a setting the panel may change' end
-    if entry.readonly and not ignored[key] then return false, 'read_only', entry.readonly end
-    if not overrides[key] and not ignored[key] then
+    local stray = type(key) == 'string' and not entry and (ignored[key] or unknown[key]) ~= nil
+    if not entry and not stray then
+        return false, 'not_allowed', 'not a setting the panel may change'
+    end
+    if entry and entry.readonly and not ignored[key] then return false, 'read_only', entry.readonly end
+    if not overrides[key] and not ignored[key] and not unknown[key] then
         return false, 'not_overridden', 'it is what config.lua says already'
     end
     -- What config.lua says passed the start-up checks on its own, but not
     -- necessarily beside the other overrides still in force: a least
     -- buyout put back under a most one changed from here.
     if overrides[key] then
-        local ok, reason = fits({ [key] = defaults[key] })
-        if not ok then return false, 'invalid_value', reason end
+        local ok, reason, _, other = fits({ [key] = defaults[key] })
+        if not ok then return false, 'invalid_value', refusal(key, reason, other) end
     end
     local wrote, writeErr = pcall(Storage.deleteSetting, key)
-    if not wrote then return false, 'store_failed', Util.dbError(writeErr) end
+    if not wrote then
+        local gone, readErr = landed(key, nil)
+        if gone == nil then
+            markUnknown(key, readErr, staff)
+            return false, 'store_unknown', Util.dbError(writeErr)
+        end
+        if not gone then return false, 'store_failed', Util.dbError(writeErr) end
+    end
 
-    local old = current(entry)
-    write(Config, key, stored(entry, defaults[key]))
+    local old = entry and current(entry) or copyOf((ignored[key] or {}).value)
+    if entry then write(Config, key, stored(entry, defaults[key])) end
     local had = overrides[key] ~= nil
-    overrides[key], ignored[key] = nil, nil
-    Audit.staff('admin_setting_reset', actorCid, nil,
+    overrides[key], ignored[key], unknown[key] = nil, nil, nil
+    committed(had and entry or nil, 'admin_setting_reset', actorCid,
         { key = key, old = old, new = copyOf(defaults[key]), by = staff })
-    flushNow()
-    if had then changed(entry) end
-    return true, nil, { key = key, value = copyOf(defaults[key]), old = old, source = 'config' }
+    return true, nil, { key = key, value = copyOf(defaults[key]), old = old, source = 'config',
+                        removed = not entry or nil }
 end
 
 --- Put one key back to what config.lua says.
@@ -858,27 +1103,62 @@ function Settings.reset(key, staff, actorCid)
 end
 
 local function resetEvery(staff, actorCid)
-    local wrote, writeErr = pcall(Storage.clearSettings)
-    if not wrote then return false, 'store_failed', Util.dbError(writeErr) end
-    local keys, changes = {}, {}
+    local keys = {}
     for key in pairs(overrides) do keys[#keys + 1] = key end
     for key in pairs(ignored) do if not overrides[key] then keys[#keys + 1] = key end end
+    for key in pairs(unknown) do
+        if not overrides[key] and not ignored[key] then keys[#keys + 1] = key end
+    end
     table.sort(keys)
-    local touched = {}
+
+    -- Which rows went: every one, or, when the clear raised, the ones the
+    -- store no longer holds (read back, as a change is).
+    local gone = {}
+    local wrote, writeErr = pcall(Storage.clearSettings)
+    if wrote then
+        for _, key in ipairs(keys) do gone[key] = true end
+    else
+        local ok, rows = pcall(Storage.readSettings)
+        if not ok or type(rows) ~= 'table' then
+            for _, key in ipairs(keys) do
+                if not unknown[key] then markUnknown(key, Util.dbError(rows), staff) end
+            end
+            return false, 'store_unknown', Util.dbError(writeErr)
+        end
+        for _, key in ipairs(keys) do gone[key] = rows[key] == nil end
+    end
+
+    local changes, touched, done, kept = {}, {}, {}, 0
     for _, key in ipairs(keys) do
-        local entry = byKey[key]
-        if entry and overrides[key] then
-            changes[key] = { old = current(entry), new = copyOf(defaults[key]) }
-            write(Config, key, stored(entry, defaults[key]))
-            touched[#touched + 1] = entry
+        if gone[key] then
+            local entry = byKey[key]
+            if entry and overrides[key] then
+                changes[key] = { old = current(entry), new = copyOf(defaults[key]) }
+                write(Config, key, stored(entry, defaults[key]))
+                touched[#touched + 1] = entry
+            end
+            overrides[key], ignored[key], unknown[key] = nil, nil, nil
+            done[#done + 1] = key
+        else
+            kept = kept + 1
         end
     end
-    overrides, ignored = {}, {}
-    Audit.staff('admin_settings_reset_all', actorCid, nil,
-        { keys = keys, changes = changes, by = staff })
-    flushNow()
-    for _, entry in ipairs(touched) do changed(entry) end
-    return true, nil, { keys = #keys }
+    if #done == 0 and kept > 0 then return false, 'store_failed', Util.dbError(writeErr) end
+
+    committed(nil, 'admin_settings_reset_all', actorCid,
+        { keys = done, changes = changes, by = staff, kept = kept > 0 and kept or nil })
+    for _, entry in ipairs(touched) do
+        local okTold, toldErr = pcall(changed, entry)
+        if not okTold then
+            Log.debug(('players\' games were not told of the change to %s: %s')
+                :format(entry.key, tostring(toldErr)))
+        end
+    end
+    if kept > 0 then
+        return false, 'store_failed', ('%s; %d were reset, and %d are still kept and in force')
+            :format(Util.dbError(writeErr), #done, kept)
+    end
+    return true, nil, { keys = #done }
 end
 
 --- Put every key back to what config.lua says.
@@ -1012,21 +1292,29 @@ end
 
 --- Every key the panel shows, with its value now, what config.lua says,
 --- and where the value in force comes from.
----@return table { features = entry[], limits = entry[], readonly = entry[], overrides = n }
+---
+--- `overrides` counts the ones in force; `stored` every row the store holds
+--- (or may hold), which Reset all clears; `notApplied` the rows held and
+--- not applied. A row for a key this version does not list is shown
+--- read-only, with why and its Reset: every start said to reset it here,
+--- and there was no row to do it from.
+---@return table { features = entry[], limits = entry[], readonly = entry[], overrides = n, stored = n, notApplied = n }
 function Settings.view()
-    local out = { features = {}, limits = {}, readonly = {}, overrides = 0 }
+    local out = { features = {}, limits = {}, readonly = {}, overrides = 0, stored = 0, notApplied = 0 }
     for _, entry in ipairs(CATALOGUE) do
         local override = overrides[entry.key]
         local skipped = ignored[entry.key]
         local row = {
             key = entry.key, group = entry.group, label = entry.label, about = entry.about,
-            kind = entry.kind, choices = entry.choices, min = entry.min, max = entry.max,
+            kind = entry.kind, choices = entry.choices, min = entry.min, max = Settings.maxOf(entry),
             integer = entry.integer or nil, live = entry.live ~= false,
             inflight = entry.inflight, readonly = entry.readonly, destroys = entry.destroys,
+            stricter = entry.stricter, strict = entry.strict,
             value = current(entry), default = copyOf(defaults[entry.key]),
             source = override and 'panel' or 'config',
             by = override and override.by or nil, at = override and override.at or nil,
             ignored = skipped and skipped.why or nil,
+            unknown = unknown[entry.key] and unknown[entry.key].why or nil,
             inactive = (entry.needs and read(Config, entry.needs) ~= true
                 and NEEDS_OFF[entry.needs])
                 or (entry.unless and read(Config, entry.unless) == true
@@ -1036,19 +1324,54 @@ function Settings.view()
         local list = out[entry.section]
         list[#list + 1] = row
     end
+    local strays = {}
+    for key in pairs(ignored) do if not byKey[key] then strays[#strays + 1] = key end end
+    for key in pairs(unknown) do
+        if not byKey[key] and not ignored[key] then strays[#strays + 1] = key end
+    end
+    table.sort(strays)
+    for _, key in ipairs(strays) do
+        local skipped = ignored[key] or {}
+        out.readonly[#out.readonly + 1] = {
+            key = key, group = 'Kept in the store, not on this list', label = key, kind = 'text',
+            readonly = 'Not a setting this version lists, so nothing reads it. Reset takes its row '
+                .. 'out of the store; nothing in force changes.',
+            value = copyOf(skipped.value), source = 'config', by = skipped.by, at = skipped.at,
+            ignored = skipped.why, unknown = unknown[key] and unknown[key].why or nil, stray = true,
+        }
+    end
+    for _, row in ipairs(Settings.active()) do
+        out.stored = out.stored + 1
+        if row.ignored then out.notApplied = out.notApplied + 1 end
+    end
     return out
 end
 
---- The overrides in force and the ones not applied, by key, for /ch-diag.
----@return table[] { key, value, by, at, ignored }
+--- The overrides in force and the ones not applied, by key, for /ch-diag:
+--- `applied` on the ones in force, `ignored` (why) on the ones not, and
+--- `unknown` (why) on a key whose last change the store may or may not hold.
+---@return table[] { key, value, by, at, applied, ignored, unknown }
 function Settings.active()
-    local out = {}
+    local out, listed = {}, {}
     for key, override in pairs(overrides) do
-        out[#out + 1] = { key = key, value = copyOf(override.value), by = override.by, at = override.at }
+        listed[key] = #out + 1
+        out[#out + 1] = { key = key, value = copyOf(override.value), by = override.by,
+                          at = override.at, applied = true }
     end
     for key, skipped in pairs(ignored) do
+        listed[key] = #out + 1
         out[#out + 1] = { key = key, value = copyOf(skipped.value), by = skipped.by,
                           at = skipped.at, ignored = skipped.why }
+    end
+    for key, doubt in pairs(unknown) do
+        local row = listed[key] and out[listed[key]]
+        if row then
+            row.unknown = doubt.why
+        else
+            local entry = byKey[key]
+            out[#out + 1] = { key = key, value = entry and current(entry) or nil, by = doubt.by,
+                              at = doubt.at, unknown = doubt.why }
+        end
     end
     table.sort(out, function(a, b) return a.key < b.key end)
     return out

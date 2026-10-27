@@ -273,7 +273,7 @@
     seq: {},                // [channel] = the newest request on it
     forms: {},              // what has been typed, by data-bind, so a redraw keeps it
     busy: {},               // writes in flight, by what they act on
-    armed: null,            // { node, timer }: the destructive button waiting for its second click
+    armed: null,            // { node, timer, value, bind }: the destructive button waiting for its second click
     menu: null,             // the dropdown that is open
     overview: null, overviewAt: 0, overviewError: null, overviewTimer: null,
     pollGen: 0,             // the open whose overview refresh is running
@@ -343,6 +343,7 @@
     read_only: 'That setting cannot be changed from the panel.',
     invalid_value: 'That value is refused.',
     store_failed: 'The store would not take it. Nothing changed.',
+    store_unknown: 'The store may or may not have kept it; the diagnosis lists it.',
     not_overridden: 'That setting is what config.lua says already.',
     busy: 'Another change is being saved right now. Try again in a moment.'
   };
@@ -387,6 +388,17 @@
       if (node) { node.disabled = false; node.classList.toggle('is-busy', false); }
       // What it moved shows in the counts at once, not at the next refresh.
       if (reply && reply.ok) loadOverview(false);
+      // Refused as not allowed: the ACE that writes went while the panel was
+      // open. The badge and every write button follow, rather than each
+      // click being refused the same way.
+      if (reply && reply.ok !== true && reply.err === 'not_allowed' && canWrite()) {
+        var was = S.access, now = {};
+        Object.keys(was).forEach(function (k) { now[k] = was[k]; });
+        now.canWrite = false;
+        S.access = now;
+        drawChrome();
+        redraw();
+      }
       return reply;
     }, function () {
       delete S.busy[key];
@@ -712,6 +724,9 @@
     S.overviewTimer = setTimeout(function () {
       S.overviewTimer = null;
       if (gen !== S.gen || !S.open) return;
+      // Stuck escrow too while it is on screen, so its list and the badge
+      // agree after another staff member settles a line.
+      if (S.section === 'stuck' && !S.drawer.id) loadStuck(true);
       loadOverview(false).then(function () { schedule(gen); });
     }, refreshMs());
   }
@@ -734,6 +749,17 @@
     orphan: 'contract never stored', never_given_release: 'left mid-release, never given',
     owed_to_nobody: 'owed to nobody', owed_to_unchecked: 'owed to an id not checked'
   };
+
+  /** Why Stuck escrow lists nothing, from where recovery stands. After a
+      recovery that failed, "while the server is recovering" told staff to
+      wait for something that never finishes. */
+  function notListed(recovery) {
+    if (recovery === 'recovery_failed') {
+      return 'Not listed: recovery failed at the last start; restart the resource once the cause in '
+        + 'the console is fixed.';
+    }
+    return 'Not listed while the server is recovering from the restart.';
+  }
 
   function tile(title, body, cls) {
     return h('div.tile' + (cls || ''), h('h3.tile-title', title), body);
@@ -759,7 +785,11 @@
     var stuckBody;
     var forYou = o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0;
     if (!o.stuck) {
-      stuckBody = h('p.note', 'Not listed while the server is recovering from the restart.');
+      stuckBody = h('p.note', notListed(o.recovery));
+    } else if (o.stuck.error) {
+      stuckBody = frag(h('p.note.is-error', 'The list could not be read just now; the diagnosis keeps '
+        + 'why. Stuck escrow reads it again.'),
+        btn('.is-small', 'section', { 'data-section': 'stuck' }, 'Open Stuck escrow', 'arrow-right'));
     } else {
       var byWhy = o.stuck.byWhy || {};
       var listed = Number(o.stuck.total) || 0;
@@ -775,7 +805,8 @@
             + (nothingToDo === 1 ? 'it is' : 'they are') + ' owed, or an ending settling itself within a minute.')
           : null,
         listed > 0
-          ? h('p.note', 'Stuck escrow lists every one and settles it; each contract\'s view lists its own.')
+          ? h('p.note', 'Stuck escrow lists every one and settles it; each contract\'s view lists its '
+            + 'own, a contract that was never stored included.')
           : null,
         btn('.is-small', 'section', { 'data-section': 'stuck' }, 'Open Stuck escrow', 'arrow-right'));
     }
@@ -792,8 +823,8 @@
           })))),
         tile('Operatives', frag(
           h('p.big', num(hitmen.operatives)),
-          h('p.sub', 'on contracts now, holding ' + num(hitmen.active) + ' contract'
-            + (Number(hitmen.active) === 1 ? '' : 's')))),
+          h('p.sub', 'on contracts now, holding ' + num(hitmen.contracts) + ' contract'
+            + (Number(hitmen.contracts) === 1 ? '' : 's')))),
         tile('Held in escrow', moneyRows(o.held)),
         tile('Owed to players', frag(moneyRows(owed),
           h('p.sub', num(owed.players) + ' player' + (Number(owed.players) === 1 ? '' : 's') + ' · '
@@ -813,14 +844,17 @@
             + bytes(photos.served && photos.served.bytes)))
           : h('p.note', 'The photo store did not answer.')),
         tile('Server', h('dl.facts',
-          h('dt', 'Storage'), h('dd', String(o.storage || '—')),
+          h('dt', 'Storage'), h('dd', String(o.storage || '—'), o.storage === 'memory'
+            ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are gone at '
+              + 'the next start' }, 'nothing is kept across a restart') : null),
           h('dt', 'New contracts'), h('dd', RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—')),
           h('dt', 'Kill photos'), h('dd', o.killPhotos === false ? 'Off'
             : 'On, kept on ' + String(o.photoStorage || '—')),
           h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'Finished'
             : o.recovery === 'recovering' ? 'Still running' : 'FAILED'),
           h('dt', 'Settings changed here'), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
-            'data-section': 'settings' }, num(o.overrides))),
+            'data-section': 'settings' }, num(o.overrides)),
+            Number(o.notApplied) > 0 ? h('span.chip.is-error', num(o.notApplied) + ' not applied') : null),
           h('dt', 'Log rows queued'), h('dd', num(o.auditQueued))))),
       h('div.cols',
         card('Slowest maintenance jobs', slowest.length ? h('div.table-wrap', h('table.grid',
@@ -836,7 +870,7 @@
         card('What the diagnosis says', warnings.length
           ? h('ul.warnings', warnings.map(function (line) { return h('li', String(line)); }))
           : empty('Nothing that wants doing.'), '',
-          btn('.is-small', 'section', { 'data-section': 'tools' }, 'Run it', 'stethoscope'))),
+          btn('.is-small', 'ov-diag', {}, 'Run it', 'stethoscope'))),
       h('p.foot', icon('rotate'),
         ' Updated ' + (S.overviewAt ? when(S.overviewAt).slice(11) : '—') + ' · refreshes every '
         + Math.round(refreshMs() / 1000) + ' s',
@@ -1008,10 +1042,13 @@
 
   function closeDrawer() {
     disarm();
+    var was = S.drawer.id;
     S.drawer = { id: null, data: null, answer: null, whois: null };
     var drawer = byId('drawer'), scrim = byId('scrim');
     if (drawer) { drawer.hidden = true; setHtml(drawer, frag()); }
     if (scrim) scrim.hidden = true;
+    // What was settled in it shows in the list behind it.
+    if (was && S.open && S.section === 'stuck') loadStuck();
   }
 
   function drawDrawer() {
@@ -1190,7 +1227,13 @@
     var timeline = asList(d.timeline);
     var stuck = d.stuck === undefined || d.stuck === null ? null : asList(d.stuck);
 
-    var actions = h('div.drawer-actions',
+    // An id with escrow and no contract record: its lines alone, settled
+    // here as Stuck escrow settles them.
+    var stub = c.neverStored === true;
+    var actions = stub ? h('div.drawer-actions', h('p.note', 'Never stored: escrow under this id has no '
+        + 'contract record, so nothing here names who put it up. Settle each line below; Return to sends '
+        + 'it to the citizen id of whoever did.'))
+      : h('div.drawer-actions',
       d.canVoid
         ? h('div.inline-form.is-wide',
           field('dr.reason', { class: 'is-grow', placeholder: 'Reason for the void (kept in the log)',
@@ -1201,7 +1244,7 @@
 
     var stuckPart = null;
     if (stuck === null) {
-      stuckPart = card('Waiting for staff', h('p.note', 'Not listed while the server is recovering from the restart.'));
+      stuckPart = card('Waiting for staff', h('p.note', notListed(S.recovery)));
     } else if (stuck.length) {
       stuckPart = card('Waiting for staff', h('ul.stuck', stuck.map(function (entry) {
         return stuckItem(entry, 'drawer');
@@ -1231,8 +1274,8 @@
       actions,
       whois,
       stuckPart,
-      card('Terms', terms),
-      card('Payouts', slotSummary(escrow, c)),
+      stub ? null : card('Terms', terms),
+      stub ? null : card('Payouts', slotSummary(escrow, c)),
       card('Escrow lines', escrow.length ? h('div.table-wrap', h('table.grid',
         h('thead', h('tr', h('th', 'Line'), h('th', 'Payout'), h('th', 'Holds'),
           h('th', 'State'), h('th', 'Owed to'), h('th.num', 'Arrived'), h('th.num', 'Still owed'))),
@@ -1248,7 +1291,7 @@
             h('td.num', line.arrived == null ? '—' : num(line.arrived)),
             h('td.num', MONEY[line.source] ? money(line.owes) : num(line.owes)));
         })))) : empty('No escrow lines.')),
-      card('Operatives', hitmen.length ? h('div.table-wrap', h('table.grid',
+      stub ? null : card('Operatives', hitmen.length ? h('div.table-wrap', h('table.grid',
         h('thead', h('tr', h('th', 'Alias'), h('th', 'Name'), canIdentify() ? h('th', 'Citizen id') : null,
           h('th', 'State'), h('th', 'Accepted'), h('th', 'Left'), h('th.num', 'Claims'), h('th.num', 'Stake'))),
         h('tbody', hitmen.map(function (m) {
@@ -1288,12 +1331,12 @@
 
   /** Every escrow line waiting for staff, from the server (op stuck), as
       the stuck listing has them, each settled here with its buttons. */
-  function loadStuck() {
+  function loadStuck(quiet) {
     return ask('stuck', {}, 'stuck').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) {
         S.stuck.error = words(reply);
-        toast(S.stuck.error, 'error');
+        if (!quiet) toast(S.stuck.error, 'error');
       } else {
         S.stuck.data = reply.data || {};
         S.stuck.error = null;
@@ -1318,7 +1361,7 @@
           btn('.is-small', 'section', { 'data-section': 'reviews' }, 'Open the queue', 'arrow-right')), '.is-warn')
       : null;
     if (d.lines === undefined || d.lines === null) {
-      return frag(h('p.note', 'Not listed while the server is recovering from the restart.'), reviews);
+      return frag(h('p.note', notListed(d.recovery)), reviews);
     }
     var lines = asList(d.lines);
     if (!lines.length) return frag(empty('No escrow line is waiting for staff.'), reviews);
@@ -1842,7 +1885,7 @@
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
         disabled: !open, 'aria-label': entry.label }),
       writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
-        entry.destroys ? 'Click again to save' : null, 'check'),
+        entry.destroys || entry.stricter ? 'Click again to save' : null, 'check'),
       h('span.st-range', range));
   }
 
@@ -1852,6 +1895,20 @@
     if (!entry.destroys || typeof value !== 'number' || value === 0) return false;
     var now = Number(entry.value) || 0;
     return now === 0 || value < now;
+  }
+
+  /** What the second click of a value that takes two says it does, or
+      null: one that deletes for good, or a rate limit made stricter (the
+      catalogue's `stricter`, the way that refuses players sooner). */
+  function secondClick(entry, value) {
+    if (destroysWith(entry, value)) return String(entry.destroys).replace(/%s/g, num(value));
+    if (entry.stricter && typeof value === 'number') {
+      var now = Number(entry.value);
+      if ((entry.stricter === 'up' && value > now) || (entry.stricter === 'down' && value < now)) {
+        return String(entry.strict || 'Stricter: players are refused sooner.').replace(/%s/g, num(value));
+      }
+    }
+    return null;
   }
 
   function settingInner(entry) {
@@ -1874,18 +1931,23 @@
         entry.readonly ? h('p.st-about.is-warn', String(entry.readonly)) : null,
         entry.destroys && !entry.readonly
           ? h('p.st-about.is-warn', 'Lowering it deletes for good, so saving a lower value takes two clicks.') : null,
+        entry.stricter && !entry.readonly
+          ? h('p.st-about.is-warn', 'Making it stricter refuses players at once, so it takes two clicks.') : null,
         entry.inflight ? h('p.st-inflight', h('b', 'Under way: '), String(entry.inflight)) : null,
         entry.readonly ? null : h('p.st-source', 'config.lua: ' + describe(entry, entry.default),
           overridden ? ' · in force from the panel' + (entry.by ? ', set by ' + entry.by : '')
             + (entry.at ? ' ' + ago(entry.at) : '') : ' · in force from config.lua'),
         entry.ignored ? h('p.st-about.is-error', 'The store holds a value that was not applied at start: '
           + String(entry.ignored) + '. config.lua\'s is in force; reset it to clear this.') : null,
+        entry.unknown ? h('p.st-about.is-error', 'A change to it raised in the store, and so did reading it '
+          + 'back (' + String(entry.unknown) + '): the store may or may not hold it. What is shown is in '
+          + 'force; set or reset it again to settle it.') : null,
         answerBox(answer)),
       // A read-only key too, when the store holds a value for it that was
       // not applied (kept from a version where it could be changed): the
       // reset takes that row away, and nothing in force moves.
       h('div.st-control', settingControl(entry),
-        entry.ignored || (overridden && !entry.readonly)
+        entry.ignored || entry.unknown || (overridden && !entry.readonly)
           ? writeBtn('.is-small.is-ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
             'Click again to reset', 'arrow-rotate-left') : null));
   }
@@ -1914,7 +1976,9 @@
       + 'finishes under the rules it started with; only new actions are refused, and players are told the '
       + 'feature is turned off by the server.',
     limits: 'Each value is checked the way the server checks config.lua at start. Lowering a cap below what is '
-      + 'in use never cancels anything: it only refuses new ones over it.',
+      + 'in use never cancels anything: it only refuses new ones over it. Rate limits are not caps: a '
+      + 'stricter one refuses players at once, so it takes two clicks and says what it refuses, and the '
+      + 'ones the app cannot work without have a floor.',
     readonly: 'Shown so you can see them, and changed only in config.lua: from here, a slip could lock staff '
       + 'out, or would need a migration.'
   };
@@ -1929,9 +1993,12 @@
       h('label.search', icon('magnifying-glass'),
         field('st.q', { id: 'st-q', placeholder: 'Find a setting', 'data-live': 'st-filter',
           'aria-label': 'Find a setting' })),
-      h('span.sub', num(overrides) + ' changed from the panel'),
-      overrides > 0 ? writeBtn('.is-danger.is-small', 'st-reset-all', {}, 'Reset all to config.lua',
-        'Click again to reset all', 'arrow-rotate-left') : null);
+      h('span.sub', num(overrides) + ' changed from the panel'
+        + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + ' kept and not applied' : '')),
+      // Whenever the store holds a row, applied or not: one not applied (a
+      // key from another version among them) is cleared by it too.
+      overrides > 0 || (d && Number(d.stored) > 0) ? writeBtn('.is-danger.is-small', 'st-reset-all', {},
+        'Reset all to config.lua', 'Click again to reset all', 'arrow-rotate-left') : null);
   }
 
   function settingsList() {
@@ -1945,7 +2012,15 @@
       if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
       byGroup[g].push(entry);
     });
-    return frag(h('p.hint', TAB_INTRO[S.settings.tab]), groups.map(function (g) {
+    // In memory mode nothing is kept across a restart: the settings no more
+    // than the contracts.
+    var intro = S.settings.tab === 'features' && S.overview && S.overview.storage === 'memory'
+      ? 'Every switch here takes effect at once, and lasts until the resource stops: this server runs in '
+        + 'memory mode, which keeps nothing across a restart. What is already under way finishes under the '
+        + 'rules it started with; only new actions are refused, and players are told the feature is turned '
+        + 'off by the server.'
+      : TAB_INTRO[S.settings.tab];
+    return frag(h('p.hint', intro), groups.map(function (g) {
       return h('section.st-group', { 'data-group': g.toLowerCase() }, h('h3.st-group-title', g),
         byGroup[g].map(settingRow));
     }), h('p.empty', { id: 'st-none', hidden: true }, 'No setting matches.'));
@@ -2094,10 +2169,22 @@
   };
 
   ACTIONS['ov-refresh'] = function () { loadOverview(true); };
+  /** A state chip: the contracts in that state, as many as it counted, so
+      nothing typed or picked before narrows the list. */
   ACTIONS['ov-state'] = function (node) {
+    S.forms['ct.q'] = '';
+    S.forms['ct.from'] = '';
+    S.forms['ct.to'] = '';
+    S.contracts.rule = '';
+    S.contracts.range = '';
     S.contracts.state = node.getAttribute('data-value') || '';
     S.contracts.page = 1;
     show('contracts');
+  };
+  /** Run it: the diagnosis, run, not only the section it is run from. */
+  ACTIONS['ov-diag'] = function () {
+    show('tools');
+    ACTIONS['tl-diag']();
   };
 
   ACTIONS['ct-search-now'] = function () { S.contracts.page = 1; loadContracts(); };
@@ -2190,6 +2277,8 @@
         loadStuck();
         return;
       }
+      // Opened from Stuck escrow, the list behind it is read again too.
+      if (S.section === 'stuck') loadStuck();
       if (S.drawer.id !== id) return;
       drawerAnswer(reply);
       drawDrawer();
@@ -2351,22 +2440,28 @@
       drawSettingRow(key);
       return;
     }
-    // A value that deletes something for good takes the two clicks every
-    // destructive button does, the row saying what the second one does.
-    // Saved on one click or on Enter, a typo of 1 for 10 days lost every
-    // unopened kill photo older than a day at the next sweep. Enter only
-    // ever arms it.
-    if (destroysWith(entry, parsed.value)) {
-      if (node.tagName === 'BUTTON' && S.armed && S.armed.node === node) {
+    // A value that deletes something for good, or a rate limit made
+    // stricter, takes the two clicks every destructive button does, the row
+    // saying what the second one does. Saved on one click or on Enter, a
+    // typo of 1 for 10 days lost every unopened kill photo older than a day
+    // at the next sweep. Enter only ever arms it, and the second click saves
+    // only the value the first one named: anything typed since arms again
+    // with its own words.
+    var said = secondClick(entry, parsed.value);
+    if (said) {
+      if (node.tagName === 'BUTTON' && S.armed && S.armed.node === node && S.armed.value === parsed.value) {
         disarm();
         setSetting(key, parsed.value, node);
         return;
       }
-      S.settings.answers[key] = { ok: false,
-        text: String(entry.destroys).replace(/%s/g, num(parsed.value)) + ' Click Save again to do it.' };
+      disarm();
+      S.settings.answers[key] = { ok: false, text: said + ' Click Save again to do it.' };
       drawSettingRow(key);
       var button = byId('st-save-' + key);
-      if (button) confirmed(button);
+      if (button) {
+        confirmed(button);
+        if (S.armed) { S.armed.value = parsed.value; S.armed.bind = 'st.' + key; }
+      }
       return;
     }
     setSetting(key, parsed.value, node.tagName === 'BUTTON' ? node : null);
@@ -2460,6 +2555,9 @@
     if (!node || !node.getAttribute) return;
     var bind = node.getAttribute('data-bind');
     if (bind) S.forms[bind] = node.value;
+    // Typing in a box whose Save is armed disarms it: what the armed click
+    // named is no longer what is in the box.
+    if (bind && S.armed && S.armed.bind === bind) disarm();
     var live = node.getAttribute('data-live');
     if (live && LIVE[live]) run(LIVE[live], node, event);
   });

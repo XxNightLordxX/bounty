@@ -620,6 +620,129 @@ describe('the logger itself', function()
     end)
 end)
 
+describe('the diagnosis after players have filled what is kept (G3)', function()
+    local function report(src, payload)
+        _G.source = src
+        local ok, err = pcall(Env.events['crimson-hitman:pageError'], payload)
+        _G.source = nil
+        truthy(ok, 'the report raised: ' .. tostring(err))
+    end
+
+    --- W123: the log staff asked for was kept as a fault, and five
+    --- diagnoses of one player pushed their real fault out of the report.
+    it('keeps the log it asked for out of the faults, the named player\'s first', function()
+        local _, s = boot('memory')
+        fixture(s)
+        report(3, { what = 'REAL FAULT of hitman', where = 'board', build = 'b' })
+        report(1, { what = 'a fault of the client', where = 'mine', build = 'b' })
+        for _ = 1, 5 do
+            s.admin.diagnose(0, 3)
+            report(3, { what = 'page diagnostics', where = 'requested', stack = 'a || b', build = 'b' })
+            Env.advance(1)
+        end
+        local out = table.concat(s.admin.diagnose(0, 3), '\n')
+        truthy(out:find('app faults: 2 reported by players\' pages, 1 by this player\'s', 1, true), out)
+        local own = out:find('REAL FAULT of hitman', 1, true)
+        local other = out:find('a fault of the client', 1, true)
+        truthy(own and other and own < other, 'theirs first: ' .. out)
+        truthy(out:find('a fault of the client  (another player\'s)', 1, true), out)
+        falsy(out:find('build b  page diagnostics', 1, true), 'the asked-for log is no fault: ' .. out)
+    end)
+
+    --- W128: a page that had spent its report allowance was refused the
+    --- log staff asked for, after the promise that it would follow.
+    it('takes the log it asked for from a page that has spent its allowance', function()
+        local _, s = boot('memory')
+        fixture(s)
+        for i = 1, Config.Cooldowns.diagnostic.burst + 1 do
+            report(3, { what = 'fault ' .. i, where = 'board', build = 'b' })
+        end
+        s.audit.flush()
+        truthy(#s.storage.auditByAction('ratelimit_pageError', 5) > 0, 'the allowance is spent')
+        Env.console = {}
+        s.admin.diagnose(0, 3)
+        report(3, { what = 'page diagnostics', where = 'requested', stack = 'newest event', build = 'b' })
+        truthy(console():find('player 3\'s app sent its log', 1, true), console())
+        truthy(console():find('page: newest event', 1, true), console())
+    end)
+
+    --- W204: one report of a long stack printed some 145 console lines.
+    it('prints a few lines of a long stack with Debug on, and says how many more', function()
+        local _, s = boot('memory', function() Config.Debug = true end)
+        fixture(s)
+        local pieces = {}
+        for i = 1, 145 do pieces[i] = tostring(i) end
+        Env.console = {}
+        report(2, { what = 'render', where = 'board', stack = table.concat(pieces, ' || '), build = 'b' })
+        local printed = 0
+        for _, line in ipairs(Env.console) do
+            if line:find('page stack from', 1, true) then printed = printed + 1 end
+        end
+        truthy(printed <= 9, 'printed ' .. printed .. ' stack lines')
+        truthy(console():find('page stack from TARGET01: %(%d+ more in the audit row%)'), console())
+    end)
+
+    --- W205: the no-host warning stayed after kill photos went off.
+    it('takes the no upload host warning back once kill photos are off', function()
+        local _, s = boot('memory', function()
+            Config.Completion.KillPhotos = true
+            Config.Completion.Fulfilment = 'either'
+            Config.Completion.PhotoStorage = 'host'
+            Config.Completion.ExtraPhotoHosts = {}
+        end)
+        local phone = Natives.phoneConfig
+        Natives.phoneConfig = {}
+        s.photo.loadAllowedHosts()
+        truthy(table.concat(s.admin.diagnose(0), '\n'):find('no photo upload host is allowed', 1, true),
+            'listed while photos come from a host')
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        truthy(panel(6, 'setSetting', { key = 'Completion.KillPhotos', value = false }).ok)
+        local out = table.concat(s.admin.diagnose(0), '\n')
+        Natives.phoneConfig = phone
+        falsy(out:find('no photo upload host is allowed', 1, true), out)
+    end)
+
+    --- W206/W207: renamed commands, and every kept line spells them so.
+    it('names renamed commands in every line it keeps', function()
+        local _, s = boot('memory', function()
+            Config.Admin.Commands.stuck = 'hm-stuck'
+            Config.Admin.Commands.settle = 'hm-settle'
+            Config.Admin.Commands.diagnose = 'hm-diag'
+            Config.Admin.Commands.review = 'hm-review'
+        end)
+        local f = fixture(s)
+        s.review.open({ kind = 'escrow_settle_lost', contract_id = 'ct00000001',
+            cids = { recipient = 'HITMAN01' } })
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local line = s.storage.readEscrow(c.id)[1]
+        local p = Env.players[3]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function() error('AddMoney hook raised', 0) end
+        for _ = 1, s.escrow.DELIVER_RAISE_LIMIT do
+            pcall(s.escrow.release, c.id, 'HITMAN01', { line = line.id }, 'test')
+        end
+        p.Functions.AddMoney = real
+        local kept = Log.view()
+        local all = table.concat(kept.problems, '\n') .. '\n' .. table.concat(kept.boot, '\n')
+        for _, entry in ipairs(kept.recent) do all = all .. '\n' .. entry.text end
+        truthy(all:find('hm-stuck', 1, true), 'a line names the renamed command: ' .. all)
+        falsy(all:find('/ch-', 1, true), all)
+    end)
+
+    --- W207: a start past what is kept of it lost the rest without a word.
+    it('says how many lines of a long start were not kept', function()
+        local s = newStack()
+        for i = 1, Log.BOOT_KEPT + 7 do Log.debug('start line ' .. i) end
+        Log.started()
+        local out = table.concat(s.admin.diagnose(0), '\n')
+        truthy(out:find('(and 7 more line(s) the start said, not kept)', 1, true), out)
+        Log.beginStart()
+    end)
+end)
+
 describe('the client with Config.Debug off', function()
     it('prints nothing to F8 in normal play, even when lb-phone refuses it', function()
         Env.reset()

@@ -2179,6 +2179,13 @@ function JsonStore.allContracts()
     return out
 end
 
+--- How many contracts are in each state. See the memory backend.
+function JsonStore.countContractsByState()
+    local out = {}
+    for _, c in pairs(db.contracts) do out[c.state] = (out[c.state] or 0) + 1 end
+    return out
+end
+
 --- Contracts still running, active or accepted. See the memory backend.
 function JsonStore.liveContracts()
     local out = {}

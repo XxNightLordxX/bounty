@@ -114,29 +114,65 @@ function Admin.allowed(src, ace, strict)
     return false
 end
 
+--- How each staff command is run from the server console, by its key in
+--- Config.Admin.Commands: the console route a refusal offers is the command
+--- that was refused, not the diagnosis for every one of them.
+local USAGE = {
+    diagnose = '%s <player id>', timeline = '%s <contract id>', whois = '%s <contract id>',
+    contracts = '%s <player id|citizen id>', void = '%s <contract id> <reason>', stuck = '%s',
+    settle = '%s <line> pay|return|delivered', review = '%s <id> refund|pay|dismiss ...',
+    refresh = '%s timers',
+}
+
 --- What to grant somebody who was refused, said in full.
 ---
 --- "Not authorised." is true and useless. An owner reading it has no way to
 --- know which ACE, or where to put it.
+---
+--- Unmasking (Config.Admin.IdentityAce) is for fewer people than the staff
+--- tools, so it is suggested for one identifier or a group of its own,
+--- never group.admin: told to grant it to the whole admin group, an owner
+--- handed every admin the one ACE the shipped config keeps apart.
 ---@param ace string
 ---@param panel boolean|nil worded for the admin panel, which has no
 --- commands in it: the grant alone, with no command to run instead
+---@param command string|nil the command refused, as it is registered: the
+--- console route names it and what it takes (the diagnosis when not given)
+---@param strict boolean|nil it is one the extra ACEs never open
+---@param hasExtraAce boolean|nil the caller holds one of Config.Admin.ExtraAces (or
+--- crimson.admin): told why their access does not reach this one
 ---@return string
-function Admin.howToAuthorise(ace, panel)
+function Admin.howToAuthorise(ace, panel, command, strict, hasExtraAce)
+    local grant
+    if ace == Config.Admin.IdentityAce then
+        grant = ('add_ace identifier.license:<their licence> %s allow for one person, or to a '
+            .. 'group of its own (add_ace group.<name> %s allow); not group.admin, since unmasking '
+            .. 'is for fewer people than the staff tools'):format(ace, ace)
+    else
+        grant = ('add_ace group.admin %s allow'):format(ace)
+    end
     if panel then
-        return ('Not authorised: this needs the %s ACE. Grant it with add_ace group.admin %s '
-            .. 'allow, pasted into the server console until the next restart, or put in '
-            .. 'server.cfg to keep it.'):format(ace, ace)
+        return ('Not authorised: this needs the %s ACE. Grant it with %s, pasted into the server '
+            .. 'console until the next restart, or put in server.cfg to keep it.'):format(ace, grant)
     end
     -- The console route matters more than the ACE for the one command an
     -- owner needs before anything is set up. Somebody locked out in game
     -- and told only about server.cfg has to restart their server to find
     -- out why their app is empty; the console answers now.
-    return ('Not authorised. Right now: run it in the server console, which '
-        .. 'never refuses — name a player, %s <playerid>. To have it in game: '
-        .. 'add_ace group.admin %s allow — pasted into the console to grant it '
-        .. 'until the next restart, or put in server.cfg to keep it.'):format(
-        tostring(Config.Admin.Commands.diagnose), ace)
+    local names = Config.Admin.Commands or {}
+    local usage
+    for key, name in pairs(names) do
+        if command ~= nil and name == command and USAGE[key] then usage = USAGE[key]:format(name) end
+    end
+    usage = usage or USAGE.diagnose:format(tostring(names.diagnose))
+    local why = ''
+    if strict and hasExtraAce then
+        why = (' This one changes money or unmasks a party, so it needs %s itself; the access you '
+            .. 'have opens the read-only tools.'):format(ace)
+    end
+    return ('Not authorised.%s Right now: run it in the server console, which never refuses: '
+        .. '%s. To have it in game: %s, pasted into the console to grant it until the next '
+        .. 'restart, or put in server.cfg to keep it.'):format(why, usage, grant)
 end
 
 --- Resolve who ran a command, for the audit row. The console has no citizen
@@ -152,9 +188,15 @@ end
 --------------------------------------------------------------------------
 
 --- Everything that happened to one contract, in order.
+---
+--- On the record, as every staff read is (the module's header): the panel's
+--- view of the same contract wrote admin_panel_contract, and this wrote
+--- nothing.
+---@param contractId any
+---@param source number|nil who asked, for the audit row (0 the console)
 ---@return table[]|nil rows
 ---@return string|nil err
-function Admin.timeline(contractId)
+function Admin.timeline(contractId, source)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CH.ERR.INVALID_INPUT end
 
@@ -168,6 +210,7 @@ function Admin.timeline(contractId)
     Audit.flush()
 
     local rows = Storage.auditForContract(contractId, Config.Admin.TimelineRows) or {}
+    Audit.staff('admin_timeline', callerCid(tonumber(source) or 0), contractId, { rows = #rows })
     return {
         contract = {
             id = contract.id, state = contract.state, mode = contract.mode,
@@ -237,6 +280,17 @@ local function tookFrom(cid, lines)
         end
     end
     return false
+end
+
+--- The player in the city a typed citizen id names, tried as typed and
+--- then in capitals, which qbx_core's ids are: Admin.knownCitizenId's first
+--- step, for a command that acts on somebody here now.
+---@param typed any
+---@return table|nil actor
+local function onlineByCitizenId(typed)
+    local cid = Util.toCitizenId(typed)
+    if not cid then return nil end
+    return Identity.byCitizenId(cid) or (cid:upper() ~= cid and Identity.byCitizenId(cid:upper())) or nil
 end
 
 --- A citizen id staff typed, in the form the server keeps it, or nil when
@@ -1972,6 +2026,9 @@ function Admin.diagnose(source, subjectId, later, opts)
             .. 'since:'):format(kept.debug and 'on' or 'off, so only what needs you was printed'))
         if #kept.boot == 0 and #kept.recent == 0 then say('  · nothing') end
         for _, text in ipairs(kept.boot) do say('  · ' .. text) end
+        if (kept.bootLeft or 0) > 0 then
+            say(('  · (and %d more line(s) the start said, not kept)'):format(kept.bootLeft))
+        end
         for _, entry in ipairs(kept.recent) do
             say(('  · %s  %s%s'):format(entry.at and os.date('%H:%M:%S', entry.at) or '--:--:--',
                 entry.text, entry.times > 1 and (' (x%d)'):format(entry.times) or ''))
@@ -2096,14 +2153,34 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- Settings changed from the admin panel, which are in force over
     -- config.lua: an owner reading their config.lua and seeing one value
     -- while the server runs another needs to be told here.
+    --
+    -- Counted as the panel's Settings section counts them: the ones in
+    -- force, and apart from them the rows the store holds that were not
+    -- applied (or that a change left it unknown whether it holds).
     local active = Settings and Settings.active() or {}
     if #active > 0 then
-        say(('admin panel settings in force over config.lua: %d'):format(#active))
+        local inForce, notApplied, unsure = 0, 0, 0
         for _, row in ipairs(active) do
+            if row.ignored then
+                notApplied = notApplied + 1
+            elseif row.applied then
+                inForce = inForce + 1
+            end
+            if row.unknown then unsure = unsure + 1 end
+        end
+        say(('admin panel settings in force over config.lua: %d%s%s'):format(inForce,
+            notApplied > 0 and (', and %d not applied'):format(notApplied) or '',
+            unsure > 0 and (', and %d the store may or may not hold'):format(unsure) or ''))
+        for _, row in ipairs(active) do
+            local note = ''
+            if row.ignored then
+                note = '  -> NOT APPLIED: ' .. row.ignored .. '; reset it in the panel'
+            elseif row.unknown then
+                note = ('  -> STORE UNKNOWN: a change to it raised, and so did reading it back (%s); '
+                    .. 'set or reset it again in the panel'):format(row.unknown)
+            end
             say(('  %s = %s  (by %s, %s)%s'):format(row.key, Settings.describe(row.value),
-                tostring(row.by or '?'), row.at and os.date('%Y-%m-%d %H:%M', row.at) or '?',
-                row.ignored and ('  -> NOT APPLIED: ' .. row.ignored .. '; reset it in the panel')
-                    or ''))
+                tostring(row.by or '?'), row.at and os.date('%Y-%m-%d %H:%M', row.at) or '?', note))
         end
     else
         say('admin panel settings: none; config.lua is in force as it stands')
@@ -2120,10 +2197,30 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- also the one place an owner can always run it, ACE or not — so the one
     -- tool for "why is my app empty" was unreachable from the one place that
     -- never refuses. It takes a player id now.
-    local subject = tonumber(subjectId) or (source ~= 0 and source or nil)
+    --
+    -- Named by a citizen id, as /ch-contracts takes one, it is the player in
+    -- the city holding it. Anything else named is said so: it fell back to
+    -- the caller, who was diagnosed in the named player's place with
+    -- nothing to say the argument had been ignored.
+    local subject, unnamed
+    if subjectId ~= nil and subjectId ~= '' then
+        subject = tonumber(subjectId)
+        if not subject then
+            local held = onlineByCitizenId(subjectId)
+            subject = held and held.source or nil
+            unnamed = not subject
+        end
+    elseif source ~= 0 then
+        subject = source
+    end
 
     local actor = subject and Identity.resolve(subject) or nil
-    if not actor then
+    if unnamed then
+        say(('identity: %s is not a player id, and nobody in the city has it as a citizen id.')
+            :format(tostring(subjectId)))
+        say('  -> Give a player id (or nothing to run it as yourself). The server-wide checks '
+            .. 'below still ran.')
+    elseif not actor then
         if subjectId then
             say(('identity: player %s is not connected, or this server cannot '
                 .. 'describe them.'):format(tostring(subjectId)))
@@ -2141,6 +2238,12 @@ function Admin.diagnose(source, subjectId, later, opts)
         say('  the server-wide checks below still ran.')
     else
         say(('identity: %s (%s)'):format(tostring(actor.name), tostring(actor.cid)))
+    end
+    -- A player named is a look into their contracts, money and inventory,
+    -- and on the record as every other staff read is.
+    if subjectId ~= nil and subjectId ~= '' and Audit then
+        pcall(Audit.staff, 'admin_diagnose', callerCid(tonumber(source) or 0), nil,
+            { subject = actor and actor.cid or nil, named = actor == nil and true or nil })
     end
 
     -- Targeting -----------------------------------------------------------
@@ -2258,10 +2361,21 @@ function Admin.diagnose(source, subjectId, later, opts)
                 answeredBy == 'metadata' and 'QBox metadata' or tostring(answeredBy)))
     else
         say('death state: NOTHING COULD ANSWER')
-        say('  -> no configured death provider responded and this player has no '
-            .. 'QBox metadata to fall back on. Eliminations cannot be verified: '
-            .. 'every photo of a real kill is refused. Deliveries alive are '
-            .. 'refused too, for the same reason.')
+        -- Led by what fails on this server: on 'alive' a handover is the only
+        -- way a contract completes, and a kill photo is taken only for a
+        -- contract placed under 'either' that is still live.
+        if placing == CH.FULFILMENT_RULE.ALIVE then
+            say('  -> no configured death provider responded and this player has no QBox '
+                .. 'metadata to fall back on. Every live handover of them is refused, since one '
+                .. 'needs them shown alive and conscious, so no contract on them can complete.'
+                .. (photosUsed and ' A kill photo of them, for a contract placed under '
+                    .. '\'either\' and still live, is refused too.' or ''))
+        else
+            say('  -> no configured death provider responded and this player has no '
+                .. 'QBox metadata to fall back on. Eliminations cannot be verified: '
+                .. 'every photo of a real kill is refused. Deliveries alive are '
+                .. 'refused too, for the same reason.')
+        end
         local providers = {}
         for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
             providers[#providers + 1] = ('%s(%s)')
@@ -2549,17 +2663,32 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- here: a page that threw on every render looked, from the server, like
     -- a player who had stopped using the app. These are the faults the page
     -- caught and sent back.
+    --
+    -- The named player's own first, then other players' marked as theirs:
+    -- the five newest server-wide were listed as "theirs", and another
+    -- player's broken page answered a question about this one.
     local faults = App and App.recentPageFaults and App.recentPageFaults() or {}
     if #faults == 0 then
         say('app faults: none reported by any player\'s page this session.')
     else
-        say(('app faults: %d reported by players\' pages, newest first:')
-            :format(#faults))
-        for i = 1, math.min(#faults, 5) do
-            local fault = faults[i]
-            say(('  %s  %s  build %s  %s'):format(
+        local ordered, own = {}, 0
+        for _, fault in ipairs(faults) do
+            if actor and fault.cid == actor.cid then
+                own = own + 1
+                ordered[#ordered + 1] = fault
+            end
+        end
+        for _, fault in ipairs(faults) do
+            if not (actor and fault.cid == actor.cid) then ordered[#ordered + 1] = fault end
+        end
+        say(('app faults: %d reported by players\' pages%s, newest first:')
+            :format(#faults, actor and (', %d by this player\'s'):format(own) or ''))
+        for i = 1, math.min(#ordered, 5) do
+            local fault = ordered[i]
+            local theirs = actor and fault.cid ~= actor.cid
+            say(('  %s  %s  build %s  %s%s'):format(
                 os.date('%H:%M:%S', fault.at), fault.cid or 'unknown',
-                fault.build or '?', fault.what))
+                fault.build or '?', fault.what, theirs and '  (another player\'s)' or ''))
             if fault.where then say(('      at %s'):format(fault.where)) end
         end
         say('  -> a fault here is a bug in this resource, not in the player\'s '

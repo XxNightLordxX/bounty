@@ -484,26 +484,41 @@ local function buildOverview()
     local Storage = deps.storage
     local out = { at = os.time() }
 
+    -- Counted by the store where it can (one GROUP BY on mysql), not from
+    -- every row of the table brought into Lua every few seconds.
     local byState, total = {}, 0
-    for _, contract in ipairs(everyContract()) do
-        byState[contract.state] = (byState[contract.state] or 0) + 1
-        total = total + 1
+    if Storage.countContractsByState then
+        for state, n in pairs(Storage.countContractsByState() or {}) do
+            byState[state] = n
+            total = total + n
+        end
+    else
+        for _, contract in ipairs(everyContract()) do
+            byState[contract.state] = (byState[contract.state] or 0) + 1
+            total = total + 1
+        end
     end
     out.contracts = { byState = byState, total = total }
 
-    local active, operatives, distinct = 0, {}, 0
+    -- Places held (one per operative on a contract), the people holding
+    -- them, and the contracts they are on: two operatives on one contract
+    -- are two places and one contract, which the tile said were two.
+    local active, operatives, distinct, onContracts = 0, {}, 0, 0
     for _, list in pairs(Storage.liveHitmen() or {}) do
+        local onIt = false
         for _, hitman in ipairs(list) do
             if hitman.state == 'active' then
                 active = active + 1
+                onIt = true
                 if not operatives[hitman.hitman_cid] then
                     operatives[hitman.hitman_cid] = true
                     distinct = distinct + 1
                 end
             end
         end
+        if onIt then onContracts = onContracts + 1 end
     end
-    out.hitmen = { active = active, operatives = distinct }
+    out.hitmen = { active = active, operatives = distinct, contracts = onContracts }
 
     -- Money still in escrow for contracts, and money owed to somebody: the
     -- second is what the owed-delivery queue holds (or waits on staff for).
@@ -532,6 +547,10 @@ local function buildOverview()
     -- caught mid-release and escrow of a contract never stored were said not
     -- to be staff's, and the total counted lines queued since or an ending
     -- finishing itself, which need nobody.
+    --
+    -- A listing that raised (a store read failing) says so: left out, the
+    -- tile read as though recovery were still running, with the badge gone,
+    -- while Stuck escrow itself answered with the error.
     out.recovery = recoveryState()
     if out.recovery == 'ready' then
         local ok, lines = pcall(deps.admin.interrupted, 0, true)
@@ -543,6 +562,10 @@ local function buildOverview()
                 if #settleActions(entry) > 0 then leftForStaff = leftForStaff + 1 end
             end
             out.stuck = { total = #lines, byWhy = byWhy, leftForStaff = leftForStaff }
+        else
+            Log.debug(('the admin panel overview could not list stuck escrow: %s')
+                :format(Util.dbError(lines)))
+            out.stuck = { error = true }
         end
     end
 
@@ -560,7 +583,13 @@ local function buildOverview()
     out.slowest = deps.timing and deps.timing.slowest(5) or {}
     out.slowMs = tonumber(Config.Diagnostics.SlowJobMs) or 0
     out.warnings = diagWarnings()
-    out.overrides = deps.settings and #deps.settings.active() or 0
+    -- Settings in force over config.lua, as the Settings section counts
+    -- them, and apart from those the store holds that were not applied.
+    local overrides, notApplied = 0, 0
+    for _, row in ipairs(deps.settings and deps.settings.active() or {}) do
+        if row.ignored then notApplied = notApplied + 1 else overrides = overrides + 1 end
+    end
+    out.overrides, out.notApplied = overrides, notApplied
     out.auditQueued = deps.audit.pending()
     return out
 end
@@ -602,8 +631,17 @@ H.contracts = function(src, data)
     local to = wholeNumber(data.to, 0)
     local page = wholeNumber(data.page, 1, 100000) or 1
 
+    -- One read of the store's index, in the form the server keeps the id:
+    -- upper case, as qbx_core's are, unless a player in the city holds it as
+    -- typed. typedCitizenId decides that with a read of its own, and this
+    -- read again after it: every search typed in lower case, a name among
+    -- them, walked every contract and every operative twice on json.
     local viaCid = {}
-    local cid = query and typedCitizenId(query)
+    local cid = query and Util.toCitizenId(query)
+    if cid and cid:upper() ~= cid then
+        local online = deps.identity.byCitizenId(cid)
+        if not (online and online.cid == cid) then cid = cid:upper() end
+    end
     if cid then
         for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
             local visible
@@ -669,25 +707,75 @@ H.contracts = function(src, data)
     return true, nil, nil, { rows = rows, page = page, pages = pages, total = #matched }
 end
 
+--- The lines /ch-stuck lists for one contract, with what settles each, or
+--- nil while recovery is still deciding them.
+local function stuckOf(src, id)
+    if recoveryState() ~= 'ready' then return nil end
+    local stuck = {}
+    local ok, lines = pcall(deps.admin.interrupted, src, true)
+    for _, entry in ipairs(ok and lines or {}) do
+        if entry.contract == id then
+            local view = {}
+            for k, v in pairs(entry) do view[k] = v end
+            view.actions = settleActions(entry)
+            stuck[#stuck + 1] = view
+        end
+    end
+    return stuck
+end
+
 --- One contract, whole: its terms, payouts, escrow, operatives, open
 --- proposals, the lines /ch-stuck lists for it, and its audit timeline.
+---
+--- An id with escrow and no contract row (a contract whose recording write
+--- failed after its money was taken, or a review pay on one never stored)
+--- answers too, as a view of its lines alone: the overview counts them as
+--- left for staff, and this is the one view that can settle them (Return
+--- to, which names who put the money up). Answered not found, only the
+--- console's settle command could.
 H.contract = function(src, data)
     local Storage = deps.storage
     local id = Util.toId(data.id)
     if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
     local contract = Storage.readContract(id)
-    if not contract then return false, CH.ERR.NOT_FOUND, 'No contract has that id.' end
+    local lines = Storage.readEscrow(id) or {}
+    if not contract and #lines == 0 then return false, CH.ERR.NOT_FOUND, 'No contract has that id.' end
 
     -- The log written first, as the timeline command does: a staff member
     -- looking into something that just happened is asking about the last
     -- ten seconds.
     deps.audit.flush()
     local canIdentify = identifies(src)
-    local hitmen = Storage.readHitmen(id) or {}
+    local hitmen = contract and Storage.readHitmen(id) or {}
     local r = redactor(canIdentify, contract, hitmen)
 
-    local escrow = {}
-    for _, line in ipairs(Storage.readEscrow(id) or {}) do escrow[#escrow + 1] = lineView(line, r) end
+    -- What each operative has at stake now: their stake lines not yet
+    -- settled, as the stake itself is kept (Contracts' heldStakes). The
+    -- hitmen row's stake_amount is written by nothing and read $0 for
+    -- every operative on every backend.
+    local escrow, stakes = {}, {}
+    for _, line in ipairs(lines) do
+        escrow[#escrow + 1] = lineView(line, r)
+        if line.portion == CH.PORTION.STAKE and line.staker
+            and line.state ~= CH.ESCROW_STATE.SETTLED then
+            stakes[line.staker] = (stakes[line.staker] or 0) + (tonumber(line.amount) or 0)
+        end
+    end
+
+    local timeline = {}
+    for _, row in ipairs(Storage.auditForContract(id, Config.Admin.TimelineRows) or {}) do
+        timeline[#timeline + 1] = rowView(row, r)
+    end
+
+    if not contract then
+        deps.audit.staff(canIdentify and 'admin_panel_contract_identified' or 'admin_panel_contract',
+            staffOf(src), id, { never_stored = true })
+        return true, nil, nil, {
+            contract = { id = id, neverStored = true },
+            escrow = escrow, hitmen = {}, amendments = {}, timeline = timeline,
+            stuck = stuckOf(src, id), canVoid = false,
+        }
+    end
 
     local operatives = {}
     for _, hitman in ipairs(hitmen) do
@@ -696,7 +784,7 @@ H.contract = function(src, data)
             name = r.name(hitman.hitman_name, hitman.anon == true),
             cid = canIdentify and hitman.hitman_cid or nil,
             state = hitman.state, accepted_at = hitman.accepted_at, left_at = hitman.left_at,
-            claims = tonumber(hitman.claims) or 0, stake = tonumber(hitman.stake_amount) or 0,
+            claims = tonumber(hitman.claims) or 0, stake = stakes[hitman.hitman_cid] or 0,
             last_claim_at = hitman.last_claim_at,
         }
     end
@@ -710,26 +798,9 @@ H.contract = function(src, data)
         }
     end
 
-    local timeline = {}
-    for _, row in ipairs(Storage.auditForContract(id, Config.Admin.TimelineRows) or {}) do
-        timeline[#timeline + 1] = rowView(row, r)
-    end
-
     -- The lines /ch-stuck lists for this contract, with what settles each.
     -- Not while recovery is still deciding them.
-    local stuck
-    if recoveryState() == 'ready' then
-        stuck = {}
-        local ok, lines = pcall(deps.admin.interrupted, src, true)
-        for _, entry in ipairs(ok and lines or {}) do
-            if entry.contract == id then
-                local view = {}
-                for k, v in pairs(entry) do view[k] = v end
-                view.actions = settleActions(entry)
-                stuck[#stuck + 1] = view
-            end
-        end
-    end
+    local stuck = stuckOf(src, id)
 
     deps.audit.staff(canIdentify and 'admin_panel_contract_identified' or 'admin_panel_contract',
         staffOf(src), id, {})
@@ -1024,7 +1095,9 @@ H.settings = function()
     return true, nil, nil, deps.settings.view()
 end
 
---- What a refused setting says.
+--- What a refused setting says. `why` from the settings names the key
+--- once, without the start's own correction, and says which other key to
+--- change first where one is in the way (Settings.check).
 local function settingRefusal(key, err, why)
     if err == 'not_allowed' then return 'Not a setting the panel may change.' end
     if err == 'read_only' then return ('Not changed: %s'):format(tostring(why)) end
@@ -1035,7 +1108,20 @@ local function settingRefusal(key, err, why)
     if err == 'store_failed' then
         return ('Not changed: the store would not take it (%s). Nothing changed.'):format(tostring(why))
     end
-    return ('Not changed: %s %s.'):format(key, tostring(why))
+    if err == 'store_unknown' then
+        return ('Not sure it was kept: the store raised (%s), and reading it back raised too, so it '
+            .. 'may or may not hold the change; the diagnosis lists it. What was in force still is: '
+            .. 'set it again once the store answers.'):format(tostring(why))
+    end
+    return ('Not changed: %s.'):format(tostring(why))
+end
+
+--- The start's warnings about a value, said with the change: they refuse
+--- nothing, and were said nowhere, not at the next start either.
+local function warned(detail)
+    local lines = type(detail) == 'table' and detail.warnings or nil
+    if type(lines) ~= 'table' or #lines == 0 then return '' end
+    return ' Note: ' .. table.concat(lines, '. ') .. '.'
 end
 
 H.setSetting = function(src, data)
@@ -1044,10 +1130,15 @@ H.setSetting = function(src, data)
     local cid, who = staffOf(src)
     local ok, err, detail = deps.settings.set(key, data.value, who, cid)
     if not ok then return false, err, settingRefusal(key, err, detail) end
+    if detail.unchanged then
+        return true, nil, ('%s is %s already; nothing changed.%s')
+            :format(key, deps.settings.describe(detail.value), warned(detail)), detail
+    end
     local entry = deps.settings.entry(key)
-    return true, nil, ('%s is now %s%s.'):format(key, deps.settings.describe(detail.value),
+    return true, nil, ('%s is now %s%s.%s'):format(key, deps.settings.describe(detail.value),
         detail.source == 'config' and ' (what config.lua says)'
-            or ((entry and entry.live == false) and '; applies after restart' or '')), detail
+            or ((entry and entry.live == false) and '; applies after restart' or ''),
+        warned(detail)), detail
 end
 
 H.resetSetting = function(src, data)
@@ -1056,6 +1147,9 @@ H.resetSetting = function(src, data)
     local cid, who = staffOf(src)
     local ok, err, detail = deps.settings.reset(key, who, cid)
     if not ok then return false, err, settingRefusal(key, err, detail) end
+    if detail.removed then
+        return true, nil, ('%s is out of the store; nothing in force changed.'):format(key), detail
+    end
     return true, nil, ('%s is back to what config.lua says (%s).')
         :format(key, deps.settings.describe(detail.value)), detail
 end

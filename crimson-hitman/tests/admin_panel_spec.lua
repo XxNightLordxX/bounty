@@ -95,7 +95,7 @@ local function place(s, f, opts)
         targetCid = opts.target or 'TARGET01', reason = opts.reason or 'Unpaid debt',
         mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = opts.reward or { baseline = { cash = 5000 } },
-        anonymous = opts.anonymous,
+        anonymous = opts.anonymous, penaltyAmount = opts.penalty,
     })
     truthy(c, 'a contract to look at')
     if opts.accept then truthy(s.contracts.accept(f.hitman, c.id, opts.anonHitman == true)) end
@@ -1413,14 +1413,39 @@ describe('the panel\'s own dead ends', function()
             'and resolves once the store has it')
     end)
 
+    --- A02: the overview counted the lines of a contract never stored as
+    --- left for staff, and its id answered not found: only the console's
+    --- settle command could reach them.
+    it('a contract never stored opens as its lines alone, settled from there', function()
+        local s = stack()
+        s.storage.writeEscrow('ct00000099', { { id = 'ct00000099:1', contract_id = 'ct00000099',
+            slot = 1, portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000,
+            state = CH.ESCROW_STATE.HELD } })
+        eq(ask(6, 'overview').data.stuck.leftForStaff, 1, 'counted as staff\'s')
+        local reply = ask(6, 'contract', { id = 'ct00000099' })
+        eq(reply.ok, true, tostring(reply.message))
+        eq(reply.data.contract.neverStored, true)
+        eq(reply.data.canVoid, false)
+        eq(#reply.data.escrow, 1, 'its line')
+        eq(#reply.data.stuck, 1)
+        eq(table.concat(reply.data.stuck[1].actions, ','), 'return_owner', 'with Return to')
+        local before = money(1)
+        local settled = ask(6, 'settle', { line = 'ct00000099:1', disposition = 'return',
+            owner = 'CREATOR1' })
+        eq(settled.ok, true, tostring(settled.message))
+        eq(money(1) - before, 5000, 'back to who put it up')
+        eq(ask(6, 'contract', { id = 'ct00000098' }).err, CH.ERR.NOT_FOUND, 'an id with nothing is not found')
+    end)
+
     --- W139: a write that raised skipped the flush and the cache drop, and
     --- its row named no contract.
     it('a write that raises is on the record at once, with what it was about', function()
         local s, f = stack()
         local c = place(s, f)
         ask(6, 'overview')
-        local reads, real = 0, s.storage.allContracts
-        s.storage.allContracts = function(...) reads = reads + 1 return real(...) end
+        -- The overview counts through the store's count by state (S24).
+        local reads, real = 0, s.storage.countContractsByState
+        s.storage.countContractsByState = function(...) reads = reads + 1 return real(...) end
         local readContract = s.storage.readContract
         s.storage.readContract = function() error('connection lost', 0) end
         local reply = ask(6, 'void', { id = c.id, reason = 'duplicate listing' })
@@ -1434,7 +1459,144 @@ describe('the panel\'s own dead ends', function()
         eq(rows[1].detail.reason, 'duplicate listing')
         eq(s.audit.pending(), 0, 'nothing left in the queue')
         ask(6, 'overview')
-        s.storage.allContracts = real
+        s.storage.countContractsByState = real
         eq(reads, 1, 'the overview is read again, not served from before the write')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- What the panel reads (G3)
+--------------------------------------------------------------------------
+
+describe('what the admin panel reads, as the store holds it', function()
+    local function storeOf(name)
+        if name == 'json' then
+            package.loaded['crimson-hitman.server.storage.json'] = nil
+            Natives.files = {}
+            local store = require('crimson-hitman.server.storage.json')
+            store.open()
+            return store
+        end
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local store = require('crimson-hitman.server.storage.mysql')
+        store.open()
+        return store
+    end
+
+    --- The panel reading `name`'s store, with what the memory one holds of
+    --- `ids` copied into it.
+    local function panelOn(s, name, ids)
+        if name == 'memory' then return s.storage end
+        local store = storeOf(name)
+        for _, id in ipairs(ids) do
+            store.insertContract(s.storage.readContract(id))
+            for _, hitman in ipairs(s.storage.readHitmen(id)) do store.addHitman(hitman) end
+            store.insertEscrow(id, s.storage.readEscrow(id))
+        end
+        s.panel.init(setmetatable({ storage = store }, { __index = s }))
+        return store
+    end
+
+    for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
+        --- S02/S27: read from crimson_hitmen.stake_amount, written by nothing.
+        it(name .. ': an operative\'s stake is what they have at stake', function()
+            local s, f = stack()
+            Env.players[3].PlayerData.money.bank = 50000
+            local c = place(s, f, { mode = CH.MODE.EXCLUSIVE, penalty = 2000, accept = true })
+            local store = panelOn(s, name, { c.id })
+            eq(ask(6, 'contract', { id = c.id }).data.hitmen[1].stake, 2000)
+            local stakeLine
+            for _, line in ipairs(store.readEscrow(c.id)) do
+                if line.portion == CH.PORTION.STAKE then stakeLine = line.id end
+            end
+            truthy(store.claimEscrowLine(stakeLine, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+            truthy(store.settleEscrowLine(stakeLine, 'HITMAN01'))
+            local view = ask(6, 'contract', { id = c.id }).data
+            eq(view.hitmen[1].stake, 0, 'handed back, nothing at stake')
+            local listed = false
+            for _, line in ipairs(view.escrow) do
+                if line.id == stakeLine then listed = line.state == CH.ESCROW_STATE.SETTLED end
+            end
+            truthy(listed, 'and the escrow still lists the settled line')
+        end)
+
+        --- S24: every row of crimson_contracts read every few seconds to count it.
+        it(name .. ': the overview counts contracts by state as the store holds them', function()
+            local s, f = stack()
+            Config.Limits.MaxActiveContractsPerCreator = 10
+            local a = place(s, f, { accept = true })
+            local b = place(s, f, { target = 'HITMAN01' })
+            truthy(s.admin.void(0, b.id, 'test'))
+            panelOn(s, name, { a.id, b.id })
+            if name == 'mysql' then Exec.statements = {} end
+            local counts = ask(6, 'overview').data.contracts
+            eq(counts.total, 2)
+            eq(counts.byState.accepted, 1)
+            eq(counts.byState.voided, 1)
+            if name == 'mysql' then
+                local grouped, whole = false, false
+                for _, sql in ipairs(Exec.statements) do
+                    if sql:find('GROUP BY state', 1, true) then grouped = true end
+                    if sql:find('^SELECT %* FROM crimson_contracts') then whole = true end
+                end
+                truthy(grouped, 'counted by GROUP BY')
+                falsy(whole, 'and no SELECT * of the whole table')
+            end
+        end)
+    end
+
+    --- A03: the tile said 'holding 2 contracts' for two operatives on one.
+    it('counts the contracts operatives hold, not the places', function()
+        local s, f = stack()
+        local c = place(s, f, { accept = true })
+        Env.addPlayer({ source = 9, citizenid = 'HITMAN02', license = 'license:h2',
+            firstname = 'Second', lastname = 'Gun' })
+        truthy(s.contracts.accept(s.identity.resolve(9), c.id, false))
+        local hitmen = ask(6, 'overview').data.hitmen
+        eq(hitmen.active, 2, 'two places')
+        eq(hitmen.operatives, 2, 'two people')
+        eq(hitmen.contracts, 1, 'one contract')
+    end)
+
+    --- A04: typedCitizenId read the index to decide the case, and the search
+    --- read it again.
+    it('reads the index once for a search typed in lower case', function()
+        local s, f = stack()
+        place(s, f)
+        local real, reads = s.storage.contractsInvolving, 0
+        s.storage.contractsInvolving = function(...) reads = reads + 1 return real(...) end
+        ask(6, 'contracts', { query = 'dana' })
+        eq(reads, 1, 'a name')
+        reads = 0
+        eq(ask(6, 'contracts', { query = 'target01' }).data.total, 1, 'a citizen id in lower case')
+        eq(reads, 1)
+        s.storage.contractsInvolving = real
+    end)
+
+    --- W148: counted with the rows not applied, the overview and the
+    --- Settings section disagreed.
+    it('counts the settings in force, and the ones not applied apart', function()
+        local s = stack()
+        s.storage.writeSetting('Bailout.MinMultiplier', 50, 'A', 1)
+        s.settings.boot()
+        local data = ask(6, 'overview').data
+        eq(data.overrides, 0, 'none in force')
+        eq(data.notApplied, 1)
+        eq(ask(6, 'settings').data.overrides, 0, 'as the Settings section says')
+        local report = table.concat(s.admin.diagnose(0), '\n')
+        truthy(report:find('admin panel settings in force over config.lua: 0, and 1 not applied', 1, true),
+            report)
+    end)
+
+    --- W190: a listing that raised left the tile saying recovery was running.
+    it('says the stuck listing could not be read when it raises', function()
+        local s = stack()
+        local real = s.admin.interrupted
+        s.admin.interrupted = function() error('connection lost', 0) end
+        local data = ask(6, 'overview').data
+        s.admin.interrupted = real
+        eq(data.recovery, 'ready')
+        eq(data.stuck and data.stuck.error, true)
     end)
 end)

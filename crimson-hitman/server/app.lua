@@ -96,6 +96,18 @@ local function shouldLogRatelimit(cid, name)
     return true
 end
 
+--- A refusal by a bucket outside a handler (a headshot, a report in the
+--- background), on the record once per window per player and name, as a
+--- handler's is: refused without a word to the player, it was not on the
+--- record at all, and staff could not see why faces were stale.
+---@param cid string
+---@param name string what was refused ('mugshot', 'appearanceChanged')
+function App.ratelimitRefused(cid, name)
+    if cid and shouldLogRatelimit(cid, name) then
+        deps.audit.rejected('ratelimit_' .. tostring(name), cid, nil, {})
+    end
+end
+
 local function floodCheck(src)
     local now = Util.monotonicMs()
     local entry = floodCounters[src]
@@ -354,7 +366,10 @@ local MONEY_REQUESTS = {
 ---@param access string|nil who the gate lets through: nil for everyone the
 --- app is open to (Identity.gate); 'view', 'target' or 'report' for the
 --- requests of the whitelisted-job view (Identity.gateFor)
-local function handler(name, action, fn, access)
+---@param exempt? fun(src: number, payload: any): boolean a request this
+--- returns true for spends nothing from the bucket (the log staff asked a
+--- page for, which the one-shot ask already bounds)
+local function handler(name, action, fn, access, exempt)
     App.handlers[name] = fn
 
     RegisterNetEvent('crimson-hitman:' .. name, function(payload)
@@ -414,7 +429,8 @@ local function handler(name, action, fn, access)
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
-        if action and not deps.ratelimit.check(actor, action) then
+        if action and not (exempt and exempt(src, payload))
+            and not deps.ratelimit.check(actor, action) then
             if shouldLogRatelimit(actor.cid, name) then
                 deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
             end
@@ -575,6 +591,26 @@ function App.expectDump(src, deliver)
     end
     if src then dumpsAsked[src] = { untilAt = now + DUMP_ANSWER_SECONDS, deliver = deliver } end
 end
+
+--- Whether a report is the log a staff member asked this page for, still
+--- awaited: it is not a fault, and it spends nothing from the page's
+--- 'diagnostic' allowance. A page that had been reporting faults had spent
+--- it, and the one thing staff asked for was refused, with the promise
+--- that it would follow already made.
+---@param src number
+---@param payload any
+---@return boolean
+local function askedDump(src, payload)
+    local asked = dumpsAsked[src]
+    return type(payload) == 'table' and payload.what == 'page diagnostics'
+        and payload.where == 'requested' and asked ~= nil and asked.untilAt >= os.time()
+end
+
+--- How many lines of one report's stack the console shows with Debug on;
+--- the rest are said as a count. The stack comes from a browser any player
+--- can script: one report of three hundred pieces printed some 145 lines,
+--- and ten at once a thousand. The audit row keeps it whole.
+local STACK_LINES_SHOWN = 8
 
 --------------------------------------------------------------------------
 -- Handlers
@@ -1375,6 +1411,11 @@ function App.register()
             if not sent then
                 for i = 1, #lines do Log.debug(lines[i], 'page-log') end
             end
+        elseif what == 'page diagnostics' and where == 'requested' then
+            -- A log nobody is waiting for (asked more than half a minute
+            -- ago, or not at all): not a fault, and kept in its audit row.
+            Log.debug(('player %s\'s app sent a log nobody is waiting for (%s); kept in the audit row')
+                :format(tostring(actor.source), actor.cid), 'page-log')
         else
             -- Kept as one counted entry however it is worded: one player
             -- sending reports of their own wording must not push anything
@@ -1389,9 +1430,13 @@ function App.register()
             -- so turning the switch on is about where it is convenient to
             -- read, not about whether it was recorded.
             if Config.Debug then
-                for i = 1, #stackLines do
+                for i = 1, math.min(#stackLines, STACK_LINES_SHOWN) do
                     Log.debug(('  page stack from %s: %s'):format(actor.cid, stackLines[i]),
                         'page-fault-stack')
+                end
+                if #stackLines > STACK_LINES_SHOWN then
+                    Log.debug(('  page stack from %s: (%d more in the audit row)')
+                        :format(actor.cid, #stackLines - STACK_LINES_SHOWN), 'page-fault-stack')
                 end
             end
         end
@@ -1400,17 +1445,22 @@ function App.register()
             what = what, where = where, stack = stack, build = build,
         })
 
-        pageFaults[#pageFaults + 1] = {
-            at = os.time(), cid = actor.cid, what = what,
-            where = where, build = build,
-        }
-        if #pageFaults > PAGE_FAULTS_KEPT then table.remove(pageFaults, 1) end
+        -- Not the log staff asked for, which is not a fault: kept as one,
+        -- the next diagnosis called it a bug in this resource, and five
+        -- diagnoses of one player pushed their real fault out of the list.
+        if not (what == 'page diagnostics' and where == 'requested') then
+            pageFaults[#pageFaults + 1] = {
+                at = os.time(), cid = actor.cid, what = what,
+                where = where, build = build,
+            }
+            if #pageFaults > PAGE_FAULTS_KEPT then table.remove(pageFaults, 1) end
+        end
 
         -- Answered so the page knows it landed. It does nothing with the
         -- reply today, but a report that silently vanishes is the thing
         -- this handler exists to stop happening.
         return { recorded = true }
-    end, 'report')
+    end, 'report', askedDump)
 
     -- Death reporting ---------------------------------------------------
     --

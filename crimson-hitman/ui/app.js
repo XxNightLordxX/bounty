@@ -305,9 +305,14 @@
       var copy = document.createElement('button');
       copy.className = 'ghost diag-copy';
       copy.textContent = 'Send this to the server log';
+      // Built as dump() builds the log staff ask for: lines joined with the
+      // marker the server splits on, and the newest 900 characters, which
+      // is all the server keeps. Sent whole and oldest first, the server
+      // kept the start of the session and cut the events nearest the fault.
       copy.onclick = function () {
+        var flat = asText().split('\n').join(' || ');
         send({ what: 'diagnostics requested by the player', where: 'panel',
-               stack: asText(), build: window.CH_BUILD || 'dev' });
+               stack: flat.slice(-900), build: window.CH_BUILD || 'dev' });
         note('sent', 'diagnostics sent to the server log');
       };
       panel.appendChild(copy);

@@ -134,6 +134,9 @@ CREATE TABLE IF NOT EXISTS crimson_hitmen (
     left_at INT,
     last_claim_at INT,
     claims INT DEFAULT 0,
+    -- Read by nothing and written by nothing. A stake is an escrow line
+    -- (portion stake, staker the hitman), and the admin panel totals
+    -- those; kept so no column that may hold data is dropped.
     stake_amount INT DEFAULT 0,
     state VARCHAR(16) NOT NULL,
     INDEX idx_contract (contract_id),

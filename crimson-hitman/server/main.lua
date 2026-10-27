@@ -971,6 +971,21 @@ local function validateConfig(quiet)
     if not Config.Kidnap.RequireCoercion then
         warn[#warn + 1] = 'Kidnap.RequireCoercion is off: a target can be "delivered" while walking freely'
     end
+    -- A restraint required and nothing that can show one: every handover is
+    -- refused as not restrained, the target cuffed in the hitman's car too,
+    -- so on 'alive' no accepted contract could ever complete and each ran to
+    -- its deadline with its hitman's stake forfeited. Handcuffs are counted
+    -- again rather than the start refused, which would freeze every
+    -- contract's escrow; the admin panel refuses the click that causes it,
+    -- in these words (checkCandidate).
+    local coercion = Config.Kidnap.Coercion
+    if Config.Kidnap.RequireCoercion and type(coercion) == 'table' and not coercion.handcuffed
+        and not coercion.passengerOfHitman and not Config.Kidnap.RestraintProvider then
+        warn[#warn + 1] = 'Kidnap.RequireCoercion is on, but neither Kidnap.Coercion.handcuffed nor '
+            .. 'Kidnap.Coercion.passengerOfHitman counts as restraint and no Kidnap.RestraintProvider '
+            .. 'is set, so no handover could ever complete. Using Kidnap.Coercion.handcuffed = true.'
+        coercion.handcuffed = true
+    end
     -- Two releases with two switches. Turning the idle one off leaves the
     -- attempt window, which an operator who meant "never take a hold away"
     -- would not expect.
@@ -997,7 +1012,8 @@ local function validateConfig(quiet)
     if Config.Advisory.Enabled
         and not next(Config.Advisory.RecipientJobTypes or {})
         and not next(Config.Advisory.RecipientJobNames or {}) then
-        warn[#warn + 1] = 'Advisory is enabled but nobody is configured to receive it'
+        warn[#warn + 1] = 'Advisory.Enabled is on but nobody is configured to receive it '
+            .. '(Advisory.RecipientJobTypes and RecipientJobNames are both empty)'
     end
 
     -- A job barred from the app that does not count as law enforcement
@@ -1473,6 +1489,27 @@ function StartCrimsonHitman()
     settings.init({ storage = Storage, audit = CrimsonBoot.require('server.audit'),
                     check = checkCandidate })
     settings.boot()
+
+    -- The start's warnings again, now for the config in force: the first
+    -- run read config.lua before the panel's settings were applied, so a
+    -- warning about a value set from the panel (the nearby list on, say)
+    -- was never said at any start. Only the ones naming a key the panel
+    -- set; the same line twice is said once (Log.problem).
+    local inForce = {}
+    for _, row in ipairs(settings.active()) do
+        if row.applied then inForce[#inForce + 1] = row.key end
+    end
+    if #inForce > 0 then
+        local _, _, again = checkCandidate(copyOf(Config))
+        for _, message in ipairs(again or {}) do
+            for _, key in ipairs(inForce) do
+                if message:find(key, 1, true) then
+                    Log.problem(('warning: %s (%s is set from the admin panel)'):format(message, key))
+                    break
+                end
+            end
+        end
+    end
 
     -- The photo address, against whether kill photos are on now the panel's
     -- settings are in force (checkPhotoAddress).
@@ -2112,9 +2149,11 @@ function Tick()
 
     local now = os.time()
     -- Only where photos come from a host. On 'server' storage the
-    -- allowlist is never consulted, and with kill photos off nothing is.
-    if Util.killPhotos() and Config.Completion.PhotoStorage == 'host'
-        and now - lastHostRefresh >= (Config.Completion.PhotoHostRefreshSeconds or 300) then
+    -- allowlist is never consulted, and with kill photos off nothing is:
+    -- then the warning that no host is allowed is not one any more.
+    local fromHost = Util.killPhotos() and Config.Completion.PhotoStorage == 'host'
+    if not fromHost and modules.photo.clearHostProblem then modules.photo.clearHostProblem() end
+    if fromHost and now - lastHostRefresh >= (Config.Completion.PhotoHostRefreshSeconds or 300) then
         -- Marked done whether or not the read succeeds: retrying a
         -- cross-resource config read every ten seconds because it failed
         -- once is how one broken export becomes a busy loop.

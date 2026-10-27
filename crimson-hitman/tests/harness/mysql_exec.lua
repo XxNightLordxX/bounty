@@ -1060,6 +1060,40 @@ local function execute(sql, params, flat)
     if flat:find('^SELECT e%.%* FROM crimson_escrow e JOIN crimson_contracts c') then
         return escrowOfContracts(flat, params)
     end
+    -- `SELECT col, COUNT(*) AS n FROM t GROUP BY col`: one row per value
+    -- the column holds, with how many rows hold it (the overview's count by
+    -- state). A NULL is a group of its own, as MariaDB groups it.
+    local groupColumn, countAlias, groupTable, groupBy = flat:match(
+        '^SELECT ([%w_]+), COUNT%(%*%) AS ([%w_]+) FROM ([%w_]+) GROUP BY ([%w_]+)$')
+    if groupColumn then
+        if groupBy ~= groupColumn then error('mysql_exec: GROUP BY another column: ' .. flat) end
+        local counts, order, nulls = {}, {}, 0
+        for _, row in pairs(rowsOf(groupTable)) do
+            local value = row[groupColumn]
+            if value == nil then
+                nulls = nulls + 1
+            else
+                if not counts[value] then order[#order + 1] = value end
+                counts[value] = (counts[value] or 0) + 1
+            end
+        end
+        local out = {}
+        for _, value in ipairs(order) do out[#out + 1] = { [groupColumn] = value, [countAlias] = counts[value] } end
+        if nulls > 0 then out[#out + 1] = { [countAlias] = nulls } end
+        return out
+    end
+    -- `SELECT MAX(col) AS name FROM t WHERE ...`: one row, the column's
+    -- highest value among the rows the same SELECT * would return, and NULL
+    -- (nil here, as oxmysql hands it back) when none matches.
+    local maxColumn, maxAlias = flat:match('^SELECT MAX%(([%w_]+)%) AS ([%w_]+) FROM ')
+    if maxColumn then
+        local top
+        for _, row in ipairs(select_(flat:gsub('^SELECT MAX%([%w_]+%) AS [%w_]+', 'SELECT *', 1), params)) do
+            local value = tonumber(row[maxColumn])
+            if value and (not top or value > top) then top = value end
+        end
+        return { { [maxAlias] = top } }
+    end
     -- A count with a condition is the rows the same SELECT * would return.
     if flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ WHERE ')
         or flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ %a+ WHERE ') then

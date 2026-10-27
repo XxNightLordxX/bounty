@@ -8272,6 +8272,40 @@ async function main() {
       });
     })();
 
+    /* W101: the panel's own send posted the whole log, oldest first and
+       newline-joined; the server keeps the first 900 characters, so the
+       events nearest the fault were the ones cut. */
+    await (async function thePanelSendsTheNewest() {
+      const app = boot({ ledger: { ok: true, data: { entries: [] } } });
+      await settle();
+      tab(app, 'ledger');
+      await settle();
+      for (let i = 0; i < 40; i++) {
+        app.sandbox.window.onerror('filler event number ' + i, 'app.js', 1, 1, { stack: 'at x' });
+      }
+      app.sandbox.window.onerror('NEWEST EVENT', 'app.js', 1, 1, { stack: 'at y' });
+      await settle();
+      const stamp = app.view.all().filter(function (n) {
+        return n._className && n._className.indexOf('build-stamp') !== -1;
+      })[0];
+      for (let i = 0; i < 5; i++) { stamp.onclick(); }
+      await settle();
+      const send = app.document.getElementById('diag').all()
+        .filter(function (n) { return n.textContent === 'Send this to the server log'; })[0];
+      send.onclick();
+      await settle();
+      const sent = app.sent.filter(function (m) {
+        return m.name === 'pageError' && m.body.what === 'diagnostics requested by the player';
+      });
+      it('sends the newest of the log, as the server keeps it', function () {
+        eq(sent.length, 1);
+        const stack = String(sent[0].body.stack);
+        truthy(stack.length <= 900, 'the server keeps 900 characters: ' + stack.length);
+        truthy(stack.indexOf(' || ') !== -1, 'in lines the server splits');
+        truthy(stack.indexOf('NEWEST EVENT') !== -1, 'with the newest event in it');
+      });
+    })();
+
     await (async function recordsWhatTheServerRefused() {
       const app = boot({ list: { ok: false, err: 'rate_limited' },
                          ledger: { ok: true, data: { entries: [] } } });

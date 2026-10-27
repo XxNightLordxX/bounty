@@ -139,7 +139,16 @@ describe('a staff command\'s answer', function()
         local atConsole = run(0, 'timeline', { c.id }).console
         local inF8 = run(6, 'timeline', { c.id }).f8
         truthy(#atConsole > 3, 'a few lines to compare')
-        eq(table.concat(inF8, '\n'), table.concat(atConsole, '\n'))
+        -- Less the row the first read wrote (W124), which the second shows.
+        local function besidesReads(lines)
+            local out = {}
+            for _, line in ipairs(lines) do
+                if not line:find('admin_timeline', 1, true) then out[#out + 1] = line end
+            end
+            return table.concat(out, '\n')
+        end
+        eq(#inF8, #atConsole + 1, 'the console\'s read is on the record the F8 one shows')
+        eq(besidesReads(inF8), besidesReads(atConsole))
     end)
 
     it('says so in F8 when the player may not run it', function()
@@ -961,5 +970,41 @@ describe('a review item left part-way resolved', function()
         truthy(out:find(('/%s %s finishes it'):format(Config.Admin.Commands.review, id), 1, true), out)
         eq(s.storage.readReview(id).state, 'resolving')
         truthy(said('review', { id }):find('Resolved', 1, true), 'and the id alone does')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- What a refused staff member is told (G3)
+--------------------------------------------------------------------------
+
+describe('a staff command refused', function()
+    --- W125/W184: every refusal pointed at the diagnosis, and the unmasking
+    --- ACE was suggested for the whole admin group.
+    it('names the command refused and what it takes, at the console', function()
+        stack()
+        Env.aces[9] = {}
+        Env.addPlayer({ source = 9, citizenid = 'NOBODY01', license = 'license:n', firstname = 'No',
+            lastname = 'Body' })
+        local said = table.concat(run(9, 'void', { 'ct00000001' }).f8, ' ')
+        truthy(said:find('Not authorised', 1, true), said)
+        truthy(said:find(Config.Admin.Commands.void .. ' <contract id> <reason>', 1, true), said)
+        falsy(said:find(Config.Admin.Commands.diagnose .. ' <', 1, true), 'not the diagnosis: ' .. said)
+    end)
+
+    it('never suggests the unmasking ACE for the whole admin group', function()
+        stack()
+        local said = table.concat(run(6, 'whois', { 'ct00000001' }).f8, ' ')
+        truthy(said:find('Not authorised', 1, true), said)
+        truthy(said:find('identifier.license:', 1, true), 'for one identifier: ' .. said)
+        falsy(said:find('add_ace group.admin crimson.identity', 1, true), said)
+    end)
+
+    it('tells an extra ACE holder why a command that writes is not theirs', function()
+        stack()
+        local said = table.concat(run(7, 'void', { 'ct00000001' }).f8, ' ')
+        truthy(said:find('changes money or unmasks a party', 1, true), said)
+        truthy(said:find('read-only tools', 1, true), said)
+        said = table.concat(run(7, 'stuck').f8, ' ')
+        falsy(said:find('Not authorised', 1, true), 'a read is theirs: ' .. said)
     end)
 end)

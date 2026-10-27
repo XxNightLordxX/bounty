@@ -113,7 +113,7 @@ function overview(extra) {
   return { ok: true, data: Object.assign({
     at: NOW,
     contracts: { total: 12, byState: { active: 3, accepted: 2, completed: 6, voided: 1 } },
-    hitmen: { active: 4, operatives: 3 },
+    hitmen: { active: 4, operatives: 3, contracts: 2 },
     held: { cash: 15000, bank: 50000, dirty: 2000, items: 4, weapons: 1, lines: 9 },
     owed: { cash: 1200, bank: 0, dirty: 0, items: 0, weapons: 0, lines: 2, players: 1, queued: 1 },
     stuck: { total: 2, leftForStaff: 1, byWhy: { raised: 1, interrupted: 1 } },
@@ -488,7 +488,7 @@ async function main() {
       has(app.main(), 'Waiting for staff');
       has(app.main(), 'left for you to settle, of 2 listed', 'what staff settle, not every line listed');
       has(app.main(), '1 need nothing from you', 'and the rest said apart');
-      has(app.main(), 'Operatives3on contracts now, holding 4 contracts', 'operatives, and what they hold');
+      has(app.main(), 'Operatives3on contracts now, holding 2 contracts', 'operatives, and the contracts they hold');
       has(app.main(), 'Alive only', 'the rule new contracts are placed under');
       has(app.main(), 'expiry', 'the slowest job');
       has(app.main(), '7.20 ms');
@@ -1948,6 +1948,233 @@ async function main() {
       eq(app.last('contracts').data, { page: 1, state: 'active' });
     });
     clean(app, 'overview links');
+  })();
+
+  /* ---- G3: what the panel says it read ---- */
+
+  /* W190: after a recovery that failed, every Stuck escrow surface said the
+     server was still recovering. */
+  await (async function () {
+    const server = standardServer({
+      overview: overview({ recovery: 'recovery_failed', stuck: null }),
+      stuck: stuckList({ recovery: 'recovery_failed', lines: null }),
+      contract: contractDetail({ stuck: null }, false)
+    });
+    const app = boot(server);
+    app.open(access({ recovery: 'recovery_failed', canIdentify: false }));
+    await settled();
+    it('the overview says recovery failed, not that it is running', function () {
+      has(app.main(), 'Not listed: recovery failed at the last start; restart the resource');
+      lacks(app.main(), 'while the server is recovering');
+    });
+    app.nav('stuck');
+    await settled();
+    it('and so does Stuck escrow', function () {
+      has(app.main(), 'Not listed: recovery failed at the last start; restart the resource');
+    });
+    app.nav('contracts');
+    await settled();
+    app.click(app.$$('[data-act="contract"]')[0]);
+    await settled();
+    it('and so does the contract\'s view', function () {
+      has(app.text(app.drawer()), 'Not listed: recovery failed at the last start');
+      lacks(app.text(app.drawer()), 'while the server is recovering');
+    });
+    clean(app, 'recovery failed');
+  })();
+
+  /* W190: a listing that raised read as recovery still running. */
+  await (async function () {
+    const app = boot(standardServer({ overview: overview({ stuck: { error: true } }) }));
+    app.open(FULL);
+    await settled();
+    it('says the stuck listing could not be read when it raised', function () {
+      has(app.main(), 'The list could not be read just now');
+      lacks(app.main(), 'while the server is recovering');
+    });
+    clean(app, 'listing raised');
+  })();
+
+  /* W189: a settle in the contract view opened from Stuck escrow left the
+     list behind it stale. */
+  await (async function () {
+    const server = standardServer();
+    let settledLine = false;
+    server.stuck = function () {
+      const list = stuckList();
+      if (settledLine) list.data.lines = list.data.lines.filter(function (l) { return l.line !== 'ct00000001:2'; });
+      return list;
+    };
+    server.settle = function () {
+      settledLine = true;
+      return { ok: true, message: 'Line settled.', data: { detail: {} } };
+    };
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.nav('stuck');
+    await settled();
+    app.click(app.$$('button.link').filter(function (b) {
+      return b.getAttribute('data-act') === 'contract' && b.getAttribute('data-id') === 'ct00000001';
+    })[0]);
+    await settled();
+    const pay = app.$$('button').filter(function (b) {
+      return b.getAttribute('data-act') === 'settle' && b.getAttribute('data-line') === 'ct00000001:2'
+        && b.getAttribute('data-how') === 'pay' && b.getAttribute('data-where') === 'drawer';
+    })[0];
+    app.click(pay);
+    app.click(pay);
+    await settled();
+    app.click(app.button('Close', app.drawer()));
+    await settled();
+    it('reads Stuck escrow again after a settle in the contract view over it', function () {
+      eq(app.requests('settle').length, 1);
+      lacks(app.main(), 'ct00000001:2', 'the settled line has left the list');
+    });
+    clean(app, 'stuck after a drawer settle');
+  })();
+
+  /* W141: Run it opened Tools, and a state chip kept the filters typed before. */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(FULL);
+    await settled();
+    app.click(app.button('Run it'));
+    await settled();
+    it('Run it runs the diagnosis', function () {
+      eq(app.byId('nav-tools').getAttribute('aria-current'), 'page');
+      eq(app.requests('diag').length, 1);
+      has(app.main(), 'photo hosts: 0');
+    });
+    app.nav('contracts');
+    await settled();
+    app.type(app.byId('ct-q'), 'Dana');
+    pick(app, 'ct-rule', 'either');
+    await settled();
+    app.nav('overview');
+    await settled();
+    app.click(app.$$('button').filter(function (b) {
+      return b.getAttribute('data-act') === 'ov-state' && b.getAttribute('data-value') === 'active';
+    })[0]);
+    await settled();
+    it('a state chip lists that state alone, whatever was typed before', function () {
+      eq(app.last('contracts').data, { page: 1, state: 'active' });
+    });
+    clean(app, 'run it and chips');
+  })();
+
+  /* W165: memory mode keeps nothing, and the panel said every switch was kept. */
+  await (async function () {
+    const app = boot(standardServer({ overview: overview({ storage: 'memory' }) }));
+    app.open(FULL);
+    await settled();
+    it('says on the overview that memory mode keeps nothing', function () {
+      has(app.main(), 'nothing is kept across a restart');
+    });
+    app.nav('settings');
+    await settled();
+    it('and in the Features intro that a change lasts until the resource stops', function () {
+      has(app.main(), 'lasts until the resource stops');
+      lacks(app.main(), 'is kept across restarts');
+    });
+    clean(app, 'memory mode');
+  })();
+
+  /* W140: a write refused as not allowed left Can change and every button on. */
+  await (async function () {
+    const server = standardServer({ void: { ok: false, err: 'not_allowed', message: 'Not authorised.' } });
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$$('[data-act="contract"]')[0]);
+    await settled();
+    const voidBtn = app.button('Void contract', app.drawer());
+    app.click(voidBtn);
+    app.click(voidBtn);
+    await settled();
+    it('reads the refusal as the write ACE gone: read only, buttons off', function () {
+      has(app.text(app.byId('badges')), 'Read only');
+      truthy(app.button('Void contract', app.drawer()).disabled, 'the void is off');
+    });
+    clean(app, 'not allowed');
+  })();
+
+  /* A05, W199: the second click saves only what the first one named. */
+  await (async function () {
+    const view = settingsView();
+    view.data.limits.push({ key: 'Ledger.PhotoRetentionDays', group: 'Ledger',
+      label: 'Days an unopened kill photo is kept (0 forever)', kind: 'number', integer: true, min: 0, max: 365,
+      live: true, value: 30, default: 30, source: 'config',
+      destroys: 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the next sweep, for good.' });
+    view.data.limits.push({ key: 'Cooldowns.load.burst', group: 'Rate limits', label: 'load: requests held',
+      kind: 'number', integer: true, min: 1, max: 200, live: true, value: 20, default: 20, source: 'config',
+      about: 'Every read the app makes of its own state.', stricter: 'down',
+      strict: 'Holding %s: players are refused sooner.' });
+    const app = boot(standardServer({ settings: view }));
+    app.open(FULL);
+    await settled();
+    app.nav('settings');
+    await settled();
+    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'limits'; })[0]);
+    const row = function (key) { return app.byId('st-row-' + key); };
+    const sets = app.requests('setSetting').length;
+    app.type(row('Ledger.PhotoRetentionDays').querySelector('input'), '9');
+    app.click(app.button('Save', row('Ledger.PhotoRetentionDays')));
+    await settled();
+    app.type(row('Ledger.PhotoRetentionDays').querySelector('input'), '1');
+    app.click(app.byId('st-save-Ledger.PhotoRetentionDays'));
+    await settled();
+    it('a value typed after arming arms again, with its own words', function () {
+      eq(app.requests('setSetting').length, sets, 'nothing saved');
+      has(app.text(row('Ledger.PhotoRetentionDays')), 'Lowered to 1, every unopened kill photo');
+      truthy(app.byId('st-save-Ledger.PhotoRetentionDays').classList.contains('is-armed'));
+    });
+    app.click(app.byId('st-save-Ledger.PhotoRetentionDays'));
+    await settled();
+    it('and the next click saves that value', function () {
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 1 });
+    });
+    const before = app.requests('setSetting').length;
+    app.type(row('Cooldowns.load.burst').querySelector('input'), '6');
+    app.click(app.button('Save', row('Cooldowns.load.burst')));
+    await settled();
+    it('a stricter rate limit takes two clicks, saying what it refuses', function () {
+      eq(app.requests('setSetting').length, before);
+      has(app.text(row('Cooldowns.load.burst')), 'Holding 6: players are refused sooner.');
+    });
+    app.click(app.byId('st-save-Cooldowns.load.burst'));
+    await settled();
+    it('(the second saves it)', function () {
+      eq(app.last('setSetting').data, { key: 'Cooldowns.load.burst', value: 6 });
+    });
+    clean(app, 'two clicks');
+  })();
+
+  /* A02: a contract never stored opens as its lines alone. */
+  await (async function () {
+    const stub = { ok: true, data: { contract: { id: 'ct00000009', neverStored: true },
+      escrow: [{ id: 'ct00000009:1', contract: 'ct00000009', slot: 1, portion: 'baseline', source: 'cash',
+        amount: 300, state: 'held', raised: 0, parked: false, owes: 300 }],
+      hitmen: [], amendments: [], timeline: [], canVoid: false,
+      stuck: [{ line: 'ct00000009:1', contract: 'ct00000009', amount: 300, source: 'cash', portion: 'baseline',
+        orphan: true, actions: ['return_owner'] }] } };
+    const app = boot(standardServer({ contract: stub }));
+    app.open(FULL);
+    await settled();
+    app.nav('stuck');
+    await settled();
+    app.click(app.$$('button.link').filter(function (b) {
+      return b.getAttribute('data-act') === 'contract' && b.getAttribute('data-id') === 'ct00000009';
+    })[0]);
+    await settled();
+    it('a contract never stored opens with its lines and Return to', function () {
+      has(app.text(app.drawer()), 'Never stored');
+      truthy(app.button('Return to', app.drawer()), 'Return to');
+      lacks(app.text(app.drawer()), 'Void contract');
+    });
+    clean(app, 'never stored');
   })();
 
   console.log('');

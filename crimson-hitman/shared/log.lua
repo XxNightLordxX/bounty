@@ -53,6 +53,7 @@ local problems = {}    -- { text = string, count = integer, printed = boolean }[
 local reported = false -- whether this start has said its one summary line
 local booting = true   -- until Log.started(): lines go to `boot`
 local boot = {}        -- string[] what the start said, in order
+local bootLeft = 0     -- lines the start said past Log.BOOT_KEPT, counted and not kept
 local recent = {}      -- { text, key, at, times, seq }[] Log.debug lines, newest last
 local loud = {}        -- { text, key, at, times, seq }[] Log.always lines, newest last
 local seq = 0          -- the order lines were kept in, across both lists
@@ -99,7 +100,7 @@ end
 --- lines, kept as one counted entry), is counted on the one it repeats.
 local function keep(text, list, cap, key)
     if booting then
-        if #boot < Log.BOOT_KEPT then boot[#boot + 1] = text end
+        if #boot < Log.BOOT_KEPT then boot[#boot + 1] = text else bootLeft = bootLeft + 1 end
         return
     end
     seq = seq + 1
@@ -261,6 +262,7 @@ end
 --- A start begins: what an earlier one found and said is forgotten.
 function Log.beginStart()
     problems, boot, recent, loud, raisedAt, heldBack = {}, {}, {}, {}, {}, {}
+    bootLeft = 0
     starts = starts + 1
     reported, booting = false, true
 end
@@ -278,9 +280,12 @@ end
 --- What is kept, for the diagnosis: copies, so nothing outside changes them.
 --- `recent` is both lists of what came after the start, in the order the
 --- lines were said.
----@return table { problems = string[], count = integer, boot = string[], recent = { text, at, times }[], debug = boolean }
+--- `bootLeft` is how many lines the start said past what is kept of it:
+--- a start that said more than Log.BOOT_KEPT lost the rest without a word.
+---@return table { problems = string[], count = integer, boot = string[], bootLeft = integer, recent = { text, at, times }[], debug = boolean }
 function Log.view()
-    local out = { problems = {}, count = counted(), boot = {}, recent = {}, debug = Log.debugOn() }
+    local out = { problems = {}, count = counted(), boot = {}, bootLeft = bootLeft, recent = {},
+                  debug = Log.debugOn() }
     for i = 1, #problems do out.problems[i] = problems[i].text end
     for i = 1, #boot do out.boot[i] = boot[i] end
     local both = {}

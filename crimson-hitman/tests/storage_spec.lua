@@ -2878,6 +2878,8 @@ describe('every mysql statement is executable', function()
             function() m.queryAudit({}, nil, 10) end,
             function() m.queryAudit({ contract = 'c1', kind = 'financial', action = 'x' }, 50, 10) end,
             function() m.queryAudit({ actor = 'A', from = 0, to = 10 }, nil, 10) end,
+            function() m.queryAudit({ from = 0, to = 10 }, nil, 10) end,
+            function() m.countContractsByState() end,
             function() m.prune() end,
             function() m.pruneContracts(os.time()) end,
             function() m.inspect() end,
@@ -3768,5 +3770,52 @@ describe('a mysql store whose database stops answering', function()
         falsy(opening.results[1], 'given up on at last')
         truthy(m.timedOut(opening.results[2]), 'as unanswered, not as a grant refused: '
             .. tostring(opening.results[2]))
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- The admin panel's reads (G3)
+--------------------------------------------------------------------------
+
+describe('what the admin panel counts and pages, in every backend', function()
+    --- S24: the overview read every row to count them by state.
+    it('counts contracts by state as allContracts holds them', function()
+        for _, b in ipairs(backends()) do
+            local states = { CH.STATE.ACTIVE, CH.STATE.ACTIVE, CH.STATE.ACCEPTED, CH.STATE.EXPIRED }
+            for i, state in ipairs(states) do
+                local c = contractFixture('ctcount0' .. i)
+                c.state = state
+                b.store.insertContract(c)
+            end
+            local want = {}
+            for _, c in ipairs(b.store.allContracts()) do want[c.state] = (want[c.state] or 0) + 1 end
+            local got = b.store.countContractsByState()
+            for state, n in pairs(want) do eq(got[state], n, b.name .. ': ' .. state) end
+            for state in pairs(got) do truthy(want[state], b.name .. ': no state of its own: ' .. state) end
+        end
+    end)
+
+    --- S25: a range ending in the past answered empty pages, five thousand
+    --- rows scanned each, until the scan reached it.
+    it('mysql: a past range\'s first page has its rows', function()
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local m = require('crimson-hitman.server.storage.mysql')
+        m.open()
+        -- Straight into the table: 5,200 rows newer than the range, and 60
+        -- inside it, as MariaDB holds them by id.
+        local now = Env.time
+        local rows = Exec.tables.crimson_audit
+        for id = 1, 60 do
+            rows[id] = { id = id, ts = now - 10 * 86400 + id * 60, kind = 'conduct', action = 'old' }
+        end
+        for id = 61, 5260 do
+            rows[id] = { id = id, ts = now - 8 * 86400 + id, kind = 'conduct', action = 'new' }
+        end
+        local page = m.queryAudit({ from = now - 10 * 86400, to = now - 9 * 86400 }, nil, 25)
+        eq(#page, 25, 'the first page has rows')
+        eq(page[1].id, 60, 'newest in the range first')
+        eq(#m.queryAudit({ from = now - 30 * 86400, to = now - 20 * 86400 }, nil, 25), 0,
+            'a range with nothing in it is empty, with no cursor')
     end)
 end)

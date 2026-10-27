@@ -2535,6 +2535,72 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 36. No console line spells a staff command's name
+--------------------------------------------------------------------------
+--
+-- Staff commands are named in Config.Admin.Commands, and a server may name
+-- them otherwise. A line printed or kept for the diagnosis that spells
+-- '/ch-stuck' sends staff on such a server to a command that does not
+-- exist, and the admin panel, which rewords the configured names into its
+-- own sections (Admin.panelWords), cannot reword it. Every Log call in
+-- server/ builds the name from Config.Admin.Commands; comments are not
+-- lines, so they may name them as they like.
+--------------------------------------------------------------------------
+
+do
+    --- Each Log call's text in a source, comments taken out, as
+    --- { line, text } where text runs from `Log.` to its closing paren.
+    local function logCalls(src)
+        local code = src:gsub('(%-%-%[(=*)%[.-%]%2%])', function(c) return (c:gsub('[^\n]', '')) end)
+            :gsub('%-%-[^\n]*', '')
+        local out = {}
+        local at, line, counted = 1, 1, 1
+        while true do
+            local s, e = code:find('Log%.%a+%s*%(', at)
+            if not s then break end
+            -- The call through its balanced closing paren, or, where a
+            -- string holds an unbalanced one, the rest of its line.
+            local text = code:match('^%b()', e) or code:match('^[^\n]*', e)
+            local _, n = code:sub(counted, s):gsub('\n', '')
+            line, counted = line + n, s + 1
+            out[#out + 1] = { line = line, text = text }
+            at = e + 1
+        end
+        return out
+    end
+    local function spelled(src)
+        local hits = {}
+        for _, call in ipairs(logCalls(src)) do
+            if call.text:find('/ch%-') or call.text:find("'ch%-") then hits[#hits + 1] = call.line end
+        end
+        return hits
+    end
+
+    -- Not vacuous: it finds a spelled name across lines, and not one in a
+    -- comment or one built from the config.
+    local probe = spelled(table.concat({
+        "Log.always(('left for staff (%s)'):format(x)) -- see /ch-stuck",
+        "Log.debug(('see /%s'):format(tostring(Config.Admin.Commands.stuck)))",
+        "Log.always('line one '",
+        "    .. 'run /ch-settle')",
+    }, '\n'))
+    if #probe ~= 1 or probe[1] ~= 3 then
+        failures[#failures + 1] = 'the spelled-command check no longer finds exactly the one '
+            .. 'spelled name in its own sample, so a clean run of it means nothing'
+    end
+
+    for _, path in ipairs(files) do
+        if path:find('crimson%-hitman/server/') then
+            for _, line in ipairs(spelled(read(path) or '')) do
+                failures[#failures + 1] = ('%s:%d prints a staff command by its shipped name. Build '
+                    .. 'it from Config.Admin.Commands, so a renamed command is named right and the '
+                    .. 'admin panel can put it in its own words (Admin.panelWords).'):format(path, line)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

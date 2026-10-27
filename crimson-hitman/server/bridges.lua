@@ -564,7 +564,11 @@ function Bridges.install(modules)
         if not modules.app.floodOk(src, 'mugshot') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
-        if not modules.ratelimit.check(actor, 'mugshot') then return end
+        if not modules.ratelimit.check(actor, 'mugshot') then
+            -- Refused without a word to the player, as a death report is:
+            -- one row a minute, so staff can see why faces are stale.
+            return modules.app.ratelimitRefused(actor.cid, 'mugshot')
+        end
         modules.mugshot.store(actor.cid, image)
     end)
 
@@ -575,7 +579,9 @@ function Bridges.install(modules)
         if not modules.app.floodOk(src, 'appearanceChanged') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
-        if not modules.ratelimit.check(actor, 'mugshot') then return end
+        if not modules.ratelimit.check(actor, 'mugshot') then
+            return modules.app.ratelimitRefused(actor.cid, 'appearanceChanged')
+        end
         modules.mugshot.invalidate(actor.cid)
     end)
 
@@ -739,12 +745,16 @@ function Bridges.install(modules)
                 for src in pairs(lastAccess) do lastAccess[src] = nil end
                 Bridges.refreshAccess()
             elseif (key == 'Completion.PhotoStorage' or key == 'Completion.KillPhotos')
-                and Config.Completion.KillPhotos == true
-                and Config.Completion.PhotoStorage == 'host'
-                and modules.photo and modules.photo.loadAllowedHosts then
-                -- Kill photos turned on, or moved to a host: the list of
-                -- hosts is read now, which nothing did while they were off.
-                pcall(modules.photo.loadAllowedHosts)
+                and modules.photo then
+                if Config.Completion.KillPhotos == true and Config.Completion.PhotoStorage == 'host' then
+                    -- Kill photos turned on, or moved to a host: the list of
+                    -- hosts is read now, which nothing did while they were off.
+                    if modules.photo.loadAllowedHosts then pcall(modules.photo.loadAllowedHosts) end
+                elseif modules.photo.clearHostProblem then
+                    -- Turned off, or kept on the server: no host is asked
+                    -- anything, and the warning that none is allowed goes.
+                    pcall(modules.photo.clearHostProblem)
+                end
             elseif key == 'Mugshot.Enabled' and Config.Mugshot.Enabled == false and modules.mugshot then
                 -- Headshots turned off: none is kept, and every card shows
                 -- the placeholder from its next refresh.
@@ -965,7 +975,11 @@ function Bridges.installCommands(modules)
         RegisterCommand(name, function(src, args)
             Bridges.runCommand(src, function()
                 if not Admin.allowed(src, ace, strict) then
-                    reply(src, Admin.howToAuthorise(ace))
+                    -- Worded for this command (its console usage), and for
+                    -- somebody whose extra ACE opens the read-only tools but
+                    -- not this one, why.
+                    reply(src, Admin.howToAuthorise(ace, nil, name, strict,
+                        strict and Admin.allowed(src, Config.Admin.Ace)))
                     return
                 end
                 fn(src, args or {})
@@ -1000,9 +1014,19 @@ function Bridges.installCommands(modules)
         for i = 1, #lines do reply(src, lines[i]) end
     end)
 
+    --- A contract id the timeline and whois commands were given, refused in
+    --- words: a raw code, 'No such contract (invalid_input).', was all a
+    --- staff member who typed the command alone was told.
+    local function noContract(src, name, err)
+        if err == CH.ERR.NOT_FOUND then return reply(src, 'No contract has that id.') end
+        return reply(src, ('%sUsage: /%s <contract id>'):format(
+            err and 'That is not a contract id. ' or '', name))
+    end
+
     command(names.timeline, Config.Admin.Ace, function(src, args)
-        local view, err = Admin.timeline(args[1])
-        if not view then return reply(src, 'No such contract (' .. tostring(err) .. ').') end
+        if not args[1] then return noContract(src, names.timeline) end
+        local view, err = Admin.timeline(args[1], src)
+        if not view then return noContract(src, names.timeline, err) end
 
         local c = view.contract
         reply(src, ('%s  %s  %s -> %s'):format(c.id, c.state, c.creator, c.target))
@@ -1333,7 +1357,8 @@ function Bridges.installCommands(modules)
         RegisterCommand(names.refresh, function(src, args)
             Bridges.runCommand(src, function()
                 if not Admin.allowed(src, Config.Admin.Ace, true) then
-                    return reply(src, Admin.howToAuthorise(Config.Admin.Ace))
+                    return reply(src, Admin.howToAuthorise(Config.Admin.Ace, nil, names.refresh,
+                        true, Admin.allowed(src, Config.Admin.Ace)))
                 end
                 local what = tostring((args or {})[1] or 'timers'):lower()
                 if what ~= 'timers' and what ~= 'refresh' then
@@ -1509,7 +1534,7 @@ function Bridges.installCommands(modules)
                     names.timeline))
             end
             local access = modules.panel and modules.panel.open(src)
-            if not access then return reply(src, Admin.howToAuthorise(Config.Admin.Ace)) end
+            if not access then return reply(src, Admin.howToAuthorise(Config.Admin.Ace, nil, names.panel)) end
             TriggerClientEvent('crimson-hitman:adminOpen', src, access)
         end)
     end
@@ -1517,8 +1542,9 @@ function Bridges.installCommands(modules)
     -- Its own ACE: reading a history and unmasking a person are different
     -- kinds of act, and should not be the same permission.
     command(names.whois, Config.Admin.IdentityAce, function(src, args)
+        if not args[1] then return noContract(src, names.whois) end
         local who, err = Admin.identify(src, args[1])
-        if not who then return reply(src, 'No such contract (' .. tostring(err) .. ').') end
+        if not who then return noContract(src, names.whois, err) end
 
         reply(src, ('creator  %s  %s%s'):format(who.creator.cid, who.creator.name,
             who.creator.anonymous and '  (listed anonymously)' or ''))

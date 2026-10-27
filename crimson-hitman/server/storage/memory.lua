@@ -292,6 +292,17 @@ function Memory.allContracts()
     return out
 end
 
+--- How many contracts the store keeps in each state, for the admin panel's
+--- overview, which needs nothing else of them. Counted where they lie, with
+--- nothing copied; mysql counts them with one GROUP BY on idx_state rather
+--- than bringing every row of the table into Lua every few seconds.
+---@return table [state] = count
+function Memory.countContractsByState()
+    local out = {}
+    for _, c in pairs(db.contracts) do out[c.state] = (out[c.state] or 0) + 1 end
+    return out
+end
+
 --- Contracts still running: active or accepted, by id.
 ---
 --- The only ones the death sampler, the expiry pass and the board act on.

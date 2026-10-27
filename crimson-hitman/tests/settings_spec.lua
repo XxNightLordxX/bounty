@@ -357,12 +357,29 @@ describe('changing a setting from the admin panel', function()
     it('frees the lock when a change raises', function()
         local s = stack()
         truthy(s.settings.set('Relay.Enabled', false, 'A'))
-        local realStaff = s.audit.staff
-        s.audit.staff = function() error('audit raised', 0) end
+        local realCheck = s.settings.check
+        s.settings.check = function() error('check raised', 0) end
         local raised = pcall(s.settings.set, 'Informant.Cost', 100, 'A')
-        s.audit.staff = realStaff
+        s.settings.check = realCheck
         falsy(raised, 'the raise reaches the caller')
         truthy(s.settings.set('Relay.Enabled', true, 'A'), 'and nothing is left holding the lock')
+    end)
+
+    --- A09: the audit row (or telling players' games) raising after the
+    --- store kept the change answered it as an error, with no row and no
+    --- broadcast, though it was in force and kept.
+    it('answers a change the store kept as done when what follows it raises', function()
+        local s = stack()
+        local realStaff = s.audit.staff
+        s.audit.staff = function() error('audit raised', 0) end
+        local ran, ok, err, detail = pcall(s.settings.set, 'Targeting.AllowNearby', true, 'A')
+        s.audit.staff = realStaff
+        truthy(ran, 'nothing reaches the caller: ' .. tostring(ok))
+        eq(ok, true, tostring(err))
+        eq(detail.value, true)
+        eq(Config.Targeting.AllowNearby, true, 'in force')
+        eq(s.storage.readSettings()['Targeting.AllowNearby'].value, true, 'and kept')
+        truthy(s.settings.set('Relay.Enabled', false, 'A'), 'and the lock is free')
     end)
 
     it('changes nothing when the store will not take it', function()
@@ -672,6 +689,211 @@ describe('settings changed from the panel, across a restart', function()
         local settings = again.projection.listing(f.hitman.cid).settings
         eq(settings.buyouts, false, 'and what the app is told comes from it')
         eq(select(2, again.informant.buy(f.target, 'ct00000001')), CH.ERR.FEATURE_OFF)
+        resetConfig()
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- G3: what a change does and says
+--------------------------------------------------------------------------
+
+describe('a change from the admin panel, written and said', function()
+    --- W003: the same value again re-sent every barred player the access
+    --- notice, with an audit row saying old == new.
+    it('changes nothing for the value already in force', function()
+        local s = stack()
+        local hooked = 0
+        s.settings.onChanged = function() hooked = hooked + 1 end
+        Env.clientEvents = {}
+        local ok, err, detail = s.settings.set('BlockOffDuty', Config.BlockOffDuty, 'A', 'A')
+        truthy(ok, tostring(err))
+        eq(detail.unchanged, true)
+        truthy(s.settings.set('Targeting.AllowNearby', true, 'A', 'A'))
+        truthy(s.settings.set('Targeting.AllowNearby', true, 'A', 'A'))
+        s.settings.onChanged = nil
+        eq(hooked, 1, 'the hook ran for the one real change')
+        eq(#s.storage.auditByAction('admin_setting_changed', 10), 1, 'one row')
+        local told = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:settings' then told = told + 1 end
+        end
+        eq(told, 1, 'players\' games told once')
+    end)
+
+    --- A08: a write that landed and then raised was answered "Nothing
+    --- changed", with config.lua's value in force over the stored row.
+    it('applies a change the store kept though the write raised', function()
+        local s = stack()
+        local real = s.storage.writeSetting
+        s.storage.writeSetting = function(...) real(...) error('Connection lost', 0) end
+        local ok, err = s.settings.set('Targeting.AllowNearby', true, 'A', 'A')
+        s.storage.writeSetting = real
+        truthy(ok, tostring(err))
+        eq(Config.Targeting.AllowNearby, true, 'in force, as the store holds it')
+        eq(#s.storage.auditByAction('admin_setting_changed', 10), 1, 'and on the record')
+
+        local delete = s.storage.deleteSetting
+        s.storage.deleteSetting = function(...) delete(...) error('Connection lost', 0) end
+        ok, err = s.settings.reset('Targeting.AllowNearby', 'A', 'A')
+        s.storage.deleteSetting = delete
+        truthy(ok, tostring(err))
+        eq(Config.Targeting.AllowNearby, false, 'config.lua\'s again, as the store holds it')
+    end)
+
+    it('says it does not know when the write and the read back both raise', function()
+        local s = stack()
+        local write, readBack = s.storage.writeSetting, s.storage.readSettings
+        s.storage.writeSetting = function() error('Connection lost', 0) end
+        s.storage.readSettings = function() error('Connection lost', 0) end
+        local ok, err = s.settings.set('Informant.Cost', 100, 'A', 'A')
+        s.storage.writeSetting, s.storage.readSettings = write, readBack
+        falsy(ok)
+        eq(err, 'store_unknown')
+        eq(Config.Informant.Cost, 25000, 'not in force')
+        local listed
+        for _, row in ipairs(s.settings.active()) do
+            if row.key == 'Informant.Cost' then listed = row end
+        end
+        truthy(listed and listed.unknown, 'listed for the diagnosis')
+        truthy(table.concat(s.admin.diagnose(0), '\n'):find('STORE UNKNOWN', 1, true))
+        truthy(s.settings.set('Informant.Cost', 100, 'A', 'A'), 'set again, it settles')
+        for _, row in ipairs(s.settings.active()) do falsy(row.unknown, row.key) end
+    end)
+
+    --- W144: both restraints off with one required: no handover could ever
+    --- complete, and nothing objected.
+    it('refuses turning off the last restraint, in the start\'s words', function()
+        local s = stack()
+        truthy(s.settings.set('Kidnap.Coercion.handcuffed', false, 'A'))
+        local ok, err, why = s.settings.set('Kidnap.Coercion.passengerOfHitman', false, 'A')
+        falsy(ok)
+        eq(err, 'invalid_value')
+        truthy(tostring(why):find('no handover could ever complete', 1, true), tostring(why))
+        truthy(tostring(why):find('Change Kidnap.Coercion.handcuffed first', 1, true), tostring(why))
+        falsy(tostring(why):find('Using', 1, true), 'not the start\'s correction: ' .. tostring(why))
+        eq(Config.Kidnap.Coercion.passengerOfHitman, true)
+        truthy(s.settings.entry('Kidnap.Coercion.handcuffed').about:find('has to count', 1, true))
+    end)
+
+    it('counts handcuffs again when config.lua turns both restraints off', function()
+        stack()
+        Config.Kidnap.Coercion.handcuffed = false
+        Config.Kidnap.Coercion.passengerOfHitman = false
+        require('crimson-hitman.server.main').validateConfig()
+        eq(Config.Kidnap.Coercion.handcuffed, true, 'corrected, not refused')
+        local found = false
+        for _, line in ipairs(require('crimson-hitman.shared.log').view().problems) do
+            if line:find('no handover could ever complete', 1, true) then found = true end
+        end
+        truthy(found, 'and said as a setting that needs attention')
+    end)
+
+    --- W146: 'Not changed: <key> <key> ... Using X..'.
+    it('says why a value does not fit once, and what to change first', function()
+        local s = stack()
+        s.bridges.install(s)
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        local function ask(data)
+            Env.clientEvents = {}
+            _G.source = 6
+            pcall(Env.events['crimson-hitman:admin'], { op = 'setSetting', data = data, __rid = 1 })
+            _G.source = nil
+            for _, event in ipairs(Env.clientEvents) do
+                if event.name == 'crimson-hitman:adminResult' then return event.args[1] end
+            end
+        end
+        local reply = ask({ key = 'Limits.ContractLifetimeSeconds', value = 600 })
+        eq(reply.ok, false)
+        local _, keys = reply.message:gsub('Limits%.ContractLifetimeSeconds', '')
+        truthy(keys <= 1, 'the key once: ' .. reply.message)
+        falsy(reply.message:find('Using', 1, true), reply.message)
+        falsy(reply.message:find('..', 1, true), reply.message)
+        truthy(reply.message:find('Change Limits.DefaultDeadlineSeconds first.', 1, true), reply.message)
+        local entry
+        for _, row in ipairs(s.settings.view().limits) do
+            if row.key == 'Limits.MinContractReward' then entry = row end
+        end
+        eq(entry.max, Config.MaxContractValue, 'offered up to what a contract may be worth')
+        reply = ask({ key = 'Limits.MinContractReward', value = Config.MaxContractValue + 1 })
+        truthy(reply.message:find('has to be from 0 to ' .. Config.MaxContractValue, 1, true), reply.message)
+
+        --- W145: a warning about the value, which refuses nothing, said with it.
+        reply = ask({ key = 'Targeting.AllowNearby', value = true })
+        eq(reply.ok, true)
+        truthy(reply.message:find('through walls', 1, true), reply.message)
+    end)
+
+    --- W147: a stored row for a key not on the list could not be cleared
+    --- from the panel, which every start said to do.
+    it('lists a stored row for a key not on the list, and resets it', function()
+        local s = stack()
+        s.storage.writeSetting('Limits.MaxRewardLines', 5, 'A', 1)
+        s.settings.boot()
+        local row
+        for _, r in ipairs(s.settings.view().readonly) do
+            if r.key == 'Limits.MaxRewardLines' then row = r end
+        end
+        truthy(row, 'listed read-only')
+        truthy(row.ignored, 'with why')
+        eq(s.settings.view().stored, 1, 'and counted, so Reset all shows')
+        local ok, err, detail = s.settings.reset('Limits.MaxRewardLines', 'A')
+        truthy(ok, tostring(err))
+        eq(detail.removed, true)
+        eq(s.storage.readSettings()['Limits.MaxRewardLines'], nil, 'its row gone')
+        eq(#s.settings.active(), 0)
+    end)
+
+    --- W199: one click of a bucket could stop the app opening.
+    it('holds the buckets the app cannot work without to their floors', function()
+        local s = stack()
+        local _, err, why = s.settings.check('Cooldowns.load.burst', 1)
+        eq(err, 'invalid_value')
+        truthy(tostring(why):find('opening the app', 1, true), tostring(why))
+        eq(select(2, s.settings.check('Cooldowns.load.per', 3600)), 'invalid_value', 'nor refilled hourly')
+        eq(select(2, s.settings.check('Cooldowns.progress.per', 10)), 'invalid_value')
+        eq(select(2, s.settings.check('Cooldowns.death.burst', 1)), 'invalid_value')
+        truthy(s.settings.check('Cooldowns.load.burst', 10), 'above the floor is fine')
+        local entry = s.settings.entry('Cooldowns.mugshot.burst')
+        truthy(entry.about:find('without a word', 1, true), 'says what it gates, and that it is silent')
+        eq(entry.stricter, 'down', 'lowering it takes two clicks')
+        eq(s.settings.entry('Cooldowns.load.per').stricter, 'up')
+        truthy(entry.strict:find('%s', 1, true), 'with what the second click does')
+    end)
+end)
+
+describe('the start\'s warnings about a value set from the panel', function()
+    --- W145: printed for config.lua before the overrides, never again.
+    it('are said at the next start, for the config in force', function()
+        local function forget()
+            for key in pairs(package.loaded) do
+                if type(key) == 'string' and (key:sub(1, 7) == 'server.' or key == 'server') then
+                    package.loaded[key] = nil
+                end
+            end
+        end
+        forget()
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'json'
+        Natives.files = {}
+        local s = require('server.main').start()
+        truthy(s.settings.set('Targeting.AllowNearby', true, 'ADMIN001'))
+
+        forget()
+        Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
+        Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
+        resetConfig()
+        Config.Database.Mode = 'json'
+        require('server.main').start()
+        local found = false
+        for _, line in ipairs(require('crimson-hitman.shared.log').view().problems) do
+            if line:find('Targeting.AllowNearby is on', 1, true)
+                and line:find('set from the admin panel', 1, true) then found = true end
+        end
+        truthy(found, 'listed as a setting that needs attention')
         resetConfig()
     end)
 end)

@@ -959,6 +959,39 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       `config.lua` is in force again
 - [ ] In `mysql` mode the `crimson_settings` table holds the changes; in
       `json` mode `data/records.json` does
+- [ ] An exclusive contract with a stake, accepted: its view lists the
+      operative's stake as the amount they put up, and $0 once it is handed
+      back. Two operatives on one competitive contract: the overview reads
+      *2 on contracts now, holding 1 contract*
+- [ ] Open the id of a contract that was never stored (a review pay left for
+      staff on one): its view lists its lines, and **Return to** settles them
+- [ ] Settle a line from a contract's view opened from **Stuck escrow**, then
+      close the view: the line has left the list and the badge agrees.
+      **Run it** on the overview runs the diagnosis. Type a search in
+      Contracts, then click *Active* on the overview: every active contract
+      is listed
+- [ ] On the `command`-only account, `/ch-void <id>` says it changes money and
+      needs `crimson.admin` itself, and how to run `ch-void` from the server
+      console; `/ch-whois` on an account without `crimson.identity` suggests
+      it for one identifier, never `group.admin`. `/ch-timeline` and
+      `/ch-whois` alone answer their usage, and `/ch-diag <citizen id>` runs
+      as that player (a made-up one says *Give a player id*, never runs as
+      you). Both are in the log (`admin_timeline`, `admin_diagnose`)
+- [ ] Turn **Handcuffs count as restraint** off, then **The hitman's vehicle
+      counts as restraint**: the second is refused, saying no handover could
+      complete and to change the handcuffs first. Turn **List the people
+      nearby** on: the answer says what the start warns about it; restart, and
+      the console counts it among the settings that need attention
+- [ ] Set the same switch to the value it has (a second panel left open):
+      nothing is written to the log and no barred player is told again
+- [ ] Rate limits: each row says what it gates. Lower *load: requests held*
+      to 1: refused, with the floor. Lower it to 10: the first Save says what
+      it refuses and turns brass, the second saves it. Lower the photo
+      retention to 9, click Save, type 1, click Save: it arms again for 1
+- [ ] Turn **Kill photos** on with `'host'` storage and no upload host, then
+      off again: the diagnosis no longer lists *no photo upload host*.
+      Run `/ch-diag <id>` five times with that player's app open: their own
+      fault is still listed first, and the logs it asked for are not faults
 - [ ] `resmon` with the panel open stays under 0.35ms, and back near idle once
       it is closed (the Escape watch runs every frame only while it is open)
 

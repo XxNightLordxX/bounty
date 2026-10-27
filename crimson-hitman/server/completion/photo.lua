@@ -103,6 +103,17 @@ local NO_HOSTS = 'warning: no photo upload host is allowed, so every kill photo 
     .. 'Add your phone\'s image host to Config.Completion.ExtraPhotoHosts (for Fivemanage: '
     .. '\'fivemanage.com\', \'fmfile.com\').'
 
+--- The warning that no upload host is allowed, taken back: kill photos
+--- turned off, or kept on the server, ask no host anything. Only the host
+--- list's own read took it back, and that runs only while photos come from
+--- a host, so turned off from the panel the warning stayed listed, and
+--- counted, until the next restart. Called by the settings hook and the
+--- tick (Bridges.install, main.lua) whenever photos do not come from a host.
+function Photo.clearHostProblem()
+    Photo.warnedEmpty = false
+    Log.dropProblem(NO_HOSTS)
+end
+
 --- Re-read on the maintenance tick: an owner who changes upload provider
 --- would otherwise have to restart this resource too. A change is logged.
 ---@return table allowedDomains

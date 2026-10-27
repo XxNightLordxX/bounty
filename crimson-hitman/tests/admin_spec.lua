@@ -1228,7 +1228,10 @@ describe('what a staff command prints', function()
 
         Env.chat = {}
         truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, { 'ct-nope' }))
-        truthy(said(3):find('No such contract'), said(3))
+        truthy(said(3):find('That is not a contract id', 1, true), said(3))
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, { 'ct99999999' }))
+        truthy(said(3):find('No contract has that id', 1, true), said(3))
     end)
 end)
 
@@ -2449,5 +2452,87 @@ describe('the diagnosis of a server whose app is closed, or whose database is no
         truthy(out:find('loops: maintenance tick 14 s ago', 1, true), out)
         truthy(out:find('handover tick idle', 1, true), out)
         eq(#Exec.statements, sent, 'and nothing was sent to the database it says is not answering')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- What the staff console and the diagnosis say (G3)
+--------------------------------------------------------------------------
+
+describe('what the staff console and the diagnosis say', function()
+    --- W124: every staff read is on the record, the module's header says;
+    --- the timeline and a diagnosis of a named player wrote nothing.
+    it('puts the timeline and a diagnosis of a named player on the record', function()
+        local s, f, c = seeded()
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, { c.id }))
+        s.admin.diagnose(3, '1')
+        s.audit.flush()
+        local timeline = s.storage.auditByAction('admin_timeline', 5)
+        eq(#timeline, 1)
+        eq(timeline[1].contract_id, c.id)
+        eq(timeline[1].actor_cid, 'HITMAN01')
+        local diag = s.storage.auditByAction('admin_diagnose', 5)
+        eq(#diag, 1)
+        eq(diag[1].detail.subject, f.creator.cid, 'with whom it looked into')
+        local _ = f
+    end)
+
+    --- W126: a citizen id, or anything else, quietly diagnosed the caller.
+    it('takes a citizen id for whom to diagnose, and never falls back to the caller', function()
+        local s = seeded()
+        local out = table.concat(s.admin.diagnose(3, 'TARGET01'), '\n')
+        truthy(out:find('identity: Dana Reyes (TARGET01)', 1, true), out)
+        out = table.concat(s.admin.diagnose(3, 'target01'), '\n')
+        truthy(out:find('(TARGET01)', 1, true), 'in lower case too: ' .. out)
+        Env.clientEvents = {}
+        out = table.concat(s.admin.diagnose(3, 'nobody'), '\n')
+        truthy(out:find('Give a player id (or nothing to run it as yourself)', 1, true), out)
+        falsy(out:find('(HITMAN01)', 1, true), 'not the caller: ' .. out)
+        for _, event in ipairs(Env.clientEvents) do
+            falsy(event.name == 'crimson-hitman:askDiagnostics', 'nobody\'s page asked')
+        end
+    end)
+
+    it('answers /ch-timeline and /ch-whois with no id with their usage', function()
+        local s = seeded()
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true, ['crimson.identity'] = true }
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, {}))
+        truthy(said(3):find('Usage: /' .. Config.Admin.Commands.timeline .. ' <contract id>', 1, true), said(3))
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.whois], 3, {}))
+        truthy(said(3):find('Usage: /' .. Config.Admin.Commands.whois .. ' <contract id>', 1, true), said(3))
+        falsy(said(3):find('invalid_input', 1, true), 'no raw code')
+    end)
+
+    --- W127: on 'alive' the advice led with kill photos, which it never takes.
+    it('says on \'alive\' that no handover of an unreadable target can complete', function()
+        local s = require('crimson-hitman.tests.harness.shipped').newStack()
+        fixture(s)
+        local real = exports.qbx_core.GetPlayer
+        exports.qbx_core.GetPlayer = function(self, src)
+            local player = real(self, src)
+            if player and player.PlayerData then player.PlayerData.metadata = nil end
+            return player
+        end
+        local out = table.concat(s.admin.diagnose(0, 2), '\n')
+        exports.qbx_core.GetPlayer = real
+        truthy(out:find('NOTHING COULD ANSWER', 1, true), out)
+        truthy(out:find('Every live handover of them is refused', 1, true), out)
+        falsy(out:find('every photo of a real kill', 1, true), 'no kill photo is taken: ' .. out)
+    end)
+
+    it('still says recovery first, before the checks it adds', function()
+        local s = seeded()
+        s.app.ready, s.app.recoveryFailed = false, true
+        local out = table.concat(s.admin.diagnose(0, '1'), '\n')
+        s.app.ready, s.app.recoveryFailed = true, false
+        local at = out:find('recovery: FAILED at the start', 1, true)
+        truthy(at, out)
+        truthy(at < out:find('admin panel settings', 1, true), out)
+        truthy(at < out:find('identity:', 1, true), out)
     end)
 end)

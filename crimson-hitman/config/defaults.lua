@@ -337,10 +337,17 @@ ConfigDefaults.RateLimit = {
     Key = 'license',
 }
 
+--- Per-player allowances, each { per = seconds a full one refills over,
+--- burst = how many it holds }. Changeable in the admin panel (Rate limits),
+--- where each row says what it gates, a stricter value takes two clicks, and
+--- the ones the app cannot work without keep a floor: load at least 6 held
+--- and one every 5 seconds, progress one a second, death 2 held. Set here,
+--- below a floor is your choice.
 ConfigDefaults.Cooldowns = {
     --- Faults the page reports about itself. Generous enough that a genuinely
     --- broken screen gets its report through, tight enough that a client
     --- posting straight at the endpoint cannot fill the audit log with it.
+    --- The log staff ask a page for with the diagnosis never spends it.
     diagnostic  = { per = 60, burst = 10 },
     create    = { per = 60, burst = 2 },
     accept    = { per = 30, burst = 3 },
@@ -667,7 +674,11 @@ ConfigDefaults.Kidnap = {
     --- during the abduction needs patching up first.
     MinTargetHealthPercent = 20,
     --- Observable coercion: the target must be restrained or under the
-    --- hitman's physical control. Any enabled detector satisfies it.
+    --- hitman's physical control. Any enabled detector satisfies it. With it
+    --- on, one of the two below (or a RestraintProvider) has to be on too:
+    --- with none, no handover could ever complete, so the start turns
+    --- handcuffed back on and says so, and the admin panel refuses turning
+    --- off the last one.
     RequireCoercion    = true,
     Coercion = {
         handcuffed        = true,   -- QBox metadata 'ishandcuffed'
