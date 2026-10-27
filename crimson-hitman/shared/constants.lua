@@ -249,6 +249,17 @@ CH.ERR = {
     --- operative". Refused uncharged for everyone, whoever has been seen,
     --- with { minutes } until it is sold again.
     INFORMANT_WARMING    = 'informant_warming',
+    --- An informant tip (Config.LocationTip) asked for while the target is
+    --- not in the city: there is nobody to place on the map. Nothing was
+    --- charged.
+    TIP_TARGET_AWAY      = 'tip_target_away',
+    --- An informant tip asked for inside Config.LocationTip.CooldownMinutes
+    --- of this hitman's last one on the contract. Sent with { untilAt =
+    --- os.time() it is sold again, retryAfter = seconds }. Nothing was charged.
+    TIP_COOLDOWN         = 'tip_cooldown',
+    --- Set GPS on an informant tip this game no longer shows: it ran out, the
+    --- contract ended, or the hitman left it.
+    NO_TIP               = 'no_tip',
     --- A call would show a number an anonymous party paid to keep hidden,
     --- this phone build cannot mask it, and Relay.RequireMaskingForAnonymous
     --- is on, so it is not placed and nobody is asked to call back (§11.3).

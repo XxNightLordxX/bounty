@@ -360,7 +360,7 @@ local MONEY_REQUESTS = {
     create = true, accept = true, cancel = true, abandon = true, withdrawReward = true,
     addEscrow = true, improve = true, propose = true, respondAmendment = true,
     bailout = true, informant = true, submitPhoto = true, verifyKill = true,
-    armKidnap = true,
+    armKidnap = true, locationTip = true,
 }
 
 ---@param access string|nil who the gate lets through: nil for everyone the
@@ -1305,6 +1305,22 @@ function App.register()
             type(payload.shown) == 'table' and payload.shown or {})
         if not ok then return false, err, data end
         return data
+    end)
+
+    -- The informant tip (server/locationtip.lua, Config.LocationTip): a
+    -- hitman holding a live contract buys the rough area its target was in.
+    -- Its own bucket. `shown` is the price the button quoted, and a price
+    -- that moved since is refused rather than charged. The area goes to the
+    -- buyer's game alone, as an event of its own, and never in this reply.
+    handler('locationTip', 'locationTip', function(actor, payload)
+        return deps.locationTip.buy(actor, payload.id,
+            type(payload.shown) == 'table' and payload.shown or {})
+    end)
+
+    -- The buyer's tips still showing, back on their map: asked by their game
+    -- when the app is theirs again (after a restart, or back in the city).
+    handler('locationTips', 'load', function(actor)
+        return deps.locationTip.reshow(actor)
     end)
 
     -- Amendments --------------------------------------------------------

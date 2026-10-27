@@ -96,11 +96,66 @@ end
 --- behind as a global is one every server spec after it could call: a
 --- server reading a ped's clothes passed here while the native was nil on
 --- every live server, and the nearby list it fed was always empty.
+--- The map's blips, as the game keeps them: [handle] = { kind = 'radius' |
+--- 'coord', x, y, radius, colour, alpha, sprite, scale, name, shortRange },
+--- and every one ever made, in order (Client.blipsMade). A removed one is
+--- gone from Client.blips and marked removed on its record.
+Client.blips, Client.blipsMade = {}, {}
+local blipSeq, blipName = 0, nil
+
+local function newBlip(record)
+    blipSeq = blipSeq + 1
+    Client.blips[blipSeq] = record
+    Client.blipsMade[#Client.blipsMade + 1] = record
+    record.handle = blipSeq
+    return blipSeq
+end
+
+local function onBlip(blip, fn)
+    local record = Client.blips[blip]
+    if record then fn(record) end
+end
+
+--- The blip natives the client calls, recorded. BOOL natives answer 1 or
+--- false, as the game does.
+local BLIP_NATIVES = {
+    AddBlipForRadius = function(x, y, z, radius)
+        return newBlip({ kind = 'radius', x = x, y = y, z = z, radius = radius })
+    end,
+    AddBlipForCoord = function(x, y, z)
+        return newBlip({ kind = 'coord', x = x, y = y, z = z })
+    end,
+    SetBlipColour = function(blip, colour) onBlip(blip, function(r) r.colour = colour end) end,
+    SetBlipAlpha = function(blip, alpha) onBlip(blip, function(r) r.alpha = alpha end) end,
+    SetBlipSprite = function(blip, sprite) onBlip(blip, function(r) r.sprite = sprite end) end,
+    SetBlipScale = function(blip, scale) onBlip(blip, function(r) r.scale = scale end) end,
+    SetBlipAsShortRange = function(blip, on) onBlip(blip, function(r) r.shortRange = on end) end,
+    BeginTextCommandSetBlipName = function(kind) blipName = { kind = kind } end,
+    AddTextComponentSubstringPlayerName = function(text)
+        if blipName then blipName.text = text end
+    end,
+    EndTextCommandSetBlipName = function(blip)
+        onBlip(blip, function(r) r.name = blipName and blipName.text end)
+        blipName = nil
+    end,
+    DoesBlipExist = function(blip) return Client.blips[blip] ~= nil and 1 or false end,
+    RemoveBlip = function(blip)
+        onBlip(blip, function(r) r.removed = true end)
+        Client.blips[blip] = nil
+    end,
+}
+
 local function clientNatives(fn, ...)
     local had = _G.GetPedDrawableVariation
     _G.GetPedDrawableVariation = drawableVariation
+    local saved = {}
+    for name, native in pairs(BLIP_NATIVES) do
+        saved[name] = _G[name]
+        _G[name] = native
+    end
     local results = table.pack(pcall(fn, ...))
     _G.GetPedDrawableVariation = had
+    for name in pairs(BLIP_NATIVES) do _G[name] = saved[name] end
     return table.unpack(results, 1, results.n)
 end
 
@@ -171,6 +226,7 @@ function Client.boot(opts)
 
     Client.toServer, Client.phone = {}, {}
     Client.nui, Client.netEvents, Client.handlers = {}, {}, {}
+    Client.blips, Client.blipsMade, blipSeq, blipName = {}, {}, 0, nil
     Client.cameraCallback = nil
     Client.coreCalls = {}
     Client.drawables, Client.drawableThrows = nil, nil

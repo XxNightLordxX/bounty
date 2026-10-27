@@ -11,6 +11,15 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Informant tip for hitmen** (`Config.LocationTip`): a hitman who has
+  accepted a live contract can buy, for $25,000 from the bank, the rough area
+  its target was in at that moment: a red circle 700 m across on their map
+  (`RadiusMeters` 350) for 10 minutes, with a GPS button to its middle. The
+  target is somewhere inside it and almost never at its centre, so the hitman
+  still has to search. The target's phone says *Someone has been tipped off
+  about your rough location*, never who or where. Up to three per hitman per
+  contract, ten minutes apart. The money goes to nobody.
+
 - **No handcuffs needed** (`Config.Kidnap.RequireCoercion = false`, as
   shipped): a handover needs the target alive, conscious and on their feet,
   with the hitman, within `Config.Kidnap.Radius` of the person who placed the
@@ -216,7 +225,8 @@ Nothing to import either way. The tables are
 `crimson_review`, `crimson_settings` (what staff changed from the admin panel),
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (who turned
 on the whitelisted-job view's Notify me), `crimson_playtime` (each character's
-counted playtime) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+counted playtime), `crimson_location_tips` (the informant tips hitmen bought)
+and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
 engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
@@ -548,7 +558,9 @@ moment the contract is placed until it ends.
 ### Buyouts
 
 What a target can pay for: buying the contract out, and buying the name of a
-hitman seen near them.
+hitman seen near them. And what a hitman can pay for: an informant tip, the
+rough area the target was in when it was bought (`Config.LocationTip`, not to
+be confused with `Config.Informant`, which a target buys).
 
 | Setting | Shipped | What it does |
 |---|---|---|
@@ -567,6 +579,14 @@ hitman seen near them.
 | `Config.Informant.ProximityWindowMinutes` | `10` | How long a sighting counts. Sightings are kept in memory, so for this long after a start, with `RequireProximity` on, informant data on a contract placed before the start is refused, uncharged, with how long to wait. |
 | `Config.Informant.RerollLockMinutes` | `30` | Buying again within this long returns the same name, so the purchase cannot enumerate every hitman for a fee. |
 | `Config.Informant.MaxPurchasesPerContract` | `2` | Purchases per buyer on one contract. |
+| `Config.LocationTip.Enabled` | `true` | A hitman holding a live contract (accepted, and still on it) may buy an informant tip: the rough area its target was in at that moment, as a circle on their map. Nobody else may: not the target, not the person who placed it, not a barred job. Off, no tip is sold and the button says so; one already bought stays on its buyer's map until it runs out. |
+| `Config.LocationTip.Cost` | `25000` | The price the button quotes is the price charged: one changed from the admin panel since is refused, nothing taken, with the price now. Charged last, after every check, once however often it is tapped, and given back if the tip cannot be delivered (the contract ended, or the hitman was taken off it, meanwhile). The money goes to nobody: it is taken out of the economy, as the informant's fee is. `0` is free. |
+| `Config.LocationTip.Account` | `'bank'` | `'cash'` or `'bank'`. |
+| `Config.LocationTip.RadiusMeters` | `350` | The circle's radius in metres, so 700 m across as shipped. Its centre is drawn at a random distance of up to three quarters of this from where the server sees the target, in a random direction: the target is inside it and almost never at its middle, so the hitman still has to search. 100 to 2000. |
+| `Config.LocationTip.ShowMinutes` | `10` | How long the circle stays on the hitman's map. It is a snapshot taken when bought and does not follow the target. It also comes off when the contract ends or the hitman leaves it, and comes back after a restart while it has time left. |
+| `Config.LocationTip.CooldownMinutes` | `10` | How long a hitman waits between two tips on one contract. Leaving the contract and coming back does not reset it. |
+| `Config.LocationTip.MaxPurchasesPerContract` | `3` | Tips per hitman on one contract. |
+| `Config.LocationTip.NotifyTarget` | `true` | The target's phone is told, through the notice budget, *Someone has been tipped off about your rough location. They know the area you were in, not exactly where you are.*, and their **On me** card (or the whitelisted-job view) says when. Never who bought it, and never the area. |
 
 ### Targeting
 
@@ -676,7 +696,7 @@ servers.
 | `Config.Progression.TrustPerElimination` / `TrustPerKidnapping` | `10` / `20` | Trust given per kill and per live handover. |
 | `Config.AntiCollusion.BlockSameAccount` | `true` | One account (the license) may not be two parties to a contract. Households are deliberately not considered. |
 | `Config.RateLimit.Key` | `'license'` | What an action allowance is counted against: `'license'` per account, so switching character does not reset it; `'citizenid'` per character. |
-| `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, informant data, messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
+| `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, informant data, informant tips (`locationTip`), messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
 | `Config.Listing.PageSize` | `15` | Contracts per board page. |
 | `Config.Diagnostics.SlowJobMs` | `25` | Every maintenance job (the ten-second tick's, and the death sampler's pass) times itself; one slower than this many milliseconds prints one Debug line naming it, at most every five minutes per job. `/ch-diag` and the admin panel list every job's worst, average and last times either way. Only time on the server thread counts, never database waits. `0` turns the line off. |
 | `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `1280` / `600000` | `'server'` storage: the app shrinks each kill photo until its longest side is at most this many pixels (320 to 4096) and it weighs at most this many bytes (50000 to 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way; the server decodes and encodes it on its main thread, about 80 ms each at the default (estimates; measure yours with the in-game checklist). |
@@ -1213,7 +1233,30 @@ been near a target when it restarts, so for
 `Config.Informant.ProximityWindowMinutes` after a start (with
 `Config.Informant.RequireProximity` on) informant data on a contract placed
 before it is refused, uncharged, for every buyer alike, with how many minutes
-to wait. Creator and hitmen can
+to wait.
+
+**Informant tip.** A hitman holding a live contract can buy, from their card
+under **Mine**, the rough area its target was in (`Config.LocationTip`):
+**Buy informant tip — $25,000**, tapped twice within three seconds, as every
+payment on a card. The server reads where it sees the target at that moment,
+draws a centre up to three quarters of `RadiusMeters` away from them in a
+random direction, and sends the hitman's game only that centre and the radius:
+a red circle on the map, 700 m across as shipped, with a marker named
+*Informant tip* in its middle, for `ShowMinutes`. The card then says until when
+it shows and offers **Set GPS**, which puts the waypoint on the centre. It is a
+snapshot: the target is not followed, and the hitman still has to search the
+area. The circle comes off when its time runs out, when the contract ends, or
+when the hitman leaves it, and comes back after a restart while it has time
+left. The button says why it cannot be bought when it cannot: the wait
+between two tips (and until when), the most bought, a target not in the city,
+or tips switched off; none of those charges anything. The price is charged
+last and once however often it is tapped, and given back if the tip cannot
+be delivered; it goes to nobody. The target is told someone has been tipped
+off about their rough location, on their phone and on their card, with when,
+and never who or where. Nobody else is ever sent the area: not the board, the
+person who placed it, another hitman, the advisory, or staff, who see only
+*a hitman bought an informant tip* (`location_tip_bought`, with the amount and
+no position) unless they hold `crimson.identity`. Creator and hitmen can
 message or call each other through the app without either learning who the
 other is (`Config.Relay`; switching it off removes messaging and calls
 entirely). A call to an anonymous party asks them to call back rather than

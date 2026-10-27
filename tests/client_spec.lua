@@ -2723,18 +2723,19 @@ describe('settings the server says this game reads', function()
     it('takes the keys it reads, in their types, and nothing else', function()
         Env.reset()
         Client.boot()
+        local shippedMode = Config.Database.Mode
         local ok, err = pcall(function()
             Client.fire('crimson-hitman:settings', 'junk')
             Client.fire('crimson-hitman:settings', {
                 ['Targeting.AllowNearby'] = 'yes',
                 ['Mugshot.RemoveBackground'] = true,
                 ['App.DefaultInstalled'] = true,
-                ['Database.Mode'] = 'mysql',
+                ['Database.Mode'] = shippedMode == 'json' and 'mysql' or 'json',
             })
             eq(Config.Mugshot.RemoveBackground, true)
             eq(Config.App.DefaultInstalled, true)
             eq(Config.Targeting.AllowNearby, false, 'a switch is a boolean or nothing')
-            eq(Config.Database.Mode, 'json', 'and a key it does not read is left alone')
+            eq(Config.Database.Mode, shippedMode, 'and a key it does not read is left alone')
         end)
         resetConfig()
         if not ok then error(err, 0) end

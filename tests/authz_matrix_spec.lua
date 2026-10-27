@@ -608,6 +608,24 @@ MATRIX.informant = {
     why = 'unmasking an operative is sold to the two parties, not to onlookers',
 }
 
+-- The informant tip a hitman buys (server/locationtip.lua). The target
+-- has to be standing somewhere for there to be anything to sell.
+MATRIX.locationTip = {
+    arrange = function()
+        Env.players[CAST.target.source]._coords = { x = 1200.0, y = -800.0, z = 30.0 }
+    end,
+    payload = function(w, role, contract)
+        return { id = contract.id,
+                 shown = { cost = Config.LocationTip.Cost, account = Config.LocationTip.Account } }
+    end,
+    expect = { creator = NOT_PARTY, target = CH.ERR.NOT_FOUND, hitman = ALLOW,
+               otherHitman = NOT_PARTY, stranger = NOT_PARTY, admin = NOT_PARTY },
+    why = 'the target\'s rough area is sold to a hitman holding the contract, and to nobody '
+       .. 'else: not the person it names, not the placer',
+}
+MATRIX.locationTips = { payload = {}, expect = ANYONE,
+    why = 'puts the caller\'s own tips back on their map, and nobody else\'s' }
+
 -- Amendments ------------------------------------------------------------
 
 MATRIX.amendments = {

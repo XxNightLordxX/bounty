@@ -364,6 +364,10 @@ describe('the grid covers the whole action surface', function()
         -- set only while a hitman holds an open contract (setMeeting's row
         -- above) and taken off at every ending (meeting_spec, "when it goes").
         clearMeeting = true, meetingWaypoint = true,
+        -- The informant tip: sold only on an active or accepted contract,
+        -- refused once it has ended and refunded if it ends mid-purchase
+        -- (location_tip_spec); and the caller's own tips still showing.
+        locationTip = true, locationTips = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

@@ -628,6 +628,26 @@ local SCHEMA = {
         first_seen INT NOT NULL,
         updated_at INT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- Informant tips (server/locationtip.lua), one row per tip a hitman
+    -- bought: the area they were shown (its centre and radius, never where
+    -- the target stood), when it was bought and when it stops showing, and
+    -- whether the target was told. Read only for the buyer's own map and
+    -- card, and for the cooldown and the most per contract. Created on an
+    -- existing database by the CREATE TABLE IF NOT EXISTS at the next start,
+    -- like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_location_tips (
+        id VARCHAR(80) PRIMARY KEY,
+        contract_id VARCHAR(32) NOT NULL,
+        buyer_cid VARCHAR(32) NOT NULL,
+        bought_at INT NOT NULL,
+        expires_at INT NOT NULL,
+        centre_x INT NOT NULL,
+        centre_y INT NOT NULL,
+        radius INT NOT NULL,
+        target_told TINYINT(1) NOT NULL DEFAULT 0,
+        INDEX idx_tip_contract (contract_id),
+        INDEX idx_tip_buyer (buyer_cid, expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -2534,6 +2554,7 @@ function MySQLStore.pruneContracts(cutoff)
             db.query('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_reveals WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_mutes WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_location_tips WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_contracts WHERE id = ?', { id })
             removed = removed + 1
         end
@@ -2566,6 +2587,43 @@ end
 
 function MySQLStore.clearReveals(contractId)
     db.query('DELETE FROM crimson_reveals WHERE contract_id = ?', { contractId })
+    return true
+end
+
+--- Informant tips (server/locationtip.lua), one row per tip bought; see the
+--- memory backend. target_told comes back as a boolean (TINYINT(1)).
+function MySQLStore.writeLocationTip(row)
+    db.query([[
+        INSERT INTO crimson_location_tips
+            (id, contract_id, buyer_cid, bought_at, expires_at, centre_x, centre_y, radius,
+             target_told)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    ]], {
+        row.id, row.contract_id, row.buyer_cid, row.bought_at, row.expires_at,
+        row.centre_x, row.centre_y, row.radius, row.target_told and 1 or 0,
+    })
+    return true
+end
+
+function MySQLStore.deleteLocationTip(id)
+    db.query('DELETE FROM crimson_location_tips WHERE id = ?', { id })
+    return true
+end
+
+function MySQLStore.readLocationTips(contractId)
+    return db.query([[
+        SELECT * FROM crimson_location_tips WHERE contract_id = ? ORDER BY bought_at, id
+    ]], { contractId }) or {}
+end
+
+function MySQLStore.liveLocationTips(buyerCid, now)
+    return db.query([[
+        SELECT * FROM crimson_location_tips WHERE buyer_cid = ? AND expires_at > ? ORDER BY id
+    ]], { buyerCid, now }) or {}
+end
+
+function MySQLStore.clearLocationTips(contractId)
+    db.query('DELETE FROM crimson_location_tips WHERE contract_id = ?', { contractId })
     return true
 end
 

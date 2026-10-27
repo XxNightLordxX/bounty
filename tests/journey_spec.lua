@@ -376,6 +376,11 @@ describe('what this suite really covered', function()
         setMeeting      = 'meeting_spec ("who sets it"), through the net event',
         clearMeeting    = 'meeting_spec ("when the placer clears it"), through the net event',
         meetingWaypoint = 'meeting_spec ("their Set GPS alone gets where"), through the net event',
+        -- The informant tip a hitman buys, and the ones still showing after a
+        -- restart.
+        locationTip     = 'location_tip_spec ("an informant tip, bought"), through the net event',
+        locationTips    = 'location_tip_spec ("comes back on the buyer\'s map after a restart"), '
+            .. 'through the net event',
     }
 
     it('got an ok from every handler the server registers', function()

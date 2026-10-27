@@ -47,7 +47,7 @@ function Memory.open()
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
         photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
-        playtime = {},
+        playtime = {}, locationTips = {},
     }
     return true
 end
@@ -1334,6 +1334,9 @@ function Memory.prune()
     for key, row in pairs(db.mutes) do
         if gone[row.contract_id] then db.mutes[key] = nil end
     end
+    for id, row in pairs(db.locationTips) do
+        if gone[row.contract_id] then db.locationTips[id] = nil end
+    end
     return true
 end
 
@@ -1358,6 +1361,65 @@ end
 function Memory.clearReveals(contractId)
     for key, row in pairs(db.reveals) do
         if row.contract_id == contractId then db.reveals[key] = nil end
+    end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Informant tips (server/locationtip.lua)
+--------------------------------------------------------------------------
+
+--- One row per tip bought: { id, contract_id, buyer_cid, bought_at,
+--- expires_at, centre_x, centre_y, radius, target_told }. The centre and
+--- the radius are the area the buyer was shown, never where the target
+--- stood. Kept so a tip still showing comes back on the buyer's map after a
+--- restart, and so the cooldown and the most per contract hold across one.
+local function tipCopy(row)
+    local out = {}
+    for k, v in pairs(row) do out[k] = v end
+    return out
+end
+
+function Memory.writeLocationTip(row)
+    db.locationTips[row.id] = tipCopy(row)
+    return true
+end
+
+--- A tip refunded before it was delivered: it was never bought.
+function Memory.deleteLocationTip(id)
+    db.locationTips[id] = nil
+    return true
+end
+
+--- Every tip bought on one contract, oldest first.
+function Memory.readLocationTips(contractId)
+    local out = {}
+    for _, row in pairs(db.locationTips) do
+        if row.contract_id == contractId then out[#out + 1] = tipCopy(row) end
+    end
+    table.sort(out, function(a, b)
+        if a.bought_at ~= b.bought_at then return a.bought_at < b.bought_at end
+        return a.id < b.id
+    end)
+    return out
+end
+
+--- One buyer's tips still showing at `now`, for their map after a restart.
+function Memory.liveLocationTips(buyerCid, now)
+    local out = {}
+    for _, row in pairs(db.locationTips) do
+        if row.buyer_cid == buyerCid and (tonumber(row.expires_at) or 0) > now then
+            out[#out + 1] = tipCopy(row)
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Every tip on a contract that has ended.
+function Memory.clearLocationTips(contractId)
+    for id, row in pairs(db.locationTips) do
+        if row.contract_id == contractId then db.locationTips[id] = nil end
     end
     return true
 end

@@ -10640,6 +10640,185 @@ async function main() {
     });
   })();
 
+  /* The informant tip (server/locationtip.lua). A hitman's card offers Buy
+     informant tip at the server's price, tapped twice within three seconds;
+     says what is bought and that the target is told; once bought says until
+     when it is on the map and offers Set GPS, whose answer the game gives
+     (client/main.lua) with nothing of where; and says why where it cannot be
+     bought. The target's card, and their whitelisted-job view, say someone
+     was tipped off and when, and nothing else. */
+  await (async function () {
+    const TIP_RULES = { enabled: true, cost: 25000, account: 'bank', radius: 350, showMinutes: 10,
+      cooldownMinutes: 10, maxPerContract: 3, tellsTarget: true };
+    function tipBoard(rules) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { relay: true, amendments: true, locationTip: rules === undefined ? TIP_RULES : rules } } };
+    }
+    function tipCard(extra) {
+      return Object.assign({
+        id: 'ct00000088', reason: 'Owes money', mode: 'competitive', state: 'accepted',
+        fulfilment: 'alive', reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0,
+        currentSlot: 1, hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes',
+        targetProtected: false, role: 'hitman', penaltyAmount: 0, myAlias: 'Operative #1',
+        creatorAnonymous: true, deadline: Math.floor(Date.now() / 1000) + 3 * 3600,
+        locationTip: { left: 3 }
+      }, extra || {});
+    }
+    async function hitmanWith(card, extra, rules) {
+      const app = boot(Object.assign({ list: tipBoard(rules), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
+        amendments: { ok: true, data: [] } }, extra || {}));
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+    function sentNamed(app, name) {
+      return app.sent.filter(function (entry) { return entry.name === name; });
+    }
+    function button(app, starts) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf(starts) === 0;
+      })[0];
+    }
+    function fireTimers(app, ms) {
+      const due = app.timers.filter(function (t) { return !t.repeating && !t.cleared && t.ms === ms; });
+      due.forEach(function (t) { app.timers.splice(app.timers.indexOf(t), 1); t.fn(); });
+    }
+
+    let bought = null;
+    const buyer = await hitmanWith(tipCard(), {
+      locationTip: function (body) { bought = body; return { ok: true, data: { secondsLeft: 600,
+        expiresAt: Math.floor(Date.now() / 1000) + 600, left: 2 } }; }
+    });
+    it('hitman: offers Buy informant tip at the server\'s price, saying what it is', function () {
+      const offer = button(buyer, 'Buy informant tip');
+      truthy(offer, 'the button: ' + buyer.view.textContent);
+      eq(offer.textContent, 'Buy informant tip \u2014 $25,000');
+      falsy(offer.disabled, 'it can be bought');
+      const text = buyer.view.textContent;
+      truthy(text.indexOf('You get the rough area the target was in when you buy it, about 700 m '
+        + 'across, on your map for 10 minutes.') !== -1, text);
+      truthy(text.indexOf('The target will be told someone knows their rough area.') !== -1, text);
+    });
+    button(buyer, 'Buy informant tip').onclick();
+    await settle();
+    it('hitman: the first tap only arms it, for three seconds', function () {
+      eq(sentNamed(buyer, 'locationTip').length, 0, 'nothing sent on one tap');
+      const armed = button(buyer, 'Tap again to pay');
+      truthy(armed, 'armed: ' + buyer.view.textContent);
+      eq(armed.textContent, 'Tap again to pay $25,000');
+      truthy(armed.classList.contains('is-armed'));
+    });
+    fireTimers(buyer, 3000);
+    await settle();
+    it('hitman: left alone, it disarms and pays nothing', function () {
+      truthy(button(buyer, 'Buy informant tip'), 'back to its label');
+      eq(sentNamed(buyer, 'locationTip').length, 0);
+    });
+    button(buyer, 'Buy informant tip').onclick();
+    await settle();
+    button(buyer, 'Tap again to pay').onclick();
+    await settle(); await settle();
+    it('hitman: the second tap buys it, sending the contract and the price it showed', function () {
+      eq(sentNamed(buyer, 'locationTip').length, 1, 'one request');
+      eq(bought.id, 'ct00000088');
+      eq(JSON.stringify(bought.shown), JSON.stringify({ cost: 25000, account: 'bank' }));
+      truthy(buyer.notice().indexOf('Informant tip bought. The rough area is on your map') !== -1,
+        buyer.notice());
+    });
+
+    const showing = await hitmanWith(tipCard({ locationTip: { left: 2, secondsLeft: 600,
+      cooldownSeconds: 600 } }), { tipGps: { ok: true } });
+    it('hitman: a tip on the map says until when, with Set GPS, and why no other yet', function () {
+      const text = showing.view.textContent;
+      truthy(/Informant tip on your map until \d\d:\d\d\./.test(text), text);
+      truthy(button(showing, 'Set GPS'), 'Set GPS');
+      const offer = button(showing, 'Buy informant tip');
+      truthy(offer && offer.disabled, 'buying another is disabled');
+      truthy(/You can buy another tip at \d\d:\d\d\./.test(text), 'and says until when: ' + text);
+    });
+    button(showing, 'Set GPS').onclick();
+    await settle(); await settle();
+    it('hitman: Set GPS sends which contract alone, and the game marks it', function () {
+      const posts = sentNamed(showing, 'tipGps');
+      eq(posts.length, 1);
+      eq(JSON.stringify(Object.keys(posts[0].body)), JSON.stringify(['id']));
+      truthy(showing.notice().indexOf('The middle of the area is marked on your GPS.') !== -1,
+        showing.notice());
+    });
+
+    const most = await hitmanWith(tipCard({ locationTip: { left: 0 } }));
+    const away = await hitmanWith(tipCard({ locationTip: { left: 3, targetAway: true } }));
+    const off = await hitmanWith(tipCard({ locationTip: undefined }), {},
+      Object.assign({}, TIP_RULES, { enabled: false }));
+    it('hitman: says why it cannot be bought: the most, the target away, switched off', function () {
+      [[most, 'You have bought the most informant tips allowed on this contract (3).'],
+       [away, 'The target is not in the city right now, so there is nobody to place.'],
+       [off, 'Informant tips are turned off on this server.']].forEach(function (pair) {
+        const offer = button(pair[0], 'Buy informant tip');
+        truthy(offer && offer.disabled, 'disabled: ' + pair[1]);
+        truthy(pair[0].view.textContent.indexOf(pair[1]) !== -1, pair[0].view.textContent);
+      });
+    });
+
+    const soon = await hitmanWith(tipCard(), { locationTip: { ok: false, err: 'tip_cooldown',
+      data: { retryAfter: 300, untilAt: Math.floor(Date.now() / 1000) + 300 } } });
+    button(soon, 'Buy informant tip').onclick(); await settle();
+    button(soon, 'Tap again to pay').onclick(); await settle(); await settle();
+    const moved = await hitmanWith(tipCard(), { locationTip: { ok: false, err: 'terms_changed',
+      data: { cost: 30000, account: 'bank' } } });
+    button(moved, 'Buy informant tip').onclick(); await settle();
+    button(moved, 'Tap again to pay').onclick(); await settle(); await settle();
+    it('hitman: a refusal says what it means, and that nothing was taken', function () {
+      truthy(/The next one is sold at \d\d:\d\d\. Nothing was taken\./.test(soon.notice()),
+        soon.notice());
+      truthy(moved.notice().indexOf('An informant tip now costs $30,000 from your bank. Nothing '
+        + 'was taken.') !== -1, moved.notice());
+    });
+
+    const none = await hitmanWith(tipCard({ locationTip: undefined }), {}, null);
+    it('hitman: nothing of a tip on a server that sends no rules for one', function () {
+      eq(none.view.textContent.indexOf('nformant tip'), -1, none.view.textContent);
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    const target = boot({ list: tipBoard(), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [{
+        id: 'ct00000089', reason: 'Owes money', mode: 'competitive', state: 'accepted',
+        reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 1,
+        hitmenMax: 5, targetName: 'You', role: 'target', bailoutAvailable: false,
+        deadline: now + 7200, tippedAt: now - 300 }] } } });
+    await settle(); await settle(); await settle();
+    tab(target, 'onme');
+    await settle(); await settle();
+    it('target: On me says someone was tipped off about their rough area, and when', function () {
+      const text = target.view.textContent;
+      truthy(text.indexOf('Someone has been tipped off about your rough location. They know the '
+        + 'area you were in, not exactly where you are.') !== -1, text);
+      truthy(text.indexOf('Tipped off 5 min ago.') !== -1, text);
+      falsy(button(target, 'Buy informant tip'), 'nothing to buy');
+      falsy(button(target, 'Set GPS'), 'and nothing of the area');
+    });
+
+    const view = boot({ list: { ok: false, err: 'blacklisted_job' }, mine: { ok: false, err: 'blacklisted_job' }, ledger: { ok: false, err: 'blacklisted_job' },
+      whitelistedView: { ok: true, data: { onYou: [{ id: 'ct00000090', targetName: 'Olive Ward',
+        targetJob: 'Police', postedAt: now - 1500, state: 'taken', hitmenActive: 1,
+        secondsLeft: 7200, tippedAt: now - 120 }], settings: { buyouts: true } } } });
+    await settle(); await settle(); await settle();
+    it('target on a whitelisted job: the view says it too', function () {
+      const text = view.view.textContent;
+      truthy(text.indexOf('Someone has been tipped off about your rough location.') !== -1, text);
+      truthy(text.indexOf('Tipped off 2 min ago.') !== -1, text);
+    });
+
+    it('informant tip: every page drew cleanly', function () {
+      [buyer, showing, most, away, off, soon, moved, none, target, view].forEach(function (app) {
+        drewCleanly(app);
+      });
+    });
+  })();
+
   /* lb-phone's light theme, its default. It draws its status bar and home
      indicator onto the page in black, and the page is dark, so the page
      marks its root with the theme and the stylesheet lays a paper band

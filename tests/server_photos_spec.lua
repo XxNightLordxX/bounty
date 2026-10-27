@@ -632,6 +632,8 @@ describe('the start\'s sweep of photo files nothing names', function()
     --- other mode kept or served, for good.
     it('leaves the files of another storage mode alone', function()
         local s = photographed()
+        -- A server in json mode, whatever the resource ships.
+        Config.Database.Mode = 'json'
         -- The sweep's notes are said with Config.Debug on, and kept for the
         -- diagnosis either way.
         Config.Debug = true
@@ -650,6 +652,8 @@ describe('the start\'s sweep of photo files nothing names', function()
 
     it('sweeps after memory mode, whose records never outlive a start, and marks the files', function()
         local s = photographed()
+        -- A server in json mode, whatever the resource ships.
+        Config.Database.Mode = 'json'
         Natives.files['data/photos/ph0000000orphan.webp'] = WEBP
         Natives.files['data/photos/.mode'] = 'memory'
         eq(s.photos.sweepFiles(), 1, 'memory mode\'s leftovers go')

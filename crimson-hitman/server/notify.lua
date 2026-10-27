@@ -684,6 +684,31 @@ function Notify.shownToTarget(contract)
     return true
 end
 
+--- Tell the target of a contract that a hitman on it bought an informant tip
+--- (server/locationtip.lua): through the notice budget, as any news, kept
+--- past it rather than dropped, and their open app moved on (a push that
+--- names no contract, as every push to a target). Never who bought it, nor
+--- the area.
+---
+--- Not before the target may be shown the contract (Notify.shownToTarget):
+--- a tip bought inside that wait is told when it ends, while the contract is
+--- still out, so the notice cannot date a placement On me does not show yet.
+---@param contract table
+---@param title string
+---@param text string
+function Notify.locationTipped(contract, title, text)
+    local function send()
+        Notify.toCitizen(contract.target_cid, title, text, { contractId = contract.id })
+        Notify.push(contract.target_cid, 'tip')
+    end
+    local at = revealAt[contract.id]
+    if not at or os.time() >= at then return send() end
+    SetTimeout((at - os.time()) * 1000, function()
+        local ok, now = pcall(function() return Storage and Storage.readContract(contract.id) end)
+        if ok and now and not CH.TERMINAL[now.state] then send() end
+    end)
+end
+
 --- Whether the contract's target, an officer, is told of it by their own
 --- copy of the posting bulletin (Notify.advisory) rather than by the
 --- paranoid alert: a bulletin goes at posting, and to them too.

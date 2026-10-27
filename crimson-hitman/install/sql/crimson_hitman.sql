@@ -332,6 +332,23 @@ CREATE TABLE IF NOT EXISTS crimson_playtime (
     updated_at INT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Informant tips, one row per tip a hitman bought: the area they were
+-- shown (its centre and radius, never where the target stood), when it was
+-- bought and when it stops showing, and whether the target was told.
+CREATE TABLE IF NOT EXISTS crimson_location_tips (
+    id VARCHAR(80) PRIMARY KEY,
+    contract_id VARCHAR(32) NOT NULL,
+    buyer_cid VARCHAR(32) NOT NULL,
+    bought_at INT NOT NULL,
+    expires_at INT NOT NULL,
+    centre_x INT NOT NULL,
+    centre_y INT NOT NULL,
+    radius INT NOT NULL,
+    target_told TINYINT(1) NOT NULL DEFAULT 0,
+    INDEX idx_tip_contract (contract_id),
+    INDEX idx_tip_buyer (buyer_cid, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

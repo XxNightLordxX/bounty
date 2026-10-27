@@ -169,7 +169,8 @@ ConfigDefaults.Amendments = {
 --                                  BUYOUTS
 -- ============================================================================
 -- What a target can pay for: buying the contract out, and buying the name of
--- a hitman who has been seen near them.
+-- a hitman who has been seen near them. And what a hitman can pay for: an
+-- informant tip, the rough area the target was in when it was bought.
 
 ConfigDefaults.Bailout = {
     Enabled                 = true,       -- a target may buy out a contract on them
@@ -191,6 +192,17 @@ ConfigDefaults.Informant = {
     ProximityWindowMinutes  = 10,      -- how long a sighting counts
     RerollLockMinutes       = 30,      -- buying again within this long names the same hitman
     MaxPurchasesPerContract = 2,       -- purchases per buyer per contract
+}
+
+ConfigDefaults.LocationTip = {
+    Enabled                 = true,    -- a hitman on a contract may buy the target's rough area
+    Cost                    = 25000,   -- price; 0 = free
+    Account                 = 'bank',  -- 'cash' | 'bank'
+    RadiusMeters            = 350,     -- metres; the area shown is twice this across
+    ShowMinutes             = 10,      -- minutes the area stays on the hitman's map
+    CooldownMinutes         = 10,      -- minutes between two tips on one contract
+    MaxPurchasesPerContract = 3,       -- tips per hitman per contract
+    NotifyTarget            = true,    -- tell the target someone knows their rough area
 }
 
 -- ============================================================================
@@ -369,6 +381,7 @@ ConfigDefaults.Cooldowns = { -- per-player allowances: refill over `per` seconds
     accept      = { per = 30, burst = 3 },   -- accepting one
     bailout     = { per = 60, burst = 1 },   -- buying one out
     informant   = { per = 300, burst = 1 },  -- buying a hitman's name
+    locationTip = { per = 60, burst = 2 },   -- buying an informant tip on a target
     message     = { per = 5,  burst = 5 },   -- messages, calls, mutes, Notify me
     amend       = { per = 30, burst = 3 },   -- proposing a change
     load        = { per = 10, burst = 20 },  -- the app reading its own state

@@ -152,6 +152,11 @@ function serverStub() {
   // Set meeting point here and Clear, and the hitman's carries Set GPS.
   own[2].meetingSet = true;
   taken[1].meetingSet = true;
+  // The informant tip on both hitman cards: one with a tip on the map (until
+  // when, Set GPS, and buying another disabled with the wait), one with the
+  // button that buys one. Measured at phone width with the rest.
+  taken[0].locationTip = { left: 2, secondsLeft: 600, cooldownSeconds: 600 };
+  taken[1].locationTip = { left: 3 };
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
@@ -159,6 +164,8 @@ function serverStub() {
         // This suite measures the most crowded card there is, so it has to
         // be a server that offers every button that card can carry.
         informant: { cost: 25000, account: 'bank', maxPerContract: 2 },
+        locationTip: { enabled: true, cost: 25000, account: 'bank', radius: 350,
+          showMinutes: 10, cooldownMinutes: 10, maxPerContract: 3, tellsTarget: true },
         reasonMode: 'freetext', reasonMaxLength: 140 } } },
     mine: { ok: true, data: { created: own, accepted: taken, onMe: [{
       // A price on this player's head. The buyout is the only move the
@@ -170,7 +177,9 @@ function serverStub() {
       hitmenActive: 2, hitmenMax: 5,
       targetName: 'You', role: 'target',
       bailoutAvailable: true, bailoutAmount: 90000,
-      deadline: Math.floor(Date.now() / 1000) + 7200
+      deadline: Math.floor(Date.now() / 1000) + 7200,
+      // Somebody bought an informant tip on them five minutes ago.
+      tippedAt: Math.floor(Date.now() / 1000) - 300
     }] } },
     ledger: { ok: true, data: { entries: [{
       // The client's row, with their kill photo waiting to be opened. Only
@@ -679,6 +688,56 @@ async function main() {
     });
   });
 
+  /* The informant tip at phone width, on a hitman's cards: the line saying
+     until when it is on the map, Set GPS, the buy button (disabled with the
+     wait on one card, live on the other) and the words under it, each whole,
+     inside its card and tall enough to tap; and the buy button armed by one
+     tap, whose label is longer. */
+  async function measureTips() {
+    return page.evaluate(function () {
+      return Array.prototype.slice.call(document.querySelectorAll('.tip')).map(function (box) {
+        const card = box.closest('.card').getBoundingClientRect();
+        const buttons = Array.prototype.slice.call(box.querySelectorAll('button'));
+        const lines = Array.prototype.slice.call(box.querySelectorAll('div'));
+        return {
+          labels: buttons.map(function (b) { return b.textContent; }),
+          shortest: Math.min.apply(Math, buttons.map(function (b) {
+            return b.getBoundingClientRect().height;
+          })),
+          outside: buttons.concat(lines).filter(function (n) {
+            const r = n.getBoundingClientRect();
+            return r.left < card.left - 1 || r.right > card.right + 1;
+          }).length,
+          cut: buttons.concat(lines).filter(function (n) {
+            return n.scrollWidth > n.clientWidth + 1;
+          }).map(function (n) { return n.textContent.slice(0, 30); })
+        };
+      });
+    });
+  }
+  const tips = await measureTips();
+  await page.evaluate(function () {
+    const live = Array.prototype.slice.call(document.querySelectorAll('.tip button'))
+      .filter(function (b) { return b.textContent.indexOf('Buy informant tip') === 0 && !b.disabled; })[0];
+    if (live) { live.click(); }
+  });
+  await page.waitForTimeout(150);
+  const armedTips = await measureTips();
+
+  it('draws the informant tip on a hitman\'s cards at phone width, whole and tappable', function () {
+    const all = tips.reduce(function (a, m) { return a.concat(m.labels); }, []);
+    truthy(all.indexOf('Set GPS') !== -1, 'Set GPS for the tip on the map: ' + all.join(' | '));
+    truthy(all.filter(function (l) { return l === 'Buy informant tip \u2014 $25,000'; }).length === 2,
+      'the buy button on both cards: ' + all.join(' | '));
+    const armed = armedTips.reduce(function (a, m) { return a.concat(m.labels); }, []);
+    truthy(armed.indexOf('Tap again to pay $25,000') !== -1, 'armed by one tap: ' + armed.join(' | '));
+    tips.concat(armedTips).forEach(function (m) {
+      truthy(m.outside === 0, m.outside + ' part(s) outside the card: ' + m.labels.join(', '));
+      truthy(m.cut.length === 0, 'cut off: ' + m.cut.join(' | '));
+      atLeast(m.shortest, 36, 'informant tip button height (px)');
+    });
+  });
+
   await page.click('[data-tab="place"]');
   await page.waitForTimeout(300);
   const placeClipped = await clippedNodes();
@@ -1120,6 +1179,29 @@ async function main() {
 
   await page.click('[data-tab="onme"]');
   await page.waitForTimeout(300);
+
+  /* The target's side at phone width: that somebody was tipped off about
+     their rough location, and when, whole inside the card. */
+  const told = await page.evaluate(function () {
+    const box = document.querySelector('.tip-told');
+    if (!box) { return null; }
+    const card = box.closest('.card').getBoundingClientRect();
+    const r = box.getBoundingClientRect();
+    return {
+      text: box.textContent,
+      inside: r.left >= card.left - 1 && r.right <= card.right + 1,
+      cut: Array.prototype.slice.call(box.querySelectorAll('div')).filter(function (n) {
+        return n.scrollWidth > n.clientWidth + 1;
+      }).length
+    };
+  });
+  it('tells the target they were tipped off, whole inside their card at phone width', function () {
+    truthy(told, 'no tip notice on On me');
+    truthy(told.text.indexOf('Someone has been tipped off about your rough location.') !== -1,
+      told.text);
+    truthy(told.inside, 'inside the card');
+    truthy(told.cut === 0, told.cut + ' line(s) cut off');
+  });
 
   const hierarchy = await page.evaluate(function () {
     const label = document.querySelector('.section');

@@ -316,9 +316,13 @@ end
 --- blacklist is the server's config and a client that could answer it could
 --- grant itself the app.
 RegisterNetEvent('crimson-hitman:access', function(allowed, mode)
+    local hadApp = accessAllowed == true and accessMode == 'full'
     accessAllowed = allowed == true
     accessMode = (mode == 'full' or mode == 'whitelisted' or mode == 'closed') and mode or nil
     CreateThread(App.reconcile)
+    -- The whole app theirs again (a start, a restart, back in the city): the
+    -- informant tips they bought that are still showing come back on the map.
+    if accessAllowed and accessMode == 'full' and not hadApp and App.askTips then App.askTips() end
 end)
 
 --- The page asking, as it opens, which screen the server said is this
@@ -570,6 +574,9 @@ local UI_EVENTS = {
     -- token and no picture, so nothing here is held back from the page.
     'verifyKill',
     'bailout', 'informant',
+    -- Buying an informant tip. The area is never in the reply: the server
+    -- sends it to this game alone (crimson-hitman:locationTip, below).
+    'locationTip',
     -- The one read of the whitelisted-job view (Config.WhitelistedView),
     -- which the server answers only for a player on a job the app bars, and
     -- its Notify me toggle, answered for the same players.
@@ -712,6 +719,104 @@ RegisterNUICallback('crimson:meetingGps', function(data, cb)
         cb({ ok = false, event = 'meetingWaypoint',
              err = type(result) == 'table' and result.err or 'no_meeting' })
     end)
+end)
+
+--------------------------------------------------------------------------
+-- Informant tips (server/locationtip.lua)
+--------------------------------------------------------------------------
+--
+-- The rough area a target was in when this player bought a tip: a centre
+-- and a radius from the server, to this game alone, drawn as a red circle
+-- with a marker in its middle until the time it was sold with runs out,
+-- the contract ends or this player leaves it (the server says so:
+-- crimson-hitman:locationTipClear). Never sent to the page: Set GPS hands it
+-- the contract id, and the waypoint is set here.
+
+--- [contractId] = { x, y, area = blip, centre = blip }: one per contract.
+local tips = {}
+
+local TIP_COLOUR = 1       -- red
+local TIP_ALPHA = 90       -- of 255: see-through, so the streets show under it
+local TIP_SPRITE = 1       -- the plain round marker
+local TIP_NAME = 'Informant tip'
+
+local function removeTip(contractId)
+    local tip = tips[contractId]
+    if not tip then return end
+    tips[contractId] = nil
+    for _, blip in ipairs({ tip.area, tip.centre }) do
+        if blip and DoesBlipExist(blip) then RemoveBlip(blip) end
+    end
+end
+
+local function clearTips()
+    for contractId in pairs(tips) do removeTip(contractId) end
+end
+
+RegisterNetEvent('crimson-hitman:locationTip', function(data)
+    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
+    local x, y, radius = tonumber(data.x), tonumber(data.y), tonumber(data.radius)
+    local seconds = tonumber(data.secondsLeft)
+    if not x or not y or not radius or radius <= 0 or not seconds or seconds <= 0 then return end
+    removeTip(data.id)
+
+    local area = AddBlipForRadius(x + 0.0, y + 0.0, 0.0, radius + 0.0)
+    SetBlipColour(area, TIP_COLOUR)
+    SetBlipAlpha(area, TIP_ALPHA)
+
+    local centre = AddBlipForCoord(x + 0.0, y + 0.0, 0.0)
+    SetBlipSprite(centre, TIP_SPRITE)
+    SetBlipColour(centre, TIP_COLOUR)
+    SetBlipScale(centre, 0.8)
+    SetBlipAsShortRange(centre, false)
+    BeginTextCommandSetBlipName('STRING')
+    AddTextComponentSubstringPlayerName(TIP_NAME)
+    EndTextCommandSetBlipName(centre)
+
+    local tip = { x = x, y = y, area = area, centre = centre }
+    tips[data.id] = tip
+    -- Off by itself when its time runs out, should the server's word not
+    -- arrive: only this one, not a newer tip on the same contract.
+    SetTimeout(math.floor(seconds * 1000), function()
+        if tips[data.id] == tip then removeTip(data.id) end
+    end)
+end)
+
+RegisterNetEvent('crimson-hitman:locationTipClear', function(data)
+    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
+    removeTip(data.id)
+end)
+
+--- Set GPS on a tip: the waypoint on the centre of the area this game was
+--- sent. The page is told only that it was set.
+RegisterNUICallback('crimson:tipGps', function(data, cb)
+    local id = type(data) == 'table' and data.id or nil
+    local tip = type(id) == 'string' and tips[id] or nil
+    if not tip then return cb({ ok = false, event = 'tipGps', err = 'no_tip' }) end
+    SetNewWaypoint(tip.x + 0.0, tip.y + 0.0)
+    cb({ ok = true, event = 'tipGps' })
+end)
+
+--- Ask for the tips still showing, once the app is this player's: the
+--- server sends each as crimson-hitman:locationTip. Asked again a few times
+--- while the server is still starting up.
+function App.askTips(attempt)
+    attempt = attempt or 1
+    App.request('locationTips', {}, function(result)
+        if type(result) == 'table' and not result.ok and result.err == 'busy' and attempt < 5 then
+            SetTimeout(5000 * attempt, function() App.askTips(attempt + 1) end)
+        end
+    end)
+end
+
+-- Another character, or none: their tips are not this one's.
+AddEventHandler('QBCore:Client:OnPlayerUnload', clearTips)
+AddEventHandler('qbx_core:client:playerLoggedOut', clearTips)
+
+-- A restart leaves nothing on the map; the server sends them again after.
+AddEventHandler('onResourceStop', function(resource)
+    if resource ~= GetCurrentResourceName() then return end
+    clearTips()
 end)
 
 --- Save the kill photo the player has open to their phone's Photos.

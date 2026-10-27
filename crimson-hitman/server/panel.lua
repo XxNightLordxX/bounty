@@ -452,6 +452,17 @@ local IDENTITY_ONLY = {
 }
 local IDENTITY_ONLY_SHOWN = '(identity only)'
 
+--- Rows whose actor staff without IdentityAce are shown only as what they
+--- were, not as which party: an informant tip (server/locationtip.lua) says
+--- a hitman bought one, never which operative, since an anonymous hitman's
+--- alias is the one thing that tells two of them apart.
+local ACTOR_SHOWN_AS = {
+    location_tip_bought = { actor = 'a hitman', said = 'a hitman bought an informant tip' },
+    location_tip_refunded = { actor = 'a hitman', said = 'an informant tip was given back' },
+    location_tip_refund_failed = { actor = 'a hitman',
+                                   said = 'an informant tip could not be given back' },
+}
+
 --- One audit row, as the panel shows it.
 local function rowView(row, r)
     local detail = r.value(nil, row.detail or {})
@@ -461,9 +472,11 @@ local function rowView(row, r)
             if detail[key] ~= nil then detail[key] = IDENTITY_ONLY_SHOWN end
         end
     end
+    local shownAs = not r.canIdentify and ACTOR_SHOWN_AS[row.action]
+    if shownAs then detail.said = shownAs.said end
     return {
         ts = row.ts, kind = row.kind, action = row.action, contract = row.contract_id,
-        actor = r.who(row.actor_cid), detail = detail,
+        actor = shownAs and shownAs.actor or r.who(row.actor_cid), detail = detail,
     }
 end
 

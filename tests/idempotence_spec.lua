@@ -1003,6 +1003,12 @@ describe('what this file leaves out', function()
             .. 'placer clears it")',
         -- Set GPS: a read.
         meetingWaypoint = true,
+        -- The informant tip (location_tip_spec).
+        locationTip = 'a second tap while the first runs is refused as busy and charged '
+            .. 'nothing; one after it is refused as tip_cooldown, charged nothing ("under a '
+            .. 'double tap", "over time")',
+        -- The tips still showing, sent again: a read of the caller's own.
+        locationTips = true,
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

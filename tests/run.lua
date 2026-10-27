@@ -292,10 +292,14 @@ function _G.newCopyingStack()
                             audit = stack.audit, notify = stack.notify })
     stack.informant.init({ storage = copying, identity = stack.identity,
                            audit = stack.audit, death = stack.death })
+    stack.locationTip.init({ storage = copying, identity = stack.identity, audit = stack.audit,
+                             notify = stack.notify, contracts = stack.contracts,
+                             review = stack.review })
     stack.projection.init({ storage = copying, identity = stack.identity,
                             escrow = stack.escrow, kidnap = stack.kidnap,
                             mugshot = stack.mugshot, progression = stack.progression,
-                            informant = stack.informant, notify = stack.notify })
+                            informant = stack.informant, notify = stack.notify,
+                            locationTip = stack.locationTip })
 
     stack.settings.init({ storage = copying, audit = stack.audit,
                           check = require('crimson-hitman.server.main').checkCandidate })
@@ -359,6 +363,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.alerts'] = nil
     package.loaded['crimson-hitman.server.meeting'] = nil
     package.loaded['crimson-hitman.server.playtime'] = nil
+    package.loaded['crimson-hitman.server.locationtip'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -389,6 +394,7 @@ function _G.newStack()
     local alerts     = require('crimson-hitman.server.alerts')
     local meeting    = require('crimson-hitman.server.meeting')
     local playtime   = require('crimson-hitman.server.playtime')
+    local locationTip = require('crimson-hitman.server.locationtip')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -429,9 +435,12 @@ function _G.newStack()
         notify = notify, ratelimit = ratelimit })
 
     mugshot.init({ identity = identity, audit = audit })
+    locationTip.init({ storage = storage, identity = identity, audit = audit, notify = notify,
+                       contracts = contracts, review = review })
     projection.init({ storage = storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
-                      comms = comms, informant = informant, notify = notify })
+                      comms = comms, informant = informant, notify = notify,
+                      locationTip = locationTip })
     meeting.init({ storage = storage, notify = notify, audit = audit })
     playtime.init({ storage = storage, identity = identity })
 
@@ -458,6 +467,8 @@ function _G.newStack()
         meeting = meeting,
         -- The built-in playtime tracker.
         playtime = playtime,
+        -- The informant tip a hitman can buy.
+        locationTip = locationTip,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -471,7 +482,7 @@ function _G.newStack()
         ledger = ledger, death = death, photo = photo, bridges = bridges,
         mugshot = mugshot, progression = progression, app = app, admin = admin,
         photos = photos, review = review, settings = settings, panel = panel, timing = timing,
-        alerts = alerts, meeting = meeting, playtime = playtime,
+        alerts = alerts, meeting = meeting, playtime = playtime, locationTip = locationTip,
     }
 end
 
@@ -509,6 +520,7 @@ end
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
     'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec', 'admin_panel_spec', 'settings_spec', 'features_spec', 'console_spec', 'staff_output_spec', 'whitelisted_view_spec', 'alerts_spec', 'admin_console_spec', 'meeting_spec', 'speed_spec', 'handover_spec', 'config_layout_spec',
+    'location_tip_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

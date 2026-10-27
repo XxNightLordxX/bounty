@@ -216,7 +216,11 @@ local function makeFolder(dir)
     if madeFolders[dir] then return end
     madeFolders[dir] = true
     local base = resourceRoot()
-    if base and os.createdir then pcall(os.createdir, base .. '/' .. dir) end
+    -- FXServer's own addition to the os library, absent from standard Lua
+    -- (and so from the linter's idea of it): read off the table, so a
+    -- runtime without it is simply skipped.
+    local createdir = rawget(os, 'createdir')
+    if base and createdir then pcall(createdir, base .. '/' .. dir) end
 end
 
 --- Write a photo's bytes to its file.

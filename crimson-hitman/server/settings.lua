@@ -314,6 +314,16 @@ local CATALOGUE = {
       label = 'Only hitmen seen nearby', about = 'Only an operative seen near the target is named.',
       inflight = AT_USE },
 
+    { key = 'LocationTip.Enabled', section = 'features', group = 'Informant tip', kind = 'switch',
+      label = 'Informant tip',
+      about = 'A hitman on a contract may pay for the rough area the target was in.',
+      inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
+          .. 'are refused while it is off.' },
+    { key = 'LocationTip.NotifyTarget', section = 'features', group = 'Informant tip',
+      kind = 'switch', label = 'Tell the target',
+      about = 'The target is told someone knows their rough area, never who or where.',
+      inflight = 'Read when a tip is bought; a target already told stays told.' },
+
     { key = 'Notifications.ParanoidAlert', section = 'features', group = 'Notifications',
       kind = 'switch', label = 'Tell the target', about = 'The target\'s phone says a price is on them.',
       inflight = 'Alerts already sent stand; alerts still waiting are checked when they fall due.' },
@@ -468,6 +478,22 @@ local CATALOGUE = {
     { key = 'Informant.Cost', section = 'limits', group = 'Informant', kind = 'number',
       integer = true, min = 0, max = 10000000, label = 'Price of a name ($)', inflight = AT_USE },
 
+    { key = 'LocationTip.Cost', section = 'limits', group = 'Informant tip', kind = 'number',
+      integer = true, min = 0, max = 10000000, label = 'Price of a tip ($)', inflight = AT_USE },
+    { key = 'LocationTip.RadiusMeters', section = 'limits', group = 'Informant tip',
+      kind = 'number', integer = true, min = 100, max = 2000,
+      label = 'Radius of the area (m; shown twice this across)',
+      inflight = 'Tips already bought keep the area they were shown.' },
+    { key = 'LocationTip.ShowMinutes', section = 'limits', group = 'Informant tip',
+      kind = 'number', integer = true, min = 1, max = 120, label = 'Minutes a tip is shown',
+      inflight = 'Tips already bought keep the time they were sold with.' },
+    { key = 'LocationTip.CooldownMinutes', section = 'limits', group = 'Informant tip',
+      kind = 'number', integer = true, min = 0, max = 1440,
+      label = 'Minutes between two tips on a contract', inflight = AT_USE },
+    { key = 'LocationTip.MaxPurchasesPerContract', section = 'limits', group = 'Informant tip',
+      kind = 'number', integer = true, min = 1, max = 50,
+      label = 'Tips per hitman per contract', inflight = AT_USE },
+
     { key = 'Kidnap.CountdownSeconds', section = 'limits', group = 'Handovers', kind = 'number',
       integer = true, min = 5, max = 600, label = 'Handover countdown (s)', inflight = AT_USE
           .. ' A countdown already running finishes at the new length.' },
@@ -524,7 +550,8 @@ local CATALOGUE = {
 --- The rate-limit buckets, each as two keys: how many seconds a full
 --- bucket refills over, and how many it holds.
 local BUCKETS = {
-    'load', 'search', 'wallet', 'create', 'accept', 'amend', 'informant', 'bailout', 'photo',
+    'load', 'search', 'wallet', 'create', 'accept', 'amend', 'informant', 'locationTip',
+    'bailout', 'photo',
     'photoSubmit', 'photoView', 'photoDecide', 'message', 'progress', 'death', 'mugshot',
     'image', 'diagnostic', 'admin', 'adminWrite',
 }
@@ -544,6 +571,7 @@ local BUCKET_ABOUT = {
     amend = 'Proposals and the answers to them, revising, improving and adding to a reward, and '
         .. 'taking part of it back.',
     informant = 'Buying a name from the informant.',
+    locationTip = 'Buying an informant tip on a target\'s rough area.',
     bailout = 'Buying out a contract, in the app and with the buyout command.',
     photo = 'Asking to photograph a kill, and Verify kill.',
     photoSubmit = 'Sending a kill photo.',

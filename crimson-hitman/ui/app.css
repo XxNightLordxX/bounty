@@ -767,6 +767,31 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
   font-size: var(--t-sm); font-weight: 600; padding: 0.5rem 0.7rem;
 }
 
+/* The informant tip (app.js, hitmanTip and tipToldNotice): on a hitman's
+   card, the button tapped twice to buy one and, once bought, until when it
+   is on the map and Set GPS; on the target's, that somebody was tipped off.
+   Across the whole width of the actions, as the meeting point is. */
+.tip, .tip-told {
+  flex-basis: 100%; min-width: 0;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.tip-state {
+  display: flex; gap: 0.45rem; align-items: flex-start;
+  font-size: var(--t-sm); font-weight: 600; color: var(--ink);
+}
+.tip-state::before { width: 0.95rem; height: 0.95rem; opacity: 0.75; margin-top: 0.1rem; }
+.tip-told .tip-state::before { color: var(--crimson-bright); opacity: 1; }
+.tip > .hint, .tip-told > .hint { margin-top: 0; }
+.row.tip-actions { margin-top: 0.15rem; gap: 0.4rem; }
+.tip-actions > button {
+  flex: 1 1 auto; min-width: 0; white-space: normal;
+  font-size: var(--t-sm); font-weight: 600; padding: 0.5rem 0.7rem;
+}
+/* Tapped once: the next tap pays, for three seconds. */
+.tip-actions > button.is-armed {
+  color: #1b1408; background: var(--gold); border-color: var(--gold);
+}
+
 .more {
   flex-basis: 100%;
   display: grid;

@@ -606,6 +606,9 @@ describe('a deadline moved while the expiry pass runs', function()
             table.sort(rows, function(x, y) return x.id == a.id and y.id ~= a.id end)
             return rows
         end
+        -- The second one's client gone, so the pass has something to do on it
+        -- and reads it again (it reads again only where it acts).
+        Env.removePlayer(19)
         -- The client shortens the first one while the pass reads the second.
         local revised, why
         s.storage.readContract = function(id, ...)

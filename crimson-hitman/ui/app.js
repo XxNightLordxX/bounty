@@ -454,6 +454,12 @@
       + 'for a moment and try again.',
     meeting_too_soon: 'The meeting point was changed a moment ago. Try again shortly.',
     no_meeting: 'No meeting point is set on this contract now.',
+    // The informant tip (server/locationtip.lua). Nothing was charged for any.
+    tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
+      + 'Nothing was taken.',
+    tip_cooldown: 'You bought a tip on this contract a moment ago. Try again later. '
+      + 'Nothing was taken.',
+    no_tip: 'That informant tip is no longer on your map.',
     relay_off: 'This server does not run messages through the app.',
     calls_off: 'This server does not place calls through the app.',
     // A feature staff turned off (proposals, the informant). Only new
@@ -701,7 +707,7 @@
   var MONEY_EVENTS = {
     create: true, accept: true, cancel: true, withdrawReward: true, abandon: true,
     bailout: true, informant: true, addEscrow: true, improve: true,
-    respondAmendment: true, submitPhoto: true, verifyKill: true
+    respondAmendment: true, submitPhoto: true, verifyKill: true, locationTip: true
   };
 
   /* What each reward source is called when a refusal names it. */
@@ -2222,6 +2228,200 @@
     return box;
   }
 
+  /* ---------- the informant tip (server/locationtip.lua) ----------
+     A hitman holding a contract buys the rough area its target was in when
+     they bought it: a red circle on their map, never the place itself. The
+     button is tapped twice within three seconds, as staff's money buttons
+     are, so a stray tap never pays. While a tip is on the map the card says
+     until when and offers Set GPS, which their game sets on the middle of
+     the area (client/main.lua): the page is never sent where it is. Where
+     one cannot be bought the button stays, disabled, with the reason. */
+  var TIP_CONFIRM_MS = 3000;
+  var tipArmed = null;   // { id, timer }: the tip button waiting for its second tap
+
+  function disarmTip() {
+    if (!tipArmed) { return; }
+    clearTimeout(tipArmed.timer);
+    tipArmed = null;
+    redraw();
+  }
+
+  function armTip(id) {
+    if (tipArmed) { clearTimeout(tipArmed.timer); }
+    var armed = { id: id };
+    armed.timer = setTimeout(function () {
+      if (tipArmed === armed) { tipArmed = null; redraw(); }
+    }, TIP_CONFIRM_MS);
+    tipArmed = armed;
+    redraw();
+  }
+
+  /* "21:07", the time of day this many seconds after the reading. */
+  function clockAt(seconds, readAt) {
+    var at = new Date((readAt || Date.now()) + Math.max(0, Number(seconds) || 0) * 1000);
+    function two(n) { return (n < 10 ? '0' : '') + n; }
+    return two(at.getHours()) + ':' + two(at.getMinutes());
+  }
+
+  /* How far across the area is, in metres: twice the radius. */
+  function tipAcross(rules) {
+    return Math.round((Number(rules && rules.radius) || 0) * 2);
+  }
+
+  /* Why a tip cannot be bought now, in a sentence, or null when it can. */
+  function tipBlocked(rules, own, contract) {
+    if (rules.enabled !== true) { return 'Informant tips are turned off on this server.'; }
+    if (own && Number(own.left) <= 0) {
+      return 'You have bought the most informant tips allowed on this contract ('
+        + (Number(rules.maxPerContract) || 0) + ').';
+    }
+    if (own && Number(own.cooldownSeconds) > 0) {
+      var wait = secondsLeftOf({ secondsLeft: own.cooldownSeconds,
+        clockReadAt: contract.clockReadAt });
+      if (wait > 0) {
+        return 'You can buy another tip at ' + clockAt(wait) + '.';
+      }
+    }
+    if (own && own.targetAway) {
+      return 'The target is not in the city right now, so there is nobody to place.';
+    }
+    return null;
+  }
+
+  function tipLabel(rules) {
+    return Number(rules.cost) > 0
+      ? 'Buy informant tip \u2014 ' + money(rules.cost) : 'Get informant tip \u2014 free';
+  }
+
+  /* What the tip is, said beside the button before anything is paid. */
+  function tipTerms(rules) {
+    return 'You get the rough area the target was in when you buy it, about '
+      + tipAcross(rules).toLocaleString('en-US') + ' m across, on your map for '
+      + durationText(Number(rules.showMinutes) || 0) + '. You still have to search it.'
+      + (rules.tellsTarget !== false
+        ? ' The target will be told someone knows their rough area.' : '');
+  }
+
+  function hitmanTip(contract) {
+    var rules = settings().locationTip;
+    if (!rules) { return null; }
+    var own = contract.locationTip || null;
+    var box = el('div', 'tip');
+    box.id = 'tip-' + contract.id;
+
+    var showing = own && Number(own.secondsLeft) > 0
+      ? secondsLeftOf({ secondsLeft: own.secondsLeft, clockReadAt: contract.clockReadAt }) : 0;
+    if (showing > 0) {
+      box.appendChild(el('div', 'tip-state ico i-pin', 'Informant tip on your map until '
+        + clockAt(showing) + '.'));
+      box.appendChild(el('div', 'hint', 'The target was somewhere in the red circle when you '
+        + 'bought it. It does not follow them.'));
+      var gps = el('div', 'row tip-actions');
+      gps.appendChild(actionButton('ghost ico i-pin', 'Set GPS', 'tipgps:' + contract.id,
+        'Setting GPS\u2026', function () {
+          return post('tipGps', { id: contract.id }).then(function (r) {
+            if (!r.ok) {
+              fail(r);
+              if (r.err === 'no_tip') { refresh(); }
+              return;
+            }
+            say('The middle of the area is marked on your GPS.', 'ok');
+          });
+        }));
+      box.appendChild(gps);
+    }
+
+    var blocked = tipBlocked(rules, own, contract);
+    var key = 'tip:' + contract.id;
+    var buy;
+    if (blocked) {
+      buy = el('button', 'ghost ico i-search', tipLabel(rules));
+      buy.disabled = true;
+    } else if (isBusy(key)) {
+      buy = actionButton('ghost ico i-search', tipLabel(rules), key, 'Buying\u2026');
+    } else {
+      var armed = tipArmed && tipArmed.id === contract.id;
+      buy = el('button', 'ghost ico i-search' + (armed ? ' is-armed' : ''),
+        armed ? (Number(rules.cost) > 0 ? 'Tap again to pay ' + money(rules.cost)
+          : 'Tap again to get it') : tipLabel(rules));
+      buy.onclick = function () {
+        if (tipArmed && tipArmed.id === contract.id) {
+          disarmTip();
+          buyTip(contract, rules);
+          return;
+        }
+        armTip(contract.id);
+      };
+    }
+    buy.id = 'tip-buy-' + contract.id;
+    var row = el('div', 'row tip-actions');
+    row.appendChild(buy);
+    box.appendChild(row);
+    box.appendChild(el('div', 'hint' + (blocked ? ' is-refusal' : ''), blocked || tipTerms(rules)));
+    return box;
+  }
+
+  /* A refusal of a tip, in words about the tip: every one charged nothing. */
+  function tipRefusal(r) {
+    var d = r.data || {};
+    function from(account) { return account === 'cash' ? 'your cash' : 'your bank'; }
+    if (r.err === 'terms_changed' && typeof d.cost === 'number') {
+      return 'An informant tip now costs ' + money(d.cost) + ' from ' + from(d.account)
+        + '. Nothing was taken. Tap it twice again if that is fine.';
+    }
+    if (r.err === 'tip_cooldown' && Number(d.retryAfter) > 0) {
+      return 'You bought a tip on this contract a moment ago. The next one is sold at '
+        + clockAt(d.retryAfter) + '. Nothing was taken.';
+    }
+    if (r.err === 'limit_reached') {
+      return 'You have bought the most informant tips allowed on this contract. '
+        + 'Nothing was taken.';
+    }
+    if (r.err === 'insufficient_funds' && typeof d.cost === 'number') {
+      return 'You cannot afford the tip: it costs ' + money(d.cost) + ' from '
+        + from(d.account) + '. Nothing was taken.';
+    }
+    if (r.err === 'already_settled') {
+      return 'This contract has ended, so there is no tip to buy. You were not charged.';
+    }
+    if (r.err === 'not_participant') {
+      return 'You are no longer on this contract. You were not charged.';
+    }
+    if (r.err === 'feature_off') { return 'Informant tips are turned off on this server.'; }
+    return failText(r);
+  }
+
+  function buyTip(contract, rules) {
+    var shown = { cost: Number(rules.cost) || 0, account: rules.account };
+    once('tip:' + contract.id, function () {
+      return post('locationTip', { id: contract.id, shown: shown }).then(function (r) {
+        if (!r.ok) {
+          var text = tipRefusal(r);
+          if (text) { say(text); }
+          if (r.err !== 'busy' && r.err !== 'rate_limited' && r.err !== 'timeout') { refresh(); }
+          return;
+        }
+        say('Informant tip bought. The rough area is on your map: the target was somewhere '
+          + 'in the red circle. Set GPS takes you to its middle.', 'ok');
+        refresh();
+      });
+    });
+  }
+
+  /* The target's side: when somebody was tipped off about their rough area,
+     on On me and on the whitelisted-job view alike. Never who, never where. */
+  function tipToldNotice(at) {
+    var box = el('div', 'tip-told');
+    box.appendChild(el('div', 'tip-state ico i-eye', 'Someone has been tipped off about your '
+      + 'rough location. They know the area you were in, not exactly where you are.'));
+    var when = agoText(at);
+    if (when) {
+      box.appendChild(el('div', 'hint', 'Tipped off ' + when.charAt(0).toLowerCase()
+        + when.slice(1) + '.'));
+    }
+    return box;
+  }
+
   /* The contract's reference, small, muted and selectable, for quoting to
      staff. Every staff command — the timeline, a void, who was behind it —
      starts from a contract id, and nothing on screen ever showed one, so
@@ -2380,6 +2580,10 @@
       // Where the person who placed it wants to meet, when they set a
       // point: said, never shown. Set GPS has the game mark it on the map.
       if (contract.meetingSet === true) { row.appendChild(hitmanMeeting(contract)); }
+
+      // The informant tip: buy one, or the one bought on the map with Set GPS.
+      var tip = hitmanTip(contract);
+      if (tip) { row.appendChild(tip); }
 
       // The target has paid to close it and the buyout waits out its delay,
       // which is there so the hitman can finish first. The phone said so
@@ -2544,6 +2748,8 @@
     }
 
     if (contract.role === 'target') {
+      // Somebody tipped off about where they were: first, it is about them now.
+      if (contract.tippedAt) { row.appendChild(tipToldNotice(contract.tippedAt)); }
       appendBuyout(row, contract);
       // Only with somebody on it. With nobody, the purchase could only
       // answer "Unknown operative", and was charged; the card already says
@@ -5868,6 +6074,8 @@
 
     if (own) {
       var row = el('div', 'row actions');
+      // As On me says it, for a target the app shows only this view.
+      if (entry.tippedAt) { row.appendChild(tipToldNotice(entry.tippedAt)); }
       appendBuyout(row, entry);
       node.appendChild(row);
     }

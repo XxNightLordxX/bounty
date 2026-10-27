@@ -18,6 +18,16 @@ local CHANGED = {
     ['Database.Mode'] = { 'json', 'mysql' },
 }
 
+--- Settings added since the rewrite, by the path the comparison reports
+--- them under (a whole new section or record), with what they ship as.
+local ADDED = {
+    ['LocationTip'] = {
+        Enabled = true, Cost = 25000, Account = 'bank', RadiusMeters = 350, ShowMinutes = 10,
+        CooldownMinutes = 10, MaxPurchasesPerContract = 3, NotifyTarget = true,
+    },
+    ['Cooldowns.locationTip'] = { per = 60, burst = 2 },
+}
+
 --- A config file's text run on its own, into a table of its own.
 local function run(text, global, name)
     local env = setmetatable({}, { __index = function(_, key)
@@ -78,14 +88,25 @@ describe('the configuration as one short file', function()
         local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
         local seen = {}
         for path, pair in pairs(differences(was, now)) do
+            if ADDED[path] then
+                eq(pair[1], nil, 'Config.' .. path .. ' is new since the rewrite')
+                local off = {}
+                for key in pairs(differences(ADDED[path], pair[2])) do off[#off + 1] = key end
+                table.sort(off)
+                eq(#off, 0, 'Config.' .. path .. ' ships as meant: ' .. table.concat(off, ', '))
+                seen[path] = true
+                goto continue
+            end
             local meant = CHANGED[path]
             truthy(meant, ('Config.%s was %s and is %s'):format(path, tostring(pair[1]),
                 tostring(pair[2])))
             eq(pair[1], meant[1], 'Config.' .. path .. ' before')
             eq(pair[2], meant[2], 'Config.' .. path .. ' now')
             seen[path] = true
+            ::continue::
         end
         for path in pairs(CHANGED) do truthy(seen[path], 'Config.' .. path .. ' changed') end
+        for path in pairs(ADDED) do truthy(seen[path], 'Config.' .. path .. ' added') end
     end)
 
     it('is what config/defaults.lua ships, key for key and value for value', function()

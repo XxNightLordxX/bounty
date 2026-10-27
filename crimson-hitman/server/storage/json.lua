@@ -24,6 +24,7 @@ local EMPTY = {
     contracts = {}, escrow = {}, hitmen = {}, amendments = {},
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
     photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
+    locationTips = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -52,7 +53,7 @@ local indexDirty = false
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
-                  'alerts', 'viewAlerts' }
+                  'alerts', 'viewAlerts', 'locationTips' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -1840,6 +1841,12 @@ function JsonStore.prune()
     for key, row in pairs(db.mutes) do
         if gone[row.contract_id] then db.mutes[key] = nil end
     end
+    for id, row in pairs(db.locationTips) do
+        if gone[row.contract_id] then
+            db.locationTips[id] = nil
+            recordsDirty = true
+        end
+    end
 
     -- The index that no longer names them goes to disk first, and the files
     -- only after it has. Unlinked first, a crash before the next flush left
@@ -1997,6 +2004,63 @@ function JsonStore.clearReveals(contractId)
     for key, row in pairs(db.reveals) do
         if row.contract_id == contractId then
             db.reveals[key] = nil
+            cleared = true
+        end
+    end
+    if cleared then touch(false) end
+    return true
+end
+
+--- Informant tips (server/locationtip.lua), one row per tip bought; see the
+--- memory backend. In records.json. Financial: the row is what says a tip
+--- was paid for, and what holds the cooldown and the most per contract.
+local function tipCopy(row)
+    local out = {}
+    for k, v in pairs(row) do out[k] = v end
+    return out
+end
+
+function JsonStore.writeLocationTip(row)
+    db.locationTips[row.id] = tipCopy(row)
+    touch(true)
+    return true
+end
+
+function JsonStore.deleteLocationTip(id)
+    if db.locationTips[id] == nil then return true end
+    db.locationTips[id] = nil
+    touch(true)
+    return true
+end
+
+function JsonStore.readLocationTips(contractId)
+    local out = {}
+    for _, row in pairs(db.locationTips) do
+        if row.contract_id == contractId then out[#out + 1] = tipCopy(row) end
+    end
+    table.sort(out, function(a, b)
+        if a.bought_at ~= b.bought_at then return a.bought_at < b.bought_at end
+        return a.id < b.id
+    end)
+    return out
+end
+
+function JsonStore.liveLocationTips(buyerCid, now)
+    local out = {}
+    for _, row in pairs(db.locationTips) do
+        if row.buyer_cid == buyerCid and (tonumber(row.expires_at) or 0) > now then
+            out[#out + 1] = tipCopy(row)
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+function JsonStore.clearLocationTips(contractId)
+    local cleared = false
+    for id, row in pairs(db.locationTips) do
+        if row.contract_id == contractId then
+            db.locationTips[id] = nil
             cleared = true
         end
     end

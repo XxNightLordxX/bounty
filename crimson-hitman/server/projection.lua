@@ -10,11 +10,15 @@ local Projection = {}
 local Util = CrimsonBoot.requireShared('util')
 
 local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify
+--- Informant tips (server/locationtip.lua): a hitman's own, on their card,
+--- and when the target was told, on theirs.
+local LocationTip
 
 function Projection.init(deps)
     Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify =
         deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
         deps.comms, deps.informant, deps.notify
+    LocationTip = deps.locationTip
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -309,6 +313,10 @@ function Projection.contract(contract, viewerCid)
             out.buyoutClosesIn = math.max(0, contract.bailout_queued_at
                 + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
         end
+        -- Their own informant tips on it (server/locationtip.lua): how many
+        -- are left, when the next may be bought, how long the one bought is
+        -- still on their map. Never the area, which only their game holds.
+        out.locationTip = LocationTip and LocationTip.cardFor(contract, viewerCid) or nil
     elseif role == 'target' then
         -- The target is in the city to read this, and knows whether they
         -- are in prison, so a stopped clock on their card could only mean a
@@ -346,6 +354,9 @@ function Projection.contract(contract, viewerCid)
                 + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
         end
         out.informantAnswer, out.informantLeft = informantFor(contract.id, viewerCid)
+        -- When they were last told somebody was tipped off about their rough
+        -- area (server/locationtip.lua). Never who, never where.
+        out.tippedAt = LocationTip and LocationTip.toldAt(contract.id) or nil
     end
 
     return out
@@ -545,6 +556,19 @@ local function buildListing(viewerCid, page)
                 askEverySeconds = Config.Cooldowns.informant
                     and Config.Cooldowns.informant.per or nil,
             } or nil,
+            -- What an informant tip costs and shows (Config.LocationTip), so
+            -- the button can quote the price and the size of the area, and
+            -- say why it cannot be bought while the server sells none.
+            locationTip = type(Config.LocationTip) == 'table' and {
+                enabled = Config.LocationTip.Enabled == true,
+                cost = Config.LocationTip.Cost,
+                account = Config.LocationTip.Account,
+                radius = Config.LocationTip.RadiusMeters,
+                showMinutes = Config.LocationTip.ShowMinutes,
+                cooldownMinutes = Config.LocationTip.CooldownMinutes,
+                maxPerContract = Config.LocationTip.MaxPurchasesPerContract,
+                tellsTarget = Config.LocationTip.NotifyTarget ~= false,
+            } or nil,
         },
     }
     local from = ((page - 1) * pageSize) + 1
@@ -553,6 +577,7 @@ local function buildListing(viewerCid, page)
         -- Never on the board, not even to its placer or a hitman on it:
         -- their own cards under Mine carry it.
         row.meetingSet = nil
+        row.locationTip = nil
         out.contracts[#out.contracts + 1] = row
     end
     return out
@@ -884,6 +909,9 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
                 entry.bailoutSecondsLeft = math.max(0, c.bailout_queued_at
                     + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
             end
+            -- As On me says it: when they were told somebody was tipped off
+            -- about their rough area. Never who, never where.
+            entry.tippedAt = LocationTip and LocationTip.toldAt(c.id) or nil
             onYou[#onYou + 1] = entry
         end
     end
@@ -933,7 +961,7 @@ Projection.WHITELISTED_KEYS = {
     entry = { targetName = true, targetJob = true, postedAt = true, state = true,
               hitmenActive = true, secondsLeft = true },
     own   = { id = true, bailoutAmount = true, bailoutAvailable = true,
-              bailoutPaid = true, bailoutSecondsLeft = true },
+              bailoutPaid = true, bailoutSecondsLeft = true, tippedAt = true },
 }
 
 --- The four reads a player's app makes, each with escrow memoised for the
@@ -1008,10 +1036,11 @@ Projection.ALLOWED_KEYS = {
     creator = { bailoutAmount = true, hitmen = true, valueHeld = true,
                 informantAnswer = true, informantLeft = true, meetingSet = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
-                buyoutClosesIn = true, lastMessageAt = true, meetingSet = true },
+                buyoutClosesIn = true, lastMessageAt = true, meetingSet = true,
+                locationTip = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true,
-                informantLeft = true },
+                informantLeft = true, tippedAt = true },
     public  = { barred = true },
 }
 

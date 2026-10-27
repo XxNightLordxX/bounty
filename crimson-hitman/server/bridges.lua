@@ -175,6 +175,8 @@ function Bridges.install(modules)
         -- on minting tokens for a contract that was over.
         if modules.death.clearContract then modules.death.clearContract(contractId) end
         if modules.photo.forgetContract then modules.photo.forgetContract(contractId) end
+        -- And every informant tip on it, off its buyer's map, with its records.
+        if modules.locationTip then modules.locationTip.clearContract(contractId) end
     end
 
     --- A hitman who is no longer on a contract has no handover on it either.
@@ -194,6 +196,9 @@ function Bridges.install(modules)
         if modules.comms and modules.comms.clearHitman then
             modules.comms.clearHitman(contractId, hitmanCid)
         end
+        -- And their informant tip on it, off their map. Its record stays, so
+        -- coming back resets neither the wait nor the most per contract.
+        if modules.locationTip then modules.locationTip.hitmanLeft(contractId, hitmanCid) end
     end
 
     -- The expiry pass skips itself when nothing could have changed since the

@@ -2707,7 +2707,8 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- report agreed the server was fine while every action a player took
     -- was being refused by a rule nobody could see.
     local buckets = { 'load', 'search', 'wallet', 'create', 'accept', 'amend',
-                      'informant', 'bailout', 'photo', 'photoSubmit', 'photoView',
+                      'informant', 'locationTip', 'bailout', 'photo', 'photoSubmit',
+                      'photoView',
                       'photoDecide', 'message',
                       'progress', 'death', 'mugshot', 'image', 'diagnostic' }
     local parts, missing = {}, 0

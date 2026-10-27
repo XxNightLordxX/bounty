@@ -257,6 +257,17 @@ local DEFAULTS = {
         MaxPurchasesPerContract = 2,
         RequireProximity = true,
     },
+    --- Read inside the purchase and on every hitman's card, as the
+    --- informant's are: a missing price is not a free tip.
+    LocationTip = {
+        Cost = 25000,
+        Account = 'bank',
+        RadiusMeters = 350,
+        ShowMinutes = 10,
+        CooldownMinutes = 10,
+        MaxPurchasesPerContract = 3,
+        NotifyTarget = true,
+    },
     --- Compared against a count in Kidnap.arm, so a missing one is not a
     --- disabled cap but a comparison against nil: every attempt to start a
     --- live delivery answers server_error.
@@ -556,6 +567,13 @@ local function validateConfig(quiet)
         { 'Ledger', 'Depth' },
         { 'Ledger', 'MaxDepthHardCap' },
         { 'Informant', 'RerollLockMinutes' },
+        -- The informant tip's price and the area it shows, read inside the
+        -- purchase and on every hitman's card.
+        { 'LocationTip', 'Cost' },
+        { 'LocationTip', 'RadiusMeters' },
+        { 'LocationTip', 'ShowMinutes' },
+        { 'LocationTip', 'CooldownMinutes' },
+        { 'LocationTip', 'MaxPurchasesPerContract' },
         { 'Amendments', 'ProposalExpirySeconds' },
         { 'Amendments', 'MaxOpenPerContract' },
         { 'Relay', 'MaxLength' },
@@ -605,6 +623,7 @@ local function validateConfig(quiet)
             { 'MaxContractValue' }, { 'Sources', 'cash', 'max' }, { 'Sources', 'bank', 'max' },
             { 'Sources', 'dirty', 'max' }, { 'Bailout', 'AbsoluteMax' }, { 'Penalty', 'MaxAmount' },
             { 'Anonymity', 'CreatorFee' }, { 'Anonymity', 'HitmanFee' }, { 'Informant', 'Cost' },
+            { 'LocationTip', 'Cost' },
         }) do
             local holder = Config
             for i = 1, #path - 1 do holder = type(holder) == 'table' and holder[path[i]] or nil end
@@ -750,6 +769,9 @@ local function validateConfig(quiet)
         -- Off is the side that shows a hitman nothing of where the placer is.
         { section = 'Kidnap', key = 'MeetingPoint',
           off = 'nobody can set a meeting point for a handover, and none is shown' },
+        -- Off is the side that sells nobody a target's rough area.
+        { section = 'LocationTip', key = 'Enabled',
+          off = 'no informant tip is sold; one already bought stays on its buyer\'s map' },
     }) do
         local value = Config[switch.section][switch.key]
         if type(value) ~= 'boolean' then
@@ -758,6 +780,36 @@ local function validateConfig(quiet)
                     and ('"' .. value .. '"') or tostring(value), switch.off)
             Config[switch.section][switch.key] = false
         end
+    end
+
+    -- The informant tip (server/locationtip.lua). Telling the target is the
+    -- side that keeps them informed, so anything but true or false is read as
+    -- on. The figures are whole numbers in a range that keeps it a search: an
+    -- area too small is a position, one too wide is no help, a tip shown for
+    -- no time is nothing, and a most of none sells nothing.
+    local tip = Config.LocationTip
+    if type(tip.NotifyTarget) ~= 'boolean' then
+        warn[#warn + 1] = ('LocationTip.NotifyTarget is %s, not true or false; it is read as '
+            .. 'true: the target is told someone knows their rough area.')
+            :format(type(tip.NotifyTarget) == 'string' and ('"' .. tip.NotifyTarget .. '"')
+                or tostring(tip.NotifyTarget))
+        tip.NotifyTarget = true
+    end
+    for _, rule in ipairs({
+        { key = 'Cost', floor = 0, ceiling = 10000000, default = 25000 },
+        { key = 'RadiusMeters', floor = 100, ceiling = 2000, default = 350 },
+        { key = 'ShowMinutes', floor = 1, ceiling = 120, default = 10 },
+        { key = 'CooldownMinutes', floor = 0, ceiling = 1440, default = 10 },
+        { key = 'MaxPurchasesPerContract', floor = 1, ceiling = 50, default = 3 },
+    }) do
+        local value = tonumber(tip[rule.key])
+        if not value or value ~= value or value < rule.floor or value > rule.ceiling then
+            warn[#warn + 1] = ('LocationTip.%s is %s; it has to be a number from %d to %d. '
+                .. 'Using %d.'):format(rule.key, tostring(tip[rule.key]), rule.floor,
+                    rule.ceiling, rule.default)
+            value = rule.default
+        end
+        tip[rule.key] = math.floor(value)
     end
 
     -- Where kill photos are kept. A misspelling is not a third place: it
@@ -902,6 +954,7 @@ local function validateConfig(quiet)
     for _, named in ipairs({
         { table = Config.Anonymity, key = 'FeeAccount', label = 'Anonymity.FeeAccount' },
         { table = Config.Informant, key = 'Account', label = 'Informant.Account' },
+        { table = Config.LocationTip, key = 'Account', label = 'LocationTip.Account' },
     }) do
         local holder = named.table
         local value = holder and holder[named.key]
@@ -1568,6 +1621,7 @@ function StartCrimsonHitman()
     local alerts     = CrimsonBoot.require('server.alerts')
     local meeting    = CrimsonBoot.require('server.meeting')
     local playtime   = CrimsonBoot.require('server.playtime')
+    local locationTip = CrimsonBoot.require('server.locationtip')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1603,9 +1657,13 @@ function StartCrimsonHitman()
     comms.init({ storage = Storage, identity = identity, audit = audit,
                  notify = notify, ratelimit = ratelimit })
     mugshot.init({ identity = identity, audit = audit })
+    -- The informant tip a hitman can buy (server/locationtip.lua).
+    locationTip.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
+                       contracts = contracts, review = review })
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
-                      comms = comms, informant = informant, notify = notify })
+                      comms = comms, informant = informant, notify = notify,
+                      locationTip = locationTip })
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
@@ -1631,6 +1689,9 @@ function StartCrimsonHitman()
         alerts = alerts,
         -- The handover's meeting point, for the app's requests.
         meeting = meeting,
+        -- The informant tip a hitman can buy, for the app's requests and
+        -- the clears when a contract ends or a hitman leaves it.
+        locationTip = locationTip,
         -- Each character's time in the city, counted on the tick, at a
         -- login and a drop, and at the stop.
         playtime = playtime,

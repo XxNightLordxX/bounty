@@ -63,6 +63,8 @@ Review.KINDS = {
         .. 'line id left): pay them',
     anonymity_fee_refund_failed = 'an anonymity fee owed back could not be credited: refund '
         .. 'what did not arrive',
+    location_tip_refund_failed = 'an informant tip that could not be delivered was owed back, '
+        .. 'and could not be credited: refund what did not arrive',
     escrow_take_unverified = 'escrow was taken and the store would not say whether it was '
         .. 'written. The server hands every line it took back to whom it came from by itself '
         .. 'once the database answers; Refund does the same now. An older one without that '
