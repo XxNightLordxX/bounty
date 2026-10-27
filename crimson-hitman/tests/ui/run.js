@@ -2696,8 +2696,11 @@ async function main() {
     it('asks the question under the warning, with a button that says what it does', function () {
       truthy(app.view.textContent.indexOf('Place a contract on them anyway?') !== -1,
         'the question: ' + app.view.textContent);
-      truthy(app.view.textContent.indexOf('every officer on duty') !== -1,
+      truthy(app.view.textContent.indexOf('every officer in the city') !== -1,
         'and what placing it does: ' + app.view.textContent);
+      // W112: the bulletin reaches officers off duty too.
+      falsy(app.view.textContent.indexOf('on duty') !== -1,
+        'not "on duty": off-duty officers are told as well: ' + app.view.textContent);
       falsy(app.view.all().some(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Yes';
       }), 'no bare Yes');
@@ -4879,7 +4882,7 @@ async function main() {
 
     const advisedBoard = await onOfficer({ advisory: { posted: true, accepted: true } });
     it('says on the board what accepting it does', function () {
-      truthy(/Accepting it alerts every officer on duty/.test(advisedBoard.view.textContent),
+      truthy(/Accepting it alerts every officer in the city/.test(advisedBoard.view.textContent),
         advisedBoard.view.textContent);
       falsy(/has been advised/.test(advisedBoard.view.textContent), advisedBoard.view.textContent);
     });
@@ -9052,6 +9055,51 @@ async function main() {
         falsy(said.indexOf('Everything you put up has been returned') !== -1, said);
         truthy(said.indexOf('staff have been asked to check it') !== -1, said);
         falsy(said.indexOf('next have room') !== -1, said);
+      });
+    })();
+
+    // W074: withdrawing after a payout on it was collected.
+    await (async function withdrawSaysWhatWasCollected() {
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [], everTaken: true,
+        slots: 2, slotsClaimed: 1, currentSlot: 2 });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        cancel: { ok: true, data: { id: 'ct00000009', queued: 0 } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Withdraw');
+      const asked = app.view.textContent;
+      click(app, 'Withdraw it'); await settle(); await settle();
+      it('says before and after that a collected payout does not come back', function () {
+        truthy(asked.indexOf('1 of 2 payouts were collected, so the rest of what you put up '
+          + 'comes back to you.') !== -1, asked);
+        const said = app.notice();
+        falsy(said.indexOf('Everything you put up has been returned') !== -1, said);
+        truthy(said.indexOf('1 of 2 payouts were collected; the rest of what you put up has been '
+          + 'returned.') !== -1, said);
+      });
+    })();
+
+    // W048: the target's buyout counted down on the hitman's own card.
+    await (async function hitmanCardCountsTheBuyoutDown() {
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], onMe: [], accepted: [{
+          id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
+          reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+          hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', role: 'hitman',
+          deadline: Math.floor(Date.now() / 1000) + 7500, buyoutClosesIn: 90 }] } },
+        amendments: { ok: true, data: [] }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      it('says the buyout closes it, and never more time than is left', function () {
+        const text = app.view.textContent;
+        truthy(text.indexOf('Buyout paid: it closes in under 2 minutes unless you finish it '
+          + 'first.') !== -1, text);
       });
     })();
 

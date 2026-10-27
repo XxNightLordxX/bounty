@@ -527,6 +527,9 @@ describe('a push names the contract it is about', function()
         -- Once the target has been shown it: inside the wait nothing tells
         -- them it exists, a push included (anonymity_spec).
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        -- And past the floor the alert's own push started (Notify.paranoid
+        -- moves an open On me as it arrives).
+        Env.advance(Config.Notifications.PushMinIntervalSeconds or 1)
         Env.clientEvents = {}
         truthy(s.contracts.cancel(f.creator, c.id))
         local toTarget = pushes(2)

@@ -239,6 +239,9 @@ local function owedTo(contractId, cid)
     end
     return owed, parked
 end
+--- For the other endings' notices that say what came back (a buyout's, a
+--- staff void's): the same count the cancel and expiry notices word theirs by.
+Contracts.owedTo = owedTo
 
 --- Hand the client a stake still held under a row its hitman walked away
 --- from (walkedAway): the forfeit an abandon began and did not finish.
@@ -298,6 +301,8 @@ local function settleStakes(contractId, creatorCid, forfeit, contract)
                 forfeited = toCreator and true or false,
                 owed = result and (result.pending or 0) > parked or false,
                 parked = parked > 0,
+                -- What they collected on it, for an expiry notice that says so.
+                claims = hitman.claims or 0,
             }
         end
     end
@@ -1717,7 +1722,10 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     end
 
     Audit.action('contract_accepted', actor.cid, contractId, { anonymous = record.anon })
-    Notify.contractAccepted(contract, record, activeCount + 1)
+    -- Taking it up again after a stint (`stint`, from the stored row) is not
+    -- news to the officers a first acceptance tells: read from the row, a
+    -- restart, which forgets who was announced, does not announce them twice.
+    Notify.contractAccepted(contract, record, activeCount + 1, stint)
 
     -- And what anonymity cost, for the page's notice to say.
     return true, nil, record, fee > 0 and { fee = fee, account = feeAccount } or nil
@@ -2271,14 +2279,15 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
         ('You held the contract on %s for %d minutes without %s, so it has gone back '
             .. 'on the board.'):format(target, minutes,
             why == 'no_attempt' and 'making an attempt on them' or 'going near them')
-        .. (given > 0 and (' Your $%d stake went to the person who placed it.'):format(given)
+        .. (given > 0 and (' Your %s stake went to the person who placed it.')
+                :format(Notify.dollars(given))
             or ''),
         { bypassBudget = true }, contractId)
     Notify.tellOrKeep(contract.creator_cid, 'Contract back on the board',
         ('The operative holding your contract on %s was not working it, so %s'):format(target,
             remaining == 0 and 'it is back on the board.'
                 or 'their place on it is open to another operative.')
-        .. (given > 0 and (' Their $%d stake is yours.'):format(given) or ''),
+        .. (given > 0 and (' Their %s stake is yours.'):format(Notify.dollars(given)) or ''),
         { bypassBudget = given > 0 }, contractId)
     others[#others + 1] = current.hitman_cid
     Notify.pushParties(Storage.readContract(contractId) or contract, others, 'released')
@@ -2947,9 +2956,13 @@ local function cancelUnlocked(actor, contractId)
 
     local lead = taken and 'The operative who took it walked away' or 'Nobody had taken it'
     local everyone = math.ceil((Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60)
+    -- A payout already collected on it did not come back, and is said: "everything
+    -- you put up has been returned" after one was paid was short by that one.
+    local collected = Notify.collectedPhrase and Notify.collectedPhrase(contract)
     local body
     if owed > 0 or parked > 0 then
-        body = lead .. '. Most of what you put up is back.'
+        body = lead .. '. ' .. (collected and (collected .. '; most of the rest of what you put '
+            .. 'up is back.') or 'Most of what you put up is back.')
         if owed > 0 then
             body = body .. (' %d thing(s) would not fit and are waiting for you — they '
                 .. 'arrive when you next have room.'):format(owed)
@@ -2958,6 +2971,8 @@ local function cancelUnlocked(actor, contractId)
             body = body .. (' %d thing(s) could not be confirmed as handed back; staff have '
                 .. 'been asked to check.'):format(parked)
         end
+    elseif collected then
+        body = lead .. '. ' .. collected .. '; the rest of what you put up has been returned.'
     else
         body = lead .. ', so everything you put up has been returned.'
     end
@@ -3592,7 +3607,8 @@ local function recoveredStakes(contract, forfeit)
         cids[#cids + 1] = hitman.hitman_cid
         if hitman.state == 'active' then
             local outcome = { cid = hitman.hitman_cid, stake = 0, owed = false, parked = false,
-                forfeited = forfeit and stakeForfeits(hitman, contract) or false }
+                forfeited = forfeit and stakeForfeits(hitman, contract) or false,
+                claims = hitman.claims or 0 }
             for _, line in ipairs(lines) do
                 if line.portion == CH.PORTION.STAKE and line.staker == hitman.hitman_cid then
                     outcome.stake = outcome.stake + (tonumber(line.amount) or 0)
@@ -3718,7 +3734,7 @@ local function creditRecovered(contract, slot, stakes)
     -- or seconds after a claim the hitman was told had failed.
     Notify.contractCompleted(contract, payee,
         fulfilment == CH.FULFILMENT.KIDNAPPING and nil or {}, result,
-        { receipt = true, keep = true })
+        { receipt = true })
     return payee
 end
 

@@ -193,10 +193,12 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     local recipient = ctx.role == 'creator' and ctx.hitmanCid or ctx.contract.creator_cid
     -- Not a ring when they muted this thread (§11.4). The message is kept
     -- and the push below still redraws a thread they have open; only the
-    -- phone notification is silenced, and it is charged to their notice
+    -- phone notification is silenced, and it is charged to their message
     -- budget all the same so the sender cannot tell (Notify.toCitizen).
+    -- That budget is the relay's own: a conversation, muted or not, no
+    -- longer uses up the one contract notices are sent from.
     Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body),
-        { muted = Storage.readMute(ctx.threadId, recipient) == true })
+        { relay = true, muted = Storage.readMute(ctx.threadId, recipient) == true })
     -- And the thread, if they have it open: a buzz does not change a page,
     -- so two people in the same conversation never saw each other's replies.
     Notify.push(recipient, 'message')
@@ -213,8 +215,9 @@ end
 --- not thread messages and still reach them; the contract is not touched.
 ---
 --- Invisible to the other side. Nothing they send or read changes, and a
---- muted message is charged to the notice budget as a rung one is, so not
---- even "could not be reached" on a call request tells them.
+--- muted message is charged to the message budget as a rung one is, so not
+--- even "could not be reached" on a call request, which reads the same
+--- budget, tells them.
 ---@param muted boolean
 ---@return boolean ok
 ---@return string|nil err
@@ -390,16 +393,19 @@ function Comms.requestCall(actor, contractId, threadHandle)
         -- hitman told "Client is calling you" did not know who that was.
         local caller = ctx.role == 'creator'
             and 'The person who placed a contract you took' or ctx.alias
+        -- On the relay budget, which muted messages spend too: its answer
+        -- reads the same whether the thread was muted or not.
         local told = Notify.toCitizen(recipient,
             placed and 'Incoming call' or 'Call request',
             placed
                 and ('%s is calling you about %s.'):format(caller,
                     ctx.role == 'creator' and 'it' or 'a contract')
                 or  ('%s wants to speak with you about %s.'):format(caller,
-                    ctx.role == 'creator' and 'it' or 'a contract'))
+                    ctx.role == 'creator' and 'it' or 'a contract'),
+            { relay = true })
 
         -- A named party who was not told either: logged off, or past their
-        -- notice budget. The page said "they have been told you want to
+        -- message budget. The page said "they have been told you want to
         -- talk" all the same. Their presence is no secret (above), so this
         -- says only what a ringing phone would have. Never for an anonymous
         -- party, whose "asked to call you back" must read the same either

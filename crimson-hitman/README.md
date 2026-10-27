@@ -287,8 +287,9 @@ to five minutes behind an escrow that was already written. Items, weapons
 and dirty money belong to
 `ox_inventory`, which saves every five minutes and at a clean shutdown, with
 no way to ask it to save one player. After a crash (not a restart), compare
-the `escrow_taken`, `escrow_released`, `stake_taken` and `pending_delivered`
-rows of the last five minutes in the audit log (`data/audit-<day>.jsonl` in
+the `escrow_taken`, `escrow_released`, `stake_taken`, `pending_delivered` and
+`escrow_delivered_late` (one per owed line handed over later, on the contract
+it paid) rows of the last five minutes in the audit log (`data/audit-<day>.jsonl` in
 `json` mode, the `crimson_audit` table in `mysql`, or `/ch-timeline` for one
 contract) against what those players are carrying. In `json` mode a file
 the crash cut off part-way through writing is put back from its last whole
@@ -781,18 +782,51 @@ waits up to two minutes for their phone to load, so it is there once they
 have spawned. Where lb-phone cannot take it, the player's game raises
 lb-phone's popup instead, which is not saved.
 
+Each player can be sent `Config.Notifications.MaxPerRecipientPerMinute` (6)
+notices a minute and `MaxPerRecipientPerHour` (40) an hour. Contract messages
+and call requests count against those figures apart from everything else, so a
+handover arranged by message never silences *Contract accepted* or *Handover
+starting*; a message into a muted thread is counted and not sent, so nobody
+can tell they were muted. A contract notice past the budget is kept, one per
+contract and kind (the newest in place of the one before), and sent once the
+minute opens; receipts and endings are outside the budget. What a player is
+told while they are away is kept for their next login: endings, an
+acceptance, a buyout, a staff void, a completion, the target's alert, a
+queued buyout's warning to the hitmen. At login they get those first, all of
+them, and then what owed payments just arrived, by amount: *$5,000 and 2
+item(s) you were owed have arrived*, and how many still wait. The same person
+taking a contract again after walking away is not announced to its client a
+second time.
+
 **Counter-play.** A target can see the price on their head and buy it out.
 A new contract shows on their On me tab (and in `/cleanse`) when their
 alert arrives, one to ten minutes after it was placed
-(`Config.Notifications.ParanoidAlertJitter`), not the second it was placed;
-after a restart, at once. One withdrawn inside that wait is never announced
-to them. An officer sees it as soon as a threat advisory about it goes out.
+(`Config.Notifications.ParanoidAlertJitter`), not the second it was placed.
+The alert is kept for their next login if they are away when it falls due,
+and the 30-minute cooldown (`ParanoidCooldownMinutes`) starts when it is
+sent. After a restart, a contract placed in the ten minutes before it is held
+back again for a fresh wait and announced when that is over. One withdrawn
+inside that wait is never announced to them, and with two sharing one alert,
+withdrawing the first leaves the alert for the second's own wait. Alerts
+switched off in the admin panel while one waits stop that one too. A target
+is told *A price on your head has lapsed* only for a contract they were told
+of and shown. An officer sees it as soon as a threat advisory about it goes
+out, and is told by their own copy of it; with
+`Config.Advisory.AlwaysAlertTarget` off they get the ordinary alert instead.
+The advisory goes to every officer in the city whose job receives it, on duty
+or off, and the app says so.
 With a hitman on the contract, the buyout waits
 `Config.Bailout.ProcessingDelaySeconds` (2 minutes) so they can finish first,
 and longer for a kill made, or a handover armed, before those two minutes
 ran out and still waiting for its photograph or counting down (up to two
 photo-token lifetimes more). If they finish, the premium goes back to the
-target. A queued buyout whose settling keeps raising holds up no other: each
+target. The operatives on it are told when it is paid, past their notice
+budget and kept if they are away, and their card under Mine counts the delay
+down; one who takes the contract inside the delay is told at once. The target
+is told when the buyout closes the contract, and when their premium comes
+back instead (a hitman finished first, or it closed another way), whether it
+is back or on its way. The client is told what came back: their escrow and the
+buyout, or what is still waiting for room. A queued buyout whose settling keeps raising holds up no other: each
 settles on its own, and after `Config.Bailout.MaxSettleAttempts` tries it is
 refunded while its contract is still open, cleared where it bought the
 contract out and its premium was paid, and otherwise left for staff in the

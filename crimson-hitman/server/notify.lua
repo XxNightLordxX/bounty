@@ -12,10 +12,27 @@ local Log = CrimsonBoot.requireShared('log')
 local Identity
 local Storage
 local budgets = {}
+--- [cid] = the same counters as `budgets`, for messages and call requests
+--- alone (opts.relay). One budget for both let a handover arranged by
+--- message, which the alive-only rule makes everybody do, silence
+--- "Handover starting" and "Contract accepted" for the minute or the hour.
+local relayBudgets = {}
 local advisorySent = {}
 
+--- [contractId .. ':' .. hitmanCid] = true once the person who placed the
+--- contract was told that hitman took it (§14.40: one who leaves and comes
+--- back is not news twice). Cleared with the contract (clearContract).
+local announced = {}
+
+--- [contractId] = true once its target was told it exists: their alert
+--- went or was kept for them, or, as an officer, their own advisory did.
+--- What the lapse notice reads (targetWasTold), never the switches as they
+--- are now. In memory, like the wait: see Notify.rearm for a restart.
+local told = {}
+
 --- [cid] = { { title, content, opts }, ... } kept for a player who was
---- offline when one of their contracts ended. See tellOrKeep.
+--- offline when one of their contracts ended (see tellOrKeep), or kept past
+--- their notice budget and sent when the minute opens (Notify.deliverKept).
 local waiting = {}
 
 --- How many a player can have waiting. Enough for every contract they could
@@ -37,23 +54,26 @@ local trailing = {}
 local paranoidUntil = {}
 
 --- [contractId] = os.time() before which the contract is kept from its
---- target (Notify.shownToTarget). In memory only: a restart forgets it and
---- shows every contract at once, which costs nothing, since a restart is
---- not the moment anybody placed one.
+--- target (Notify.shownToTarget). In memory only: a restart forgets it, and
+--- the start draws it again for a contract placed inside the longest wait
+--- before it (Notify.rearm).
 local revealAt = {}
 
 --- [targetCid] = the paranoid alert waiting out its delay, and the
---- contracts it stands for: { ids = { [contractId] = true }, before =
---- paranoidUntil as it was }. It goes only while one of them is still out
---- (Notify.clearContract). One withdrawn inside the wait rang the target
---- with "A price has been put on your head" for a contract their On me tab
---- and /cleanse never showed, and used up their cooldown doing it.
+--- contracts it stands for: { ids = { [contractId] = os.time() it falls due
+--- for that one }, due = the earliest of them }. It goes only while one of
+--- them is still out (Notify.clearContract), at the earliest reveal among
+--- those left. One withdrawn inside the wait rang the target with "A price
+--- has been put on your head" for a contract their On me tab and /cleanse
+--- never showed; and with the first of two withdrawn, it went at the
+--- first one's time while On me still showed nothing.
 local pendingAlert = {}
 
 function Notify.init(deps)
     Identity = deps.identity
     Storage = deps.storage
-    budgets, advisorySent = {}, {}
+    budgets, relayBudgets, advisorySent = {}, {}, {}
+    announced, told = {}, {}
     lastPush, trailing = {}, {}
     waiting = {}
     paranoidUntil = {}
@@ -61,12 +81,14 @@ function Notify.init(deps)
     pendingAlert = {}
 end
 
-local function withinBudget(cid)
-    local bucket = budgets[cid]
+---@param book table|nil budgets (contract notices) or relayBudgets
+local function withinBudget(cid, book)
+    book = book or budgets
+    local bucket = book[cid]
     local now = os.time()
     if not bucket or now - bucket.minuteStart >= 60 then
         bucket = { minuteStart = now, minute = 0, hourStart = bucket and bucket.hourStart or now, hour = bucket and bucket.hour or 0 }
-        budgets[cid] = bucket
+        book[cid] = bucket
     end
     if now - bucket.hourStart >= 3600 then
         bucket.hourStart, bucket.hour = now, 0
@@ -169,28 +191,74 @@ function Notify.onScreen(src, title, content)
     return true
 end
 
+--- Keep a notice that found its player past their budget, to go when the
+--- minute opens (Notify.deliverKept) rather than be dropped (§14.40).
+---
+--- Coalesced by event and contract: one kept per title and contract, the
+--- newest in place of the one before ("2 operatives are active" over "1
+--- operative is"). Keyed by the contract alone, a "Reward changed" in the
+--- same minute replaced "Contract accepted". A notice that names no
+--- contract is coalesced only with one saying exactly the same.
+local function keepOver(cid, title, content, opts)
+    local contractId = opts and opts.contractId
+    local key = tostring(title) .. '\0' .. (contractId and ('#' .. tostring(contractId))
+        or tostring(content))
+    local list = waiting[cid] or {}
+    for i = 1, #list do
+        if list[i].key == key then table.remove(list, i) break end
+    end
+    if #list >= WAITING_CAP then table.remove(list, 1) end
+    list[#list + 1] = { title = title, content = content, opts = opts,
+                        contract_id = contractId, key = key }
+    waiting[cid] = list
+end
+
 --- Send to one player by citizen id. Silently no-ops when they are offline.
 ---
 --- Saved on their phone through lb-phone's server export where it can be,
 --- and raised by their client where it cannot (raise).
 ---
+--- opts.relay: a contract message or a call request (server/comms.lua).
+--- Charged to a budget of its own, the same per-minute and per-hour figures
+--- as every other notice (Config.Notifications) counted apart, and dropped past
+--- it, as before. Every other notice — "Contract accepted", "Handover
+--- starting", a proposal — has the other budget to itself, and one past it
+--- is kept and sent when the minute opens, never dropped.
+---
 --- opts.muted: the recipient muted the thread this came from (§11.4). It is
 --- charged to their budget exactly as a sent one is, and then not sent.
 --- Left uncharged, a muted thread would leave room in the budget that an
 --- unmuted one fills, and the next notice — a call request, whose sender is
---- told when it could not get through — would tell the sender which it was.
+--- told when it could not get through, and which reads the same relay
+--- budget — would tell the sender which it was.
+---
+--- opts.contractId: the contract it is about, which a notice kept past the
+--- budget is coalesced by.
 ---
 --- What it answers does not depend on which way the notice went, or on
 --- whether lb-phone took it: only on the budget, the mute and whether the
---- player is here, exactly as before. The call request reports the answer
---- to its sender.
+--- player is here. False for a notice kept past the budget: not sent now.
+--- The call request reports the answer to its sender.
 function Notify.toCitizen(cid, title, content, opts)
     if not cid then return false end
-    if not (opts and opts.bypassBudget) and not withinBudget(cid) then return false end
-    if opts and opts.muted then return false end
+    if opts and opts.relay then
+        if not withinBudget(cid, relayBudgets) then return false end
+        if opts.muted then return false end
+        local actor = Identity.byCitizenId(cid)
+        if not actor then return false end
+        raise(actor, cid, title, content)
+        return true
+    end
 
+    -- Somebody away spends nothing: a notice that never reached them used
+    -- up the minute they came back in.
     local actor = Identity.byCitizenId(cid)
     if not actor then return false end
+    if not (opts and opts.bypassBudget) and not withinBudget(cid) then
+        if not (opts and opts.muted) then keepOver(cid, title, content, opts) end
+        return false
+    end
+    if opts and opts.muted then return false end
 
     raise(actor, cid, title, content)
     return true
@@ -369,9 +437,11 @@ function Notify.contractCreated(contract, targetActor)
 
     -- The target's paranoid alert. Deliberately vague: it tells them
     -- something is wrong, not who or how much.
-    -- An officer is told by the posting bulletin instead, unless none goes.
-    if Config.Notifications.ParanoidAlert
-        and (not contract.target_protected or not Notify.advises('posted')) then
+    -- An officer is told by their own copy of the posting bulletin instead,
+    -- but only where one goes to them (Config.Advisory.AlwaysAlertTarget):
+    -- with that off, an officer with a price on their head heard nothing at
+    -- all, not even the alert a civilian gets.
+    if Config.Notifications.ParanoidAlert and not Notify.advisedTarget(contract) then
         Notify.paranoid(contract.target_cid, delay, contract.id)
     end
 
@@ -394,6 +464,55 @@ function Notify.shownToTarget(contract)
     return true
 end
 
+--- Whether the contract's target, an officer, is told of it by their own
+--- copy of the posting bulletin (Notify.advisory) rather than by the
+--- paranoid alert: a bulletin goes at posting, and to them too.
+---@param contract table
+---@return boolean
+function Notify.advisedTarget(contract)
+    return contract.target_protected == true and Notify.advises('posted')
+        and Config.Advisory.AlwaysAlertTarget == true
+end
+
+--- Send the alert now: kept for a target who is away, outside the budget
+--- (the cooldown rations it), and the cooldown started by it. Not at all
+--- once staff have switched alerts off while it waited: the panel says
+--- alerts still waiting are checked when they fall due.
+---@param ids table<string, any> the contracts it stands for
+local function sendAlert(targetCid, ids)
+    if Config.Notifications.ParanoidAlert ~= true then return false end
+    paranoidUntil[targetCid] = os.time()
+        + math.max(0, (tonumber(Config.Notifications.ParanoidCooldownMinutes) or 0) * 60)
+    for id in pairs(ids or {}) do told[id] = true end
+    Notify.tellOrKeep(targetCid, 'Unsettling',
+        'You feel eyes on you. A price has been put on your head.', { bypassBudget = true })
+    -- An open On me tab re-reads, and shows the contract as the alert
+    -- arrives. Names no contract: the page learns only what On me shows.
+    Notify.push(targetCid, 'alert')
+    return true
+end
+
+--- Set the waiting alert's timer for the earliest of the contracts it still
+--- stands for; one set before is let go (its token no longer matches).
+local function armAlert(targetCid, alert)
+    local due
+    for _, at in pairs(alert.ids) do
+        if not due or at < due then due = at end
+    end
+    if not due then
+        if pendingAlert[targetCid] == alert then pendingAlert[targetCid] = nil end
+        return
+    end
+    alert.due = due
+    local token = {}
+    alert.token = token
+    SetTimeout(math.max(0, due - os.time()) * 1000, function()
+        if pendingAlert[targetCid] ~= alert or alert.token ~= token then return end
+        pendingAlert[targetCid] = nil
+        if next(alert.ids) then sendAlert(targetCid, alert.ids) end
+    end)
+end
+
 --- The target's alert, some minutes after the placement and once per
 --- cooldown (§14.40).
 ---
@@ -404,45 +523,92 @@ end
 --- contract, so the count of alerts was the count of people paying.
 ---
 --- Tied to the contract it is about (pendingAlert): one ended inside the
---- wait takes its alert with it, and gives the cooldown back. A second
---- contract placed while the first one's alert is still waiting rides on
---- that alert, so the first being withdrawn does not silence the second.
+--- wait takes its alert with it. A second contract placed while the first
+--- one's alert is still waiting rides on that alert, which goes at the
+--- earliest reveal among those still out, so the first being withdrawn
+--- neither silences the second nor rings before On me shows it.
+---
+--- The cooldown starts when the alert is sent or kept (sendAlert), not at
+--- the placement: a target away when it fell due, past their budget, or
+--- whose contract was placed just before a restart lost the alert and the
+--- next half hour's with it. A contract placed while the cooldown runs
+--- counts as told: the alert inside it said a price is on them, and how
+--- many is what the cooldown keeps from them.
 ---@param targetCid string
 ---@param delay integer|nil seconds to wait; drawn from the jitter when nil
 ---@param contractId string|nil the contract it is about
 function Notify.paranoid(targetCid, delay, contractId)
     local now = os.time()
+    local wait = math.max(0, tonumber(delay) or revealDelay())
+    local due = now + wait
+
+    local waitingAlert = pendingAlert[targetCid]
+    if waitingAlert and contractId then
+        waitingAlert.ids[contractId] = due
+        if not waitingAlert.due or due < waitingAlert.due then armAlert(targetCid, waitingAlert) end
+        return
+    end
     if (paranoidUntil[targetCid] or 0) > now then
-        local waitingAlert = pendingAlert[targetCid]
-        if waitingAlert and contractId then waitingAlert.ids[contractId] = true end
+        if contractId then told[contractId] = true end
         return
     end
-    local before = paranoidUntil[targetCid]
-    paranoidUntil[targetCid] = now
-        + math.max(0, (tonumber(Config.Notifications.ParanoidCooldownMinutes) or 0) * 60)
 
-    local wait = tonumber(delay) or revealDelay()
-
-    local function send()
-        Notify.toCitizen(targetCid, 'Unsettling',
-            'You feel eyes on you. A price has been put on your head.')
-    end
-    if wait <= 0 then return send() end
     if not contractId then
-        SetTimeout(wait * 1000, send)
+        if wait <= 0 then return sendAlert(targetCid, {}) end
+        SetTimeout(wait * 1000, function() sendAlert(targetCid, {}) end)
         return
     end
+    if wait <= 0 then return sendAlert(targetCid, { [contractId] = true }) end
 
-    local alert = { ids = { [contractId] = true }, before = before }
+    local alert = { ids = { [contractId] = due } }
     pendingAlert[targetCid] = alert
-    SetTimeout(wait * 1000, function()
-        if pendingAlert[targetCid] ~= alert then return end
-        pendingAlert[targetCid] = nil
-        if next(alert.ids) then send() end
-    end)
+    armAlert(targetCid, alert)
 end
 
-function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
+--- A restart forgets the wait, the alert and who was told (all in memory).
+--- Every live contract placed less than the longest wait before this start
+--- is held back from its target again, for a fresh draw counted from now
+--- and never less than the shortest wait, with its alert re-armed and kept
+--- for a target who is away: shown at once, it was on On me the moment the
+--- server came back, never announced, and a restart dated it no more
+--- closely than the wait does. Older ones count as told where the alert or
+--- the officer's bulletin was on (On me already listed them), so a lapse
+--- notice tells them nothing On me did not. Worst case, one extra alert.
+---@param contracts table[] the live contracts (Storage.liveContracts)
+---@return integer rearmed
+function Notify.rearm(contracts)
+    local jitter = type(Config.Notifications.ParanoidAlertJitter) == 'table'
+        and Config.Notifications.ParanoidAlertJitter or {}
+    local longest = math.max(0, math.floor(tonumber(jitter.max) or 0))
+    local now, rearmed = os.time(), 0
+    for _, contract in ipairs(contracts or {}) do
+        local placed = tonumber(contract.created_at) or 0
+        -- What a bulletin already said of it dated it for the officer.
+        local bulletin = contract.advised_posted_at ~= nil or contract.advised_hitmen ~= nil
+        if Notify.advisedTarget(contract) or bulletin then
+            -- Shown at once when it was placed, and their bulletin or their
+            -- alert went then.
+            if (Config.Advisory.AlwaysAlertTarget == true and contract.target_protected)
+                or Config.Notifications.ParanoidAlert == true then
+                told[contract.id] = true
+            end
+        elseif now - placed < longest then
+            local delay = revealDelay()
+            if delay > 0 then revealAt[contract.id] = now + delay end
+            if Config.Notifications.ParanoidAlert == true then
+                Notify.paranoid(contract.target_cid, delay, contract.id)
+            end
+            rearmed = rearmed + 1
+        elseif Config.Notifications.ParanoidAlert == true then
+            told[contract.id] = true
+        end
+    end
+    return rearmed
+end
+
+---@param returning boolean|nil the hitman is taking it up again after a stint of their own
+--- on it (Contracts.accept): not news to officers twice, whatever a restart forgot
+function Notify.contractAccepted(contract, hitmanRecord, activeHitmen, returning)
     local who = hitmanRecord.anon and 'an operative' or hitmanRecord.hitman_name
     local body = ('Your contract on %s has been accepted by %s. %d operative%s now active.')
         :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and ' is' or 's are')
@@ -459,13 +625,32 @@ function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
                 (tonumber(activeHitmen) or 0) > 1
                     and (' %d hitmen are on it now.'):format(activeHitmen) or '')
     end
-    Notify.toCitizen(contract.creator_cid, 'Contract accepted', body)
+    -- Once per hitman (§14.40): one taking it, walking away and taking it
+    -- again rang the client every time, and filled their notice budget at
+    -- no cost to the hitman. Kept for a client who is away: on an alive-only
+    -- contract this is their cue to be in the city for the handover.
+    local pair = tostring(contract.id) .. ':' .. tostring(hitmanRecord.hitman_cid)
+    if not announced[pair] then
+        announced[pair] = true
+        Notify.tellOrKeep(contract.creator_cid, 'Contract accepted', body, nil, contract.id)
+    end
 
     -- Every acceptance raises an advisory carrying the running count, so law
     -- enforcement can judge the scale of the threat and not just its
-    -- existence. The per-contract hitman cap bounds the total (§7.5).
-    if contract.target_protected then
+    -- existence. The per-contract hitman cap bounds the total (§7.5). Only
+    -- on a first stint: one who walks away and comes back is not news, and
+    -- the in-memory record of who was announced is gone after a restart.
+    if contract.target_protected and not returning then
         Notify.advisory(contract, 'accepted', activeHitmen, hitmanRecord.hitman_cid)
+    end
+
+    -- Taken while the target's buyout waits out its delay: told at once, as
+    -- the operatives on it when it was paid were, and their card counts it
+    -- down (Projection: buyoutClosesIn).
+    if contract.bailout_queued_at then
+        local left = (tonumber(contract.bailout_queued_at) or 0)
+            + (tonumber(Config.Bailout.ProcessingDelaySeconds) or 0) - os.time()
+        if left > 0 then Notify.buyoutQueued(contract, { hitmanRecord.hitman_cid }, left) end
     end
 
     -- The creator's own card now shows one more operative, and the hitman's
@@ -493,8 +678,8 @@ end
 ---@param hitmanRecord table|string|nil the hitman paid: an actor, or a citizen id
 ---@param proof table|nil nil for a live delivery; for a kill, { photo = handle }, the handle nil when no photo was kept
 ---@param result table|nil the claim's own answer (Contracts.claimSlot)
----@param opts table|nil { receipt = send the hitman theirs (hitmanReceipt), keep = keep
---- the client's for their next login when they are away }
+---@param opts table|nil { receipt = send the hitman theirs (hitmanReceipt) }; the client's
+--- is kept for their next login when they are away, always
 function Notify.contractCompleted(contract, hitmanRecord, proof, result, opts)
     if not contract then return end
     local delivered = type(proof) ~= 'table'
@@ -536,12 +721,10 @@ function Notify.contractCompleted(contract, hitmanRecord, proof, result, opts)
         body = body .. (' It is still running, with %d more to collect.')
             :format(tonumber(result.remaining) or 0)
     end
-    if opts and opts.keep then
-        Notify.tellOrKeep(contract.creator_cid, title, body, { bypassBudget = true }, contract.id)
-    else
-        Notify.toCitizen(contract.creator_cid, title, body,
-            { bypassBudget = true })
-    end
+    -- Kept for a client who is away, whichever way it was paid: a kill
+    -- verified while they were out of the city (an 'either' contract) told
+    -- them nothing, then or at their next login.
+    Notify.tellOrKeep(contract.creator_cid, title, body, { bypassBudget = true }, contract.id)
 
     if opts and opts.receipt then
         local cid = type(hitmanRecord) == 'table' and hitmanRecord.cid or hitmanRecord
@@ -580,7 +763,13 @@ end
 --- about a contract the player was anonymous on (Notify.waitingFor).
 local function tellOrKeep(cid, title, content, opts, contractId)
     if not cid then return false end
-    if Identity.byCitizenId(cid) then return Notify.toCitizen(cid, title, content, opts) end
+    if Identity.byCitizenId(cid) then
+        -- With the contract it is about, which one kept past the budget is
+        -- coalesced by.
+        local sendOpts = { contractId = contractId }
+        for k, v in pairs(opts or {}) do sendOpts[k] = v end
+        return Notify.toCitizen(cid, title, content, sendOpts)
+    end
     local list = waiting[cid] or {}
     if #list >= WAITING_CAP then table.remove(list, 1) end
     list[#list + 1] = { title = title, content = content, opts = opts, contract_id = contractId }
@@ -612,20 +801,93 @@ end
 
 --- Hand a player what was kept for them while they were away. Called from
 --- Bridges.onPlayerReady, once they can receive it.
+---
+--- Outside the budget, every one: they were rationed when they were kept.
+--- Replayed through it, a player who came back to seven lost the seventh,
+--- with the list already cleared.
 ---@return integer delivered
 function Notify.deliverWaiting(cid)
     local list = cid and waiting[cid]
-    if not list then return 0 end
+    if not list or not Identity.byCitizenId(cid) then return 0 end
     waiting[cid] = nil
     for i = 1, #list do
-        Notify.toCitizen(cid, list[i].title, list[i].content, list[i].opts)
+        Notify.toCitizen(cid, list[i].title, list[i].content, { bypassBudget = true })
     end
     return #list
 end
 
-local function dollars(amount)
-    return ('$%d'):format(math.floor(tonumber(amount) or 0))
+--- Send what was kept for players in the city, as far as their budget
+--- has room: a notice that found its player past the budget (toCitizen),
+--- in the order kept. Once a minute from the maintenance tick, when the
+--- minute that was full has opened again. One kept outside the budget (a
+--- receipt kept for a login that has not come yet) goes as it is.
+---@return integer sent
+function Notify.deliverKept()
+    local cids = {}
+    for cid in pairs(waiting) do cids[#cids + 1] = cid end
+    table.sort(cids)
+    local sent = 0
+    for _, cid in ipairs(cids) do
+        local actor = Identity.byCitizenId(cid)
+        local list = waiting[cid]
+        if actor and list then
+            local left = {}
+            for i = 1, #list do
+                local note = list[i]
+                if (note.opts and note.opts.bypassBudget) or withinBudget(cid) then
+                    raise(actor, cid, note.title, note.content)
+                    sent = sent + 1
+                else
+                    left[#left + 1] = note
+                end
+            end
+            waiting[cid] = #left > 0 and left or nil
+        end
+    end
+    return sent
 end
+
+--- Tell a player what owed payments just reached them (Escrow.retryPending's
+--- summary): by amount, "$5,000 and 2 item(s) you were owed have arrived",
+--- and how many still wait. "2 outstanding items have been delivered" called
+--- cash an item and named no figure. Outside the budget: a receipt.
+---@param cid string
+---@param count integer lines delivered
+---@param summary table|nil { money, goods, left }
+---@return boolean sent
+function Notify.outstandingDelivered(cid, count, summary)
+    count = math.floor(tonumber(count) or 0)
+    if count <= 0 then return false end
+    local body
+    if type(summary) == 'table' then
+        local money = math.floor(tonumber(summary.money) or 0)
+        local goods = math.floor(tonumber(summary.goods) or 0)
+        local left = math.floor(tonumber(summary.left) or 0)
+        local parts = {}
+        if money > 0 then parts[#parts + 1] = Notify.dollars(money) end
+        if goods > 0 then parts[#parts + 1] = ('%d item(s)'):format(goods) end
+        local what = table.concat(parts, ' and ')
+        if what == '' then what = ('%d payment(s)'):format(count) end
+        body = ('%s you were owed %s arrived'):format(what,
+            (money > 0 and goods == 0) and 'has' or 'have')
+            .. (left > 0 and ('; %d more %s still waiting for you.'):format(left,
+                left == 1 and 'is' or 'are') or '.')
+    else
+        body = ('%d outstanding item%s been delivered.')
+            :format(count, count == 1 and ' has' or 's have')
+    end
+    return Notify.toCitizen(cid, 'Outstanding payment', body, { bypassBudget = true })
+end
+
+--- Dollars as the page writes them (ui/app.js money()): "$100,000".
+---@param amount number
+---@return string
+local function dollars(amount)
+    local digits = tostring(math.floor(math.abs(tonumber(amount) or 0)))
+    local grouped = digits:reverse():gsub('(%d%d%d)', '%1,'):reverse():gsub('^,', '')
+    return ((tonumber(amount) or 0) < 0 and '-$' or '$') .. grouped
+end
+Notify.dollars = dollars
 
 --- The sentence that ends a hitman's notice: where their stake went. Left
 --- out when they had none.
@@ -731,9 +993,17 @@ end
 local function hitmanNotice(contract, ending, outcome)
     local target = contract.target_name or 'your target'
     if ending == CH.STATE.EXPIRED then
-        return 'Contract expired', outcome.forfeited
+        -- A payout they collected on it before it ran out is theirs, and said
+        -- so: "the deadline passed" alone, beside a stake gone, read as the
+        -- contract having paid them nothing.
+        local paid = math.floor(tonumber(outcome.claims) or 0)
+        local collected = paid > 0
+            and (' You were paid for %d collection%s on it.'):format(paid, paid == 1 and '' or 's')
+            or ''
+        return 'Contract expired', (outcome.forfeited
             and ('The deadline on your contract on %s passed.'):format(target)
-            or  ('Your contract on %s ran out before it could be finished.'):format(target)
+            or  ('Your contract on %s ran out before it could be finished.'):format(target))
+            .. collected
     elseif ending == CH.STATE.BAILED_OUT then
         return 'Contract closed', ('%s bought their way out of your contract.'):format(target)
     elseif ending == CH.STATE.VOIDED then
@@ -751,13 +1021,26 @@ local function hitmanNotice(contract, ending, outcome)
 end
 
 --- Whether the target was ever told this contract existed — by the paranoid
---- alert, or as an officer by their own advisory. Mirrors contractCreated.
+--- alert, or as an officer by their own advisory — as it happened (`told`),
+--- not as the switches read now: a contract placed with alerts off and
+--- ending after they were turned on told a target who never heard of it
+--- that it had lapsed, and the reverse left one who had been told without
+--- a word.
 local function targetWasTold(contract)
-    if contract.target_protected and Notify.advises('posted') then
-        return Config.Advisory.AlwaysAlertTarget == true
-    end
-    return Config.Notifications.ParanoidAlert == true
+    return told[contract.id] == true
 end
+
+--- What a client is told came back on an ending that returns their escrow,
+--- by the payouts already collected: "everything you put up has been
+--- returned" after a collection was paid was untrue by that collection.
+---@return string|nil phrase nil when nothing was collected
+local function collectedPhrase(contract)
+    local claimed = math.floor(tonumber(contract.slots_claimed) or 0)
+    if claimed <= 0 then return nil end
+    return ('%d of %d payouts were collected'):format(claimed,
+        math.max(claimed, math.floor(tonumber(contract.payout_slots) or 1)))
+end
+Notify.collectedPhrase = collectedPhrase
 
 --- Tell everyone a contract's ending left uninformed.
 ---@param contract table
@@ -813,13 +1096,20 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     -- Only an expiry is new to the creator: cancel, void, buyout and
     -- completion each tell them already.
     local owed = opts.creatorOwed or 0
+    local collected = collectedPhrase(contract)
     local body = ('Nobody finished your contract on %s in time.')
         :format(contract.target_name or 'your target')
     if owed > 0 then
-        body = body .. (' What you put up is coming back: %d thing(s) could not be handed '
-             .. 'over yet and arrive as soon as you can take them.'):format(owed)
+        body = body .. (collected and (' ' .. collected .. '; the rest of what you put up is '
+                .. 'coming back:') or ' What you put up is coming back:')
+            .. (' %d thing(s) could not be handed over yet and arrive as soon as you can '
+                .. 'take them.'):format(owed)
     elseif parked == 0 then
-        body = body .. ' Everything you put up has been returned.'
+        body = body .. (collected
+            and (' ' .. collected .. '; the rest of what you put up has been returned.')
+            or ' Everything you put up has been returned.')
+    elseif collected then
+        body = body .. ' ' .. collected .. '.'
     end
     body = body .. staffCheck
     if forfeitedCount == 1 then
@@ -831,8 +1121,11 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
 
     -- The target only when they were told there was a price on their head
     -- at all. Anyone else would learn of a contract from its ending. Worded
-    -- as one price, because it may not have been the only one.
-    if targetWasTold(contract) then
+    -- as one price, because it may not have been the only one. And only once
+    -- it was shown to them (Notify.shownToTarget, read here, before
+    -- clearContract forgets it): one that ran out inside the wait, its alert
+    -- never sent, was the one notice they had of it, and dated it.
+    if targetWasTold(contract) and Notify.shownToTarget(contract) then
         Notify.toCitizen(contract.target_cid, 'Breathing room',
             'A price on your head has lapsed.')
     end
@@ -863,20 +1156,24 @@ end
 
 --- Warn the operatives on a contract that its target has paid to close it.
 --- The processing delay exists so they can finish first (§14.17), which a
---- hitman who never hears of it cannot do. Spends the budget, as the
---- client's own "Contract challenged" does.
+--- hitman who never hears of it cannot do. Outside the budget and kept for
+--- one who is away, as a receipt is: it was lost to a full budget, and it
+--- is the one warning the delay exists to give. Their card counts it down
+--- too (Projection: buyoutClosesIn).
 ---@param contract table
 ---@param hitmanCids string[]
----@param seconds integer the processing delay
+---@param seconds integer what is left of the processing delay
 function Notify.buyoutQueued(contract, hitmanCids, seconds)
     if not contract then return end
     seconds = math.floor(tonumber(seconds) or 0)
+    -- Never more time than they have: whole minutes from two up, rounded
+    -- down, and seconds below that.
     local wait = seconds >= 120 and ('%d minutes'):format(seconds // 60)
         or ('%d seconds'):format(seconds)
     local body = ('%s is buying their way out of your contract. It closes in %s '
         .. 'unless you finish it first.'):format(contract.target_name or 'Your target', wait)
     for i = 1, #(hitmanCids or {}) do
-        Notify.toCitizen(hitmanCids[i], 'Contract challenged', body)
+        tellOrKeep(hitmanCids[i], 'Contract challenged', body, { bypassBudget = true }, contract.id)
     end
 end
 
@@ -980,15 +1277,18 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     -- "Your department" only where their job is one the advisory goes to: a
     -- medic or a lawyer was told their department had been advised, and
     -- nobody in it was.
+    -- Kept for an officer who is away, as the alert is for anybody else:
+    -- this is what they are told instead of it (Notify.advisedTarget).
     if Config.Advisory.AlwaysAlertTarget then
-        local told = Identity.protectedCategory(contract.target_job) == 'law'
+        local whoKnows = Identity.protectedCategory(contract.target_job) == 'law'
             and 'Your department has been advised.' or 'Law enforcement has been advised.'
-        Notify.toCitizen(contract.target_cid, title,
+        told[contract.id] = true
+        tellOrKeep(contract.target_cid, title,
             stage == 'posted'
-                and ('A contract has been placed on you. ' .. told)
+                and ('A contract has been placed on you. ' .. whoKnows)
                 or  ('The contract on you has been accepted. %d operative%s active.')
                         :format(activeHitmen or 1, (activeHitmen or 1) == 1 and ' is' or 's are'),
-            { bypassBudget = true })
+            { bypassBudget = true }, contract.id)
     end
 
     -- The same advisory goes to dispatch so it lands in the MDT alongside
@@ -1013,6 +1313,7 @@ end
 --- table cannot grow across a long uptime.
 function Notify.clearPlayer(cid)
     budgets[cid] = nil
+    relayBudgets[cid] = nil
     lastPush[cid] = nil
     trailing[cid] = nil
     -- A cooldown still running is kept: relogging must not buy a second
@@ -1022,20 +1323,29 @@ end
 
 function Notify.clearContract(contractId, contract)
     revealAt[contractId] = nil
+    told[contractId] = nil
     -- An alert still waiting goes only while a contract it stands for is
-    -- still out. With none left it never goes, and the cooldown it started
-    -- is given back: nothing was said.
+    -- still out. With none left it never goes (and no cooldown was started:
+    -- that starts when it is sent). With some left, it goes at the earliest
+    -- reveal among them, never before On me shows one.
+    local targets = {}
     for targetCid, alert in pairs(pendingAlert) do
-        if alert.ids[contractId] then
-            alert.ids[contractId] = nil
-            if not next(alert.ids) then
-                pendingAlert[targetCid] = nil
-                paranoidUntil[targetCid] = alert.before
-            end
+        if alert.ids[contractId] then targets[#targets + 1] = targetCid end
+    end
+    for i = 1, #targets do
+        local alert = pendingAlert[targets[i]]
+        alert.ids[contractId] = nil
+        if next(alert.ids) then
+            armAlert(targets[i], alert)
+        else
+            pendingAlert[targets[i]] = nil
         end
     end
     for key in pairs(advisorySent) do
         if key:sub(1, #contractId + 1) == contractId .. ':' then advisorySent[key] = nil end
+    end
+    for key in pairs(announced) do
+        if key:sub(1, #contractId + 1) == contractId .. ':' then announced[key] = nil end
     end
 
     -- Take the threat off the MDT. sc-dispatch files an advisory as an

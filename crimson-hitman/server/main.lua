@@ -1669,6 +1669,13 @@ function StartCrimsonHitman()
     -- from before a restart is still one the sweep can see.
     reindexed('the list of held contracts', contracts.reindexHolds,
         'a hold taken before this start is not released for being idle')
+    -- The wait before a target is shown a new contract, and their alert, are
+    -- kept in memory: a contract placed inside the longest wait before this
+    -- start is held back again for a fresh one, and its alert re-armed
+    -- (Notify.rearm).
+    reindexed('the waits before targets are told of new contracts', function()
+        notify.rearm(Storage.liveContracts())
+    end, 'a contract placed just before it is shown to its target at once, unannounced')
     -- Reviews the last shutdown left part-way resolved, finished as staff
     -- decided them, now recovery has put back what their lines left.
     local reviewed, reviewErr = pcall(review.recover)
@@ -2021,16 +2028,28 @@ end
 --- app told a player whose pockets were full to "make room and it will be
 --- handed over". Told the same way the login retry tells them.
 function RetryWaiting()
-    local delivered = modules.escrow.retryWaiting(function(cid)
+    local delivered, summaries = modules.escrow.retryWaiting(function(cid)
         return modules.identity.byCitizenId(cid) ~= nil
     end)
     for cid, count in pairs(delivered) do
-        modules.notify.toCitizen(cid, 'Outstanding payment',
-            ('%d outstanding item%s been delivered.')
-                :format(count, count == 1 and ' has' or 's have'),
-            { bypassBudget = true })
+        modules.notify.outstandingDelivered(cid, count, summaries and summaries[cid])
     end
     return delivered
+end
+
+--- How often notices kept past a player's budget are tried again: once the
+--- minute that was full has opened (Notify.deliverKept).
+local DELIVER_KEPT_EVERY_SECONDS = 60
+local nextKept = 0
+
+--- Contract notices that found their player past the per-minute budget,
+--- sent once there is room, at most every DELIVER_KEPT_EVERY_SECONDS
+--- (§14.40: coalesced, never dropped).
+function DeliverKept()
+    local now = os.time()
+    if now < nextKept then return 0 end
+    nextKept = now + DELIVER_KEPT_EVERY_SECONDS
+    return modules.notify.deliverKept()
 end
 
 --- How often the photo retention runs while it has nothing to catch up on.
@@ -2082,6 +2101,7 @@ function Tick()
     job('amendments.expire', modules.amendments.expire)
     job('bailout.processQueue', modules.bailout.processQueue)
     job('escrow.retryWaiting', RetryWaiting)
+    if modules.notify.deliverKept then job('notify.deliverKept', DeliverKept) end
     -- Kill photos switched off (Config.Completion.KillPhotos): nothing below
     -- that is about them runs while none is kept, and nothing ever asks an
     -- image host. One kept from before still expires as usual.

@@ -432,3 +432,99 @@ describe('the escrow line id sequence with nothing left to mint', function()
             .. 'written, the contract closed anyway, and only an audit row says so')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Messages and contract notices, each on a budget of its own (W104, W116)
+--------------------------------------------------------------------------
+
+describe('messages and contract notices, each on a budget of its own', function()
+    local function noticesTo(src, title)
+        local n = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == src
+                and event.args[1].title == title then
+                n = n + 1
+            end
+        end
+        return n
+    end
+
+    --- A contract with one operative on it, who then sends the client a
+    --- minute's worth of messages, a second apart.
+    local function talked(muted)
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } },
+        })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        if muted then
+            truthy(s.comms.mute(f.creator, c.id, s.comms.threads(f.creator, c.id)[1].handle, true))
+        end
+        Env.advance(61)
+        for i = 1, Config.Notifications.MaxPerRecipientPerMinute do
+            truthy(s.comms.send(f.hitman, c.id, nil, 'Ping ' .. i))
+            Env.advance(1)
+        end
+        Env.clientEvents = {}
+        return s, f, c
+    end
+
+    for _, muted in ipairs({ false, true }) do
+        it((muted and 'muted: ' or '') .. 'a minute of messages leaves an acceptance and a '
+            .. 'handover ringing', function()
+            local s, _, c = talked(muted)
+            Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+                cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+            truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+            eq(noticesTo(1, 'Contract accepted'), 1, 'the chat silenced "Contract accepted"')
+
+            for _, src in ipairs({ 1, 2, 3 }) do
+                Env.players[src]._coords = { x = 200.0, y = 200.0, z = 30.0 }
+            end
+            Env.players[2].PlayerData.metadata.ishandcuffed = true
+            truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+            eq(noticesTo(1, 'Handover starting'), 1, 'the chat silenced "Handover starting"')
+        end)
+    end
+
+    it('keeps a contract notice past the budget and sends it when the minute opens', function()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'memory'
+        local main = require('server.main')
+        local s = main.start()
+        fixture(s)
+        main.tick()
+        for i = 1, Config.Notifications.MaxPerRecipientPerMinute do
+            truthy(s.notify.toCitizen('CREATOR1', 'n' .. i, 'x'))
+        end
+        Env.clientEvents = {}
+        falsy(s.notify.toCitizen('CREATOR1', 'Contract accepted', 'one', { contractId = 'ct1' }))
+        falsy(s.notify.toCitizen('CREATOR1', 'Contract accepted', 'two', { contractId = 'ct1' }))
+        falsy(s.notify.toCitizen('CREATOR1', 'Reward changed', 'three', { contractId = 'ct1' }))
+        main.tick()
+        eq(noticesTo(1, 'Contract accepted'), 0, 'not inside the minute that was full')
+
+        Env.advance(61)
+        main.tick()
+        eq(noticesTo(1, 'Contract accepted'), 1, 'one per contract and event, not dropped')
+        eq(noticesTo(1, 'Reward changed'), 1, 'another event on the same contract is its own')
+        local said
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.args[1].title == 'Contract accepted' then
+                said = event.args[1].content
+            end
+        end
+        eq(said, 'two', 'the newest in place of the one before')
+        resetConfig()
+    end)
+end)

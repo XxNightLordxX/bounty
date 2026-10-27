@@ -1241,3 +1241,124 @@ describe('a payout left for staff is not one waiting for room', function()
             'one left for staff is not one making room hands over')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- What the payee is told came back (W083, W074, W092)
+--------------------------------------------------------------------------
+
+describe('what a buyout, a void and an ending say came back', function()
+    local function said(src, title)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == src
+                and (not title or event.args[1].title == title) then
+                out[#out + 1] = tostring(event.args[1].content)
+            end
+        end
+        return table.concat(out, ' | ')
+    end
+
+    --- A contract whose reward is part cash and part dirty money, the second
+    --- an inventory item that full pockets cannot take.
+    local function placed(s, f, extra)
+        Env.players[2].PlayerData.money.bank = 200000
+        local req = {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 4000 }, bonus = { dirty = 1000 } },
+            bailoutAmount = 15000,
+        }
+        for k, v in pairs(extra or {}) do req[k] = v end
+        local c = s.contracts.create(f.creator, req)
+        truthy(c, 'placed')
+        return c
+    end
+
+    it('says what waits after a buyout into full pockets', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f)
+        Env.clientEvents = {}
+        Env.players[1]._inventoryFull = true
+        truthy(s.bailout.buy(f.target, c.id))
+        Env.players[1]._inventoryFull = false
+        local note = said(1, 'Contract closed')
+        truthy(note:find('would not fit and are waiting for you', 1, true), note)
+        falsy(note:find('Escrow and premium have been returned', 1, true), note)
+        falsy(note:find('Your escrow is back', 1, true), note)
+    end)
+
+    it('says what waits after a staff void into full pockets', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f)
+        Env.clientEvents = {}
+        Env.players[1]._inventoryFull = true
+        truthy(s.admin.void(0, c.id, 'test'))
+        Env.players[1]._inventoryFull = false
+        local note = said(1, 'Contract voided')
+        truthy(note:find('could not be handed over yet', 1, true), note)
+        falsy(note:find('Your escrow has been returned', 1, true), note)
+    end)
+
+    --- Two collections, the first one paid, then the contract ends.
+    local function oneCollected(penalty)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            penaltyAmount = penalty,
+            reward = { slots = { { baseline = { cash = 3000 } }, { baseline = { cash = 3000 } } } },
+        })
+        truthy(c, 'placed')
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        Env.clientEvents = {}
+        return s, f, c
+    end
+
+    it('names the payout collected when a two-payout contract expires', function()
+        local s, _, c = oneCollected(500)
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        local client = said(1, 'Contract expired')
+        truthy(client:find('1 of 2 payouts were collected; the rest of what you put up has been '
+            .. 'returned.', 1, true), client)
+        falsy(client:find('Everything you put up', 1, true), client)
+        local hitman = said(3, 'Contract expired')
+        truthy(hitman:find('You were paid for 1 collection on it.', 1, true), hitman)
+    end)
+
+    it('names the payout collected when a two-payout contract is withdrawn', function()
+        local s, f, c = oneCollected(0)
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        Env.clientEvents = {}
+        truthy(s.contracts.cancel(f.creator, c.id))
+        local client = said(1, 'Contract withdrawn')
+        truthy(client:find('1 of 2 payouts were collected; the rest of what you put up has been '
+            .. 'returned.', 1, true), client)
+        falsy(client:find('everything you put up', 1, true), client)
+    end)
+
+    it('writes a row on the contract for each owed line handed over later', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, { bailoutAmount = 0 })
+        Env.players[1]._inventoryFull = true
+        truthy(s.contracts.cancel(f.creator, c.id))
+        Env.players[1]._inventoryFull = false
+        local delivered, summary = s.escrow.retryPending('CREATOR1')
+        eq(delivered, 1, 'the dirty money, once there is room')
+        eq(summary.goods, 1)
+        s.audit.flush()
+        local rows = {}
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'escrow_delivered_late' then rows[#rows + 1] = row end
+        end
+        eq(#rows, 1, 'one row per line delivered')
+        eq(rows[1].contract_id, c.id, 'on the contract it paid')
+        eq(rows[1].detail.source, 'dirty')
+        eq(rows[1].detail.amount, 1000)
+        truthy(rows[1].detail.line, 'naming the line')
+    end)
+end)

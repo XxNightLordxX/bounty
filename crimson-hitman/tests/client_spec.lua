@@ -1573,6 +1573,32 @@ describe('what happens to a player as they arrive and leave', function()
             .. 'and a player who does not know they were paid asks for it twice')
     end)
 
+    --- W195: the kept notice was written while nothing could be handed over,
+    --- and came after "it has been delivered", which it then contradicted;
+    --- and cash was counted as "1 outstanding item".
+    it('says what happened first, then what arrived, by amount', function()
+        local s = wired()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 100000 } },
+        })
+        truthy(c, 'placed')
+        Env.removePlayer(1)
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        Env.clientEvents = {}
+        Env.addPlayer({ source = 1, citizenid = 'CREATOR1', license = 'license:aaa',
+            cash = 0, bank = 100000, firstname = 'Vic', lastname = 'Marlowe' })
+        s.bridges.onPlayerReady(s, 1)
+        local order = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == 1 then order[#order + 1] = event.args[1] end
+        end
+        eq(#order, 2, 'the kept notice and the delivery')
+        eq(order[1].title, 'Contract expired', 'what happened to their contract first')
+        eq(order[2].title, 'Outstanding payment', 'then what arrived')
+        eq(order[2].content, '$100,000 you were owed has arrived.')
+    end)
+
     it('says nothing to a player who is owed nothing', function()
         local s = wired()
         fixture(s)

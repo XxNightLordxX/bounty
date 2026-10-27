@@ -818,7 +818,9 @@ ConfigDefaults.Advisory = {
     --- setting says — they cannot open the app to check for themselves.
     --- "Your department has been advised" only where their job receives the
     --- advisory (the Recipient lists); otherwise "Law enforcement has been
-    --- advised".
+    --- advised". Kept for their next login if they are away. Off, they are
+    --- told as anybody else is, by the paranoid alert when
+    --- Notifications.ParanoidAlert is on.
     AlwaysAlertTarget = true,
     --- Warn the creator before escrow is taken, and the hitman before they
     --- accept, that the target holds a protected job, by its kind (law
@@ -969,6 +971,10 @@ ConfigDefaults.Ledger = {
 --------------------------------------------------------------------------
 
 ConfigDefaults.Notifications = {
+    --- The target's alert, "You feel eyes on you", once the wait below is
+    --- over. Kept for their next login if they are away. Switched off while
+    --- one waits, that one is not sent. A target is sent "A price on your
+    --- head has lapsed" only for a contract they were told of and shown.
     ParanoidAlert = true,
     --- Seconds the target's alert waits after the contract is placed, drawn
     --- at random between these two, so it does not date the placement to
@@ -982,15 +988,22 @@ ConfigDefaults.Notifications = {
     --- already cached), and the nearby list stays open to them meanwhile.
     --- An officer is not held back once a bulletin (Advisory) goes out
     --- about it, at posting or at acceptance. A contract that ends inside
-    --- the wait takes its alert with it, and gives the cooldown below back.
-    --- Kept in memory: after a restart every contract shows at once.
+    --- the wait takes its alert with it; one of two sharing an alert leaves
+    --- it for the other's own wait. Kept in memory: after a restart, a
+    --- contract placed less than `max` seconds before it is held back again
+    --- for a fresh wait, and its alert sent when that is over.
     ParanoidAlertJitter = { min = 60, max = 600 },
     --- And at most one per target in this many minutes, however many
     --- contracts are placed on them, so neither do the alerts count them.
+    --- Counted from when the alert is sent, not from the placement.
     ParanoidCooldownMinutes = 30,
     --- Phone notifications one player can be sent, per minute and per hour.
-    --- A message into a thread they muted is counted here and not sent, so
-    --- the sender cannot tell a muted thread from one that rang.
+    --- Contract messages and call requests count against these figures
+    --- apart from everything else, so a conversation never silences a
+    --- contract notice. A message into a thread they muted is counted and
+    --- not sent, so the sender cannot tell a muted thread from one that
+    --- rang. A contract notice past them is kept and sent once the minute
+    --- opens, never dropped; receipts and endings are outside them.
     MaxPerRecipientPerMinute = 6,
     MaxPerRecipientPerHour = 40,
 

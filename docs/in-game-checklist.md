@@ -539,18 +539,25 @@ uploads, and with neither. Restart the resource between them.
 
 ## 7. Law enforcement advisory
 
-- [ ] Placing a contract on an officer warns the creator first, naming the department
+- [ ] Placing a contract on an officer warns the creator first, naming the
+      department, and says it alerts *every officer in the city* (an off-duty
+      officer is told too: check one)
 - [ ] **Every** online LEO gets a phone notification naming the officer —
       including officers who never had the app, since it is never on their
       phone (lb-phone's handling of an app it has not installed is not
       documented; this is the check)
-- [ ] The targeted officer is notified directly
+- [ ] The targeted officer is notified directly; logged off at the time, they
+      find it once they have spawned at their next login
+- [ ] With **Always tell the officer** off in the admin panel, the targeted
+      officer gets the ordinary "eyes on you" alert instead
 - [ ] An `sc-dispatch` entry appears in the MDT
 - [ ] With an officer's contract taken, turn **Advisories**, **When
       accepted** or **Use dispatch** off in the admin panel, then end the
       contract (void it): both MDT entries are gone
 - [ ] Accepting raises a second advisory with the operative count
 - [ ] A second acceptance raises another, with the count now 2
+- [ ] The first operative walks away, `restart crimson-hitman`, and takes it
+      again: no second acceptance bulletin, on phones or in the MDT
 - [ ] The creator is **never** named in any of it
 - [ ] The listing shows the LAW ENFORCEMENT flag and warns before accepting
 - [ ] All of the above for a target on `sast` and for one on `fib`
@@ -561,12 +568,33 @@ uploads, and with neither. Restart the resource between them.
       only once their "eyes on you" alert has arrived (one to ten minutes
       after it was placed); before that On Me and `/cleanse` show nothing,
       and the board shows no face for them unless one was already rendered.
-      Restart the resource inside that wait: it shows at once. Withdraw one
-      inside the wait: the target never gets the alert for it
+      Restart the resource inside that wait: On Me still shows nothing, and
+      one to ten minutes after the restart the alert arrives with it.
+      Withdraw one inside the wait: the target never gets the alert for it
+- [ ] The target logs off before the alert is due and back after it: the
+      "eyes on you" alert is in their notifications once they have spawned
+- [ ] Place one, switch **Tell the target** off in the admin panel inside the
+      wait: no alert comes. Let a contract run out inside the wait (a short
+      deadline): the target is never told it lapsed
+- [ ] Two clients place one each on the same target a few minutes apart, and
+      the first withdraws: the alert comes when the second shows on On Me,
+      not before
+- [ ] The target has On Me open when the alert arrives: the contract appears
+      on it without leaving the tab
 - [ ] With `Config.Advisory.OnCreate = false`, a contract on an officer is
       accepted inside the wait: the officer's "THREAT ADVISORY — ACTIVE"
       arrives and `/cleanse` lists the contract at once
-- [ ] Buying out closes the contract, returns escrow **and** premium to the creator
+- [ ] Buying out closes the contract, returns escrow **and** premium to the
+      creator, who is told *Your escrow is back and the $… buyout was paid to
+      you* (logged off, at their next login); the target is told *Your buyout
+      went through*. With the creator's pockets full of the reward's items,
+      the creator is told what is waiting for room instead
+- [ ] With a hitman on it, buy out: the hitman is told *It closes in 2
+      minutes unless you finish it first* even after a minute of messages,
+      and their card under Mine counts it down. A second hitman who accepts
+      inside the delay is told at once. If a hitman finishes first, the
+      target is told *A hitman finished the contract on you … your $… is
+      back*
 - [ ] A cash-paid premium arrives as cash, not bank
 - [ ] Buying out is refused while a handover countdown is running
 - [ ] Buy out with a hitman on it; the hitman kills the target in the last
@@ -616,6 +644,11 @@ uploads, and with neither. Restart the resource between them.
 ## 9. Communication
 
 - [ ] Creator and hitman can message under aliases
+- [ ] Send six messages in a minute, then have a second operative accept, and
+      arm a handover: *Contract accepted* and *Handover starting* still ring,
+      muted thread or not
+- [ ] One operative takes a competitive contract, walks away and takes it
+      again: the client is told *Contract accepted* once
 - [ ] Neither sees the other's real name when anonymous
 - [ ] On a competitive contract, hitmen cannot see each other's threads
 
@@ -672,6 +705,18 @@ uploads, and with neither. Restart the resource between them.
       and where their stake went, and the client finds *Contract expired* in
       their notifications once they log back in
 - [ ] A payout to a player with a full inventory is delivered on their next login
+- [ ] Let a contract expire while its client is logged off: at login they
+      read *Contract expired* first, then *Outstanding payment: $… you were
+      owed has arrived*, with thousands separators; the panel's **Logs** for
+      that contract show `escrow_delivered_late` for each line
+- [ ] Staff void a contract while its client is logged off: at login the
+      client reads *Contract voided*. Logged off while a hitman accepts, or
+      while a kill on an `'either'` contract is verified: *Contract accepted*
+      or *Contract fulfilled* at login
+- [ ] With collections raised to 2 in the panel, collect one, then let it
+      expire (or walk away and Withdraw): the client is told *1 of 2 payouts
+      were collected; the rest of what you put up has been returned*, and the
+      Withdraw dialog says the same before
 - [ ] ...and, with them still connected through a `restart crimson-hitman`,
       within a minute of making room, without a relog
 - [ ] A target with a live contract on them who logs out through the

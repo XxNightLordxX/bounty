@@ -2000,7 +2000,7 @@
     if (flagged && context === 'board') {
       node.appendChild(el('div', 'notice gold', 'This target '
         + protectedWords(contract.targetProtectedAs).is + '.'
-        + (advised('accepted') ? ' Accepting it alerts every officer on duty.' : '')));
+        + (advised('accepted') ? ' Accepting it alerts every officer in the city.' : '')));
     }
 
     // The placer's half of a live handover, on their own card once it is
@@ -2163,6 +2163,21 @@
       if (firstJob) { row.appendChild(firstJob); }
       var held = exclusiveReminder(contract);
       if (held) { row.appendChild(held); }
+
+      // The target has paid to close it and the buyout waits out its delay,
+      // which is there so the hitman can finish first. The phone said so
+      // once, and a full notice budget, a logoff or taking the contract
+      // inside the delay missed it; the card said nothing at all.
+      // Never more time than they have: "under N minutes".
+      if (Number(contract.buyoutClosesIn) > 0) {
+        var closesIn = secondsLeftOf({ secondsLeft: contract.buyoutClosesIn,
+          clockReadAt: contract.clockReadAt });
+        row.appendChild(el('div', 'hint is-warn', 'Buyout paid: it closes in '
+          + (!(closesIn > 0) ? 'a moment'
+            : closesIn < 60 ? 'under a minute'
+              : 'under ' + durationText(Math.ceil(closesIn / 60)))
+          + ' unless you finish it first.'));
+      }
 
       // Opening a thread is a round trip that changes nothing on screen
       // until it lands, so the button read as dead and got tapped again.
@@ -2473,12 +2488,25 @@
       + (others ? ' ' + others : '');
   }
 
+  /* A payout already collected on a contract is not part of what comes
+     back when it closes. "Everything you put up" after one was paid was
+     short by that one, which is how a player counts their money, finds it
+     short and reports it stolen. null when none was collected. */
+  function collectedText(contract) {
+    var claimed = Number(contract.slotsClaimed) || 0;
+    if (claimed <= 0) { return null; }
+    return claimed + ' of ' + Math.max(claimed, Number(contract.slots) || 1)
+      + ' payouts were collected';
+  }
+
   function cancelContract(contract) {
     var waits = relistWaitText(contract);
+    var collected = collectedText(contract);
+    var lead = contract.everTaken ? 'The operative who took it walked away' : 'Nobody has taken it';
     ask('Withdraw this contract?',
-      (contract.everTaken
-        ? 'The operative who took it walked away, so everything you put up comes back to you.'
-        : 'Nobody has taken it, so everything you put up comes back to you.')
+      (collected
+        ? lead + '. ' + collected + ', so the rest of what you put up comes back to you.'
+        : lead + ', so everything you put up comes back to you.')
         + (waits ? ' ' + waits : '')
         + ' To change what it pays or when it runs out, use Change reward or '
         + 'Edit instead.',
@@ -2496,7 +2524,10 @@
             ? 'Contract withdrawn. Some of what you put up would not fit and is '
               + 'waiting for you — it arrives when you next have room.' + checking
             : checking ? 'Contract withdrawn.' + checking
-              : 'Contract withdrawn. Everything you put up has been returned.', 'ok');
+              : collected
+                ? 'Contract withdrawn. ' + collected + '; the rest of what you put up has been '
+                  + 'returned.'
+                : 'Contract withdrawn. Everything you put up has been returned.', 'ok');
           refresh();
         });
       }, { yes: 'Withdraw it', no: 'Keep it' });
@@ -2812,7 +2843,7 @@
       // has already been advised" read today's switch, not whether a
       // bulletin went for this contract.
       var told = [];
-      if (advised('accepted')) { told.push('Accepting alerts every officer on duty that someone is coming.'); }
+      if (advised('accepted')) { told.push('Accepting alerts every officer in the city that someone is coming.'); }
       told.push('Accept anyway?');
       ask('This contract is on ' + protectedWords(contract.targetProtectedAs).noun + '.',
           told.join(' '), chooseAnonymity);
@@ -6848,14 +6879,17 @@
     }
 
     // Asked, every time: with a bulletin on it stated a fact under a Yes
-    // button and never asked the question.
+    // button and never asked the question. "Every officer in the city", not
+    // "on duty": the bulletin goes to every officer whose job receives it,
+    // on duty or off, and the narrower words told the creator fewer would
+    // hear than do.
     var protectedTarget = state.draft.targetProtected === true;
     if (protectedTarget && settings().warnCreator !== false && !state.leoConfirmed) {
       ask('That target ' + protectedWords(state.draft.targetProtectedAs).is + '.',
           (advised('posted')
-            ? 'Placing this will alert every officer on duty, by phone and over dispatch. '
+            ? 'Placing this will alert every officer in the city, by phone and over dispatch. '
             : advised('accepted')
-              ? 'Officers on duty will be alerted when someone accepts it. '
+              ? 'Every officer in the city will be alerted when someone accepts it. '
               : '')
             + 'Place a contract on them anyway?',
           function () { state.leoConfirmed = true; submitContract(); },
@@ -7484,8 +7518,8 @@
         results.appendChild(change);
         if (person.protected) {
           say('That person ' + protectedWords(person.protectedAs).is + '.'
-            + (advised('posted') ? ' Placing this alerts every officer on duty.'
-              : advised('accepted') ? ' Officers on duty are told when someone accepts it.' : ''),
+            + (advised('posted') ? ' Placing this alerts every officer in the city.'
+              : advised('accepted') ? ' Every officer in the city is told when someone accepts it.' : ''),
             'caution');
         }
       };

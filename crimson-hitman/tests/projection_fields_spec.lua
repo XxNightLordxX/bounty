@@ -74,6 +74,8 @@ local CONDITIONAL = {
     bailoutPaid      = 'target-only, and only after the premium has been taken',
     -- How long the hitman on it still has, for that same paid card.
     bailoutSecondsLeft = 'target-only, and only while a paid buyout waits out its delay',
+    -- The same delay on the hitman's own card: the warning the delay is for.
+    buyoutClosesIn = 'hitman-only, and only while a paid buyout waits out its delay',
     -- The viewer's own informant answer, so only once they have bought one,
     -- and only while the reroll lock lasts.
     informantAnswer  = 'creator or target, and only inside the reroll lock after buying',

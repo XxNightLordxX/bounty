@@ -795,7 +795,7 @@ describe('a handover that is paid', function()
         eq(s.kidnap.outcome(c.id, 'HITMAN01').outcome, 'paid')
         local receipt = told(3, 'Handover paid')
         truthy(receipt, 'the hitman is sent a receipt')
-        truthy(receipt:find('Delivered alive: $5000 released to you.', 1, true), receipt)
+        truthy(receipt:find('Delivered alive: $5,000 released to you.', 1, true), receipt)
         truthy(receipt:find('Your $500 stake has been returned.', 1, true), receipt)
     end)
 

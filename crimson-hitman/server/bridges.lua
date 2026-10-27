@@ -52,20 +52,26 @@ end
 --- payout for a relog, since only this pass ever put a player who had been
 --- offline back on the tick's list (W085). What happened to their contracts
 --- is told even then.
+---
+--- What happened to their contracts first, then what arrived: the notices
+--- kept for them were written while nothing could be handed over ("it
+--- arrives as soon as you can take it"), and coming after "it has been
+--- delivered" they read as untrue. The delivery is said by amount
+--- (Notify.outstandingDelivered).
 function Bridges.onPlayerReady(modules, src)
     local actor = modules.identity and modules.identity.resolve(src)
     if not actor then return 0 end
 
     if modules.escrow.noteWaiting then modules.escrow.noteWaiting(actor.cid) end
-    local ran, delivered = pcall(modules.escrow.retryPending, actor.cid)
-    if ran and delivered > 0 then
-        modules.notify.toCitizen(actor.cid, 'Outstanding payment',
-            ('%d outstanding item%s been delivered.')
-                :format(delivered, delivered == 1 and ' has' or 's have'),
-            { bypassBudget = true })
+    local toldOk, toldErr = pcall(modules.notify.deliverWaiting, actor.cid)
+    if not toldOk then
+        Log.debug(('handing %s the notices kept for them raised: %s')
+            :format(tostring(actor.cid), tostring(toldErr)))
     end
-    -- And what happened to their contracts while they were away.
-    modules.notify.deliverWaiting(actor.cid)
+    local ran, delivered, summary = pcall(modules.escrow.retryPending, actor.cid)
+    if ran and delivered > 0 then
+        modules.notify.outstandingDelivered(actor.cid, delivered, summary)
+    end
     if not ran then error(delivered, 0) end
     return delivered
 end

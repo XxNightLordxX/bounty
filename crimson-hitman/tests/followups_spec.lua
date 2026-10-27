@@ -1150,10 +1150,10 @@ describe('endings reach the phone, not only an open app', function()
         local hitman, creator = told(3), told(1)
         eq(#hitman, 1)
         eq(hitman[1].title, 'Contract expired')
-        truthy(hitman[1].content:find('$2000 stake went to the person who placed the contract',
+        truthy(hitman[1].content:find('$2,000 stake went to the person who placed the contract',
             1, true), hitman[1].content)
         eq(#creator, 1)
-        truthy(creator[1].content:find("operative's $2000 stake is yours", 1, true), creator[1].content)
+        truthy(creator[1].content:find("operative's $2,000 stake is yours", 1, true), creator[1].content)
     end)
 
     it('keeps the notice for a hitman who was offline and gives it at login', function()
@@ -1176,7 +1176,7 @@ describe('endings reach the phone, not only an open app', function()
         local hitman = told(3)
         eq(#hitman, 1)
         truthy(hitman[1].content:find('Staff closed your contract', 1, true))
-        truthy(hitman[1].content:find('$2000 stake has been returned', 1, true))
+        truthy(hitman[1].content:find('$2,000 stake has been returned', 1, true))
     end)
 
     it('tells a competitive loser, not the winner, and says completed', function()
@@ -1200,7 +1200,7 @@ describe('endings reach the phone, not only an open app', function()
         local creator = told(1)
         eq(#creator, 1)
         eq(creator[1].title, 'Operative walked away')
-        truthy(creator[1].content:find('Their $2000 stake is yours. It is back on the board.', 1, true),
+        truthy(creator[1].content:find('Their $2,000 stake is yours. It is back on the board.', 1, true),
             creator[1].content)
     end)
 
@@ -1230,7 +1230,7 @@ describe('endings reach the phone, not only an open app', function()
         idle(s, IDLE)
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
         local client = titled(told(1), 'Contract back on the board')
-        truthy(client and client.content:find('Their $2000 stake is yours.', 1, true),
+        truthy(client and client.content:find('Their $2,000 stake is yours.', 1, true),
             client and client.content)
         Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
             firstname = 'Rook', lastname = 'Ash' })
@@ -1238,7 +1238,7 @@ describe('endings reach the phone, not only an open app', function()
         s.bridges.onPlayerReady(s, 3)
         local note = titled(told(3), 'Taken off a contract')
         truthy(note, 'told on next login')
-        truthy(note.content:find('Your $2000 stake went to the person who placed it.', 1, true),
+        truthy(note.content:find('Your $2,000 stake went to the person who placed it.', 1, true),
             note.content)
     end)
 
@@ -1270,7 +1270,7 @@ describe('endings reach the phone, not only an open app', function()
         truthy(client and client.content:find('Everything you put up has been returned.', 1, true),
             client and client.content)
         local hitman = titled(told(3), 'Contract called off')
-        truthy(hitman and hitman.content:find('Your $2000 stake has been returned.', 1, true),
+        truthy(hitman and hitman.content:find('Your $2,000 stake has been returned.', 1, true),
             hitman and hitman.content)
         s.audit.flush()
         eq(#s.storage.auditByAction('amendment_applied', 10), 1, 'and on the record')
@@ -1631,5 +1631,152 @@ describe('a buyout whose queue write raises', function()
         s.bailout.processQueue()
         eq(money(2), before, 'the refund was paid more than once')
         falsy(s.storage.readContract(c.id).bailout_queued_at)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Who is told what, and when (W103, W105, W111, W175, W049, W048)
+--------------------------------------------------------------------------
+
+describe('every party told, away or not', function()
+    local function told(src, title)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == src
+                and (not title or event.args[1].title == title) then
+                out[#out + 1] = tostring(event.args[1].content)
+            end
+        end
+        return out
+    end
+
+    local function placed(s, f, opts)
+        opts = opts or {}
+        Env.players[2].PlayerData.money.bank = 200000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = opts.bailout,
+        })
+        truthy(c, 'placed')
+        return c
+    end
+
+    local function away(src) Env.removePlayer(src) end
+    local function back(s, src, cid, first, last)
+        Env.addPlayer({ source = src, citizenid = cid, license = 'license:' .. cid,
+            cash = 100000, bank = 100000, firstname = first, lastname = last })
+        s.bridges.onPlayerReady(s, src)
+    end
+
+    it('does not tell the client twice of one operative taking it again', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f)
+        Env.clientEvents = {}
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        Env.advance(15)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        eq(#told(1, 'Contract accepted'), 1, 'one operative coming back is not news twice')
+    end)
+
+    it('hands over every notice kept for a login, past the budget', function()
+        local s = newStack()
+        fixture(s)
+        away(1)
+        local n = Config.Notifications.MaxPerRecipientPerMinute + 1
+        for i = 1, n do
+            s.notify.tellOrKeep('CREATOR1', 'Note ' .. i, 'x', nil, 'ct' .. i)
+        end
+        Env.clientEvents = {}
+        back(s, 1, 'CREATOR1', 'Vic', 'Marlowe')
+        local got = 0
+        for i = 1, n do got = got + #told(1, 'Note ' .. i) end
+        eq(got, n, 'kept for a login, then lost to the budget at it')
+    end)
+
+    it('tells a client who was away of an acceptance, a buyout, a void and a completion', function()
+        local cases = {
+            { title = 'Contract accepted', run = function(s, f, c)
+                truthy(s.contracts.accept(f.hitman, c.id, false)) end },
+            { title = 'Contract closed', bailout = 5000, run = function(s, f, c)
+                truthy(s.bailout.buy(f.target, c.id)) end },
+            { title = 'Contract voided', run = function(s, _, c)
+                truthy(s.admin.void(0, c.id, 'test')) end },
+            { title = 'Contract fulfilled', run = function(s, f, c)
+                truthy(s.contracts.accept(f.hitman, c.id, false))
+                truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+                s.notify.contractCompleted(s.storage.readContract(c.id), f.hitman, {})
+            end },
+        }
+        for _, case in ipairs(cases) do
+            local s = newStack()
+            local f = fixture(s)
+            local c = placed(s, f, { bailout = case.bailout })
+            away(1)
+            case.run(s, f, c)
+            Env.clientEvents = {}
+            back(s, 1, 'CREATOR1', 'Vic', 'Marlowe')
+            eq(#told(1, case.title), 1, case.title .. ' was lost to being away')
+        end
+    end)
+
+    it('tells the target their buyout went through', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, { bailout = 5000 })
+        Env.clientEvents = {}
+        truthy(s.bailout.buy(f.target, c.id))
+        local said = table.concat(told(2, 'Buyout complete'), ' | ')
+        truthy(said:find('the contract on you is closed', 1, true), said)
+        local client = table.concat(told(1, 'Contract closed'), ' | ')
+        truthy(client:find('Your escrow is back and the $5,000 buyout was paid to you.', 1, true),
+            client)
+    end)
+
+    it('tells the target their premium came back when a hitman finished first', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, { bailout = 5000 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local ok, err, queued = s.bailout.buy(f.target, c.id)
+        truthy(ok, tostring(err))
+        truthy(queued, 'queued behind the operative on it')
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        Env.clientEvents = {}
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+        s.bailout.processQueue()
+        local said = table.concat(told(2, 'Buyout refunded'), ' | ')
+        truthy(said:find('A hitman finished the contract on you', 1, true), said)
+        truthy(said:find('$5,000 is back', 1, true), said)
+    end)
+
+    it('warns the operatives of a queued buyout past their budget, and on their card', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, { bailout = 5000 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        for i = 1, Config.Notifications.MaxPerRecipientPerMinute do
+            s.notify.toCitizen('HITMAN01', 'n' .. i, 'x')
+        end
+        Env.clientEvents = {}
+        truthy(s.bailout.buy(f.target, c.id))
+        local said = table.concat(told(3, 'Contract challenged'), ' | ')
+        truthy(said:find('unless you finish it first', 1, true), 'lost to the budget: ' .. said)
+
+        local card
+        for _, entry in ipairs(s.projection.accepted('HITMAN01')) do
+            if entry.id == c.id then card = entry end
+        end
+        truthy(card, 'the card under Mine')
+        eq(card.buyoutClosesIn, Config.Bailout.ProcessingDelaySeconds, 'counted down on the card')
+
+        -- And one who takes it inside the delay is told at once.
+        Env.advance(30)
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        local late = table.concat(told(4, 'Contract challenged'), ' | ')
+        truthy(late:find('It closes in 90 seconds unless you finish it first.', 1, true), late)
     end)
 end)

@@ -677,3 +677,199 @@ describe('a target in a protected job', function()
         eq(found[1].protectedAs, 'emergency')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- The target's alert, as it is sent (W032, W035, W036, W037, W038, W051, W053)
+--------------------------------------------------------------------------
+
+describe('the target\'s alert, kept and checked when it falls due', function()
+    local Shipped = require('crimson-hitman.tests.harness.shipped')
+
+    local function place(s, actor, reason)
+        local c, err = s.contracts.create(actor or s.identity.resolve(1), {
+            targetCid = 'TARGET01', reason = reason or 'x', anonymous = true,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c, 'placed: ' .. tostring(err))
+        return c
+    end
+
+    local function lapses()
+        return countNotifications('Breathing room')
+    end
+
+    --- One wait, fixed, so a test can say when the alert falls due.
+    local function waitOf(seconds)
+        Config.Notifications.ParanoidAlertJitter = { min = seconds, max = seconds }
+    end
+
+    it('keeps the alert for a target who is away when it falls due', function()
+        local s = seeded()
+        Shipped.apply()
+        place(s)
+        Env.removePlayer(2)
+        s.notify.clearPlayer('TARGET01')
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        eq(countParanoid(), 0, 'nobody there to tell')
+        Env.addPlayer({ source = 2, citizenid = 'TARGET01', license = 'license:bbb',
+            cash = 20000, bank = 20000, firstname = 'Dana', lastname = 'Reyes' })
+        s.bridges.onPlayerReady(s, 2)
+        eq(countParanoid(), 1, 'kept for their next login, not lost')
+    end)
+
+    it('is not dropped by a notice budget full when it falls due', function()
+        local s = seeded()
+        Shipped.apply()
+        waitOf(300)
+        place(s)
+        Env.advance(299)
+        for i = 1, Config.Notifications.MaxPerRecipientPerMinute do
+            s.notify.toCitizen('TARGET01', 'n' .. i, 'x')
+        end
+        Env.advance(2)
+        eq(countParanoid(), 1, 'the cooldown rations it, not the budget')
+    end)
+
+    it('is not sent once staff switched alerts off while it waited', function()
+        local s = seeded()
+        Shipped.apply()
+        place(s)
+        Env.advance(30)
+        Config.Notifications.ParanoidAlert = false
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        eq(countParanoid(), 0, 'the panel says alerts still waiting are checked when they fall due')
+    end)
+
+    it('says nothing of a contract that lapsed inside the wait', function()
+        local s = seeded()
+        Shipped.apply()
+        waitOf(600)
+        local c = place(s)
+        Env.advance(10)
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        Env.advance(700)
+        eq(countParanoid(), 0, 'never alerted')
+        eq(lapses(), 0, 'and not told it lapsed: that would date the placement')
+    end)
+
+    it('says it lapsed by what the target was told, not by the switch now', function()
+        -- Placed with alerts off, ending after they were switched on.
+        local s = seeded()
+        Shipped.apply()
+        Config.Notifications.ParanoidAlert = false
+        local quiet = place(s)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Config.Notifications.ParanoidAlert = true
+        truthy(s.contracts.resolve(quiet.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        eq(lapses(), 0, 'never told of it, so not told it lapsed')
+
+        -- Told, then the switch turned off before it ended.
+        s = seeded()
+        Shipped.apply()
+        local loud = place(s)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        eq(countParanoid(), 1)
+        Config.Notifications.ParanoidAlert = false
+        truthy(s.contracts.resolve(loud.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        eq(lapses(), 1, 'told of it, so told it lapsed')
+    end)
+
+    it('rings for a second contract at its own reveal when the first is withdrawn', function()
+        local s = seeded()
+        Shipped.apply()
+        waitOf(600)
+        local first = place(s)
+        Env.advance(300)
+        Env.addPlayer({ source = 5, citizenid = 'CREATOR2', license = 'license:eee',
+            cash = 100000, bank = 100000 })
+        place(s, s.identity.resolve(5), 'y')
+        Env.advance(50)
+        truthy(s.contracts.cancel(s.identity.resolve(1), first.id))
+        Env.advance(260)
+        eq(countParanoid(), 0, 'not at the first one\'s time')
+        eq(#s.projection.onMe('TARGET01'), 0, 'while On me still shows nothing')
+        Env.advance(300)
+        eq(countParanoid(), 1, 'at the second one\'s reveal')
+        eq(#s.projection.onMe('TARGET01'), 1)
+    end)
+
+    it('moves an open On me tab as the alert arrives, naming no contract', function()
+        local s = seeded()
+        Shipped.apply()
+        place(s)
+        Env.clientEvents = {}
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        eq(countParanoid(), 1)
+        local pushes = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:push' and event.target == 2 then
+                pushes[#pushes + 1] = event.args[1]
+            end
+        end
+        eq(#pushes, 1, 'one push to the target')
+        eq(pushes[1].reason, 'alert')
+        eq(pushes[1].ids, nil, 'no contract named')
+    end)
+
+    it('gives an officer the paranoid alert when they are not sent the bulletin', function()
+        local s, f = seeded(leoJob('trooper'))
+        Shipped.apply()
+        Config.Advisory.AlwaysAlertTarget = false
+        place(s)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        local toTarget = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == f.target.source then
+                toTarget = toTarget + 1
+            end
+        end
+        eq(countParanoid(), 1, 'an officer with a price on their head was told nothing')
+        eq(toTarget, 1, 'and nothing else')
+    end)
+end)
+
+describe('a returning operative after a restart', function()
+    local function forget()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+    end
+
+    it('raises no second acceptance bulletin', function()
+        forget()
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        require('crimson-hitman.tests.harness.shipped').apply()
+        Config.Database.Mode = 'json'
+        Natives.files = {}
+        local s = require('server.main').start()
+        local f = fixture(s, { targetJob = leoJob('trooper') })
+        Env.addPlayer({ source = 20, citizenid = 'OFFICER1', license = 'license:o1',
+            job = leoJob('police'), firstname = 'Ada', lastname = 'Kane' })
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        eq(countNotifications('THREAT ADVISORY — ACTIVE'), 2, 'the officer and the target')
+        truthy(s.contracts.abandon(f.hitman, c.id))
+
+        rawset(s.storage, '__rawFixture', true)
+        forget()
+        Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
+        Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        local again = require('server.main').start()
+        local ok, err = again.contracts.accept(again.identity.resolve(3), c.id, false)
+        truthy(ok, 'taken up again: ' .. tostring(err))
+        eq(countNotifications('THREAT ADVISORY — ACTIVE'), 0,
+            'one who walks away and comes back is not news twice')
+        eq(#Natives.calls.dispatch, 0, 'nor on the MDT')
+        resetConfig()
+    end)
+end)

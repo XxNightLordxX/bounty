@@ -1024,18 +1024,20 @@ describe('a muted thread', function()
         --- Two worlds that differ only in whether the client muted. What the
         --- operative sends, reads and is told must come out the same — the
         --- call request included, whose "could not be reached" depends on
-        --- the client's notice budget, which a muted message still spends.
+        --- the client's message budget, which a muted message still spends.
         local function world(mute)
             local s, f, c, handle = talking()
             if mute then truthy(s.comms.mute(f.creator, c.id, handle, true)) end
             local seen = {}
-            -- The acceptance spent one; the two messages spend the rest.
+            -- The three messages spend the message budget (contract notices
+            -- have one of their own).
             withConfig({ { Config.Notifications, 'MaxPerRecipientPerMinute', 3 } }, function()
-                for i = 1, 2 do
+                for i = 1, 3 do
                     local sent = call('sendMessage', 3, { id = c.id, body = 'Ping ' .. i })
                     seen[#seen + 1] = tostring(sent.ok) .. ':' .. tostring(sent.err)
                 end
-                seen[#seen + 1] = 'budget left: ' .. tostring(s.notify.toCitizen('CREATOR1', 'Probe', '.'))
+                seen[#seen + 1] = 'budget left: ' .. tostring(s.notify.toCitizen('CREATOR1',
+                    'Probe', '.', { relay = true }))
                 local read = call('readThread', 3, { id = c.id })
                 seen[#seen + 1] = #read.data.messages .. ':' .. tostring(read.data.muted)
                 local rang = call('requestCall', 3, { id = c.id })

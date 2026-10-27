@@ -669,21 +669,36 @@ describe('a contract placed on somebody, two worlds apart', function()
             'the bulletin dated it for every officer; holding back theirs hides nothing')
     end)
 
-    --- The wait lives in memory. A restart forgets it, and shows what it
-    --- held back at once: a restart is not the moment anybody placed one.
-    it('shows it at once after a restart', function()
-        local function forget()
-            for name in pairs(package.loaded) do
-                if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
-                    package.loaded[name] = nil
-                end
+    --- The wait lives in memory. A restart forgot it, and showed what it
+    --- held back at once, never announced (W032, W013): the start draws a
+    --- fresh wait for a contract placed inside the longest one, and alerts
+    --- when it is over, kept for a target who is away.
+    local function forget()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
             end
         end
+    end
+    local function alertsIn(events, src)
+        local n = 0
+        for _, event in ipairs(events) do
+            if event.target == src and Natives.isNotice(event)
+                and tostring(event.args[1].content):find('eyes on you', 1, true) then
+                n = n + 1
+            end
+        end
+        return n
+    end
+    --- Place one on the shipped config (json), let the process die `after`
+    --- seconds into the wait, and start it again on the same disk.
+    local function placedThenRestarted(after)
         forget()
         Env.reset()
         Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
         Natives.resetResourceStates()
         resetConfig()
+        require('crimson-hitman.tests.harness.shipped').apply()
         Config.Database.Mode = 'json'
         Natives.files = {}
         local s = require('server.main').start()
@@ -693,14 +708,38 @@ describe('a contract placed on somebody, two worlds apart', function()
             reward = { baseline = { cash = 5000 } },
         }))
         eq(#s.projection.onMe('TARGET01'), 0, 'held back in the process that placed it')
+        Env.advance(after)
 
         -- The process dies; the disk and the players stay.
         rawset(s.storage, '__rawFixture', true)
         forget()
         Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
         Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
-        local again = require('server.main').start()
-        eq(#again.projection.onMe('TARGET01'), 1, 'shown at once by the one that came back')
+        return require('server.main').start()
+    end
+
+    it('holds it back again after a restart, and alerts once when the fresh wait is over', function()
+        local again = placedThenRestarted(30)
+        local jitter = Config.Notifications.ParanoidAlertJitter
+        eq(#again.projection.onMe('TARGET01'), 0, 'not shown at once by the one that came back')
+        Env.advance(jitter.min - 1)
+        eq(alertsIn(Env.clientEvents, 2), 0, 'not sooner than the shortest wait after the start')
+        eq(#again.projection.onMe('TARGET01'), 0, 'nor on On me before the alert')
+        Env.advance(jitter.max)
+        eq(alertsIn(Env.clientEvents, 2), 1, 'one alert once the fresh wait is over')
+        eq(#again.projection.onMe('TARGET01'), 1, 'and shown with it')
+        resetConfig()
+    end)
+
+    it('keeps the alert a restart re-armed for a target who is away', function()
+        local again = placedThenRestarted(30)
+        Env.removePlayer(2)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 5)
+        eq(alertsIn(Env.clientEvents, 2), 0, 'nobody there to tell')
+        Env.addPlayer({ source = 2, citizenid = 'TARGET01', license = 'license:bbb',
+            cash = 20000, bank = 20000, firstname = 'Dana', lastname = 'Reyes' })
+        require('server.bridges').onPlayerReady(again, 2)
+        eq(alertsIn(Env.clientEvents, 2), 1, 'told at their next login')
         resetConfig()
     end)
 end)

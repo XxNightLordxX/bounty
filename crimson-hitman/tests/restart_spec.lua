@@ -4918,7 +4918,7 @@ describe('an ending a restart finished', function()
         eq(s2.storage.readContract(c.id).state, CH.STATE.EXPIRED)
         local hitman = noticesTo(3)
         truthy(hitman:find('Contract expired', 1, true), hitman)
-        truthy(hitman:find('$2000 stake went to the person who placed the contract', 1, true), hitman)
+        truthy(hitman:find('$2,000 stake went to the person who placed the contract', 1, true), hitman)
         local _, titles = s2.notify.waitingFor('CREATOR1')
         truthy(table.concat(titles, ','):find('Contract expired', 1, true),
             'kept for the client\'s next login: ' .. table.concat(titles, ','))

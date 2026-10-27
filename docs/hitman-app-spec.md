@@ -233,7 +233,7 @@ When a contract is created against a protected-job target:
 
 Both sides of the contract are told plainly who they are dealing with:
 
-- **The creator is warned before the contract is placed.** Selecting a protected-job target raises an explicit confirmation — *"This target is a sworn law enforcement officer. Placing this contract will alert every officer on duty."* — naming the target's department. Escrow is not taken until they confirm.
+- **The creator is warned before the contract is placed.** Selecting a protected-job target raises an explicit confirmation — *"This target is a sworn law enforcement officer. Placing this contract will alert every officer in the city."* — naming the target's department. Escrow is not taken until they confirm.
 - **The hitman is warned before accepting.** The listing carries a permanent **LAW ENFORCEMENT** flag, and accepting raises the same style of confirmation — *"This contract is on an active police officer. Law enforcement has been advised."* No hitman can claim they did not know.
 - The flag is shown even when the creator is anonymous: it describes the *target*, and the target's job is not the creator's secret to keep.
 

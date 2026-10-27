@@ -273,6 +273,15 @@ function Projection.contract(contract, viewerCid)
         if Kidnap then
             out.kidnapProgress = Kidnap.progress(contract.id, viewerCid)
         end
+        -- The target's buyout waiting out its delay, counted down on their
+        -- card. Their one word of it was a phone notice (Notify.buyoutQueued)
+        -- that a full budget, a logoff or an acceptance inside the delay
+        -- missed, and the delay is there for them to finish first. Says
+        -- nothing that notice does not: when it was paid, to the second.
+        if contract.bailout_queued_at then
+            out.buyoutClosesIn = math.max(0, contract.bailout_queued_at
+                + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
+        end
     elseif role == 'target' then
         -- The target is in the city to read this, and knows whether they
         -- are in prison, so a stopped clock on their card could only mean a
@@ -886,7 +895,8 @@ Projection.ALLOWED_KEYS = {
     },
     creator = { bailoutAmount = true, hitmen = true, valueHeld = true,
                 informantAnswer = true, informantLeft = true },
-    hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
+    hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
+                buyoutClosesIn = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true,
                 informantLeft = true },

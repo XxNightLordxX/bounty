@@ -2298,9 +2298,12 @@ end
 --- Retry queued deliveries for a player who has just come online (§9.3).
 ---@param cid string
 ---@return integer delivered
+---@return table summary { money = dollars delivered (cash and bank), goods = other lines
+--- delivered, left = entries still queued }, for the notice that says what arrived
 local function retryPending(mine, cid)
     local queued = Storage.readPending(cid) or {}
     local delivered = 0
+    local summary = { money = 0, goods = 0, left = 0 }
     local tried = lastTried[cid] or {}
 
     -- Least recently tried first; among entries tried equally long ago
@@ -2360,6 +2363,19 @@ local function retryPending(mine, cid)
                     delivered = delivered + 1
                     handed = true
                     gone[entry.id] = true
+                    -- On the contract it paid, line by line: the per-player
+                    -- row below names no contract, so a contract's history
+                    -- ended at the release that queued it and never said it
+                    -- arrived.
+                    Audit.financial('escrow_delivered_late', cid, line.contract_id, {
+                        line = line.id, source = line.source, amount = line.amount,
+                        item = line.item, count = line.quantity,
+                    })
+                    if line.source == 'cash' or line.source == 'bank' then
+                        summary.money = summary.money + (tonumber(line.amount) or 0)
+                    else
+                        summary.goods = summary.goods + 1
+                    end
                 else
                     -- Nothing of it moved: no give in flight, as in
                     -- Escrow.release, written before it is held again.
@@ -2414,13 +2430,15 @@ local function retryPending(mine, cid)
     if delivered > 0 then
         Audit.financial('pending_delivered', cid, nil, { count = delivered })
     end
-    return delivered
+    summary.left = left
+    return delivered, summary
 end
 
 --- Retry queued deliveries for a player: see retryPending above. A line it
 --- claimed and was still holding when it raised is no longer in flight.
 ---@param cid string
 ---@return integer delivered
+---@return table summary what arrived and what still waits (retryPending)
 function Escrow.retryPending(cid)
     return withClaims(retryPending, cid)
 end
@@ -2440,9 +2458,10 @@ local RETRY_SECONDS = 30
 --- dropped: their login runs the same retry.
 ---@param isOnline fun(cid: string): boolean
 ---@return table<string, integer> delivered per citizen id, where anything was
+---@return table<string, table> what arrived and what still waits, by the same ids
 function Escrow.retryWaiting(isOnline)
     local now = os.time()
-    local out = {}
+    local out, summaries = {}, {}
 
     -- A snapshot: retryPending yields on mysql, and a release queuing for a
     -- new player mid-walk would otherwise be a table modified under pairs.
@@ -2457,8 +2476,8 @@ function Escrow.retryWaiting(isOnline)
             waiting[cid] = nil
         else
             local woken = wakes[cid]
-            local delivered = Escrow.retryPending(cid)
-            if delivered > 0 then out[cid] = delivered end
+            local delivered, summary = Escrow.retryPending(cid)
+            if delivered > 0 then out[cid], summaries[cid] = delivered, summary end
             local left = #(Storage.readPending(cid) or {})
             if wakes[cid] ~= woken then
                 -- Something was queued for them while this ran, and the
@@ -2473,7 +2492,7 @@ function Escrow.retryWaiting(isOnline)
         end
     end
 
-    return out
+    return out, summaries
 end
 
 return Escrow

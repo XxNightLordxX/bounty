@@ -1099,9 +1099,9 @@ function Admin.void(src, contractId, reason)
         local read, now = pcall(Storage.readContract, contractId)
         if read and now and now.state == CH.STATE.VOIDED then
             if Photos then pcall(Photos.forgetContract, contractId) end
-            pcall(Notify.toCitizen, contract.creator_cid, 'Contract voided',
+            pcall(Notify.tellOrKeep, contract.creator_cid, 'Contract voided',
                 'Staff closed your contract. Your escrow is on its way back to you.',
-                { bypassBudget = true })
+                { bypassBudget = true }, contractId)
             return false, 'raised', 'closed'
         end
         return false, 'raised', 'open'
@@ -1121,9 +1121,24 @@ function Admin.void(src, contractId, reason)
     -- had deleted it; one they already saved is on their phone, not here.
     if Photos then Photos.forgetContract(contractId) end
 
-    Notify.toCitizen(contract.creator_cid, 'Contract voided',
-        'Staff closed your contract. Your escrow has been returned.',
-        { bypassBudget = true })
+    -- Worded by what came back (Contracts.owedTo), as the cancel notice is,
+    -- and kept for a client who is away: "Your escrow has been returned"
+    -- went to one whose pockets had no room, and to nobody at all for one
+    -- logged off, who found the money with nothing to say why.
+    local owed, parked = 0, 0
+    if Contracts.owedTo then owed, parked = Contracts.owedTo(contractId, contract.creator_cid) end
+    local voidBody = 'Staff closed your contract. '
+    if owed > 0 or parked > 0 then
+        voidBody = voidBody .. 'Most of your escrow is back.'
+            .. (owed > 0 and (' %d thing(s) could not be handed over yet and arrive as soon as '
+                .. 'you can take them.'):format(owed) or '')
+            .. (parked > 0 and (' %d thing(s) could not be confirmed as handed back; staff have '
+                .. 'been asked to check.'):format(parked) or '')
+    else
+        voidBody = voidBody .. 'Your escrow has been returned.'
+    end
+    Notify.tellOrKeep(contract.creator_cid, 'Contract voided', voidBody, { bypassBudget = true },
+        contractId)
 
     return true
 end

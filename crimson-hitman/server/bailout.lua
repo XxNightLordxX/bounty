@@ -446,6 +446,69 @@ local function payOwed(contract, id, cid, amount, account, reason, metadata)
     end
 end
 
+--- What the person who placed it is told of a buyout: what came back, from
+--- what is still owed to them (Contracts.owedTo), as the cancel notice words
+--- it. "Escrow and premium have been returned" went to a client whose
+--- pockets had no room for the goods, and to one away, whose money was only
+--- queued. Kept for one who is away (Notify.tellOrKeep).
+local function tellCreatorClosed(contract, amount)
+    local owed, parked = 0, 0
+    if Contracts.owedTo then owed, parked = Contracts.owedTo(contract.id, contract.creator_cid) end
+    local premium = Notify.dollars(amount)
+    local body = 'Your target bought out the contract. '
+    if owed > 0 or parked > 0 then
+        body = body .. ('Your escrow and the %s buyout are yours, but not all of it is in your '
+            .. 'hands yet.'):format(premium)
+        if owed > 0 then
+            body = body .. (Identity.byCitizenId(contract.creator_cid)
+                and ' %d thing(s) would not fit and are waiting for you — they arrive when you '
+                    .. 'next have room.'
+                or  ' %d thing(s) could not be handed over yet and arrive as soon as you can '
+                    .. 'take them.'):format(owed)
+        end
+        if parked > 0 then
+            body = body .. (' %d thing(s) could not be confirmed as handed back; staff have been '
+                .. 'asked to check.'):format(parked)
+        end
+    else
+        body = body .. ('Your escrow is back and the %s buyout was paid to you.'):format(premium)
+    end
+    Notify.tellOrKeep(contract.creator_cid, 'Contract closed', body, { bypassBudget = true },
+        contract.id)
+end
+
+--- What the target who paid is told when the premium comes back: why, from
+--- how the contract stands now, and whether the money is in their hands.
+--- The refund was handed back without a word, so a target who had paid saw
+--- the card vanish (or, by /cleanse, nothing at all) and money turn up.
+---@param why string|nil the reason, when it is not the contract's ending
+local function tellRefunded(contractId, payer, amount, lineId, why)
+    if not payer then return end
+    local now = Storage.readContract(contractId)
+    local line = Storage.readEscrowLine(lineId)
+    local lead = why
+    if not lead then
+        if now and now.state == CH.STATE.COMPLETED then
+            lead = 'A hitman finished the contract on you before your buyout closed it'
+        elseif now and CH.TERMINAL[now.state] then
+            lead = 'The contract on you closed another way before your buyout went through'
+        else
+            lead = 'Your buyout could not be completed'
+        end
+    end
+    local where
+    if line and line.state == CH.ESCROW_STATE.SETTLED then
+        where = 'is back'
+    elseif line and Escrow and Escrow.parked(line) then
+        where = 'could not be confirmed as handed back; staff have been asked to check it'
+    else
+        where = 'is on its way: it arrives as soon as you can take it'
+    end
+    Notify.tellOrKeep(payer, 'Buyout refunded',
+        ('%s, so your %s %s.'):format(lead, Notify.dollars(amount), where),
+        { bypassBudget = true }, contractId)
+end
+
 --- Close a bought-out contract: the creator gets their escrow back plus the
 --- premium, and the contract resolves once.
 ---@param opts table|nil { retryable = true } when driven by the queue
@@ -538,10 +601,11 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
         -- to the target, a queue clear that raised left the record for the
         -- next tick, which refunded it again, on every tick the clear kept
         -- failing. Now a retry finds the line and its state.
-        payOwed(contract, Bailout.refundLineId(contractId, contract.bailout_queued_at),
-            targetCid, amount, account, 'bailout_refund')
+        local refundId = Bailout.refundLineId(contractId, contract.bailout_queued_at)
+        payOwed(contract, refundId, targetCid, amount, account, 'bailout_refund')
         Audit.financial('bailout_refunded', targetCid, contractId, { amount = amount, reason = err })
         Bailout.clearQueue(contractId, contract.bailout_queued_at)
+        tellRefunded(contractId, targetCid, amount, refundId)
         return false, err
     end
 
@@ -564,9 +628,12 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
         { queued_at = contract.bailout_queued_at, paid_by = contract.bailout_paid_by })
 
     Audit.financial('bailout_settled', targetCid, contractId, { amount = amount })
-    Notify.toCitizen(contract.creator_cid, 'Contract closed',
-        'Your target bought out the contract. Escrow and premium have been returned.',
-        { bypassBudget = true })
+    tellCreatorClosed(contract, amount)
+    -- And the target who paid, told nothing when a queued buyout closed: an
+    -- officer using /cleanse cannot open the app to see it.
+    Notify.tellOrKeep(targetCid, 'Buyout complete',
+        'Your buyout went through; the contract on you is closed.', { bypassBudget = true },
+        contractId)
 
     Bailout.clearQueue(contractId, contract.bailout_queued_at)
     return true
@@ -718,13 +785,13 @@ end
 --- or never recorded it.
 local function refundBuyout(contract, fields, why)
     local payer = fields.bailout_paid_by
-    payOwed(contract, Bailout.refundLineId(contract.id, fields.bailout_queued_at), payer,
+    local refundId = Bailout.refundLineId(contract.id, fields.bailout_queued_at)
+    payOwed(contract, refundId, payer,
         fields.bailout_paid_amount, fields.bailout_paid_account, 'bailout_refund')
     Audit.financial('bailout_refunded', payer, contract.id,
         { amount = fields.bailout_paid_amount, reason = why })
-    Notify.toCitizen(payer, 'Buyout refunded',
-        'Your buyout could not be completed, so your payment has been given back to you.',
-        { bypassBudget = true })
+    tellRefunded(contract.id, payer, fields.bailout_paid_amount, refundId,
+        'Your buyout could not be completed')
 end
 
 --- Whether this buyout's premium was paid: the premium line exists and says
