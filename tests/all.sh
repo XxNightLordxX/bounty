@@ -1,0 +1,68 @@
+#!/bin/sh
+# Every check, in one place.
+#
+#   lua5.4 tests/run.lua          server logic against a stubbed runtime
+#   lua5.4 tests/invariants.lua   the same suite, watched by a store monitor
+#   lua5.4 tests/static_check.lua source-level rules a unit test cannot see
+#   node    tests/ui/run.js       the real app.js against a scripted server
+#   node    tests/ui/admin_run.js the staff panel's admin.js, the same way
+#   node    tests/layout/run.js   the real page in a real browser, measured
+#   node    tests/layout/admin_run.js  the staff panel at 1280, 1920 and 1024
+#
+# Run from the repository root.
+
+set -e
+status=0
+
+echo "── server suite ─────────────────────────────────────────"
+lua5.4 tests/run.lua || status=1
+
+# The same suite again, with a monitor watching the store after every write
+# and after every test. It asserts what must be true of the store whatever
+# ran, which is the half no individual spec is responsible for.
+echo "── store invariants ─────────────────────────────────────"
+lua5.4 tests/invariants.lua || status=1
+
+echo "── static checks ────────────────────────────────────────"
+lua5.4 tests/static_check.lua || status=1
+
+echo "── ui suite ─────────────────────────────────────────────"
+if command -v node >/dev/null 2>&1; then
+    node tests/ui/run.js || status=1
+else
+    echo "node not installed; skipping the ui suite"
+fi
+
+# The staff panel (/hitmanadmin) is a page of its own, ui/admin.js, driven
+# the same way through the same DOM shim, which reads its markup here
+# (tests/ui/markup.js): every value it draws goes through its escaping
+# helper, and one that did not would turn up as an element.
+echo "── staff panel ui suite ─────────────────────────────────"
+if command -v node >/dev/null 2>&1; then
+    node tests/ui/admin_run.js || status=1
+else
+    echo "node not installed; skipping the staff panel ui suite"
+fi
+
+# Layout is the one thing neither of the others can see: the server suite
+# has no DOM, and the ui suite's DOM shim has no layout engine, so a control
+# that is present, correct and three pixels tall passes both. This renders
+# the real page in a real browser and measures it. It skips itself where
+# playwright is not installed.
+echo "── layout suite ─────────────────────────────────────────"
+if command -v node >/dev/null 2>&1; then
+    node tests/layout/run.js || status=1
+else
+    echo "node not installed; skipping the layout suite"
+fi
+
+# And the staff panel at the desktop sizes it opens at, without its icon
+# font (a game that cannot reach the CDN draws it so).
+echo "── staff panel layout suite ─────────────────────────────"
+if command -v node >/dev/null 2>&1; then
+    node tests/layout/admin_run.js || status=1
+else
+    echo "node not installed; skipping the staff panel layout suite"
+fi
+
+exit $status

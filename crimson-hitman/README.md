@@ -2172,8 +2172,8 @@ The suite runs the real server modules against a stubbed FiveM runtime, so it
 can be run anywhere Lua is installed:
 
 ```bash
-sh crimson-hitman/tests/all.sh    # everything
-CH_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in seconds
+sh tests/all.sh    # everything
+CH_SUITES=journeys_spec lua tests/run.lua   # one area, in seconds
 ```
 
 Six kinds of check, because each catches what the others cannot:

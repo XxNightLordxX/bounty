@@ -23,8 +23,8 @@ crimson-hitman/data/photos/.mode
 # moved into a real suite and registered in tests/run.lua, so what is left
 # under these names is by definition scratch — and three times now it has
 # ended up staged by a `git add -A` and had to be taken back out.
-crimson-hitman/tests/_probe*.lua
-crimson-hitman/tests/zz_*.lua
+tests/_probe*.lua
+tests/zz_*.lua
 zz_*.lua
 
 # Worktrees created for isolated subagent runs. Never part of the repo.

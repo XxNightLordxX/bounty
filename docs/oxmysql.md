@@ -1,7 +1,7 @@
 # oxmysql: how it behaves, as crimson-hitman's mysql store relies on it
 
 This is the reference the mysql store (`crimson-hitman/server/storage/mysql.lua`) and the
-test harness that stands in for oxmysql (`crimson-hitman/tests/harness/mysql_exec.lua`,
+test harness that stands in for oxmysql (`tests/harness/mysql_exec.lua`,
 `natives.lua`, `await_scheduler.lua`) cite as `docs/oxmysql.md §N`. Each section says what
 oxmysql does, so a comment that leans on it can be checked here.
 
@@ -55,7 +55,7 @@ On `query`, `single`, `scalar`, `update`, `insert` and `transaction` (OX
 | boolean | `true` / `false`, stored as 1 / 0, never NULL (SE). |
 | a sequence table as one value | Expanded to `a, b, c`: right for `IN (?)` only. |
 
-This resource's SQL never holds `:` or `@` (a rule in `crimson-hitman/tests/static_check.lua`),
+This resource's SQL never holds `:` or `@` (a rule in `tests/static_check.lua`),
 because about twenty of its writes send tables with holes.
 
 ## 3. Return shapes

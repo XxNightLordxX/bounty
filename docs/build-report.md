@@ -65,7 +65,7 @@ You said to use my judgement. These are the ones that were mine:
 ## How it was verified
 
 ```
-sh crimson-hitman/tests/all.sh
+sh tests/all.sh
 ```
 
 - **2,394 server tests** (the run of 20 October 2026) — escrow arithmetic,

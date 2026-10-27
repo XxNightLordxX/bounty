@@ -1,0 +1,1072 @@
+--- Abuse, anonymity and griefing, driven the way a hostile client would.
+---
+--- Each block is one hole that was open: a way for one player to make
+--- themselves unclaimable, to learn who an anonymous client is, to put text
+--- on the board the operator had banned, to skip a creator's waits by
+--- switching character, to have their own number shown on a call they paid
+--- to keep hidden, or to freeze somebody else's contract.
+
+local AT = { x = 200.0, y = 200.0, z = 30.0 }
+
+local function fire(name, src, ...)
+    local handler = Env.events[name]
+    if not handler then return nil, 'not registered: ' .. name end
+    _G.source = src
+    local ok, err = pcall(handler, ...)
+    _G.source = nil
+    return ok, err
+end
+
+--- A net event, the way a client sends it, and the reply it gets.
+local function call(name, src, payload)
+    local handler = Env.events['crimson-hitman:' .. name]
+    if not handler then return { ok = false, err = 'NO SUCH HANDLER' } end
+    Env.clientEvents = {}
+    _G.source = src
+    local fired, err = pcall(handler, payload or {})
+    _G.source = nil
+    if not fired then return { ok = false, err = 'THREW: ' .. tostring(err) } end
+    for _, event in ipairs(Env.clientEvents) do
+        if event.name == 'crimson-hitman:result' then return event.args[1] end
+    end
+    return nil
+end
+
+local function place(s, actor, opts)
+    opts = opts or {}
+    local c, err = s.contracts.create(actor, {
+        targetCid = opts.target or 'TARGET01', reason = opts.reason or 'Unpaid debt',
+        mode = opts.mode or CH.MODE.COMPETITIVE,
+        reward = { baseline = { cash = opts.cash or 5000 } },
+        anonymous = opts.anonymous, penaltyAmount = opts.penalty,
+    })
+    truthy(c, 'the contract has to exist to be abused: ' .. tostring(err))
+    return c
+end
+
+--------------------------------------------------------------------------
+-- The new-player clock
+--------------------------------------------------------------------------
+
+describe('a client-fired login event', function()
+    --- QBCore:Server:OnPlayerLoaded is a net event any client can fire. It
+    --- restarted the session clock, and immunity is re-checked on every
+    --- payout: a target who fired it every nine minutes could never be
+    --- claimed on, by a kill or by a handover.
+    it('does not make a target who has been here for an hour just-arrived', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.advance(3600)
+
+        for _ = 1, 5 do
+            truthy(fire('QBCore:Server:OnPlayerLoaded', 2))
+            Env.advance(9 * 60)
+            local immune, why = s.contracts.isImmune(s.identity.resolve(2))
+            falsy(immune, 'the target made themselves immune: ' .. tostring(why))
+        end
+
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {})
+        truthy(ok, 'and the hitman is paid for the kill: ' .. tostring(err))
+    end)
+
+    it('does not restart a session it watched begin', function()
+        local s = newStack()
+        fixture(s)
+        s.bridges.install(s)
+        -- A real arrival: the character loads and the framework says so.
+        s.identity.endSession('TARGET01')
+        truthy(fire('local:qbx_core:server:playerLoaded', nil, { PlayerData = { source = 2 } }))
+        eq(s.identity.sessionMinutes('TARGET01'), 0, 'a real login starts the clock')
+
+        Env.advance(15 * 60)
+        fire('QBCore:Server:OnPlayerLoaded', 2)
+        fire('local:qbx_core:server:playerLoaded', nil, { PlayerData = { source = 2 } })
+        eq(s.identity.sessionMinutes('TARGET01'), 15, 'and nothing sent afterwards restarts it')
+    end)
+
+    it('does not make anybody just-arrived straight after a restart either', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        -- A fresh process: everyone already in the city is noticed, not
+        -- watched arriving, and so has no session floor at all.
+        s.identity.endSession('TARGET01')
+        s.identity.resolve(2)
+        eq(s.identity.sessionMinutes('TARGET01'), nil, 'noticed, length unknown')
+
+        truthy(fire('QBCore:Server:OnPlayerLoaded', 2))
+        local immune, why = s.contracts.isImmune(s.identity.resolve(2))
+        falsy(immune, 'a client turned "noticed" into "just arrived": ' .. tostring(why))
+        local _ = f
+    end)
+
+    it('never begins a watched session on the say-so of a client', function()
+        -- Unreachable through the bridge today, which resolves the player
+        -- (noting them) first; held on its own so it stays that way.
+        local s = newStack()
+        fixture(s)
+        s.identity.endSession('TARGET01')
+        falsy(s.identity.confirmSession('TARGET01', true))
+        eq(s.identity.sessionMinutes('TARGET01'), nil, 'noticed, not watched arriving')
+        truthy(s.identity.confirmSession('TARGET01'), 'the server\'s own event still can')
+    end)
+
+    it('still protects somebody who has really just arrived', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        -- Disconnect and reconnect: the drop ends the session, the arrival
+        -- is noticed, and the login event confirms it.
+        -- In the order stock qbx_core sends them: the server's own login
+        -- event, then the client's. The first was never listened for, and
+        -- the floor applied only where a test fired a name qbx_core never
+        -- has.
+        truthy(fire('local:playerDropped', 2))
+        s.identity.resolve(2)
+        truthy(fire('local:QBCore:Server:PlayerLoaded', nil, { PlayerData = { source = 2 } }))
+        truthy(fire('QBCore:Server:OnPlayerLoaded', 2))
+        local immune, why = s.contracts.isImmune(s.identity.resolve(2))
+        truthy(immune, 'a player who has just walked in is not fair game')
+        eq(why, CH.ERR.TARGET_JUST_ON)
+
+        Env.advance((Config.Immunity.MinTargetSessionMinutes + 1) * 60)
+        falsy(s.contracts.isImmune(s.identity.resolve(2)), 'and then they are')
+        local _ = f
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- An anonymous client's presence
+--------------------------------------------------------------------------
+
+describe("an anonymous client's presence", function()
+    it('is not written on the board (§14.32)', function()
+        local s = newStack()
+        local f = fixture(s)
+        place(s, f.creator, { anonymous = true })
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 1)
+
+        Env.removePlayer(1)
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 1,
+            'the anonymous contract vanished when its creator logged off')
+    end)
+
+    it('still hides a named contract whose creator is away (§7.1)', function()
+        local s = newStack()
+        local f = fixture(s)
+        place(s, f.creator)
+        Env.removePlayer(1)
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 0)
+    end)
+
+    it('still hides any contract whose target is away', function()
+        local s = newStack()
+        local f = fixture(s)
+        place(s, f.creator, { anonymous = true })
+        Env.removePlayer(2)
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 0)
+    end)
+
+    it('cannot be asked by pressing Arm', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator, { anonymous = true })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._coords = { x = 0.0, y = 0.0, z = 0.0 }
+        Env.players[2]._coords = { x = 900.0, y = 900.0, z = 0.0 }
+        Env.players[1]._coords = { x = 1500.0, y = 100.0, z = 0.0 }
+
+        local online = call('armKidnap', 3, { id = c.id })
+        Env.removePlayer(1)
+        local offline = call('armKidnap', 3, { id = c.id })
+        falsy(online.ok)
+        eq(offline.err, online.err,
+            'the refusal said whether the anonymous client was in the city')
+    end)
+
+    it('reads as not here, not as offline, with everything else in place', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator, { anonymous = true })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        for _, src in ipairs({ 1, 2, 3 }) do Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z } end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        Env.players[1]._coords = { x = 9000.0, y = 9000.0, z = 30.0 }
+
+        local _, far = s.kidnap.arm(c.id, 'HITMAN01')
+        Env.removePlayer(1)
+        local _, gone = s.kidnap.arm(c.id, 'HITMAN01')
+        eq(far, 'creator_too_far')
+        eq(gone, far)
+    end)
+
+    it('is not named when a countdown fails for it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator, { anonymous = true })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        for _, src in ipairs({ 1, 2, 3 }) do Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z } end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+
+        Env.removePlayer(1)
+        Env.clientEvents = {}
+        for _ = 1, math.ceil((Config.Kidnap.MaxTotalGraceMs + 2000) / Config.Kidnap.TickMs) do
+            s.kidnap.tick(Config.Kidnap.TickMs)
+        end
+
+        local said
+        for _, event in ipairs(Env.clientEvents) do
+            if Natives.isNotice(event) and event.target == 3 then
+                said = event.args[1].content
+            end
+        end
+        truthy(said, 'the hitman is told the handover failed')
+        falsy(said:find('offline', 1, true), 'and not that their client went offline: ' .. said)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- The reason on the board
+--------------------------------------------------------------------------
+
+describe('a reason changed by agreement', function()
+    --- On a contract nobody holds the client is the only party, so the
+    --- proposal is applied in the one request.
+    local function agree(s, c, payload)
+        local proposed = call('propose', 1, { id = c.id, kind = 'change_reason', payload = payload })
+        if not proposed.ok then return proposed end
+        if proposed.data.outcome == 'applied' then return { ok = true } end
+        return { ok = false, err = proposed.data.err }
+    end
+
+    it('answers to the banned patterns, as a placed or edited one does', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        local r = agree(s, c, { reason = 'join https://discord.gg/abc' })
+        falsy(r.ok)
+        eq(r.err, CH.ERR.REASON_REFUSED)
+        eq(r.data and r.data.rule, 'pattern', 'with the rule, as placing and Edit say it')
+        eq(s.storage.readContract(c.id).reason, 'Unpaid debt', 'a link reached the board')
+    end)
+
+    it('answers to the phone word list', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        -- The harness phone refuses 'slur'.
+        local r = agree(s, c, { reason = 'a slur here' })
+        falsy(r.ok)
+        eq(s.storage.readContract(c.id).reason, 'Unpaid debt')
+    end)
+
+    it('takes only a preset on a preset server', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Reason.Mode = 'preset'
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reasonPreset = 1,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        falsy(agree(s, c, { reason = 'anything I like' }).ok,
+            'free text on a server that only takes presets')
+        eq(s.storage.readContract(c.id).reason, Config.Reason.Presets[1])
+
+        truthy(agree(s, c, { reasonPreset = 2 }).ok, 'a preset is still a change it can make')
+        eq(s.storage.readContract(c.id).reason, Config.Reason.Presets[2])
+    end)
+
+    it('is not offered on a server that shows no reason', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Reason.Mode = 'off'
+        local c = place(s, f.creator)
+        falsy(agree(s, c, { reason = 'anything' }).ok)
+    end)
+
+    it('still goes through when it is an ordinary reason', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(agree(s, c, { reason = 'Stolen product' }).ok)
+        eq(s.storage.readContract(c.id).reason, 'Stolen product')
+    end)
+
+    it('is refused, not thrown, when the kind is missing or not a word', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        for _, kind in ipairs({ false, 7, {} }) do
+            local r = call('propose', 1, { id = c.id, kind = kind or nil })
+            eq(r.err, CH.ERR.INVALID_INPUT, 'kind ' .. tostring(kind))
+        end
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- A creator's waits, across characters
+--------------------------------------------------------------------------
+
+describe("a creator's limits, on another character", function()
+    local function relogAs(cid)
+        Env.removePlayer(1)
+        Env.addPlayer({ source = 1, citizenid = cid, license = 'license:aaa',
+            cash = 100000, bank = 100000, firstname = 'Alt', lastname = 'Ego' })
+    end
+
+    it('still waits out naming the same person again', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.cancel(f.creator, c.id))
+        Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 60)
+
+        relogAs('CREATOR2')
+        local again, err = s.contracts.create(s.identity.resolve(1), {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        falsy(again, 'a second character on the same licence skipped the two-hour wait')
+        eq(err, CH.ERR.SAME_TARGET_TOO_SOON)
+    end)
+
+    it('still waits out a cancellation', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.addPlayer({ source = 7, citizenid = 'TARGET02', license = 'license:t2' })
+        local c = place(s, f.creator)
+        truthy(s.contracts.cancel(f.creator, c.id))
+
+        relogAs('CREATOR2')
+        local _, err = s.contracts.create(s.identity.resolve(1), {
+            targetCid = 'TARGET02', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        eq(err, CH.ERR.CANCELLED_TOO_SOON)
+    end)
+
+    it('counts open contracts across every character', function()
+        local s = newStack()
+        local f = fixture(s)
+        for i = 1, Config.Limits.MaxActiveContractsPerCreator do
+            local cid = ('TGT%05d'):format(i)
+            Env.addPlayer({ source = 20 + i, citizenid = cid, license = 'license:t' .. i })
+            place(s, s.identity.resolve(1), { target = cid })
+        end
+
+        relogAs('CREATOR2')
+        Env.addPlayer({ source = 40, citizenid = 'TGTEXTRA', license = 'license:extra' })
+        local _, err = s.contracts.create(s.identity.resolve(1), {
+            targetCid = 'TGTEXTRA', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        eq(err, CH.ERR.LIMIT_REACHED)
+        local _ = f
+    end)
+
+    it('does not hold one player to another player\'s contracts', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.cancel(f.creator, c.id))
+        Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 60)
+
+        Env.addPlayer({ source = 8, citizenid = 'OTHERCR1', license = 'license:other',
+            cash = 100000, bank = 100000 })
+        truthy(s.contracts.create(s.identity.resolve(8), {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        }), 'somebody else is not bound by this creator\'s waits')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Masked calls
+--------------------------------------------------------------------------
+
+describe('a call from somebody who paid to stay anonymous', function()
+    local function withPlacer(fn)
+        local dialled
+        Natives.callExport = function(_, caller, number, anonymous)
+            dialled = { caller = caller, number = number, anonymous = anonymous }
+            return true
+        end
+        withConfig({ { Config.Relay, 'CallExport', { resource = 'lb-phone', export = 'StartCall' } } }, function()
+            fn(function() return dialled end)
+        end)
+        Natives.callExport = nil
+    end
+
+    it('hides the caller', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator, { anonymous = true })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local thread = s.comms.threads(f.creator, c.id)[1]
+
+        withPlacer(function(dialled)
+            s.comms.resetCallCache()
+            local ok, err = s.comms.requestCall(f.creator, c.id, thread.handle)
+            truthy(ok, tostring(err))
+            eq(dialled().caller, 1)
+            eq(dialled().anonymous, true, "the anonymous creator's own number was shown")
+        end)
+    end)
+
+    it('hides an anonymous operative calling a named client', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+
+        withPlacer(function(dialled)
+            s.comms.resetCallCache()
+            truthy(s.comms.requestCall(f.hitman, c.id, nil))
+            eq(dialled().anonymous, true)
+        end)
+    end)
+
+    --- Refused, as Relay.RequireMaskingForAnonymous says, and nobody is
+    --- asked to call back: the call back would show the same number, so the
+    --- named party was sent to a Call that could only be refused (W117).
+    it('is not dialled on a phone that cannot mask, and nobody is asked to call back', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator, { anonymous = true })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local thread = s.comms.threads(f.creator, c.id)[1]
+
+        withPlacer(function(dialled)
+            withConfig({ { Natives, 'phoneConfig', { AnonymousCalls = false } } }, function()
+                s.comms.resetCallCache()
+                s.comms.resetMaskingCache()
+                Natives.calls.notifications = {}
+                local ok, err = s.comms.requestCall(f.creator, c.id, thread.handle)
+                falsy(ok)
+                eq(err, CH.ERR.CALL_UNMASKED)
+                falsy(dialled(), 'an unmaskable call was placed')
+                eq(#Natives.calls.notifications, 0, 'nobody asked for a call that cannot happen')
+            end)
+        end)
+        s.comms.resetMaskingCache()
+    end)
+
+    it('is still an ordinary call between two named parties', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        withPlacer(function(dialled)
+            s.comms.resetCallCache()
+            truthy(s.comms.requestCall(f.hitman, c.id, nil))
+            eq(dialled().anonymous, false)
+        end)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Informant data bought by the creator
+--------------------------------------------------------------------------
+
+describe('informant data bought by the creator', function()
+    --- Both orders of acceptance, because the draw is fixed per contract
+    --- and buyer: whichever operative lands on the drawn index is named, so
+    --- one of the two orders put the named operative there.
+    for _, namedFirst in ipairs({ true, false }) do
+        it(('unmasks the anonymous operative, not the named one (%s accepted first)')
+            :format(namedFirst and 'named' or 'anonymous'), function()
+            local s = newStack()
+            local f = fixture(s)
+            Env.addPlayer({ source = 5, citizenid = 'HITMAN02', license = 'license:h2',
+                cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+            local c = place(s, f.creator)
+            local named, anon = f.hitman, s.identity.resolve(5)
+            if namedFirst then
+                truthy(s.contracts.accept(named, c.id, false))
+                truthy(s.contracts.accept(anon, c.id, true))
+            else
+                truthy(s.contracts.accept(anon, c.id, true))
+                truthy(s.contracts.accept(named, c.id, false))
+            end
+            -- Both are on the target.
+            s.death.watchTargets(s.storage.allContracts())
+
+            local ok, err, data = s.informant.buy(f.creator, c.id)
+            truthy(ok, tostring(err))
+            eq(data.name, 'Kade Wolfe',
+                'the creator paid for a name already on their own card')
+        end)
+    end
+
+    it('still names any operative to the target, who sees no roster', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        s.death.watchTargets(s.storage.allContracts())
+        Env.players[2].PlayerData.money.bank = Config.Informant.Cost
+        local ok, err, data = s.informant.buy(f.target, c.id)
+        truthy(ok, tostring(err))
+        eq(data.name, 'Rook Ash')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- An exclusive contract nobody is working
+--------------------------------------------------------------------------
+
+describe('an exclusive contract held by somebody who is not working it', function()
+    local function held(opts)
+        opts = opts or {}
+        local s = newStack()
+        local f = fixture(s)
+        Env.addPlayer({ source = 4, citizenid = 'REALHIT', license = 'license:real',
+            cash = 50000, bank = 50000 })
+        local c = place(s, f.creator, { mode = CH.MODE.EXCLUSIVE, cash = 50000,
+            penalty = opts.penalty, anonymous = opts.anonymous })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        -- Nowhere near the target.
+        Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
+        return s, f, c
+    end
+
+    --- Minutes of the server running: the condition sampler every second
+    --- is folded into one pass a minute, and the maintenance job runs.
+    local function run(s, minutes)
+        for _ = 1, minutes do
+            Env.advance(60)
+            s.death.watchTargets(s.storage.allContracts())
+            s.contracts.releaseIdleHolds()
+        end
+    end
+
+    it('goes back on the board', function()
+        local s, f, c = held()
+        s.contracts.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'the hold was never released')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false),
+            'somebody who will work it can take it')
+        local _ = f
+    end)
+
+    it('is not released while the target is in prison', function()
+        -- The deadline stops for a sentence; the hold's idle clock ran on,
+        -- and the hitman was taken off for not going near a target locked
+        -- in Bolingbroke.
+        local s, f, c = held()
+        local zone = Config.Limits.JailZone
+        Env.players[2].PlayerData.metadata.injail = 120
+        Env.players[2]._coords = { x = zone.x, y = zone.y, z = 45.0 }
+        s.contracts.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 5)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'still theirs')
+        local _ = f
+    end)
+
+    --- W016: going idle for half an hour instead of tapping Abandon gave
+    --- the stake back, while walking away openly forfeited it.
+    it('hands the stake to the person who placed it, the same money as walking away', function()
+        local function purse(src)
+            return Env.players[src].PlayerData.money.bank + Env.players[src].PlayerData.money.cash
+        end
+        local function leaving(leave)
+            local s, f, c = held({ penalty = 2000 })
+            eq(s.storage.readContract(c.id).penalty_amount, 2000)
+            local client, hitman = purse(1), purse(3)
+            leave(s, f, c)
+            return purse(1) - client, purse(3) - hitman
+        end
+        local idleClient, idleHitman = leaving(function(s)
+            s.contracts.releaseIdleHolds()
+            run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+        end)
+        local walkClient, walkHitman = leaving(function(s, f, c)
+            truthy(s.contracts.abandon(f.hitman, c.id))
+        end)
+        eq(idleClient, 2000, 'the stake went back to the hitman who sat on it')
+        eq(idleHitman, 0)
+        eq(idleClient, walkClient, 'going idle and walking away cost the same')
+        eq(idleHitman, walkHitman)
+    end)
+
+    --- W015: walking away and straight back started both idle clocks from
+    --- nothing, so a friend tapping Abandon every 25 minutes held it for good.
+    it('cannot be walked away from and taken straight back, on any character', function()
+        local s, f, c = held()
+        s.contracts.releaseIdleHolds()
+        run(s, 25)
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        Env.advance(20)
+        local r = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 0 })
+        eq(r.err, CH.ERR.RETAKE_TOO_SOON)
+        local wait = r.data and r.data.retryAfter or 0
+        truthy(wait > 0 and wait <= Config.Limits.ExclusiveIdleReleaseSeconds,
+            'and how long: ' .. tostring(wait))
+
+        Env.removePlayer(3)
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN02', license = 'license:ccc',
+            cash = 5000, bank = 5000 })
+        local _, err = s.contracts.accept(s.identity.resolve(3), c.id, false)
+        eq(err, CH.ERR.RETAKE_TOO_SOON, 'another character of the same player')
+
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false),
+            'it is on the board for anybody else meanwhile')
+    end)
+
+    it('may be taken again once a whole idle window has passed', function()
+        local s, f, c = held()
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        Env.advance(Config.Limits.ExclusiveIdleReleaseSeconds + 1)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+    end)
+
+    --- W019: five friends on a competitive contract, far from its target:
+    --- every real hitman was refused it as full, and its client could not
+    --- cancel it.
+    it('takes the idle holder off a full competitive contract, and leaves one with room alone', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxHitmenPerContract = 2
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 5000 })
+        Env.addPlayer({ source = 5, citizenid = 'REALHIT', license = 'license:real',
+            cash = 5000, bank = 5000 })
+        local c = place(s, f.creator, { mode = CH.MODE.COMPETITIVE, cash = 50000 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
+        local minutes = math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1
+
+        s.contracts.releaseIdleHolds()
+        run(s, minutes)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'it had room for another')
+
+        -- Full now. The second works it, beside the target.
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        Env.players[4]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        local _, full = s.contracts.accept(s.identity.resolve(5), c.id, false)
+        eq(full, CH.ERR.CONTRACT_FULL)
+        run(s, minutes)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released', 'the idle one was kept on')
+        eq(s.storage.readHitman(c.id, 'HITMAN02').state, 'active', 'and not the one working it')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        truthy(s.contracts.accept(s.identity.resolve(5), c.id, false), 'a real hitman gets the place')
+    end)
+
+    it('is not taken back by the same player, on any character', function()
+        local s, f, c = held()
+        s.contracts.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+
+        local r = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 0 })
+        eq(r.err, CH.ERR.HOLD_RELEASED)
+
+        Env.removePlayer(3)
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN02', license = 'license:ccc',
+            cash = 5000, bank = 5000 })
+        local _, err = s.contracts.accept(s.identity.resolve(3), c.id, false)
+        eq(err, CH.ERR.HOLD_RELEASED)
+        local _ = f
+    end)
+
+    it('leaves alone a hitman who is working it', function()
+        local s, f, c = held()
+        Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        s.contracts.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) * 3)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        local _ = f
+    end)
+
+    --- Near, and nothing else. A target's friend holding the contract for
+    --- them is near the target by definition, and being near reset the idle
+    --- clock on every pass: the contract stayed frozen until its deadline.
+    it('releases a holder who stays near the target and never makes an attempt', function()
+        local s, f, c = held()
+        Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        Natives.calls.notifications = {}
+        s.contracts.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveAttemptWindowSeconds / 60) + 1)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released',
+            'sat beside the target for hours and kept the contract from everyone')
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.content):find('making an attempt', 1, true) then told = true end
+        end
+        truthy(told, 'and told why')
+        local _ = f
+    end)
+
+    it('keeps a holder who lands a hit now and then', function()
+        local s, f, c = held()
+        Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        s.contracts.releaseIdleHolds()
+        for _ = 1, 4 do
+            run(s, 45)
+            Env.players[2]._health = (Env.players[2]._health or 200) - 5
+            s.death.recordDamage(3, 2, 123456)
+        end
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
+        local _ = f
+    end)
+
+    it('keeps a holder who arms a handover now and then', function()
+        local s, f, c = held()
+        Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        s.contracts.releaseIdleHolds()
+        for _ = 1, 4 do
+            run(s, 45)
+            s.contracts.noteAttempt(c.id, 'HITMAN01')
+        end
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
+        local _ = f
+    end)
+
+    it('does not count time the target is not in the city', function()
+        local s, f, c = held()
+        s.contracts.releaseIdleHolds()
+        run(s, math.floor(Config.Limits.ExclusiveIdleReleaseSeconds / 60) - 5)
+
+        local target = Env.players[2]
+        Env.removePlayer(2)
+        run(s, 120)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active',
+            'released for not finding a target who was not there')
+
+        Env.players[2] = target
+        Env.byCitizen['TARGET01'] = 2
+        run(s, 10)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
+        local _ = f
+    end)
+
+    it('does not count time a named client is away', function()
+        local s, f, c = held()
+        s.contracts.releaseIdleHolds()
+        Env.removePlayer(1)
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active',
+            'released while the client the handover is for was not in the city')
+        local _ = f
+    end)
+
+    it('counts time an anonymous client is away, which nobody may know', function()
+        local s, f, c = held({ anonymous = true })
+        s.contracts.releaseIdleHolds()
+        Env.removePlayer(1)
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released',
+            'the moment of the release told the holder when the client was in the city')
+        local _ = f
+    end)
+
+    it('still sees a hold taken before a restart', function()
+        local s, f, c = held()
+        -- A fresh process knows nothing of what was accepted before it;
+        -- boot rebuilds the index from the store.
+        package.loaded['crimson-hitman.server.contracts'] = nil
+        local fresh = require('crimson-hitman.server.contracts')
+        fresh.init({ storage = s.storage, escrow = s.escrow, identity = s.identity,
+                     audit = s.audit, notify = s.notify, progression = s.progression,
+                     death = s.death })
+        s.contracts = fresh
+        eq(fresh.reindexHolds(), 1)
+        fresh.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
+        local _ = f
+    end)
+
+    it('can be switched off', function()
+        local s, f, c = held()
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
+        s.contracts.releaseIdleHolds()
+        run(s, 240)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
+        local _ = f
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- A friend's contracts that nobody can finish
+--------------------------------------------------------------------------
+
+--- W006: under 'alive' a contract pays only when the target is brought to
+--- its client. Two $1,000 contracts from a friend filled the target's cap,
+--- the friend logged off, the board hid both from everybody, and every real
+--- enemy was refused for the two days the contracts lived.
+describe('a friend filling the cap on a target', function()
+    local Shipped = require('tests.harness.shipped')
+
+    local function friends()
+        local s = Shipped.newStack()
+        local f = fixture(s)
+        for i, who in ipairs({ 'FRIEND01', 'FRIEND02', 'ENEMY001' }) do
+            Env.addPlayer({ source = 10 + i, citizenid = who, license = 'license:f' .. i,
+                cash = 100000, bank = 100000, firstname = 'Pal', lastname = tostring(i) })
+        end
+        return s, f, s.identity.resolve(11), s.identity.resolve(12), s.identity.resolve(13)
+    end
+
+    local function onTarget(s, actor, opts)
+        opts = opts or {}
+        return s.contracts.create(actor, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 1000 } }, anonymous = opts.anonymous,
+        })
+    end
+
+    it('lets a real enemy place once the friends who filled it log off', function()
+        local s, _, one, two, enemy = friends()
+        truthy(onTarget(s, one))
+        truthy(onTarget(s, two))
+        local _, err = onTarget(s, enemy)
+        eq(err, CH.ERR.TARGET_HAS_ENOUGH, 'the cap holds while they are here and listed')
+        Env.removePlayer(11)
+        Env.removePlayer(12)
+        local c, why = onTarget(s, enemy)
+        truthy(c, 'two hidden contracts nobody can take kept a real enemy off: ' .. tostring(why))
+    end)
+
+    it('still counts them while the target is away, so nothing piles up on them', function()
+        local s, f, one, two, enemy = friends()
+        truthy(onTarget(s, one))
+        truthy(onTarget(s, two))
+        Env.removePlayer(11)
+        Env.removePlayer(12)
+        local target = f.target
+        Env.removePlayer(2)
+        local ok, err = s.contracts.canCreate(enemy, target)
+        falsy(ok)
+        eq(err, CH.ERR.TARGET_HAS_ENOUGH)
+    end)
+
+    it('counts an anonymous friend, whose presence is never asked, and a held one', function()
+        local s, _, one, two, enemy = friends()
+        truthy(onTarget(s, one, { anonymous = true }))
+        local held = onTarget(s, two)
+        truthy(held)
+        truthy(s.contracts.accept(s.identity.resolve(3), held.id, false))
+        Env.removePlayer(11)
+        Env.removePlayer(12)
+        local _, err = onTarget(s, enemy)
+        eq(err, CH.ERR.TARGET_HAS_ENOUGH)
+    end)
+
+    it('takes one live contract per player on one target', function()
+        local s, _, one = friends()
+        truthy(onTarget(s, one))
+        local c, err = onTarget(s, one)
+        falsy(c, 'one friend filled the cap alone')
+        eq(err, CH.ERR.SAME_TARGET_ACTIVE)
+    end)
+end)
+
+describe('an anonymous operative logging off', function()
+    --- The client's handle for the operative's thread was dropped when the
+    --- operative disconnected: a message, a call or a re-read with it came
+    --- back not_participant, and `threads` handed out a new one — the moment
+    --- the anonymous operative left the city and returned, for the asking.
+    local function threaded()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        local c = place(s, f.creator, { mode = CH.MODE.COMPETITIVE })
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        local thread = s.comms.threads(f.creator, c.id)[1]
+        truthy(thread and thread.handle)
+        return s, f, c, thread.handle
+    end
+
+    it('reads the same to the client whether the operative is here or not', function()
+        local s, f, c, handle = threaded()
+        local here = { s.comms.send(f.creator, c.id, handle, 'still there?') }
+
+        require('crimson-hitman.server.bridges').onPlayerDropped(s, 'HITMAN01')
+        Env.removePlayer(3)
+        local away = { s.comms.send(f.creator, c.id, handle, 'still there?') }
+        eq(away[1], here[1], 'the answer changed when they logged off: ' .. tostring(away[2]))
+        eq(s.comms.threads(f.creator, c.id)[1].handle, handle,
+            'a fresh handle said they had gone')
+        local ok = s.comms.requestCall(f.creator, c.id, handle)
+        truthy(ok, 'a call request refused only because they were away')
+    end)
+
+    it('still closes the thread when they leave the contract', function()
+        local s, f, c, handle = threaded()
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        local ok = s.comms.send(f.creator, c.id, handle, 'hello?')
+        falsy(ok, 'writing to an operative who is no longer on it')
+    end)
+end)
+
+describe('odd values where a table or a page number goes', function()
+    --- Each of these threw inside its handler. A thrown handler answers
+    --- server_error and refunds its own rate limit, so it could be sent
+    --- again at the flood guard's pace, and every one wrote a console line
+    --- and an audit row.
+    it('refuses a proposal whose payload is not a table', function()
+        local s = newStack()
+        s.app.init(s)
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        for _, payload in ipairs({ true, 0, 'x' }) do
+            local reply = call('propose', 1, { id = c.id, kind = 'cancel', payload = payload })
+            truthy(reply, 'answered')
+            falsy(tostring(reply.err):find('THREW', 1, true), tostring(reply.err))
+            eq(reply.err, CH.ERR.INVALID_INPUT, tostring(payload))
+        end
+    end)
+
+    it('answers a board page far past the end', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        for _, page in ipairs({ 2^62, math.huge, -5, 0/0 }) do
+            local reply = call('list', 3, { page = page })
+            truthy(reply and reply.ok, 'page ' .. tostring(page) .. ': ' .. tostring(reply and reply.err))
+            truthy(reply.data.page == math.floor(reply.data.page) and reply.data.page >= 1,
+                'a page number that means something: ' .. tostring(reply.data.page))
+        end
+    end)
+end)
+
+describe('a refused request, over and over', function()
+    --- Every rate-limited request wrote an audit row: hundreds a minute from
+    --- one client, kept for a month in a file rewritten in full each flush.
+    it('is written down once per window, not once per request', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        Config.Cooldowns.wallet = { per = 60, burst = 1 }
+        for _ = 1, 40 do call('rewardOptions', 3, {}) end
+        s.audit.flush()
+        local rows = 0
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'ratelimit_rewardOptions' then rows = rows + 1 end
+        end
+        eq(rows, 1, 'one refusal is one fact, however often it is repeated')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- A muted thread (§11.4)
+--------------------------------------------------------------------------
+
+describe('a muted thread', function()
+    --- A named contract with one operative on it, and the client's handle
+    --- for their thread.
+    local function talking()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        return s, f, c, s.comms.threads(f.creator, c.id)[1].handle
+    end
+
+    --- 'crimson-hitman:notify' counts a phone notification by either
+    --- route: saved through lb-phone's server export, or the client's popup.
+    local function count(name, target, title)
+        local n = 0
+        for _, event in ipairs(Env.clientEvents) do
+            local named = event.name == name
+                or (name == 'crimson-hitman:notify' and Natives.isNotice(event))
+            if named and event.target == target
+                and (not title or event.args[1].title == title) then
+                n = n + 1
+            end
+        end
+        return n
+    end
+
+    it('does not ring the one who muted it, and the message still arrives', function()
+        local s, f, c, handle = talking()
+        local reply = call('muteThread', 1, { id = c.id, thread = handle, muted = true })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        eq(reply.data.muted, true)
+
+        s.notify.clearPush('CREATOR1')
+        Env.clientEvents = {}
+        truthy(s.comms.send(f.hitman, c.id, nil, 'On my way.'))
+        eq(count('crimson-hitman:notify', 1, 'Contract message'), 0, 'the muted thread rang')
+        eq(count('crimson-hitman:push', 1), 1, 'an open thread still has to redraw')
+
+        local read = call('readThread', 1, { id = c.id, thread = handle })
+        eq(read.data.messages[#read.data.messages].body, 'On my way.')
+        eq(read.data.muted, true, 'the client is shown their own mute')
+    end)
+
+    it('silences only the one who muted it, and rings again once unmuted', function()
+        local s, f, c, handle = talking()
+        truthy(s.comms.mute(f.creator, c.id, handle, true))
+
+        Env.clientEvents = {}
+        truthy(s.comms.send(f.creator, c.id, handle, 'Where are you?'))
+        eq(count('crimson-hitman:notify', 3, 'Contract message'), 1,
+            'the operative did not mute anything')
+
+        truthy(s.comms.mute(f.creator, c.id, handle, false))
+        Env.clientEvents = {}
+        truthy(s.comms.send(f.hitman, c.id, nil, 'Here.'))
+        eq(count('crimson-hitman:notify', 1, 'Contract message'), 1)
+    end)
+
+    it('still lets contract notices through', function()
+        local s, f, c = talking()
+        truthy(s.comms.mute(f.hitman, c.id, nil, true))
+        truthy(s.comms.mute(f.creator, c.id, s.comms.threads(f.creator, c.id)[1].handle, true))
+        Env.clientEvents = {}
+        truthy(s.amendments.propose(f.hitman, c.id, 'shorten_deadline', { seconds = 600 }))
+        eq(count('crimson-hitman:notify', 1, 'Contract change proposed'), 1,
+            'a proposal is not thread text and a mute does not silence it')
+    end)
+
+    it('cannot be told from the other side', function()
+        --- Two worlds that differ only in whether the client muted. What the
+        --- operative sends, reads and is told must come out the same — the
+        --- call request included, whose "could not be reached" depends on
+        --- the client's message budget, which a muted message still spends.
+        local function world(mute)
+            local s, f, c, handle = talking()
+            if mute then truthy(s.comms.mute(f.creator, c.id, handle, true)) end
+            local seen = {}
+            -- The three messages spend the message budget (contract notices
+            -- have one of their own).
+            withConfig({ { Config.Notifications, 'MaxPerRecipientPerMinute', 3 } }, function()
+                for i = 1, 3 do
+                    local sent = call('sendMessage', 3, { id = c.id, body = 'Ping ' .. i })
+                    seen[#seen + 1] = tostring(sent.ok) .. ':' .. tostring(sent.err)
+                end
+                seen[#seen + 1] = 'budget left: ' .. tostring(s.notify.toCitizen('CREATOR1',
+                    'Probe', '.', { relay = true }))
+                local read = call('readThread', 3, { id = c.id })
+                seen[#seen + 1] = #read.data.messages .. ':' .. tostring(read.data.muted)
+                local rang = call('requestCall', 3, { id = c.id })
+                seen[#seen + 1] = tostring(rang.ok) .. ':' .. tostring(rang.data.placed)
+                    .. ':' .. tostring(rang.data.reason)
+            end)
+            return table.concat(seen, ' | ')
+        end
+
+        local open = world(false)
+        truthy(open:find('budget left: false', 1, true),
+            'the fixture has to spend the budget, or it proves nothing: ' .. open)
+        eq(world(true), open, 'the operative could tell they had been muted')
+    end)
+
+    it('is kept per thread and person, and an outsider cannot set it', function()
+        local s, f, c, handle = talking()
+        local reply = call('muteThread', 2, { id = c.id, thread = handle, muted = true })
+        falsy(reply.ok, 'the target muted somebody else\'s thread')
+        eq(reply.err, CH.ERR.NOT_PARTICIPANT)
+        eq(call('muteThread', 1, { id = c.id, thread = handle, muted = 'yes' }).err,
+            CH.ERR.INVALID_INPUT, 'only a yes or a no is an answer')
+        falsy(s.storage.readMute(c.id .. '|HITMAN01', 'CREATOR1'))
+        falsy(s.storage.readMute(c.id .. '|HITMAN01', 'TARGET01'))
+    end)
+end)
