@@ -9,7 +9,10 @@
    nothing at all while it is closed (body stays transparent over the game). */
 
 :root {
-  color-scheme: dark;
+  /* No color-scheme here. On the root, 'dark' makes the browser paint the
+     whole page's backdrop dark grey instead of leaving it see-through, and
+     this page covers the game screen even while the panel is closed: a grey
+     screen for every player. The panel asks for dark controls itself. */
 
   --bg: #0b0908;
   --panel: #1d1815;
@@ -81,6 +84,7 @@ ul, ol { padding: 0; list-style: none; }
 /* ---------- the frame ---------- */
 
 .panel {
+  color-scheme: dark;
   position: fixed;
   inset: clamp(8px, 2.2vh, 28px) clamp(8px, 2vw, 40px);
   margin: auto;
