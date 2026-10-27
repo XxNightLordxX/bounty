@@ -898,6 +898,45 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       after 3 tries (HTTP 404), and the alerts are still listed. Check
       `resmon` while this runs: the resource stays at its idle figure between
       posts (estimate; confirm on your server)
+- [ ] **Console**: it shows the settings that need attention (set a limit in
+      `config.lua` the start corrects and restart: it is listed as *Problem*),
+      what the last start said, and the newest lines since, newest first,
+      each with *Always* or *Debug*, its time and *said N times* for a line
+      said again. **Always**, **Problems** and **Debug** each show only that
+      kind; typing in the filter box narrows the lines as you type. With the
+      section open, make the server say something (leave a payout for staff):
+      it appears within 10 seconds without pressing **Refresh**, and the list
+      does not flicker in between. **Copy**, then paste into a text editor:
+      the lines shown arrive as plain text, in the same order. With Debug off
+      the section says so, and the server console printed only the *Always*
+      lines. Check `resmon` with the section open: the resource stays at its
+      idle figure between refreshes (estimate; confirm on your server)
+- [ ] On the account without `crimson.identity`, a console line naming an
+      anonymous contract reads *the client* and *Anonymous*, never a citizen
+      id, licence or the client's name; on the `crimson.identity` account it
+      reads whole. With `set crimson_hitman_alert_webhook "<a webhook>"` in the
+      server console and a post that fails, no account sees the webhook's
+      address in the Console (its host at most, the rest *(path hidden)*), and
+      a database error shows the server's words, never the values sent
+- [ ] **Remove the kill photos kept from before** (as shipped, kill photos
+      off): with none kept, Features shows no such button under **Kill
+      photos**. On a test server set **How contracts are completed** to
+      *either* and turn kill photos on, verify two kills and leave both photos
+      unopened, then turn kill photos off again: under **Kill photos** the panel offers *Remove the 2 kill photos
+      kept from before*, saying how many have a file here (or, on `'host'`
+      storage, that the pictures stay on the image host). The first click
+      turns it brass and says *Click again: remove 2 kill photos for good*;
+      the second removes them, the answer says what it deleted, the button
+      goes, `data/photos/` holds no picture any more, and the **Logs** have an
+      `admin_photos_removed` row with the count. The client's Ledger no
+      longer offers either photo. Press it on the `command`-only account: it
+      is greyed out
+- [ ] With a kill photo open on its client's phone (opened from the Ledger,
+      not yet saved or deleted), press the removal: the photo stays on their
+      screen, and the answer says *1 open on a phone
+      right now*. They tap Delete (or leave it open until it times out): the
+      record is gone then, and the button with it. If they tap *Keep in the
+      app* instead, they are told the photo is gone
 - [ ] Nothing anywhere in the panel names a command: no `/ch-…`, no
       `/hitmanadmin`, in any section, tooltip, empty list, answer or refusal
       (an answer that sends you on names the section or button instead, *see

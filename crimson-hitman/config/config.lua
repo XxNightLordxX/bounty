@@ -493,6 +493,10 @@ Config.Completion = {
     --- usual, and their client can still open each one once, to keep it in
     --- the app or delete it (no Save to Photos, by link or by lb-phone's own
     --- upload, since nothing is served or uploaded while this is off).
+    --- Staff can remove them all at once in the admin panel (Features,
+    --- under Completion: Remove the kill photos kept from before): every
+    --- record goes, a file kept here is deleted, a picture on the image
+    --- host stays there, and one open on a phone goes when that view closes.
     ---
     --- true: a kill is verified with a photo, kept as PhotoStorage says.
     --- /ch-diag says which is in use; the admin panel switches it without

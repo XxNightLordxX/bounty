@@ -2655,6 +2655,40 @@ function MySQLStore.deletePhoto(id)
     return true
 end
 
+--- See the memory backend.
+function MySQLStore.photosNotOpen(limit)
+    return db.query([[
+        SELECT * FROM crimson_photos WHERE state <> 'open'
+        ORDER BY created_at LIMIT ?
+    ]], { limit or 200 }) or {}
+end
+
+--- One guarded DELETE a record, each only while it is in the state it was
+--- read in: a photo opened between the read and the delete is left to the
+--- view that has it. `update` answers the rows a DELETE removed.
+function MySQLStore.deletePhotosIn(list)
+    local gone = {}
+    for _, wanted in ipairs(list or {}) do
+        local affected = db.update('DELETE FROM crimson_photos WHERE id = ? AND state = ?',
+            { wanted.id, wanted.state })
+        if (tonumber(affected) or 0) > 0 then gone[wanted.id] = true end
+    end
+    return gone
+end
+
+--- Counted here rather than in SQL, as photoTotals is: it is read only
+--- while kill photos are off and some are kept from before, which are few.
+function MySQLStore.photoCounts()
+    local rows = db.query('SELECT state, kind, file FROM crimson_photos') or {}
+    local out = { total = #rows, open = 0, links = 0, files = 0 }
+    for i = 1, #rows do
+        if rows[i].state == 'open' then out.open = out.open + 1 end
+        if rows[i].kind == 'url' then out.links = out.links + 1 end
+        if rows[i].file then out.files = out.files + 1 end
+    end
+    return out
+end
+
 --- When this process was last known to be running. See main.lua's Recover.
 --------------------------------------------------------------------------
 -- The review queue

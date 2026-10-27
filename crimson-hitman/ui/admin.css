@@ -526,6 +526,21 @@ ul, ol { padding: 0; list-style: none; }
 .al .card-head .chip:first-child { margin-left: 0; }
 .al-text { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
 
+/* ---------- console ---------- */
+
+.cs-lines { display: flex; flex-direction: column; gap: 0.3rem; font-size: var(--t-sm); }
+.cs-line {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.5rem;
+  padding-bottom: 0.3rem; border-bottom: 1px solid var(--line-soft);
+}
+.cs-line .chip { margin-left: 0; }
+.cs-text {
+  flex: 1 1 24rem; min-width: 0; color: var(--ink); font-family: var(--f-mono); font-size: var(--t-xs);
+  line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+/* The box Copy selects and copies from: in the page, never seen. */
+.copy-buffer { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
+
 /* ---------- players ---------- */
 
 .person { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; }
@@ -559,6 +574,12 @@ ul, ol { padding: 0; list-style: none; }
 .st-edit { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem; }
 .st-range { flex-basis: 100%; text-align: right; color: var(--ink-faint); font-size: var(--t-xs); }
 .st-value { font-family: var(--f-mono); font-size: var(--t-sm); color: var(--ink-dim); overflow-wrap: anywhere; }
+.st-kept {
+  margin-top: 0.45rem; padding: 0.6rem 0.75rem; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.st-kept .btn-row { margin-top: 0.5rem; }
+.st-kept-facts { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.35rem; color: var(--ink-dim); font-size: var(--t-sm); }
 
 /* ---------- tools ---------- */
 

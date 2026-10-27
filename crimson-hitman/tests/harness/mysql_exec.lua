@@ -836,12 +836,17 @@ local function delete(sql, params)
             return tostring(a.key) < tostring(b.key)
         end)
     end
+    -- How many it deleted, as oxmysql's `update` answers a DELETE (its
+    -- affectedRows, OXMYSQL.md §2): a guarded delete reads it to know
+    -- whether the row was still there in the state it was read in.
+    local deleted = 0
     for i = 1, #doomed do
         if limit and i > limit then break end
         Exec.tables[tableName][doomed[i].key] = nil
+        deleted = deleted + 1
     end
 
-    return {}
+    return deleted
 end
 
 --------------------------------------------------------------------------

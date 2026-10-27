@@ -1007,6 +1007,43 @@ function Memory.deletePhoto(id)
     return true
 end
 
+--- Every record not open right now, in any other state, oldest first, at
+--- most `limit`: what staff's removal of the photos kept from before kill
+--- photos were turned off takes (Photos.removeAll). One open is left to the
+--- view that has it.
+function Memory.photosNotOpen(limit)
+    return photosWhere(function(row) return row.state ~= CH.PHOTO.OPEN end, limit)
+end
+
+--- Delete each of `list` ({ id, state }) only while it is still in that
+--- state: one opened since it was read is left. The ids deleted.
+---@return table<string, boolean>
+function Memory.deletePhotosIn(list)
+    local gone = {}
+    for _, wanted in ipairs(list or {}) do
+        local row = db.photos[wanted.id]
+        if row and row.state == wanted.state then
+            db.photos[wanted.id] = nil
+            gone[wanted.id] = true
+        end
+    end
+    return gone
+end
+
+--- How many records there are, how many are open right now, how many are
+--- on lb-phone's image host (a link) and how many still hold a file here.
+---@return table { total, open, links, files }
+function Memory.photoCounts()
+    local out = { total = 0, open = 0, links = 0, files = 0 }
+    for _, row in pairs(db.photos) do
+        out.total = out.total + 1
+        if row.state == CH.PHOTO.OPEN then out.open = out.open + 1 end
+        if row.kind == 'url' then out.links = out.links + 1 end
+        if row.file then out.files = out.files + 1 end
+    end
+    return out
+end
+
 function Memory.queuePending(cid, contractId, lineId)
     local id = Memory.nextId('pnd')
     db.pending[id] = { id = id, cid = cid, contract_id = contractId, line_id = lineId, queued_at = os.time() }

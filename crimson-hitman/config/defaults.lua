@@ -472,7 +472,8 @@ ConfigDefaults.Completion = {
 
     --- Kill photos at all: false (as shipped) never takes, uploads, keeps or
     --- serves one, and Verify kill (under 'either') completes at the scene
-    --- on the server's own checks; true verifies a kill with a photo.
+    --- on the server's own checks; true verifies a kill with a photo. With
+    --- it false, the admin panel removes the photos kept from before.
     KillPhotos = false,
 
     --- Where kill photos are kept: 'server' (the default) or 'host'. Read

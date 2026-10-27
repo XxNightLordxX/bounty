@@ -164,6 +164,14 @@
       + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
 
+  /** A server time as the local time of day, to the second. */
+  function clock(ts) {
+    var t = Number(ts);
+    if (!t) return '--:--:--';
+    var d = new Date(t * 1000);
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
   function nowSeconds() { return Math.floor(Date.now() / 1000); }
 
   /** How long ago, or how long until, a server time. */
@@ -252,15 +260,15 @@
 
   /* ---------- state ---------------------------------------------------- */
 
-  var SECTIONS = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'logs', 'players', 'settings',
-                  'tools'];
+  var SECTIONS = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players',
+                  'settings', 'tools'];
 
   /** Ops that only read. A refusal of one as not_allowed means the staff
       member may no longer read at all (an ACE taken away while the panel was
       open), and the panel closes on it, as the README says it does. */
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
-                   alerts: true };
+                   alerts: true, console: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -284,9 +292,10 @@
     stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
+    console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
     players: { data: null, whois: {} },
-    settings: { data: null, tab: 'features', answers: {} },
+    settings: { data: null, tab: 'features', answers: {}, photos: null },
     tools: { refresh: null, diag: null, flush: null }
   };
 
@@ -351,7 +360,8 @@
     busy: 'Another change is being saved right now. Try again in a moment.',
     no_webhook: 'No Discord webhook is set in server.cfg.',
     discord_off: 'Posting alerts to Discord is switched off (Alerts.ToDiscord).',
-    unavailable: 'Alerts are not running on this server yet.'
+    unavailable: 'Alerts are not running on this server yet.',
+    photos_on: 'Kill photos are on: turn them off first.'
   };
 
   function words(reply) {
@@ -736,6 +746,8 @@
       if (S.section === 'stuck' && !S.drawer.id) loadStuck(true);
       // And the alerts, unless a button there waits for its second click.
       if (S.section === 'alerts' && !S.drawer.id && !S.armed) loadAlerts();
+      // And the console: its live updates, at this pace and no faster.
+      if (S.section === 'console' && !S.drawer.id) loadConsole();
       loadOverview(false).then(function () { schedule(gen); });
     }, refreshMs());
   }
@@ -1713,6 +1725,171 @@
   };
   LOAD.alerts = function () { loadAlerts(); };
 
+  /* ---- console ---- */
+
+  var KIND_LABEL = { always: 'Always', problem: 'Problem', debug: 'Debug' };
+  var CONSOLE_KINDS = [
+    { value: '', label: 'All' }, { value: 'always', label: 'Always' },
+    { value: 'problem', label: 'Problems' }, { value: 'debug', label: 'Debug' }
+  ];
+
+  /** What the server keeps of its console. One read at a time: a refresh
+      asked for while one is out waits for that one's answer. */
+  function loadConsole() {
+    if (S.console.loading) return Promise.resolve();
+    S.console.loading = true;
+    return ask('console', {}, 'console').then(function (reply) {
+      S.console.loading = false;
+      if (!reply) return;
+      if (!reply.ok) {
+        S.console.error = words(reply);
+        if (!S.console.data) drawConsole(); else toast(S.console.error, 'error');
+        return;
+      }
+      var data = reply.data || {};
+      S.console.error = null;
+      S.console.readAt = nowSeconds();
+      var at = byId('cs-at');
+      if (at) at.textContent = consoleAt();
+      // Drawn again only when a line changed: a redraw of the same lines
+      // would undo a selection being made by hand.
+      var sig = JSON.stringify([data.debug, data.count, data.problems, data.boot, data.bootLeft, data.recent]);
+      if (sig === S.console.sig && S.console.data) return;
+      S.console.sig = sig;
+      S.console.data = data;
+      drawConsole();
+    });
+  }
+
+  function drawConsole() { if (S.section === 'console') setHtml(byId('cs-list'), consoleBody()); }
+
+  function consoleAt() {
+    return S.console.readAt ? 'Read at ' + clock(S.console.readAt) + ', again every ' + Math.round(refreshMs() / 1000)
+      + ' s while open' : '';
+  }
+
+  /** Whether a line passes the kind and text filters. */
+  function consoleWanted(kind, text) {
+    if (S.console.kind && kind !== S.console.kind) return false;
+    var q = trim(S.forms['cs.q']).toLowerCase();
+    return !q || String(text).toLowerCase().indexOf(q) !== -1;
+  }
+
+  /** The lines the filters leave: the settings that need attention, what
+      the start said in order, and what came after, newest first. */
+  function consoleShown() {
+    var d = S.console.data || {};
+    return {
+      problems: asList(d.problems).filter(function (text) { return consoleWanted('problem', text); }),
+      boot: asList(d.boot).filter(function (line) { return consoleWanted(line.kind, line.text); }),
+      recent: asList(d.recent).slice().reverse().filter(function (line) { return consoleWanted(line.kind, line.text); })
+    };
+  }
+
+  /** The shown lines as plain text, in the order shown, for Copy. */
+  function consoleText(shown) {
+    var out = [];
+    if (shown.problems.length) {
+      out.push('Settings that need attention:');
+      shown.problems.forEach(function (text) { out.push('[problem] ' + text); });
+    }
+    if (shown.boot.length) {
+      out.push('What the last start said:');
+      shown.boot.forEach(function (line) { out.push('[' + line.kind + '] ' + line.text); });
+    }
+    if (shown.recent.length) {
+      out.push('Since the start, newest first:');
+      shown.recent.forEach(function (line) {
+        var times = Number(line.times) || 1;
+        out.push(clock(line.at) + ' [' + line.kind + '] ' + line.text + (times > 1 ? ' (x' + times + ')' : ''));
+      });
+    }
+    return out.join('\n');
+  }
+
+  function consoleLine(line, withTime) {
+    var times = Number(line.times) || 1;
+    return h('li.cs-line',
+      withTime ? h('span.time', clock(line.at)) : null,
+      h('span.chip' + (line.kind === 'always' ? '.is-warn' : line.kind === 'problem' ? '.is-panel' : ''),
+        KIND_LABEL[line.kind] || String(line.kind || '')),
+      times > 1 ? h('span.chip', 'said ' + num(times) + ' times') : null,
+      h('span.cs-text', String(line.text || '')));
+  }
+
+  function consoleList(lines, withTime, none) {
+    return lines.length ? h('ul.cs-lines', lines.map(function (line) { return consoleLine(line, withTime); }))
+      : empty(none);
+  }
+
+  function consoleBody() {
+    var d = S.console.data;
+    if (!d) return S.console.error ? empty(S.console.error) : loading('Reading the console…');
+    var shown = consoleShown();
+    var kind = S.console.kind;
+    var filtered = !!trim(S.forms['cs.q']);
+    var parts = [h('p.note', d.debug
+      ? 'Debug output is on (Config.Debug): the server console printed every line here as well.'
+      : 'Debug output is off (Config.Debug): the server console printed only the lines marked Always, and one '
+        + 'line for the settings that need attention. Every other line is kept here.')];
+    if (!kind || kind === 'problem') {
+      parts.push(card('Settings that need attention (' + num(d.count) + ')',
+        consoleList(shown.problems.map(function (text) { return { text: text, kind: 'problem' }; }), false,
+          filtered ? 'None matches.' : 'None.')));
+    }
+    if (kind !== 'problem') {
+      var left = Number(d.bootLeft) || 0;
+      parts.push(card('What the last start said', frag(
+        consoleList(shown.boot, false, filtered || kind ? 'None matches.' : 'Nothing kept.'),
+        left > 0 ? h('p.note', 'And ' + num(left) + ' more line' + (left === 1 ? '' : 's') + ' the start said, past the '
+          + num(d.bootKept) + ' kept.') : null)));
+      parts.push(card('Since the start, newest first', frag(
+        h('p.note', 'The newest ' + num(d.recentKept) + ' debug lines and the newest ' + num(d.alwaysKept)
+          + ' lines marked Always; the same line again is counted on it.'),
+        consoleList(shown.recent, true, filtered || kind ? 'None matches.' : 'Nothing since the start.'))));
+    }
+    return frag(parts);
+  }
+
+  /** Put text on the clipboard, from a box made for it and selected, with
+      execCommand: it needs no clipboard permission. */
+  function copyText(text) {
+    var box = document.createElement('textarea');
+    box.className = 'copy-buffer';
+    box.value = text;
+    box.setAttribute('readonly', 'readonly');
+    box.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(box);
+    var copied = false;
+    try {
+      box.select();
+      copied = document.execCommand('copy') === true;
+    } catch (err) {
+      copied = false;
+    }
+    box.remove();
+    return copied;
+  }
+
+  SHELL.console = function () {
+    return h('section.view',
+      h('div.toolbar',
+        segmented('cs-kind', CONSOLE_KINDS, S.console.kind),
+        h('label.search', icon('magnifying-glass'),
+          field('cs.q', { id: 'cs-q', placeholder: 'Filter the lines', 'data-live': 'cs-filter',
+            'aria-label': 'Filter the lines' })),
+        btn('.is-ghost', 'cs-refresh', {}, 'Refresh', 'rotate'),
+        btn('', 'cs-copy', {}, 'Copy', 'copy'),
+        h('span.sub', { id: 'cs-at' }, consoleAt())),
+      h('p.hint', 'What this resource said in the server console since its last start, and what it kept with Debug '
+        + 'off: Always is printed whatever Debug says, Problems are the settings the start found wrong, and Debug is '
+        + 'printed only with Debug on. Kept in memory, so a restart begins it again. Without the identity ACE, people '
+        + 'are shown by their place on a contract; nobody here sees a webhook address, a secret, or the values a '
+        + 'database statement was sent.'),
+      h('div.stack', { id: 'cs-list' }, consoleBody()));
+  };
+  LOAD.console = function () { loadConsole(); };
+
   /* ---- logs ---- */
 
   DD['lg-kind'] = {
@@ -2076,7 +2253,8 @@
         entry.unknown ? h('p.st-about.is-error', 'A change to it raised in the store, and so did reading it '
           + 'back (' + String(entry.unknown) + '): the store may or may not hold it. What is shown is in '
           + 'force; set or reset it again to settle it.') : null,
-        answerBox(answer)),
+        answerBox(answer),
+        key === 'Completion.KillPhotos' ? keptPhotosPart(entry) : null),
       // A read-only key too, when the store holds a value for it that was
       // not applied (kept from a version where it could be changed): the
       // reset takes that row away, and nothing in force moves.
@@ -2084,6 +2262,37 @@
         entry.ignored || entry.unknown || (overridden && !entry.readonly)
           ? writeBtn('.is-small.is-ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
             'Click again to reset', 'arrow-rotate-left') : null));
+  }
+
+  /** Under Kill photos, while they are off and some are kept from before
+      they were: the button that removes them all, and what removing does to
+      each kind. Its answer stays once the button has gone. */
+  function keptPhotosPart(entry) {
+    var kept = (S.settings.data || {}).keptPhotos;
+    var answer = S.settings.photos;
+    var n = kept ? Number(kept.count) || 0 : 0;
+    if (entry.value === true || n < 1) return answer ? answerBox(answer) : null;
+    var photos = n === 1 ? 'kill photo' : 'kill photos';
+    var files = Number(kept.files) || 0, links = Number(kept.links) || 0;
+    var open = Math.max(Number(kept.open) || 0, Number(kept.waiting) || 0);
+    var facts = [];
+    if (files) facts.push(num(files) + ' with a file on this server: the file is deleted.');
+    if (links) {
+      facts.push(num(links) + ' on lb-phone\'s image host: removing only forgets the link here, and the picture '
+        + 'stays on the host.');
+    }
+    if (open) {
+      facts.push(num(open) + ' open on a phone right now: each is removed when that view closes, never while it '
+        + 'is shown.');
+    }
+    return h('div.st-kept',
+      h('p.st-about', num(n) + ' ' + photos + ' kept from before kill photos were turned off (records, whatever '
+        + 'became of each photo). Removing deletes every one, and is on the record.'),
+      facts.length ? h('ul.st-kept-facts', facts.map(function (text) { return h('li', text); })) : null,
+      h('div.btn-row', writeBtn('.is-danger.is-small', 'st-remove-photos', {},
+        'Remove the ' + num(n) + ' ' + photos + ' kept from before',
+        'Click again: remove ' + num(n) + ' ' + photos + ' for good', 'trash-can', true)),
+      answerBox(answer));
   }
 
   function settingRow(entry) {
@@ -2550,6 +2759,22 @@
     });
   };
 
+  ACTIONS['cs-kind'] = function (node) {
+    S.console.kind = node.getAttribute('data-value') || '';
+    if (!KIND_LABEL[S.console.kind]) S.console.kind = '';
+    redraw();
+  };
+  ACTIONS['cs-refresh'] = function () { loadConsole(); };
+  LIVE['cs-filter'] = function () { drawConsole(); };
+  ACTIONS['cs-copy'] = function () {
+    if (!S.console.data) return;
+    var shown = consoleShown();
+    var n = shown.problems.length + shown.boot.length + shown.recent.length;
+    if (!n) { toast('Nothing is shown to copy.', 'info'); return; }
+    if (copyText(consoleText(shown))) toast('Copied ' + num(n) + ' line' + (n === 1 ? '' : 's') + '.', 'ok');
+    else toast('This game would not copy it: select the lines and press Ctrl+C instead.', 'error');
+  };
+
   ACTIONS['lg-search-now'] = function () { firstLogPage(true); };
   LIVE['lg-search'] = function () {
     clearTimeout(S.logs.timer);
@@ -2651,6 +2876,15 @@
       toast(words(reply), reply.ok ? 'ok' : 'error');
       delete S.forms['st.' + key];
       if (reply.ok) loadSettings(); else drawSettingRow(key);
+    });
+  };
+  ACTIONS['st-remove-photos'] = function (node) {
+    if (!confirmed(node)) return;
+    write('removePhotos', {}, 'remove-photos', node).then(function (reply) {
+      if (!reply) return;
+      S.settings.photos = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      loadSettings();
     });
   };
   ACTIONS['st-reset-all'] = function (node) {
@@ -2792,6 +3026,7 @@
     S.reviews.items = null;
     S.reviews.answers = {};
     S.alerts = { state: S.alerts.state, data: null, error: null, answers: {}, all: null, test: null };
+    S.console = { kind: S.console.kind, data: null, error: null, sig: null, loading: false, readAt: null };
     S.logs.data = null;
     S.logs.cursor = null;
     S.logs.back = [];
@@ -2800,6 +3035,7 @@
     S.players.whois = {};
     S.settings.data = null;
     S.settings.answers = {};
+    S.settings.photos = null;
     S.tools = { refresh: null, diag: null, flush: null };
     S.busy = {};
     S.seq = {};

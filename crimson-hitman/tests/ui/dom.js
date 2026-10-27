@@ -162,9 +162,21 @@ function makeDocument() {
     node.focus = function () { doc.activeElement = node; };
     node.blur = function () { if (doc.activeElement === node) { doc.activeElement = null; } };
     node.setSelectionRange = function () {};
+    // Selecting a box's text, for copying it (the staff panel's Copy).
+    node.select = function () { doc._selected = node; };
     return node;
   };
   doc.activeElement = null;
+
+  /* Copy, as a page copies without a clipboard permission: what the box
+     last selected holds lands in doc.clipboard. doc.copyRefused is a game
+     that will not copy, where execCommand answers false. */
+  doc.clipboard = null;
+  doc.execCommand = function (command) {
+    if (command !== 'copy' || doc.copyRefused || !doc._selected) { return false; }
+    doc.clipboard = String(doc._selected.value);
+    return true;
+  };
 
   /* Only nodes that are still in the document.
    *

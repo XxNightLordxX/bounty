@@ -2837,6 +2837,36 @@ function JsonStore.deletePhoto(id)
     return true
 end
 
+--- See the memory backend. The records file is written once for the lot.
+function JsonStore.photosNotOpen(limit)
+    return photosWhere(function(row) return row.state ~= CH.PHOTO.OPEN end, limit)
+end
+
+function JsonStore.deletePhotosIn(list)
+    local gone, any = {}, false
+    for _, wanted in ipairs(list or {}) do
+        local row = db.photos[wanted.id]
+        if row and row.state == wanted.state then
+            db.photos[wanted.id] = nil
+            gone[wanted.id] = true
+            any = true
+        end
+    end
+    if any then touch(true) end
+    return gone
+end
+
+function JsonStore.photoCounts()
+    local out = { total = 0, open = 0, links = 0, files = 0 }
+    for _, row in pairs(db.photos) do
+        out.total = out.total + 1
+        if row.state == CH.PHOTO.OPEN then out.open = out.open + 1 end
+        if row.kind == 'url' then out.links = out.links + 1 end
+        if row.file then out.files = out.files + 1 end
+    end
+    return out
+end
+
 function JsonStore.queuePending(cid, contractId, lineId)
     local id = JsonStore.nextId('pnd')
     db.pending[id] = {

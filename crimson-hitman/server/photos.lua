@@ -99,9 +99,21 @@ local anyHeld, anyAskedAt = nil, 0
 --- each asking is a query.
 local ANY_EVERY_SECONDS = 60
 
+--- Photos open on a phone when staff removed the ones kept from before kill
+--- photos were turned off (Photos.removeAll): each is removed once its view
+--- closes, never while it is shown. In memory only: one whose view outlives
+--- a restart closes as usual (Photos.expire), and the panel offers to remove
+--- what is left again.
+local removeOnClose = {} -- [id] = true
+
+--- One removal makes at most this many passes of PER_PASS records, and
+--- marks at most OPEN_MAX open ones to go when their views close.
+local REMOVE_PASSES, OPEN_MAX = 50, 1000
+
 function Photos.init(deps)
     Storage, Audit = deps.storage, deps.audit
     anyHeld, anyAskedAt = nil, 0
+    removeOnClose = {}
 end
 
 --- Whether the store holds any kill photo record at all, in any state.
@@ -273,6 +285,29 @@ local function close(record, next_)
     local held, state = holding(record), record.state
     if not Storage.closePhoto(record.id, state, next_, nil) then return false end
     release(held)
+    return true
+end
+
+--- Remove a record staff removed while its view was open, now that it is
+--- not open any more: the record goes, and its file with it. true once it
+--- is gone.
+---@param id string
+---@return boolean
+local function removeClosed(id)
+    if not removeOnClose[id] then return false end
+    local record = Storage.readPhoto(id)
+    if not record then
+        removeOnClose[id] = nil
+        return true
+    end
+    if record.state == CH.PHOTO.OPEN then return false end
+    local held, contractId = holding(record), record.contract_id
+    if not (Storage.deletePhotosIn({ { id = id, state = record.state } }) or {})[id] then
+        return false
+    end
+    removeOnClose[id] = nil
+    release(held)
+    Audit.action('photo_removed_by_staff', nil, contractId, {})
     return true
 end
 
@@ -840,6 +875,13 @@ function Photos.decide(actor, rawHandle, choice)
     end
 
     if choice == 'link' then return publish(actor, record) end
+    -- Staff removed the photos kept from before kill photos were turned off
+    -- while this one was open: it goes now that its view closes, so it is
+    -- not kept in the app, and the client is told it is gone.
+    if choice == 'keep' and removeOnClose[record.id] then
+        if close(record, CH.PHOTO.DELETED) then removeClosed(record.id) end
+        return nil, CH.ERR.PHOTO_GONE
+    end
     if choice == 'keep' then return keep(actor, record) end
 
     local next_ = choice == 'save' and CH.PHOTO.SAVED or CH.PHOTO.DELETED
@@ -851,6 +893,7 @@ function Photos.decide(actor, rawHandle, choice)
     end
 
     Audit.action(choice == 'save' and 'photo_saved' or 'photo_deleted', actor.cid, contractId, {})
+    removeClosed(record.id)
     return { handle = record.id, state = next_ }
 end
 
@@ -885,6 +928,9 @@ function Photos.expire()
             Audit.action('photo_expired', nil, contractId, {})
         end
     end
+    -- And each one staff removed while it was open, once its view has
+    -- closed, here or any other way (a void, the phone's Photos).
+    for id in pairs(removeOnClose) do removeClosed(id) end
     return deleted
 end
 
@@ -1044,6 +1090,95 @@ function Photos.phoneReset(actor, phoneNumber)
         end
     end
     return released
+end
+
+--------------------------------------------------------------------------
+-- Staff removing the photos kept from before kill photos were turned off
+--------------------------------------------------------------------------
+
+--- Remove one photo file, and say whether it is gone: removed now, or not
+--- there at all (ENOENT), as one an earlier removal already took is.
+local function fileGone(file)
+    local base = resourceRoot()
+    if not base then return false end
+    local ok, removed, _, code = pcall(os.remove, base .. '/' .. file)
+    return ok and (removed == true or code == 2)
+end
+
+--- Mark every photo open on a phone right now to be removed when its view
+--- closes.
+local function markOpen()
+    for _, record in ipairs(Storage.photosOpenedBefore(os.time() + 1, OPEN_MAX) or {}) do
+        if record.state == CH.PHOTO.OPEN then removeOnClose[record.id] = true end
+    end
+end
+
+--- The kill photos kept from before kill photos were turned off, for the
+--- admin panel's button that removes them (Features > Completion): how
+--- many records there are, how many are open on a phone right now, how
+--- many were on lb-phone's image host, how many still hold a file here,
+--- and how many a removal left to their views. nil while kill photos are
+--- on, and when none is kept.
+---@return table|nil { count, open, links, files, waiting }
+function Photos.keptFromBefore()
+    if Util.killPhotos() or not Photos.anyStored() then return nil end
+    local counts = Storage.photoCounts() or {}
+    local total = tonumber(counts.total) or 0
+    if total == 0 then
+        anyHeld, anyAskedAt = false, os.time()
+        return nil
+    end
+    local waiting = 0
+    for _ in pairs(removeOnClose) do waiting = waiting + 1 end
+    return {
+        count = total, open = tonumber(counts.open) or 0, links = tonumber(counts.links) or 0,
+        files = tonumber(counts.files) or 0, waiting = waiting,
+    }
+end
+
+--- Remove every kill photo record, whatever became of it: staff's button
+--- in the admin panel, once kill photos are off. A file kept on this server
+--- ('server' storage) is deleted with its record. A photo on lb-phone's
+--- image host ('host' storage) is only forgotten: the host gives a resource
+--- no way to delete it, so the picture stays there. A photo open on a phone
+--- right now is left to that view and removed when it closes (removeOnClose),
+--- never while it is shown; so is one opened while this runs, which each
+--- record's guarded delete leaves. Running it again removes what is left,
+--- and with nothing left does nothing.
+---@return table { removed, files, links, left, waiting } left: files that could not be deleted
+function Photos.removeAll()
+    local out = { removed = 0, files = 0, links = 0, left = 0, waiting = 0 }
+    markOpen()
+    for _ = 1, REMOVE_PASSES do
+        local batch = Storage.photosNotOpen(PER_PASS) or {}
+        if #batch == 0 then break end
+        local wanted, held = {}, {}
+        for i = 1, #batch do
+            wanted[i] = { id = batch[i].id, state = batch[i].state }
+            held[i] = holding(batch[i])
+        end
+        local gone = Storage.deletePhotosIn(wanted) or {}
+        local any = false
+        for i = 1, #batch do
+            if gone[wanted[i].id] then
+                any = true
+                out.removed = out.removed + 1
+                removeOnClose[wanted[i].id] = nil
+                forgetUri(wanted[i].id)
+                if held[i].kind == 'url' then out.links = out.links + 1 end
+                local file = held[i].kind == 'file' and fileOf(held[i]) or nil
+                if file then
+                    if fileGone(file) then out.files = out.files + 1 else out.left = out.left + 1 end
+                end
+            end
+        end
+        if not any then break end
+    end
+    -- One opened while this ran is left to its view as well.
+    markOpen()
+    for _ in pairs(removeOnClose) do out.waiting = out.waiting + 1 end
+    anyHeld, anyAskedAt = nil, 0
+    return out
 end
 
 --- How many photos this server holds a file for, and how much disk they

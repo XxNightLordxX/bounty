@@ -323,7 +323,9 @@ function Natives.install()
         if not file then return nil, tostring(path) .. ': Permission denied', 13 end
         Natives.calls.removed = Natives.calls.removed or {}
         table.insert(Natives.calls.removed, file)
-        if Natives.files[file] == nil then return nil, tostring(path) .. ': Permission denied', 13 end
+        -- No such file is ENOENT, as the operating system answers it: a
+        -- removal can tell a file already gone from one it may not delete.
+        if Natives.files[file] == nil then return nil, tostring(path) .. ': No such file or directory', 2 end
         Natives.files[file] = nil
         return true
     end

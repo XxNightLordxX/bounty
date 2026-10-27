@@ -35,8 +35,10 @@ local READ, WRITE, IDENTITY = 'read', 'write', 'identity'
 local OPS = {
     access = READ, overview = READ, contracts = READ, contract = READ, reviews = READ,
     logs = READ, player = READ, settings = READ, diag = READ, stuck = READ, alerts = READ,
+    console = READ,
     void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
     resetSettings = WRITE, refresh = WRITE, flush = WRITE, ackAlerts = WRITE, testAlert = WRITE,
+    removePhotos = WRITE,
     whois = IDENTITY,
 }
 
@@ -366,6 +368,58 @@ function Panel.scrubText(text, canIdentify, contractId, outside, parties)
         end
         return word
     end))
+end
+
+--- The server convars that hold a secret, whose values never reach the
+--- page: the two Discord webhooks, and oxmysql's connection string, whose
+--- password a database error could carry.
+local SECRET_CONVARS = { 'crimson_hitman_webhook', 'crimson_hitman_alert_webhook',
+                         'mysql_connection_string' }
+
+--- How a password is written in a connection string, in any case.
+local PASSWORD_WORDS = { '[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]', '[Pp][Aa][Ss][Ss][Ww][Dd]', '[Pp][Ww][Dd]' }
+
+--- Every occurrence of `needle` in `text`, as `with`.
+local function replacePlain(text, needle, with)
+    return (text:gsub(needle:gsub('%p', '%%%0'), (with:gsub('%%', '%%%%'))))
+end
+
+--- A console line as the admin panel's Console section shows it to anybody,
+--- identity ACE or not: never a webhook's address, a convar's secret or the
+--- values a statement was sent. A database error keeps the server's words
+--- and the start of the statement (Util.dbErrorIn); a secret convar's value
+--- is '(hidden)' wherever it is written; every web address is cut to its
+--- host, which drops a webhook's id and token, a served photo's name and a
+--- key in a query, and the user and password of one that has them; and a
+--- password written as `password=` is hidden.
+---@param text any
+---@return string
+function Panel.withoutSecrets(text)
+    text = Util.dbErrorIn(tostring(text or ''))
+    for _, name in ipairs(SECRET_CONVARS) do
+        local ok, value = pcall(GetConvar, name, '')
+        if ok and type(value) == 'string' and #value >= 8 then
+            text = replacePlain(text, value, '(hidden)')
+        end
+    end
+    text = text:gsub('(%a[%w+.-]*://)([^%s/?#]+)([^%s]*)', function(scheme, host, rest)
+        host = host:gsub('^.*@', '')
+        return scheme .. host .. (rest ~= '' and '/(path hidden)' or '')
+    end)
+    text = text:gsub('(api/webhooks/)%S+', '%1(hidden)')
+    for _, word in ipairs(PASSWORD_WORDS) do
+        text = text:gsub('(%f[%w]' .. word .. '%s*[=:]%s*)[^%s;,&]+', '%1(hidden)')
+    end
+    return text
+end
+
+--- The first contract id a line names, if it names one: whose parties the
+--- scrub puts by their place on it (as the Alerts do).
+local function contractIn(text)
+    for candidate in text:gmatch('%f[%w](ct[%l%d]+)%f[%W]') do
+        if Util.toId(candidate) then return candidate end
+    end
+    return nil
 end
 
 --- One escrow line, as the panel shows it.
@@ -1150,7 +1204,18 @@ H.whois = function(src, data)
 end
 
 H.settings = function()
-    return true, nil, nil, deps.settings.view()
+    local view = deps.settings.view()
+    -- The kill photos kept from before they were turned off, for the button
+    -- under Completion that removes them: only while they are off and some
+    -- are kept. A store that cannot say leaves the button out.
+    local ok, kept = pcall(deps.photos.keptFromBefore)
+    if ok then
+        view.keptPhotos = kept
+    else
+        Log.debug(('the admin panel could not count the kill photos kept from before: %s')
+            :format(Util.dbError(kept)))
+    end
+    return true, nil, nil, view
 end
 
 --- What a refused setting says. `why` from the settings names the key
@@ -1332,6 +1397,92 @@ H.testAlert = function(src)
     end
     return true, nil, ('A test alert goes to Discord in about %d second(s). This section says '
         .. 'whether it went through.'):format(math.max(0, seconds or 0)), { seconds = seconds }
+end
+
+--------------------------------------------------------------------------
+-- Console
+--------------------------------------------------------------------------
+
+--- What shared/log.lua keeps (Log.view): the settings that need attention
+--- found at start, what the last start said, and the newest lines since,
+--- each with its kind ('always', 'problem' or 'debug'), when it was last
+--- said and how many times. Every line without a secret in it
+--- (Panel.withoutSecrets), and scrubbed for staff without IdentityAce as the
+--- Alerts are (Panel.scrubText), with each staff command's name put as the
+--- panel's own place for it.
+H.console = function(src)
+    local kept = Log.view()
+    local canIdentify = identifies(src)
+    local parties = partiesReader()
+    local function shown(text)
+        text = Panel.withoutSecrets(text)
+        return deps.admin.panelWords(Panel.scrubText(text, canIdentify, contractIn(text), false,
+            parties))
+    end
+    local problems, boot, recent = {}, {}, {}
+    for i, text in ipairs(kept.problems) do problems[i] = shown(text) end
+    for i, text in ipairs(kept.boot) do
+        boot[i] = { text = shown(text), kind = kept.bootKinds[i] or 'debug' }
+    end
+    for i, entry in ipairs(kept.recent) do
+        recent[i] = { text = shown(entry.text), kind = entry.kind, at = entry.at, times = entry.times }
+    end
+    return true, nil, nil, {
+        at = os.time(), debug = kept.debug, count = kept.count, problems = problems,
+        boot = boot, bootLeft = kept.bootLeft or 0, recent = recent,
+        bootKept = Log.BOOT_KEPT, recentKept = Log.KEPT, alwaysKept = Log.KEPT_ALWAYS,
+    }
+end
+
+--------------------------------------------------------------------------
+-- Kill photos kept from before
+--------------------------------------------------------------------------
+
+--- What a removal of the kill photos kept from before says it did.
+local function removedWords(done)
+    if done.removed == 0 and done.waiting == 0 then
+        return 'No kill photos are kept from before; nothing to remove.'
+    end
+    local parts = {}
+    if done.removed > 0 then
+        parts[#parts + 1] = ('Removed %d kill photo(s).'):format(done.removed)
+    else
+        parts[#parts + 1] = 'Nothing removed yet.'
+    end
+    if done.files > 0 then
+        parts[#parts + 1] = ('%d file(s) deleted from this server.'):format(done.files)
+    end
+    if done.links > 0 then
+        parts[#parts + 1] = ('%d were on lb-phone\'s image host: this server has forgotten them, '
+            .. 'and the pictures stay on the host.'):format(done.links)
+    end
+    if done.left > 0 then
+        parts[#parts + 1] = ('%d file(s) could not be deleted: delete what is left in '
+            .. 'data/photos/ by hand.'):format(done.left)
+    end
+    if done.waiting > 0 then
+        parts[#parts + 1] = ('%d open on a phone right now: each is removed when that view '
+            .. 'closes.'):format(done.waiting)
+    end
+    return table.concat(parts, ' ')
+end
+
+--- Remove every kill photo kept from before kill photos were turned off
+--- (Features, under Completion). A write: the ACE itself, the write
+--- allowance, and a row in the log with how many, whatever it removed.
+--- Refused while kill photos are on, when they are not photos kept from
+--- before. Run again, it removes what is left, or nothing.
+H.removePhotos = function(src)
+    if Util.killPhotos() then
+        return false, 'photos_on', 'Not removed: kill photos are on (Completion.KillPhotos). '
+            .. 'This removes the ones kept from before they were turned off, so turn them off first.'
+    end
+    local done = deps.photos.removeAll()
+    deps.audit.staff('admin_photos_removed', staffOf(src), nil, {
+        count = done.removed, files = done.files, links = done.links,
+        left = done.left > 0 and done.left or nil, waiting = done.waiting > 0 and done.waiting or nil,
+    })
+    return true, nil, removedWords(done), done
 end
 
 --- What the store answered, not only whether it raised: the json store's

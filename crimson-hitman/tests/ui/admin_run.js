@@ -147,6 +147,21 @@ function alertsView(data) {
     discord: { on: true, webhook: 'alert', waiting: 0, posting: false, posted: 7, lastOkAt: NOW - 120 } } };
 }
 
+/* What the server keeps of its console, as server/panel.lua's console op
+   answers: the settings that need attention, the start's lines with their
+   kinds, and the newest lines since, oldest first, each with when it was
+   last said and how many times. */
+function consoleView(extra) {
+  return { ok: true, data: Object.assign({
+    at: NOW, debug: false, count: 2, bootLeft: 3, bootKept: 120, recentKept: 40, alwaysKept: 40,
+    problems: ['warning: Kidnap.Radius is 2', 'warning: Limits.MaxAcceptedPerHitman is 0'],
+    boot: [{ text: 'opening the store in json mode', kind: 'debug' },
+           { text: 'BOOT RECOVERY FAILED: ' + XSS, kind: 'always' }],
+    recent: [{ text: 'escrow line ct00000001:1 left for staff', kind: 'always', at: NOW - 600, times: 1 },
+             { text: 'slow job expiry took 12 ms', kind: 'debug', at: NOW - 60, times: 4 }]
+  }, extra || {}) };
+}
+
 function contractRow(i, extra) {
   return Object.assign({ id: 'ct0000000' + i, state: i === 1 ? 'accepted' : 'active', mode: 'competitive',
     rule: 'alive', created_at: NOW - i * 3600, deadline_at: NOW + 7200, target: 'Dana Reyes ' + i,
@@ -304,7 +319,10 @@ function settingsView(extra) {
 function standardServer(extra) {
   return Object.assign({
     overview: overview(), contracts: contracts(), contract: contractDetail(null, false), reviews: reviews(),
-    stuck: stuckList(), alerts: alertsView,
+    stuck: stuckList(), alerts: alertsView, console: consoleView(),
+    removePhotos: { ok: true, message: 'Removed 3 kill photo(s). 1 file(s) deleted from this server. 2 were on '
+      + 'lb-phone\'s image host: this server has forgotten them, and the pictures stay on the host.',
+      data: { removed: 3, files: 1, links: 2, left: 0, waiting: 0 } },
     ackAlerts: function (data) {
       return { ok: true, message: 'Acknowledged ' + (data.ids || []).length + ' alert(s).',
         data: { done: (data.ids || []).length, already: 0, missing: 0 } };
@@ -1420,6 +1438,153 @@ async function main() {
     clean(failed, 'a post given up');
   })();
 
+  /* ---- console ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('console');
+    await settled();
+    it('reads what the server keeps of its console when it opens', function () {
+      eq(app.last('console').data, {});
+      has(app.main(), 'Settings that need attention (2)');
+      has(app.main(), 'warning: Kidnap.Radius is 2');
+      has(app.main(), 'What the last start said');
+      has(app.main(), 'opening the store in json mode');
+      has(app.main(), 'And 3 more lines the start said, past the 120 kept.');
+      has(app.main(), 'Since the start, newest first');
+      has(app.main(), 'Debug output is off (Config.Debug)');
+      eq(app.$$('img').length, 0, 'every line is escaped');
+    });
+    it('shows the newest line first, each with its kind, when it was said and how many times', function () {
+      const lines = app.byId('cs-list').querySelectorAll('li').filter(function (li) {
+        return li.querySelectorAll('span').filter(function (sp) { return sp.classList.contains('time'); }).length;
+      });
+      eq(lines.length, 2);
+      has(app.text(lines[0]), 'slow job expiry');
+      has(app.text(lines[0]), 'Debug');
+      has(app.text(lines[0]), 'said 4 times');
+      has(app.text(lines[1]), 'Always');
+      lacks(app.text(lines[1]), 'said 1 times');
+    });
+
+    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-act') === 'cs-kind'
+      && b.getAttribute('data-value') === 'always'; })[0]);
+    it('filters by kind', function () {
+      const text = app.text(app.byId('cs-list'));
+      has(text, 'BOOT RECOVERY FAILED');
+      has(text, 'left for staff');
+      lacks(text, 'opening the store');
+      lacks(text, 'slow job expiry');
+      lacks(text, 'Settings that need attention');
+    });
+    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-act') === 'cs-kind'
+      && b.getAttribute('data-value') === 'problem'; })[0]);
+    it('the problems alone', function () {
+      const text = app.text(app.byId('cs-list'));
+      has(text, 'warning: Limits.MaxAcceptedPerHitman is 0');
+      lacks(text, 'left for staff');
+      lacks(text, 'What the last start said');
+    });
+    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-act') === 'cs-kind'
+      && b.getAttribute('data-value') === ''; })[0]);
+    const reads = app.requests('console').length;
+    app.type(app.byId('cs-q'), 'KIDNAP');
+    it('and by text, as it is typed, asking the server nothing', function () {
+      const text = app.text(app.byId('cs-list'));
+      has(text, 'Kidnap.Radius');
+      lacks(text, 'MaxAcceptedPerHitman');
+      lacks(text, 'slow job');
+      eq(app.requests('console').length, reads);
+      eq(app.byId('cs-q').value, 'KIDNAP', 'the box is not drawn again under the typing');
+    });
+
+    app.click(app.button('Copy'));
+    it('copies the lines shown, as plain text', function () {
+      eq(app.document.clipboard, 'Settings that need attention:\n[problem] warning: Kidnap.Radius is 2');
+      has(app.toasts(), 'Copied 1 line.');
+    });
+    app.type(app.byId('cs-q'), '');
+    app.click(app.button('Copy'));
+    it('every line shown, in the order shown, with times and counts', function () {
+      const copied = String(app.document.clipboard).split('\n');
+      eq(copied.length, 9);
+      eq(copied[3], 'What the last start said:');
+      eq(copied[4], '[debug] opening the store in json mode');
+      eq(copied[5], '[always] BOOT RECOVERY FAILED: ' + XSS, 'plain text, as the server sent it');
+      truthy(/^\d\d:\d\d:\d\d \[debug\] slow job expiry took 12 ms \(x4\)$/.test(copied[7]), copied[7]);
+      has(app.toasts(), 'Copied 6 lines.');
+      eq(app.$$('textarea').length, 0, 'the box it copied from is gone');
+    });
+    app.document.copyRefused = true;
+    app.click(app.button('Copy'));
+    it('says so when the game will not copy', function () {
+      has(app.toasts(), 'select the lines and press Ctrl+C instead');
+    });
+
+    app.click(app.button('Refresh'));
+    await settled();
+    it('Refresh reads it again', function () { eq(app.requests('console').length, reads + 1); });
+    const clears = app.byId('cs-list')._clears || 0;
+    app.fire(10000);
+    await settled();
+    it('and so does the panel\'s refresh while it is open, drawing nothing when nothing changed', function () {
+      eq(app.requests('console').length, reads + 2);
+      eq(app.byId('cs-list')._clears || 0, clears, 'the same lines are not drawn again');
+    });
+    app.server.console = consoleView({ recent: [{ text: 'a new line', kind: 'always', at: NOW, times: 1 }] });
+    app.fire(10000);
+    await settled();
+    it('a new line is drawn at the next refresh', function () {
+      has(app.text(app.byId('cs-list')), 'a new line');
+    });
+    let held = null;
+    app.server.console = function () { return new Promise(function (resolve) { held = resolve; }); };
+    app.click(app.button('Refresh'));
+    app.click(app.button('Refresh'));
+    app.fire(10000);
+    await settled();
+    it('one read at a time: a refresh asked for while one is out waits for its answer', function () {
+      eq(app.requests('console').length, reads + 4);
+    });
+    held(consoleView());
+    await settled();
+    app.nav('overview');
+    await settled();
+    const after = app.requests('console').length;
+    app.fire(10000);
+    await settled();
+    it('and nothing once another section is open', function () {
+      eq(app.requests('console').length, after);
+    });
+    clean(app, 'console');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ console: consoleView({ debug: true, problems: [], count: 0, bootLeft: 0,
+      boot: [], recent: [] }) }));
+    app.open(READER);
+    await settled();
+    app.nav('console');
+    await settled();
+    it('staff who may only read see it too, and an empty console says so', function () {
+      has(app.main(), 'Debug output is on (Config.Debug)');
+      has(app.main(), 'Settings that need attention (0)');
+      has(app.main(), 'None.');
+      has(app.main(), 'Nothing kept.');
+      has(app.main(), 'Nothing since the start.');
+      truthy(!app.button('Copy').disabled, 'copying is not a write');
+    });
+    const refused = boot(standardServer({ console: { ok: false, err: 'rate_limited', message: 'Slow down. Try again in 3 second(s).' } }));
+    refused.open(ADMIN);
+    await settled();
+    refused.nav('console');
+    await settled();
+    it('a refused read says why', function () { has(refused.main(), 'Slow down. Try again in 3 second(s).'); });
+    clean(app, 'console read only');
+    clean(refused, 'console refused');
+  })();
+
   /* ---- logs ---- */
   await (async function () {
     const app = boot(standardServer());
@@ -1904,7 +2069,7 @@ async function main() {
         app.open(who);
         await settled();
         sweep(app, 'overview');
-        for (const section of ['contracts', 'stuck', 'reviews', 'alerts', 'logs', 'players', 'settings', 'tools']) {
+        for (const section of ['contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players', 'settings', 'tools']) {
           app.nav(section);
           await settled();
           sweep(app, section);
@@ -2051,6 +2216,82 @@ async function main() {
       lacks(app.main(), 'Commands');
       lacks(app.main(), 'Runs ');
     });
+  })();
+
+  /* ---- the kill photos kept from before ---- */
+  await (async function () {
+    const kept = { count: 3, open: 1, links: 2, files: 1, waiting: 0 };
+    const server = standardServer({ settings: settingsView({ keptPhotos: kept }) });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('settings');
+    await settled();
+    const row = app.byId('st-row-Completion.KillPhotos');
+    it('offers the removal under Kill photos while they are off and some are kept', function () {
+      const button = app.button('Remove the 3 kill photos kept from before', row);
+      truthy(button && !button.disabled, 'the button');
+      has(app.text(row), '1 with a file on this server: the file is deleted.');
+      has(app.text(row), '2 on lb-phone\'s image host: removing only forgets the link here, and the picture stays on the host.');
+      has(app.text(row), '1 open on a phone right now: each is removed when that view closes, never while it is shown.');
+    });
+    const remove = app.button('Remove the 3 kill photos kept from before', row);
+    app.click(remove);
+    await settled();
+    it('takes two clicks, the second naming the count', function () {
+      eq(app.requests('removePhotos').length, 0);
+      truthy(remove.classList.contains('is-armed'), 'armed');
+      has(app.text(remove), 'Click again: remove 3 kill photos for good');
+    });
+    server.settings = settingsView();
+    app.click(remove);
+    await settled();
+    it('then removes them, says what it did, and the button goes', function () {
+      eq(app.requests('removePhotos').length, 1);
+      eq(app.last('removePhotos').data, {});
+      has(app.toasts(), 'the pictures stay on the host');
+      const after = app.byId('st-row-Completion.KillPhotos');
+      has(app.text(after), 'Removed 3 kill photo(s).', 'its answer stays');
+      eq(after.querySelectorAll('button').filter(function (b) {
+        return b.getAttribute('data-act') === 'st-remove-photos'; }).length, 0);
+    });
+    clean(app, 'remove kept photos');
+  })();
+
+  await (async function () {
+    const kept = { count: 1, open: 0, links: 0, files: 1, waiting: 0 };
+    const on = settingsView({ keptPhotos: kept });
+    on.data.features.forEach(function (e) { if (e.key === 'Completion.KillPhotos') e.value = true; });
+    function removeButtons(app) {
+      return app.$$('button').filter(function (b) { return b.getAttribute('data-act') === 'st-remove-photos'; });
+    }
+    const none = boot(standardServer());
+    none.open(ADMIN);
+    await settled();
+    none.nav('settings');
+    await settled();
+    const photosOn = boot(standardServer({ settings: on }));
+    photosOn.open(ADMIN);
+    await settled();
+    photosOn.nav('settings');
+    await settled();
+    const reader = boot(standardServer({ settings: settingsView({ keptPhotos: kept }) }));
+    reader.open(READER);
+    await settled();
+    reader.nav('settings');
+    await settled();
+    it('offers nothing when none is kept, or while kill photos are on', function () {
+      eq(removeButtons(none).length, 0);
+      eq(removeButtons(photosOn).length, 0);
+    });
+    it('names one photo as one, and is greyed out for staff who may only read', function () {
+      const button = reader.button('Remove the 1 kill photo kept from before');
+      truthy(button.disabled, 'a write');
+      lacks(reader.text(reader.byId('st-row-Completion.KillPhotos')), 'image host');
+    });
+    clean(none, 'no kept photos');
+    clean(photosOn, 'kill photos on');
+    clean(reader, 'kept photos read only');
   })();
 
   /* ---- tools ---- */

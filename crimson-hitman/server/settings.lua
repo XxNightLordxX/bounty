@@ -159,7 +159,8 @@ local CATALOGUE = {
           .. 'server\'s own checks.',
       inflight = 'Read at the next Verify kill, with no restart. A photo already kept stays until '
           .. 'it expires as usual, and its client can still open it once; off, links to photos '
-          .. 'saved to a phone\'s Photos stop loading.' },
+          .. 'saved to a phone\'s Photos stop loading. While it is off, the photos kept from '
+          .. 'before can be removed all at once here.' },
     { key = 'Completion.PhotoStorage', section = 'features', group = 'Completion', kind = 'choice',
       needs = 'Completion.KillPhotos',
       choices = { 'server', 'host' }, label = 'Where kill photos are kept',

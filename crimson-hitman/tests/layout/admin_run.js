@@ -78,6 +78,13 @@ function serverStub() {
       kind: 'switch', live: i !== 2, value: i % 3 !== 0, default: true, source: i % 7 === 0 ? 'panel' : 'config',
       by: 'ADMIN001', at: NOW - 600, ignored: i === 5 ? 'has to be on or off' : undefined });
   }
+  // Kill photos off with some kept from before: the removal under the
+  // switch, with every fact it can say.
+  settings.features.push({ key: 'Completion.KillPhotos', group: 'Completion', label: 'Kill photos', kind: 'switch',
+    live: true, value: false, default: false, source: 'config',
+    about: 'Off: no kill photo is ever taken, uploaded, kept or served, and no image host is asked anything.',
+    inflight: 'Read at the next Verify kill, with no restart.' });
+  settings.keptPhotos = { count: 1234, open: 12, links: 600, files: 634, waiting: 2 };
   settings.features.push({ key: 'Completion.Fulfilment', group: 'Completion', label: 'How contracts are completed',
     kind: 'choice', choices: ['alive', 'either'], live: true, value: 'alive', default: 'alive', source: 'config',
     about: '\'alive\': live handover only. \'either\': a photographed kill or a handover.',
@@ -137,6 +144,25 @@ function serverStub() {
         }
         return out;
       })() } },
+    // The console, with the longest things it keeps: a start of 120 lines
+    // and more not kept, a line with no spaces to break at, a database
+    // error, a block of lines, and the newest 80 with counts.
+    console: { ok: true, data: (function () {
+      const boot = [], recent = [];
+      for (let i = 0; i < 120; i++) {
+        boot.push({ text: i === 3 ? 'a_line_with_no_spaces_to_break_at_' + 'x'.repeat(240)
+          : 'start line ' + i + ': ' + REASON, kind: i % 9 ? 'debug' : 'always' });
+      }
+      for (let i = 0; i < 80; i++) {
+        recent.push({ text: i === 1 ? 'BOOT RECOVERY FAILED: ' + REASON + '\n  What the last shutdown left part-way'
+          : 'escrow line ct' + String(10000000 + i) + ':2 raised: Deadlock found when trying to get lock (statement: '
+            + 'UPDATE crimson_escrow SET state = ? WHERE id = ? AND state = ?)', kind: i % 2 ? 'always' : 'debug',
+          at: NOW - 60 * (80 - i), times: i % 5 ? 1 : 1234 });
+      }
+      return { at: NOW, debug: false, count: 14, bootLeft: 37, bootKept: 120, recentKept: 40, alwaysKept: 40,
+        problems: ['warning: Config.Completion.ExtraPhotoHosts names ' + 'host'.repeat(30) + ', which is not a host',
+          'warning: ' + REASON], boot: boot, recent: recent };
+    })() },
     contracts: { ok: true, data: { rows: rows, page: 1, pages: 50, total: 1234 } },
     contract: { ok: true, data: {
       contract: { id: 'ct10000001', state: 'accepted', mode: 'exclusive', rule: 'either', reason: REASON,
@@ -364,7 +390,8 @@ async function main() {
     // Still usable: tables may scroll inside their own frame, never the page.
     { w: 1024, h: 768, tablesFit: false }
   ];
-  const sections = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'logs', 'players', 'settings', 'tools'];
+  const sections = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players', 'settings',
+    'tools'];
 
   for (const size of sizes) {
     const page = await openAt(browser, size.w, size.h);
@@ -401,6 +428,12 @@ async function main() {
       if (section === 'alerts') {
         // Measured with Acknowledge all shown armed, its confirm showing.
         await page.click('button[data-act="al-ack-all"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'settings') {
+        // Measured with the removal of the kill photos kept from before
+        // armed, its confirm naming the count.
+        await page.click('button[data-act="st-remove-photos"]');
         await page.waitForTimeout(60);
       }
       const faults = await page.evaluate(measure, { tablesFit: size.tablesFit });
