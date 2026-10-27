@@ -999,3 +999,260 @@ describe('informant data the target pays for', function()
         end)
     end
 end)
+
+--------------------------------------------------------------------------
+-- The phone a client carries, in what they put up
+--------------------------------------------------------------------------
+
+describe('goods that carry the anonymous client\'s phone', function()
+    --- A client whose lb-phone number ('555-1' in this harness) is not the
+    --- charinfo.phone qbx_core keeps, as on most lb-phone servers.
+    local function client(inventory)
+        local s = newStack()
+        Env.addPlayer({ source = 1, citizenid = 'CREATOR1', license = 'license:aaa',
+            cash = 100000, bank = 100000, firstname = 'Vic', lastname = 'Marlowe',
+            inventory = inventory })
+        Env.players[1].PlayerData.charinfo.phone = '5550001111'
+        Env.addPlayer({ source = 2, citizenid = 'TARGET01', license = 'license:bbb',
+            cash = 20000, bank = 20000, firstname = 'Dana', lastname = 'Reyes' })
+        return s, s.identity.resolve(1)
+    end
+
+    local function place(s, actor, item)
+        return s.contracts.create(actor, {
+            targetCid = 'TARGET01', reason = 'x', anonymous = true,
+            reward = { baseline = { items = { { name = item, count = 1 } } } },
+        })
+    end
+
+    it('refuses an item that carries the number of the phone they have on them', function()
+        local s, actor = client({ { name = 'simcard', count = 1, metadata = { line = '555-1' } } })
+        local c, err, refusal = place(s, actor, 'simcard')
+        falsy(c, 'a SIM with the client\'s own lb-phone number reached the hitman')
+        eq(err, CH.ERR.ITEM_NAMES_OWNER)
+        eq(refusal and refusal.item, 'simcard')
+    end)
+
+    it('refuses a unique lb-phone by the name it is shown under', function()
+        local s, actor = client({ { name = 'phone_blue', count = 1,
+            metadata = { lbPhoneName = 'Personal' } } })
+        local c, err = place(s, actor, 'phone_blue')
+        falsy(c)
+        eq(err, CH.ERR.ITEM_NAMES_OWNER)
+    end)
+
+    it('still takes a SIM with somebody else\'s number on it', function()
+        local s, actor = client({ { name = 'simcard', count = 1, metadata = { line = '555-9' } } })
+        truthy(place(s, actor, 'simcard'))
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Every channel, scanned
+--------------------------------------------------------------------------
+
+describe('every channel a player not entitled to it can read', function()
+    --- Who each hidden party is, in every form a channel could carry them.
+    local CLIENT = { 'CREATOR1', 'Vic Marlowe', 'Marlowe', 'license:aaa', '5550001111', '555-1' }
+    local OPERATIVE = { 'HITMAN01', 'Rook Ash', 'Rook', 'license:ccc', '5550003333', '555-3' }
+    --- Keys under which a number is a server id or a network id.
+    local ID_KEYS = { source = true, src = true, serverid = true, playerid = true,
+                      netid = true, net_id = true, entity = true, ped = true, vehicle = true }
+
+    local function call(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        truthy(fire, 'no handler registered for ' .. name)
+        local from = #Env.clientEvents
+        _G.source = src
+        fire(payload or {})
+        _G.source = nil
+        for i = from + 1, #Env.clientEvents do
+            local event = Env.clientEvents[i]
+            if event.name == 'crimson-hitman:result' and event.target == src then
+                return event.args[1]
+            end
+        end
+        return nil
+    end
+
+    local function admin(src, op, data)
+        _G.source = src
+        Env.events['crimson-hitman:admin']({ op = op, data = data or {}, __rid = 7 })
+        _G.source = nil
+    end
+
+    --- Every string in a value, keys included, and every number kept under
+    --- a key that names a server or network id.
+    local function scan(value, found, key)
+        if type(value) == 'string' then
+            found.text[#found.text + 1] = value:lower()
+        elseif type(value) == 'number' then
+            if key and ID_KEYS[tostring(key):lower()] then found.ids[#found.ids + 1] = value end
+        elseif type(value) == 'table' then
+            for k, v in pairs(value) do
+                scan(k, found)
+                scan(v, found, k)
+            end
+        end
+        return found
+    end
+
+    local function leaks(value, needles, sources)
+        local found = scan(value, { text = {}, ids = {} })
+        local out = {}
+        for _, needle in ipairs(needles) do
+            for _, text in ipairs(found.text) do
+                if text:find(needle:lower(), 1, true) then
+                    out[#out + 1] = needle .. ' in "' .. text:sub(1, 120) .. '"'
+                    break
+                end
+            end
+        end
+        for _, id in ipairs(found.ids) do
+            for _, src in ipairs(sources) do
+                if id == src then out[#out + 1] = 'server id ' .. src end
+            end
+        end
+        return out
+    end
+
+    local function both(a, b)
+        local out = {}
+        for _, v in ipairs(a) do out[#out + 1] = v end
+        for _, v in ipairs(b) do out[#out + 1] = v end
+        return out
+    end
+
+    --- An anonymous client, an anonymous operative, an officer as target,
+    --- a bystander and an officer colleague, and staff without IdentityAce;
+    --- then the contract worked through every channel it has.
+    local function city()
+        local s = newStack()
+        Config.Completion.Fulfilment = 'alive'
+        Config.Cooldowns.admin = { per = 10, burst = 500 }
+        Natives.convars['crimson_hitman_webhook'] = 'https://discord.example/api/webhooks/1/x'
+        local f = fixture(s, { targetJob = { name = 'police', type = 'leo', onduty = true } })
+        Env.players[1].PlayerData.charinfo.phone = '5550001111'
+        Env.players[3].PlayerData.charinfo.phone = '5550003333'
+        Env.players[3].PlayerData.money.bank = 200000
+        Env.addPlayer({ source = 4, citizenid = 'BYSTAND1', license = 'license:ddd',
+            firstname = 'Bea', lastname = 'Stander' })
+        Env.addPlayer({ source = 5, citizenid = 'OFFICER1', license = 'license:eee',
+            firstname = 'Otto', lastname = 'Beat', job = { name = 'police', type = 'leo', onduty = true } })
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:fff',
+            firstname = 'Sam', lastname = 'Steward' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        s.bridges.install(s)
+        -- A phone that places calls: what the callee's phone is handed to
+        -- show, recorded as reaching the callee.
+        exports['lb-phone'].CreateCall = function(_, caller, number)
+            Env.clientEvents[#Env.clientEvents + 1] = {
+                name = 'lb-phone:CreateCall', target = tonumber(tostring(number):match('(%d+)$')),
+                args = { { shown = caller.phoneNumber } },
+            }
+            return 42
+        end
+        s.comms.resetCallCache()
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', anonymous = true,
+            mode = CH.MODE.COMPETITIVE, bailoutAmount = 20000,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c, 'placed')
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Env.runTimers()
+        truthy(s.contracts.accept(f.hitman, c.id, true), 'taken anonymously')
+        -- And a second operative under his own name, whom the client can ring.
+        Env.addPlayer({ source = 7, citizenid = 'HITMAN02', license = 'license:ggg',
+            cash = 5000, bank = 5000, firstname = 'Jay', lastname = 'Fox' })
+        truthy(s.contracts.accept(s.identity.resolve(7), c.id, false), 'taken under a name')
+
+        Env.players[1]._coords = { x = 1234.0, y = -568.0, z = 30.0 }
+        Env.players[2]._coords = { x = 1200.0, y = -800.0, z = 30.0 }
+        call('setMeeting', 1, { id = c.id, x = 1234.0, y = -568.0, z = 30.0 })
+        call('meetingWaypoint', 3, { id = c.id })
+        call('sendMessage', 3, { id = c.id, body = 'On my way' })
+        local threads = call('threads', 1, { id = c.id })
+        local handle = threads and threads.data and threads.data[1] and threads.data[1].handle
+        call('sendMessage', 1, { id = c.id, thread = handle, body = 'Good' })
+        call('readThread', 1, { id = c.id, thread = handle })
+        call('readThread', 3, { id = c.id })
+        call('requestCall', 3, { id = c.id })
+        call('requestCall', 1, { id = c.id, thread = handle })
+        for _, thread in ipairs(threads and threads.data or {}) do
+            if thread.name then call('requestCall', 1, { id = c.id, thread = thread.handle }) end
+        end
+        call('sendMessage', 7, { id = c.id, body = 'Me too' })
+        call('requestCall', 7, { id = c.id })
+        call('locationTip', 3, { id = c.id, shown = { cost = Config.LocationTip.Cost,
+            account = Config.LocationTip.Account } })
+        for _, src in ipairs({ 1, 2, 3, 4, 5 }) do
+            call('list', src, { page = 1 })
+            call('mine', src, {})
+            call('ledger', src, {})
+            call('whitelistedView', src, {})
+        end
+        call('amendments', 1, { id = c.id })
+        call('amendments', 3, { id = c.id })
+        for _, op in ipairs({ 'overview', 'contracts', 'stuck', 'reviews', 'logs', 'alerts', 'console' }) do
+            admin(6, op, {})
+        end
+        admin(6, 'contract', { id = c.id })
+        call('abandon', 3, { id = c.id })
+        call('cancel', 1, { id = c.id })
+        admin(6, 'contract', { id = c.id })
+        s.audit.flush()
+        Env.advance(60)
+        Env.runTimers()
+        exports['lb-phone'].CreateCall = nil
+        s.comms.resetCallCache()
+        return s, f, c
+    end
+
+    it('names neither hidden party to anybody not entitled, on any channel', function()
+        local _, _, c = city()
+        truthy(c)
+        local forbidden = {
+            [1] = { needles = OPERATIVE, sources = { 3 } },
+            [2] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+            [3] = { needles = CLIENT, sources = { 1 } },
+            [4] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+            [5] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+            [6] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+            [7] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+        }
+        local reached, problems = {}, {}
+        for _, event in ipairs(Env.clientEvents) do
+            for src, rule in pairs(forbidden) do
+                if event.target == src or event.target == -1 then
+                    reached[src] = (reached[src] or 0) + 1
+                    for _, leak in ipairs(leaks(event.args, rule.needles, rule.sources)) do
+                        problems[#problems + 1] = ('%s to %d: %s'):format(event.name, src, leak)
+                    end
+                end
+            end
+        end
+        for src = 1, 7 do truthy((reached[src] or 0) > 0, 'nothing reached source ' .. src) end
+        local kinds = {}
+        for _, event in ipairs(Env.clientEvents) do kinds[event.name] = true end
+        for _, name in ipairs({ 'lb-phone:CreateCall', 'lb-phone:SendNotification',
+                                'crimson-hitman:locationTip', 'crimson-hitman:adminResult' }) do
+            truthy(kinds[name], 'the journey never used ' .. name)
+        end
+        truthy(#(Natives.calls.dispatch or {}) > 0, 'no advisory reached sc-dispatch')
+        truthy(#(Natives.calls.http or {}) > 0, 'nothing was posted to Discord')
+        local everybody = both(CLIENT, OPERATIVE)
+        for _, sent in ipairs(Natives.calls.dispatch or {}) do
+            for _, leak in ipairs(leaks(sent, everybody, { 1, 3 })) do
+                problems[#problems + 1] = 'sc-dispatch: ' .. leak
+            end
+        end
+        for _, post in ipairs(Natives.calls.http or {}) do
+            for _, leak in ipairs(leaks(post.body, everybody, {})) do
+                problems[#problems + 1] = 'discord: ' .. leak
+            end
+        end
+        eq(#problems, 0, table.concat(problems, '\n'))
+    end)
+end)

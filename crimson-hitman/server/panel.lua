@@ -208,6 +208,12 @@ local CID_KEYS = {
     proposer = true, declined_by = true, actor = true, who = true,
 }
 
+--- Detail fields that hold a server id. A refused or flooded request is
+--- kept by the server id that sent it, with the second it came: set beside
+--- a contract row of the same second ('operative #1' messaged), it said
+--- which player in the city an anonymous party was.
+local SOURCE_KEYS = { source = true, src = true, serverId = true }
+
 --- How a party's account (a licence) is shown to staff who may not see who
 --- is behind an anonymous party: it is never shown at all.
 local ACCOUNT_SHOWN = '(an account)'
@@ -290,6 +296,7 @@ local function redactor(canIdentify, contract, hitmen)
             for k, inner in pairs(v) do out[k] = value(k, inner) end
             return out
         end
+        if not canIdentify and SOURCE_KEYS[key] and type(v) == 'number' then return '(a player)' end
         if canIdentify or type(v) ~= 'string' then return v end
         if labels[v] then return labels[v] end
         if hidden[v] then return 'Anonymous' end

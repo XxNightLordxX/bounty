@@ -281,7 +281,7 @@ Escrow.isDirtyItem = isDirtyItem
 local OWNER_KEYS = {
     citizenid = true, cid = true, owner = true, ownername = true,
     name = true, firstname = true, lastname = true, fullname = true,
-    phonenumber = true, lbphonenumber = true, phone_number = true,
+    phonenumber = true, lbphonenumber = true, lbphonename = true, phone_number = true,
     dob = true, birthdate = true, dateofbirth = true,
 }
 
@@ -315,6 +315,16 @@ function Escrow.namesOwner(actor, lines)
     local charinfo = actor and actor.player and actor.player.PlayerData
         and actor.player.PlayerData.charinfo
     if type(charinfo) == 'table' then want(charinfo.phone) end
+    -- And the number of the phone they carry, which lb-phone keeps apart
+    -- from charinfo.phone: a SIM, a burner or a note from another resource
+    -- carries that one under whatever key it likes.
+    local src = actor and actor.source
+    if src and GetResourceState('lb-phone') == 'started' then
+        local ok, number = pcall(function()
+            return exports['lb-phone']:GetEquippedPhoneNumber(src)
+        end)
+        if ok then want(number) end
+    end
 
     local function carries(meta, depth)
         if type(meta) ~= 'table' or depth > 4 then return false end
