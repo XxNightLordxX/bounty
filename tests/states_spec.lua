@@ -349,6 +349,7 @@ describe('the grid covers the whole action surface', function()
         revise = true,            -- reward_edit_spec, keyed on lines not state
         submitPhoto = true,       -- needs a token, which needs a kill
         informant = true,         -- interaction_spec
+        placerInformant = true,   -- informant_spec, contracts that ended included
         respondAmendment = true,  -- needs an open proposal
         readThread = true, sendMessage = true, requestCall = true,
         endCall = true,           -- names no contract: the caller's own call

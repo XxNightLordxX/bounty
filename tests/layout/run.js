@@ -157,13 +157,27 @@ function serverStub() {
   // button that buys one. Measured at phone width with the rest.
   taken[0].locationTip = { left: 2, secondsLeft: 600, cooldownSeconds: 600 };
   taken[1].locationTip = { left: 3 };
+  // The placer's informant on that card, with an operative to ask about;
+  // and on another, drawn disabled with why under it (every operative there
+  // took it under their name), so both are measured at every width.
+  own[2].placerInformantPicks = [{ pick: 'op_aaaaaaaaaaaa', label: 'Operative #1' }];
+  own[2].placerInformantLeft = 2;
+  own[2].placerInformantWait = 0;
+  own[1].hitmenActive = 1;
+  own[1].hitmen = [{ alias: 'Operative #1', name: 'Rook Ash' }];
+  own[1].placerInformantPicks = [];
+  own[1].placerInformantLeft = 2;
+  own[1].placerInformantFound = [{ label: 'Operative #2', text: 'Nel Vey' }];
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
       settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true,
         // This suite measures the most crowded card there is, so it has to
         // be a server that offers every button that card can carry.
-        informant: { cost: 25000, account: 'bank', maxPerContract: 2 },
+        informant: { cost: 25000, account: 'bank', maxPerContract: 2, chance: 10,
+                     repeatFreeMinutes: 30 },
+        placerInformant: { cost: 25000, account: 'bank', chance: 20, alertChance: 20,
+                           maxPerContract: 2, cooldownMinutes: 10 },
         locationTip: { enabled: true, cost: 25000, account: 'bank', radius: 350,
           showMinutes: 10, cooldownMinutes: 10, maxPerContract: 3, tellsTarget: true },
         reasonMode: 'freetext', reasonMaxLength: 140 } } },
@@ -179,7 +193,12 @@ function serverStub() {
       bailoutAvailable: true, bailoutAmount: 90000,
       deadline: Math.floor(Date.now() / 1000) + 7200,
       // Somebody bought an informant tip on them five minutes ago.
-      tippedAt: Math.floor(Date.now() / 1000) - 300
+      tippedAt: Math.floor(Date.now() / 1000) - 300,
+      // The target's informant: every operative on it, and the placer.
+      informantLeft: 2,
+      informantPicks: [{ pick: 'op_bbbbbbbbbbbb', label: 'Operative #1' },
+                       { pick: 'op_cccccccccccc', label: 'Operative #2' },
+                       { pick: 'placer', label: 'The person who placed it' }]
     }] } },
     ledger: { ok: true, data: { entries: [{
       // The client's row, with their kill photo waiting to be opened. Only
@@ -240,6 +259,7 @@ function serverStub() {
     withdrawReward: { ok: true, data: { id: 'ct00000001', returned: 1, queued: 0 } },
     amendments: { ok: true, data: [] },
     informant: { ok: true, data: { found: false } },
+    placerInformant: { ok: true, data: { found: false } },
     browseTargets: { ok: true, data: { people: [
       { handle: 'tg1', name: 'Ada Quill', protected: false },
       { handle: 'tg2', name: 'Bo Renn', protected: true }
@@ -940,7 +960,8 @@ async function main() {
                    ['onme', null], ['ledger', null],
                    ['mine', 'Change reward'],
                    ['mine', 'Propose change'],
-                   ['mine', 'Buy informant data'],
+                   ['mine', 'Informant on an operative \u2014 $25,000'],
+                   ['onme', 'Buy informant data'],
                    ['mine', 'Extend deadline'],
                    ['mine', 'Edit'],
                    ['mine', 'Withdraw'],
@@ -1001,6 +1022,81 @@ async function main() {
       });
     }
     await p2.close();
+  }
+
+  /* The placer's informant at phone width: the button with its long label,
+     the dialog with its picker, and the pay button armed for its second
+     tap — each on screen, inside its card or dialog, and none cut off. */
+  for (const [w, h] of [[280, 560], [360, 640]]) {
+    const ip = await browser.newPage({ viewport: { width: w, height: h } });
+    await ip.addInitScript(serverStub);
+    await ip.goto('file://' + UI);
+    await ip.waitForTimeout(250);
+    await ip.click('[data-tab="mine"]');
+    await ip.waitForTimeout(200);
+    const onCard = await ip.evaluate(function () {
+      const label = 'Informant on an operative \u2014 $25,000';
+      const all = Array.prototype.slice.call(document.querySelectorAll('button'))
+        .filter(function (n) { return n.textContent === label; });
+      const live = all.filter(function (n) { return !n.disabled; })[0];
+      const off = all.filter(function (n) { return n.disabled; })[0];
+      function fits(n) {
+        const r = n.getBoundingClientRect();
+        const card = n.closest('.card').getBoundingClientRect();
+        return r.left >= card.left - 0.5 && r.right <= card.right + 0.5
+          && n.scrollWidth <= n.clientWidth + 1 && r.height >= 30;
+      }
+      const why = off && off.parentNode.querySelector('.hint');
+      const out = { live: !!live, off: !!off, liveFits: live && fits(live),
+        offFits: off && fits(off), why: why ? why.textContent : null,
+        whyFits: why && why.scrollWidth <= why.clientWidth + 1 };
+      if (live) { live.click(); }
+      return out;
+    });
+    await ip.waitForTimeout(200);
+    const inDialog = await ip.evaluate(function () {
+      const panel = document.querySelector('.dialog');
+      if (!panel) { return null; }
+      const nav = document.querySelector('.tabs').getBoundingClientRect();
+      const pay = Array.prototype.slice.call(panel.querySelectorAll('button'))
+        .filter(function (n) { return n.textContent === 'Pay $25,000'; })[0];
+      if (pay) { pay.click(); }
+      return { text: panel.textContent };
+    });
+    await ip.waitForTimeout(200);
+    const armed = await ip.evaluate(function () {
+      const panel = document.querySelector('.dialog');
+      if (!panel) { return null; }
+      const nav = document.querySelector('.tabs').getBoundingClientRect();
+      const box = panel.getBoundingClientRect();
+      const buttons = Array.prototype.slice.call(panel.querySelectorAll('button'));
+      const tap = buttons.filter(function (n) {
+        return n.textContent === 'Tap again to pay $25,000';
+      })[0];
+      return {
+        tap: !!tap,
+        buried: buttons.filter(function (b) {
+          return b.getBoundingClientRect().bottom > nav.top + 1;
+        }).map(function (b) { return b.textContent; }),
+        outside: buttons.filter(function (b) {
+          const r = b.getBoundingClientRect();
+          return r.left < box.left - 0.5 || r.right > box.right + 0.5
+            || b.scrollWidth > b.clientWidth + 1;
+        }).map(function (b) { return b.textContent; })
+      };
+    });
+    await ip.close();
+    it('draws the placer\'s informant and its two-tap dialog at ' + w + 'px', function () {
+      truthy(onCard.live && onCard.liveFits, 'the button fits its card: ' + JSON.stringify(onCard));
+      truthy(onCard.off && onCard.offFits, 'and so does the disabled one: ' + JSON.stringify(onCard));
+      truthy(onCard.why === 'You already know who every operative on it is.' && onCard.whyFits,
+        'with why under it: ' + JSON.stringify(onCard));
+      truthy(inDialog && inDialog.text.indexOf('20% chance') !== -1,
+        'the dialog says the chance: ' + JSON.stringify(inDialog));
+      truthy(armed && armed.tap, 'the pay button arms for its second tap: ' + JSON.stringify(armed));
+      truthy(armed.buried.length === 0, 'nothing behind the tab bar: ' + armed.buried.join(', '));
+      truthy(armed.outside.length === 0, 'nothing outside the dialog: ' + armed.outside.join(', '));
+    });
   }
 
   it('actually opened the dialogs it claims to have measured', function () {

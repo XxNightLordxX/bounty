@@ -168,9 +168,10 @@ ConfigDefaults.Amendments = {
 -- ============================================================================
 --                                  BUYOUTS
 -- ============================================================================
--- What a target can pay for: buying the contract out, and buying the name of
--- a hitman who has been seen near them. And what a hitman can pay for: an
--- informant tip, the rough area the target was in when it was bought.
+-- What a target can pay for: buying the contract out, and a look-up on who
+-- is after them. The placer's look-up on who took their contract. And what a
+-- hitman can pay for: an informant tip, the rough area the target was in
+-- when it was bought.
 
 ConfigDefaults.Bailout = {
     Enabled                 = true,       -- a target may buy out a contract on them
@@ -183,15 +184,25 @@ ConfigDefaults.Bailout = {
 }
 
 ConfigDefaults.Informant = {
-    Enabled                 = true,    -- a target may buy a hitman's name
-    Cost                    = 25000,   -- price; 0 = free
+    Enabled                 = true,    -- a target may pay to find out who is after them
+    Cost                    = 25000,   -- price of one look-up, paid win or lose; 0 = free
     Account                 = 'bank',  -- 'cash' | 'bank'
     RevealMode              = 'name',  -- 'name' | 'description'
-    RequireProximity        = true,    -- only a hitman seen near the target
-    ProximityRadius         = 120.0,   -- metres that counts as near
-    ProximityWindowMinutes  = 10,      -- how long a sighting counts
-    RerollLockMinutes       = 30,      -- buying again within this long names the same hitman
-    MaxPurchasesPerContract = 2,       -- purchases per buyer per contract
+    RevealChancePercent     = 10,      -- chance one look-up finds out who it is, 0-100
+    ProximityRadius         = 120.0,   -- metres that count as near (an idle hold's clock)
+    RerollLockMinutes       = 30,      -- the same pick again this soon repeats the answer, free
+    MaxPurchasesPerContract = 2,       -- look-ups per target per contract, both kinds
+}
+
+ConfigDefaults.PlacerInformant = {
+    Enabled                 = true,    -- the placer may pay to find out who took it
+    Cost                    = 25000,   -- price of one look-up, paid win or lose; 0 = free
+    Account                 = 'bank',  -- 'cash' | 'bank'
+    RevealChancePercent     = 20,      -- chance one look-up names the operative, 0-100
+    AlertChancePercent      = 20,      -- chance a named operative is told, 0-100
+    RevealMode              = 'name',  -- 'name' | 'description'
+    MaxPurchasesPerContract = 2,       -- look-ups per placer per contract
+    CooldownMinutes         = 10,      -- wait between two look-ups
 }
 
 ConfigDefaults.LocationTip = {
@@ -380,7 +391,8 @@ ConfigDefaults.Cooldowns = { -- per-player allowances: refill over `per` seconds
     create      = { per = 60, burst = 2 },   -- placing a contract
     accept      = { per = 30, burst = 3 },   -- accepting one
     bailout     = { per = 60, burst = 1 },   -- buying one out
-    informant   = { per = 300, burst = 1 },  -- buying a hitman's name
+    informant   = { per = 300, burst = 1 },  -- the target's informant
+    placerInformant = { per = 300, burst = 1 },  -- the placer's informant
     locationTip = { per = 60, burst = 2 },   -- buying an informant tip on a target
     message     = { per = 5,  burst = 5 },   -- messages, calls, mutes, Notify me
     amend       = { per = 30, burst = 3 },   -- proposing a change

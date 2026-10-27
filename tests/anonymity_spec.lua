@@ -880,20 +880,26 @@ describe('informant data the target pays for', function()
             reward = { baseline = { cash = 5000 } },
         }))
         truthy(s.contracts.accept(f.hitman, c.id, true))
-        s.death.watchTargets(s.storage.allContracts())
         Env.players[2].PlayerData.money.bank = 100000
+        -- A look-up that finds out, unless a test says otherwise.
+        s.informant.setRandom(function() return 1 end)
         return s, f, c
     end
 
     local function spent() return 100000 - Env.players[2].PlayerData.money.bank end
 
+    --- The operative the target's card offers, by the handle it was given.
+    local function pick(s, c)
+        return s.projection.contract(s.storage.readContract(c.id), 'TARGET01').informantPicks[1].pick
+    end
+
     --- The fee is taken and never refunded, so the paid answer is given
     --- whatever the store does with the record of it.
     it('answers the name it was paid for when the record of it will not write', function()
         local s, f, c = tracked()
-        local real = s.storage.writeReveal
+        local real, which = s.storage.writeReveal, pick(s, c)
         s.storage.writeReveal = function() error('the connection dropped', 0) end
-        local ran, ok, err, data = pcall(s.informant.buy, f.target, c.id)
+        local ran, ok, err, data = pcall(s.informant.buy, f.target, c.id, nil, which)
         s.storage.writeReveal = real
         truthy(ran, 'the purchase raised: ' .. tostring(ok))
         truthy(ok, tostring(err))
@@ -911,18 +917,19 @@ describe('informant data the target pays for', function()
     --- it was paid, and every retry paid it again.
     it('charges once across a read that raised and a retry', function()
         local s, f, c = tracked()
-        local real, raised = s.storage.readHitmen, false
-        s.storage.readHitmen = function(...)
+        local which = pick(s, c)
+        local real, raised = s.storage.readHitman, false
+        s.storage.readHitman = function(...)
             if not raised then
                 raised = true
                 error('the connection dropped', 0)
             end
             return real(...)
         end
-        falsy(pcall(s.informant.buy, f.target, c.id), 'the read raised')
+        falsy(pcall(s.informant.buy, f.target, c.id, nil, which), 'the read raised')
         eq(spent(), 0, 'and nothing was taken for it')
-        local ok, err, data = s.informant.buy(f.target, c.id)
-        s.storage.readHitmen = real
+        local ok, err, data = s.informant.buy(f.target, c.id, nil, which)
+        s.storage.readHitman = real
         truthy(ok, tostring(err))
         eq(data.name, 'Rook Ash')
         eq(spent(), Config.Informant.Cost, 'one fee for one answer')
@@ -932,16 +939,17 @@ describe('informant data the target pays for', function()
     --- paid out, or one that ended in that await, was still sold.
     it('is refused uncharged on a contract that started paying out inside the purchase', function()
         local s, f, c = tracked()
-        local real, moved = s.storage.readHitmen, false
-        s.storage.readHitmen = function(...)
+        local which = pick(s, c)
+        local real, moved = s.storage.readHitman, false
+        s.storage.readHitman = function(...)
             if not moved then
                 moved = true
                 truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING))
             end
             return real(...)
         end
-        local ok, err = s.informant.buy(f.target, c.id)
-        s.storage.readHitmen = real
+        local ok, err = s.informant.buy(f.target, c.id, nil, which)
+        s.storage.readHitman = real
         truthy(s.storage.compareSetContractState(c.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED))
         falsy(ok)
         eq(err, CH.ERR.ALREADY_SETTLED)
@@ -953,15 +961,21 @@ describe('informant data the target pays for', function()
     --- the one purchase never refunded.
     it('refuses a price that moved since it was quoted, and takes nothing', function()
         local s, f, c = tracked()
+        -- A look-up that finds nothing, so asking again inside the lock is
+        -- the free repeat below.
+        s.informant.setRandom(function() return 100 end)
+        local which = pick(s, c)
         local quoted, account = Config.Informant.Cost, Config.Informant.Account
         Config.Informant.Cost = quoted * 2
-        local reply = call('informant', 2, { id = c.id, shown = { cost = quoted, account = account } })
+        local reply = call('informant', 2, { id = c.id, pick = which,
+            shown = { cost = quoted, account = account } })
         eq(reply and reply.err, CH.ERR.TERMS_CHANGED)
         eq(reply.data and reply.data.cost, quoted * 2, 'with the price now')
         eq(spent(), 0, 'nothing taken')
 
         Env.advance(Config.Cooldowns.informant.per + 1)
-        local paid = call('informant', 2, { id = c.id, shown = { cost = quoted * 2, account = account } })
+        local paid = call('informant', 2, { id = c.id, pick = which,
+            shown = { cost = quoted * 2, account = account } })
         truthy(paid and paid.ok, tostring(paid and paid.err))
         eq(spent(), quoted * 2, 'the price quoted, once')
 
@@ -969,7 +983,8 @@ describe('informant data the target pays for', function()
         -- the price is now, so nothing is refused for it.
         Config.Informant.Cost = quoted * 3
         Env.advance(Config.Cooldowns.informant.per + 1)
-        local again = call('informant', 2, { id = c.id, shown = { cost = quoted * 2, account = account } })
+        local again = call('informant', 2, { id = c.id, pick = which,
+            shown = { cost = quoted * 2, account = account } })
         truthy(again and again.ok, tostring(again and again.err))
         eq(spent(), quoted * 2, 'and the repeat costs nothing')
     end)
@@ -977,27 +992,22 @@ describe('informant data the target pays for', function()
     it('needs no quote where nothing is charged', function()
         local s, f, c = tracked()
         Config.Informant.Cost = 0
-        local reply = call('informant', 2, { id = c.id })
+        local reply = call('informant', 2, { id = c.id, pick = pick(s, c) })
         truthy(reply and reply.ok, tostring(reply and reply.err))
         eq(spent(), 0)
     end)
 
-    --- Two operatives seen on the target and one of them gone from the city:
-    --- whichever it is, the purchase names the one still here. Leaving the
-    --- gone one out says nothing new: alone, it is "Unknown operative" too.
-    for _, gone in ipairs({ 3, 4 }) do
-        it(('names the seen operative still in the city (source %d left)'):format(gone), function()
-            local s, f, c = tracked()
-            Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
-                cash = 5000, bank = 5000, firstname = 'Sol', lastname = 'Vane' })
-            truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
-            s.death.watchTargets(s.storage.allContracts())
-            Env.removePlayer(gone)
-            local ok, err, data = s.informant.buy(f.target, c.id)
-            truthy(ok, tostring(err))
-            eq(data.name, gone == 3 and 'Sol Vane' or 'Rook Ash')
-        end)
-    end
+    --- An operative away from the city when they are found out is named by
+    --- the name the contract holds for them: "Unknown operative" took the
+    --- full price for a look-up that had found them.
+    it('names an operative who has left the city by the name the contract holds', function()
+        local s, f, c = tracked()
+        local which = pick(s, c)
+        Env.removePlayer(3)
+        local ok, err, data = s.informant.buy(f.target, c.id, nil, which)
+        truthy(ok, tostring(err))
+        eq(data.name, 'Rook Ash')
+    end)
 end)
 
 --------------------------------------------------------------------------

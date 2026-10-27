@@ -595,17 +595,45 @@ MATRIX.bailout = {
 }
 
 MATRIX.informant = {
-    -- With the price quoted, as the page sends it: a price not quoted is
-    -- refused before anything is asked (Informant.buy).
+    -- Every look-up forced to find nothing: a name a look-up finds is what
+    -- was paid for, not a leak, and informant_spec says who may learn one.
+    -- What this row is about is who may buy at all.
+    arrange = function(w) w.s.informant.setRandom(function() return 100 end) end,
+    -- With the price quoted, as the page sends it, and the operative the
+    -- target's card offers (a handle the server minted).
     payload = function(w, role, contract)
-        return { id = contract.id,
+        local card = w.s.projection.contract(w.s.storage.readContract(contract.id), CAST.target.cid)
+        return { id = contract.id, pick = card.informantPicks[1].pick,
                  shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }
     end,
-    -- Both ends of the deal may buy, and nobody else: the creator to see who
-    -- is working for them, the target to see who is coming (§6.1).
-    expect = { creator = ALLOW, target = ALLOW, hitman = NOT_PARTY,
-               otherHitman = NOT_PARTY, stranger = NOT_PARTY, admin = NOT_PARTY },
-    why = 'unmasking an operative is sold to the two parties, not to onlookers',
+    -- The target's alone: the placer has an informant of their own
+    -- (placerInformant), and nobody else may buy either.
+    expect = TARGET_ONLY,
+    why = 'the target\'s look-up on who is after them is sold to the target alone',
+}
+
+MATRIX.placerInformant = {
+    -- One operative the placer cannot already see by name: in the named
+    -- pass the hitman put their name to it, so somebody else takes it too,
+    -- anonymously.
+    arrange = function(w)
+        -- Forced to find nothing, as the target's row is.
+        w.s.informant.setRandom(function() return 100 end)
+        Env.addPlayer({ source = 11, citizenid = 'SHADOW01', license = 'license:SHADOW01',
+            cash = 250000, bank = 250000, firstname = 'Lux', lastname = 'Penn' })
+        truthy(w.s.contracts.accept(w.s.identity.resolve(11), w.held.id, true),
+            'an anonymous operative to ask about')
+    end,
+    payload = function(w, role, contract)
+        local card = w.s.projection.contract(w.s.storage.readContract(contract.id), CAST.creator.cid)
+        return { id = contract.id, pick = card.placerInformantPicks[1].pick,
+                 shown = { cost = Config.PlacerInformant.Cost,
+                           account = Config.PlacerInformant.Account } }
+    end,
+    -- The person who placed it, named or anonymous, and nobody else: not
+    -- the operative, not the target.
+    expect = CREATOR_ONLY,
+    why = 'the placer\'s look-up on who took their contract is sold to the placer alone',
 }
 
 -- The informant tip a hitman buys (server/locationtip.lua). The target

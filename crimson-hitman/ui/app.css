@@ -806,6 +806,17 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
 }
 /* An odd one out takes the whole last row rather than leaving a hole. */
 .more > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+/* The placer's informant: a long label, and under it, when it cannot be
+   pressed, why. A row of its own, as a block, so the narrow layout's tile
+   rules (flex direction) leave it alone. */
+.more > .placer-informant { grid-column: 1 / -1; display: block; min-width: 0; }
+.placer-informant > button {
+  width: 100%; min-width: 0;
+  justify-content: flex-start; text-align: left;
+  font-size: var(--t-sm); font-weight: 600;
+  padding: 0.5rem 0.7rem;
+}
+.placer-informant > .hint { margin-top: 0.3rem; }
 /* The Hang up above every screen but the thread while a call placed from
    the app is live (app.js, callBar). */
 .call-bar {

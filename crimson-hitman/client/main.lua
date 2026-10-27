@@ -573,7 +573,7 @@ local UI_EVENTS = {
     -- Verify kill with kill photos off (Config.Completion.KillPhotos): no
     -- token and no picture, so nothing here is held back from the page.
     'verifyKill',
-    'bailout', 'informant',
+    'bailout', 'informant', 'placerInformant',
     -- Buying an informant tip. The area is never in the reply: the server
     -- sends it to this game alone (crimson-hitman:locationTip, below).
     'locationTip',

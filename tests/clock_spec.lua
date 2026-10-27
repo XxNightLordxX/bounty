@@ -600,7 +600,11 @@ describe('a deadline moved while the expiry pass runs', function()
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
         truthy(a and b, 'two contracts')
 
-        local live, read = s.storage.liveContracts, s.storage.readContract
+        -- The client shortens the first one once the pass has read the
+        -- list: the pass reads a contract again only where it has something
+        -- to do to it, so the list is all it has of the second.
+        local live = s.storage.liveContracts
+        local revised, why
         s.storage.liveContracts = function()
             local rows = live()
             table.sort(rows, function(x, y) return x.id == a.id and y.id ~= a.id end)
@@ -615,11 +619,11 @@ describe('a deadline moved while the expiry pass runs', function()
             if id == b.id and revised == nil then
                 revised, why = s.contracts.revise(f.creator, a.id, { deadlineSeconds = 300 })
             end
-            return read(id, ...)
+            return rows
         end
         main.markPresenceChanged()
         main.expire()
-        s.storage.liveContracts, s.storage.readContract = live, read
+        s.storage.liveContracts = live
         truthy(revised, 'the revise landed: ' .. tostring(why))
 
         local due = s.storage.readContract(a.id).deadline_at

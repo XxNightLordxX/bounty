@@ -25,6 +25,7 @@ local EMPTY = {
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
     photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
     locationTips = {},
+    placerInformants = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -53,7 +54,7 @@ local indexDirty = false
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
-                  'alerts', 'viewAlerts', 'locationTips' }
+                  'alerts', 'viewAlerts', 'locationTips', 'placerInformants' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -1838,6 +1839,12 @@ function JsonStore.prune()
             recordsDirty = true
         end
     end
+    for key, row in pairs(db.placerInformants) do
+        if gone[row.contract_id] then
+            db.placerInformants[key] = nil
+            recordsDirty = true
+        end
+    end
     for key, row in pairs(db.mutes) do
         if gone[row.contract_id] then db.mutes[key] = nil end
     end
@@ -2061,6 +2068,40 @@ function JsonStore.clearLocationTips(contractId)
     for id, row in pairs(db.locationTips) do
         if row.contract_id == contractId then
             db.locationTips[id] = nil
+            cleared = true
+        end
+    end
+    if cleared then touch(false) end
+    return true
+end
+--- The look-ups a contract's placer bought from their informant; see the
+--- memory backend. Financial: each is the record of a price never given
+--- back, and what the cap on how many a contract sells is counted from.
+function JsonStore.readPlacerInformants(contractId, placerCid)
+    local out = {}
+    for _, row in pairs(db.placerInformants) do
+        if row.contract_id == contractId and row.placer_cid == placerCid then
+            local copy = {}
+            for k, v in pairs(row) do copy[k] = v end
+            out[#out + 1] = copy
+        end
+    end
+    return out
+end
+
+function JsonStore.writePlacerInformant(row)
+    local copy = {}
+    for k, v in pairs(row) do copy[k] = v end
+    db.placerInformants[row.contract_id .. ':' .. row.placer_cid .. ':' .. tostring(row.seq)] = copy
+    touch(true)
+    return true
+end
+
+function JsonStore.clearPlacerInformants(contractId)
+    local cleared = false
+    for key, row in pairs(db.placerInformants) do
+        if row.contract_id == contractId then
+            db.placerInformants[key] = nil
             cleared = true
         end
     end

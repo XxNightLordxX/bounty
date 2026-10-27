@@ -47,7 +47,7 @@ function Memory.open()
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
         photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
-        playtime = {}, locationTips = {},
+        playtime = {}, locationTips = {}, placerInformants = {},
     }
     return true
 end
@@ -1331,6 +1331,9 @@ function Memory.prune()
     for key, row in pairs(db.reveals) do
         if gone[row.contract_id] then db.reveals[key] = nil end
     end
+    for key, row in pairs(db.placerInformants) do
+        if gone[row.contract_id] then db.placerInformants[key] = nil end
+    end
     for key, row in pairs(db.mutes) do
         if gone[row.contract_id] then db.mutes[key] = nil end
     end
@@ -1361,6 +1364,39 @@ end
 function Memory.clearReveals(contractId)
     for key, row in pairs(db.reveals) do
         if row.contract_id == contractId then db.reveals[key] = nil end
+    end
+    return true
+end
+
+--- The look-ups a contract's placer bought from their informant
+--- (Config.PlacerInformant), one row each: which operative, when, whether it
+--- found out who they are and whether they were told. Kept in the store, not
+--- only in the informant's memory: a restart that forgot them counted the cap
+--- from zero and hid a name already paid for.
+---@return table[] rows, in no order (the informant sorts them by seq)
+function Memory.readPlacerInformants(contractId, placerCid)
+    local out = {}
+    for _, row in pairs(db.placerInformants) do
+        if row.contract_id == contractId and row.placer_cid == placerCid then
+            local copy = {}
+            for k, v in pairs(row) do copy[k] = v end
+            out[#out + 1] = copy
+        end
+    end
+    return out
+end
+
+---@param row table { contract_id, placer_cid, hitman_cid, bought_at, revealed, alerted, seq }
+function Memory.writePlacerInformant(row)
+    local copy = {}
+    for k, v in pairs(row) do copy[k] = v end
+    db.placerInformants[row.contract_id .. ':' .. row.placer_cid .. ':' .. tostring(row.seq)] = copy
+    return true
+end
+
+function Memory.clearPlacerInformants(contractId)
+    for key, row in pairs(db.placerInformants) do
+        if row.contract_id == contractId then db.placerInformants[key] = nil end
     end
     return true
 end

@@ -19,6 +19,17 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   still has to search. The target's phone says *Someone has been tipped off
   about your rough location*, never who or where. Up to three per hitman per
   contract, ten minutes apart. The money goes to nobody.
+- **The placer's informant** (`Config.PlacerInformant`): the person who
+  placed a contract, named or anonymous, can pay $25,000 for a 20% chance to
+  find out who one of its anonymous operatives is, picked from **Mine**; a
+  hit stays on the card, and has a 20% chance of being noticed by that
+  operative, who is never told who asked. Two look-ups a contract, ten
+  minutes apart.
+- **The target's informant, reworked** (`Config.Informant`): the target picks
+  any operative on the contract, or the person who placed it, and pays for a
+  10% chance (two look-ups a contract, both kinds together). Nobody is told.
+  The old rule that only a hitman seen near the target could be named is
+  gone, and the informant is never sold to a member of a whitelisted job.
 
 - **No handcuffs needed** (`Config.Kidnap.RequireCoercion = false`, as
   shipped): a handover needs the target alive, conscious and on their feet,
@@ -221,7 +232,8 @@ on another engine is moved to InnoDB at start); MariaDB and MySQL 8 both work.
 Nothing to import either way. The tables are
 `crimson_contracts`, `crimson_escrow`, `crimson_hitmen`, `crimson_amendments`,
 `crimson_messages`, `crimson_ledger`, `crimson_pending`, `crimson_stats`,
-`crimson_audit`, `crimson_reveals`, `crimson_mutes`, `crimson_photos`,
+`crimson_audit`, `crimson_reveals`, `crimson_placer_informants` (the placer's informant
+look-ups), `crimson_mutes`, `crimson_photos`,
 `crimson_review`, `crimson_settings` (what staff changed from the admin panel),
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (who turned
 on the whitelisted-job view's Notify me), `crimson_playtime` (each character's
@@ -557,10 +569,11 @@ moment the contract is placed until it ends.
 
 ### Buyouts
 
-What a target can pay for: buying the contract out, and buying the name of a
-hitman seen near them. And what a hitman can pay for: an informant tip, the
-rough area the target was in when it was bought (`Config.LocationTip`, not to
-be confused with `Config.Informant`, which a target buys).
+What a target can pay for: buying the contract out, and a look-up on who is
+after them. The look-up the person who placed a contract can buy on who took
+it. And what a hitman can pay for: an informant tip, the rough area the target
+was in when it was bought (`Config.LocationTip`, not to be confused with
+`Config.Informant`, which a target buys).
 
 | Setting | Shipped | What it does |
 |---|---|---|
@@ -570,15 +583,22 @@ be confused with `Config.Informant`, which a target buys).
 | `Config.Bailout.ProcessingDelaySeconds` | `120` | Once a hitman holds the contract, a buyout takes effect only after this long, so a target cannot pull it out from under them mid-fight. A kill made before it ran out and still waiting to be verified, or a handover armed before it and still counting, holds it off until that finishes, for at most two `PhotoTokenLifetimeSeconds` more. |
 | `Config.Bailout.BlockWhileIncapacitated` | `true` | No buyout while the target is dead or downed. |
 | `Config.Bailout.Command` | `'cleanse'` | A command for players who cannot open the app: it lists every contract on them **On me** would show and buys one out, exactly as the button does. There whatever `Config.Admin.Enabled` says; it is not a staff tool. |
-| `Config.Informant.Enabled` | `true` | A target may buy the name of a hitman on a contract on them. |
-| `Config.Informant.Cost` | `25000` | The price the dialog quotes is the price charged: one changed from the admin panel since is refused, nothing taken, with the price now. `0` is free, and the app says so. |
+| `Config.Informant.Enabled` | `true` | **The target's informant.** A target may pay for a look-up on who is after them: one operative on the contract, picked from **On me** as *Operative #1*, *Operative #2* (every operative on it, wherever they have been), or the person who placed it. A placer who put their name to the contract is already known, and is not sold. Never offered to a member of a whitelisted job (by the flag the contract recorded, or a barred job held now): the server refuses it as `informant_protected`, nothing charged, and their buyout stays. Turned off, new look-ups are refused and a name already found stays shown. |
+| `Config.Informant.Cost` | `25000` | The price of one look-up, paid whatever it finds. The price the dialog quotes is the price charged: one changed from the admin panel since is refused, nothing taken, with the price now. `0` is free, and the app says so. |
 | `Config.Informant.Account` | `'bank'` | `'cash'` or `'bank'`. |
-| `Config.Informant.RevealMode` | `'name'` | `'name'` names the hitman; `'description'` describes them. |
-| `Config.Informant.RequireProximity` | `true` | Only a hitman the server has seen near the target may be named, observed by the condition sampler and never taken from a client's word; one who pressed Accept and did nothing is not tracking anybody. |
-| `Config.Informant.ProximityRadius` | `120.0` | Metres that count as near. |
-| `Config.Informant.ProximityWindowMinutes` | `10` | How long a sighting counts. Sightings are kept in memory, so for this long after a start, with `RequireProximity` on, informant data on a contract placed before the start is refused, uncharged, with how long to wait. |
-| `Config.Informant.RerollLockMinutes` | `30` | Buying again within this long returns the same name, so the purchase cannot enumerate every hitman for a fee. |
-| `Config.Informant.MaxPurchasesPerContract` | `2` | Purchases per buyer on one contract. |
+| `Config.Informant.RevealMode` | `'name'` | `'name'` names whoever was found out; `'description'` describes them. |
+| `Config.Informant.RevealChancePercent` | `10` | The chance, a whole number from 0 to 100, that one look-up finds out who it is, rolled on the server with a fresh number each time. On a hit the name stays on their **On me** card; on a miss they are told *Your informant could not find out who it is.* Nobody is told either way. |
+| `Config.Informant.ProximityRadius` | `120.0` | Metres from the target that count as near. No longer an informant rule: it is what an exclusive hold's idle clock (`Config.Limits.ExclusiveIdleReleaseSeconds`) counts as working the contract. |
+| `Config.Informant.RerollLockMinutes` | `30` | Asking about the same pick again within this long gives the answer already given, free, and spends no look-up, so a miss cannot be rolled again at once. The admin panel's timer refresh ends it early. |
+| `Config.Informant.MaxPurchasesPerContract` | `2` | Look-ups per target on one contract, operatives and placer together. |
+| `Config.PlacerInformant.Enabled` | `true` | **The placer's informant.** The person who placed a contract, named or anonymous, may pay for a look-up on one operative who took it, while the contract is live and has one: picked from their **Mine** card as *Operative #1*, *Operative #2*, under handles the server minted, which name no row to the page. An operative who took it under their name, or one already found out, is not offered. Never a hitman on it, its target or a barred job. Turned off, new look-ups are refused and a name already found stays shown. |
+| `Config.PlacerInformant.Cost` | `25000` | The price of one look-up, paid whatever it finds, and to nobody. Quoted and checked as `Config.Informant.Cost` is. Given back if the contract ends or the operative leaves between the charge and the roll. |
+| `Config.PlacerInformant.Account` | `'bank'` | `'cash'` or `'bank'`. |
+| `Config.PlacerInformant.RevealChancePercent` | `20` | The chance, a whole number from 0 to 100, that one look-up names the operative, rolled on the server. On a hit the name stays on their **Mine** card, restarts included; on a miss they are told *Your informant could not find out who they are.* |
+| `Config.PlacerInformant.AlertChancePercent` | `20` | Only after a hit: the chance, 0 to 100, that the operative found out is told, by a phone notice inside their notice budget: *The person who placed one of your contracts has found out who you are*, with the contract named by its target as their own card names it, and never who placed it. Nothing is said to them on a miss or a lost alert roll. |
+| `Config.PlacerInformant.RevealMode` | `'name'` | `'name'` names the operative; `'description'` describes them. |
+| `Config.PlacerInformant.MaxPurchasesPerContract` | `2` | Look-ups per placer on one contract. |
+| `Config.PlacerInformant.CooldownMinutes` | `10` | The wait between two look-ups on one contract; the card says how long is left. |
 | `Config.LocationTip.Enabled` | `true` | A hitman holding a live contract (accepted, and still on it) may buy an informant tip: the rough area its target was in at that moment, as a circle on their map. Nobody else may: not the target, not the person who placed it, not a barred job. Off, no tip is sold and the button says so; one already bought stays on its buyer's map until it runs out. |
 | `Config.LocationTip.Cost` | `25000` | The price the button quotes is the price charged: one changed from the admin panel since is refused, nothing taken, with the price now. Charged last, after every check, once however often it is tapped, and given back if the tip cannot be delivered (the contract ended, or the hitman was taken off it, meanwhile). The money goes to nobody: it is taken out of the economy, as the informant's fee is. `0` is free. |
 | `Config.LocationTip.Account` | `'bank'` | `'cash'` or `'bank'`. |
@@ -696,7 +716,7 @@ servers.
 | `Config.Progression.TrustPerElimination` / `TrustPerKidnapping` | `10` / `20` | Trust given per kill and per live handover. |
 | `Config.AntiCollusion.BlockSameAccount` | `true` | One account (the license) may not be two parties to a contract. Households are deliberately not considered. |
 | `Config.RateLimit.Key` | `'license'` | What an action allowance is counted against: `'license'` per account, so switching character does not reset it; `'citizenid'` per character. |
-| `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, informant data, informant tips (`locationTip`), messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
+| `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, each informant (`informant`, `placerInformant`), informant tips (`locationTip`), messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
 | `Config.Listing.PageSize` | `15` | Contracts per board page. |
 | `Config.Diagnostics.SlowJobMs` | `25` | Every maintenance job (the ten-second tick's, and the death sampler's pass) times itself; one slower than this many milliseconds prints one Debug line naming it, at most every five minutes per job. `/ch-diag` and the admin panel list every job's worst, average and last times either way. Only time on the server thread counts, never database waits. `0` turns the line off. |
 | `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `1280` / `600000` | `'server'` storage: the app shrinks each kill photo until its longest side is at most this many pixels (320 to 4096) and it weighs at most this many bytes (50000 to 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way; the server decodes and encodes it on its main thread, about 80 ms each at the default (estimates; measure yours with the in-game checklist). |
@@ -705,7 +725,7 @@ servers.
 | `Config.Completion.RejectLastStand` | `true` | A player downed or bleeding out is never a kill; this only matters for a death provider that reports a player dead and in last stand at once. Read-only in the admin panel. |
 | `Config.Completion.RequireObservedDamage` | `true` | A killer the victim's game names must also be in the damage log the server built itself. The cost: a kill by something that raises no weapon damage event (explosives, fire, a vehicle, a fall) pays nobody; only gunfire and melee count. |
 | `Config.Completion.DeathReportWindowMs` | `30000` | How long before a death a hit still counts towards it. The kill goes to the hitman the target's game names, if the server saw a hit of theirs land; otherwise to whoever on the contract did the most damage in this time. A death the target's game never reports is attributed by the server a few seconds later. |
-| `Config.Completion.ConditionSampleMs` | `1000` | How often live contracts' targets are sampled (health, and the hitmen near them for the informant). Each pass reads running contracts only. |
+| `Config.Completion.ConditionSampleMs` | `1000` | How often live contracts' targets are sampled (health, and the hitmen near them for an idle hold's clock). Each pass reads running contracts only. |
 | `Config.Completion.MaxWeaponRange` | `425.0` | Metres a hit is believed from. Keep it at least OneSync's culling radius (424 m), or a sniper's kill beyond it pays nobody. |
 | `Config.Completion.MedicJobs` / `DefibItem` / `DefibRange` | `{ ambulance = true }` / `'defibrillator'` / `3.0` | The defibrillator the kill logic listens for, so its gap while bringing a player back is never read as a revive. Match sc-ambulance's `Config.Defib`: `MedicJobs` to its `RequireEMS` job (`false` there: any job; its defibrillator off: `{}`), `DefibItem` to its `Item`, `DefibRange` to its `Distance`. |
 | `Config.Completion.DeathStateProviders` | sc-ambulance, then qbx_medical | Medical resources asked on the server who is dead or downed, in order, each `{ resource, dead, lastStand }`. One without those server exports is not asked again until it restarts, and its players' state is read from QBox metadata instead; qbx_medical is one (its exports are client-side), kept listed because the client reads the list. `/ch-diag` says which answered. |
@@ -1223,17 +1243,17 @@ does not mean nobody else is after you.* A command that raises answers
 *Something broke on the server, not on your end*, gives back the
 one-a-minute purchase allowance and writes an `error_cleanse` row. It is
 there whatever `Config.Admin.Enabled` says: it is a player's tool, not a
-staff one. Either
-side can pay an informant to unmask one hitman: offered only while the buyer
-has a purchase left on that contract, and to the target only while an
-operative is on it (their card already shows how many); the dialog says when
-it is the last one, and that it is free where `Config.Informant.Cost` is 0.
-The server forgets who has
-been near a target when it restarts, so for
-`Config.Informant.ProximityWindowMinutes` after a start (with
-`Config.Informant.RequireProximity` on) informant data on a contract placed
-before it is refused, uncharged, for every buyer alike, with how many minutes
-to wait.
+staff one. Each
+side can pay an informant for a look-up, a gamble the dialog says plainly is
+paid either way: the target on one operative or the person who placed it
+(`Config.Informant`, a 10% chance, two look-ups a contract, never to a member
+of a whitelisted job), the placer on one operative who took their contract
+(`Config.PlacerInformant`, a 20% chance, and a 20% chance that an operative
+found out is told). Each picks from a list the server gives their own card,
+*Operative #1*, *Operative #2*, behind handles that name no row; the dialog
+asks to be confirmed twice, and says when it is the last look-up and that it
+is free where the price is 0. What was found stays on the buyer's card, and
+nobody else's.
 
 **Informant tip.** A hitman holding a live contract can buy, from their card
 under **Mine**, the rough area its target was in (`Config.LocationTip`):
@@ -1501,8 +1521,8 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   anonymous with the fee unpaid (`anonymity_fee_unpaid` in the log), which
   costs the server its fee and never a player their money.
 - **What the page shows is what is charged.** The Place form, the accept
-  dialog and the informant dialog send back what they showed: the anonymity
-  fee and its account, the informant's price, and how a contract placed now
+  dialog and the informant dialogs send back what they showed: the anonymity
+  fee and its account, each informant's price, and how a contract placed now
   is completed (`Config.Completion.Fulfilment`). One changed from the admin
   panel since is refused before anything is taken (`terms_changed`,
   `rule_changed`), with the figure or the rule now, and the page says so and
@@ -1566,7 +1586,7 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   it is not lost when the log is pruned.
 - **One request at a time where money moves.** On one contract a buyout, an
   acceptance, a cancel, a withdrawal and an agreed change run one at a time;
-  so do two purchases of informant data by one buyer, and two creates by one
+  so do two look-ups from either informant by one buyer, and two creates by one
   client or on one target, which is what the limits on live contracts count.
   A second tap while the first is still running is refused as busy before
   anything is read or charged, whatever the request limits are set to in the
@@ -1964,8 +1984,8 @@ off is paid out or returned as before. Lowering a cap below what is in use
 cancels nothing and only refuses new ones. A rule read each time it is used
 (the handover's and the kill's checks) applies from the next check, except the
 handover radius, which a countdown already running keeps from when it was
-armed. A name a target already bought from the informant stays on their card
-while the informant is off. The panel says which for every key. `Config.App.DefaultInstalled` is kept and sent to
+armed. A name either informant already found stays on the buyer's card
+while that informant is off. The panel says which for every key. `Config.App.DefaultInstalled` is kept and sent to
 every game but applies when the app is next added to a phone (after this
 resource or lb-phone restarts, or when a player rejoins), and the panel marks it
 *applies after restart*.
@@ -2159,7 +2179,7 @@ the playtime is counted here, see *New players and playtime*).
 | A new character can be named as a target, or an old one cannot | Run `/ch-diag <player id>`: under *playtime* it says what the rule reads for them (an export, QBox metadata or the count here), the hours, and whether they are grandfathered. A character counted here is decided within a minute of being in the city; until then the rule is skipped for them. Correct one character's hours in the admin panel's **Players**. Where it says `qbx_core`'s players table could not be read, characters were grandfathered by `Config.Immunity.GrandfatherDays` instead, new ones made in those days included |
 | A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) have it only for the whitelisted-job view's one screen (`Config.WhitelistedView.Enabled`, on as shipped); with the view off they never see it (or see it answering nothing, with `Config.HideAppFromBlockedJobs` off), and a job they hold but are not working is named on their phone. `/ch-diag <player id>` says why it is not showing for them |
 | A kill does not complete a contract, or there is no Verify kill | As shipped, `Config.Completion.Fulfilment` is `'alive'`: contracts are completed only by bringing the target alive to the person who placed the contract, who has to be there for the handover, and a kill never completes one (the server answers `kill_not_allowed`). Set it to `'either'` to let kills complete contracts placed from then on; ones already placed keep their rule. `/ch-diag` says which is in use |
-| Buy informant data says *The informant is still asking around after a restart* | The server forgets who has been near a target when it restarts, so for `Config.Informant.ProximityWindowMinutes` (10) after a start, informant data on a contract placed before it is refused, and nothing is charged. Wait the minutes it says. Turning `Config.Informant.RequireProximity` off removes the wait, and lets the informant name any hitman on the contract |
+| The informant is not offered on a contract | The target's (`Config.Informant`) is never offered to a member of a whitelisted job, and the placer's (`Config.PlacerInformant`) only while an operative they do not already know is on the contract. Either is gone once its look-ups on the contract are spent; the placer's waits `Config.PlacerInformant.CooldownMinutes` between two, and the card says how long. A look-up that found nothing was not broken: it is a chance (`RevealChancePercent`), paid either way |
 | A staff command typed in chat seems to answer nothing | It answers in your F8 console, never in chat: press F8. A notice on your screen says *Printed to your F8 console* |
 | The console prints `N setting(s) need attention` at start | `config.lua` has settings the start read as something else, or lacks some. Run `ch-diag` in F8 or the server console, or open the admin panel's **Tools** and **Run the diagnosis**: *settings that need attention* lists each in full. Or set `Config.Debug = true` to have the start print each |
 | The console says nothing at all, not even that it started | That is `Config.Debug = false` (the shipped config has it on): a sound start says nothing. `ch-diag` lists what it would have said |
@@ -2226,8 +2246,8 @@ Six kinds of check, because each catches what the others cannot:
   every contract state, deliberate exploit attempts, storage conformance
   across all three backends (mysql on an executor that refuses what MariaDB's
   strict mode refuses and answers as oxmysql does, `../docs/oxmysql.md`), on
-  mysql thirteen pairings of requests (two acceptances, two buyouts, two
-  informant purchases, two creates on one target, two kill verifications,
+  mysql fourteen pairings of requests (two acceptances, two buyouts, two
+  informant look-ups, two placer look-ups, two creates on one target, two kill verifications,
   two staff writes and more) with the second landed before and after every
   database wait of the first, every admin panel request against every
   permission (with what each staff member may see of an anonymous party),

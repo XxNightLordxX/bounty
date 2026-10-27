@@ -291,37 +291,6 @@ describe('anonymity survives reputation', function()
     end)
 end)
 
-describe('informant selection is not steerable', function()
-    it('does not change with the second the buyer presses buy', function()
-        local results = {}
-
-        for _, offset in ipairs({ 0, 1, 2, 3 }) do
-            local s = newStack()
-            local f = fixture(s)
-            Env.players[1].PlayerData.money.bank = 500000
-            local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
-                reward = { baseline = { cash = 1000 } },
-            })
-            s.contracts.accept(f.hitman, c.id, false)
-            for i = 2, 3 do
-                Env.addPlayer({ source = 3 + i, citizenid = 'HITMAN0' .. i,
-                    license = 'license:h' .. i })
-                s.contracts.accept(s.identity.resolve(3 + i), c.id, false)
-            end
-
-            Env.advance(offset)
-            local _, _, data = s.informant.buy(f.creator, c.id)
-            results[#results + 1] = data and data.name or 'none'
-        end
-
-        for i = 2, #results do
-            eq(results[i], results[1],
-                'waiting a second must not let a buyer choose which hitman is unmasked')
-        end
-    end)
-end)
-
 describe('the audit queue, set to nothing', function()
     --- A size of 0 moved the head past every row as it was pushed: nothing
     --- was ever written, not even the overflow row, and the rows stayed in

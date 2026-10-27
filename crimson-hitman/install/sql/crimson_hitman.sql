@@ -241,6 +241,20 @@ CREATE TABLE IF NOT EXISTS crimson_reveals (
     INDEX idx_reveal_contract (contract_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- The look-ups a contract's placer bought from their informant
+-- (Config.PlacerInformant), one row each.
+CREATE TABLE IF NOT EXISTS crimson_placer_informants (
+    id VARCHAR(120) PRIMARY KEY,
+    contract_id VARCHAR(32) NOT NULL,
+    placer_cid VARCHAR(32) NOT NULL,
+    hitman_cid VARCHAR(32) NOT NULL,
+    seq INT NOT NULL,
+    bought_at INT NOT NULL,
+    revealed TINYINT(1) NOT NULL DEFAULT 0,
+    alerted TINYINT(1) NOT NULL DEFAULT 0,
+    INDEX idx_placer_informant_contract (contract_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_mutes (
     id VARCHAR(120) PRIMARY KEY,
     contract_id VARCHAR(32) NOT NULL,

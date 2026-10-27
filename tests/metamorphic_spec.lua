@@ -239,13 +239,15 @@ describe('changing an input moves the answer the matching way', function()
         local s, f = seeded()
         local c = place(s, f, { mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } } })
-        s.contracts.accept(f.hitman, c.id, false)
+        s.contracts.accept(f.hitman, c.id, true)
 
         Env.players[1].PlayerData.money.bank = 500000
         local start = Env.players[1].PlayerData.money.bank
-        s.informant.buy(f.creator, c.id)
+        local pick = s.projection.contract(s.storage.readContract(c.id), f.creator.cid)
+            .placerInformantPicks[1].pick
+        truthy(s.informant.placerBuy(f.creator, c.id, nil, pick))
         local afterOne = Env.players[1].PlayerData.money.bank
-        s.informant.buy(f.creator, c.id)
+        s.informant.placerBuy(f.creator, c.id, nil, pick)
         local afterTwo = Env.players[1].PlayerData.money.bank
 
         truthy(afterOne <= start, 'the first purchase paid the buyer')

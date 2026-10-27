@@ -1442,7 +1442,7 @@ describe('a safety switch added to a section the operator already had', function
     --- with was simply not there.
     local SWITCHES = {
         { 'Completion', 'RequireObservedDamage' }, { 'Completion', 'RejectLastStand' },
-        { 'Penalty', 'RequireDisclosureOnAccept' }, { 'Informant', 'RequireProximity' },
+        { 'Penalty', 'RequireDisclosureOnAccept' },
         { 'Bailout', 'BlockWhileIncapacitated' }, { 'Kidnap', 'RequireConscious' },
         { 'Kidnap', 'RejectDead' }, { 'Kidnap', 'RejectLastStand' },
         { 'Notifications', 'PushEnabled' },

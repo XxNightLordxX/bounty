@@ -130,26 +130,27 @@ describe('the informant purchase ceiling (§14.29)', function()
 
     it('refuses the purchase past the cap, and charges nothing for the refusal', function()
         local s, f, c = contested()
-        withConfig({ { Config.Informant, 'RequireProximity', false } }, function()
-            local cost = Config.Informant.Cost
+        local cost = Config.Informant.Cost
+        Env.players[2].PlayerData.money.bank = 400000
+        s.informant.setRandom(function() return 100 end)
+        local picks = s.projection.contract(s.storage.readContract(c.id), 'TARGET01').informantPicks
 
-            for i = 1, Config.Informant.MaxPurchasesPerContract do
-                local bank = Env.players[1].PlayerData.money.bank
-                local ok = s.informant.buy(f.creator, c.id)
-                truthy(ok, 'purchase ' .. i .. ' is inside the ceiling')
-                eq(Env.players[1].PlayerData.money.bank, bank - cost,
-                    'and is paid for')
-                pastTheLock()
-            end
+        for i = 1, Config.Informant.MaxPurchasesPerContract do
+            local bank = Env.players[2].PlayerData.money.bank
+            local ok = s.informant.buy(f.target, c.id, nil, picks[i].pick)
+            truthy(ok, 'purchase ' .. i .. ' is inside the ceiling')
+            eq(Env.players[2].PlayerData.money.bank, bank - cost,
+                'and is paid for')
+            pastTheLock()
+        end
 
-            local bank = Env.players[1].PlayerData.money.bank
-            local ok, err, data = s.informant.buy(f.creator, c.id)
-            falsy(ok, 'one purchase past the ceiling must be refused')
-            eq(err, CH.ERR.LIMIT_REACHED)
-            falsy(data, 'and reveals nobody')
-            eq(Env.players[1].PlayerData.money.bank, bank,
-                'refused before payment: a wall you are charged for is a sale')
-        end)
+        local bank = Env.players[2].PlayerData.money.bank
+        local ok, err, data = s.informant.buy(f.target, c.id, nil, picks[1].pick)
+        falsy(ok, 'one purchase past the ceiling must be refused')
+        eq(err, CH.ERR.LIMIT_REACHED)
+        falsy(data, 'and reveals nobody')
+        eq(Env.players[2].PlayerData.money.bank, bank,
+            'refused before payment: a wall you are charged for is a sale')
     end)
 end)
 

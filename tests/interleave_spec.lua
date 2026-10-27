@@ -417,7 +417,7 @@ describe('the same races at every await on mysql', function()
             penaltyAmount = opts.penalty, bailoutAmount = opts.bailout,
         })
         assert(c, 'create refused: ' .. tostring(err))
-        if opts.accepted then assert(m.contracts.accept(f.hitman, c.id, false)) end
+        if opts.accepted then assert(m.contracts.accept(f.hitman, c.id, opts.anon == true)) end
         return main, m, { f = f, c = c }
     end
 
@@ -478,15 +478,40 @@ describe('the same races at every await on mysql', function()
                     local main, m, x = seeded({ accepted = true }, nil, { realLimits = true })
                     raised(m, 'Cooldowns.informant.burst')
                     Env.players[2].PlayerData.money.bank = 100000
-                    m.death.watchTargets(m.storage.allContracts())
+                    -- The roll forced, so every order ends the same way.
+                    m.informant.setRandom(function() return 100 end)
+                    x.pick = m.projection.contract(m.storage.readContract(x.c.id), 'TARGET01')
+                        .informantPicks[1].pick
                     return main, m, x
                 end,
-                -- With the price quoted, as the page sends it: unquoted,
-                -- both are refused before anything is read.
-                first = function(_, x) return tap('informant', 2, 905, { id = x.c.id,
+                -- With the price quoted, as the page sends it, and the
+                -- operative the card offered.
+                first = function(_, x) return tap('informant', 2, 905, { id = x.c.id, pick = x.pick,
                     shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }) end,
-                second = function(_, x) return tap('informant', 2, 906, { id = x.c.id,
+                second = function(_, x) return tap('informant', 2, 906, { id = x.c.id, pick = x.pick,
                     shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }) end,
+            },
+            {
+                -- The placer's double tap on one operative: one look-up,
+                -- one price, to nobody.
+                name = 'placer informant x placer informant, through the app',
+                mints = true,
+                build = function()
+                    local main, m, x = seeded({ accepted = true, anon = true }, nil,
+                        { realLimits = true })
+                    raised(m, 'Cooldowns.placerInformant.burst')
+                    Env.players[1].PlayerData.money.bank = 100000
+                    m.informant.setRandom(function() return 1 end)
+                    x.pick = m.projection.contract(m.storage.readContract(x.c.id), 'CREATOR1')
+                        .placerInformantPicks[1].pick
+                    return main, m, x
+                end,
+                first = function(_, x) return tap('placerInformant', 1, 907, { id = x.c.id,
+                    pick = x.pick, shown = { cost = Config.PlacerInformant.Cost,
+                        account = Config.PlacerInformant.Account } }) end,
+                second = function(_, x) return tap('placerInformant', 1, 908, { id = x.c.id,
+                    pick = x.pick, shown = { cost = Config.PlacerInformant.Cost,
+                        account = Config.PlacerInformant.Account } }) end,
             },
             {
                 -- The target already carries one of the two it may.

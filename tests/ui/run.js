@@ -3978,118 +3978,291 @@ async function main() {
     });
   })();
 
-  /* ---- saying what a refusal actually was ---------------------------- */
+  /* ---- the informants: the placer's on Mine, the target's on On me ------ */
   await (async function refusalsThatSayWhat() {
-    const OWN = { ok: true, data: { created: [{
-      id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
-      reward: { baseline: 5000, bonus: 2500 },
-      slots: 1, slotsClaimed: 0, currentSlot: 1,
-      hitmenActive: 1, hitmenMax: 5, hitmen: [{ alias: 'Grey' }],
-      targetName: 'Dana Reyes', role: 'creator',
-      deadline: Math.floor(Date.now() / 1000) + 7200
-    }], accepted: [], onMe: [] } };
-
-    /* A server that runs informants, unless a test says otherwise. The
-       button is only drawn where the settings carry the block, so a fixture
-       that omitted it was describing a server with informants switched off
-       — which is not what most of these tests are about. */
-    function board(settings) {
-      return { ok: true, data: { page: 1, pages: 1, contracts: [],
-        settings: Object.assign({
-          minQueryLength: 3,
-          informant: { cost: 25000, account: 'bank', maxPerContract: 2 }
-        }, settings || {}) } };
+    const OP1 = 'op_aaaaaaaaaaaa', OP2 = 'op_bbbbbbbbbbbb';
+    function ownCard(over) {
+      return Object.assign({
+        id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+        reward: { baseline: 5000, bonus: 2500 },
+        slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 1, hitmenMax: 5, hitmen: [{ alias: 'Operative #1' }],
+        targetName: 'Dana Reyes', role: 'creator',
+        deadline: Math.floor(Date.now() / 1000) + 7200,
+        placerInformantPicks: [{ pick: OP1, label: 'Operative #1' }],
+        placerInformantLeft: 2, placerInformantWait: 0
+      }, over || {});
     }
 
-    async function onMine(over, settings) {
+    /* A server that runs both informants, unless a test says otherwise. The
+       buttons are only drawn where the settings carry the blocks. */
+    const RULES = {
+      informant: { cost: 25000, account: 'bank', maxPerContract: 2, chance: 10,
+                   repeatFreeMinutes: 30 },
+      placerInformant: { cost: 25000, account: 'bank', chance: 20, alertChance: 20,
+                         maxPerContract: 2, cooldownMinutes: 10 }
+    };
+    function board(settings) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: Object.assign({ minQueryLength: 3 }, RULES, settings || {}) } };
+    }
+
+    async function onMine(over, settings, card) {
       const app = boot(Object.assign({
-        list: board(settings), mine: OWN, ledger: LEDGER
+        list: board(settings),
+        mine: { ok: true, data: { created: [ownCard(card)], accepted: [], onMe: [] } },
+        ledger: LEDGER
       }, over || {}));
       await settle(); await settle();
-      app.document.querySelectorAll('.tab')
-        .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+      tab(app, 'mine');
       await settle(); await settle();
       return app;
     }
 
-    /* A server that does not run informants.
-     *
-     * The projection omits the informant block entirely when it is off, so
-     * it arrives as undefined and never as false — and the page guarded on
-     * `rules === false`, which nothing can ever satisfy. The button was
-     * drawn on every card, quoted "a fee" because there was no figure to
-     * quote, took the player through a confirmation, and spent a request to
-     * be told the server does not run them.
-     *
-     * The same rule as the calls button and the money sources: off, it is
-     * not drawn rather than drawn and refused. */
-    const noInformants = await onMine({}, { informant: undefined });
+    const PLACER_BUTTON = 'Informant on an operative — $25,000';
+    function buttonNamed(app, label) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === label;
+      })[0];
+    }
+    /* Pick (where a label is given), then pay, confirmed twice. */
+    function payFor(app, label) {
+      if (label) { click(app, label); }
+      click(app, 'Pay $25,000');
+      click(app, 'Tap again to pay $25,000');
+    }
 
-    it('does not offer informant data where the server has none', function () {
-      falsy(noInformants.view.all().some(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), 'a button whose only outcome is a refusal is worse than no button: '
-        + noInformants.view.textContent);
+    /* Off on the server: the block is not in the settings at all. */
+    const placerOff = await onMine({}, { placerInformant: undefined });
+    it('does not offer the placer\'s informant where the server has none', function () {
+      falsy(buttonNamed(placerOff, PLACER_BUTTON), placerOff.view.textContent);
+      eq(placerOff.sent.filter(function (x) { return x.name === 'placerInformant'; }).length, 0);
     });
 
-    it('spends no request finding that out', function () {
-      eq(noInformants.sent.filter(function (x) { return x.name === 'informant'; }).length, 0,
-        'the page already knew');
+    const placer = await onMine({
+      placerInformant: { ok: true, data: { found: true, label: 'Operative #1', name: 'Rook Ash' } }
+    });
+    it('offers it on the placer\'s card, priced', function () {
+      truthy(buttonNamed(placer, PLACER_BUTTON), placer.view.textContent);
+    });
+    click(placer, PLACER_BUTTON);
+    const placerDialog = placer.view.textContent;
+    it('says the chance, that it is paid either way, and the chance of being noticed', function () {
+      truthy(placerDialog.indexOf('20% chance they find out who it is') !== -1, placerDialog);
+      truthy(placerDialog.indexOf('$25,000 from your bank is paid either way') !== -1, placerDialog);
+      truthy(placerDialog.indexOf('there is a 20% chance that operative notices') !== -1,
+        placerDialog);
+      truthy(placerDialog.indexOf('10 minutes apart') !== -1, placerDialog);
+      truthy(placerDialog.indexOf('2 times in total') !== -1, placerDialog);
+    });
+    it('lists the operatives anonymously, the only one picked already', function () {
+      const op = buttonNamed(placer, 'Operative #1');
+      truthy(op, 'the operative is offered by alias');
+      truthy(/is-chosen/.test(op.className), 'and picked: ' + op.className);
+    });
+    click(placer, 'Pay $25,000');
+    it('asks again before it pays: one tap sends nothing', function () {
+      eq(placer.sent.filter(function (x) { return x.name === 'placerInformant'; }).length, 0);
+      truthy(buttonNamed(placer, 'Tap again to pay $25,000'), placer.view.textContent);
+    });
+    // The arm lasts three seconds, then lets go.
+    const arm = placer.timers.filter(function (t) { return t.ms === 3000 && !t.cleared; })[0];
+    it('arms for three seconds', function () { truthy(arm, 'a three-second timer'); });
+    if (arm) { arm.fn(); }
+    await settle();
+    it('and lets go after them', function () {
+      truthy(buttonNamed(placer, 'Pay $25,000'), placer.view.textContent);
+    });
+    click(placer, 'Pay $25,000');
+    click(placer, 'Tap again to pay $25,000');
+    await settle(); await settle();
+    const placerSent = placer.sent.filter(function (x) { return x.name === 'placerInformant'; });
+    it('pays on the second tap, with the pick and the price it showed', function () {
+      eq(placerSent.length, 1);
+      eq(placerSent[0].body.pick, OP1);
+      eq(JSON.stringify(placerSent[0].body.shown), JSON.stringify({ cost: 25000, account: 'bank' }));
+      eq(placerSent[0].body.id, 'ct00000001');
+    });
+    it('says what it found, plainly', function () {
+      eq(placer.notice(), 'Your informant found out: Operative #1 is Rook Ash.');
     });
 
-    /* The target's own card offers it too, and had the same button. */
-    async function onMeWith(settings, card) {
-      const app = boot({
+    const missed = await onMine({
+      placerInformant: { ok: true, data: { found: false, label: 'Operative #1',
+        message: 'Your informant could not find out who they are.' } }
+    });
+    click(missed, PLACER_BUTTON);
+    payFor(missed);
+    await settle(); await settle();
+    it('says plainly when it found nothing', function () {
+      eq(missed.notice(), 'Your informant could not find out who they are.');
+    });
+
+    /* Two operatives: none is picked for them, and Pay waits for a pick. */
+    const two = await onMine({
+      placerInformant: { ok: true, data: { found: false, message: 'x' } }
+    }, null, { hitmenActive: 2, placerInformantPicks: [
+      { pick: OP1, label: 'Operative #1' }, { pick: OP2, label: 'Operative #2' }] });
+    click(two, PLACER_BUTTON);
+    it('waits for a pick when there is a choice', function () {
+      truthy(buttonNamed(two, 'Pay $25,000').disabled, 'Pay is disabled until one is picked');
+      truthy(two.view.textContent.indexOf('Pick who to ask about first.') !== -1);
+    });
+    payFor(two, 'Operative #2');
+    await settle(); await settle();
+    it('sends the one picked', function () {
+      eq(two.sent.filter(function (x) { return x.name === 'placerInformant'; })[0].body.pick, OP2);
+    });
+
+    /* What was found stays on the card it was paid for. */
+    const kept = await onMine({}, null, {
+      placerInformantFound: [{ label: 'Operative #1', text: 'Rook Ash' }],
+      placerInformantPicks: []
+    });
+    it('keeps what the informant found on the placer\'s card', function () {
+      truthy(kept.view.textContent.indexOf('Informant: Operative #1 is Rook Ash') !== -1,
+        kept.view.textContent);
+    });
+    it('and says why it cannot ask again when every operative is known', function () {
+      const button = buttonNamed(kept, PLACER_BUTTON);
+      truthy(button && button.disabled, 'drawn, disabled');
+      truthy(kept.view.textContent.indexOf('You already know who every operative on it is.') !== -1,
+        kept.view.textContent);
+    });
+
+    const spent = await onMine({}, null, { placerInformantLeft: 0 });
+    it('says when every look-up on the contract is used', function () {
+      truthy(buttonNamed(spent, PLACER_BUTTON).disabled);
+      truthy(spent.view.textContent.indexOf('You have used every look-up the informant sells '
+        + 'on this contract.') !== -1, spent.view.textContent);
+    });
+
+    const waiting = await onMine({}, null, { placerInformantWait: 600 });
+    it('says how long until the next look-up', function () {
+      truthy(buttonNamed(waiting, PLACER_BUTTON).disabled);
+      truthy(waiting.view.textContent.indexOf('Your informant can ask again in about 10 minutes.')
+        !== -1, waiting.view.textContent);
+    });
+
+    const nobody = await onMine({}, null, { hitmenActive: 0, hitmen: [], placerInformantPicks: [] });
+    it('is not offered on a contract nobody has taken', function () {
+      falsy(buttonNamed(nobody, PLACER_BUTTON), nobody.view.textContent);
+    });
+
+    const free = await onMine({}, { placerInformant: Object.assign({}, RULES.placerInformant,
+      { cost: 0 }) });
+    it('says a free look-up is free', function () {
+      truthy(buttonNamed(free, 'Informant on an operative — free'), free.view.textContent);
+    });
+
+    /* Every refusal in its own words, and nothing taken. */
+    async function refusedWith(reply) {
+      const app = await onMine({ placerInformant: reply });
+      click(app, PLACER_BUTTON);
+      payFor(app);
+      await settle(); await settle();
+      return app;
+    }
+    const cooling = await refusedWith({ ok: false, err: 'informant_cooldown', data: { minutes: 7 } });
+    const gone = await refusedWith({ ok: false, err: 'operative_gone' });
+    const known = await refusedWith({ ok: false, err: 'already_revealed' });
+    const moved = await refusedWith({ ok: false, err: 'terms_changed',
+      data: { cost: 30000, account: 'bank' } });
+    const broke = await refusedWith({ ok: false, err: 'insufficient_funds' });
+    const capped = await refusedWith({ ok: false, err: 'limit_reached' });
+    const limited = await refusedWith({ ok: false, err: 'rate_limited', data: { retryAfter: 45 } });
+    const heldLong = await refusedWith({ ok: false, err: 'busy', data: { heldMs: 12000 } });
+    const heldShort = await refusedWith({ ok: false, err: 'busy', data: { heldMs: 2000 } });
+    it('says every refusal in its own words', function () {
+      eq(cooling.notice(), 'Your informant can ask again in 7 minutes. Nothing was taken.');
+      eq(gone.notice(), 'That operative is no longer on this contract. Nothing was taken.');
+      eq(known.notice(), 'You already know who that is. Nothing was taken.');
+      truthy(moved.notice().indexOf('The informant now costs $30,000') !== -1, moved.notice());
+      eq(broke.notice(), 'You cannot afford the informant.');
+      truthy(capped.notice().indexOf('too many contracts') === -1, capped.notice());
+      eq(capped.notice(), 'You have used every look-up the informant sells on this contract.');
+      truthy(limited.notice().indexOf('45 second') !== -1, limited.notice());
+      eq(heldLong.notice(),
+        'This is still being worked on. Look again in a minute before you try again.');
+      eq(heldShort.notice(), 'That was busy for a moment. Try again.');
+    });
+
+    /* The target's own card, On me. */
+    async function onMeWith(settings, card, over) {
+      const app = boot(Object.assign({
         list: board(settings),
         mine: { ok: true, data: { created: [], accepted: [], onMe: [Object.assign({
           id: 'ct00000002', target: 'You', reason: 'Unpaid debt',
           state: 'active', role: 'target', mode: 'exclusive',
-          reward: { total: 5000 }, bailoutAmount: 15000, hitmen: [], hitmenActive: 1
+          reward: { total: 5000 }, bailoutAmount: 15000, hitmenActive: 1,
+          informantLeft: 2,
+          informantPicks: [{ pick: OP1, label: 'Operative #1' },
+                           { pick: 'placer', label: 'The person who placed it' }]
         }, card || {})] } },
         ledger: LEDGER
-      });
+      }, over || {}));
       await settle(); await settle();
-      app.document.querySelectorAll('.tab')
-        .filter(function (t) { return t.dataset.tab === 'onme'; })[0].onclick();
+      tab(app, 'onme');
       await settle(); await settle();
       return app;
     }
 
-    const targetNoInformants = await onMeWith({ informant: undefined });
-
-    it('does not offer it on the target card either', function () {
-      falsy(targetNoInformants.view.all().some(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), 'the person being targeted got the same dead button: '
-        + targetNoInformants.view.textContent);
+    const targetOff = await onMeWith({ informant: undefined });
+    it('does not offer the target\'s informant where the server has none', function () {
+      falsy(buttonNamed(targetOff, 'Buy informant data'), targetOff.view.textContent);
     });
 
-    const targetWithInformants = await onMeWith({});
-
-    it('offers it on the target card where the server runs them', function () {
-      truthy(targetWithInformants.view.all().some(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), 'a target buying data on who is following them is the feature');
+    const target = await onMeWith({}, null, {
+      informant: { ok: true, data: { found: true, label: 'The person who placed it',
+        name: 'Vic Marlowe' } }
+    });
+    click(target, 'Buy informant data');
+    const targetDialog = target.view.textContent;
+    it('offers every operative and the person who placed it', function () {
+      truthy(buttonNamed(target, 'Operative #1'), targetDialog);
+      truthy(buttonNamed(target, 'The person who placed it'), targetDialog);
+      truthy(buttonNamed(target, 'Pay $25,000').disabled, 'nothing picked for them');
+    });
+    it('says the 10% chance, that it is paid either way, and that nobody is told', function () {
+      truthy(targetDialog.indexOf('10% chance they find out who it is') !== -1, targetDialog);
+      truthy(targetDialog.indexOf('is paid either way') !== -1, targetDialog);
+      truthy(targetDialog.indexOf('Nobody is told you asked.') !== -1, targetDialog);
+      truthy(targetDialog.indexOf('within 30 minutes repeats the answer at no charge') !== -1,
+        targetDialog);
+    });
+    payFor(target, 'The person who placed it');
+    await settle(); await settle();
+    it('asks about the placer when that is the pick, and says what it found', function () {
+      const sent = target.sent.filter(function (x) { return x.name === 'informant'; });
+      eq(sent.length, 1);
+      eq(sent[0].body.pick, 'placer');
+      eq(JSON.stringify(sent[0].body.shown), JSON.stringify({ cost: 25000, account: 'bank' }));
+      eq(target.notice(), 'Your informant found out: The person who placed it is Vic Marlowe.');
     });
 
-    /* W063: with nobody on the contract the purchase can only answer
-       "Unknown operative", and is charged. The card already shows how many
-       operatives there are, so hiding it says nothing new. */
-    const nobodyOnIt = await onMeWith({}, { hitmenActive: 0 });
-    it('does not offer it on a target card nobody has taken', function () {
-      falsy(nobodyOnIt.view.all().some(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), nobodyOnIt.view.textContent);
+    const targetMiss = await onMeWith({}, null, {
+      informant: { ok: true, data: { found: false,
+        message: 'Your informant could not find out who it is.' } }
+    });
+    click(targetMiss, 'Buy informant data');
+    payFor(targetMiss, 'Operative #1');
+    await settle(); await settle();
+    it('says plainly when the target\'s look-up found nothing', function () {
+      eq(targetMiss.notice(), 'Your informant could not find out who it is.');
     });
 
-    /* W066: the viewer's own purchases left. Spent, the button went on
-       quoting the full price; one left, nothing said it was the last. */
-    const spentOut = await onMeWith({}, { informantLeft: 0 });
-    it('drops the button once no purchase is left', function () {
-      falsy(spentOut.view.all().some(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), spentOut.view.textContent);
+    const namedPlacer = await onMeWith({}, { informantPicks: [
+      { pick: OP1, label: 'Operative #1' },
+      { pick: 'placer', label: 'The person who placed it', known: true, named: true }] });
+    click(namedPlacer, 'Buy informant data');
+    it('does not sell a named placer, and says why', function () {
+      truthy(buttonNamed(namedPlacer, 'The person who placed it').disabled);
+      truthy(namedPlacer.view.textContent.indexOf('Placed under their name: you know who it is.')
+        !== -1, namedPlacer.view.textContent);
+      truthy(/is-chosen/.test(buttonNamed(namedPlacer, 'Operative #1').className),
+        'the one left is picked');
     });
+
     const lastOne = await onMeWith({}, { informantLeft: 1 });
     click(lastOne, 'Buy informant data');
     it('says when this is the last one', function () {
@@ -4097,193 +4270,59 @@ async function main() {
         lastOne.view.textContent);
     });
 
-    /* W065: a price of 0 from the panel was described as a fee. */
-    const free = await onMeWith({ informant: { cost: 0, account: 'bank', maxPerContract: 2 } });
-    click(free, 'Buy informant data');
+    const targetFree = await onMeWith({ informant: Object.assign({}, RULES.informant, { cost: 0 }) });
+    click(targetFree, 'Buy informant data');
     it('says a free informant is free', function () {
-      const text = free.view.textContent;
-      truthy(text.indexOf('It is free on this server.') !== -1, text);
-      falsy(text.indexOf('It costs') !== -1, 'not a fee: ' + text);
+      const text = targetFree.view.textContent;
+      truthy(text.indexOf('it is free on this server') !== -1, text);
+      falsy(text.indexOf('paid either way') !== -1, 'not a fee: ' + text);
+      truthy(buttonNamed(targetFree, 'Ask'), 'and the button asks rather than pays');
     });
 
-    /* W061/W143: the price quoted goes back with the purchase, and a price
-       that moved since is refused, said and read again. */
-    const quoted = await onMeWith({ informant: { cost: 25000, account: 'bank', maxPerContract: 2 } });
-    click(quoted, 'Buy informant data');
-    click(quoted, 'Yes');
+    const targetSpent = await onMeWith({}, { informantLeft: 0 });
+    it('drops the button once no look-up is left', function () {
+      falsy(buttonNamed(targetSpent, 'Buy informant data'), targetSpent.view.textContent);
+    });
+
+    /* A member of a whitelisted job: the server sends no picks, and the
+       page offers nothing. Their buyout stays. */
+    const shielded = await onMeWith({}, { informantPicks: undefined, informantLeft: undefined,
+      targetProtected: true, bailoutAvailable: true });
+    it('offers a whitelisted-job target no informant, and keeps their buyout', function () {
+      falsy(buttonNamed(shielded, 'Buy informant data'), shielded.view.textContent);
+      truthy(shielded.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Buy out') === 0;
+      }), shielded.view.textContent);
+    });
+
+    const targetKept = await onMeWith({}, { informantFound: [
+      { label: 'The person who placed it', text: 'Vic Marlowe' }] });
+    it('keeps what the target\'s informant found on their On me card', function () {
+      truthy(targetKept.view.textContent.indexOf('Informant: The person who placed it is Vic '
+        + 'Marlowe') !== -1, targetKept.view.textContent);
+    });
+
+    const protectedRefusal = await onMeWith({}, null,
+      { informant: { ok: false, err: 'informant_protected' } });
+    click(protectedRefusal, 'Buy informant data');
+    payFor(protectedRefusal, 'Operative #1');
     await settle(); await settle();
-    const purchase = quoted.sent.filter(function (x) { return x.name === 'informant'; })[0];
-    it('sends the price it quoted with the purchase', function () {
-      truthy(purchase, 'a purchase was sent');
-      eq(JSON.stringify(purchase.body.shown), JSON.stringify({ cost: 25000, account: 'bank' }));
+    const placerKnown = await onMeWith({}, null, { informant: { ok: false, err: 'placer_known' } });
+    click(placerKnown, 'Buy informant data');
+    payFor(placerKnown, 'The person who placed it');
+    await settle(); await settle();
+    it('says the target\'s refusals in their own words', function () {
+      eq(protectedRefusal.notice(), 'The informant does not work for members of a whitelisted '
+        + 'job. Nothing was taken.');
+      eq(placerKnown.notice(), 'They placed it under their name, so you already know who it is. '
+        + 'Nothing was taken.');
     });
 
-    const withInformants = await onMine({}, {
-      informant: { cost: 25000, account: 'bank', maxPerContract: 2 }
-    });
-
-    it('offers it where the server runs them', function () {
-      truthy(withInformants.view.all().some(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), 'and must still be offered where it works');
-    });
-
-    it('quotes the real price rather than "a fee"', function () {
-      click(withInformants, 'Buy informant data');
-      const shown = withInformants.view.textContent;
-      truthy(shown.indexOf('$25,000') !== -1,
-        'a purchase that is deliberately not refunded has to name its price '
-        + 'before it is agreed to: ' + shown);
-    });
-
-    /* "Slow down" alone reads as a broken button: tapping again says exactly
-       the same thing, and a player cannot tell two seconds from five
-       minutes. */
-    const limited = await onMine({
-      informant: { ok: false, err: 'rate_limited', data: { retryAfter: 45 } }
-    });
-    click(limited, 'Buy informant data');
-    click(limited, 'Yes');
-    await settle();
-
-    it('says how long a rate limit lasts', function () {
-      truthy(limited.notice().indexOf('45 second') !== -1,
-        'a refusal with a wait must say the wait: ' + limited.notice());
-    });
-
-    const longWait = await onMine({
-      informant: { ok: false, err: 'rate_limited', data: { retryAfter: 300 } }
-    });
-    click(longWait, 'Buy informant data');
-    click(longWait, 'Yes');
-    await settle();
-
-    it('says minutes when the wait is minutes', function () {
-      truthy(longWait.notice().indexOf('minute') !== -1,
-        'five minutes should not be reported in seconds: ' + longWait.notice());
-    });
-
-    /* Busy with how long: a key held for seconds is the same request still
-       being worked on, and "try again" at once meets it again. Under ten
-       seconds it is the moment the plain words say. */
-    const heldLong = await onMine({
-      informant: { ok: false, err: 'busy', data: { heldMs: 12000 } }
-    });
-    click(heldLong, 'Buy informant data');
-    click(heldLong, 'Yes');
-    await settle();
-    const heldShort = await onMine({
-      informant: { ok: false, err: 'busy', data: { heldMs: 2000 } }
-    });
-    click(heldShort, 'Buy informant data');
-    click(heldShort, 'Yes');
-    await settle();
-
-    it('says a long hold is still being worked on, and a short one was a moment', function () {
-      eq(heldLong.notice(),
-        'This is still being worked on. Look again in a minute before you try again.');
-      eq(heldShort.notice(), 'That was busy for a moment. Try again.');
-    });
-
-    /* The minutes after a restart, which forgot who had been near the
-       target: refused uncharged, with how long. */
-    const warming = await onMine({
-      informant: { ok: false, err: 'informant_warming', data: { minutes: 10 } }
-    });
-    click(warming, 'Buy informant data');
-    click(warming, 'Yes');
-    await settle();
-
-    it('says how long until the informant sells again after a restart', function () {
-      eq(warming.notice(),
-        'The informant is still asking around after a restart. Try again in 10 minutes.');
-    });
-
-    /* limit_reached means something else entirely for an informant, and the
-       shared wording for it described a rule with nothing to do with this
-       purchase. */
-    const bought = await onMine({
-      informant: { ok: false, err: 'limit_reached' }
-    });
-    click(bought, 'Buy informant data');
-    click(bought, 'Yes');
-    await settle();
-
-    it('does not blame the wrong rule when an informant is spent', function () {
-      truthy(bought.notice().indexOf('too many contracts') === -1,
-        'that is a different rule entirely: ' + bought.notice());
-      truthy(bought.notice().indexOf('informant') !== -1,
-        'and it has to say what this one was: ' + bought.notice());
-    });
-
-    /* The server refuses a purchase the buyer cannot cover as
-       insufficient_funds. The page had words for a code nothing sends, so
-       this fell through to the Place form's "You do not have that." */
-    const broke = await onMine({
-      informant: { ok: false, err: 'insufficient_funds' }
-    });
-    click(broke, 'Buy informant data');
-    click(broke, 'Yes');
-    await settle();
-
-    it('says the informant is what they cannot afford', function () {
-      truthy(broke.notice().indexOf('afford the informant') !== -1, broke.notice());
-    });
-
-    /* The price, before they agree to pay it. */
-    const priced = await onMine({}, {
-      informant: { cost: 25000, account: 'bank', needsProximity: true }
-    });
-    click(priced, 'Buy informant data');
-
-    it('says what an informant costs before it is bought', function () {
-      const text = priced.view.textContent;
-      truthy(text.indexOf('$25,000') !== -1,
-        'the price has to be on the confirmation: ' + text);
-      truthy(text.indexOf('bank') !== -1, 'and where it comes from: ' + text);
-    });
-
-    it('says why an informant may find nobody', function () {
-      truthy(priced.view.textContent.indexOf('seen near the target') !== -1,
-        'the commonest reason it turns up nothing is a rule, not a fault: '
-        + priced.view.textContent);
-    });
-
-    /* An informant who could not put a name to anyone, and one who named
-       somebody, have to read the same (§14.29).
-
-       The page used to branch on a `found` flag and print "Nobody has been
-       seen near the target", which is a reliable server-side answer to "is
-       anyone on me right now?" for the price of the premium — the paid
-       oracle the charge-either-way rule exists to prevent. That the money
-       is taken regardless is said on the confirmation screen before it is
-       spent, which is where §14.29 puts it, and is asserted above. */
-    const RULES = { informant: { cost: 25000, account: 'bank', needsProximity: true } };
-    const empty = await onMine({
-      informant: { ok: true, data: { name: 'Unknown operative' } }
-    }, RULES);
-    click(empty, 'Buy informant data');
-    click(empty, 'Yes');
-    await settle();
-
-    const named = await onMine({
-      informant: { ok: true, data: { name: 'Rook Ash' } }
-    }, RULES);
-    click(named, 'Buy informant data');
-    click(named, 'Yes');
-    await settle();
-
-    it('does not tell a target that nobody is on them', function () {
-      falsy(empty.notice().toLowerCase().indexOf('nobody') !== -1,
-        'a miss must not read as an all-clear: ' + empty.notice());
-      truthy(empty.notice().indexOf('Unknown operative') !== -1,
-        'it says what the informant came back with: ' + empty.notice());
-    });
-
-    it('words a miss and a hit the same way', function () {
-      const shape = function (text) { return text.replace(/Unknown operative|Rook Ash/, '·'); };
-      eq(shape(empty.notice()), shape(named.notice()),
-        'the two answers differ in more than the operative named');
+    it('drew every one of these cleanly', function () {
+      [placerOff, placer, missed, two, kept, spent, waiting, nobody, free, cooling, gone, known,
+       moved, broke, capped, limited, heldLong, heldShort, targetOff, target, targetMiss,
+       namedPlacer, lastOne, targetFree, targetSpent, shielded, targetKept, protectedRefusal,
+       placerKnown].forEach(function (app) { drewCleanly(app); });
     });
   })();
 
@@ -5734,7 +5773,9 @@ async function main() {
           created: [Object.assign({}, CONTRACTS[0], { role: 'creator', hitmen: [] })],
           accepted: [Object.assign({}, CONTRACTS[1], { role: 'hitman' })],
           onMe: [Object.assign({}, CONTRACTS[0], { role: 'target', id: 'ct00000003',
-            bailoutAmount: 15000, hitmenActive: 1 })] } },
+            bailoutAmount: 15000, hitmenActive: 1, informantLeft: 2,
+            informantPicks: [{ pick: 'op_cccccccccccc', label: 'Operative #1' },
+                             { pick: 'placer', label: 'The person who placed it' }] })] } },
         ledger: LEDGER,
         rewardOptions: { ok: true, data: {
           cash: 100000, bank: 50000, dirty: 2000, inventoryRead: true,
@@ -6854,31 +6895,34 @@ async function main() {
       hitmenActive: 1, hitmenMax: 5, penaltyAmount: 0,
       // Anonymous: the only operative a client's informant can name.
       hitmen: acrossTheWire([{ alias: 'Operative #1', claims: 0,
-        record: { standing: 'Unproven' } }])
+        record: { standing: 'Unproven' } }]),
+      placerInformantPicks: [{ pick: 'op_dddddddddddd', label: 'Operative #1' }],
+      placerInformantLeft: 3, placerInformantWait: 0
     }], accepted: [], onMe: [] } };
+    const PLACER_RULES = { cost: 25000, account: 'bank', chance: 20, alertChance: 20,
+      maxPerContract: 3, cooldownMinutes: 10 };
 
     const priced = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
-        minQueryLength: 3,
-        informant: { cost: 25000, account: 'bank', maxPerContract: 3 }
+        minQueryLength: 3, placerInformant: PLACER_RULES
       } } },
       mine: OWN, ledger: LEDGER
     });
     await settle(); await settle();
     tab(priced, 'mine');
     await settle(); await settle();
-    click(priced, 'Buy informant data');
+    click(priced, 'Informant on an operative \u2014 $25,000');
     await settle();
 
-    /* Every operative on the card already named: the client's purchase
-       can only draw an anonymous one, so it bought a certain "nobody". */
+    /* Every operative on the card already named: the server offers none to
+       ask about, and the button says so rather than selling a certainty. */
     const allNamed = JSON.parse(JSON.stringify(OWN));
     allNamed.data.created[0].hitmen = [{ alias: 'Operative #1', name: 'Rook Ash',
       claims: 0, record: { standing: 'Unproven' } }];
+    allNamed.data.created[0].placerInformantPicks = {};
     const namedCard = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
-        minQueryLength: 3,
-        informant: { cost: 25000, account: 'bank', maxPerContract: 3 }
+        minQueryLength: 3, placerInformant: PLACER_RULES
       } } },
       mine: allNamed, ledger: LEDGER
     });
@@ -6886,9 +6930,10 @@ async function main() {
     tab(namedCard, 'mine');
     await settle(); await settle();
     it('does not sell the client an informant when every operative is named', function () {
-      falsy(namedCard.view.all().some(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), 'a purchase that can only answer "nobody", never refunded');
+      const button = namedCard.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Informant on an operative \u2014 $25,000';
+      })[0];
+      truthy(button && button.disabled, 'drawn disabled, with why: ' + namedCard.view.textContent);
     });
 
     it('says how many times one contract can be asked', function () {
@@ -9609,29 +9654,34 @@ async function main() {
   /* The informant's answer, kept on the card it was paid for, and the
      dialog saying when asking again is free. */
   await (async function informantAnswerKept() {
-    const own = { id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
-      reward: { baseline: 5000, bonus: 2500 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
-      hitmenActive: 1, hitmenMax: 5, hitmen: [{ alias: 'Grey' }],
-      targetName: 'Dana Reyes', role: 'creator', informantAnswer: 'Rook Ash' };
+    const own = { id: 'ct00000002', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+      reward: { total: 5000 }, hitmenActive: 1, role: 'target', bailoutAmount: 15000,
+      targetName: 'You', informantLeft: 1,
+      informantFound: [{ label: 'Operative #1', text: 'Rook Ash' }],
+      informantPicks: [{ pick: 'op_eeeeeeeeeeee', label: 'Operative #1', known: true },
+                       { pick: 'placer', label: 'The person who placed it' }] };
     const app = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
-        informant: { cost: 25000, account: 'bank', maxPerContract: 2,
+        informant: { cost: 25000, account: 'bank', maxPerContract: 2, chance: 10,
           repeatFreeMinutes: 30, askEverySeconds: 300 } } } },
-      mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [own] } },
       ledger: LEDGER
     });
     await settle(); await settle();
-    tab(app, 'mine');
+    tab(app, 'onme');
     await settle(); await settle();
 
     it('keeps what the informant said on the card', function () {
-      truthy(app.view.textContent.indexOf('Informant: Rook Ash') !== -1, app.view.textContent);
+      truthy(app.view.textContent.indexOf('Informant: Operative #1 is Rook Ash') !== -1,
+        app.view.textContent);
     });
 
     click(app, 'Buy informant data');
     it('says a repeat inside the window is free, from the server\'s figures', function () {
-      truthy(app.view.textContent.indexOf('between 5 and 30 minutes after an answer') !== -1,
-        app.view.textContent);
+      truthy(app.view.textContent.indexOf('within 30 minutes repeats the answer at no charge')
+        !== -1, app.view.textContent);
+      truthy(app.view.textContent.indexOf('Your informant already found out.') !== -1,
+        'the one found out is not sold again: ' + app.view.textContent);
     });
   })();
 
@@ -10874,6 +10924,29 @@ async function main() {
   }
   const VIEW_INTRO = 'You’re on a whitelisted job, so this app only shows contracts '
     + 'on you and on other whitelisted-job members.';
+
+  /* A whitelisted-job member is never sold the informant (the server
+     refuses it, informant_protected): nowhere on their view, whatever the
+     settings say the server sells. Their buyout stays. */
+  await (async function whitelistedViewHasNoInformant() {
+    const app = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: function () {
+        return jobView({ settings: { buyouts: true, buyoutDelaySeconds: 120,
+          informant: { cost: 25000, account: 'bank', chance: 10, maxPerContract: 2 },
+          placerInformant: { cost: 25000, account: 'bank', chance: 20, alertChance: 20 } } });
+      }
+    });
+    await settle(); await settle(); await settle();
+    it('offers no informant anywhere on the whitelisted-job view', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      falsy(labels.some(function (l) { return /informant/i.test(l); }), labels.join(' | '));
+      truthy(labels.indexOf('Buy out \u2014 $15,000') !== -1, 'the buyout stays: ' + labels.join(' | '));
+      falsy(/informant/i.test(app.view.textContent), app.view.textContent);
+      drewCleanly(app);
+    });
+  })();
 
   await (async function whitelistedView() {
     let bought = null;

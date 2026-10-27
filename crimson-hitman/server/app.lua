@@ -359,7 +359,7 @@ end
 local MONEY_REQUESTS = {
     create = true, accept = true, cancel = true, abandon = true, withdrawReward = true,
     addEscrow = true, improve = true, propose = true, respondAmendment = true,
-    bailout = true, informant = true, submitPhoto = true, verifyKill = true,
+    bailout = true, informant = true, placerInformant = true, submitPhoto = true, verifyKill = true,
     armKidnap = true, locationTip = true,
 }
 
@@ -1296,13 +1296,28 @@ function App.register()
         return { queued = third == true }
     end, 'target')
 
+    -- The target's informant: one look-up on an operative (by the handle
+    -- their On me card was given) or on the person who placed it ('placer').
+    -- On a refusal the third says more than the code: how long a busy key
+    -- has been held, or the price now. `shown` is the price the dialog
+    -- quoted, and a price that moved since is refused rather than charged.
+    -- The pick is only ever a string the server minted; Informant.buy
+    -- refuses anything else, and anything it did not mint for this contract.
     handler('informant', 'informant', function(actor, payload)
-        -- On a refusal the third says more than the code: how long a busy
-        -- key has been held, the minutes until it is sold again, or the
-        -- price now. `shown` is the price the dialog quoted, and a price
-        -- that moved since is refused rather than charged.
         local ok, err, data = deps.informant.buy(actor, payload.id,
-            type(payload.shown) == 'table' and payload.shown or {})
+            type(payload.shown) == 'table' and payload.shown or {},
+            type(payload.pick) == 'string' and payload.pick:sub(1, 64) or nil)
+        if not ok then return false, err, data end
+        return data
+    end)
+
+    -- The placer's informant (Config.PlacerInformant): one look-up on an
+    -- operative who took their contract, by the handle their Mine card was
+    -- given. Its own bucket, so it never spends the target's.
+    handler('placerInformant', 'placerInformant', function(actor, payload)
+        local ok, err, data = deps.informant.placerBuy(actor, payload.id,
+            type(payload.shown) == 'table' and payload.shown or {},
+            type(payload.pick) == 'string' and payload.pick:sub(1, 64) or nil)
         if not ok then return false, err, data end
         return data
     end)

@@ -290,6 +290,10 @@ describe('what a player doing ordinary things spends', function()
     --- refused. That is deliberate, but it has to SAY so.
     it('tells a player how long an informant refusal lasts', function()
         local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        Env.players[2].PlayerData.money.bank = 100000
+        local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+            .informantPicks[1].pick
 
         -- The first purchase has to actually go through, or the handler
         -- refunds the token and the second one is never the refusal this
@@ -297,12 +301,12 @@ describe('what a player doing ordinary things spends', function()
         -- written as "if it happened to be refused".
         -- With the price quoted, as the page sends it.
         local quoted = { cost = Config.Informant.Cost, account = Config.Informant.Account }
-        local first = call('informant', 1, { id = c.id, shown = quoted })
+        local first = call('informant', 2, { id = c.id, shown = quoted, pick = pick })
         truthy(first, 'the handler must answer')
         truthy(first.ok, 'the first purchase has to succeed for the bucket to '
             .. 'be spent, but it said ' .. tostring(first.err))
 
-        local second = call('informant', 1, { id = c.id, shown = quoted })
+        local second = call('informant', 2, { id = c.id, shown = quoted, pick = pick })
         truthy(second, 'and answer again')
         eq(second.err, CH.ERR.RATE_LIMITED,
             'a second purchase inside the five-minute window has to be refused')

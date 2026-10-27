@@ -465,11 +465,19 @@
     // A feature staff turned off (proposals, the informant). Only new
     // actions are refused; whatever was under way carries on.
     feature_off: 'That is turned off by the server right now.',
-    /* Informant data in the minutes after a restart, which forgot who had
-       been near the target. Nothing was charged. failText says how long
-       when the server sends it. */
-    informant_warming: 'The informant is still asking around after a restart. '
-      + 'Try again in a few minutes.',
+    /* The informants' refusals. Nothing was charged for any of them. A pick
+       that is not an operative on the contract now: forged, from before a
+       restart, or one who has left. */
+    operative_gone: 'That operative is no longer on this contract. Nothing was taken.',
+    // The target's informant on a placer who put their name to it.
+    placer_known: 'They placed it under their name, so you already know who it is. '
+      + 'Nothing was taken.',
+    already_revealed: 'You already know who that is. Nothing was taken.',
+    // A member of a whitelisted job, to whom the informant is not sold.
+    informant_protected: 'The informant does not work for members of a whitelisted job. '
+      + 'Nothing was taken.',
+    // How long is said by failText where the server sends it.
+    informant_cooldown: 'Your informant needs a while before asking again. Nothing was taken.',
     // Whose number it would be is said by failText where the server says.
     call_unmasked: 'They are staying anonymous, and a call from this phone '
       + 'would show their number. Send a message instead.',
@@ -706,7 +714,7 @@
      read everything again (the 'late' push). */
   var MONEY_EVENTS = {
     create: true, accept: true, cancel: true, withdrawReward: true, abandon: true,
-    bailout: true, informant: true, addEscrow: true, improve: true,
+    bailout: true, informant: true, placerInformant: true, addEscrow: true, improve: true,
     respondAmendment: true, submitPhoto: true, verifyKill: true, locationTip: true
   };
 
@@ -798,6 +806,79 @@
   function closeDialog() {
     state.dialog = null;
     render();
+  }
+
+  /* Pick one, then pay, confirmed twice.
+
+     Who first: each option is a button, and the one picked stays picked.
+     Then the price: the pay button arms on the first tap, saying so ("Tap
+     again to pay $25,000") for three seconds, and pays on the second, so a
+     stray thumb on a gamble paid either way is not a purchase. An option the
+     server says is not for sale is drawn, disabled, with why. */
+  var PICK_CONFIRM_MS = 3000;
+  function askPick(question, detail, options, onPick, payLabel) {
+    var open = (options || []).filter(function (o) { return !o.disabled; });
+    state.dialog = { kind: 'pick', question: question, detail: detail,
+                     options: options || [], onPick: onPick, payLabel: payLabel || 'Pay',
+                     chosen: open.length === 1 ? open[0].pick : null, armed: false };
+    render();
+  }
+
+  function renderPick(view) {
+    var d = state.dialog;
+    var panel = el('div', 'card dialog');
+    panel.appendChild(el('div', 'target', d.question));
+    if (d.detail) panel.appendChild(el('div', 'reason', d.detail));
+
+    var list = el('div', 'choices');
+    d.options.forEach(function (option) {
+      var block = el('div', 'choice' + (option.note ? ' has-note' : ''));
+      var button = el('button', option.pick === d.chosen ? 'primary is-chosen' : 'ghost',
+        option.label);
+      if (option.disabled) {
+        button.disabled = true;
+      } else {
+        button.onclick = function () {
+          d.chosen = option.pick;
+          d.armed = false;
+          render();
+        };
+      }
+      block.appendChild(button);
+      if (option.note) { block.appendChild(el('div', 'hint', option.note)); }
+      list.appendChild(block);
+    });
+    panel.appendChild(list);
+
+    var row = el('div', 'row');
+    var armedLabel = 'Tap again to ' + d.payLabel.charAt(0).toLowerCase() + d.payLabel.slice(1);
+    var pay = el('button', d.armed ? 'danger' : 'primary', d.armed ? armedLabel : d.payLabel);
+    if (!d.chosen) { pay.disabled = true; }
+    pay.onclick = function () {
+      if (!d.chosen) { return; }
+      if (!d.armed) {
+        d.armed = true;
+        setTimeout(function () {
+          if (state.dialog === d && d.armed) {
+            d.armed = false;
+            render();
+          }
+        }, PICK_CONFIRM_MS);
+        render();
+        return;
+      }
+      var pick = d.chosen, handler = d.onPick;
+      state.dialog = null;
+      render();
+      if (handler) { handler(pick); }
+    };
+    var no = el('button', 'ghost', 'Cancel');
+    no.onclick = closeDialog;
+    row.appendChild(pay);
+    row.appendChild(no);
+    panel.appendChild(row);
+    if (!d.chosen) { panel.appendChild(el('div', 'hint', 'Pick who to ask about first.')); }
+    view.appendChild(panel);
   }
 
   function renderFields(view) {
@@ -1607,11 +1688,11 @@
         + retryIn(result.data.retryAfter) + '.';
     }
 
-    // How long until the informant sells again after a restart.
-    if (result.err === 'informant_warming' && result.data && Number(result.data.minutes) > 0) {
+    // How long until the placer's informant asks again.
+    if (result.err === 'informant_cooldown' && result.data && Number(result.data.minutes) > 0) {
       var minutes = Math.ceil(Number(result.data.minutes));
-      return 'The informant is still asking around after a restart. Try again in '
-        + minutes + ' minute' + (minutes === 1 ? '' : 's') + '.';
+      return 'Your informant can ask again in ' + minutes + ' minute'
+        + (minutes === 1 ? '' : 's') + '. Nothing was taken.';
     }
 
     // Worth too little in money: the least is sent with the refusal, and
@@ -2100,14 +2181,10 @@
     }
     node.appendChild(meta);
 
-    // What this player's informant came back with, kept by the server with
-    // the purchase. It used to be said once, in a notice that cleared itself
-    // after four seconds, and nothing on the card or anywhere else held the
-    // name the premium had paid for.
-    if (contract.informantAnswer) {
-      node.appendChild(el('div', 'informant-answer ico i-search',
-        'Informant: ' + contract.informantAnswer));
-    }
+    // What this player's informant found out, kept by the server with the
+    // purchase: the target's on their On me card, the placer's on Mine.
+    informantFound(node, contract.informantFound);
+    informantFound(node, contract.placerInformantFound);
 
     // What accepting it does, under the switches now. "Their department has
     // been advised" read today's switch, not whether a bulletin went for
@@ -2682,20 +2759,11 @@
       top.onclick = function () { editReward(contract); };
       row.appendChild(top);
 
-      // Only where the server runs them. The block is omitted from the
-      // settings entirely when informants are off, so it arrives undefined
-      // and never as false — and the guard inside buyInformant tested for
-      // false, which nothing could satisfy. The button was drawn, quoted
-      // "a fee" because there was no figure to quote, and spent a request
-      // to be told the server does not run them.
-      //
-      // Nor where every operative on this card is already named. The
-      // client's purchase only ever draws an anonymous one, so with none it
-      // bought a certain "nobody" on the one purchase never refunded.
-      var anyAnonymous = asList(contract.hitmen).some(function (h) { return !h.name; });
-      if (informantOffered(contract) && anyAnonymous) {
-        more.appendChild(informantButton(contract));
-      }
+      // The placer's informant (Config.PlacerInformant): only where the
+      // server sells it and somebody is on the contract, and drawn disabled,
+      // with why, once it cannot be pressed.
+      var lookUp = placerInformantRow(contract);
+      if (lookUp) { more.appendChild(lookUp); }
 
       // Same shape, same reason: {} has no .length, so this read as "no
       // hitmen" whether or not there were any.
@@ -2751,10 +2819,9 @@
       // Somebody tipped off about where they were: first, it is about them now.
       if (contract.tippedAt) { row.appendChild(tipToldNotice(contract.tippedAt)); }
       appendBuyout(row, contract);
-      // Only with somebody on it. With nobody, the purchase could only
-      // answer "Unknown operative", and was charged; the card already says
-      // how many operatives there are, so hiding it says nothing new.
-      if (informantOffered(contract) && Number(contract.hitmenActive) > 0) {
+      // Only where the server offers this target something to pick: never to
+      // a member of a whitelisted job, who keeps their buyout.
+      if (informantOffered(contract)) {
         more.appendChild(informantButton(contract));
       }
       return withMore();
@@ -4070,95 +4137,123 @@
         }, { yes: 'Pay ' + amount });
   }
 
-  /* Whether this card offers informant data: where the server runs
-     informants, and while this player has a purchase left on it (their own
-     count, the projection's informantLeft). Spent, the button stayed, quoted
-     the full price, and said nothing more could be bought only once the
-     player had agreed to pay. */
+  /* ---------- informants ----------
+     Two look-ups the server sells, each a gamble paid either way: the
+     target's (settings().informant), on one operative or the person who
+     placed it, and the placer's (settings().placerInformant), on one
+     operative who took their contract. Each card carries what its own viewer
+     may pick (informantPicks, placerInformantPicks): handles the server
+     minted, shown by the alias the roster already uses, which name no row.
+     The roll is the server's; the page only says what it came back with. */
+
+  /* What a look-up found, kept on the card it was paid for. It used to be
+     said once, in a notice that cleared itself, and a buyer who looked away
+     had paid for a name they could no longer read. */
+  function informantFound(node, found) {
+    asList(found).forEach(function (f) {
+      if (!f || !f.text) { return; }
+      node.appendChild(el('div', 'informant-answer ico i-search',
+        'Informant: ' + (f.label || 'An operative') + ' is ' + f.text));
+    });
+  }
+
+  /* The price of a look-up, as the button and the dialog say it. */
+  function lookUpPrice(rules) {
+    return Number(rules.cost) > 0 ? money(rules.cost) : 'free';
+  }
+
+  function chanceOf(value) {
+    return Math.max(0, Math.min(100, Math.round(Number(value) || 0))) + '% chance';
+  }
+
+  /* Whether the target's card offers it: where the server sells look-ups,
+     while they have one left on this contract (their own count), and while
+     something on it is still unknown to them. The server sends no picks to
+     a target it will not sell to (a member of a whitelisted job), so the
+     button is never drawn for them. */
   function informantOffered(contract) {
     if (!settings().informant) { return false; }
     var left = contract.informantLeft;
-    return left === undefined || left === null || Number(left) > 0;
+    if (left !== undefined && left !== null && Number(left) <= 0) { return false; }
+    return asList(contract.informantPicks).some(function (p) { return p && !p.known; });
   }
 
-  /* Buy informant data, disabled while a purchase is in flight: the one
-     purchase that is never refunded, and the button stayed live through
-     the round trip. */
+  /* Buy informant data, disabled while a purchase is in flight. */
   function informantButton(contract) {
     var key = 'informant:' + contract.id;
     if (isBusy(key)) {
-      return actionButton('ghost ico i-search', 'Buy informant data', key, 'Buying\u2026');
+      return actionButton('ghost ico i-search', 'Buy informant data', key, 'Buying…');
     }
     var buy = el('button', 'ghost ico i-search', 'Buy informant data');
     buy.onclick = function () { buyInformant(contract); };
     return buy;
   }
 
+  /* What the last-one and cap lines say, from the viewer's own count. */
+  function lookUpsLeftText(left, most) {
+    if (Number(left) === 1) { return ' This is your last one on this contract.'; }
+    if (Number(most) > 0) {
+      return ' You can ask about one contract ' + Number(most)
+        + (Number(most) === 1 ? ' time in total.' : ' times in total.');
+    }
+    return '';
+  }
+
   function buyInformant(contract) {
     var rules = settings().informant;
-    // Absent, not false: the projection omits the block rather than sending
-    // a flag, so anything comparing against false here was dead code.
-    if (!rules) {
-      return say('This server does not run informants.');
-    }
-
-    // What it costs, said before they agree to pay it. The dialog used to
-    // call it "expensive" and leave the player to find the figure out by
-    // spending it — on a purchase that is deliberately not refunded. Kept,
-    // and sent back with the purchase: a price that has moved since is
-    // refused rather than charged.
+    if (!rules) { return say('This server does not run informants.'); }
     var shown = { cost: Number(rules.cost) || 0,
                   account: rules.account === 'cash' ? 'cash' : 'bank' };
-    // Free is said as free. A cost of 0 fell to the words for a missing
-    // figure, and a free purchase was described as a paid one.
-    var detail = rules.cost === 0
-      ? 'It is free on this server.'
-      : 'It costs ' + (Number(rules.cost) > 0
-        ? money(rules.cost) + ' from your ' + shown.account : 'a fee')
-        + ', taken now, whether or not it turns anything up.';
-    // How many times this contract can be asked at all. The cap is already
-    // sent; without it a player has no idea they are on their last one, and
-    // finds out by spending it. Their own count says which this is.
-    if (Number(contract.informantLeft) === 1) {
-      detail += ' This is your last one on this contract.';
-    } else if (rules && rules.maxPerContract) {
-      detail += ' An informant will answer about one contract '
-        + rules.maxPerContract
-        + (rules.maxPerContract === 1 ? ' time in total.' : ' times in total.');
-    }
-    if (rules && rules.needsProximity) {
-      // The single most common reason this "does not work": an operative who
-      // accepted and has not gone near the target cannot be named, by
-      // design, so the money buys a blank.
-      detail += ' An informant can only name an operative who has actually '
-        + 'been seen near the target — one who took the contract and has not '
-        + 'moved on it yet cannot be found.';
-    }
-
-    // A repeat inside the reroll lock is free and gives the answer already
-    // bought, once the rate limit lets a second request through — and the
-    // dialog quoted the full fee for that too.
-    var waitMinutes = Math.ceil((Number(rules.askEverySeconds) || 0) / 60);
+    var detail = 'Your informant asks around about the one you pick. There is a '
+      + chanceOf(rules.chance) + ' they find out who it is, and '
+      + (shown.cost > 0
+        ? 'the ' + money(shown.cost) + ' from your ' + shown.account + ' is paid either way.'
+        : 'it is free on this server.')
+      + ' Nobody is told you asked.'
+      + lookUpsLeftText(contract.informantLeft, rules.maxPerContract);
     var freeMinutes = Number(rules.repeatFreeMinutes) || 0;
-    if (freeMinutes > waitMinutes) {
-      detail += ' Asked about this contract again ' + (waitMinutes > 0
-        ? 'between ' + waitMinutes + ' and ' + freeMinutes + ' minutes after an answer'
-        : 'within ' + freeMinutes + ' minutes of an answer')
-        + ', the informant repeats that answer at no charge.';
+    if (freeMinutes > 0) {
+      detail += ' Asking about the same one again within ' + freeMinutes
+        + ' minutes repeats the answer at no charge.';
     }
-
-    ask('Buy informant data?', detail, function () { doBuyInformant(contract, shown); });
+    var options = asList(contract.informantPicks).map(function (p) {
+      return { pick: p.pick, label: p.label, disabled: !!p.known,
+               note: p.known ? (p.named ? 'Placed under their name: you know who it is.'
+                 : 'Your informant already found out.') : null };
+    });
+    askPick('Buy informant data?', detail, options, function (pick) {
+      doBuyInformant(contract, shown, pick);
+    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : 'Ask');
     // Drawn again from the settings when they change while it is open
     // (readBoard), so the price it quotes, and sends back, is the price now.
-    // Closed instead where the informant has been switched off meanwhile.
     if (state.dialog) {
       state.dialog.redo = function () { state.dialog = null; buyInformant(contract); };
     }
   }
 
-  function doBuyInformant(contract, shown) {
+  /* What a look-up came back with, in plain words. */
+  function sayLookUp(data, miss) {
+    var d = data || {};
+    if (d.found) {
+      return say('Your informant found out: ' + (d.label || 'they') + ' is '
+        + (d.name || d.description) + '.', 'ok');
+    }
+    say((d.message || miss) + (d.repeated
+      ? ' That is the answer you were given a moment ago, and it cost nothing.' : ''));
+  }
+
+  /* The refusals both informants share, in their words. */
+  var INFORMANT_REFUSALS = {
+    limit_reached: 'You have used every look-up the informant sells on this contract.',
+    insufficient_funds: 'You cannot afford the informant.',
+    not_participant: 'This is not yours to ask about.',
+    bad_state: 'This server does not run informants.',
+    feature_off: 'The informant is turned off by the server right now.'
+  };
+
+  function doBuyInformant(contract, shown, pick) {
     once('informant:' + contract.id, function () {
-    return post('informant', { id: contract.id, shown: shown }).then(function (r) {
+    return post('informant', { id: contract.id, shown: shown, pick: pick }).then(function (r) {
       if (!r.ok) {
         // The price moved since it was quoted: said, and the settings read
         // again, so the next quote is the price now. Nothing was taken.
@@ -4166,36 +4261,100 @@
           fail(r);
           return refresh({ board: true });
         }
-        // limit_reached means something else entirely here, and the shared
-        // message for it — "You are holding too many contracts" — described
-        // a rule that has nothing to do with this purchase.
-        var reasons = {
-          limit_reached: 'You have already bought everything this informant '
-            + 'will tell you about this contract.',
-          // The code the server sends. This was keyed `insufficient`, which
-          // nothing sends, so the purchase fell through to the Place form's
-          // "You do not have that."
-          insufficient_funds: 'You cannot afford the informant.',
-          not_participant: 'This is not yours to ask about.',
-          bad_state: 'This server does not run informants.',
-          feature_off: 'The informant is turned off by the server right now.'
-        };
-        if (reasons[r.err]) { return say(reasons[r.err]); }
-        return fail(r);
+        if (INFORMANT_REFUSALS[r.err]) { say(INFORMANT_REFUSALS[r.err]); return refresh(); }
+        fail(r);
+        return refresh();
       }
-
-      // One branch, because the server sends one shape. The page used to
-      // read a `found` flag and print "Nobody has been seen near the
-      // target", which handed a target a reliable answer to "is anyone on
-      // me?" for the price of the premium — the paid oracle §14.29 exists
-      // to close. An informant who could not put a name to anyone reads
-      // the same whether that is because there was nobody or because the
-      // operative is not somewhere they could be described.
-      say('Informant: ' + ((r.data && (r.data.name || r.data.description))
-        || 'Unknown operative'), 'ok');
-      // The answer is kept on the card too; the refresh brings it.
+      sayLookUp(r.data, 'Your informant could not find out who it is.');
+      // What was found is kept on the card too; the refresh brings it.
       refresh();
     });
+    });
+  }
+
+  /* The placer's informant on their own card: the button, and under it why
+     it cannot be pressed when it cannot. Nothing where the server does not
+     sell it or nobody is on the contract. */
+  function placerInformantRow(contract) {
+    var rules = settings().placerInformant;
+    if (!rules || !(Number(contract.hitmenActive) > 0)) { return null; }
+    if (contract.placerInformantPicks === undefined || contract.placerInformantPicks === null) {
+      return null;
+    }
+    var key = 'placerInformant:' + contract.id;
+    var label = 'Informant on an operative — ' + lookUpPrice(rules);
+    var wrap = el('div', 'placer-informant');
+    var picks = asList(contract.placerInformantPicks);
+    var left = contract.placerInformantLeft;
+    var wait = Number(contract.placerInformantWait) || 0;
+    var why = null;
+    if (left !== undefined && left !== null && Number(left) <= 0) {
+      why = 'You have used every look-up the informant sells on this contract.';
+    } else if (picks.length === 0) {
+      why = 'You already know who every operative on it is.';
+    } else if (wait > 0) {
+      why = 'Your informant can ask again ' + retryIn(wait) + '.';
+    }
+    var button;
+    if (isBusy(key)) {
+      button = actionButton('ghost ico i-search', label, key, 'Asking…');
+    } else {
+      button = el('button', 'ghost ico i-search', label);
+      if (why) {
+        button.disabled = true;
+      } else {
+        button.onclick = function () { buyPlacerInformant(contract); };
+      }
+    }
+    wrap.appendChild(button);
+    if (why) { wrap.appendChild(el('div', 'hint', why)); }
+    return wrap;
+  }
+
+  function buyPlacerInformant(contract) {
+    var rules = settings().placerInformant;
+    if (!rules) { return say('This server does not run informants.'); }
+    var shown = { cost: Number(rules.cost) || 0,
+                  account: rules.account === 'cash' ? 'cash' : 'bank' };
+    var detail = 'Your informant asks around about the operative you pick. There is a '
+      + chanceOf(rules.chance) + ' they find out who it is, and '
+      + (shown.cost > 0
+        ? 'the ' + money(shown.cost) + ' from your ' + shown.account + ' is paid either way.'
+        : 'it is free on this server.')
+      + ' If they do find out, there is a ' + chanceOf(rules.alertChance)
+      + ' that operative notices someone was asking about them, though never who.'
+      + lookUpsLeftText(contract.placerInformantLeft, rules.maxPerContract);
+    if (Number(rules.cooldownMinutes) > 0) {
+      detail += ' Look-ups on one contract are ' + Number(rules.cooldownMinutes)
+        + ' minutes apart.';
+    }
+    var options = asList(contract.placerInformantPicks).map(function (p) {
+      return { pick: p.pick, label: p.label };
+    });
+    askPick('Informant on an operative?', detail, options, function (pick) {
+      doBuyPlacerInformant(contract, shown, pick);
+    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : 'Ask');
+    if (state.dialog) {
+      state.dialog.redo = function () { state.dialog = null; buyPlacerInformant(contract); };
+    }
+  }
+
+  function doBuyPlacerInformant(contract, shown, pick) {
+    once('placerInformant:' + contract.id, function () {
+    return post('placerInformant', { id: contract.id, shown: shown, pick: pick })
+      .then(function (r) {
+        if (!r.ok) {
+          if (r.err === 'terms_changed') {
+            fail(r);
+            return refresh({ board: true });
+          }
+          if (INFORMANT_REFUSALS[r.err]) { say(INFORMANT_REFUSALS[r.err]); return refresh(); }
+          fail(r);
+          return refresh();
+        }
+        sayLookUp(r.data, 'Your informant could not find out who they are.');
+        refresh();
+      });
     });
   }
 
@@ -8320,6 +8479,8 @@
         renderRewardEditor(view);
       } else if (state.dialog.kind === 'proof') {
         renderProof(view);
+      } else if (state.dialog.kind === 'pick') {
+        renderPick(view);
       } else {
         renderDialog(view);
       }

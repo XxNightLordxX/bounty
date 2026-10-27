@@ -16,6 +16,18 @@ local CHANGED = {
     ['Kidnap.RequireCoercion'] = { true, false },
     ['Diagnostics.SlowJobMs'] = { 5, 25 },
     ['Database.Mode'] = { 'json', 'mysql' },
+    -- The target's informant: a chance roll on a pick of the target's,
+    -- with the proximity rule taken out (the owner's request).
+    ['Informant.RequireProximity'] = { true, nil },
+    ['Informant.ProximityWindowMinutes'] = { 10, nil },
+    ['Informant.RevealChancePercent'] = { nil, 10 },
+    -- The placer's informant, new, and its own rate-limit bucket.
+    ['PlacerInformant'] = { nil, {
+        Enabled = true, Cost = 25000, Account = 'bank', RevealChancePercent = 20,
+        AlertChancePercent = 20, RevealMode = 'name', MaxPurchasesPerContract = 2,
+        CooldownMinutes = 10,
+    } },
+    ['Cooldowns.placerInformant'] = { nil, { per = 300, burst = 1 } },
 }
 
 --- Settings added since the rewrite, by the path the comparison reports
@@ -101,7 +113,15 @@ describe('the configuration as one short file', function()
             truthy(meant, ('Config.%s was %s and is %s'):format(path, tostring(pair[1]),
                 tostring(pair[2])))
             eq(pair[1], meant[1], 'Config.' .. path .. ' before')
-            eq(pair[2], meant[2], 'Config.' .. path .. ' now')
+            if type(meant[2]) == 'table' then
+                -- A section or a record added whole: every field of it.
+                local off = {}
+                for field in pairs(differences(pair[2], meant[2])) do off[#off + 1] = field end
+                table.sort(off)
+                eq(#off, 0, 'Config.' .. path .. ' now differs in ' .. table.concat(off, ', '))
+            else
+                eq(pair[2], meant[2], 'Config.' .. path .. ' now')
+            end
             seen[path] = true
             ::continue::
         end

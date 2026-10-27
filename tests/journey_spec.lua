@@ -363,6 +363,7 @@ describe('what this suite really covered', function()
         revise         = 'reward_edit_spec',
         withdrawReward = 'reward_edit_spec',
         informant      = 'interaction_spec',
+        placerInformant = 'informant_spec ("goes through the app"), through the net event',
         -- Not a contract action at all.
         pageError      = 'authz_matrix_spec, under "a page reporting its own fault"',
         -- Answered only for a player on a whitelisted job, whom no journey

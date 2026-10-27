@@ -780,20 +780,23 @@ describe('refreshing every timer for testing', function()
     it('leaves the counts that are limits rather than waits alone', function()
         local s, f, c = seeded({ accept = true })
         Config.Informant.MaxPurchasesPerContract = 1
-        Env.players[3].PlayerData.money.bank = 50000
+        Env.players[2].PlayerData.money.bank = 50000
+        s.informant.setRandom(function() return 100 end)
+        local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+            .informantPicks[1].pick
 
-        local ok = s.informant.buy(f.creator, c.id)
+        local ok = s.informant.buy(f.target, c.id, nil, pick)
         truthy(ok, 'the first purchase works')
-        eq(select(2, s.informant.buy(f.creator, c.id)), nil,
-            'a second inside the lock returns the same name rather than rolling')
+        eq(select(2, s.informant.buy(f.target, c.id, nil, pick)), nil,
+            'a second inside the lock repeats the answer rather than rolling')
 
         Env.aces[3] = { ['crimson.admin'] = true }
         cmd(s)(3, {})
 
         -- The lock is gone, so this is a fresh roll — and the purchase count
         -- is not, so it is refused.
-        eq(select(2, s.informant.buy(f.creator, c.id)), CH.ERR.LIMIT_REACHED,
-            'the refresh must not hand a buyer the whole roster')
+        eq(select(2, s.informant.buy(f.target, c.id, nil, pick)), CH.ERR.LIMIT_REACHED,
+            'the refresh must not hand a buyer more look-ups')
     end)
 
     it('writes nothing back from the list it read at the start', function()

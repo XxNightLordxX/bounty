@@ -901,150 +901,77 @@ describe('an idle exclusive hold, on the running server', function()
     end)
 end)
 
-describe('informant data across a restart', function()
-    --- The reveal record is the reroll lock and the purchase count. Held only
-    --- in memory, a restart charged the fee again for the same name and
-    --- counted the ceiling from zero — on the one purchase in the resource
-    --- that is never refunded.
-    for _, mode in ipairs({ 'json', 'mysql' }) do
-        it(mode .. ': buying again inside the lock is not charged again', function()
-            local _, s = boot(mode)
-            Config.Informant.RequireProximity = false
-            local f = fixture(s)
-            Env.players[2].PlayerData.money.bank = 200000
-            local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x',
-                reward = { baseline = { cash = 10000 } },
-            })
-            truthy(s.contracts.accept(f.hitman, c.id))
-
-            local before = money(2)
-            local ok, _, data = s.informant.buy(f.target, c.id)
-            truthy(ok)
-            eq(data.name, 'Rook Ash')
-
-            Env.advance(300)
-            local _, s2 = restart(mode, s)
-            local again, _, data2 = s2.informant.buy(s2.identity.resolve(2), c.id)
-            truthy(again)
-            eq(data2.name, 'Rook Ash', 'the same name, as inside the lock')
-            eq(before - money(2), Config.Informant.Cost, 'one purchase, one fee')
-        end)
-
-        it(mode .. ': a repeat inside the lock gives the answer given then, not a fresh look', function()
-            -- Kept in memory only, a restart made the free repeat a new
-            -- read of whether the hitman was in the city: a presence check
-            -- for nothing, as often as the buyer liked.
-            local _, s = boot(mode)
-            Config.Informant.RequireProximity = false
-            local f = fixture(s)
-            Env.players[2].PlayerData.money.bank = 200000
-            local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x',
-                reward = { baseline = { cash = 10000 } },
-            })
-            truthy(s.contracts.accept(f.hitman, c.id))
-            local ok, _, data = s.informant.buy(f.target, c.id)
-            truthy(ok)
-
-            Env.advance(300)
-            local _, s2 = restart(mode, s)
-            Env.removePlayer(3)
-            local again, _, data2 = s2.informant.buy(s2.identity.resolve(2), c.id)
-            truthy(again)
-            eq(json.encode(data2), json.encode(data),
-                'the repeat read the hitman afresh and said whether they were here')
-        end)
-
-        it(mode .. ': the answer stays on the buyer\'s card for the lock, and only theirs', function()
-            -- It lived only in a notice that cleared itself in four seconds,
-            -- on the one purchase that is never refunded.
-            local _, s = boot(mode)
-            Config.Informant.RequireProximity = false
-            local f = fixture(s)
-            Env.players[2].PlayerData.money.bank = 200000
-            local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x',
-                reward = { baseline = { cash = 10000 } },
-            })
-            truthy(s.contracts.accept(f.hitman, c.id))
-            truthy(s.informant.buy(f.target, c.id))
-
-            local _, s2 = restart(mode, s)
-            local row = s2.projection.contract(s2.storage.readContract(c.id), 'TARGET01')
-            eq(row.informantAnswer, 'Rook Ash', 'the stored answer, after a restart')
-            local theirs = s2.projection.contract(s2.storage.readContract(c.id), 'CREATOR1')
-            eq(theirs.informantAnswer, nil, 'the client bought nothing and is told nothing')
-
-            -- Only while a repeat purchase would give it anyway: after the
-            -- lock that operative may be long gone, and the card said not.
-            Env.advance(Config.Informant.RerollLockMinutes * 60)
-            row = s2.projection.contract(s2.storage.readContract(c.id), 'TARGET01')
-            eq(row.informantAnswer, nil, 'a stale name stayed on the card after the lock')
-        end)
-
-        it(mode .. ': the ceiling still counts what was bought before', function()
-            local _, s = boot(mode)
-            Config.Informant.RequireProximity = false
-            local f = fixture(s)
-            Env.players[2].PlayerData.money.bank = 500000
-            local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x',
-                reward = { baseline = { cash = 10000 } },
-            })
-            truthy(s.contracts.accept(f.hitman, c.id))
-
-            local lock = Config.Informant.RerollLockMinutes * 60 + 1
-            for _ = 1, Config.Informant.MaxPurchasesPerContract do
-                truthy(s.informant.buy(f.target, c.id))
-                Env.advance(lock)
-            end
-            local before = money(2)
-
-            local _, s2 = restart(mode, s)
-            local ok, err = s2.informant.buy(s2.identity.resolve(2), c.id)
-            falsy(ok, 'a restart reset the ceiling')
-            eq(err, CH.ERR.LIMIT_REACHED)
-            eq(money(2), before, 'and charged for it')
-        end)
+describe('the informants across a restart', function()
+    --- What a look-up found is shown on the buyer's card for the contract's
+    --- life, and the cap counts every look-up made. Held only in memory, a
+    --- restart hid a name already paid for and counted the cap from zero.
+    local function forced(s, ...)
+        local queue = { ... }
+        s.informant.setRandom(function() return table.remove(queue, 1) or 100 end)
     end
 
-    --- Who had been near the target is kept in memory only, and a restart
-    --- forgot it: a purchase in the window after it paid $25,000 for
-    --- "Unknown operative" on a hitman who had tailed the target and backed
-    --- off. Refused uncharged until the sampler has watched a whole window,
-    --- whoever it has seen since, so the refusal says nothing about who has
-    --- been near; then sold as before.
-    it('json: refuses a purchase uncharged in the window after a restart, whoever has been seen', function()
-        for _, seen in ipairs({ false, true }) do
-            local _, s = boot('json')
+    local function handle(s, c, cid, field)
+        local row = s.projection.contract(s.storage.readContract(c.id), cid)
+        for _, p in ipairs(row[field] or {}) do
+            if p.pick ~= 'placer' then return p.pick end
+        end
+        return nil
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': the placer\'s revealed name stays on their card, and the cap counts', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Env.players[1].PlayerData.money.bank = 200000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', anonymous = true,
+                reward = { baseline = { cash = 10000 } },
+            })
+            truthy(s.contracts.accept(f.hitman, c.id, true))
+            forced(s, 1, 100)
+            local ok, err, data = s.informant.placerBuy(f.creator, c.id, nil,
+                handle(s, c, 'CREATOR1', 'placerInformantPicks'))
+            truthy(ok, tostring(err))
+            eq(data.name, 'Rook Ash')
+
+            Env.advance(60)
+            local _, s2 = restart(mode, s)
+            local card = s2.projection.contract(s2.storage.readContract(c.id), 'CREATOR1')
+            truthy(card.placerInformantFound, 'the name is still shown after a restart')
+            eq(card.placerInformantFound[1].text, 'Rook Ash')
+            eq(card.placerInformantLeft, 1, 'one of two spent')
+            eq(#card.placerInformantPicks, 0, 'and the operative is not offered again')
+            eq(card.placerInformantWait, Config.PlacerInformant.CooldownMinutes * 60 - 60,
+                'the wait between look-ups is remembered too')
+        end)
+
+        it(mode .. ': the target\'s found name stays on On me, and two look-ups stay two', function()
+            local _, s = boot(mode)
             local f = fixture(s)
             Env.players[2].PlayerData.money.bank = 200000
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x',
+                targetCid = 'TARGET01', reason = 'x', anonymous = true,
                 reward = { baseline = { cash = 10000 } },
             })
-            truthy(s.contracts.accept(f.hitman, c.id))
-            s.death.watchTargets(s.storage.allContracts())
-            Env.advance(60)
-
-            local _, s2 = restart('json', s)
-            if seen then s2.death.watchTargets(s2.storage.allContracts()) end
+            truthy(s.contracts.accept(f.hitman, c.id, true))
+            forced(s, 1, 100)
+            truthy(s.informant.buy(f.target, c.id, nil, handle(s, c, 'TARGET01', 'informantPicks')))
+            truthy(s.informant.buy(f.target, c.id, nil, 'placer'))
             local before = money(2)
-            local ok, err, data = s2.informant.buy(s2.identity.resolve(2), c.id)
-            falsy(ok, 'sold for what the restart forgot')
-            eq(err, CH.ERR.INFORMANT_WARMING)
-            eq(data.minutes, Config.Informant.ProximityWindowMinutes)
-            eq(money(2), before, 'and nothing was charged')
 
-            Env.advance(Config.Informant.ProximityWindowMinutes * 60)
-            s2.death.watchTargets(s2.storage.allContracts())
-            ok, err, data = s2.informant.buy(s2.identity.resolve(2), c.id)
-            truthy(ok, tostring(err))
-            eq(data.name, 'Rook Ash', 'after a whole window, named as before')
-            eq(before - money(2), Config.Informant.Cost, 'and charged as before')
-        end
-    end)
+            local _, s2 = restart(mode, s)
+            local card = s2.projection.contract(s2.storage.readContract(c.id), 'TARGET01')
+            truthy(card.informantFound, 'the name is still shown after a restart')
+            eq(card.informantFound[1].text, 'Rook Ash')
+            eq(#card.informantFound, 1, 'the miss found nothing')
+            eq(card.informantLeft, 0)
+            Env.advance(Config.Informant.RerollLockMinutes * 60 + 1)
+            local ok, err = s2.informant.buy(s2.identity.resolve(2), c.id, nil, 'placer')
+            falsy(ok, 'a restart reset the cap')
+            eq(err, CH.ERR.LIMIT_REACHED)
+            eq(money(2), before, 'and nothing was charged')
+        end)
+    end
 end)
 
 describe('memory mode stopping with a buyout waiting out its delay', function()

@@ -603,55 +603,71 @@ end)
 --------------------------------------------------------------------------
 
 describe('buying informant data twice', function()
-    --- A sticky reveal is idempotence with a price on it: inside the reroll
-    --- lock the second purchase returns the first answer and takes nothing,
-    --- which is also what stops the button being used to walk the roster.
-    it('charges once inside the reroll lock and names the same operative', function()
+    local function pickOf(s, c, viewer, field)
+        return s.projection.contract(s.storage.readContract(c.id), viewer)[field][1].pick
+    end
+
+    --- The target asking about the same operative again inside the reroll
+    --- lock gets the answer it got, free, and spends no look-up.
+    it('charges the target once inside the reroll lock and answers the same', function()
         local s, f, c = seeded()
         truthy(s.contracts.accept(f.hitman, c.id, false))
-        -- The sampler has to have seen the hitman on the target, or there is
-        -- nobody in the pool and the purchase reveals nothing.
-        Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
-        Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
+        Env.players[2].PlayerData.money.bank = 100000
+        s.informant.setRandom(function() return 100 end)
+        local pick = pickOf(s, c, 'TARGET01', 'informantPicks')
 
         local first, second, third = replay(s, 'informant', function()
-            return s.informant.buy(f.creator, c.id)
+            return s.informant.buy(f.target, c.id, nil, pick)
         end)
         truthy(first[1], tostring(first[2]))
         truthy(second[1], 'the replay is answered, not refused')
-        eq(second[3].found, first[3].found, 'with the same answer')
-        eq(second[3].name or second[3].description,
-           first[3].name or first[3].description, 'naming the same operative')
+        eq(second[3].message, first[3].message, 'with the same answer')
         truthy(third[1])
-        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost,
-            'and one purchase was paid for')
+        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Informant.Cost,
+            'and one look-up was paid for')
+    end)
+
+    --- The placer asking again about an operative already found out is
+    --- refused, and charged nothing.
+    it('charges the placer once for an operative found out', function()
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        s.informant.setRandom(function() return 1 end)
+        local pick = pickOf(s, c, 'CREATOR1', 'placerInformantPicks')
+        local first, second = replay(s, 'placerInformant', function()
+            return s.informant.placerBuy(f.creator, c.id, nil, pick)
+        end)
+        truthy(first[1], tostring(first[2]))
+        falsy(second[1])
+        eq(second[2], CH.ERR.ALREADY_REVEALED)
+        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.PlacerInformant.Cost,
+            'one look-up was paid for')
     end)
 
     --- The second tap landing while the first waits on the database, before
-    --- the first has remembered the reveal: it found no record and was
-    --- charged again for the same sticky answer, counted once.
+    --- the first has remembered its look-up: refused as busy.
     it('refuses a second purchase that lands while the first is still running', function()
         local s, f, c = seeded()
-        -- Wired as main.lua wires it, with the contracts module for its key.
-        s.informant.init({ storage = s.storage, identity = s.identity, audit = s.audit,
-            death = s.death, contracts = s.contracts })
         truthy(s.contracts.accept(f.hitman, c.id, false))
-        local real, fired, inner = s.storage.readHitmen, false, nil
-        s.storage.readHitmen = function(...)
+        Env.players[2].PlayerData.money.bank = 100000
+        s.informant.setRandom(function() return 100 end)
+        local pick = pickOf(s, c, 'TARGET01', 'informantPicks')
+        local real, fired, inner = s.storage.readHitman, false, nil
+        s.storage.readHitman = function(...)
             if not fired then
                 fired = true
-                inner = table.pack(s.informant.buy(f.creator, c.id))
+                inner = table.pack(s.informant.buy(f.target, c.id, nil, pick))
             end
             return real(...)
         end
-        local ok, err = s.informant.buy(f.creator, c.id)
-        s.storage.readHitmen = real
+        local ok, err = s.informant.buy(f.target, c.id, nil, pick)
+        s.storage.readHitman = real
         truthy(ok, tostring(err))
         truthy(fired, 'the second tap landed inside the first')
         eq(inner[2], CH.ERR.BUSY, 'refused as busy, before anything was charged')
-        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost,
+        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Informant.Cost,
             'one purchase was paid for')
-        eq(s.storage.readReveal(c.id, 'CREATOR1').purchases, 1, 'and one is counted')
+        eq(s.storage.readReveal(c.id, 'TARGET01').purchases, 1, 'and one is counted')
     end)
 end)
 
@@ -965,7 +981,8 @@ describe('what this file leaves out', function()
     local TESTED = {
         accept = true, cancel = true, abandon = true, bailout = true,
         withdrawReward = true, propose = true, respondAmendment = true,
-        informant = true, submitPhoto = true, verifyKill = true, armKidnap = true,
+        informant = true, placerInformant = true, submitPhoto = true, verifyKill = true,
+        armKidnap = true,
         muteThread = true,
     }
 

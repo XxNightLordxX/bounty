@@ -1,42 +1,221 @@
---- Counter-Intelligence — Buy Informant Data (§6.1, §14.29).
+--- Counter-Intelligence — the two informants (§6.1, §14.29).
 ---
---- Unmasks one hitman currently tracking the buyer. Selection happens
---- server-side, the response is uniform whether or not a name was found, and
---- the reveal is sticky so repeat purchases cannot enumerate the roster.
+--- The target's (Config.Informant): a target picks one operative on a
+--- contract on them, or the person who placed it, and pays for one look-up.
+--- The placer's (Config.PlacerInformant): the person who placed a contract
+--- picks one of the operatives who took it, and pays for one look-up.
+---
+--- Both are a gamble, and say so: the price is paid whatever the look-up
+--- finds. Whether it finds anything is a roll made here, on the server, with
+--- a fresh number for every purchase that is never sent before the answer.
+--- The pick is a handle this module minted for an operative's row on that
+--- contract; which row it stands for never leaves the server.
 
 local Util = CrimsonBoot.requireShared('util')
 
 local Informant = {}
 
-local Storage, Identity, Audit, Death, Contracts
+local Storage, Identity, Audit, Contracts, Notify, Bailout
 
---- [contractId .. ':' .. buyerCid] = { hitmanCid, at, purchases }
+--- The target's purchases. [contractId .. ':' .. buyerCid] = { purchases,
+--- at, picks = { [hitmanCid | 'placer'] = { at, found, answer, label } } }
 local reveals = {}
+
+--- The placer's purchases, in the order they were made.
+--- [contractId .. ':' .. placerCid] = { { hitman_cid, bought_at, revealed, alerted, seq } }
+local placerBought = {}
+
+--- The handles a contract's operatives are offered under.
+--- [contractId] = { byCid = { [hitmanCid] = handle }, byHandle = { [handle] = hitmanCid } }
+local handles = {}
 
 --- Reroll locks older than this were aged by a staff timer refresh. A record
 --- read back from the store after that refresh is aged the same way.
 local locksAgedAt = nil
 
---- os.time() this process started: the condition sampler's record of who
---- has been near a target (Death.seenNear) starts empty here.
-local startedAt = nil
+--- What every roll draws from. math.random, or what a test put in its place
+--- (Informant.setRandom).
+local random = math.random
+
+--- The pick that names the person who placed the contract, on the target's
+--- informant. Every other pick is an operative's handle.
+local PLACER = 'placer'
+local PLACER_LABEL = 'The person who placed it'
+
+--- What a look-up that found nothing says, to each buyer.
+local TARGET_MISS = 'Your informant could not find out who it is.'
+local PLACER_MISS = 'Your informant could not find out who they are.'
+
+--- The phone notice an operative a placer found out about may be sent.
+local ALERT_TITLE = 'You have been found out'
 
 function Informant.init(deps)
     Storage, Identity, Audit = deps.storage, deps.identity, deps.audit
-    Death = deps.death
-    -- For one purchase at a time per buyer and contract (Informant.buy).
+    -- For one purchase at a time per buyer and contract (Contracts.serialized).
     Contracts = deps.contracts
-    reveals = {}
+    -- The operative's alert (Notify.tellOrKeep), and a refund that could not
+    -- be handed back at once (Bailout.owe).
+    Notify, Bailout = deps.notify, deps.bailout
+    reveals, placerBought, handles = {}, {}, {}
     locksAgedAt = nil
-    startedAt = os.time()
+end
+
+--- Put a random source in place of math.random, for every roll from now on:
+--- `fn(1, 100)` answers a whole number from 1 to 100. nil puts math.random
+--- back. The test harness forces a roll each way with it.
+---@param fn function|nil
+function Informant.setRandom(fn)
+    random = type(fn) == 'function' and fn or math.random
+end
+
+--- One roll against a chance in percent, with a fresh number.
+---@param percent any
+---@return boolean
+local function roll(percent)
+    local chance = math.floor(tonumber(percent) or 0)
+    local drawn = tonumber(random(1, 100)) or 100
+    return drawn <= chance
+end
+
+local function lockSeconds()
+    return math.max(0, tonumber(Config.Informant.RerollLockMinutes) or 0) * 60
+end
+
+--------------------------------------------------------------------------
+-- Operatives, by handle
+--------------------------------------------------------------------------
+
+--- The handle an operative's row on this contract is offered under, minted
+--- the first time it is asked for and the same for the life of the process.
+--- Random, so it says nothing of who the row is or when they took it.
+---@param contractId string
+---@param hitmanCid string
+---@return string|nil
+local function handleOf(contractId, hitmanCid)
+    local book = handles[contractId]
+    if not book then
+        book = { byCid = {}, byHandle = {} }
+        handles[contractId] = book
+    end
+    local handle = book.byCid[hitmanCid]
+    if handle then return handle end
+    for _ = 1, 8 do
+        local candidate = Util.randomId('op')
+        if not book.byHandle[candidate] then
+            handle = candidate
+            break
+        end
+    end
+    if not handle then return nil end
+    book.byCid[hitmanCid], book.byHandle[handle] = handle, hitmanCid
+    return handle
+end
+
+--- The operative row a handle stands for on this contract, while they are
+--- on it. nil for a handle this server never minted for it (forged, from
+--- another contract, or from before a restart) and for one who has left.
+---@param contractId string
+---@param handle any
+---@return table|nil row
+local function operativeFor(contractId, handle)
+    if type(handle) ~= 'string' or #handle > 64 then return nil end
+    local book = handles[contractId]
+    local cid = book and book.byHandle[handle]
+    if not cid then return nil end
+    local row = Storage.readHitman(contractId, cid)
+    if not row or row.state ~= 'active' then return nil end
+    return row
+end
+
+--- How an operative is called to a buyer: the alias the contract gave their
+--- row ('Operative #1'), the same one the placer's card shows.
+local function labelOf(row)
+    return type(row.alias) == 'string' and row.alias or 'An operative'
+end
+
+--- What a look-up that found somebody tells the buyer, by RevealMode: a
+--- name, or what the informant saw of them. A citizen id never.
+---
+--- The name as the contract recorded it when the operative is away: one
+--- found while offline was answered "Unknown operative", for the full price.
+---@param cid string|nil
+---@param mode string|nil 'name' | 'description'
+---@param knownName string|nil the name the contract holds for them
+---@return table { name } or { description }
+function Informant.describe(cid, mode, knownName)
+    local actor = cid and Identity.byCitizenId(cid)
+    if (mode or Config.Informant.RevealMode) == 'name' then
+        return { name = (actor and actor.name) or knownName or 'Unknown operative' }
+    end
+    return {
+        description = actor
+            and ('Seen recently around %s'):format(actor.job and actor.job.name or 'the city')
+            or 'A face you have seen before',
+    }
+end
+
+--- The words an answer is shown in.
+local function answerText(answer)
+    return type(answer) == 'table' and (answer.name or answer.description) or nil
+end
+
+--- Whether a contract is still one an informant can be bought on.
+local function live(contract)
+    return contract ~= nil and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED)
+end
+
+--- After the charge and before the roll: the contract still open, and the
+--- operative (where there is one) still on it. The contract as read now, or
+--- nil and why not.
+local function stillOn(contractId, pick, row)
+    local now = Storage.readContract(contractId)
+    if not live(now) then return nil, CH.ERR.ALREADY_SETTLED end
+    if row and not operativeFor(contractId, pick) then return nil, CH.ERR.OPERATIVE_GONE end
+    return now
+end
+
+--- Give back a price taken for a look-up that was never made: the contract
+--- ended, or the operative left, between the charge and the roll. Owed (and
+--- handed over at the next login) where it cannot be paid now.
+local function refund(actor, contractId, cost, account, action, why)
+    if cost <= 0 then return end
+    local credited = Util.credit(actor.player, account, cost)
+    if not credited and Bailout and Bailout.owe then
+        credited = Bailout.owe(actor.cid, contractId, cost, account, action) ~= nil
+    end
+    Audit.financial(action, actor.cid, contractId,
+        { amount = cost, account = account, reason = why, owed = not credited or nil })
+end
+
+--------------------------------------------------------------------------
+-- The target's informant (Config.Informant)
+--------------------------------------------------------------------------
+
+--- The picks a record carries, as stored (a JSON object in `answer`).
+local function decodePicks(stored)
+    local answer = stored.answer
+    if type(answer) == 'string' and answer ~= '' then
+        local ok, decoded = pcall(json.decode, answer)
+        answer = ok and decoded or nil
+    end
+    local picks = {}
+    if type(answer) == 'table' and type(answer.picks) == 'table' then
+        for key, p in pairs(answer.picks) do
+            if type(key) == 'string' and type(p) == 'table' then
+                picks[key] = { at = tonumber(p.at) or 0, found = p.found == true,
+                               answer = type(p.answer) == 'table' and p.answer or nil,
+                               label = type(p.label) == 'string' and p.label or nil }
+            end
+        end
+    end
+    return picks
 end
 
 --- The buyer's record, from memory or from the store.
 ---
---- The store is the authority: this record is the reroll lock and the
---- purchase count, and a restart that forgot them made the next purchase
---- charge the fee again for the same name and count the ceiling from zero —
---- on the one purchase in the resource that is never refunded.
+--- The store is the authority: it holds the purchase count, which picks
+--- were found out (shown on their card), and when each was last asked, and
+--- a restart that forgot them counted the cap from zero.
 local function recordFor(contractId, cid)
     local key = contractId .. ':' .. cid
     if reveals[key] then return reveals[key] end
@@ -45,25 +224,14 @@ local function recordFor(contractId, cid)
     local stored = Storage.readReveal(contractId, cid)
     if not stored then return nil end
 
-    local at = tonumber(stored.revealed_at) or 0
-    if locksAgedAt and at <= locksAgedAt then
-        at = os.time() - ((Config.Informant.RerollLockMinutes or 0) * 60 + 1)
+    local picks = decodePicks(stored)
+    if locksAgedAt then
+        for _, p in pairs(picks) do
+            if p.at <= locksAgedAt then p.at = os.time() - (lockSeconds() + 1) end
+        end
     end
-    -- The answer given at the time, kept with the reveal. Kept in memory
-    -- only, a restart inside the reroll lock turned the free repeat back
-    -- into a fresh look at who was online.
-    local answer
-    if type(stored.answer) == 'table' then
-        answer = stored.answer
-    elseif type(stored.answer) == 'string' and stored.answer ~= '' then
-        local ok, decoded = pcall(json.decode, stored.answer)
-        if ok and type(decoded) == 'table' then answer = decoded end
-    end
-    reveals[key] = {
-        hitmanCid = stored.hitman_cid, at = at,
-        purchases = tonumber(stored.purchases) or 0, seed = tonumber(stored.seed),
-        answer = answer,
-    }
+    reveals[key] = { purchases = tonumber(stored.purchases) or 0,
+                     at = tonumber(stored.revealed_at) or 0, picks = picks }
     return reveals[key]
 end
 
@@ -71,116 +239,55 @@ local function remember(contractId, cid, record)
     reveals[contractId .. ':' .. cid] = record
     if Storage and Storage.writeReveal then
         Storage.writeReveal(contractId, cid, {
-            hitman_cid = record.hitmanCid, revealed_at = record.at,
-            purchases = record.purchases, seed = record.seed,
-            answer = type(record.answer) == 'table' and json.encode(record.answer) or nil,
+            revealed_at = record.at, purchases = record.purchases,
+            answer = json.encode({ picks = record.picks }),
         })
     end
 end
 
---- Remember a purchase that has been paid for, and answer it whatever the
---- store does. The buyer has been charged by now, and this is the one
---- purchase never refunded: a write that raised answered server_error for
---- a name already paid for. Kept in memory all the same (remember sets it
---- first), so a repeat inside the lock is free on this process; recorded
---- for staff, since a restart forgets it.
-local function rememberPaid(contractId, cid, record)
+--- Remember a purchase that has been paid for and rolled, and answer it
+--- whatever the store does: kept in memory all the same (remember sets it
+--- first), and recorded for staff, since a restart forgets it.
+local function rememberPaid(contractId, cid, record, action)
     local wrote, err = pcall(remember, contractId, cid, record)
     if not wrote then
-        Audit.financial('informant_unremembered', cid, contractId, { error = tostring(err) })
+        Audit.financial(action, cid, contractId, { error = tostring(err) })
     end
 end
 
---- Who may buy data on a contract: its creator, or its target.
-local function authorised(contract, actor)
-    return contract.creator_cid == actor.cid or contract.target_cid == actor.cid
+--- Whether this target may not use the informant at all: a member of a
+--- whitelisted job, by the flag the contract recorded when it was placed or
+--- by a barred job they hold now. Their buyout stays.
+local function shielded(contract, actor)
+    return contract.target_protected == true or (Identity.isBarred and Identity.isBarred(actor)) == true
 end
 
---- Hitmen eligible to be revealed.
----
---- A hitman who accepted and has done nothing is not tracking anyone. The
---- pool is those the server has actually seen near the target recently
---- (§6.1) — observed by the condition sampler, never claimed by anybody —
---- so the purchase names someone who is genuinely on you rather than
---- dumping the roster of everyone who pressed accept.
----
---- With the requirement switched off the pool is every active hitman, which
---- is what this did before and is left available for servers that prefer it.
-local function pool(contract, actor)
-    local hitmen = Storage.readHitmen(contract.id)
-    local near = Config.Informant.RequireProximity and Death and Death.seenNear(contract.id)
+local targetBuy
 
-    -- A creator already sees every operative who chose to be named, in the
-    -- roster on their own card. Drawing one of those spent a purchase that is
-    -- never refunded — one of only MaxPurchasesPerContract — on a name that
-    -- was already on their screen, while the anonymous operative the purchase
-    -- exists to unmask (§6.1, §14.29) stayed hidden. The target sees no
-    -- roster at all, so for them every operative is unknown.
-    local buyerSeesNamed = contract.creator_cid == actor.cid
-
-    -- And only one the server can describe now. A hitman seen near the
-    -- target who has since left the city is answered "Unknown operative"
-    -- (describe), and landing on one paid the fee for that while another
-    -- seen one was online. Leaving them out says nothing new: with only
-    -- offline ones the answer is that same "Unknown operative".
-    local out = {}
-    for i = 1, #hitmen do
-        local h = hitmen[i]
-        if h.state == 'active' and (not near or near[h.hitman_cid])
-            and not (buyerSeesNamed and not h.anon)
-            and Identity.byCitizenId(h.hitman_cid) ~= nil then
-            out[#out + 1] = h
-        end
-    end
-    return out
-end
-
---- Seconds until the sampler has watched for a whole window since this
---- process started, while the pool is the hitmen it has seen; 0 otherwise.
----
---- Its record is kept in memory only, so a restart forgets who had been
---- near the target, and a purchase in the window after it paid the fee for
---- "Unknown operative", locked in for the reroll lock. Refused uncharged
---- instead, on a contract that was already placed when this process
---- started: one placed since has had every acceptance on it watched from
---- the start. Never by who has been seen: a refusal only when nobody had
---- been near would tell any buyer, for nothing, what the purchase sells.
----@param contract table
----@return integer seconds
-local function warming(contract)
-    if not Config.Informant.RequireProximity or not startedAt then return 0 end
-    if (tonumber(contract.created_at) or 0) >= startedAt then return 0 end
-    local window = (tonumber(Config.Informant.ProximityWindowMinutes) or 10) * 60
-    return math.max(0, startedAt + window - os.time())
-end
-
-local buyUnlocked
-
---- Buy informant data, one purchase at a time per buyer and contract.
----
---- The record that makes a repeat free is read, then the fee taken, then
---- the record written, and every read is an await on mysql: a second tap
---- landing in between found no record and was charged again for the same
---- sticky reveal, counted once. A second purchase while one is running is
+--- Buy one look-up from the target's informant, one purchase at a time per
+--- buyer and contract (Contracts.serialized): a second tap while one runs is
 --- refused as busy, before anything is read or charged.
+---@param actor table
+---@param contractId any
 ---@param shown table|nil the page's echo of the price it quoted, { cost,
 --- account }; nil for a caller that is not a page, which quoted nothing
+---@param pick any an operative's handle, or 'placer'
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil data
-function Informant.buy(actor, contractId, shown)
+function Informant.buy(actor, contractId, shown, pick)
+    -- Turned off, from the admin panel or config.lua: new purchases only.
+    -- A name already found stays shown.
+    if not Config.Informant.Enabled then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
-    -- Turned off, from the admin panel or config.lua: new purchases only.
-    -- A name already bought stays shown.
-    if not Config.Informant.Enabled then return false, CH.ERR.FEATURE_OFF end
-    -- Unkeyed only where no contracts module was wired in (Informant.init).
-    if not Contracts then return buyUnlocked(actor, contractId, shown) end
+    if type(pick) ~= 'string' or pick == '' or #pick > 64 then return false, CH.ERR.INVALID_INPUT end
+    if not Contracts then return targetBuy(actor, contractId, shown, pick) end
     return Contracts.serialized({ 'informant:' .. contractId .. ':' .. tostring(actor.cid) },
-        buyUnlocked, actor, contractId, shown)
+        targetBuy, actor, contractId, shown, pick)
 end
 
-buyUnlocked = function(actor, contractId, shown)
+targetBuy = function(actor, contractId, shown, pick)
     -- The price, read once: the figure checked against the quote below is
     -- the figure charged, whatever the admin panel does in the awaits.
     local cost = math.floor(tonumber(Config.Informant.Cost) or 0)
@@ -188,42 +295,41 @@ buyUnlocked = function(actor, contractId, shown)
 
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
-    if not authorised(contract, actor) then return false, CH.ERR.NOT_PARTICIPANT end
-
-    -- A contract that is over has nobody tracking anybody.
-    --
-    -- Checked here, before the charge, because this is the one purchase in
-    -- the resource that is deliberately never refunded: an empty result costs
-    -- the premium on purpose (§14.29), so that the fee cannot become a free
-    -- oracle for "is anyone after me?". That makes a missing state check
-    -- more expensive here than anywhere else — a tap on a card that had not
-    -- been redrawn yet took the money for information about a contract that
-    -- no longer existed, and nothing gave it back.
+    -- The target's, and only the target's: the placer has an informant of
+    -- their own (Informant.placerBuy).
+    if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
+    if shielded(contract, actor) then return false, CH.ERR.INFORMANT_PROTECTED end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
 
-    local existing = recordFor(contractId, actor.cid)
+    -- Who the look-up is about. Every operative on it is offered, wherever
+    -- they have been; the placer only where they placed it anonymously, as
+    -- a named one is already known.
+    local key, row, label
+    if pick == PLACER then
+        if contract.anon_creator ~= true then return false, CH.ERR.PLACER_KNOWN end
+        key, label = PLACER, PLACER_LABEL
+    else
+        row = operativeFor(contractId, pick)
+        if not row then return false, CH.ERR.OPERATIVE_GONE end
+        key, label = row.hitman_cid, labelOf(row)
+    end
 
-    -- A sticky reveal: buying again inside the lock returns the same name
-    -- rather than rolling for another, so the purchase cannot be used to
-    -- enumerate every hitman for a fee.
-    if existing and (os.time() - existing.at) < (Config.Informant.RerollLockMinutes * 60) then
-        -- The answer given when they were revealed, not a fresh look. Asked
-        -- again, it said whether that hitman was online right now — free,
-        -- every few minutes, for the whole lock: a presence oracle on an
-        -- anonymous hitman. After a restart the lock has run out (locksAgedAt),
-        -- so nothing needs this across one.
-        return true, nil, existing.answer or Informant.describe(existing.hitmanCid)
+    local existing = recordFor(contractId, actor.cid)
+    local asked = existing and existing.picks[key]
+    if asked and asked.found then return false, CH.ERR.ALREADY_REVEALED end
+    -- Asked about the same one again inside the reroll lock: the answer it
+    -- got, at no charge and spending no attempt, rather than a second roll.
+    if asked and (os.time() - asked.at) < lockSeconds() then
+        return true, nil, { found = false, label = label, message = TARGET_MISS, repeated = true }
     end
 
     local purchases = existing and existing.purchases or 0
-    if purchases >= Config.Informant.MaxPurchasesPerContract then
+    if purchases >= math.floor(tonumber(Config.Informant.MaxPurchasesPerContract) or 0) then
         return false, CH.ERR.LIMIT_REACHED
     end
 
-    -- The price the dialog quoted is the price charged, as the stake is on
-    -- accepting: a price raised from the admin panel while the dialog was
-    -- open was taken in full on the one purchase never refunded. Only where
-    -- something is charged, and before anything is.
+    -- The price the dialog quoted is the price charged: one raised from the
+    -- admin panel while it was open is refused, with the price now.
     if shown ~= nil and cost > 0 then
         local quoted = type(shown) == 'table' and shown or {}
         if tonumber(quoted.cost) ~= cost or quoted.account ~= account then
@@ -231,189 +337,332 @@ buyUnlocked = function(actor, contractId, shown)
         end
     end
 
-    -- Just after a restart, nothing is sold that the restart made worthless.
-    local wait = warming(contract)
-    if wait > 0 then
-        return false, CH.ERR.INFORMANT_WARMING, { minutes = math.ceil(wait / 60) }
-    end
+    -- Read again with nothing between this and the charge: the state above
+    -- was read before every await since.
+    if not live(Storage.readContract(contractId)) then return false, CH.ERR.ALREADY_SETTLED end
+    if row and not operativeFor(contractId, pick) then return false, CH.ERR.OPERATIVE_GONE end
 
-    -- Who could be named, before anything is charged: the read is an await
-    -- on mysql and raises on a dropped connection, and one that raised after
-    -- the charge kept the fee with nothing recorded for it, so every retry
-    -- was charged again.
-    local candidates = pool(contract, actor)
-
-    -- And the contract read again, with nothing between this and the
-    -- charge. The state checked above was read before every await since,
-    -- and a contract that ended in one of them was still sold. Only an open
-    -- one, as for a buyout: a contract being paid out (COMPLETING) is
-    -- ending too.
-    local now = Storage.readContract(contractId)
-    if not now or (now.state ~= CH.STATE.ACTIVE and now.state ~= CH.STATE.ACCEPTED) then
-        return false, CH.ERR.ALREADY_SETTLED
-    end
-
-    -- Balance read first: RemoveMoney answers true on an empty bank, which
-    -- is the account this ships pointed at.
+    -- Charged last. Balance read first: RemoveMoney answers true on an empty
+    -- bank, which is the account this ships pointed at.
     if not Util.charge(actor.player, account, cost) then
         return false, CH.ERR.INSUFFICIENT
     end
-    Audit.financial('informant_purchased', actor.cid, contractId, { cost = cost })
 
-    if #candidates == 0 then
-        -- Charged anyway, and deliberately: a refund on an empty result turns
-        -- the purchase into a free oracle for "is anyone after me?".
-        --
-        -- And answered in the same words as a hitman the server has no
-        -- current description for, rather than with a distinct "nothing
-        -- found" reply. Charging either way is only half of §14.29: the
-        -- other half is that the ANSWER must not distinguish the two, or the
-        -- premium buys a target a reliable server-side yes/no on whether an
-        -- anonymous operative is on them right now — which is the paid
-        -- oracle the charge was there to prevent.
-        local answer = Informant.describe(nil)
-        rememberPaid(contractId, actor.cid, { hitmanCid = nil, at = os.time(),
-                         purchases = purchases + 1, seed = existing and existing.seed, answer = answer })
-        Audit.action('informant_revealed', actor.cid, contractId, { hitman = nil })
-        return true, nil, answer
+    -- Anything that goes before the roll gives the money back, a read that
+    -- raised (a dropped connection) included.
+    local read, now, gone = pcall(stillOn, contractId, pick, row)
+    if not read or not now then
+        refund(actor, contractId, cost, account, 'informant_refunded', read and gone or 'read_failed')
+        if not read then error(now, 0) end
+        return false, gone
     end
 
-    -- Selection must not be steerable. A wall clock in the formula lets the
-    -- buyer pick the second they press buy and walk the roster; the seed is
-    -- instead fixed per (contract, buyer) on first purchase, so a second
-    -- purchase moves on deterministically rather than to a chosen target.
-    local seed = existing and existing.seed
-    if not seed then
-        seed = 0
-        for i = 1, #contractId do seed = seed + contractId:byte(i) * i end
-        for i = 1, #actor.cid do seed = seed + actor.cid:byte(i) * (i * 7) end
-    end
+    local found = roll(Config.Informant.RevealChancePercent)
+    local answer = found and (row
+        and Informant.describe(row.hitman_cid, Config.Informant.RevealMode, row.hitman_name)
+        or Informant.describe(now.creator_cid, Config.Informant.RevealMode, now.creator_name)) or nil
 
-    -- Not the one already named, while there is anybody else: a second
-    -- purchase that named the same hitman again was paid for nothing, and
-    -- left the other hidden.
-    if existing and existing.hitmanCid and #candidates > 1 then
-        local others = {}
-        for _, h in ipairs(candidates) do
-            if h.hitman_cid ~= existing.hitmanCid then others[#others + 1] = h end
-        end
-        if #others > 0 then candidates = others end
-    end
+    local picks = {}
+    for k, p in pairs(existing and existing.picks or {}) do picks[k] = p end
+    picks[key] = { at = os.time(), found = found, answer = answer, label = label }
+    rememberPaid(contractId, actor.cid, { purchases = purchases + 1, at = os.time(), picks = picks },
+        'informant_unremembered')
+    Audit.financial('informant_purchased', actor.cid, contractId, {
+        cost = cost, pick = row and 'operative' or 'placer', hitman = row and row.hitman_cid or nil,
+        outcome = found and 'revealed' or 'not_found',
+    })
 
-    local index = ((seed + purchases) % #candidates) + 1
-    local chosen = candidates[index]
-
-    local answer = Informant.describe(chosen.hitman_cid)
-    rememberPaid(contractId, actor.cid, { hitmanCid = chosen.hitman_cid, at = os.time(),
-                     purchases = purchases + 1, seed = seed, answer = answer })
-    Audit.action('informant_revealed', actor.cid, contractId, { hitman = chosen.hitman_cid })
-
-    return true, nil, answer
+    -- Nobody is told either way: not the operative, not the placer.
+    if not found then return true, nil, { found = false, label = label, message = TARGET_MISS } end
+    local out = { found = true, label = label }
+    for k, v in pairs(answer) do out[k] = v end
+    return true, nil, out
 end
 
---- A record's answer, while its reroll lock lasts; nil after.
-local function lockedAnswer(record)
-    if not record then return nil end
-    if (os.time() - record.at) >= (Config.Informant.RerollLockMinutes or 0) * 60 then
-        return nil
-    end
-    return record.answer
-end
-
---- The answer this buyer was last given on this contract, for their card.
+--- What the target's informant has found out on this contract, for their
+--- card, and how many look-ups they have left on it.
 ---
---- The stored answer, never a fresh look, so carrying it on every read says
---- nothing the purchase did not already say: it is not the presence oracle a
---- free re-ask would be. The paid answer used to exist only in a notice that
---- cleared itself after four seconds, and a buyer who looked away had paid
---- the premium for a name they could no longer read.
----
---- Only inside the reroll lock, the window in which buying again gives the
---- same answer anyway. Kept on the card for the contract's life, it went on
---- reading "Informant: <name>" long after that operative had walked away
---- and somebody else had taken it, and a target acting on it watched the
---- wrong person. Bounded by time alone: asking whether that hitman is still
---- on it would make the card a free presence and departure oracle.
----
---- With it, from the same read of their record, how many purchases they have
---- left on this contract, for their own card. The card drew Buy informant
---- data after the last purchase allowed, quoted the full price, and said
---- nothing more could be bought only once the player had agreed to pay.
---- Their own count, so it says nothing about anybody else.
----@return table|nil answer { name } or { description }
+--- Kept for the contract's life, whatever Config.Informant.Enabled says: a
+--- name found was paid for under the rules of the moment it was bought.
+---@return table[] found { label, text }
 ---@return integer left
 function Informant.answerFor(contractId, cid)
     local record = recordFor(contractId, cid)
-    local most = math.floor(tonumber(Config.Informant.MaxPurchasesPerContract) or 0)
-    return lockedAnswer(record), math.max(0, most - (record and record.purchases or 0))
-end
-
---- What the buyer is shown.
----
---- One shape, whatever happened. There is no `found` flag on the wire: the
---- answer for "nobody the informant could reach" is the same answer as for
---- "somebody, whom the server cannot currently describe" — a hitman who has
---- gone offline since they were seen produces it too. So the reply carries
---- no reliable signal about whether anyone has accepted, which is what
---- §14.29 asks of it, and the app has one branch to render rather than two.
----
---- Not a fabricated name: naming somebody who is not there would be a worse
---- answer than an unhelpful one, because a target would act on it.
----
---- A citizen id is never returned in either mode — it is an internal key,
---- not something a player should be handed.
-function Informant.describe(hitmanCid)
-    local actor = hitmanCid and Identity.byCitizenId(hitmanCid)
-
-    if Config.Informant.RevealMode == 'name' then
-        return { name = actor and actor.name or 'Unknown operative' }
+    local found = {}
+    for _, p in pairs(record and record.picks or {}) do
+        if p.found and answerText(p.answer) then
+            found[#found + 1] = { label = p.label or 'An operative', text = answerText(p.answer) }
+        end
     end
-
-    return {
-        description = actor
-            and ('Seen recently around %s'):format(actor.job and actor.job.name or 'the city')
-            or 'A face you have seen before',
-    }
+    table.sort(found, function(a, b) return a.label < b.label end)
+    local most = math.floor(tonumber(Config.Informant.MaxPurchasesPerContract) or 0)
+    return found, math.max(0, most - (record and record.purchases or 0))
 end
 
---- Release a player's reveals when they disconnect.
+--- What the target may pick on this contract: every active operative, by
+--- handle and alias, and the person who placed it. `known` where the answer
+--- is already theirs (found before, or a placer who put their name to it),
+--- which is not sold. Nothing for a target the informant is not open to.
+---@param contract table
+---@param cid string the target
+---@param hitmen table[] the contract's rows, as the projection read them
+---@return table[]|nil
+function Informant.targetPicks(contract, cid, hitmen)
+    if Config.Informant.Enabled ~= true or contract.target_cid ~= cid then return nil end
+    if contract.target_protected == true or CH.TERMINAL[contract.state] then return nil end
+    local record = recordFor(contract.id, cid)
+    local picks = record and record.picks or {}
+    local out = {}
+    for i = 1, #hitmen do
+        local h = hitmen[i]
+        if h.state == 'active' then
+            local handle = handleOf(contract.id, h.hitman_cid)
+            if handle then
+                local asked = picks[h.hitman_cid]
+                out[#out + 1] = { pick = handle, label = labelOf(h),
+                                  known = (asked and asked.found) == true }
+            end
+        end
+    end
+    out[#out + 1] = { pick = PLACER, label = PLACER_LABEL,
+                      known = contract.anon_creator ~= true or (picks[PLACER] and picks[PLACER].found) == true,
+                      named = contract.anon_creator ~= true or nil }
+    return out
+end
+
 --- Age every reroll lock past its window, for the staff timer refresh.
 ---
 --- The lock only, never the purchase count: the count is a limit on how
---- many hitmen a fee can uncover, not a wait, and clearing it would turn
---- the refresh into a way to buy the whole roster.
+--- many look-ups a contract sells, not a wait.
 ---@return integer aged
 function Informant.expireRerollLocks()
-    local window = (Config.Informant.RerollLockMinutes or 0) * 60
+    local window = lockSeconds()
     local aged = 0
     -- Records still only in the store are aged as they are read back.
     locksAgedAt = os.time()
-    for key, reveal in pairs(reveals) do
-        reveal.at = os.time() - (window + 1)
+    for key, record in pairs(reveals) do
+        for _, p in pairs(record.picks or {}) do p.at = os.time() - (window + 1) end
         local contractId, cid = key:match('^([^:]+):(.+)$')
-        if contractId then remember(contractId, cid, reveal) end
+        if contractId then pcall(remember, contractId, cid, record) end
         aged = aged + 1
     end
     return aged
 end
 
+--------------------------------------------------------------------------
+-- The placer's informant (Config.PlacerInformant)
+--------------------------------------------------------------------------
+
+--- The placer's purchases on one contract, oldest first, from memory or
+--- from the store, which is the authority: a restart that forgot them
+--- counted the cap from zero and hid a name already paid for.
+---@return table[]
+local function boughtBy(contractId, cid)
+    local key = contractId .. ':' .. cid
+    if placerBought[key] then return placerBought[key] end
+    local rows = {}
+    if Storage and Storage.readPlacerInformants then
+        for _, r in ipairs(Storage.readPlacerInformants(contractId, cid) or {}) do
+            rows[#rows + 1] = {
+                hitman_cid = r.hitman_cid, bought_at = tonumber(r.bought_at) or 0,
+                -- A TINYINT(1) comes back from mysql as a number or a boolean.
+                revealed = r.revealed == true or (tonumber(r.revealed) or 0) ~= 0,
+                alerted = r.alerted == true or (tonumber(r.alerted) or 0) ~= 0,
+                seq = tonumber(r.seq) or (#rows + 1),
+            }
+        end
+    end
+    table.sort(rows, function(a, b) return a.seq < b.seq end)
+    placerBought[key] = rows
+    return rows
+end
+
+--- Whether the placer already knows who this operative is: one who took it
+--- under their name, or one a look-up found out.
+local function placerKnows(rows, row)
+    if row.anon ~= true then return true end
+    for _, r in ipairs(rows) do
+        if r.hitman_cid == row.hitman_cid and r.revealed then return true end
+    end
+    return false
+end
+
+--- Seconds until the placer may buy again on this contract, 0 now.
+local function placerWait(rows)
+    local last = rows[#rows]
+    if not last then return 0 end
+    local gap = math.max(0, tonumber(Config.PlacerInformant.CooldownMinutes) or 0) * 60
+    return math.max(0, last.bought_at + gap - os.time())
+end
+
+--- The operative's phone notice: that the person who placed one of their
+--- contracts has found out who they are, naming the contract as their own
+--- card does (by its target) and never who placed it.
+local function alertOperative(contract, hitmanCid)
+    if not (Notify and Notify.tellOrKeep) then return false end
+    local target = contract.target_name or 'your target'
+    return Notify.tellOrKeep(hitmanCid, ALERT_TITLE,
+        ('The person who placed one of your contracts has found out who you are: your contract '
+            .. 'on %s.'):format(target), nil, contract.id)
+end
+
+local placerBuyUnlocked
+
+--- Buy one look-up from the placer's informant on one operative, one
+--- purchase at a time per placer and contract (Contracts.serialized).
+---@param actor table
+---@param contractId any
+---@param shown table|nil the page's echo of the price it quoted
+---@param pick any an operative's handle
+---@return boolean ok
+---@return string|nil err
+---@return table|nil data
+function Informant.placerBuy(actor, contractId, shown, pick)
+    if not Config.PlacerInformant.Enabled then return false, CH.ERR.FEATURE_OFF end
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    if type(pick) ~= 'string' or pick == '' or #pick > 64 then return false, CH.ERR.INVALID_INPUT end
+    if not Contracts then return placerBuyUnlocked(actor, contractId, shown, pick) end
+    return Contracts.serialized({ 'placerInformant:' .. contractId .. ':' .. tostring(actor.cid) },
+        placerBuyUnlocked, actor, contractId, shown, pick)
+end
+
+placerBuyUnlocked = function(actor, contractId, shown, pick)
+    local rules = Config.PlacerInformant
+    local cost = math.floor(tonumber(rules.Cost) or 0)
+    local account = rules.Account
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return false, CH.ERR.NOT_FOUND end
+    -- The placer's, named or anonymous, and nobody else's: never a hitman
+    -- on it or its target.
+    if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
+    if Identity.isBarred and Identity.isBarred(actor) then return false, CH.ERR.BLACKLISTED_JOB end
+    if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+
+    local row = operativeFor(contractId, pick)
+    if not row then return false, CH.ERR.OPERATIVE_GONE end
+
+    local rows = boughtBy(contractId, actor.cid)
+    if placerKnows(rows, row) then return false, CH.ERR.ALREADY_REVEALED end
+    if #rows >= math.floor(tonumber(rules.MaxPurchasesPerContract) or 0) then
+        return false, CH.ERR.LIMIT_REACHED
+    end
+    local wait = placerWait(rows)
+    if wait > 0 then
+        return false, CH.ERR.INFORMANT_COOLDOWN, { minutes = math.ceil(wait / 60) }
+    end
+
+    if shown ~= nil and cost > 0 then
+        local quoted = type(shown) == 'table' and shown or {}
+        if tonumber(quoted.cost) ~= cost or quoted.account ~= account then
+            return false, CH.ERR.TERMS_CHANGED, { cost = cost, account = account }
+        end
+    end
+
+    if not live(Storage.readContract(contractId)) then return false, CH.ERR.ALREADY_SETTLED end
+    if not operativeFor(contractId, pick) then return false, CH.ERR.OPERATIVE_GONE end
+
+    if not Util.charge(actor.player, account, cost) then
+        return false, CH.ERR.INSUFFICIENT
+    end
+
+    -- The contract ending or the operative leaving between the charge and
+    -- the roll gives the money back: there is nobody left to look up. So
+    -- does a read that raised.
+    local read, now, gone = pcall(stillOn, contractId, pick, row)
+    if not read or not now then
+        refund(actor, contractId, cost, account, 'placer_informant_refunded',
+            read and gone or 'read_failed')
+        if not read then error(now, 0) end
+        return false, gone
+    end
+
+    -- The roll, and only on a reveal the second: whether the operative
+    -- notices. Nothing is said to them on a miss or a lost alert roll.
+    local revealed = roll(rules.RevealChancePercent)
+    local alerted = revealed and roll(rules.AlertChancePercent) or false
+
+    local record = { hitman_cid = row.hitman_cid, bought_at = os.time(), revealed = revealed,
+                     alerted = alerted, seq = #rows + 1 }
+    rows[#rows + 1] = record
+    local wrote, err = pcall(function()
+        if Storage.writePlacerInformant then
+            Storage.writePlacerInformant({
+                contract_id = contractId, placer_cid = actor.cid, hitman_cid = row.hitman_cid,
+                bought_at = record.bought_at, revealed = revealed, alerted = alerted,
+                seq = record.seq,
+            })
+        end
+    end)
+    if not wrote then
+        Audit.financial('placer_informant_unremembered', actor.cid, contractId,
+            { error = tostring(err) })
+    end
+    -- To nobody: the price leaves the economy.
+    Audit.financial('placer_informant_bought', actor.cid, contractId, {
+        amount = cost, account = account, hitman = row.hitman_cid,
+        outcome = revealed and 'revealed' or 'not_found', alerted = alerted,
+    })
+
+    if alerted then alertOperative(now, row.hitman_cid) end
+
+    local label = labelOf(row)
+    if not revealed then return true, nil, { found = false, label = label, message = PLACER_MISS } end
+    local out = { found = true, label = label }
+    for k, v in pairs(Informant.describe(row.hitman_cid, rules.RevealMode, row.hitman_name)) do
+        out[k] = v
+    end
+    return true, nil, out
+end
+
+--- What the placer's card carries of their informant: the operatives they
+--- may still ask about (anonymous, active, not found out), what earlier
+--- look-ups found, how many they have left and how long until the next.
+---
+--- What was found stays, whatever Config.PlacerInformant.Enabled says; the
+--- rest only while it is on.
+---@param contract table
+---@param cid string the placer
+---@param hitmen table[]
+---@return table { picks, found, left, wait }
+function Informant.placerView(contract, cid, hitmen)
+    local rows = boughtBy(contract.id, cid)
+    local out = { found = {} }
+    local byCid = {}
+    for i = 1, #hitmen do byCid[hitmen[i].hitman_cid] = hitmen[i] end
+    for _, r in ipairs(rows) do
+        local h = byCid[r.hitman_cid]
+        if r.revealed and h then
+            local answer = Informant.describe(r.hitman_cid, Config.PlacerInformant.RevealMode,
+                h.hitman_name)
+            out.found[#out.found + 1] = { label = labelOf(h), text = answerText(answer) }
+        end
+    end
+    if Config.PlacerInformant.Enabled ~= true or CH.TERMINAL[contract.state] then return out end
+    out.picks = {}
+    for i = 1, #hitmen do
+        local h = hitmen[i]
+        if h.state == 'active' and not placerKnows(rows, h) then
+            local handle = handleOf(contract.id, h.hitman_cid)
+            if handle then out.picks[#out.picks + 1] = { pick = handle, label = labelOf(h) } end
+        end
+    end
+    local most = math.floor(tonumber(Config.PlacerInformant.MaxPurchasesPerContract) or 0)
+    out.left = math.max(0, most - #rows)
+    out.wait = placerWait(rows)
+    return out
+end
+
+--------------------------------------------------------------------------
+-- Releasing
+--------------------------------------------------------------------------
+
 --- Nothing is released when a player disconnects.
 ---
---- This used to delete the buyer's reveal record, which is the record that
---- carries both the reroll lock and the purchase count. So a relog was a free
---- reset of both: the next purchase found no record, skipped the sticky early
---- return that makes a repeat purchase free, charged the fee again for the same
---- name — and counted purchases from zero, so the ceiling on how many hitmen
---- one contract's fees may uncover was bypassed by rejoining. On the one
---- purchase in the resource that is never refunded.
----
---- RateLimit.clear already refuses to reset on disconnect for exactly this
---- reason. Clearing on the REVEALED hitman's disconnect bought nothing either:
---- describe() already answers "Unknown operative" for a hitman who has gone
---- offline since they were seen.
----
---- Nothing accumulates without it: reveals are keyed to a contract and
---- released by clearContract the moment the contract resolves.
+--- The records are the purchase counts and what was found, and a relog that
+--- reset them was a free reset of the cap. They are keyed to a contract and
+--- released by clearContract the moment it resolves.
 ---@return boolean false, always
 function Informant.clearPlayer(cid)
     local _ = cid
@@ -421,10 +670,16 @@ function Informant.clearPlayer(cid)
 end
 
 function Informant.clearContract(contractId)
+    local prefix = contractId .. ':'
     for key in pairs(reveals) do
-        if key:sub(1, #contractId + 1) == contractId .. ':' then reveals[key] = nil end
+        if key:sub(1, #prefix) == prefix then reveals[key] = nil end
     end
+    for key in pairs(placerBought) do
+        if key:sub(1, #prefix) == prefix then placerBought[key] = nil end
+    end
+    handles[contractId] = nil
     if Storage and Storage.clearReveals then Storage.clearReveals(contractId) end
+    if Storage and Storage.clearPlacerInformants then Storage.clearPlacerInformants(contractId) end
 end
 
 return Informant

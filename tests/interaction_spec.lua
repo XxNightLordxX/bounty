@@ -88,251 +88,74 @@ describe('bailout', function()
 end)
 
 describe('informant data', function()
-    --- Put the hitman on the target's shoulder and let the sampler see it.
-    --- A hitman who pressed accept and went to bed is not tracking anybody,
-    --- and naming them would make the purchase a roster dump (§6.1).
-    local function tailing(s, hitmanSource)
-        Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
-        Env.players[hitmanSource or 3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
-        s.death.watchTargets(s.storage.allContracts())
+    --- The target picks who to ask about; the look-up is a chance, forced
+    --- here through the harness's random source (1 always lands).
+    local function pickOf(s, c)
+        local row = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+        return row.informantPicks[1].pick
     end
 
-    it('names a hitman for the creator', function()
-        -- Anonymous: the creator already sees every operative who chose to
-        -- be named, so those are not what a purchase is spent on.
+    it('is the target\'s, not the creator\'s, who has an informant of their own', function()
         local s, f, c = seeded({ anonHitman = true })
-        tailing(s)
-        local ok, err, data = s.informant.buy(f.creator, c.id)
-        truthy(ok, tostring(err))
-        eq(data.name, 'Rook Ash')
-        falsy(data.found, 'no flag on the wire says whether this was a hit')
+        local ok, err = s.informant.buy(f.creator, c.id, nil, pickOf(s, c))
+        falsy(ok)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
-    it('is available to the target as well', function()
-        local s, f, c = seeded()
-        tailing(s)
-        Env.players[2].PlayerData.money.bank = 100000
-        local ok, _, data = s.informant.buy(f.target, c.id)
-        truthy(ok)
-        eq(data.name, 'Rook Ash')
-    end)
-
-    it('names nobody when no hitman has come near', function()
-        local s, f, c = seeded()
-        -- Accepted, and a mile away. There is nobody on you to name.
-        Env.players[2]._coords = { x = 0.0, y = 0.0, z = 30.0 }
-        Env.players[3]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
-        s.death.watchTargets(s.storage.allContracts())
-
-        local ok, err, data = s.informant.buy(f.creator, c.id)
-        truthy(ok, tostring(err))
-        eq(data.name, 'Unknown operative',
-            'accepting a contract is not tracking somebody')
-    end)
-
-    it('forgets an observation that has gone stale', function()
-        local s, f, c = seeded()
-        tailing(s)
-        Env.time = Env.time + (Config.Informant.ProximityWindowMinutes * 60) + 1
-
-        local ok, _, data = s.informant.buy(f.creator, c.id)
-        truthy(ok)
-        eq(data.name, 'Unknown operative',
-            'somebody who walked past yesterday is not on you now')
-    end)
-
-    it('names everyone active when proximity is not required', function()
-        local s, f, c = seeded({ anonHitman = true })
-        withConfig({ { Config.Informant, 'RequireProximity', false } }, function()
-            local ok, _, data = s.informant.buy(f.creator, c.id)
-            truthy(ok)
-            eq(data.name, 'Rook Ash', 'the old behaviour, for servers that prefer it')
-        end)
-    end)
-
-    it('refuses anyone who is not the creator or the target', function()
-        local s, f, c = seeded()
+    it('refuses anyone who is not the target', function()
+        local s, _, c = seeded()
         Env.addPlayer({ source = 9, citizenid = 'NOSEY001', license = 'license:n', bank = 99999 })
-        local ok, err = s.informant.buy(s.identity.resolve(9), c.id)
+        local ok, err = s.informant.buy(s.identity.resolve(9), c.id, nil, pickOf(s, c))
         falsy(ok)
         eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('charges the premium', function()
         local s, f, c = seeded()
-        Env.players[1].PlayerData.money.bank = 100000
-        s.informant.buy(f.creator, c.id)
-        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost)
+        s.informant.setRandom(function() return 100 end)
+        Env.players[2].PlayerData.money.bank = 100000
+        truthy(s.informant.buy(f.target, c.id, nil, pickOf(s, c)))
+        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Informant.Cost)
     end)
 
-    it('returns the same hitman on a repeat purchase inside the lock', function()
-        local s, f, c = seeded()
-        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
-        s.contracts.accept(s.identity.resolve(4), c.id, false)
-        local _, _, first = s.informant.buy(f.creator, c.id)
-        local _, _, again = s.informant.buy(f.creator, c.id)
-        eq(again.name, first.name, 'sticky, so repeat buys cannot enumerate the roster')
-    end)
-
-    it('charges even when nobody is working, so it is not a free oracle', function()
-        local s, f, c = seeded({ accept = false })
-        Env.players[1].PlayerData.money.bank = 100000
-        local ok, _, data = s.informant.buy(f.creator, c.id)
-        truthy(ok)
-        eq(data.name, 'Unknown operative')
-        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost, 'still charged')
-    end)
-
-    --- §14.29's uniform response, asserted as the property rather than one
-    --- case at a time. Charging either way was implemented; answering the
-    --- same way was not, so the reply was a reliable server-side yes/no on
-    --- "is an anonymous operative on me right now?" for the price of the
-    --- premium — the paid oracle the charge exists to prevent.
-    it('answers a miss and an undescribable hit in the same words', function()
-        local function keysOf(t)
-            local out = {}
-            for k, v in pairs(t) do out[#out + 1] = k .. '=' .. tostring(v) end
-            table.sort(out)
-            return table.concat(out, ',')
-        end
-
-        -- Nobody has come near: a miss.
-        local s, f, c = seeded()
-        Env.players[2]._coords = { x = 0.0, y = 0.0, z = 30.0 }
-        Env.players[3]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
-        s.death.watchTargets(s.storage.allContracts())
-        local _, _, miss = s.informant.buy(f.creator, c.id)
-
-        -- Somebody is on the target, and has since gone offline: a hit the
-        -- server cannot put a description to.
-        local s2, f2, c2 = seeded()
-        tailing(s2)
-        Env.removePlayer(3)
-        local _, _, hit = s2.informant.buy(f2.creator, c2.id)
-
-        eq(keysOf(miss), keysOf(hit),
-            'a target who buys twice must not be able to tell which answer '
-            .. 'meant somebody and which meant nobody')
-    end)
-
-    --- Selection must not be steerable (§14.29).
-    ---
-    --- This was proved as a live exploit and fixed by seeding the pick per
-    --- (contract, buyer) rather than off the wall clock, and then nothing
-    --- kept it fixed: the proof lived in an orphaned scratch file nothing
-    --- ran. The rule is that a buyer who waits cannot walk the roster, so
-    --- the same purchase made at different moments names the same operative.
-    it('does not let the buyer choose who is named by choosing when', function()
-        local names = {}
-        for offset = 0, 2 do
-            -- The same contract id each time, as the seed is drawn from it:
-            -- ids are random (Util.randomId), so the stream is pinned.
-            math.randomseed(20240601)
-            local s = newStack()
-            local f = fixture(s)
-            local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
-                reward = { baseline = { cash = 1000 } },
-            })
-            truthy(c)
-            -- Three anonymous hitmen, so a clock-driven index would land
-            -- on a different one as the clock moves.
-            Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
-                cash = 5000, bank = 5000, firstname = 'Nel', lastname = 'Vey' })
-            Env.addPlayer({ source = 5, citizenid = 'HITMAN03', license = 'license:eee',
-                cash = 5000, bank = 5000, firstname = 'Sam', lastname = 'Orr' })
-            truthy(s.contracts.accept(f.hitman, c.id, true))
-            truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
-            truthy(s.contracts.accept(s.identity.resolve(5), c.id, true))
-
-            -- All three standing over the target, or the pool is empty and
-            -- every purchase answers the same because there is nobody to
-            -- name — which is a test that passes whatever the selection
-            -- does. It did, until putting os.time() back in the formula
-            -- left it green.
-            Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
-            for _, src in ipairs({ 3, 4, 5 }) do
-                Env.players[src]._coords = { x = 505.0, y = 500.0, z = 30.0 }
-            end
-            s.death.watchTargets(s.storage.allContracts())
-
-            local pool = 0
-            for _, h in ipairs(s.storage.readHitmen(c.id)) do
-                if h.state == 'active' then pool = pool + 1 end
-            end
-            eq(pool, 3, 'three operatives to choose between, or there is no choice')
-
-            Env.advance(offset)
-            Env.players[1].PlayerData.money.bank = 999999
-            local ok, err, data = s.informant.buy(f.creator, c.id)
-            truthy(ok, tostring(err))
-            falsy(data.name == 'Unknown operative',
-                'the informant found nobody, so this measured nothing')
-            names[#names + 1] = tostring(data.name)
-        end
-
-        eq(names[2], names[1],
-            'the same purchase one second later named somebody else: '
-            .. table.concat(names, ', '))
-        eq(names[3], names[1],
-            'the same purchase two seconds later named somebody else: '
-            .. table.concat(names, ', '))
-    end)
-
-    it('never returns a citizen id', function()
-        local s, f, c = seeded()
-        local _, _, data = s.informant.buy(f.creator, c.id)
-        falsy(data.cid, 'citizen ids are internal keys')
-        falsy(data.citizenid)
-    end)
-
-    --- Config.Informant.RevealMode takes 'name' or 'description'. Only the
-    --- default had ever been exercised, which is how a mode an operator can
-    --- choose goes unnoticed until somebody chooses it — the same way
-    --- Config.Reason.Mode = 'preset' made every contract unplaceable.
-    ---
-    --- The stack is opened before withConfig on purpose: newStack() resets
-    --- the whole config, so opening one inside it puts the mode back and the
-    --- test measures the default it thought it had changed.
+    --- Config.Informant.RevealMode takes 'name' or 'description'. The stack
+    --- is opened before withConfig on purpose: newStack() resets the whole
+    --- config.
     describe('in each mode an operator can choose', function()
         it('names the hitman on a server set to names', function()
             local s, f, c = seeded({ anonHitman = true })
-            tailing(s)
+            s.informant.setRandom(function() return 1 end)
+            Env.players[2].PlayerData.money.bank = 100000
             local data
             withConfig({ { Config.Informant, 'RevealMode', 'name' } }, function()
-                local _, _, got = s.informant.buy(f.creator, c.id)
+                local _, _, got = s.informant.buy(f.target, c.id, nil, pickOf(s, c))
                 data = got
             end)
-            truthy(data)
             eq(data.name, 'Rook Ash')
             falsy(data.description, 'one mode or the other, not both')
         end)
 
         it('describes the hitman on a server set to descriptions', function()
             local s, f, c = seeded({ anonHitman = true })
-            tailing(s)
+            s.informant.setRandom(function() return 1 end)
+            Env.players[2].PlayerData.money.bank = 100000
             local data
             withConfig({ { Config.Informant, 'RevealMode', 'description' } }, function()
-                local _, _, got = s.informant.buy(f.creator, c.id)
+                local _, _, got = s.informant.buy(f.target, c.id, nil, pickOf(s, c))
                 data = got
             end)
-            truthy(data, 'a description is still a hit')
-            truthy(data.description and #data.description > 0,
-                'the whole point of this mode is that there is something to '
-                .. 'read, and the page renders name or description')
-            falsy(data.name,
-                'an operator who chose descriptions did so to stop names '
-                .. 'being handed out')
+            truthy(data.description and #data.description > 0, 'something to read')
+            falsy(data.name, 'an operator who chose descriptions did not choose names')
         end)
 
         it('gives away no citizen id in either mode', function()
             for _, mode in ipairs({ 'name', 'description' }) do
                 local s, f, c = seeded()
-                tailing(s)
+                s.informant.setRandom(function() return 1 end)
+                Env.players[2].PlayerData.money.bank = 100000
                 withConfig({ { Config.Informant, 'RevealMode', mode } }, function()
-                    local _, _, data = s.informant.buy(f.creator, c.id)
-                    falsy(data.cid, mode .. ' mode leaked a citizen id')
-                    falsy(data.citizenid, mode .. ' mode leaked a citizen id')
+                    local _, _, data = s.informant.buy(f.target, c.id, nil, pickOf(s, c))
+                    falsy(json.encode(data):find('HITMAN01', 1, true), mode .. ' mode leaked a citizen id')
                 end)
             end
         end)
@@ -3150,38 +2973,6 @@ describe('two amendments open on the same contract', function()
     end)
 end)
 
-describe('a second informant purchase', function()
-    it('names somebody else when somebody else can be named', function()
-        for _, target in ipairs({ 'TARGET01' }) do
-            for seedShift = 0, 3 do
-                local s = newStack()
-                local f = fixture(s)
-                Env.addPlayer({ source = 4, citizenid = 'HITMAN0' .. (2 + seedShift), license = 'license:x' .. seedShift,
-                    cash = 5000, bank = 5000, firstname = 'Nel', lastname = 'Vey' .. seedShift })
-                local c = s.contracts.create(f.creator, { targetCid = target, reason = 'x',
-                    mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
-                truthy(s.contracts.accept(f.hitman, c.id, true))
-                Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
-                Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
-                Env.players[4]._coords = { x = 5000.0, y = 500.0, z = 30.0 }
-                s.death.watchTargets(s.storage.allContracts())
-                Env.players[1].PlayerData.money.bank = 999999
-                local ok, _, first = s.informant.buy(f.creator, c.id)
-                truthy(ok)
-                -- Later a second operative is on them too.
-                truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
-                Env.players[4]._coords = { x = 505.0, y = 500.0, z = 30.0 }
-                s.death.watchTargets(s.storage.allContracts())
-                Env.advance(((Config.Informant.RerollLockMinutes or 0) + 1) * 60)
-                s.death.watchTargets(s.storage.allContracts())
-                local ok2, err2, second = s.informant.buy(f.creator, c.id)
-                truthy(ok2, tostring(err2))
-                falsy(second.name == first.name, 'paid twice for the same name: ' .. tostring(first.name))
-            end
-        end
-    end)
-end)
-
 describe('a revive the client reported too early', function()
     it('is recorded once the target is up by the medical state', function()
         local s = newStack()
@@ -3639,15 +3430,16 @@ describe('asking the informant again inside the lock', function()
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
         truthy(s.contracts.accept(f.hitman, c.id, true))
-        Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
-        Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
-        s.death.watchTargets(s.storage.allContracts())
-        Env.players[1].PlayerData.money.bank = 999999
-        local _, _, first = s.informant.buy(f.creator, c.id)
+        Env.players[2].PlayerData.money.bank = 999999
+        s.informant.setRandom(function() return 100 end)
+        local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01').informantPicks[1].pick
+        local _, _, first = s.informant.buy(f.target, c.id, nil, pick)
         local hitman = Env.players[3]
         Env.players[3] = nil   -- the hitman logs off
-        local _, _, again = s.informant.buy(f.creator, c.id)
+        local _, _, again = s.informant.buy(f.target, c.id, nil, pick)
         Env.players[3] = hitman
-        eq(again.name, first.name, 'the repeat said the hitman had gone offline')
+        eq(again.message, first.message, 'the repeat said something new')
+        eq(again.found, false)
+        eq(again.repeated, true)
     end)
 end)

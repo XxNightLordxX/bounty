@@ -242,13 +242,6 @@ CH.ERR = {
     --- a feature that may stay off for good. Only new actions are refused:
     --- whatever was already under way finishes under the rules it began.
     FEATURE_OFF          = 'feature_off',
-    --- Informant data on a contract placed before this start, asked for
-    --- inside Config.Informant.ProximityWindowMinutes of it, with
-    --- RequireProximity on. Who had been near the target is kept in memory
-    --- and a restart forgot it, so the purchase was charged for "Unknown
-    --- operative". Refused uncharged for everyone, whoever has been seen,
-    --- with { minutes } until it is sold again.
-    INFORMANT_WARMING    = 'informant_warming',
     --- An informant tip (Config.LocationTip) asked for while the target is
     --- not in the city: there is nobody to place on the map. Nothing was
     --- charged.
@@ -260,6 +253,24 @@ CH.ERR = {
     --- Set GPS on an informant tip this game no longer shows: it ran out, the
     --- contract ended, or the hitman left it.
     NO_TIP               = 'no_tip',
+    --- An informant's pick that is not an operative on the contract now: a
+    --- handle this server never minted for it, one from before a restart,
+    --- or an operative who has left. Nothing is charged.
+    OPERATIVE_GONE       = 'operative_gone',
+    --- The target's informant asked about a placer who put their name to
+    --- the contract: already known, so not sold.
+    PLACER_KNOWN         = 'placer_known',
+    --- An informant asked about somebody the buyer already knows: found out
+    --- by an earlier look-up, or (the placer's) an operative who took it
+    --- under their name. Nothing is charged.
+    ALREADY_REVEALED     = 'already_revealed',
+    --- The target's informant on a contract whose target is a member of a
+    --- whitelisted job: by the flag the contract recorded, or a barred job
+    --- they hold now. Not sold to them at all; their buyout stays.
+    INFORMANT_PROTECTED  = 'informant_protected',
+    --- The placer's informant inside Config.PlacerInformant.CooldownMinutes
+    --- of their last look-up on the contract, with { minutes } to wait.
+    INFORMANT_COOLDOWN   = 'informant_cooldown',
     --- A call would show a number an anonymous party paid to keep hidden,
     --- this phone build cannot mask it, and Relay.RequireMaskingForAnonymous
     --- is on, so it is not placed and nobody is asked to call back (§11.3).

@@ -76,11 +76,17 @@ local CONDITIONAL = {
     bailoutSecondsLeft = 'target-only, and only while a paid buyout waits out its delay',
     -- The same delay on the hitman's own card: the warning the delay is for.
     buyoutClosesIn = 'hitman-only, and only while a paid buyout waits out its delay',
-    -- The viewer's own informant answer, so only once they have bought one,
-    -- and only while the reroll lock lasts.
-    informantAnswer  = 'creator or target, and only inside the reroll lock after buying',
-    -- The viewer's own purchases left, where the server runs informants.
-    informantLeft    = 'creator or target, and only where informants run',
+    -- The target's informant (Config.Informant): what it found, once a
+    -- look-up found something; what they may pick, and how many are left,
+    -- where the server sells look-ups and never to a whitelisted-job target.
+    informantFound   = 'target-only, and only once a look-up found somebody',
+    informantPicks   = 'target-only, where informants run and the target may buy',
+    informantLeft    = 'target-only, and only where informants run',
+    -- The placer's (Config.PlacerInformant), the same way on their own card.
+    placerInformantFound = 'creator-only, and only once a look-up found somebody',
+    placerInformantPicks = 'creator-only, where it runs on a live contract',
+    placerInformantLeft  = 'creator-only, where it runs on a live contract',
+    placerInformantWait  = 'creator-only, where it runs on a live contract',
     -- The kind of protected job, only where the target holds one.
     targetProtectedAs = 'present only when targetProtected is',
     -- Exactly one of these two, never both: when the creator chose anonymity
@@ -297,17 +303,25 @@ describe('the fields whose presence is a rule', function()
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'x', mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
         truthy(c)
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         local most = Config.Informant.MaxPurchasesPerContract
-        eq((s.projection.mine(f.creator.cid) or {})[1].informantLeft, most, 'the creator, none spent')
+        local placerMost = Config.PlacerInformant.MaxPurchasesPerContract
+        eq((s.projection.mine(f.creator.cid) or {})[1].placerInformantLeft, placerMost,
+            'the creator, none spent')
+        falsy((s.projection.mine(f.creator.cid) or {})[1].informantLeft,
+            'and never the target\'s count')
         eq((s.projection.onMe(f.target.cid) or {})[1].informantLeft, most, 'the target')
         falsy(boardRow(s, f.hitman).informantLeft, 'nobody else')
+        falsy(boardRow(s, f.hitman).placerInformantLeft, 'nobody else')
 
         Env.players[2].PlayerData.money.bank = 400000
-        truthy(s.informant.buy(f.target, c.id))
+        local onMe = (s.projection.onMe(f.target.cid) or {})[1]
+        truthy(s.informant.buy(f.target, c.id, nil, onMe.informantPicks[1].pick))
         eq((s.projection.onMe(f.target.cid) or {})[1].informantLeft, most - 1,
             'one spent is one fewer, on their own card')
-        eq((s.projection.mine(f.creator.cid) or {})[1].informantLeft, most,
+        eq((s.projection.mine(f.creator.cid) or {})[1].placerInformantLeft, placerMost,
             'and nobody else\'s count moves')
 
         Config.Informant.Enabled = false

@@ -640,6 +640,9 @@ describe('the start\'s sweep of photo files nothing names', function()
         Natives.files['data/photos/ph0000000orphan.webp'] = WEBP
         Natives.files['data/photos/kept/ph000000kept01.webp'] = WEBP
         Natives.files['data/photos/.mode'] = 'mysql'
+        -- A json server: the shipped config is mysql now, and the store
+        -- under the stack is the harness's own whatever this says.
+        Config.Database.Mode = 'json'
         eq(Config.Database.Mode, 'json', 'this server is in json mode')
 
         eq(s.photos.sweepFiles(), 0, 'nothing is removed')

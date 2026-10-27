@@ -710,13 +710,14 @@ function Death.startSampler()
     return true
 end
 
---- When the server last saw a hitman close to their target.
+--- When the server last saw a hitman close to their target, within
+--- Config.Informant.ProximityRadius.
 ---
 --- [contractId] = { [hitmanCid] = os.time() }
 ---
---- Observed here rather than claimed anywhere: this is what makes "a hitman
---- currently tracking you" (§6.1) a thing the server knows rather than a
---- synonym for "a hitman who accepted".
+--- Observed here rather than claimed anywhere: an idle hold's clock is reset
+--- by a hitman working the contract (Death.lastEngaged), and being near the
+--- target is half of what working it means.
 local seenNear = {}
 
 --- How long a death the server saw for itself waits for the victim's own
@@ -930,20 +931,6 @@ function Death.watchTargets(contracts, rosters)
     -- while this pass ran is added by its own watch after the swap.
     watching = targets
     return watched
-end
-
---- Hitmen the server has seen near this target recently.
----@param contractId string
----@return table set of hitman citizen ids
-function Death.seenNear(contractId)
-    local out = {}
-    local window = (Config.Informant.ProximityWindowMinutes or 10) * 60
-    local now = os.time()
-
-    for hitmanCid, at in pairs(seenNear[contractId] or {}) do
-        if (now - at) <= window then out[hitmanCid] = true end
-    end
-    return out
 end
 
 function Death.clearProximity(contractId)

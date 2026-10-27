@@ -742,6 +742,8 @@ do
         ['Util.resetMonotonic']        = 'the wrap-absorbing clock, which is not '
             .. 'reloaded between stacks and would otherwise carry one test\'s '
             .. 'elapsed time into the next',
+        ['Informant.setRandom']        = 'the random source every informant roll draws '
+            .. 'from, so a spec can force a look-up to find out or not',
     }
 
     local function read_all(dir, filter)
@@ -1858,7 +1860,12 @@ do
         ['crimson_reveals.id']                = 'the primary key',
         ['crimson_reveals.contract_id']       = 'which contract the purchases were on',
         ['crimson_reveals.buyer_cid']         = 'who bought them',
-        ['crimson_mutes.id']                  = 'the primary key',
+        ['crimson_placer_informants.id']          = 'the primary key',
+        ['crimson_placer_informants.contract_id'] = 'which contract the look-up was on',
+        ['crimson_placer_informants.placer_cid']  = 'who bought it',
+        ['crimson_placer_informants.seq']         = 'its place among that placer\'s look-ups, '
+            .. 'which is part of its key',
+        ['crimson_mutes.id']                 = 'the primary key',
         ['crimson_mutes.contract_id']         = 'which contract the thread is on',
         ['crimson_mutes.thread_id']           = 'which thread was muted',
         ['crimson_mutes.cid']                 = 'who muted it',

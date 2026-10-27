@@ -508,6 +508,25 @@ local SCHEMA = {
         answer TEXT,
         INDEX idx_reveal_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- The look-ups a contract's placer bought from their informant
+    -- (Config.PlacerInformant), one row each: which operative, when, whether
+    -- it found out who they are and whether the operative was told. Kept
+    -- here rather than only in memory, because a restart that forgot them
+    -- counted the cap from zero and hid a name already paid for. `seq` is
+    -- the purchase's place among that placer's on the contract. Created on
+    -- an existing database by the CREATE TABLE IF NOT EXISTS at the next
+    -- start, like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_placer_informants (
+        id VARCHAR(120) PRIMARY KEY,
+        contract_id VARCHAR(32) NOT NULL,
+        placer_cid VARCHAR(32) NOT NULL,
+        hitman_cid VARCHAR(32) NOT NULL,
+        seq INT NOT NULL,
+        bought_at INT NOT NULL,
+        revealed TINYINT(1) NOT NULL DEFAULT 0,
+        alerted TINYINT(1) NOT NULL DEFAULT 0,
+        INDEX idx_placer_informant_contract (contract_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Threads somebody has muted (§11.4): a row is a mute, and unmuting
     -- deletes it. Created on an existing database by the CREATE TABLE IF
     -- NOT EXISTS below at the next start, like any table added since.
@@ -2553,6 +2572,7 @@ function MySQLStore.pruneContracts(cutoff)
             db.query('DELETE FROM crimson_amendments WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_reveals WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_placer_informants WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_mutes WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_location_tips WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_contracts WHERE id = ?', { id })
@@ -2604,6 +2624,34 @@ function MySQLStore.writeLocationTip(row)
     })
     return true
 end
+--- The look-ups a contract's placer bought from their informant; see the
+--- memory backend.
+function MySQLStore.readPlacerInformants(contractId, placerCid)
+    local rows = db.query([[
+        SELECT hitman_cid, seq, bought_at, revealed, alerted FROM crimson_placer_informants
+        WHERE contract_id = ? AND placer_cid = ?
+    ]], { contractId, placerCid }) or {}
+    for i = 1, #rows do
+        rows[i].revealed = flag(rows[i].revealed)
+        rows[i].alerted = flag(rows[i].alerted)
+    end
+    return rows
+end
+
+function MySQLStore.writePlacerInformant(row)
+    db.query([[
+        INSERT INTO crimson_placer_informants
+            (id, contract_id, placer_cid, hitman_cid, seq, bought_at, revealed, alerted)
+        VALUES (?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE hitman_cid = VALUES(hitman_cid), bought_at = VALUES(bought_at),
+            revealed = VALUES(revealed), alerted = VALUES(alerted)
+    ]], {
+        row.contract_id .. ':' .. row.placer_cid .. ':' .. tostring(row.seq), row.contract_id,
+        row.placer_cid, row.hitman_cid, row.seq, row.bought_at,
+        row.revealed and 1 or 0, row.alerted and 1 or 0,
+    })
+    return true
+end
 
 function MySQLStore.deleteLocationTip(id)
     db.query('DELETE FROM crimson_location_tips WHERE id = ?', { id })
@@ -2624,6 +2672,10 @@ end
 
 function MySQLStore.clearLocationTips(contractId)
     db.query('DELETE FROM crimson_location_tips WHERE contract_id = ?', { contractId })
+    return true
+end
+function MySQLStore.clearPlacerInformants(contractId)
+    db.query('DELETE FROM crimson_placer_informants WHERE contract_id = ?', { contractId })
     return true
 end
 

@@ -147,7 +147,7 @@ describe('buying informant data on a contract that has closed', function()
             local before = Env.players[2].PlayerData.money.cash
                          + Env.players[2].PlayerData.money.bank
 
-            local ok, err = s.informant.buy(f.target, c.id)
+            local ok, err = s.informant.buy(f.target, c.id, nil, 'placer')
 
             falsy(ok, 'a closed contract has nobody tracking anybody')
             eq(err, CH.ERR.ALREADY_SETTLED)
@@ -169,7 +169,9 @@ describe('buying informant data on a contract that has closed', function()
             reward = { baseline = { cash = 5000 } },
         })
         truthy(s.contracts.accept(f.hitman, c.id))
-        truthy(s.informant.buy(f.target, c.id),
+        local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+            .informantPicks[1].pick
+        truthy(s.informant.buy(f.target, c.id, nil, pick),
             'the ordinary case has to keep working')
     end)
 end)
@@ -476,8 +478,11 @@ describe('informant data across a crash', function()
             reward = { baseline = { cash = 5000 } },
         })
         truthy(s.contracts.accept(f.hitman, c.id))
-        truthy(s.informant.buy(f.target, c.id), 'the first purchase')
-        return s, f, c
+        s.informant.setRandom(function() return 100 end)
+        local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+            .informantPicks[1].pick
+        truthy(s.informant.buy(f.target, c.id, nil, pick), 'the first purchase')
+        return s, f, c, pick
     end
 
     local function purse()
@@ -495,26 +500,26 @@ describe('informant data across a crash', function()
     end
 
     it('does not charge again for the same answer after a relog', function()
-        local s, f, c = informed()
+        local s, f, c, pick = informed()
         local target = relog(s, f)
         local before = purse()
 
-        truthy(s.informant.buy(target, c.id), 'asking again inside the lock')
+        truthy(s.informant.buy(target, c.id, nil, pick), 'asking again inside the lock')
         eq(purse(), before,
             'inside the reroll lock a repeat is free by design; a crash made it '
             .. 'cost the whole fee again for the same name')
     end)
 
     it('does not reset how many times one contract can be asked about', function()
-        local s, f, c = informed()
+        local s, f, c, pick = informed()
         -- Spend the second and last purchase outside the lock.
         Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
-        truthy(s.informant.buy(f.target, c.id), 'the second purchase')
+        truthy(s.informant.buy(f.target, c.id, nil, pick), 'the second purchase')
         Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
-        eq(select(2, s.informant.buy(f.target, c.id)), CH.ERR.LIMIT_REACHED)
+        eq(select(2, s.informant.buy(f.target, c.id, nil, pick)), CH.ERR.LIMIT_REACHED)
 
         local target = relog(s, f)
-        local ok, err = s.informant.buy(target, c.id)
+        local ok, err = s.informant.buy(target, c.id, nil, pick)
         falsy(ok, 'rejoining must not be a way past the ceiling')
         eq(err, CH.ERR.LIMIT_REACHED)
     end)

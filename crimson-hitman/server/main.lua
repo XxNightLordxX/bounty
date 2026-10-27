@@ -140,8 +140,8 @@ local DEFAULTS = {
     --- had, and each is read as a plain truth test, so on a config taken
     --- before it the protection was simply off: a victim's client naming any
     --- hitman as the killer with no damage observed, a stake repriced
-    --- between the board and Accept, an informant naming hitmen never near
-    --- the target. A switch the operator never had is not one they turned
+    --- between the board and Accept. A switch the operator never had is not
+    --- one they turned
     --- off; one they set to false stays false.
     Completion = {
         RequireObservedDamage = true,
@@ -250,12 +250,20 @@ local DEFAULTS = {
     Amendments = {
         CancelCooldownSeconds = 300,
     },
-    --- Both read inside the purchase. A missing price is not a free
-    --- informant; it is one nobody can buy.
+    --- Read inside the purchase. A missing price is not a free informant;
+    --- it is one nobody can buy. A missing chance is the shipped one, not a
+    --- look-up that can never find anybody.
     Informant = {
         Cost = 25000,
         MaxPurchasesPerContract = 2,
-        RequireProximity = true,
+        RevealChancePercent = 10,
+    },
+    PlacerInformant = {
+        Cost = 25000,
+        MaxPurchasesPerContract = 2,
+        RevealChancePercent = 20,
+        AlertChancePercent = 20,
+        CooldownMinutes = 10,
     },
     --- Read inside the purchase and on every hitman's card, as the
     --- informant's are: a missing price is not a free tip.
@@ -605,6 +613,25 @@ local function validateConfig(quiet)
         error('[crimson-hitman] refusing to start on an invalid configuration')
     end
 
+    -- The informants' chances (server/informant.lua), in whole percent: a
+    -- roll draws a whole number from 1 to 100, so a fraction or a figure
+    -- outside 0 to 100 is a chance it cannot mean. Corrected to the shipped
+    -- figure, and said.
+    for _, chance in ipairs({
+        { 'Informant', 'RevealChancePercent', 10 },
+        { 'PlacerInformant', 'RevealChancePercent', 20 },
+        { 'PlacerInformant', 'AlertChancePercent', 20 },
+    }) do
+        local block = Config[chance[1]]
+        local value = type(block) == 'table' and block[chance[2]] or nil
+        if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
+            or math.floor(value) ~= value or value < 0 or value > 100) then
+            warn[#warn + 1] = ('Config.%s.%s is %s; it has to be a whole number from 0 to 100. '
+                .. 'Using %d.'):format(chance[1], chance[2], tostring(value), chance[3])
+            block[chance[2]] = chance[3]
+        end
+    end
+
     local mode = Config.Database.Mode
     if mode ~= 'mysql' and mode ~= 'json' and mode ~= 'memory' then
         fatal[#fatal + 1] = ('Config.Database.Mode is "%s"; expected mysql, json or memory'):format(tostring(mode))
@@ -624,6 +651,7 @@ local function validateConfig(quiet)
             { 'Sources', 'dirty', 'max' }, { 'Bailout', 'AbsoluteMax' }, { 'Penalty', 'MaxAmount' },
             { 'Anonymity', 'CreatorFee' }, { 'Anonymity', 'HitmanFee' }, { 'Informant', 'Cost' },
             { 'LocationTip', 'Cost' },
+            { 'PlacerInformant', 'Cost' },
         }) do
             local holder = Config
             for i = 1, #path - 1 do holder = type(holder) == 'table' and holder[path[i]] or nil end
@@ -955,6 +983,7 @@ local function validateConfig(quiet)
         { table = Config.Anonymity, key = 'FeeAccount', label = 'Anonymity.FeeAccount' },
         { table = Config.Informant, key = 'Account', label = 'Informant.Account' },
         { table = Config.LocationTip, key = 'Account', label = 'LocationTip.Account' },
+        { table = Config.PlacerInformant, key = 'Account', label = 'PlacerInformant.Account' },
     }) do
         local holder = named.table
         local value = holder and holder[named.key]
@@ -1650,8 +1679,8 @@ function StartCrimsonHitman()
     bailout.init({ storage = Storage, identity = identity, contracts = contracts,
                    escrow = escrow, audit = audit, notify = notify, kidnap = kidnap,
                    death = death, review = review })
-    informant.init({ storage = Storage, identity = identity, audit = audit, death = death,
-                     contracts = contracts })
+    informant.init({ storage = Storage, identity = identity, audit = audit,
+                     contracts = contracts, notify = notify, bailout = bailout })
     amendments.init({ storage = Storage, identity = identity, contracts = contracts,
                       escrow = escrow, audit = audit, notify = notify })
     comms.init({ storage = Storage, identity = identity, audit = audit,

@@ -792,17 +792,43 @@ uploads, and with neither. Restart the resource between them.
 - [ ] Buy out with a hitman on it; the hitman kills the target a few seconds
       after the delay ran out: the contract closes as bought out, the photo
       is refused, and the premium goes to the client, not back to the target
-- [ ] Informant data names one hitman, and charges even when it finds nobody
-- [ ] Buying informant data twice returns the same name
-- [ ] In the panel, raise **bailout: requests held** and **informant: requests
-      held** to 2. Tap **Buy out** twice as fast as you can: the target pays
-      once (the second says *That was busy for a moment. Try again.* or *You
-      have already paid*). The same with **Buy informant data**: one fee.
-      Put both back to 1
-- [ ] Restart the resource with a hitman on a contract and buy informant data
-      on it at once: *The informant is still asking around after a restart.
-      Try again in 10 minutes.*, and nothing is charged. After ten minutes,
-      with the hitman near the target again, it names them and charges
+- [ ] **The target's informant.** On **On me**, **Buy informant data** lists
+      every operative on the contract (*Operative #1*, ...) and *The person
+      who placed it*, including an operative who has never been near you. The
+      dialog says *10% chance*, that the price is paid either way, and that
+      nobody is told. Pick one, press **Pay $25,000**: it changes to **Tap
+      again to pay $25,000** for three seconds; tap it. $25,000 leaves your
+      bank once, whatever the answer. A hit puts *Informant: Operative #1 is
+      <name>* on the card (still there after a restart); a miss says *Your
+      informant could not find out who it is.* Neither the operative nor the
+      placer gets any notice
+- [ ] On a contract placed under a name, *The person who placed it* is
+      greyed out with *Placed under their name: you know who it is.* After two
+      look-ups on one contract (operatives and placer together) the button is
+      gone. Asking about the same pick again within 30 minutes repeats the
+      answer free
+- [ ] A target on a whitelisted job (police, EMS): no informant anywhere, not
+      on the whitelisted-job view and not on **On me** after they leave the
+      job for a contract placed while they held it; the buyout is still there
+- [ ] **The placer's informant.** On **Mine**, with an anonymous operative on
+      your contract (placed named or anonymously): **Informant on an operative
+      — $25,000**. The dialog says *20% chance*, paid either way, and that a
+      successful look-up has a *20% chance* of being noticed. Two taps pay
+      once. A hit puts the name on your card (kept after a restart); a miss
+      says *Your informant could not find out who they are.* With
+      **Chance the operative found out is told** at 100 in the panel, a hit
+      sends the operative *The person who placed one of your contracts has
+      found out who you are: your contract on <target>* and never your name
+- [ ] The placer's button is greyed out with why: within 10 minutes of a
+      look-up (*Your informant can ask again in about N minutes.*), after two
+      look-ups, and when every operative took it under their name or was
+      found out. Have the operative abandon between the two taps: the price
+      comes back
+- [ ] In the panel, raise **bailout: requests held**, **informant: requests
+      held** and **placerInformant: requests held** to 2. Tap **Buy out**
+      twice as fast as you can: the target pays once (the second says *That
+      was busy for a moment. Try again.* or *You have already paid*). The same
+      with the second tap of each informant dialog: one fee. Put them back to 1
 - [ ] A hitman walks away from a staked contract while its client is offline:
       the client gets the stake at their next login, and the panel's **Logs**
       show `stake_forfeited` with the amount and *queued*. Walking away from
@@ -1155,9 +1181,9 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       told *Law enforcement has been advised*, an officer target *Your
       department has been advised*. Turn **Flag the listing** off: the card
       has no chip, no gold notice and no protected styling
-- [ ] Informant data on a target card with no operative on it: no **Buy
-      informant data**. Buy the last one allowed: the dialog says *This is
-      your last one on this contract*, and afterwards the button is gone
+- [ ] Buy the last look-up allowed from either informant: the dialog says
+      *This is your last one on this contract*, and afterwards the target's
+      button is gone and the placer's is greyed out with why
 - [ ] Turn dirty money off in the panel: the Place form says *This server
       does not take dirty money as a reward*, and the minimum names only cash
       and bank. Turn items off while carrying a pistol: *This server does not

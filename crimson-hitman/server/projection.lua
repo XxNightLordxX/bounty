@@ -77,27 +77,26 @@ local function currentReward(contract)
     }
 end
 
---- What the viewer's own informant purchase on this contract came back
---- with, as the words to show. Only ever the viewer's own: the record is
---- keyed by buyer, so a creator and a target who both bought each see theirs.
+--- What the target's informant has found out for this target on this
+--- contract, what they may still pick, and how many look-ups they have left.
+--- Only ever their own: the record is keyed by buyer.
 ---
---- Whatever Config.Informant.Enabled says: a name already bought was paid
---- for under the rules of the moment it was bought, and stays shown for as
---- long as it would have (Informant.answerFor). Turning the informant off
---- refuses new purchases (Informant.buy); hiding what was paid for took
---- from the target what Config.Informant.Cost had bought.
----
---- With it, how many purchases the viewer has left on the contract, where
---- the server runs informants: their own count, so their card can drop the
---- button once none are left and say when this is the last.
----@return string|nil answer
+--- What was found stays shown whatever Config.Informant.Enabled says: it was
+--- paid for under the rules of the moment it was bought. The picks and the
+--- count only while the server sells look-ups, and never to a target the
+--- informant is not open to (a member of a whitelisted job, by the flag the
+--- contract recorded): their card does not offer it at all.
+---@return table[]|nil found { label, text }
 ---@return integer|nil left
-local function informantFor(contractId, viewerCid)
-    if not Informant then return nil, nil end
-    local answer, left = Informant.answerFor(contractId, viewerCid)
-    if Config.Informant.Enabled ~= true then left = nil end
-    if type(answer) ~= 'table' then return nil, left end
-    return answer.name or answer.description, left
+---@return table[]|nil picks { pick, label, known }
+local function informantFor(contract, viewerCid, hitmen)
+    if not Informant then return nil, nil, nil end
+    local found, left = Informant.answerFor(contract.id, viewerCid)
+    local picks = Informant.targetPicks(contract, viewerCid, hitmen)
+    if Config.Informant.Enabled ~= true or contract.target_protected == true then
+        left, picks = nil, nil
+    end
+    return (#found > 0) and found or nil, left, picks
 end
 
 --- A single contract, projected for one viewer.
@@ -246,7 +245,18 @@ function Projection.contract(contract, viewerCid)
         -- contract may be worth: the add-to-reward box offered amounts the
         -- server could only refuse, as a reward that did not add up.
         out.valueHeld = Escrow.moneyValue(contract.id)
-        out.informantAnswer, out.informantLeft = informantFor(contract.id, viewerCid)
+        -- The placer's informant (Config.PlacerInformant): the operatives
+        -- they may ask about, by a handle the server minted and the alias
+        -- the roster below already shows; what earlier look-ups found, kept
+        -- whatever the switch says; how many they have left, and how long
+        -- until the next. Never which row a handle stands for.
+        if Informant then
+            local view = Informant.placerView(contract, viewerCid, hitmen)
+            out.placerInformantFound = #view.found > 0 and view.found or nil
+            out.placerInformantPicks = view.picks
+            out.placerInformantLeft = view.left
+            out.placerInformantWait = view.wait
+        end
         -- The creator learns how many operatives are on it, never who they
         -- are, unless a hitman chose to be seen.
         out.hitmen = {}
@@ -353,7 +363,8 @@ function Projection.contract(contract, viewerCid)
             out.bailoutSecondsLeft = math.max(0, contract.bailout_queued_at
                 + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
         end
-        out.informantAnswer, out.informantLeft = informantFor(contract.id, viewerCid)
+        out.informantFound, out.informantLeft, out.informantPicks =
+            informantFor(contract, viewerCid, hitmen)
         -- When they were last told somebody was tipped off about their rough
         -- area (server/locationtip.lua). Never who, never where.
         out.tippedAt = LocationTip and LocationTip.toldAt(contract.id) or nil
@@ -547,11 +558,11 @@ local function buildListing(viewerCid, page)
                 cost = Config.Informant.Cost,
                 account = Config.Informant.Account,
                 maxPerContract = Config.Informant.MaxPurchasesPerContract,
-                needsProximity = Config.Informant.RequireProximity == true,
-                -- When asking again is free: after the rate limit lets a
-                -- second request through, and inside the reroll lock, which
-                -- repeats the answer already bought. Sent so the dialog can
-                -- say so rather than quote the full fee for a repeat.
+                -- The chance one look-up finds out, said in the dialog: the
+                -- price is paid either way.
+                chance = Config.Informant.RevealChancePercent,
+                -- When asking about the same one again is free: inside the
+                -- reroll lock, which repeats the answer already given.
                 repeatFreeMinutes = Config.Informant.RerollLockMinutes,
                 askEverySeconds = Config.Cooldowns.informant
                     and Config.Cooldowns.informant.per or nil,
@@ -568,6 +579,16 @@ local function buildListing(viewerCid, page)
                 cooldownMinutes = Config.LocationTip.CooldownMinutes,
                 maxPerContract = Config.LocationTip.MaxPurchasesPerContract,
                 tellsTarget = Config.LocationTip.NotifyTarget ~= false,
+            } or nil,
+            -- The placer's informant, the same way: its price, its two
+            -- chances (found out, and then noticed), its cap and its wait.
+            placerInformant = Config.PlacerInformant.Enabled == true and {
+                cost = Config.PlacerInformant.Cost,
+                account = Config.PlacerInformant.Account,
+                chance = Config.PlacerInformant.RevealChancePercent,
+                alertChance = Config.PlacerInformant.AlertChancePercent,
+                maxPerContract = Config.PlacerInformant.MaxPurchasesPerContract,
+                cooldownMinutes = Config.PlacerInformant.CooldownMinutes,
             } or nil,
         },
     }
@@ -1033,14 +1054,15 @@ Projection.ALLOWED_KEYS = {
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },
-    creator = { bailoutAmount = true, hitmen = true, valueHeld = true,
-                informantAnswer = true, informantLeft = true, meetingSet = true },
+    creator = { bailoutAmount = true, hitmen = true, valueHeld = true, meetingSet = true,
+                placerInformantFound = true, placerInformantPicks = true,
+                placerInformantLeft = true, placerInformantWait = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
                 buyoutClosesIn = true, lastMessageAt = true, meetingSet = true,
                 locationTip = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
-                bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true,
-                informantLeft = true, tippedAt = true },
+                bailoutPaid = true, bailoutSecondsLeft = true, informantFound = true,
+                informantLeft = true, informantPicks = true, tippedAt = true },
     public  = { barred = true },
 }
 

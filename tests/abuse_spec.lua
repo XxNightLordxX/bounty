@@ -470,11 +470,11 @@ end)
 --------------------------------------------------------------------------
 
 describe('informant data bought by the creator', function()
-    --- Both orders of acceptance, because the draw is fixed per contract
-    --- and buyer: whichever operative lands on the drawn index is named, so
-    --- one of the two orders put the named operative there.
+    --- Both orders of acceptance: the placer's informant offers only the
+    --- operative the placer cannot already see by name, whichever took it
+    --- first, and a look-up on the named one is refused uncharged.
     for _, namedFirst in ipairs({ true, false }) do
-        it(('unmasks the anonymous operative, not the named one (%s accepted first)')
+        it(('offers the anonymous operative, not the named one (%s accepted first)')
             :format(namedFirst and 'named' or 'anonymous'), function()
             local s = newStack()
             local f = fixture(s)
@@ -489,24 +489,28 @@ describe('informant data bought by the creator', function()
                 truthy(s.contracts.accept(anon, c.id, true))
                 truthy(s.contracts.accept(named, c.id, false))
             end
-            -- Both are on the target.
-            s.death.watchTargets(s.storage.allContracts())
-
-            local ok, err, data = s.informant.buy(f.creator, c.id)
+            local card = s.projection.contract(s.storage.readContract(c.id), f.creator.cid)
+            eq(#card.placerInformantPicks, 1, 'one operative to ask about')
+            s.informant.setRandom(function() return 1 end)
+            Env.players[1].PlayerData.money.bank = 100000
+            local ok, err, data = s.informant.placerBuy(f.creator, c.id, nil,
+                card.placerInformantPicks[1].pick)
             truthy(ok, tostring(err))
             eq(data.name, 'Kade Wolfe',
                 'the creator paid for a name already on their own card')
         end)
     end
 
-    it('still names any operative to the target, who sees no roster', function()
+    it('still offers a named operative to the target, who sees no roster', function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator)
         truthy(s.contracts.accept(f.hitman, c.id, false))
-        s.death.watchTargets(s.storage.allContracts())
         Env.players[2].PlayerData.money.bank = Config.Informant.Cost
-        local ok, err, data = s.informant.buy(f.target, c.id)
+        s.informant.setRandom(function() return 1 end)
+        local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+            .informantPicks[1].pick
+        local ok, err, data = s.informant.buy(f.target, c.id, nil, pick)
         truthy(ok, tostring(err))
         eq(data.name, 'Rook Ash')
     end)
