@@ -53,6 +53,14 @@ function Contracts.heldByStaff(contract, hitmen)
     return Freeze ~= nil and Freeze.holds(contract, hitmen)
 end
 
+--- Whether every live contract is on the restart hold: the last half hour
+--- before a scheduled restart (Freeze.scheduledRestart). Nothing ends,
+--- pays out a queued buyout or finishes a handover meanwhile.
+---@return boolean
+function Contracts.restartHeld()
+    return Freeze ~= nil and Freeze.restartHeld()
+end
+
 --- Whether staff have frozen this player.
 ---@param cid string|nil
 ---@return boolean
@@ -399,7 +407,19 @@ local function finalise(contractId, contract, forfeitStakes, ending, winnerCid)
         creatorParked = creatorParked,
     })
 
+    -- Whether its target may be shown it yet, asked before the clear below
+    -- forgets the wait: the advisory tells them it was called off only then.
+    local targetShown = Notify.shownToTarget(settled or contract)
     Notify.clearContract(contractId, settled or contract)
+    -- Called off by its placer, or voided by staff with its escrow handed
+    -- back: law enforcement is told, where it was on one of them
+    -- (Notify.cancelAdvisory). After the clear above, so this call is not
+    -- taken off the MDT with the earlier ones.
+    local resolution = (settled or contract).resolution
+    if ending == CH.STATE.VOIDED or (ending == CH.STATE.CANCELLED
+        and (resolution == 'cancelled_by_creator' or resolution == 'cancelled_by_agreement')) then
+        pcall(Notify.cancelAdvisory, settled or contract, targetShown)
+    end
     if Contracts.onResolved then Contracts.onResolved(contractId) end
     if Contracts.onChanged then Contracts.onChanged() end
     return stakes
@@ -1259,21 +1279,31 @@ end
 ---
 --- A stake on a contract about to run out is a stake handed to the client:
 --- nobody can work a target in the minutes left, and the client can set a
---- contract nobody holds to run out in minutes (§14.18). And the deadline
---- is part of the terms, like the stake: brought forward since `shown`, it
---- is refused rather than staked on. A minute's slack for the clock itself.
---- Contracts that carry no stake have nothing to lose to either.
+--- contract nobody holds to run out in minutes (§14.18). And the time left
+--- is part of the terms, like the stake: players are shown it only as a
+--- rough band (Util.timeBand), so a band shorter now than the one the
+--- hitman was shown (`shownBand`) is refused rather than staked on, and the
+--- page reads the contract again. `shown`, a deadline, is for a caller on
+--- the server that has one; no page is sent it any more. A minute's slack
+--- for the clock itself. Contracts that carry no stake have nothing to lose
+--- to either.
 ---@param contract table
----@param shown integer|nil the deadline the hitman was shown
+---@param shown integer|nil the deadline the caller was shown
+---@param shownBand string|nil the band the hitman was shown
 ---@return string|nil err
-local function stakeTimeRefusal(contract, shown)
+local function stakeTimeRefusal(contract, shown, shownBand)
     if (contract.penalty_amount or 0) <= 0 or not contract.deadline_at then return nil end
     -- A paused clock has what it had when it stopped.
-    local left = contract.deadline_at - (contract.paused_since or os.time())
+    local left = Util.runLeft(contract)
     if left < (Config.Penalty.MinWindowMinutes or 0) * 60 then
         return CH.ERR.TOO_LITTLE_TIME
     end
     if shown and contract.deadline_at < shown - 60 then
+        return CH.ERR.TERMS_CHANGED
+    end
+    local was = Util.bandRank(shownBand)
+    local _, now = Util.timeBand(left)
+    if was and now and now > was then
         return CH.ERR.TERMS_CHANGED
     end
     return nil
@@ -1351,7 +1381,9 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- The echo is disclosure, so it goes with the stake's (stakeWasDisclosed).
     local shown = opts and opts.checkDisclosure and Config.Penalty.RequireDisclosureOnAccept
         and type(opts.shownDeadline) == 'number' and opts.shownDeadline or nil
-    local timeErr = stakeTimeRefusal(contract, shown)
+    local shownBand = opts and opts.checkDisclosure and Config.Penalty.RequireDisclosureOnAccept
+        and opts.shownBand or nil
+    local timeErr = stakeTimeRefusal(contract, shown, shownBand)
     if timeErr then return false, timeErr end
     -- Kept by value: on the memory store `contract` is the stored row
     -- itself, and would read whatever the deadline is moved to next.
@@ -1807,8 +1839,12 @@ end
 function Contracts.accept(actor, contractId, anonymous, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
-    return Contracts.serialized({ 'contract:' .. contractId, 'hitman:' .. tostring(actor.cid) },
-        acceptUnlocked, actor, contractId, anonymous, opts)
+    local out = table.pack(Contracts.serialized({ 'contract:' .. contractId, 'hitman:' .. tostring(actor.cid) },
+        acceptUnlocked, actor, contractId, anonymous, opts))
+    -- An operative on it may start its clock: with nobody holding it, it
+    -- does not run (the expiry pass).
+    if out[1] and Contracts.onChanged then Contracts.onChanged() end
+    return table.unpack(out, 1, out.n)
 end
 
 --- Contracts an acceptance could not be taken back on after a throw, where
@@ -2244,6 +2280,8 @@ function Contracts.abandon(actor, contractId)
         leaving[contractId] = true
         error(out[2], 0)
     end
+    -- One operative fewer on it may stop its clock (the expiry pass).
+    if out[2] and Contracts.onChanged then Contracts.onChanged() end
     return table.unpack(out, 2, out.n)
 end
 
@@ -2310,8 +2348,9 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     if not contract or contract.state ~= CH.STATE.ACCEPTED then return false end
     local current = Storage.readHitman(contractId, hitman.hitman_cid)
     if not current or current.state ~= 'active' then return false end
-    -- On hold by staff: nobody is released and no stake moves.
-    if Contracts.heldByStaff(contract) then return false end
+    -- On hold by staff, or for the restart: nobody is released and no
+    -- stake moves.
+    if Contracts.heldByStaff(contract) or Contracts.restartHeld() then return false end
 
     -- Read before anything moves, so the notices can name the figure.
     local stake = heldStakes(contractId)[current.hitman_cid] or 0
@@ -2380,8 +2419,11 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
 end
 
 local function releaseIdleHold(contractId, hitman, idleSeconds, why)
-    return Contracts.serialized({ 'contract:' .. contractId },
-        releaseIdleHoldUnlocked, contractId, hitman, idleSeconds, why)
+    local out = table.pack(Contracts.serialized({ 'contract:' .. contractId },
+        releaseIdleHoldUnlocked, contractId, hitman, idleSeconds, why))
+    -- One operative fewer on it may stop its clock (the expiry pass).
+    if out[1] and Contracts.onChanged then Contracts.onChanged() end
+    return table.unpack(out, 1, out.n)
 end
 
 --- Finish what an abandon that stopped part-way left on a live contract.

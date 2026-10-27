@@ -343,8 +343,10 @@ describe('a contract sitting exactly on its deadline', function()
 
     it('is left alone at the deadline and closed one second past it', function()
         local main, modules, f, c = bootWithContract({ deadline_at = 0 })
+        -- Held, so its deadline runs: with nobody holding it, it does not.
+        truthy(modules.contracts.accept(f.hitman, c.id), 'taken')
         eq(main.expire(), 0, 'exactly due is not overdue')
-        eq(modules.storage.readContract(c.id).state, CH.STATE.ACTIVE)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
 
         local before = accounted(modules.storage)
         Env.time = Env.time + 1

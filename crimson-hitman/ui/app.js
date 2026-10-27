@@ -457,6 +457,8 @@
     // Staff put the contract on hold (server/freeze.lua). Plain, and never
     // which party it is about. Nothing was taken.
     contract_frozen: 'This contract is on hold by staff.',
+    // The last half hour before a scheduled restart (server/freeze.lua).
+    restart_hold: 'Contracts are paused until the server restart.',
     // The informant tip (server/locationtip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',
@@ -2573,9 +2575,13 @@
        time as too_little_time, and the card said nothing. The same sum as
        the server's, from the clock it sent. */
     var stakeWindow = Number(settings().stakeWindowMinutes) || 0;
-    var left = secondsLeftOf(contract);
-    if (Number(contract.penaltyAmount) > 0 && stakeWindow > 0 && left !== null
-        && left < stakeWindow * 60) {
+    var band = bandOf(contract);
+    // From the band, the only time the page is told: only where every time
+    // it can mean is inside the window. Anywhere else the server answers.
+    var bandMost = band ? (band === TIME_BANDS[0] ? Infinity
+      : TIME_BANDS[TIME_BANDS.indexOf(band) - 1].least - 1) : null;
+    if (Number(contract.penaltyAmount) > 0 && stakeWindow > 0 && bandMost !== null
+        && bandMost < stakeWindow) {
       return 'Too little time left to stake on this one.';
     }
     return null;
@@ -3101,16 +3107,16 @@
        hour from now", saved, and the contract lapsed nine minutes later
        under "Contract updated.". The box no longer shows a figure Save
        ignores: whatever is in it is sent. */
-    var left = minutesLeft(contract);
-    // With no deadline running there is nothing to keep: the figure in the
-    // box is only a suggestion, and Save means it.
-    var suggested = left === null || left <= 0;
+    var band = bandOf(contract);
+    // With no deadline there is nothing to keep: the figure in the box is
+    // only a suggestion, and Save means it.
+    var suggested = band === null;
     fields.push({
       id: 'hours',
       label: suggested ? 'Hours from now to the deadline'
                        : 'New deadline, in hours from now (optional)',
       type: 'number', value: suggested ? 3 : '', min: 1, max: 48,
-      placeholder: suggested ? '' : 'Leave empty to keep ' + durationText(left)
+      placeholder: suggested ? '' : 'Leave empty to keep it (' + band.text.toLowerCase() + ')'
     });
 
     askFields('Edit this contract',
@@ -3223,9 +3229,9 @@
       return post('accept', {
         id: contract.id, anonymous: anonymous,
         penaltyAmount: contract.penaltyAmount || 0,
-        // And the deadline, which the stake is forfeit to: brought forward
-        // since it was shown, the server refuses rather than takes the stake.
-        deadline: contract.deadline,
+        // And the time left as it was shown, the band the stake is forfeit
+        // to: shorter now, the server refuses rather than takes the stake.
+        timeLeft: contract.timeLeft,
         // And the anonymity fee and its account, as the dialog said them.
         shown: { hitmanFee: shownFee, feeAccount: feeAccount }
       }).then(function (r) {
@@ -3342,9 +3348,7 @@
             : '')
           // How much time that is. The stake is forfeit to the deadline, and
           // nothing on the dialog said when it was.
-          + (minutesLeft(contract) !== null && minutesLeft(contract) > 0
-            ? ' It runs out in ' + durationText(minutesLeft(contract)) + '.'
-            : '')
+          + (bandOf(contract) ? ' It has ' + bandOf(contract).text.toLowerCase() + '.' : '')
           + exclusiveRule(contract),
         options: [
           { label: 'Anonymously', primary: true, run: function () { take(true); } },
@@ -4391,11 +4395,10 @@
     // With the before and after, which is what the hitman is agreeing to.
     shorten_deadline: function (p, contract) {
       var by = p && p.seconds ? Math.round(p.seconds / 60) : 0;
-      var now = contract ? minutesLeft(contract) : null;
+      var band = contract ? bandOf(contract) : null;
       return 'Shorten the deadline'
         + (by ? ' by ' + durationText(by) : '')
-        + (by && now !== null && now > by
-          ? ' (from ' + durationText(now) + ' left to ' + durationText(now - by) + ')' : '');
+        + (by && band ? ' (now ' + band.text.toLowerCase() + ')' : '');
     },
     raise_penalty: function (p) {
       return 'Raise the stake' + (p && p.amount ? ' to ' + money(p.amount) : '');
@@ -4643,70 +4646,66 @@
     return box;
   }
 
-  /* Seconds left on the clock, or null when there is no deadline to read.
+  /* Seconds left on a countdown the server read (a buyout's delay, a
+     cooldown), counted down from when the reply arrived; null without one.
 
-     From the server's own reading, counted down from when it arrived. The
-     deadline alone is wrong twice over: it stands still while the contract
-     is paused and jumps on when the pause ends, so a countdown to it ran
-     straight through every pause; and it is the server's clock compared
-     with this machine's, which need not agree. A stopped clock is not
-     counted down at all. The deadline is the fallback for a reply that
-     carries no reading. */
-  function secondsLeftOf(contract) {
-    var read = contract.secondsLeft;
-    if (read === undefined || read === null || isNaN(Number(read))) {
-      if (!contract.deadline) { return null; }
-      return contract.deadline - Math.floor(Date.now() / 1000);
+     Never a contract's deadline: no page is sent it. The server sends how
+     long a contract has left only as a rough band (timeLeft), because a
+     countdown players could watch stop, or jump on when it started again,
+     told them when an anonymous placer or operative logged off. */
+  function secondsLeftOf(reading) {
+    var read = reading.secondsLeft;
+    if (read === undefined || read === null || isNaN(Number(read))) { return null; }
+    if (!reading.clockReadAt) { return Number(read); }
+    return Number(read) - Math.floor((Date.now() - reading.clockReadAt) / 1000);
+  }
+
+  /* The bands a contract's time left is said in, longest first, with the
+     least time each one can mean, in minutes (server: Util.TIME_BANDS). */
+  var TIME_BANDS = [
+    { text: 'More than 2 hours left', least: 121 },
+    { text: '1\u20132 hours left', least: 61 },
+    { text: 'Under 1 hour left', least: 16 },
+    { text: 'Under 15 minutes left', least: 0 }
+  ];
+
+  /* The band a contract is in, or null when it has no deadline. */
+  function bandOf(contract) {
+    var text = contract && contract.timeLeft;
+    for (var i = 0; i < TIME_BANDS.length; i++) {
+      if (TIME_BANDS[i].text === text) { return TIME_BANDS[i]; }
     }
-    if (contract.clockStopped || contract.onHold || !contract.clockReadAt) { return Number(read); }
-    return Number(read) - Math.floor((Date.now() - contract.clockReadAt) / 1000);
+    return null;
   }
 
-  /* Minutes left on the clock, or null when there is no deadline to read. */
+  /* The least whole minutes a contract's band can mean, or null without
+     one: what a cut may come out of, said without the exact time. */
   function minutesLeft(contract) {
-    var seconds = secondsLeftOf(contract);
-    if (seconds === null) { return null; }
-    return seconds > 0 ? Math.floor(seconds / 60) : 0;
+    var band = bandOf(contract);
+    return band ? band.least : null;
   }
 
-  /* When each contract's clock was read, so its card can count down from
-     there. Stamped as the reply lands, not as the card is drawn: a card is
-     redrawn many times from the same reply. */
+  /* When each contract's countdowns were read, so a card can count a
+     buyout's delay down from there. Stamped as the reply lands, not as the
+     card is drawn: a card is redrawn many times from the same reply. */
   function stampClocks(list) {
     var at = Date.now();
     asList(list).forEach(function (c) { if (c && typeof c === 'object') { c.clockReadAt = at; } });
   }
 
-  /* The time left, in the words of whoever is reading it.
-
-     Never "out of time". The server resolves a contract whose clock is
-     running within moments of its deadline, so a card still on screen at
-     zero is one the server has not got to yet or one whose reading has gone
-     stale here — and telling a staked hitman their stake was gone on a
-     contract that was still alive is worse than saying nothing. */
+  /* The time left, as the server's band says it. Never a countdown, a
+     "Due now" or a stopped clock: the band moves only while the clock
+     really runs, so nothing here changes when somebody logs off. */
   function clockWords(contract) {
-    var seconds = secondsLeftOf(contract);
-    if (seconds === null) { return null; }
-    if (seconds <= 0) { return { text: 'Due now', warn: true }; }
-    var left = durationText(Math.ceil(seconds / 60));
+    var band = bandOf(contract);
+    if (!band) { return null; }
     // On hold by staff: the clock stands still until they release it.
-    if (contract.onHold) {
-      return { text: 'On hold · ' + left + ' left', warn: false };
-    }
-    if (contract.clockStopped) {
-      return { text: 'Clock stopped · ' + left + ' left', warn: false };
-    }
-    var close = seconds < (Number(settings().stakeWindowMinutes) || 30) * 60;
-    if (contract.atLatest) {
-      return { text: (contract.role === 'target' ? 'Lapses within ' : 'Runs out within ') + left,
-               warn: false };
-    }
-    if (contract.role === 'creator') { return { text: 'Runs out in ' + left, warn: close }; }
-    if (contract.role === 'target') { return { text: 'Lapses in ' + left, warn: close }; }
+    if (contract.onHold) { return { text: 'On hold \u00b7 ' + band.text, warn: false }; }
+    var close = band.least < (Number(settings().stakeWindowMinutes) || 30);
     if (contract.role === 'hitman' && contract.penaltyAmount > 0 && close) {
-      return { text: left + ' left · stake at risk', warn: true };
+      return { text: band.text + ' \u00b7 stake at risk', warn: true };
     }
-    return { text: left + ' left', warn: close };
+    return { text: band.text, warn: close };
   }
 
   /* The clock chips on screen, rewritten in place every half minute while
@@ -4745,10 +4744,10 @@
   /* "runs out in 2h", or what to say instead when there is no clock. The
      no-deadline case used to be spliced into the same sentence and read
      "runs out in no set deadline". */
-  function runsOut(minutes) {
-    if (minutes === null || minutes === undefined) { return 'has no deadline'; }
-    if (minutes <= 0) { return 'has run out'; }
-    return 'runs out in ' + durationText(minutes);
+  function runsOut(contract) {
+    var band = bandOf(contract);
+    if (!band) { return 'has no deadline'; }
+    return 'has ' + band.text.toLowerCase();
   }
 
   /* "3 days ago", from a server time in seconds; null without one. */
@@ -4821,14 +4820,15 @@
     var spare = Math.max(0, total - current);
 
     // A cut has to leave this much on the clock; the server refuses one
-    // that does not, so the box never offers it.
+    // that does not. Offered only out of the least its band can mean, since
+    // the page is never told the exact time.
     var keep = Number(settings().deadlineMinLeftMinutes) || 5;
     var most = left === null ? 0 : left - keep;
 
     var options = [
       {
         label: 'Shorten the deadline',
-        note: 'It ' + runsOut(left) + ' now.',
+        note: bandOf(contract) ? bandOf(contract).text + '.' : 'It ' + runsOut(contract) + '.',
         // Nothing to shorten without a deadline, or without time to spare.
         skip: most < 1,
         run: function () {
@@ -4852,7 +4852,7 @@
                   return 'Between 1 and ' + most + ' minutes, leaving at least '
                     + keep + '.';
                 }
-                return 'It would then run out in ' + durationText(left - value) + '.';
+                return 'It would then have ' + durationText(value) + ' less.';
               }
             });
         }
@@ -5007,7 +5007,7 @@
       // contract pays and how long is left is what every one of these
       // choices is about, and it should not disappear because the option
       // that happened to carry it does not apply here.
-      detail: 'Pays ' + pays + ', ' + runsOut(left)
+      detail: 'Pays ' + pays + ', ' + runsOut(contract)
         + (total > 1 ? ', ' + total + ' payouts' : '')
         + (untaken
           // Nobody holds it, so there is nobody to wait for.
@@ -5088,12 +5088,10 @@
        creator deciding how much to add has to know what they are adding to —
        and the one thing the app already knows and was not saying is how long
        is left. */
-    var left = minutesLeft(contract);
-    var standing = (left === null)
+    var band = bandOf(contract);
+    var standing = band === null
       ? 'This contract has no deadline set.'
-      : (left > 0
-          ? 'It currently has ' + durationText(left) + ' left.'
-          : 'Its deadline has already passed.');
+      : 'It currently has ' + band.text.toLowerCase() + '.';
 
     /* It opened on an empty box, with no ceiling and no hint — so Confirm,
        the obvious first tap, did nothing and said nothing. It now opens on
@@ -5125,9 +5123,8 @@
                     return ceiling > 0 ? 'Between 1 and ' + ceiling + ' minutes.'
                                        : 'At least 1 minute.';
                   }
-                  return 'It would then run out in '
-                    + durationText(Math.max(left || 0, 0) + value)
-                    + ', or at the contract\u2019s own time limit if that is sooner.';
+                  return 'It would then have ' + durationText(value)
+                    + ' more, or run to the contract\u2019s own time limit if that is sooner.';
                 }
               });
   }
@@ -7567,11 +7564,12 @@
         : ' It only pays when the target is brought to you alive.';
     }
 
-    var seconds = Number(placed.secondsLeft);
-    var minutes = seconds > 0 ? Math.ceil(seconds / 60)
-      : Number(settings().defaultDeadlineMinutes) || 0;
-    if (minutes > 0) {
-      text += ' It runs out in ' + durationText(minutes) + ' unless you extend it.';
+    var band = bandOf(placed);
+    var minutes = Number(settings().defaultDeadlineMinutes) || 0;
+    if (band || minutes > 0) {
+      text += ' It has ' + (band ? band.text.toLowerCase() : durationText(minutes) + ' left')
+        + ' unless you extend it. Its clock runs only while you, the target and an '
+        + 'operative on it are all in the city.';
     }
     return text;
   }
@@ -8765,12 +8763,6 @@
     state.jobView = data;
     asList(data.onYou).forEach(function (entry) {
       if (entry && typeof entry === 'object') { entry.role = 'target'; }
-    });
-    // Each clock here is the contract's lifetime, the latest it can run
-    // (Projection.whitelistedView): said as "within", since it may end
-    // sooner.
-    asList(data.onYou).concat(asList(data.colleagues)).forEach(function (entry) {
-      if (entry && typeof entry === 'object') { entry.atLatest = true; }
     });
     stampClocks(data.onYou);
     stampClocks(data.colleagues);

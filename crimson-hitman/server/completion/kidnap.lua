@@ -193,6 +193,9 @@ function Kidnap.arm(contractId, hitmanCid)
     -- On hold by staff (server/freeze.lua): the payout at the end would be
     -- refused, so nobody is held for it.
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- Every contract is on the restart hold (Freeze.scheduledRestart): a
+    -- countdown armed now could not finish before the restart.
+    if Contracts and Contracts.restartHeld and Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
 
     -- The wait between payouts, for the same reason as the immunity check
     -- below: the claim at the end would be refused either way. It is ten
@@ -373,7 +376,15 @@ function Kidnap.tick(deltaMs)
             -- after it waited on a pass that never came to it.
             local stepped, stepError = pcall(function()
             local contract = Storage.readContract(state.contractId)
-            if contract and contract.state == CH.STATE.COMPLETING then
+            if contract and contract.state == CH.STATE.ACCEPTED
+                and Contracts and Contracts.restartHeld and Contracts.restartHeld() then
+                -- The restart hold (Freeze.scheduledRestart): stood still,
+                -- neither advanced nor charged grace, so it cannot finish
+                -- during it. One already running when the hold began goes
+                -- on once it is released; a restart ends it with the
+                -- resource, as any restart does.
+                state.breaking = nil
+            elseif contract and contract.state == CH.STATE.COMPLETING then
                 -- Somebody else's payout holds the contract's lock, and holds it
                 -- across yields: every escrow read and write inside claimSlot
                 -- waits on the database. This tick is a separate thread, so it

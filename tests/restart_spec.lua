@@ -801,10 +801,12 @@ describe('a queued payout whose contract file could not be read', function()
 end)
 
 describe('an anonymous client away from the city', function()
-    --- The deadline paused for the creator as for the target, so it moved
-    --- on by exactly how long an anonymous creator was away, and every
-    --- viewer is sent it: when they logged off and when they came back, to
-    --- the second, on a contract that exists to keep them unknown (§14.32).
+    --- The deadline pauses for an anonymous creator as for a named one, and
+    --- moves on by exactly how long they were away. It used to skip them,
+    --- because every viewer was sent the deadline: when they logged off and
+    --- came back, to the second (§14.32). Nobody is sent it now, only a
+    --- band of the run time left, which neither their leaving nor their
+    --- coming back moves.
     local function placed(anonymous)
         local main, s = boot('memory')
         -- The deadline, not an idle hold: nobody here goes near the target.
@@ -833,40 +835,45 @@ describe('an anonymous client away from the city', function()
         main.expire()
     end
 
-    local function shown(s, c)
-        return s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').deadline
+    local function deadline(s, c) return s.storage.readContract(c.id).deadline_at end
+    local function shown(s, c, cid)
+        return s.projection.contract(s.storage.readContract(c.id), cid or 'HITMAN01')
     end
 
-    it('does not move the deadline anyone is shown', function()
+    it('does not change anything anyone is shown', function()
         local main, s, _, c = placed(true)
-        local before = shown(s, c)
-        truthy(before)
+        local before, target = shown(s, c), shown(s, c, 'TARGET01')
+        truthy(before.timeLeft, 'a band')
+        eq(before.deadline, nil, 'the deadline reached the hitman')
         away(main, 1, 137 * 60)
-        eq(shown(s, c), before, 'the deadline moved by exactly how long the client was gone')
+        eq(shown(s, c).timeLeft, before.timeLeft, 'the hitman\'s band moved with the client away')
+        eq(shown(s, c, 'TARGET01').timeLeft, target.timeLeft, 'the target\'s did')
     end)
 
-    it('still moves it for a named client', function()
-        local main, s, _, c = placed(false)
-        local before = shown(s, c)
-        away(main, 1, 1800)
-        eq(shown(s, c) - before, 1800)
+    it('moves the deadline for an anonymous client, as for a named one', function()
+        for _, anonymous in ipairs({ true, false }) do
+            local main, s, _, c = placed(anonymous)
+            local before = deadline(s, c)
+            away(main, 1, 1800)
+            eq(deadline(s, c) - before, 1800, (anonymous and 'anonymous' or 'named') .. ' client')
+        end
     end)
 
     it('still moves it for a target who is away', function()
         local main, s, _, c = placed(true)
-        local before = shown(s, c)
+        local before = deadline(s, c)
         away(main, 2, 1800)
-        eq(shown(s, c) - before, 1800, 'the hitman cannot work a target who is not here')
+        eq(deadline(s, c) - before, 1800, 'the hitman cannot work a target who is not here')
     end)
 
-    it('runs out on time while the client is away', function()
+    it('does not run out while the anonymous client is away', function()
         local main, s, _, c = placed(true)
         Env.removePlayer(1)
         main.markPresenceChanged()
         main.tick()
         Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
         main.tick()
-        eq(s.storage.readContract(c.id).state, CH.STATE.EXPIRED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
     end)
 end)
 
@@ -1178,6 +1185,11 @@ describe('an acceptance as the deadline runs out', function()
             reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
         })
         truthy(c)
+        -- Held by another operative already, so its clock runs: with nobody
+        -- holding it, it does not, and no acceptance could meet its end.
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 50000, firstname = 'Kit', lastname = 'Vane' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false), 'held by the first')
         main.tick()
         return main, s, f, c
     end

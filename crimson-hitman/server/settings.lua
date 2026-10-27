@@ -284,6 +284,10 @@ local CATALOGUE = {
     { key = 'Advisory.OnLocationTip', section = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'When a tip is bought',
       about = 'A bulletin when a hitman buys an informant tip on the officer.', inflight = AT_USE },
+    { key = 'Advisory.OnCancel', section = 'features', group = 'Law enforcement advisory',
+      kind = 'switch', label = 'When called off',
+      about = 'A bulletin when a contract on an officer is cancelled or voided with a refund.',
+      inflight = AT_USE },
     { key = 'Advisory.WarnCreator', section = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'Warn the client', about = 'Before escrow is taken.', inflight = AT_USE },
     { key = 'Advisory.WarnHitman', section = 'features', group = 'Law enforcement advisory',
@@ -518,6 +522,15 @@ local CATALOGUE = {
     { key = 'LocationTip.MaxPurchasesPerContract', section = 'limits', group = 'Informant tip',
       kind = 'number', integer = true, min = 1, max = 50,
       label = 'Tips per hitman per contract', inflight = AT_USE },
+
+    { key = 'Restart.PauseBeforeSeconds', section = 'limits', group = 'Server restart',
+      kind = 'number', integer = true, min = 0, max = 3600,
+      label = 'Pause contracts this long before a txAdmin restart (s, 0 = off)',
+      inflight = 'A pause already on stays until the restart, a skip or its longest.' },
+    { key = 'Restart.MaxHoldMinutes', section = 'limits', group = 'Server restart',
+      kind = 'number', integer = true, min = 1, max = 240,
+      label = 'Longest the pause lasts with no restart (min)',
+      inflight = 'A pause already on ends at the new length.' },
 
     { key = 'Kidnap.CountdownSeconds', section = 'limits', group = 'Handovers', kind = 'number',
       integer = true, min = 5, max = 600, label = 'Handover countdown (s)', inflight = AT_USE

@@ -1304,6 +1304,15 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       Restart the resource while frozen: still frozen after
 - [ ] `resmon` with the panel open stays under 0.35ms, and back near idle once
       it is closed (the Escape watch runs every frame only while it is open)
+- [ ] Place a contract and take it: its card says *More than 2 hours left*,
+      never a time to the minute. Log the hitman off: nothing on the placer's
+      or the target's card changes; staff see the deadline stop in the panel
+- [ ] Schedule a txAdmin restart under 30 minutes away: every party gets
+      *Contracts are paused until the server restart.* once, and the panel
+      shows every deadline stopped; skip it in txAdmin and they run again
+- [ ] Cancel a contract on an on-duty officer: officers and the MDT get
+      *THREAT ADVISORY — CANCELLED*, the officer *The contract on you has been
+      called off.*, and the earlier dispatch calls are gone
 
 ---
 

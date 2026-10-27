@@ -39,6 +39,10 @@ local ADDED = {
     },
     ['Cooldowns.locationTip'] = { per = 60, burst = 2 },
     ['Advisory.OnLocationTip'] = true,
+    -- Every contract paused for the half hour before a txAdmin restart, and
+    -- the bulletin when a contract on an officer is called off.
+    ['Restart'] = { PauseBeforeSeconds = 1800, MaxHoldMinutes = 45 },
+    ['Advisory.OnCancel'] = true,
 }
 
 --- A config file's text run on its own, into a table of its own.

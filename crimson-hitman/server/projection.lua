@@ -163,19 +163,17 @@ function Projection.contract(contract, viewerCid)
         -- only where the flag above is already set.
         targetProtectedAs = contract.target_protected
             and Identity.protectedCategory(contract.target_job) or nil,
-        deadline      = contract.deadline_at,
-        -- The clock as the server reads it, the same sum stakeTimeRefusal
-        -- makes. deadline_at stands still while a contract is paused and is
-        -- pushed on when the pause ends, so a page counting down to it
-        -- alone ran through every pause and could tell a hitman their
-        -- stake was gone on a contract that was not running at all. For an
-        -- anonymous client the pause follows the target alone (§14.32), so
-        -- whether it is stopped says nothing about the client. The target's
-        -- own card is read differently, below.
-        secondsLeft   = contract.deadline_at
-            and math.max(0, contract.deadline_at - (contract.paused_since or os.time()))
-            or nil,
-        clockStopped  = contract.paused_since ~= nil,
+        -- How long is left, as a rough band (Util.timeBand) worked out from
+        -- the run time the contract really has, and the same to every viewer,
+        -- the target included. Never the deadline, the seconds left or
+        -- whether the clock is running: the clock stops while the placer
+        -- (named or anonymous), the target or every operative is away, and a
+        -- countdown that stood still, or a deadline that moved on by exactly
+        -- how long somebody was gone, told every viewer when that was. The
+        -- band moves only while the clock runs, so nothing on the card
+        -- changes the moment anybody logs off or on. Staff see the exact
+        -- times (server/panel.lua).
+        timeLeft      = Util.timeBand(Util.runLeft(contract)),
         -- Staff have put it on hold (server/freeze.lua). The same one word
         -- to every viewer, never which party or why: true or absent.
         onHold        = heldSince ~= nil or nil,
@@ -335,19 +333,10 @@ function Projection.contract(contract, viewerCid)
         -- still on their map. Never the area, which only their game holds.
         out.locationTip = LocationTip and LocationTip.cardFor(contract, viewerCid) or nil
     elseif role == 'target' then
-        -- The target is in the city to read this, and knows whether they
-        -- are in prison, so a stopped clock on their card could only mean a
-        -- named client had logged off: their session, live, to the one
-        -- person most keen to know who the client is. So the target's clock
-        -- is read from the deadline as if it were always running, the same
-        -- for every contract on them whether the client is named or not —
-        -- keying it on that would tell them which.
-        out.clockStopped = nil
-        -- On hold, read at the moment the hold began: what this card said
-        -- then, standing still. Never from the pause, which may have begun
-        -- earlier for a named client logging off.
-        out.secondsLeft = contract.deadline_at
-            and math.max(0, contract.deadline_at - (heldSince or os.time())) or nil
+        -- The target's band is everyone's (timeLeft above): read from the
+        -- run time left, it says nothing about who is away, a named placer
+        -- or an anonymous one, and on hold it stands where the clock
+        -- stopped, as it does for everybody.
         out.bailoutAmount = contract.bailout_amount
         -- Both questions, not one. A price stored before the owner switched
         -- buyouts off stays on the row, and the switch was read only when
@@ -772,14 +761,10 @@ end
 --- there is nothing on the payload for a client-side inspector to find.
 ---
 --- When it was posted to the five minutes (Util.CLOCK_STEP), as every other
---- time a viewer is sent about a placement. When it runs out at the latest:
---- its lifetime (expires_at), which runs through every pause and is moved
---- by nobody's presence. Not the deadline, even read as if the clock always
---- ran (the target's own card, Projection.contract): a pause for a named
---- placer who logged off ends by moving the deadline on by exactly how long
---- they were away, so its countdown jumped up the second they came back —
---- to every officer, on every colleague's contract — saying the placer is
---- named, when they reconnected and how long they had been gone.
+--- time a viewer is sent about a placement. How long is left as the rough
+--- band every card shows (Util.timeBand), from the run time it really has:
+--- never the deadline or a countdown, whose pauses and jumps said when a
+--- placer or an operative logged off and came back.
 ---
 --- A colleague's entry (`advised`) carries what the bulletins about it
 --- said, and only what they said, as each was kept on the contract when it
@@ -790,10 +775,9 @@ end
 --- bulletin went; taken by the count the latest acceptance bulletin carried
 --- (one walking away is not announced, so it is not shown either), or open
 --- where a posting one went and no acceptance one has, with acceptance ones
---- going out all the while (neither, after a time they were off). When it runs out only
---- with when it was posted: the lifetime runs from the end of the five
---- minutes it was placed in and is the same for every contract, so the time
---- left gives the posted time back.
+--- going out all the while (neither, after a time they were off). How long is
+--- left only with when it was posted: the band would date a placement no
+--- bulletin dated.
 ---@param contract table
 ---@param job string the job the target is shown under
 ---@param advised table|nil { posted = boolean, accepted = boolean } for a
@@ -828,8 +812,7 @@ local function whitelistedEntry(contract, job, advised)
         postedAt     = posted and (posted - (posted % Util.CLOCK_STEP)) or nil,
         state        = active and (active > 0 and 'taken' or 'open') or nil,
         hitmenActive = active,
-        secondsLeft  = (posted and contract.expires_at)
-            and math.max(0, contract.expires_at - os.time()) or nil,
+        timeLeft     = posted and Util.timeBand(Util.runLeft(contract)) or nil,
     }
 end
 
@@ -997,7 +980,7 @@ end
 --- the viewer.
 Projection.WHITELISTED_KEYS = {
     entry = { targetName = true, targetJob = true, postedAt = true, state = true,
-              hitmenActive = true, secondsLeft = true, tipAdvisedAt = true },
+              hitmenActive = true, timeLeft = true, tipAdvisedAt = true },
     own   = { id = true, bailoutAmount = true, bailoutAvailable = true,
               bailoutPaid = true, bailoutSecondsLeft = true, tippedAt = true },
 }
@@ -1066,8 +1049,8 @@ Projection.ALLOWED_KEYS = {
         fulfilment = true,
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         hitmenActive = true, hitmenMax = true, targetName = true,
-        targetProtected = true, targetProtectedAs = true, deadline = true, secondsLeft = true,
-        clockStopped = true, role = true, onHold = true,
+        targetProtected = true, targetProtectedAs = true, timeLeft = true,
+        role = true, onHold = true,
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },

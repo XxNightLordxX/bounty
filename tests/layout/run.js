@@ -125,7 +125,7 @@ function serverStub() {
     // and its dialog gets measured too.
     copy.slots = 3;
     copy.currentSlot = 1;
-    copy.deadline = Math.floor(Date.now() / 1000) + 7200;
+    copy.timeLeft = 'More than 2 hours left';
     return copy;
   });
   const taken = contracts.slice(3, 5).map(function (c) {
@@ -160,6 +160,9 @@ function serverStub() {
   // On hold by staff (server/freeze.lua): the chip, the clock's words and
   // the notice under the meta, on the most crowded hitman card there is.
   taken[0].onHold = true;
+  // A band, with the on-hold words in front of it (the longest band is
+  // measured on the placer's own cards).
+  taken[0].timeLeft = 'Under 15 minutes left';
   // The placer's informant on that card, with an operative to ask about;
   // and on another, drawn disabled with why under it (every operative there
   // took it under their name), so both are measured at every width.
@@ -194,7 +197,7 @@ function serverStub() {
       hitmenActive: 2, hitmenMax: 5,
       targetName: 'You', role: 'target',
       bailoutAvailable: true, bailoutAmount: 90000,
-      deadline: Math.floor(Date.now() / 1000) + 7200,
+      timeLeft: 'More than 2 hours left',
       // Somebody bought an informant tip on them five minutes ago.
       tippedAt: Math.floor(Date.now() / 1000) - 300,
       // The target's informant: every operative on it, and the placer.
@@ -615,7 +618,12 @@ async function main() {
       return el.textContent === 'On hold';
     })[0];
     const k = chip ? chip.getBoundingClientRect() : null;
+    const clock = Array.prototype.slice.call(card.querySelectorAll('.chip')).filter(function (el) {
+      return el.textContent === 'On hold \u00b7 Under 15 minutes left';
+    })[0];
+    const b = clock ? clock.getBoundingClientRect() : null;
     return {
+      bandInside: !!b && b.left >= c.left - 1 && b.right <= c.right + 1,
       inside: n.left >= c.left - 1 && n.right <= c.right + 1,
       chipInside: !!k && k.left >= c.left - 1 && k.right <= c.right + 1,
       height: n.height,
@@ -627,6 +635,7 @@ async function main() {
     truthy(onHold, 'no on-hold notice drawn on the card');
     truthy(onHold.inside, 'the on-hold notice runs outside its card');
     truthy(onHold.chipInside, 'the On hold chip runs outside its card');
+    truthy(onHold.bandInside, 'the time-left band is missing or runs outside its card');
     truthy(onHold.height >= 16, 'the on-hold notice is ' + onHold.height + 'px tall');
     truthy(onHold.pageScroll <= 0, 'the page scrolls sideways by ' + onHold.pageScroll + 'px');
   });

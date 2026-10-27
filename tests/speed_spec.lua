@@ -121,6 +121,8 @@ describe('the json heartbeat', function()
         local early = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 5000 } } })
         truthy(early)
+        -- Held, so their clocks run: with nobody holding one, it does not.
+        truthy(s.contracts.accept(f.hitman, early.id), 'taken')
         main.tick()
         local stamp = heartbeatOf()
         -- Placed after the last heartbeat, then the process dies 50 seconds
@@ -131,6 +133,8 @@ describe('the json heartbeat', function()
         local late = s.contracts.create(f.creator, { targetCid = 'TARGET02', reason = 'x',
             reward = { baseline = { cash = 5000 } } })
         truthy(late)
+        truthy(s.contracts.accept(f.hitman, late.id), 'taken')
+        main.expire()
         local lateCreated = s.storage.readContract(late.id).created_at
         local earlyDeadline = s.storage.readContract(early.id).deadline_at
         local lateDeadline = s.storage.readContract(late.id).deadline_at
@@ -170,6 +174,7 @@ describe('the json heartbeat', function()
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 5000 } } })
         truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken, so its clock runs')
         main.tick()
         local stamp = heartbeatOf()
         Env.time = Env.time + 40
@@ -220,7 +225,8 @@ local function countingExports()
 end
 
 --- 200 live contracts placed through the front door, by 15 players on 15
---- others, all of them in the city.
+--- others, all of them in the city, each held by one operative (so its
+--- clock runs: with nobody holding it, it does not).
 local function board(s)
     Config.Limits.MaxActiveContractsPerCreator = 10000
     Config.Limits.MaxActiveContractsPerTarget = 10000
@@ -244,6 +250,11 @@ local function board(s)
         if c then made[#made + 1] = c.id end
     end
     eq(#made, 200, 'the board the owner measured')
+    Config.Limits.MaxAcceptedPerHitman = 10000
+    Env.addPlayer({ source = 400, citizenid = 'OPR00001', license = 'license:opr1',
+        cash = 90000000, bank = 90000000 })
+    local operative = s.identity.resolve(400)
+    for _, id in ipairs(made) do truthy(s.contracts.accept(operative, id), 'held') end
     return made
 end
 
@@ -264,7 +275,7 @@ describe('the expiry pass with 200 live contracts', function()
         put()
         truthy(ok, tostring(err))
         local asked = (counts['qbx_core.GetPlayerByCitizenId'] or 0) + (counts['qbx_core.GetPlayer'] or 0)
-        truthy(asked <= 30, ('the first pass after a start asked qbx_core %d times for 30 people '
+        truthy(asked <= 31, ('the first pass after a start asked qbx_core %d times for 31 people '
             .. '(it was 400)'):format(asked))
         for _, id in ipairs(ids) do
             local c = s2.storage.readContract(id)

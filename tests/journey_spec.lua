@@ -763,57 +763,66 @@ describe('a stake on a contract about to run out', function()
             'seventy minutes on a stopped clock is seventy minutes')
     end)
 
+    --- The page is shown only a band of the time left (Util.timeBand), and
+    --- echoes it: a band shorter now than the one it showed is refused.
+    local Util = require('crimson-hitman.shared.util')
+    local function bandOf(s, c) return Util.timeBand(Util.runLeft(s.storage.readContract(c.id))) end
+
     it('refuses when the deadline was brought forward while the page showed it', function()
         local s, f, c = staked(2000)
-        local shown = s.storage.readContract(c.id).deadline_at
+        local shown = bandOf(s, c)
+        eq(shown, 'More than 2 hours left')
 
         truthy(s.contracts.revise(f.creator, c.id,
             { deadlineSeconds = Config.Limits.DefaultDeadlineSeconds // 2 }))
-        local now = s.storage.readContract(c.id).deadline_at
-        truthy(now < shown - 60, 'the fixture must move it forward')
+        local now = bandOf(s, c)
+        eq(now, '1–2 hours left', 'the fixture must move it into a shorter band')
 
         local reply = call('accept', 3, { id = c.id, anonymous = false,
-            penaltyAmount = 2000, deadline = shown })
+            penaltyAmount = 2000, timeLeft = shown })
         falsy(reply.ok, 'the stake forfeits to a deadline the hitman was not shown')
         eq(reply.err, CH.ERR.TERMS_CHANGED)
         nobodyOn(s, c)
 
         ok('accept', 3, { id = c.id, anonymous = false,
-            penaltyAmount = 2000, deadline = now },
+            penaltyAmount = 2000, timeLeft = now },
             'shown the new one, it is taken')
     end)
 
     it('takes it when the deadline moved later instead', function()
         local s, f, c = staked(2000)
-        local shown = s.storage.readContract(c.id).deadline_at
-        s.storage.setDeadline(c.id, nil, shown + 3600)
+        local stored = s.storage.readContract(c.id).deadline_at
+        s.storage.setDeadline(c.id, nil, os.time() + 5000)
+        local shown = bandOf(s, c)
+        s.storage.setDeadline(c.id, nil, stored + 3600)
         ok('accept', 3, { id = c.id, anonymous = false,
-            penaltyAmount = 2000, deadline = shown },
+            penaltyAmount = 2000, timeLeft = shown },
             'more time than the hitman was shown takes nothing from them')
     end)
 
-    it('gives the clock a minute of slack', function()
+    it('takes it when the band is the one shown, wherever inside it the clock is', function()
         local s, _, c = staked(2000)
-        local stored = s.storage.readContract(c.id).deadline_at
+        local shown = bandOf(s, c)
+        s.storage.setDeadline(c.id, nil, os.time() + 7201)
         ok('accept', 3, { id = c.id, anonymous = false,
-            penaltyAmount = 2000, deadline = stored + 60 },
-            'a minute is the clock, not a change of terms')
+            penaltyAmount = 2000, timeLeft = shown },
+            'the same band is the same terms')
     end)
 
-    it('does not check the deadline of a contract with no stake', function()
+    it('does not check the time left of a contract with no stake', function()
         local s, _, c = staked(0)
-        local stored = s.storage.readContract(c.id).deadline_at
-        ok('accept', 3, { id = c.id, anonymous = false, deadline = stored + 7200 },
+        s.storage.setDeadline(c.id, nil, os.time() + 600)
+        ok('accept', 3, { id = c.id, anonymous = false, timeLeft = 'More than 2 hours left' },
             'there is nothing for it to be forfeit to')
     end)
 
-    it('leaves the deadline echo off where the operator turned disclosure off', function()
+    it('leaves the time-left echo off where the operator turned disclosure off', function()
         local s, f, c = staked(2000)
-        local shown = s.storage.readContract(c.id).deadline_at
-        s.storage.setDeadline(c.id, nil, shown - 3600)
+        local shown = bandOf(s, c)
+        s.storage.setDeadline(c.id, nil, os.time() + 5000)
         Config.Penalty.RequireDisclosureOnAccept = false
         local reply = call('accept', 3, { id = c.id, anonymous = false,
-            penaltyAmount = 2000, deadline = shown })
+            penaltyAmount = 2000, timeLeft = shown })
         Config.Penalty.RequireDisclosureOnAccept = true
         truthy(reply.ok, 'the switch turns the echo off for both terms: '
             .. tostring(reply.err))
@@ -826,7 +835,7 @@ describe('a stake on a contract about to run out', function()
         for _, junk in ipairs({ {}, 'soon', '9e999', true, -1e308, 1e308,
                                 '0x7fffffff', 0 / 0 }) do
             local reply = call('accept', 3, { id = c.id, anonymous = false,
-                penaltyAmount = 2000, deadline = junk })
+                penaltyAmount = 2000, deadline = junk, timeLeft = junk })
             truthy(reply, 'no reply to deadline ' .. tostring(junk))
             falsy(tostring(reply.err):find('THREW', 1, true),
                 'deadline ' .. tostring(junk) .. ' threw: ' .. tostring(reply.err))

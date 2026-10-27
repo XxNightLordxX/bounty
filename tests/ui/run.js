@@ -6,6 +6,16 @@
 
 'use strict';
 
+
+/* How long a contract has left, as the server sends it (Util.timeBand):
+   a rough band, never a deadline. */
+function band(seconds) {
+  if (seconds > 7200) { return 'More than 2 hours left'; }
+  if (seconds > 3600) { return '1\u20132 hours left'; }
+  if (seconds > 900) { return 'Under 1 hour left'; }
+  return 'Under 15 minutes left';
+}
+
 const fs = require('fs');
 const path = require('path');
 const { makeDocument } = require('./dom.js');
@@ -2536,7 +2546,7 @@ async function main() {
     const app = placeForm({
       create: function (body) {
         app.body = body;
-        return { ok: true, data: { bailoutAmount: 60000, penaltyAmount: 0, secondsLeft: 10800 } };
+        return { ok: true, data: { bailoutAmount: 60000, penaltyAmount: 0, timeLeft: 'More than 2 hours left' } };
       }
     });
     await settle(); await settle();
@@ -2597,7 +2607,8 @@ async function main() {
       truthy(said.indexOf('Held from you: $60,000 cash') !== -1, said);
       truthy(said.indexOf('Buyout $60,000.') !== -1, said);
       truthy(said.indexOf('moved to the nearest amount') !== -1, said);
-      truthy(said.indexOf('runs out in 3h') !== -1, said);
+      truthy(said.indexOf('has more than 2 hours left') !== -1, said);
+      falsy(/\d+h|\d+ minutes/.test(said.split('Buyout')[1] || ''), 'an exact time: ' + said);
     });
   })();
 
@@ -3988,7 +3999,7 @@ async function main() {
         slots: 1, slotsClaimed: 0, currentSlot: 1,
         hitmenActive: 1, hitmenMax: 5, hitmen: [{ alias: 'Operative #1' }],
         targetName: 'Dana Reyes', role: 'creator',
-        deadline: Math.floor(Date.now() / 1000) + 7200,
+        timeLeft: band(7200),
         placerInformantPicks: [{ pick: OP1, label: 'Operative #1' }],
         placerInformantLeft: 2, placerInformantWait: 0
       }, over || {});
@@ -4339,7 +4350,7 @@ async function main() {
       hitmenActive: 0, hitmenMax: 5,
       targetName: 'Dana Reyes', role: 'creator',
       hitmen: acrossTheWire([]),
-      deadline: Math.floor(Date.now() / 1000) + 7200
+      timeLeft: band(7200)
     }], accepted: [], onMe: [] } };
 
     const app = boot({
@@ -4465,7 +4476,7 @@ async function main() {
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
       reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
       hitmenActive: 0, hitmenMax: 5, targetName: 'Dana Reyes', role: 'creator',
-      deadline: Math.floor(Date.now() / 1000) + 7200
+      timeLeft: band(7200)
     }], accepted: [], onMe: [] } };
 
     const own = boot({
@@ -4518,19 +4529,8 @@ async function main() {
       slots: 1, slotsClaimed: 0, currentSlot: 1,
       hitmenActive: 1, hitmenMax: 5,
       targetName: 'Dana Reyes', role: 'hitman',
-      /* 2h05m, not exactly 2h.
-       *
-       * The assertion below looks for "2h" in what the page draws.
-       * minutesLeft() floors (deadline - now) / 60, so at exactly 7200 a
-       * single second of drift between building this fixture and reading the
-       * screen gives 119 minutes, which durationText writes as "1h 59m" —
-       * and the test failed, once, in a full run. A suite that fails one run
-       * in ten teaches everybody to re-run it, which is how a real failure
-       * gets waved through.
-       *
-       * Five minutes of slack puts the hours component out of reach of any
-       * plausible run time. */
-      deadline: Math.floor(Date.now() / 1000) + 7500
+      // The time left as the server says it: a band, never a deadline.
+      timeLeft: 'More than 2 hours left'
     }], onMe: [] } };
 
     const app = boot({
@@ -4551,7 +4551,7 @@ async function main() {
       // hitman $7,500 for a kill that pays $5,000.
       truthy(text.indexOf('Pays $5,000 (+$2,500 if alive)') !== -1,
         'the reward has to be stated, or "reduce it" is unanswerable: ' + text);
-      truthy(text.indexOf('2h') !== -1,
+      truthy(text.indexOf('more than 2 hours left') !== -1,
         'and the time left, for the same reason: ' + text);
     });
 
@@ -4578,7 +4578,7 @@ async function main() {
       slots: 3, slotsClaimed: 0, currentSlot: 1,
       hitmenActive: 1, hitmenMax: 5,
       targetName: 'Dana Reyes', role: 'hitman',
-      deadline: Math.floor(Date.now() / 1000) + 7200
+      timeLeft: band(7200)
     }], onMe: [] } };
 
     const multi = boot({
@@ -6559,8 +6559,8 @@ async function main() {
   await (async function theStakeOnTheBoard() {
     const STAKED = JSON.parse(JSON.stringify(BOARD));
     STAKED.data.contracts[0].penaltyAmount = 4000;
-    const DEADLINE = Math.floor(Date.now() / 1000) + 5430;
-    STAKED.data.contracts[0].deadline = DEADLINE;
+    const BAND = '1\u20132 hours left';
+    STAKED.data.contracts[0].timeLeft = BAND;
 
     const app = boot({ list: STAKED, mine: MINE, ledger: LEDGER });
     await settle(); await settle();
@@ -6586,7 +6586,7 @@ async function main() {
       // The stake forfeits at the deadline, and nothing on the dialog said
       // when that was.
       const shown = app.view.textContent;
-      truthy(shown.indexOf('It runs out in 1h 30m') !== -1,
+      truthy(shown.indexOf('It has 1\u20132 hours left.') !== -1,
         'the dialog that takes the stake must say when it runs out: ' + shown);
     });
 
@@ -6602,8 +6602,8 @@ async function main() {
       eq(sent[0].body.penaltyAmount, 4000,
         'the acceptance must carry the stake the player was shown: '
         + JSON.stringify(sent[0].body));
-      eq(sent[0].body.deadline, DEADLINE,
-        'and the deadline it is forfeit to, so one brought forward is refused: '
+      eq(sent[0].body.timeLeft, BAND,
+        'and the time left it is forfeit to, so one cut since is refused: '
         + JSON.stringify(sent[0].body));
     });
 
@@ -6665,7 +6665,7 @@ async function main() {
   await (async function tooLittleTimeToStake() {
     const STAKED = JSON.parse(JSON.stringify(BOARD));
     STAKED.data.contracts[0].penaltyAmount = 4000;
-    STAKED.data.contracts[0].deadline = Math.floor(Date.now() / 1000) + 600;
+    STAKED.data.contracts[0].timeLeft = 'Under 15 minutes left';
 
     const app = boot({
       list: STAKED, mine: MINE, ledger: LEDGER,
@@ -6958,7 +6958,7 @@ async function main() {
         slots: 1, slotsClaimed: 0, currentSlot: 1,
         hitmenActive: 1, hitmenMax: 1,
         targetName: 'Dana Reyes', role: 'hitman',
-        deadline: Math.floor(Date.now() / 1000) + 7200
+        timeLeft: band(7200)
       }], onMe: [] } };
     }
 
@@ -7464,7 +7464,7 @@ async function main() {
         slots: 1, slotsClaimed: 0, currentSlot: 1,
         hitmenActive: 0, hitmenMax: 1, hitmen: [],
         targetName: 'Dana Reyes', role: 'creator',
-        deadline: Math.floor(Date.now() / 1000) + 7200
+        timeLeft: band(7200)
       }], accepted: [], onMe: [] } },
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
         minQueryLength: 3, allowBrowseAll: true, reasonMode: 'freetext',
@@ -7516,7 +7516,7 @@ async function main() {
       slots: 1, slotsClaimed: 0, currentSlot: 1,
       hitmenActive: 1, hitmenMax: 1,
       targetName: 'Dana Reyes', role: 'hitman',
-      deadline: Math.floor(Date.now() / 1000) + 7200
+      timeLeft: band(7200)
     }], onMe: [] } };
 
     let progress = { ok: true, data: { elapsed: 4, required: 30 } };
@@ -7586,7 +7586,7 @@ async function main() {
        * remainder, so at exactly 5400 one second of drift between building
        * this and reading the screen gives 89 minutes and "1h 29m". I wrote
        * this test today and it carried the flake it was written beside. */
-      deadline: Math.floor(Date.now() / 1000) + 5430
+      timeLeft: '1\u20132 hours left'
     };
 
     await (async function extendSaysWhereTheDeadlineStands() {
@@ -7599,7 +7599,7 @@ async function main() {
 
       it('says how long is left before asking how much to add', function () {
         const shown = app.view.textContent;
-        truthy(shown.indexOf('1h 30m') !== -1,
+        truthy(shown.indexOf('It currently has 1\u20132 hours left.') !== -1,
           'a creator deciding how much to add has to know what they are '
           + 'adding to, and the app already knew: ' + shown.slice(0, 200));
       });
@@ -7629,7 +7629,7 @@ async function main() {
       });
 
       it('says what the deadline would become', function () {
-        truthy(app.view.textContent.indexOf('would then run out in') !== -1,
+        truthy(app.view.textContent.indexOf('It would then have 30 minutes more') !== -1,
           app.view.textContent);
       });
 
@@ -7826,7 +7826,7 @@ async function main() {
     /* With no deadline, "runs out in no set deadline" — and an option to
        shorten a deadline that does not exist. */
     await (async function noDeadlineReadsRight() {
-      const open = Object.assign({}, own, { role: 'hitman', hitmen: undefined, deadline: undefined });
+      const open = Object.assign({}, own, { role: 'hitman', hitmen: undefined, timeLeft: undefined });
       const app = boot({
         mine: { ok: true, data: { created: [], accepted: [open], onMe: [] } },
         amendments: { ok: true, data: [] }
@@ -7852,12 +7852,11 @@ async function main() {
        that leaves less, so the box stops short of it rather than offering a
        figure that can only be refused. */
     await (async function shortenStopsShortOfTheFloor() {
-      function heldWith(seconds) {
-        return Object.assign({}, own, { role: 'hitman', hitmen: undefined,
-          deadline: Math.floor(Date.now() / 1000) + seconds });
+      function heldWith(band) {
+        return Object.assign({}, own, { role: 'hitman', hitmen: undefined, timeLeft: band });
       }
       const app = boot({
-        mine: { ok: true, data: { created: [], accepted: [heldWith(20 * 60 + 30)], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [heldWith('Under 1 hour left')], onMe: [] } },
         amendments: { ok: true, data: [] }
       });
       await settle(); await settle();
@@ -7867,14 +7866,15 @@ async function main() {
       await settle();
       click(app, 'Shorten the deadline');
       await settle();
-      it('opens on a cut that leaves five minutes, not one', function () {
-        const shown = app.view.textContent;
-        truthy(shown.indexOf('It would then run out in 5 minutes') !== -1,
-          'twenty minutes left, cut by at most fifteen: ' + shown.slice(-300));
+      it('opens on a cut that leaves five minutes of the least its band means', function () {
+        // Under an hour is at least sixteen minutes: cut by at most eleven.
+        const box = app.document.getElementById('dialog-value');
+        eq(String(box.max), '11');
+        eq(Number(box.value), 11);
       });
 
       const tight = boot({
-        mine: { ok: true, data: { created: [], accepted: [heldWith(5 * 60 + 30)], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [heldWith('Under 15 minutes left')], onMe: [] } },
         amendments: { ok: true, data: [] }
       });
       await settle(); await settle();
@@ -7940,7 +7940,7 @@ async function main() {
       slots: 1, slotsClaimed: 0, currentSlot: 1,
       hitmenActive: 1, hitmenMax: 1,
       targetName: 'Dana Reyes', role: 'hitman',
-      deadline: Math.floor(Date.now() / 1000) + 7500
+      timeLeft: band(7500)
     }], onMe: [] } };
 
     await (async function protectedOnTheKillPath() {
@@ -8000,7 +8000,7 @@ async function main() {
         slots: 1, slotsClaimed: 0, currentSlot: 1,
         hitmenActive: 0, hitmenMax: 5, hitmen: [],
         targetName: 'Dana Reyes', role: 'creator',
-        deadline: Math.floor(Date.now() / 1000) + 7500
+        timeLeft: band(7500)
       }], accepted: [], onMe: [] } };
 
       const app = boot({
@@ -8058,7 +8058,7 @@ async function main() {
           slots: 1, slotsClaimed: 0, currentSlot: 1,
           hitmenActive: 1, hitmenMax: 1,
           targetName: 'Dana Reyes', role: 'hitman',
-          deadline: Math.floor(Date.now() / 1000) + 7200
+          timeLeft: band(7200)
         }], onMe: [] } },
         readThread: { ok: true, data: [] },
         threads: { ok: true, data: [] },
@@ -8395,7 +8395,7 @@ async function main() {
         id: 'ct00000009', reason: 'Owes money', mode: 'competitive', state: 'accepted',
         reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
         hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
-        creatorName: 'Vic Marlowe', role: 'creator', deadline: nowSeconds() + 3 * 3600,
+        creatorName: 'Vic Marlowe', role: 'creator', timeLeft: band(3 * 3600),
         penaltyAmount: 0,
         hitmen: [{ alias: 'Operative #1', claims: 0, record: { standing: 'Unproven' } }]
       }, extra || {});
@@ -8578,7 +8578,7 @@ async function main() {
     await (async function editLeavesTheDeadlineAlone() {
       let revised = null;
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
-        deadline: nowSeconds() + 20 * 3600 });
+        timeLeft: band(20 * 3600 )});
       const app = boot({
         list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
@@ -8592,7 +8592,7 @@ async function main() {
       it('opens the deadline empty, saying empty keeps what is left', function () {
         const box = app.document.getElementById('dialog-hours');
         eq(box.value, '');
-        truthy(/keep 20h/.test(box.placeholder), box.placeholder);
+        truthy(/keep it \(more than 2 hours left\)/.test(box.placeholder), box.placeholder);
       });
 
       const reason = app.document.getElementById('dialog-reason');
@@ -8614,7 +8614,7 @@ async function main() {
     await (async function editSetsTheRoundedFigure() {
       let revised = null;
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
-        deadline: nowSeconds() + 10 * 60 });
+        timeLeft: band(10 * 60 )});
       const app = boot({
         list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
@@ -8627,7 +8627,7 @@ async function main() {
       const hours = app.document.getElementById('dialog-hours');
       it('shows no figure Save would ignore, and says exactly how long is left', function () {
         eq(hours.value, '');
-        truthy(/10 min/.test(hours.placeholder), hours.placeholder);
+        truthy(/under 15 minutes left/.test(hours.placeholder), hours.placeholder);
       });
       hours.value = '1'; hours.oninput();
       click(app, 'Save'); await settle();
@@ -8642,7 +8642,7 @@ async function main() {
     await (async function editKeepsThePresetReason() {
       let revised = null;
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
-        reason: 'Snitching', deadline: nowSeconds() + 2 * 3600 });
+        reason: 'Snitching', timeLeft: band(2 * 3600 )});
       const app = boot({
         list: boardWith({ reasonMode: 'preset',
           reasonPresets: ['Unpaid debt', 'Snitching', 'Territory dispute'] }),
@@ -8876,8 +8876,8 @@ async function main() {
        what missing it costs nor that the proposal lapses. */
     await (async function proposalSaysCostAndLapse() {
       const card = placedCard({ role: 'hitman', hitmen: undefined, myAlias: 'Operative #1',
-        mode: 'exclusive', penaltyAmount: 10000, deadline: nowSeconds() + 40 * 60,
-        secondsLeft: 40 * 60 });
+        mode: 'exclusive', penaltyAmount: 10000, timeLeft: band(40 * 60),
+        });
       const app = boot({
         list: boardWith(), ledger: LEDGER,
         mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
@@ -9176,7 +9176,7 @@ async function main() {
           id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
           reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
           hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', role: 'hitman',
-          deadline: Math.floor(Date.now() / 1000) + 7500, buyoutClosesIn: 90 }] } },
+          timeLeft: band(7500), buyoutClosesIn: 90 }] } },
         amendments: { ok: true, data: [] }
       });
       await settle(); await settle(); await settle();
@@ -9467,7 +9467,7 @@ async function main() {
   await (async function cardsShowOnHold() {
     const board = JSON.parse(JSON.stringify(BOARD));
     board.data.contracts[0].onHold = true;
-    board.data.contracts[0].secondsLeft = 5400;
+    board.data.contracts[0].timeLeft = band(5400);
     const mine = { ok: true, data: {
       created: [],
       accepted: [{
@@ -9475,12 +9475,12 @@ async function main() {
         reward: { baseline: 10000 }, slots: 1, currentSlot: 1,
         hitmenActive: 1, hitmenMax: 5, targetName: 'Rico Alvarez', role: 'hitman',
         penaltyAmount: 1000, myAlias: 'Operative #1', myAnonymous: true,
-        secondsLeft: 600, clockStopped: true, onHold: true
+        timeLeft: band(600), clockStopped: true, onHold: true
       }],
       onMe: [{
         id: 'ct00000004', reason: 'Debt', mode: 'exclusive', state: 'accepted',
         reward: { baseline: 2000 }, slots: 1, currentSlot: 1, hitmenActive: 1,
-        targetName: 'Sam Hale', role: 'target', secondsLeft: 1200, onHold: true,
+        targetName: 'Sam Hale', role: 'target', timeLeft: band(1200), onHold: true,
         creatorAnonymous: true
       }]
     } };
@@ -9490,13 +9490,13 @@ async function main() {
       const text = app.view.textContent;
       truthy(text.indexOf('On hold') !== -1, text);
       truthy(text.indexOf('This contract is on hold by staff.') !== -1, text);
-      truthy(text.indexOf('On hold · 1h 30m left') !== -1, text);
+      truthy(text.indexOf('On hold · 1\u20132 hours left') !== -1, text);
     });
     tab(app, 'mine');
     await settle(); await settle();
     const shown = app.view.textContent;
     it('marks the hitman\'s card On hold, the clock standing still', function () {
-      truthy(shown.indexOf('On hold · 10 minutes left') !== -1, shown);
+      truthy(shown.indexOf('On hold · Under 15 minutes left') !== -1, shown);
       truthy(shown.indexOf('This contract is on hold by staff.') !== -1, shown);
       falsy(/frozen|placer|client is/i.test(shown.replace('Clock stopped', '')), 'says which party: ' + shown);
     });
@@ -9509,7 +9509,7 @@ async function main() {
       PageDate.now = function () { return realNow.call(PageDate) + 600000; };
       try {
         ticker.fn();
-        truthy(app.view.textContent.indexOf('On hold · 10 minutes left') !== -1, app.view.textContent);
+        truthy(app.view.textContent.indexOf('On hold · Under 15 minutes left') !== -1, app.view.textContent);
       } finally {
         PageDate.now = realNow;
       }
@@ -9518,7 +9518,7 @@ async function main() {
     await settle(); await settle();
     it('marks the target\'s card On hold too, in the same words', function () {
       const onMe = app.view.textContent;
-      truthy(onMe.indexOf('On hold · 20 minutes left') !== -1, onMe);
+      truthy(onMe.indexOf('On hold · Under 1 hour left') !== -1, onMe);
       truthy(onMe.indexOf('This contract is on hold by staff.') !== -1, onMe);
       falsy(onMe.indexOf('Lapses in') !== -1, 'the target\'s clock counts down on hold: ' + onMe);
     });
@@ -9536,26 +9536,26 @@ async function main() {
      must never say the time has run out on a contract still alive. */
   await (async function cardsShowTheClock() {
     const board = JSON.parse(JSON.stringify(BOARD));
-    board.data.contracts[0].secondsLeft = 5400;
+    board.data.contracts[0].timeLeft = band(5400);
     const mine = { ok: true, data: {
       created: [{
         id: 'ct00000002', reason: 'Debt', mode: 'exclusive', state: 'active',
         reward: { baseline: 0, goods: { items: 1, weapons: 0, labels: ['Gold Bar'] } },
         slots: 3, slotsClaimed: 1, currentSlot: 2, hitmenActive: 0,
         targetName: 'Bo Renn', role: 'creator', creatorAnonymous: true,
-        secondsLeft: 600, clockStopped: true
+        timeLeft: band(600), clockStopped: true
       }],
       accepted: [{
         id: 'ct00000003', reason: 'Debt', mode: 'competitive', state: 'accepted',
         reward: { baseline: 10000 }, slots: 1, currentSlot: 1,
         hitmenActive: 3, hitmenMax: 5, targetName: 'Rico Alvarez', role: 'hitman',
         penaltyAmount: 10000, myAlias: 'Operative #1', myAnonymous: true,
-        secondsLeft: 1200
+        timeLeft: band(1200)
       }, {
         id: 'ct00000004', reason: 'Debt', mode: 'exclusive', state: 'accepted',
         reward: { baseline: 2000 }, slots: 1, currentSlot: 1, hitmenActive: 1,
         targetName: 'Sam Hale', role: 'hitman', penaltyAmount: 500,
-        myAlias: 'Operative #2', myAnonymous: false, secondsLeft: 0,
+        myAlias: 'Operative #2', myAnonymous: false, timeLeft: band(0),
         deadline: Math.floor(Date.now() / 1000) - 3600
       }],
       onMe: []
@@ -9563,23 +9563,25 @@ async function main() {
     const app = boot({ list: board, mine: mine, ledger: LEDGER });
     await settle(); await settle();
 
-    it('shows the time left on a board card', function () {
-      truthy(app.view.textContent.indexOf('1h 30m left') !== -1, app.view.textContent);
+    it('shows the time left on a board card, as a band', function () {
+      truthy(app.view.textContent.indexOf('1\u20132 hours left') !== -1, app.view.textContent);
     });
 
     tab(app, 'mine');
     await settle(); await settle();
     const shown = app.view.textContent;
 
-    it('says a paused clock is stopped rather than counting it down', function () {
-      truthy(shown.indexOf('Clock stopped · 10 minutes left') !== -1, shown);
+    it('never says a clock is stopped, or counts one down', function () {
+      truthy(shown.indexOf('Under 15 minutes left') !== -1, shown);
+      falsy(/Clock stopped|paused|waiting|\d+ minutes left|\dh \d+m/i
+        .test(shown.replace(/Under 15 minutes left/g, '')), shown);
     });
     it('tells a staked hitman their stake is at risk when time is short', function () {
-      truthy(shown.indexOf('20 minutes left · stake at risk') !== -1, shown);
+      truthy(shown.indexOf('Under 1 hour left · stake at risk') !== -1, shown);
     });
     it('never says a live contract is out of time', function () {
       falsy(/out of time/i.test(shown), shown);
-      truthy(shown.indexOf('Due now') !== -1, shown);
+      falsy(shown.indexOf('Due now') !== -1, shown);
     });
     it('says who the hitman is on it, and counts only the others', function () {
       truthy(shown.indexOf('You: Operative #1 · anonymous') !== -1, shown);
@@ -9601,7 +9603,7 @@ async function main() {
     it('keeps the clocks moving while cards are on screen', function () {
       truthy(ticker && !ticker.cleared, 'nothing moves the clocks on');
       ticker.fn();
-      truthy(app.view.textContent.indexOf('Clock stopped · 10 minutes left') !== -1,
+      truthy(app.view.textContent.indexOf('Under 15 minutes left') !== -1,
         app.view.textContent);
     });
 
@@ -9925,7 +9927,7 @@ async function main() {
       const offer = { id: 'ct00000004', reason: 'x', mode: mode, state: 'active',
         reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
         hitmenActive: 0, hitmenMax: 5, targetName: 'Dana Reyes', role: 'public',
-        penaltyAmount: 2000, deadline: Math.floor(Date.now() / 1000) + 3 * 3600 };
+        penaltyAmount: 2000, timeLeft: band(3 * 3600 )};
       const app = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [offer],
           settings: { exclusiveIdleMinutes: 30, exclusiveAttemptMinutes: 120 } } },
         mine: MINE, ledger: LEDGER });
@@ -10001,7 +10003,7 @@ async function main() {
         slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 0, hitmenMax: 5,
         targetName: 'Dana Reyes', targetProtected: false,
         creatorName: 'Vic Marlowe', role: 'public',
-        deadline: Math.floor(Date.now() / 1000) + 7500
+        timeLeft: band(7500)
       };
       if (rule !== undefined) { c.fulfilment = rule; }
       return Object.assign(c, over || {});
@@ -10209,7 +10211,7 @@ async function main() {
         list: list || boardFor(rule),
         create: function (body) {
           app.body = body;
-          return { ok: true, data: Object.assign({ penaltyAmount: 0, secondsLeft: 10800 },
+          return { ok: true, data: Object.assign({ penaltyAmount: 0, timeLeft: band(10800) },
             (more && more.created) || {}) };
         }
       }, more && more.rewardOptions ? { rewardOptions: more.rewardOptions } : {}));
@@ -10630,7 +10632,7 @@ async function main() {
         fulfilment: 'alive', reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0,
         currentSlot: 1, hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes',
         targetProtected: false, role: 'creator', penaltyAmount: 0,
-        deadline: Math.floor(Date.now() / 1000) + 3 * 3600,
+        timeLeft: band(3 * 3600),
         hitmen: [{ alias: 'Operative #1', claims: 0 }]
       }, extra || {});
     }
@@ -10777,7 +10779,7 @@ async function main() {
         fulfilment: 'alive', reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0,
         currentSlot: 1, hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes',
         targetProtected: false, role: 'hitman', penaltyAmount: 0, myAlias: 'Operative #1',
-        creatorAnonymous: true, deadline: Math.floor(Date.now() / 1000) + 3 * 3600,
+        creatorAnonymous: true, timeLeft: band(3 * 3600),
         locationTip: { left: 3 }
       }, extra || {});
     }
@@ -10905,7 +10907,7 @@ async function main() {
         id: 'ct00000089', reason: 'Owes money', mode: 'competitive', state: 'accepted',
         reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 1,
         hitmenMax: 5, targetName: 'You', role: 'target', bailoutAvailable: false,
-        deadline: now + 7200, tippedAt: now - 300 }] } } });
+        timeLeft: band(7200), tippedAt: now - 300 }] } } });
     await settle(); await settle(); await settle();
     tab(target, 'onme');
     await settle(); await settle();
@@ -10921,7 +10923,7 @@ async function main() {
     const view = boot({ list: { ok: false, err: 'blacklisted_job' }, mine: { ok: false, err: 'blacklisted_job' }, ledger: { ok: false, err: 'blacklisted_job' },
       whitelistedView: { ok: true, data: { onYou: [{ id: 'ct00000090', targetName: 'Olive Ward',
         targetJob: 'Police', postedAt: now - 1500, state: 'taken', hitmenActive: 1,
-        secondsLeft: 7200, tippedAt: now - 120 }], settings: { buyouts: true } } } });
+        timeLeft: band(7200), tippedAt: now - 120 }], settings: { buyouts: true } } } });
     await settle(); await settle(); await settle();
     it('target on a whitelisted job: the view says it too', function () {
       const text = view.view.textContent;
@@ -10974,15 +10976,15 @@ async function main() {
     const data = {
       onYou: [{
         id: 'ct00000031', targetName: 'Olive Ward', targetJob: 'Police',
-        postedAt: now - 25 * 60, state: 'open', hitmenActive: 0, secondsLeft: 7200,
+        postedAt: now - 25 * 60, state: 'open', hitmenActive: 0, timeLeft: band(7200),
         bailoutAmount: 15000, bailoutAvailable: true
       }],
       colleagues: [{
         targetName: 'Colin Hart', targetJob: 'SAST', postedAt: now - 3 * 3600,
-        state: 'taken', hitmenActive: 2, secondsLeft: 3000
+        state: 'taken', hitmenActive: 2, timeLeft: band(3000)
       }, {
         targetName: 'Oona Fell', targetJob: 'EMS', postedAt: now - 120,
-        state: 'open', hitmenActive: 0, secondsLeft: 9000
+        state: 'open', hitmenActive: 0, timeLeft: band(9000)
       }],
       settings: { buyouts: true, buyoutDelaySeconds: 120 }
     };
@@ -11041,8 +11043,8 @@ async function main() {
       truthy(text.indexOf('Contracts on whitelisted jobs') !== -1, text);
       ['Olive Ward', 'Police', 'Colin Hart', 'SAST', 'Oona Fell', 'EMS',
        'Taken by 2 hitmen', 'Open — no hitman yet', 'Posted 25 min ago',
-       'Posted 3h ago', 'Posted 2 min ago', 'Lapses within 2h',
-       'Runs out within '].forEach(function (want) {
+       'Posted 3h ago', 'Posted 2 min ago', '1\u20132 hours left',
+       'More than 2 hours left'].forEach(function (want) {
         truthy(text.indexOf(want) !== -1, '"' + want + '" is on screen: ' + text);
       });
       eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 0,
@@ -11228,7 +11230,7 @@ async function main() {
     const quiet = boot({ list: BARRED, mine: BARRED, ledger: BARRED, whitelistedView: jobView({
       colleagues: [{ targetName: 'Colin Hart', targetJob: 'SAST' }],
       onYou: [{ id: 'ct00000031', targetName: 'Olive Ward', postedAt: now - 60, state: 'open',
-        hitmenActive: 0, secondsLeft: 7200 }]
+        hitmenActive: 0, timeLeft: band(7200) }]
     }) });
     await settle(); await settle(); await settle();
     it('draws neither open nor taken where the entry carries no count', function () {
@@ -11698,7 +11700,7 @@ async function main() {
       state: 'accepted', reward: { baseline: 5000 },
       slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 1, hitmenMax: 1,
       targetName: 'Dana Reyes', role: 'hitman', creatorName: 'Vic Marlowe',
-      deadline: Math.floor(Date.now() / 1000) + 7200,
+      timeLeft: band(7200),
       kidnapProgress: { elapsed: 4, required: 30, graceLeft: 3000, graceTotal: 3000, radius: 12 }
     }], onMe: [] } };
     const app = boot({
@@ -11912,7 +11914,7 @@ async function main() {
        reads the board again. */
     const tight = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
     tight.penaltyAmount = 2000;
-    tight.secondsLeft = 600;
+    tight.timeLeft = band(600);
     const windowed = boot({ list: boardWith({ stakeWindowMinutes: 30 }, [tight]),
       mine: MINE, ledger: LEDGER });
     await settle(); await settle();

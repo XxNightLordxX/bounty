@@ -342,6 +342,25 @@ function Bridges.install(modules)
         end
     end)
 
+    -- txAdmin's scheduled restart (its Events Broadcasted documentation):
+    -- server events, which no client can raise. 'scheduledRestart' carries { secondsRemaining,
+    -- translatedMessage } at 30, 15, 10, 5, 4, 3, 2 and 1 minutes before;
+    -- the one inside Config.Restart.PauseBeforeSeconds puts every live
+    -- contract on the restart hold (Freeze.scheduledRestart). A skip ends it:
+    -- 'scheduledRestartSkipped' since txAdmin v8, and the older
+    -- 'skippedNextScheduledRestart' it still sends for now.
+    if modules.freeze then
+        AddEventHandler('txAdmin:events:scheduledRestart', function(data)
+            local ok, err = pcall(modules.freeze.scheduledRestart, data)
+            if not ok then Log.always(('the restart hold could not start: %s'):format(tostring(err))) end
+        end)
+        local function skipped()
+            pcall(modules.freeze.releaseRestart, 'skipped')
+        end
+        AddEventHandler('txAdmin:events:scheduledRestartSkipped', skipped)
+        AddEventHandler('txAdmin:events:skippedNextScheduledRestart', skipped)
+    end
+
     -- A sentence starting or ending moves a contract's clock as a player
     -- arriving or leaving does. qbx_core announces every metadata write on
     -- the server; a local event, so no client can raise it.

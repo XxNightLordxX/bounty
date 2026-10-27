@@ -143,6 +143,8 @@ describe('contract expiry', function()
 
     it('never skips past a deadline that has come due', function()
         local main, modules, f, c = bootWithContract({ deadline_at = Env.time + 30 })
+        -- Held, so its deadline runs: with nobody holding it, it does not.
+        truthy(modules.contracts.accept(f.hitman, c.id), 'taken')
         eq(main.expire(), 0, 'not due yet')
 
         -- The skip is bounded by the earliest deadline, so advancing past it

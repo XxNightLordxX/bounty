@@ -131,7 +131,7 @@ Config.Limits = {
     MaxAcceptedPerHitman                 = 3,       -- live contracts one hitman may hold
     MaxActiveContractsPerTarget          = 2,       -- live contracts on one person
     MaxHitmenPerContract                 = 5,       -- hitmen on one competitive contract
-    DefaultDeadlineSeconds               = 10800,   -- how long a contract runs (paused while a party is away)
+    DefaultDeadlineSeconds               = 10800,   -- run time; runs only with placer, target, operative in
     ContractLifetimeSeconds              = 172800,  -- hard ceiling, pauses included
     TargetCooldownAfterResolveSeconds    = 1800,    -- nobody may target a person again for this long
     SameCreatorSameTargetCooldownSeconds = 7200,    -- the same placer on the same target
@@ -140,6 +140,11 @@ Config.Limits = {
     ExclusiveAttemptWindowSeconds        = 7200,    -- release one who never makes an attempt; 0 = off
     PauseWhileTargetJailed               = true,    -- the deadline stops while the target serves time
     JailZone                             = { x = 1693.3, y = 2569.5, radius = 300 },  -- the prison grounds
+}
+
+Config.Restart = {
+    PauseBeforeSeconds = 1800,  -- pause every contract this long before a txAdmin restart; 0 = off
+    MaxHoldMinutes     = 45,    -- end the pause if the restart has not come by then
 }
 
 Config.Bonus = {
@@ -299,6 +304,7 @@ Config.Advisory = {
     OnCreate          = true,                           -- a bulletin when a contract is placed
     OnAccept          = true,                           -- and when each hitman accepts
     OnLocationTip     = true,                           -- and when a hitman buys an informant tip
+    OnCancel          = true,                           -- and when one on an officer is called off
     WarnCreator       = true,                           -- warn the placer before escrow is taken
     WarnHitman        = true,                           -- warn the hitman before they accept
     FlagListing       = true,                           -- mark the card on the board

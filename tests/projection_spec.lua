@@ -102,26 +102,40 @@ describe('projection', function()
         eq(s.escrow.moneyValue(c.id), 7500)
     end)
 
-    -- The page counts down from this, not from the deadline: deadline_at
-    -- stands still through a pause and is pushed on after it.
-    it('sends the clock as the server reads it, and says when it is stopped', function()
+    -- A rough band from the run time really left, the same to every role,
+    -- and never the deadline, seconds or whether the clock runs: a clock
+    -- players could watch stop told them when somebody logged off.
+    it('sends a band of the run time left, the same to everyone, and nothing exact', function()
         local s, f, c = seeded({ accept = true })
         local now = os.time()
         s.storage.setDeadline(c.id, nil, now + 2400)
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
-        truthy(math.abs(row.secondsLeft - 2400) <= 1, 'running: ' .. tostring(row.secondsLeft))
-        eq(row.clockStopped, false)
+        local function seen(cid) return s.projection.contract(s.storage.readContract(c.id), cid) end
+        eq(seen('HITMAN01').timeLeft, 'Under 1 hour left', 'running, forty minutes')
+        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'PUBLIC01' }) do
+            eq(seen(cid).timeLeft, 'Under 1 hour left', cid .. ' is shown the same band')
+        end
+        for _, key in ipairs({ 'deadline', 'secondsLeft', 'clockStopped', 'paused', 'pausedSince' }) do
+            eq(seen('HITMAN01')[key], nil, key .. ' reached a player')
+            eq(seen('TARGET01')[key], nil, key .. ' reached the target')
+        end
 
+        -- Stopped ten minutes ago with fifty left: the band is the one it
+        -- stopped in, to every role, the target included.
         truthy(s.storage.startPause(c.id, now - 600))
-        row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
-        eq(row.secondsLeft, 3000, 'a stopped clock has what it had when it stopped')
-        eq(row.clockStopped, true)
+        eq(seen('HITMAN01').timeLeft, 'Under 1 hour left', 'stopped where it stood')
+        eq(seen('TARGET01').timeLeft, 'Under 1 hour left', 'the target reads it the same')
+        Env.advance(7200)
+        eq(seen('HITMAN01').timeLeft, 'Under 1 hour left', 'a stopped clock does not move the band')
 
-        -- Never to the target: online and free, a stop there could only be
-        -- a named client logging off.
-        row = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
-        eq(row.clockStopped, nil, 'the target was told the clock had stopped')
-        truthy(math.abs(row.secondsLeft - 2400) <= 1, 'read as running: ' .. tostring(row.secondsLeft))
+        -- Each band at its edges.
+        local Util = require('crimson-hitman.shared.util')
+        eq(Util.timeBand(7201), 'More than 2 hours left')
+        eq(Util.timeBand(7200), '1–2 hours left')
+        eq(Util.timeBand(3601), '1–2 hours left')
+        eq(Util.timeBand(3600), 'Under 1 hour left')
+        eq(Util.timeBand(901), 'Under 1 hour left')
+        eq(Util.timeBand(900), 'Under 15 minutes left')
+        eq(Util.timeBand(0), 'Under 15 minutes left')
     end)
 
     it('does not list a contract to its own target', function()

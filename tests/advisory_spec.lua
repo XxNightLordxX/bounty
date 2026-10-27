@@ -927,3 +927,107 @@ describe('a returning operative after a restart', function()
         resetConfig()
     end)
 end)
+
+describe('a contract on an officer called off', function()
+    local function cancelled(title)
+        local out = {}
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.title) == (title or 'THREAT ADVISORY — CANCELLED') then out[#out + 1] = note end
+        end
+        return out
+    end
+
+    local function placeOn(s, f)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', anonymous = true,
+            reward = { baseline = { cash = 1000 } },
+        })
+        truthy(c, 'placed')
+        Natives.calls.notifications, Natives.calls.dispatch = {}, {}
+        return c
+    end
+
+    it('tells every officer, the officer it was on, and dispatch, naming nobody else', function()
+        local s, f = seeded(leoJob('trooper'))
+        local c = placeOn(s, f)
+        Natives.calls.dispatchCleared = {}
+        local before = #Env.threads
+        truthy(s.contracts.cancel(f.creator, c.id), 'cancelled by its placer')
+        for i = before + 1, #Env.threads do Env.threads[i]() end
+
+        local notes = cancelled()
+        eq(#notes, 3, 'two officers and the targeted one')
+        local toOfficer, toTarget = 0, 0
+        for _, note in ipairs(notes) do
+            if note.content == 'The contract on TROOPER Dana Reyes has been called off.' then
+                toOfficer = toOfficer + 1
+            elseif note.content == 'The contract on you has been called off.' then
+                toTarget = toTarget + 1
+            end
+            for _, leak in ipairs({ 'Vic', 'Marlowe', 'CREATOR1', 'Rook', 'HITMAN01', 'Operative' }) do
+                falsy(tostring(note.content):find(leak, 1, true), 'names ' .. leak .. ': ' .. note.content)
+            end
+        end
+        eq(toOfficer, 2, 'the bulletin, in its words')
+        eq(toTarget, 1, 'and the officer it was on')
+
+        local call
+        for _, entry in ipairs(Natives.calls.dispatch) do
+            if entry.unique_id == 'ch-' .. c.id .. '-cancelled' then call = entry end
+        end
+        truthy(call, 'over sc-dispatch')
+        eq(call.title, 'THREAT ADVISORY — CANCELLED')
+        eq(call.message, 'The contract on TROOPER Dana Reyes has been called off.')
+        for key, value in pairs(call) do
+            if type(value) == 'string' then
+                falsy(value:find('Marlowe', 1, true) or value:find('CREATOR1', 1, true),
+                    'the dispatch payload names the placer in ' .. key)
+            end
+        end
+        local cleared = {}
+        for _, entry in ipairs(Natives.calls.dispatchCleared) do cleared[entry.uid] = true end
+        truthy(cleared['ch-' .. c.id .. '-posted'], 'the earlier calls cleared')
+        falsy(cleared['ch-' .. c.id .. '-cancelled'], 'and not this one')
+
+        -- Off the whitelisted-job view, as any closed contract.
+        local view = s.projection.whitelistedView('OFFICER1', { name = 'police', type = 'leo', onduty = true })
+        eq(#(view.colleagues or {}), 0, 'still listed once called off')
+    end)
+
+    it('goes out for a staff void, which hands the escrow back', function()
+        local s, f = seeded(leoJob('trooper'))
+        local c = placeOn(s, f)
+        truthy(s.contracts.resolve(c.id, CH.STATE.VOIDED, 'CREATOR1', nil, 'voided_by_staff'))
+        eq(#cancelled(), 3, 'a void is a contract called off too')
+    end)
+
+    it('says nothing for a civilian target', function()
+        local s, f = seeded()
+        local c = placeOn(s, f)
+        truthy(s.contracts.cancel(f.creator, c.id))
+        eq(#cancelled(), 0)
+        eq(#Natives.calls.dispatch, 0, 'nor on the MDT')
+    end)
+
+    it('says nothing with Advisory.OnCancel off, or Advisory.Enabled off', function()
+        for _, setting in ipairs({ 'OnCancel', 'Enabled' }) do
+            local s, f = seeded(leoJob('trooper'))
+            local c = placeOn(s, f)
+            Config.Advisory[setting] = false
+            truthy(s.contracts.cancel(f.creator, c.id))
+            eq(#cancelled(), 0, setting .. ' off and a bulletin went')
+            for _, entry in ipairs(Natives.calls.dispatch) do
+                falsy(entry.unique_id == 'ch-' .. c.id .. '-cancelled', setting .. ' off and dispatch was told')
+            end
+            resetConfig()
+        end
+    end)
+
+    it('is not sent for a contract that ran out', function()
+        local s, f = seeded(leoJob('trooper'))
+        local c = placeOn(s, f)
+        s.storage.setDeadline(c.id, nil, os.time() - 1)
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired', { dueAt = os.time() }))
+        eq(#cancelled(), 0, 'an expiry is not a cancellation')
+    end)
+end)

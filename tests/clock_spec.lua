@@ -504,6 +504,8 @@ describe('the expiry pass past a contract the store refuses', function()
         local b = s.contracts.create(s.identity.resolve(19), { targetCid = 'TARGET01', reason = 'y',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
         truthy(a and b, 'two contracts')
+        -- Held, so its clock may run (nobody holding it, it does not).
+        truthy(s.contracts.accept(f.hitman, a.id), 'the first one held')
         -- The first one paused, so the pass ends its pause; the second one
         -- simply overdue.
         local rowA = s.storage.readContract(a.id)
@@ -533,7 +535,7 @@ describe('the expiry pass past a contract the store refuses', function()
 
         truthy(ran, 'the pass did not stop at the first contract: ' .. tostring(err))
         eq(s.storage.readContract(b.id).state, CH.STATE.EXPIRED, 'the second one is expired by the same pass')
-        eq(s.storage.readContract(a.id).state, CH.STATE.ACTIVE, 'the first left as it was')
+        eq(s.storage.readContract(a.id).state, CH.STATE.ACCEPTED, 'the first left as it was')
         local text = said()
         truthy(text:find(('expiry pass: contract %s could not be updated'):format(a.id), 1, true), text)
         truthy(text:find("Out of range value for column 'paused_ms'", 1, true), 'in the store\'s words: ' .. text)
@@ -545,6 +547,7 @@ describe('the expiry pass past a contract the store refuses', function()
         local f = fixture(s)
         local a = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(s.contracts.accept(f.hitman, a.id), 'held, so its clock may run')
         local row = s.storage.readContract(a.id)
         row.paused_since = os.time() - 60
         s.storage.writeContract(row)
@@ -621,6 +624,10 @@ describe('a deadline moved while the expiry pass runs', function()
         main.expire()
         s.storage.liveContracts, s.storage.readContract = live, read
         truthy(revised, 'the revise landed: ' .. tostring(why))
+        -- Its clock runs only once somebody holds it: taken now, and the
+        -- pass that follows starts it, banking the wait.
+        truthy(s.contracts.accept(f.hitman, a.id), 'taken')
+        main.expire()
 
         local due = s.storage.readContract(a.id).deadline_at
         Env.advance(due - os.time() + 2)
@@ -734,6 +741,10 @@ describe('the expiry pass kept in step', function()
         main.markPresenceChanged()
         main.expire()
         truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 300 }))
+        -- Nobody holding it, its clock does not run; taken, the next pass
+        -- starts it.
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken')
+        main.expire()
         local due = s.storage.readContract(c.id).deadline_at
         Env.advance(due - os.time() + 2)
         main.expire()

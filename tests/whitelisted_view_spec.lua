@@ -143,44 +143,48 @@ describe('the whitelisted-job view', function()
         local posted = w.s.storage.readContract(w.colleague.id).created_at
         eq(byName['Colin Hart'].postedAt, posted - (posted % 300),
             'to the five minutes, as every time about a placement is sent')
-        truthy(byName['Colin Hart'].secondsLeft > 0, 'and when it runs out')
+        truthy(w.s.projection and require('crimson-hitman.shared.util').bandRank(byName['Colin Hart'].timeLeft),
+            'and how long is left, as a band: ' .. tostring(byName['Colin Hart'].timeLeft))
+        eq(byName['Colin Hart'].secondsLeft, nil, 'never the seconds')
     end)
 
     --- The deadline stops while a named placer is offline and is moved on
     --- by exactly how long they were away when they come back (the expiry
-    --- pass: Storage.startPause, then Storage.endPause). Read from it, the
-    --- countdown jumped up the second they reconnected, for every officer
-    --- and every colleague's contract: the placer is named, when they came
-    --- back and how long they were gone.
-    it('counts down by wall time alone, with no jump when a named placer comes back', function()
+    --- pass: Storage.startPause, then Storage.endPause). A countdown read
+    --- from it jumped up the second they reconnected, for every officer and
+    --- every colleague's contract. The view sends a band of the run time
+    --- left instead, which neither the pause nor its end moves.
+    it('shows a band that neither a named placer leaving nor coming back moves', function()
         local w = world()
         local function left()
             local data = view()
             local out = {}
-            for _, entry in ipairs(data.colleagues) do out[entry.targetName] = entry.secondsLeft end
-            out.own = data.onYou[1].secondsLeft
+            for _, entry in ipairs(data.colleagues) do out[entry.targetName] = entry.timeLeft end
+            out.own = data.onYou[1].timeLeft
             return out
         end
         local before = left()
-        truthy(before['Colin Hart'] and before['Colin Hart'] > 0, 'a clock to read')
+        truthy(before['Colin Hart'], 'a band to read')
 
         -- CREATOR1 (named) logs off; the expiry pass stops both clocks.
         local since = os.time()
         for _, id in ipairs({ w.colleague.id, w.mine.id }) do
             truthy(w.s.storage.startPause(id, since))
         end
+        local paused = left()
+        eq(paused['Colin Hart'], before['Colin Hart'], 'the moment they left changed nothing')
+        eq(paused.own, before.own, 'on their own entry either')
         Env.advance(600)
+        eq(left()['Colin Hart'], before['Colin Hart'], 'nor ten minutes of it')
         -- Back: the deadline moves on by the 600 s they were away.
         local deadline = w.s.storage.readContract(w.colleague.id).deadline_at
         for _, id in ipairs({ w.colleague.id, w.mine.id }) do
             truthy(w.s.storage.endPause(id, since, 600))
         end
         eq(w.s.storage.readContract(w.colleague.id).deadline_at, deadline + 600, 'the deadline moved')
-        Env.advance(70)
-
         local after = left()
-        eq(before['Colin Hart'] - after['Colin Hart'], 670, 'a colleague\'s clock fell by wall time')
-        eq(before.own - after.own, 670, 'and their own')
+        eq(after['Colin Hart'], before['Colin Hart'], 'nor their coming back')
+        eq(after.own, before.own, 'on their own entry either')
     end)
 
     it('carries no more than the advisory: no placer, hitman, reason, place, photo or reward', function()
@@ -445,7 +449,7 @@ describe('the colleagues\' list', function()
         -- The lifetime runs from the end of the five minutes it was placed
         -- in, and is the same for every contract: the time left gave the
         -- posted time back exactly.
-        eq(entries['Colin Hart'].secondsLeft, nil, 'nor when it runs out, which would say it')
+        eq(entries['Colin Hart'].timeLeft, nil, 'nor how long is left, which would date it roughly')
         falsy(entries['Oona Fell'], 'nobody has taken hers, so nothing was said of it')
     end)
 
@@ -514,7 +518,7 @@ describe('the colleagues\' list', function()
         truthy(entry, 'listed once an acceptance bulletin went out')
         eq(entry.hitmenActive, 1)
         eq(entry.postedAt, nil, 'but not when it was posted')
-        eq(entry.secondsLeft, nil, 'nor when it runs out, which would date it as well')
+        eq(entry.timeLeft, nil, 'nor how long is left, which would date it as well')
     end)
 
     --- V01: and not open either. "No acceptance bulletin since it was
@@ -620,10 +624,11 @@ describe('the colleagues\' list', function()
         for _, entry in ipairs(view(11).colleagues) do
             if entry.targetName == 'Fay Lowe' or (entry.targetName == 'Colin Hart'
                 and entry.hitmenActive == 0) then
-                left[#left + 1] = entry.secondsLeft
+                left[#left + 1] = entry.timeLeft
             end
         end
         eq(#left, 2)
+        truthy(left[1] ~= nil, 'a band each')
         eq(left[1], left[2], 'nor does the time left the view sends tell them apart')
     end)
 end)

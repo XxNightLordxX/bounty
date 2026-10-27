@@ -1674,6 +1674,58 @@ function Notify.tipAdvisory(contract)
     return recipients
 end
 
+--- A contract on a member of a whitelisted job was called off: its placer
+--- cancelled it (on their own, nobody holding it, or by an agreed cancel),
+--- or staff voided it, handing its escrow back. Law enforcement is told on
+--- their phones and over sc-dispatch, and the targeted officer is told
+--- directly. Never who placed it or any operative: the words name only the
+--- target. With Config.Advisory.Enabled and OnCancel on, and nothing for a
+--- civilian target. Sent after the ending has cleared the contract's
+--- earlier dispatch calls (Notify.clearContract).
+---@param contract table
+---@param targetShown boolean|nil whether its target could be shown it yet:
+--- one still inside the wait (Notify.shownToTarget) is not told of it now
+---@return integer recipients
+function Notify.cancelAdvisory(contract, targetShown)
+    if type(contract) ~= 'table' or contract.target_protected ~= true then return 0 end
+    if not Notify.advises('cancel') then return 0 end
+    local rank = contract.target_job and (contract.target_job:upper() .. ' ') or ''
+    local title = 'THREAT ADVISORY — CANCELLED'
+    local content = ('The contract on %s%s has been called off.')
+        :format(rank, tostring(contract.target_name))
+
+    local recipients = 0
+    local online = Identity.online()
+    for i = 1, #online do
+        local actor = online[i]
+        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job) then
+            Notify.toCitizen(actor.cid, title, content, { bypassBudget = true })
+            recipients = recipients + 1
+        end
+    end
+
+    -- The officer it was on, kept for one who is away, as the advisory's
+    -- own word to them is.
+    if targetShown ~= false then
+        tellOrKeep(contract.target_cid, title, 'The contract on you has been called off.',
+            { bypassBudget = true }, contract.id)
+    end
+
+    if Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
+        pcall(function()
+            exports['sc-dispatch']:AddNotification({
+                title = title,
+                message = content,
+                priority = Config.Advisory.DispatchPriority,
+                caller = 'Criminal Intelligence',
+                job_table = dispatchJobs(),
+                unique_id = 'ch-' .. contract.id .. '-cancelled',
+            })
+        end)
+    end
+    return recipients
+end
+
 --- Release a player's notification budget when they disconnect, so the
 --- table cannot grow across a long uptime.
 function Notify.clearPlayer(cid)

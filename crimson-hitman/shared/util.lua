@@ -271,7 +271,55 @@ end
 --- left with when it is brought in (Contracts.bringDeadlineIn).
 Util.CLOCK_STEP = 300
 
---- Whether law enforcement is told at this stage: 'posted' or 'accepted'.
+--- The rough bands every player is shown in place of a deadline, longest
+--- first: `above` is the run time a contract must have more than to be in
+--- it. A countdown players could watch stop would tell them when an
+--- anonymous placer or operative logged off, so nobody but staff is sent the
+--- deadline, the seconds left or whether the clock runs; only this, worked
+--- out from the run time the contract really has left. It moves only while
+--- the clock runs, so nobody logging off or on changes it.
+Util.TIME_BANDS = {
+    { above = 7200, text = 'More than 2 hours left' },
+    { above = 3600, text = '1–2 hours left' },
+    { above = 900,  text = 'Under 1 hour left' },
+    { above = nil,  text = 'Under 15 minutes left' },
+}
+
+--- The run time a contract really has left, in seconds: from its deadline
+--- to now, or to the moment its clock stopped while it is stopped. nil
+--- without a deadline. Staff see this; players see its band (Util.timeBand).
+---@param contract table
+---@param now integer|nil os.time()
+---@return integer|nil
+function Util.runLeft(contract, now)
+    local deadline = contract and tonumber(contract.deadline_at)
+    if not deadline then return nil end
+    return math.max(0, deadline - (tonumber(contract.paused_since) or now or os.time()))
+end
+
+--- The band a run time falls in, and its rank (1 the longest).
+---@param seconds integer|nil
+---@return string|nil text
+---@return integer|nil rank
+function Util.timeBand(seconds)
+    if seconds == nil then return nil, nil end
+    for i, band in ipairs(Util.TIME_BANDS) do
+        if band.above == nil or seconds > band.above then return band.text, i end
+    end
+end
+
+--- The rank of a band's words, or nil for words that are not one.
+---@param text any
+---@return integer|nil
+function Util.bandRank(text)
+    for i, band in ipairs(Util.TIME_BANDS) do
+        if band.text == text then return i end
+    end
+    return nil
+end
+
+--- Whether law enforcement is told at this stage: 'posted', 'accepted',
+--- 'tip' or 'cancel'.
 ---
 --- The one answer to that question, asked by the advisory itself and by the
 --- projection that tells the page. They asked it two ways — the advisory by
@@ -283,7 +331,8 @@ Util.CLOCK_STEP = 300
 function Util.advises(stage)
     local advisory = Config and Config.Advisory
     if type(advisory) ~= 'table' or advisory.Enabled ~= true then return false end
-    local key = (stage == 'posted' and 'OnCreate') or (stage == 'tip' and 'OnLocationTip') or 'OnAccept'
+    local key = (stage == 'posted' and 'OnCreate') or (stage == 'tip' and 'OnLocationTip')
+        or (stage == 'cancel' and 'OnCancel') or 'OnAccept'
     return advisory[key] ~= false
 end
 

@@ -979,7 +979,8 @@ function App.register()
         -- refused rather than charged where it is not the fee now.
         local ok, err, refusal, charged = deps.contracts.accept(actor, payload.id, payload.anonymous,
             { checkDisclosure = true, disclosed = payload.penaltyAmount,
-              shownDeadline = tonumber(payload.deadline), shown = payload.shown })
+              shownBand = type(payload.timeLeft) == 'string' and payload.timeLeft or nil,
+              shown = payload.shown })
         if not ok then return false, err, refusal end
         local contract = deps.storage.readContract(Util.toId(payload.id))
         local reply = deps.projection.contract(contract, actor.cid)

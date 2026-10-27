@@ -250,6 +250,12 @@ local DEFAULTS = {
     Amendments = {
         CancelCooldownSeconds = 300,
     },
+    --- The restart hold (Freeze.scheduledRestart), read on txAdmin's event
+    --- and by the maintenance tick. Checked below.
+    Restart = {
+        PauseBeforeSeconds = 1800,
+        MaxHoldMinutes = 45,
+    },
     --- Read inside the purchase. A missing price is not a free informant;
     --- it is one nobody can buy. A missing chance is the shipped one, not a
     --- look-up that can never find anybody.
@@ -629,6 +635,25 @@ local function validateConfig(quiet)
             warn[#warn + 1] = ('Config.%s.%s is %s; it has to be a whole number from 0 to 100. '
                 .. 'Using %d.'):format(chance[1], chance[2], tostring(value), chance[3])
             block[chance[2]] = chance[3]
+        end
+    end
+
+    -- The restart hold (Freeze.scheduledRestart): how long before a txAdmin
+    -- restart every contract is paused, from 0 (off) to the hour txAdmin's
+    -- first warning cannot come before; and the most it may last when the
+    -- restart never comes, at least a minute. Corrected to the shipped
+    -- figure, and said.
+    for _, bound in ipairs({
+        { 'PauseBeforeSeconds', 0, 3600, 1800 },
+        { 'MaxHoldMinutes', 1, 240, 45 },
+    }) do
+        local block = Config.Restart
+        local value = type(block) == 'table' and block[bound[1]] or nil
+        if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
+            or math.floor(value) ~= value or value < bound[2] or value > bound[3]) then
+            warn[#warn + 1] = ('Config.Restart.%s is %s; it has to be a whole number from %d to %d. '
+                .. 'Using %d.'):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
+            block[bound[1]] = bound[4]
         end
     end
 
@@ -2308,6 +2333,8 @@ function Tick()
     job('audit.flush', modules.audit.flush)
     job('amendments.expire', modules.amendments.expire)
     job('bailout.processQueue', modules.bailout.processQueue)
+    -- A restart hold the restart never came for (Config.Restart.MaxHoldMinutes).
+    if modules.freeze and modules.freeze.restartTick then job('freeze.restartTick', modules.freeze.restartTick) end
     job('escrow.retryWaiting', RetryWaiting)
     if modules.notify.deliverKept then job('notify.deliverKept', DeliverKept) end
     -- Kill photos switched off (Config.Completion.KillPhotos): nothing below
@@ -2393,8 +2420,9 @@ end
 
 --- Close contracts whose deadline has passed.
 ---
---- The completion clock is paused while either party is offline, so logging
---- out cannot run out a hitman's timer and cannot dodge a refund (§7.1). The
+--- The completion clock runs only while the placer, the target and at least
+--- one operative holding it are all in the city (judge), so logging out
+--- cannot run out a hitman's timer and cannot dodge a refund (§7.1). The
 --- absolute lifetime is NOT paused: without that ceiling a contract whose
 --- creator never logs in again would hold its escrow forever.
 ---
@@ -2413,8 +2441,10 @@ end
 local nextDue = 0
 local presenceChanged = true
 
---- Called from the connection bridge. A player arriving or leaving is the
---- only thing besides the clock that can change a contract's pause state.
+--- Called from the connection bridge. A player arriving or leaving is, with
+--- an operative taking a contract up or leaving it (Contracts.onChanged) and
+--- a hold beginning or ending (server/freeze.lua), the only thing besides
+--- the clock that can change a contract's pause state.
 function MarkPresenceChanged()
     presenceChanged = true
 end
@@ -2459,30 +2489,44 @@ local function presentActor(pass, cid)
     return known or nil
 end
 
+--- The operatives holding a contract, as the pass read them: every live
+--- contract's at once (Storage.liveHitmen, one read a pass), or this one's
+--- alone where the store has no such read or the row was read again.
+---@param pass table
+---@param contract table
+---@param fresh boolean|nil read this contract's again
+---@return table[]
+local function operativesOf(pass, contract, fresh)
+    if not fresh and pass.hitmen then return pass.hitmen[contract.id] or {} end
+    return Storage.readHitmen(contract.id) or {}
+end
+
 --- What the pass makes of one contract: whether its lifetime is up, who is
 --- here, and whether its clock stops. Asked of the row the list gave first,
 --- and again of the row read back when there is something to do.
----@return table { lifetime, targetActor, overdue, jailed, targetAvailable, paused }
-local function judge(contract, now, pass)
-    -- An anonymous creator's presence is not asked (§14.32).
-    -- Pausing for it moved the deadline on by exactly how long
-    -- they were away, and every viewer is sent the deadline:
-    -- their session, to the minute. The hitman loses nothing by
-    -- it. A kill needs only the target, and a handover to a
-    -- creator nobody can locate is as easily avoided by one who
-    -- is online and elsewhere as by one who has logged off.
-    local creatorOnline = contract.anon_creator == true
-        or presentActor(pass, contract.creator_cid) ~= nil
+---
+--- The deadline runs only while all three are in the city: the placer,
+--- named or anonymous; the target, out of prison (PauseWhileTargetJailed);
+--- and at least one operative holding it, one being enough however many a
+--- competitive contract has. With nobody holding it yet, it does not run.
+--- Nobody but staff is told whether it is running (Projection: timeLeft is
+--- a rough band, and it moves only while the clock does), so asking an
+--- anonymous placer's or operative's presence gives nothing away (§14.32),
+--- where a deadline every viewer was sent used to move on by exactly how
+--- long they had been away.
+---@param fresh boolean|nil the row was read again: read its operatives again too
+---@return table { lifetime, targetActor, overdue, jailed, targetAvailable, operativeIn, paused }
+local function judge(contract, now, pass, fresh)
+    local creatorOnline = presentActor(pass, contract.creator_cid) ~= nil
     local targetActor = presentActor(pass, contract.target_cid)
     -- Whether the deadline has gone while the clock ran, asked before any
     -- pause. Once it has, nobody leaving or being jailed now stops the
     -- clock: a pause begun after the deadline turned an expiry into one
     -- the lifetime ended, which hands the hitman back a stake they had
-    -- already lost, and left them on a card saying Due now with nothing
-    -- they could do on it. Either order on its own — the expiry first,
-    -- or the party gone with the deadline still to come and then passed
-    -- — forfeits; the seconds between the deadline and this pass must
-    -- too.
+    -- already lost, and left them on a card with nothing they could do on
+    -- it. Either order on its own — the expiry first, or the party gone
+    -- with the deadline still to come and then passed — forfeits; the
+    -- seconds between the deadline and this pass must too.
     local overdue = not contract.paused_since
         and contract.deadline_at ~= nil and now > contract.deadline_at
     -- A target in prison is as far out of reach as one who has
@@ -2491,11 +2535,23 @@ local function judge(contract, now, pass)
     local jailed = Config.Limits.PauseWhileTargetJailed and targetActor ~= nil
         and not overdue and modules.identity.isJailed(targetActor)
     local targetAvailable = targetActor ~= nil and not jailed
+    -- One operative holding it and in the city is enough. Asked only when
+    -- the other two are here: nothing else needs it.
+    local operativeIn = false
+    if creatorOnline and targetAvailable then
+        local hitmen = operativesOf(pass, contract, fresh)
+        for i = 1, #hitmen do
+            if hitmen[i].state == 'active' and presentActor(pass, hitmen[i].hitman_cid) ~= nil then
+                operativeIn = true
+                break
+            end
+        end
+    end
     return {
         lifetime = contract.expires_at ~= nil and now > contract.expires_at,
         targetActor = targetActor, overdue = overdue, jailed = jailed,
-        targetAvailable = targetAvailable,
-        paused = not overdue and not (creatorOnline and targetAvailable),
+        targetAvailable = targetAvailable, operativeIn = operativeIn,
+        paused = not overdue and not (creatorOnline and targetAvailable and operativeIn),
     }
 end
 
@@ -2506,6 +2562,21 @@ local function acts(contract, verdict, now)
     if verdict.paused then return not contract.paused_since end
     return contract.paused_since ~= nil
         or (contract.deadline_at ~= nil and now > contract.deadline_at)
+end
+
+--- Whether a contract's deadline may run now, as the expiry pass would
+--- judge it: everybody in the city and no hold on it. Asked by an unfreeze
+--- (Freeze.clockMayRun), which banks a hold's pause itself only where
+--- nothing else would keep it stopped.
+---@param contract table
+---@return boolean
+function ContractClockMayRun(contract)
+    if not (modules and modules.identity and contract) then return true end
+    if modules.freeze and (modules.freeze.restartHeld() or modules.freeze.holds(contract)) then
+        return false
+    end
+    local verdict = judge(contract, os.time(), { actors = {} }, true)
+    return not verdict.paused
 end
 
 --- One live contract's turn in the expiry pass. `pass` carries what the
@@ -2527,7 +2598,15 @@ local function expireOne(contract, now, pass)
     -- time on hold when it is released. One whose deadline had already gone
     -- with the clock running stays as late as it was, and ends once it is
     -- released.
-    if modules.freeze and modules.freeze.holds(contract) then
+    --
+    -- The restart hold the same way (Freeze.scheduledRestart): every live
+    -- contract for the last half hour before a scheduled restart, nothing
+    -- ending it, its lifetime included, until the restart or its release.
+    -- Neither hold ends the other, nor a pause for somebody's absence: each
+    -- only makes sure the clock is stopped, and it runs again only on a
+    -- pass that finds nothing at all stopping it, below.
+    if (modules.freeze and modules.freeze.holds(contract))
+        or (modules.freeze and modules.freeze.restartHeld()) then
         if not contract.paused_since and not verdict.overdue
             and Storage.startPause(contract.id, now) then
             contract.paused_since = now
@@ -2551,7 +2630,7 @@ local function expireOne(contract, now, pass)
     if acts(contract, verdict, now) then
         contract = Storage.readContract(contract.id) or contract
         if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return end
-        verdict = judge(contract, now, pass)
+        verdict = judge(contract, now, pass, true)
     end
 
     -- A due contract whose ending was refused (a claim running on it, a
@@ -2675,6 +2754,13 @@ function ExpireContracts()
     -- pulled in by every live contract's deadline.
     local pass = { resolved = 0, soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600),
                    actors = {} }
+    -- Every live contract's operatives in one read, for whether one of
+    -- them is in the city (judge). A read that raised is not a reason to
+    -- stop the pass: each contract reads its own instead.
+    if Storage.liveHitmen then
+        local okHitmen, hitmen = pcall(Storage.liveHitmen)
+        if okHitmen and type(hitmen) == 'table' then pass.hitmen = hitmen end
+    end
 
     for i = 1, #contracts do
         local ok, err = pcall(expireOne, contracts[i], now, pass)

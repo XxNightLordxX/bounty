@@ -21,6 +21,12 @@
 --- the store (crimson_freezes on mysql, records.json on json), so it holds
 --- across a restart.
 ---
+--- The restart hold lives here too: every live contract held for the last
+--- half hour before a scheduled txAdmin restart (Freeze.scheduledRestart).
+--- It reuses the same pause, and no hold ends another's: a contract's clock
+--- runs again only once no staff freeze, no restart hold and nobody's
+--- absence still stops it (the expiry pass in server/main.lua decides).
+---
 --- Anonymity: nothing here says which party is frozen. The frozen player is
 --- told their contracts are on hold; every other party of each contract is
 --- told that contract is, in the same words whoever caused it; a card says
@@ -35,6 +41,9 @@ local Storage, Audit, Notify, Kidnap
 
 local frozen = {}   -- [cid] = { cid, name, reason, by_cid, frozen_at }
 local count = 0
+--- The restart hold now, or nil: { since }. Kept in memory only, so
+--- the resource starting again after the restart is what ends it.
+local restartHold = nil
 
 --- What players are told. Plain, and never which party.
 Freeze.TEXT = {
@@ -54,6 +63,8 @@ local REASON_MAX = 120
 ---@param deps table { storage, audit, notify, kidnap }
 function Freeze.init(deps)
     Storage, Audit, Notify, Kidnap = deps.storage, deps.audit, deps.notify, deps.kidnap
+    -- A restart hold ends with the restart: this start is it.
+    restartHold = nil
     Freeze.reload()
 end
 
@@ -288,8 +299,14 @@ function Freeze.unfreeze(staffCid, cid, reason)
                 { expires_at = (tonumber(contract.expires_at) or now) + back })
         end
         if not others then
+            -- Banked now only where nothing else stops it: not while the
+            -- restart hold is on, and not while a party is away (the expiry
+            -- pass's own judgement). Either keeps the pause going, and the
+            -- pass banks all of it when the last one ends.
             local since = contract.paused_since
-            if since then pcall(Storage.endPause, contract.id, since, math.max(0, now - since)) end
+            if since and Freeze.clockMayRun(contract) then
+                pcall(Storage.endPause, contract.id, since, math.max(0, now - since))
+            end
             released[#released + 1] = contract
         end
     end
@@ -304,6 +321,110 @@ function Freeze.unfreeze(staffCid, cid, reason)
     if type(MarkPresenceChanged) == 'function' then MarkPresenceChanged() end
     if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
     return true
+end
+
+--------------------------------------------------------------------------
+-- The restart hold
+--------------------------------------------------------------------------
+
+--- What every player with a live contract is told, once.
+Freeze.TEXT.restartTitle = 'Server restart'
+Freeze.TEXT.restart = 'Contracts are paused until the server restart.'
+
+--- Whether the deadline of a contract no freeze holds may run again now:
+--- asked of the expiry pass's own judgement (ContractClockMayRun, in
+--- server/main.lua), and never while the restart hold is on.
+---@param contract table
+---@return boolean
+function Freeze.clockMayRun(contract)
+    if Freeze.restartHeld() then return false end
+    if type(ContractClockMayRun) ~= 'function' then return true end
+    local ok, may = pcall(ContractClockMayRun, contract)
+    return not ok or may ~= false
+end
+
+--- Whether the restart hold is on. Not once Config.Restart.MaxHoldMinutes
+--- has passed, even before the tick has released it.
+---@return boolean
+function Freeze.restartHeld()
+    return restartHold ~= nil and os.time() < Freeze.restartHoldEnds()
+end
+
+--- When the restart hold ends if the restart has not come: its start and
+--- Config.Restart.MaxHoldMinutes as it is set now. nil with no hold.
+---@return integer|nil
+function Freeze.restartHoldEnds()
+    if not restartHold then return nil end
+    local minutes = math.max(1, tonumber(Config.Restart and Config.Restart.MaxHoldMinutes) or 45)
+    return restartHold.since + minutes * 60
+end
+
+--- txAdmin's 'txAdmin:events:scheduledRestart' ({ secondsRemaining }), sent
+--- 30, 15, 10, 5, 4, 3, 2 and 1 minutes before a scheduled restart. The
+--- first one inside Config.Restart.PauseBeforeSeconds starts the hold on
+--- every live contract: its deadline stops (the pause every contract has),
+--- and nothing ends it, pays out a queued buyout or finishes a handover
+--- until the hold ends. The ones after it change nothing.
+---@param data table|nil
+---@return boolean started
+function Freeze.scheduledRestart(data)
+    local seconds = type(data) == 'table' and tonumber(data.secondsRemaining) or nil
+    if not seconds then return false end
+    local within = tonumber(Config.Restart and Config.Restart.PauseBeforeSeconds) or 0
+    if within <= 0 or seconds > within then return false end
+    if Freeze.restartHeld() then return false end
+
+    local now = os.time()
+    restartHold = { since = now }
+    local hold = Freeze.restartHoldEnds() - now
+
+    local told = {}
+    local live = Storage.liveContracts() or {}
+    for i = 1, #live do
+        local contract = live[i]
+        if LIVE[contract.state] then
+            local overdue = not contract.paused_since and contract.deadline_at ~= nil
+                and now > contract.deadline_at
+            if not contract.paused_since and not overdue then
+                pcall(Storage.startPause, contract.id, now)
+            end
+            told[contract.creator_cid or false] = true
+            if Notify.shownToTarget(contract) then told[contract.target_cid or false] = true end
+            for _, hitman in ipairs(Storage.readHitmen(contract.id) or {}) do
+                if hitman.state == 'active' then told[hitman.hitman_cid] = true end
+            end
+        end
+    end
+    told[false] = nil
+    for cid in pairs(told) do
+        Notify.toCitizen(cid, Freeze.TEXT.restartTitle, Freeze.TEXT.restart, { bypassBudget = true })
+        Notify.push(cid, 'hold')
+    end
+    Log.always(('a scheduled restart is %d second(s) away: every live contract is paused until '
+        .. 'the restart, for at most %d minute(s)'):format(seconds, hold // 60))
+    if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
+    return true
+end
+
+--- End the restart hold without a restart: txAdmin's skip, or
+--- Config.Restart.MaxHoldMinutes passing. The next expiry pass lets every
+--- clock nothing else stops run again, banking the time on hold.
+---@param why string 'skipped' | 'max_hold'
+---@return boolean released
+function Freeze.releaseRestart(why)
+    if not restartHold then return false end
+    restartHold = nil
+    Log.always(('the restart hold on contracts has ended (%s): their clocks run again where '
+        .. 'nothing else stops them'):format(tostring(why)))
+    if type(MarkPresenceChanged) == 'function' then MarkPresenceChanged() end
+    if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
+    return true
+end
+
+--- From the maintenance tick: a hold the restart never came for ends at
+--- Config.Restart.MaxHoldMinutes.
+function Freeze.restartTick()
+    if restartHold and os.time() >= Freeze.restartHoldEnds() then Freeze.releaseRestart('max_hold') end
 end
 
 return Freeze

@@ -960,7 +960,9 @@ function Bailout.processQueue()
         local contract = pending[i]
         -- One paid before the contract went on hold waits for its release
         -- (server/freeze.lua): nothing on it settles meanwhile.
-        local held = Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract)
+        -- And none while every contract is on the restart hold.
+        local held = Contracts and Contracts.heldByStaff and (Contracts.heldByStaff(contract)
+            or (Contracts.restartHeld and Contracts.restartHeld()))
         if not held and os.time() - contract.bailout_queued_at >= Config.Bailout.ProcessingDelaySeconds then
             local ran, ok = pcall(Bailout.settle, contract.id, contract.bailout_paid_amount,
                 contract.bailout_paid_by, contract.bailout_paid_account, { retryable = true })

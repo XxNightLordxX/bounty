@@ -301,6 +301,9 @@ CH.ERR = {
     --- player placing or taking a contract, and a contract placed on one.
     --- Never says which party: to the player it is only "on hold by staff".
     CONTRACT_FROZEN      = 'contract_frozen',
+    --- Every contract is on the restart hold, the last half hour before a
+    --- scheduled restart (server/freeze.lua): a handover is not armed.
+    RESTART_HOLD         = 'restart_hold',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

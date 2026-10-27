@@ -11,6 +11,22 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **The clock runs only with everyone in**: a contract's deadline counts
+  down only while its placer (named or anonymous), its target (out of
+  prison) and at least one operative holding it are all in the city. With
+  nobody holding it yet, it does not run. The board lifetime
+  (`Config.Limits.ContractLifetimeSeconds`) is separate and unchanged.
+- **No visible countdown**: players never see a deadline, a countdown or a
+  stopped clock, which told them when an anonymous placer or operative
+  logged off. Every card, notice and the whitelisted-job view show a rough
+  band instead: *More than 2 hours left*, *1–2 hours left*, *Under 1 hour
+  left*, *Under 15 minutes left*. Staff still see the exact times.
+- **Paused before a restart** (`Config.Restart`): every live contract is
+  paused for the last half hour before a scheduled txAdmin restart, with one
+  notice, until the server is back (or the restart is skipped, or 45 minutes
+  pass).
+- **Cancelled officer contracts** (`Config.Advisory.OnCancel`): law
+  enforcement is told when a contract on one of them is called off.
 - **Staff freeze**: from **Players** in the admin panel, staff with
   `crimson.admin` can freeze a player for a staff situation or an RP dispute.
   Every live contract they are party to (as the target, the placer or an
@@ -554,8 +570,10 @@ moment the contract is placed until it ends.
 | `Config.Limits.MaxAcceptedPerHitman` | `3` | Live contracts one hitman may hold. |
 | `Config.Limits.MaxActiveContractsPerTarget` | `2` | Live contracts on one person, and one player (on any character) may place only one of them. While the target is in the city, a contract nobody holds whose named client is away does not count. |
 | `Config.Limits.MaxHitmenPerContract` | `5` | Hitmen on one competitive contract. |
-| `Config.Limits.DefaultDeadlineSeconds` | `10800` | How long a contract runs before it expires, unless the client extends it. Paused while either party is offline (an anonymous creator's presence is not asked) or the target is in prison, and moved on by the pause. A kill made before it and still waiting to be verified, or a handover armed before it and still counting, holds the expiry off until it finishes, for at most two `PhotoTokenLifetimeSeconds`. |
-| `Config.Limits.ContractLifetimeSeconds` | `172800` | The absolute ceiling, pauses included, from the end of the five minutes a contract is placed in. Reaching it while the deadline still has time on it hands the hitman's stake back. |
+| `Config.Limits.DefaultDeadlineSeconds` | `10800` | How long a contract runs before it expires, unless the client extends it. It counts down only while all three are in the city: the placer (named or anonymous), the target (out of prison) and at least one operative holding it (one is enough on a competitive contract). With nobody holding it yet, it does not run; it is moved on by every pause. Once it has gone with the clock running, nobody leaving stops it. Players never see it: every card shows a rough band of the run time left (*More than 2 hours left*, *1–2 hours left*, *Under 1 hour left*, *Under 15 minutes left*), which moves only while the clock runs; staff see the exact times in the admin panel. A kill made before it and still waiting to be verified, or a handover armed before it and still counting, holds the expiry off until it finishes, for at most two `PhotoTokenLifetimeSeconds`. |
+| `Config.Limits.ContractLifetimeSeconds` | `172800` | The absolute ceiling, pauses included, from the end of the five minutes a contract is placed in. Separate from the deadline above: it keeps running whoever is away, and is what ends a contract left on the board with nobody holding it. Reaching it while the deadline still has time on it hands the hitman's stake back. |
+| `Config.Restart.PauseBeforeSeconds` | `1800` | Every live contract is paused from the first txAdmin restart warning (`txAdmin:events:scheduledRestart`, sent 30, 15, 10, 5, 4, 3, 2 and 1 minutes before) with at most this many seconds to go: deadlines stop, and nothing expires (the lifetime included), no queued buyout pays out and no handover finishes or is armed until the server is back. Players get one notice, *Contracts are paused until the server restart.* The pause ends when the resource starts again; the time it lasted is added back to every deadline. `0` turns it off; 0 to 3600. |
+| `Config.Restart.MaxHoldMinutes` | `45` | The pause ends anyway when the restart has not come this long after it began, or at once when staff skip it in txAdmin (`txAdmin:events:scheduledRestartSkipped`, or the older `skippedNextScheduledRestart`). A pause never ends another: a contract on hold by staff, or with a party away, stays stopped. 1 to 240. |
 | `Config.Limits.TargetCooldownAfterResolveSeconds` | `1800` | How long nobody may place a contract on a person after one on them closes; not after one nobody took up that was withdrawn or ran out (that cost the target nothing). |
 | `Config.Limits.SameCreatorSameTargetCooldownSeconds` | `7200` | How long the same placer, on any character, waits before placing on the same target again. |
 | `Config.Limits.SlotCooldownSeconds` | `600` | The same hitman may not claim two payouts on one contract inside this window. |
@@ -666,6 +684,7 @@ the anonymous messages and calls between the parties.
 | `Config.Advisory.AlwaysAlertTarget` | `true` | The targeted officer is always told, whatever `ParanoidAlert` says: *Your department has been advised* where their job receives the advisory, *Law enforcement has been advised* otherwise. Kept for their next login. Off, they are told as anybody else is. |
 | `Config.Advisory.OnCreate` / `OnAccept` | `true` / `true` | A bulletin when the contract is posted, and one when each hitman accepts, carrying the running count (one who walks away and comes back raises no second). What each bulletin said is kept on the contract, and that is what the whitelisted-job view shows. |
 | `Config.Advisory.OnLocationTip` | `true` | When a hitman buys an informant tip (`Config.LocationTip`) on a member of a whitelisted job, law enforcement is told on their phones and over sc-dispatch: *A hitman has been tipped off about <target>'s location and is closing in.* Never which hitman, never the area or any position, and nothing for a civilian target. The targeted officer is not sent it, as the tip's own notice has told them. Colleagues' entries on the whitelisted-job view say *A hitman has a tip on their location*, with when. Needs `Advisory.Enabled`. |
+| `Config.Advisory.OnCancel` | `true` | When a contract on a member of a whitelisted job is cancelled by its placer (on their own, or by an agreed cancel) or voided by staff with its escrow handed back, law enforcement is told on their phones and over sc-dispatch: *THREAT ADVISORY — CANCELLED: The contract on <RANK> <target name> has been called off.* The targeted officer is told *The contract on you has been called off.* Never the placer or any operative. The contract's earlier dispatch calls are cleared first, and the whitelisted-job view stops listing it. Needs `Advisory.Enabled`. |
 | `Config.Advisory.WarnCreator` / `WarnHitman` | `true` / `true` | Warn the placer before escrow is taken, and the hitman before they accept, that the target holds a protected job, by its kind (law enforcement, emergency services, legal). A target who took one after being picked is refused until the placer has seen the warning. |
 | `Config.Advisory.FlagListing` | `true` | Mark the board card itself (its chip, its notice and its styling). |
 | `Config.Relay.Enabled` | `true` | Anonymous messages between the parties of a contract. |
@@ -930,10 +949,10 @@ hitman always takes the contract as it reads.
 **Taking one.** Accept from the board, anonymously if you like. More hitmen
 may accept than there are payouts; the first to fulfil are paid. If the
 contract carries a stake, you put it up when you accept — walk away and the
-person who placed it keeps it. The accept dialog says how long is left, and a staked
+person who placed it keeps it. The accept dialog says how long is left, as its band, and a staked
 contract with less than `Config.Penalty.MinWindowMinutes` to go cannot be
-taken; if the stake or the deadline changed while you were looking at it, the
-acceptance is refused and the board refreshes rather than taking a stake on
+taken; if the stake changed, or the band is shorter than the one you were
+shown, the acceptance is refused and the board refreshes rather than taking a stake on
 terms you were not shown. You can take it up again later, staking again; the wait
 between payouts on one contract (`Config.Limits.SlotCooldownSeconds`) carries
 over, so walking away is not a way round it. An exclusive contract you walked
@@ -957,9 +976,13 @@ idlest operative is taken off it, stake and all, and the place opens; one with
 room is left alone. The accept dialog names both windows and says where the
 stake goes, and so does your card under Mine while you hold it. The notice of
 a release waits for a hitman who was away, and names a stake only where there
-was one. The deadline pauses the same way. Both follow the target alone when the client is anonymous, because
-a clock that stops while they are away tells everyone watching it when they
-logged off. A target serving a prison sentence counts as away too, so the
+was one. The idle clocks follow the target alone when the client is
+anonymous. The deadline runs only while the placer (named or anonymous), the
+target and at least one operative holding it are all in the city, and not at
+all while nobody holds it. Nobody is shown it, only a rough band of the run
+time left (*More than 2 hours left*, *1–2 hours left*, *Under 1 hour left*,
+*Under 15 minutes left*) that moves only while it runs, so nothing on any
+card changes when somebody logs off. A target serving a prison sentence counts as away too, so the
 deadline stops for the sentence and moves on by the time served, and an
 exclusive hold is not released for idleness meanwhile
 (`Config.Limits.PauseWhileTargetJailed`). "In prison" means an `injail`
@@ -1364,15 +1387,11 @@ bulletin went and no acceptance one has since, with acceptance bulletins going
 out all the while: a contract live while they were off (switched off in the
 admin panel, or off at a start) is shown neither open nor taken until an
 acceptance bulletin gives its count. And, beside when it was posted
-and only there, when it runs out at the latest (*Runs out within 47h*). With
-only acceptance bulletins going out, a contract is listed once one has, with
-neither. When it runs out is the contract's lifetime
-(`Config.Limits.ContractLifetimeSeconds`, counted from the end of the five
-minutes it was placed in, so it dates the placement no more finely than when
-it was posted does, and is left out with it, since the two give each other
-back), which no one's presence moves: the hitmen's deadline stops while a
-named placer is offline and jumps on when they come back, so a countdown read
-from it would tell every officer when the placer reconnected. Never who
+and only there, how long it has left, as the rough band every card shows
+(*1–2 hours left*), read from the run time it really has: nobody's leaving or
+coming back moves it, and it is left out with when it was posted, since it
+would date the placement. With only acceptance bulletins going out, a
+contract is listed once one has, with neither. Never who
 placed it (named or anonymous), any hitman, the
 reason, a location, a photo or headshot, or the reward. A contract on anybody else is never shown or counted. Like On me, a
 new contract appears once its target may be shown it (their alert's wait, or
@@ -1930,8 +1949,13 @@ target, the placer or an active operative of is **on hold**:
 The frozen player's phone says *Staff have put your contracts on hold.* (and
 *Your contracts are no longer on hold.*); every other party of each contract
 is told *This contract is on hold by staff.* and its release, the same words
-whoever caused it, and their card says **On hold** with no reason. Nothing
-says which party is frozen. In the panel, the overview counts frozen players,
+whoever caused it, and their card says **On hold** with no reason, beside the
+band of time left where its clock stopped. Nothing says which party is frozen.
+A freeze, the restart pause (`Config.Restart`) and a party being away each
+stop the deadline on their own, and ending one never starts a clock another
+still stops: an unfreeze with the restart pause on, or with a party away,
+leaves the contract stopped, and the expiry pass starts it, the whole pause
+added back, once nothing stops it. In the panel, the overview counts frozen players,
 and a contract on hold carries a **Frozen** badge in Contracts and on the
 player's lookup; without `crimson.identity`, a contract held only through an
 anonymous party carries none, so the badge never says that the player you

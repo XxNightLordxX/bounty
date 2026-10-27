@@ -152,10 +152,13 @@ describe('a freeze stops both clocks, and gives the time back to the second', fu
         main.tick()
         eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'expired while on hold')
         eq(snapshot(s, { c.id }), before, 'something moved while on hold')
-        eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').secondsLeft, deadlineLeft,
-            'the hitman\'s clock ran on while on hold')
-        eq(s.projection.contract(s.storage.readContract(c.id), 'TARGET01').secondsLeft, deadlineLeft,
-            'the target\'s clock ran on while on hold')
+        local Util = require('crimson-hitman.shared.util')
+        eq(Util.runLeft(s.storage.readContract(c.id)), deadlineLeft, 'the clock ran on while on hold')
+        local band = Util.timeBand(deadlineLeft)
+        eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').timeLeft, band,
+            'the hitman\'s band moved while on hold')
+        eq(s.projection.contract(s.storage.readContract(c.id), 'TARGET01').timeLeft, band,
+            'the target\'s band moved while on hold')
 
         reply = ask(6, 'unfreeze', { subject = 2, reason = 'sorted' })
         truthy(reply and reply.ok, 'unfrozen: ' .. tostring(reply and reply.message))
@@ -351,13 +354,16 @@ describe('nobody is told which party is frozen', function()
         eq(hitmanView.onHold, true, 'the operative\'s card does not say On hold')
         eq(targetView.onHold, true, 'the target\'s card does not say On hold')
         eq(targetView.clockStopped, nil, 'the target\'s card says the clock stopped')
+        eq(hitmanView.clockStopped, nil, 'the operative\'s card says the clock stopped')
+        eq(targetView.timeLeft, targetBefore.timeLeft, 'the target\'s band moved at the hold')
+        eq(hitmanView.timeLeft, hitmanBefore.timeLeft, 'the operative\'s band moved at the hold')
         eq(hitmanView.creatorAnonymous, hitmanBefore.creatorAnonymous)
         eq(hitmanView.creatorName, hitmanBefore.creatorName, 'the hold changed how the client is named')
         for key in pairs(targetView) do
             truthy(targetBefore[key] ~= nil or key == 'onHold', 'a new key on the target\'s card: ' .. key)
         end
         for key, value in pairs(hitmanView) do
-            truthy(hitmanBefore[key] ~= nil or key == 'onHold' or key == 'clockStopped',
+            truthy(hitmanBefore[key] ~= nil or key == 'onHold',
                 'a new key on the operative\'s card: ' .. key)
             if type(value) == 'string' then
                 falsy(value:find('CREATOR1', 1, true) or value:find('Marlowe', 1, true), 'names the client')
