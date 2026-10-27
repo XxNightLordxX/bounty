@@ -10325,6 +10325,38 @@ async function main() {
       truthy(text.indexOf('get within 7 m of that person, tap Deliver alive and hold for 45 '
         + 'seconds.') !== -1, text);
     });
+    // Config.Kidnap.RequireCoercion off, as shipped: nothing tells the hitman
+    // to cuff anybody, and it says plainly what the handover needs.
+    const unrestrained = await workingOn(heldFrom(), { killPhotos: false,
+      kidnap: { radius: 12, seconds: 30, restrain: false } });
+    it('alive, no restraint required: the how-to says what is needed, and nothing about cuffs', function () {
+      const text = unrestrained.view.textContent;
+      truthy(text.indexOf('Bring them in alive: take them to the person who placed this '
+        + 'contract, stay within 12 m of that person with them, tap Deliver alive and hold '
+        + 'for 30 seconds. They have to stay alive, conscious and on their feet the whole '
+        + 'time. Killing them does not count — they respawn and the contract stays '
+        + 'open.') !== -1, text);
+      falsy(/cuff|restrain|your vehicle/i.test(text), 'restraint is not needed here: ' + text);
+      noClientNoPhoto(text, 'the how-to');
+    });
+    const unrestrainedKill = boot({ list: boardWith('alive', [], { killPhotos: false,
+      kidnap: { radius: 12, seconds: 30, restrain: false } }), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [heldFrom({ fulfilment: undefined })],
+        onMe: [] } },
+      amendments: { ok: true, data: [] },
+      verifyKill: { ok: false, err: 'kill_not_allowed' } });
+    await settle(); await settle(); await settle();
+    tab(unrestrainedKill, 'mine');
+    await settle(); await settle();
+    click(unrestrainedKill, 'Verify kill');
+    await settle(); await settle();
+    it('alive, no restraint required: a refused kill says the same, and nothing about cuffs', function () {
+      const said = unrestrainedKill.notice();
+      truthy(said.indexOf('This contract only pays when you bring the target, alive, to the '
+        + 'person who placed it. Bring them in alive: take them to the person who placed this '
+        + 'contract, stay within 12 m of that person with them') !== -1, said);
+      falsy(/cuff|restrain/i.test(said), said);
+    });
 
     // The board chip names who placed it, as that.
     it('says who placed a contract, as that, on the hitman\'s card', function () {

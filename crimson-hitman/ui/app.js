@@ -577,8 +577,8 @@
     // not read them. "The client" is gone from every line about it: a
     // hitman had no way to know it meant the person who placed the contract.
     kill_not_allowed: 'This contract only pays when you bring the target, alive, to '
-      + 'the person who placed it. Killing them does not count: cuff them or get '
-      + 'them into your vehicle, take them to that person and tap Deliver alive.',
+      + 'the person who placed it. Killing them does not count: take them to that '
+      + 'person alive and tap Deliver alive.',
     // The same contracts pay their whole reward for that delivery, so there
     // is no bonus on top to set, raise or add to.
     no_bonus: 'Contracts here only pay when the target is brought alive to the '
@@ -3111,7 +3111,8 @@
     // A contract a kill can finish too keeps the words it had.
     var kidnap = settings().kidnap || {};
     var within = metres(armed);
-    var deliver = 'restrain them or get them into your vehicle, bring them '
+    var deliver = (mustRestrain() ? 'restrain them or get them into your vehicle, bring them '
+      : 'bring them, alive and conscious, ')
       + (within ? 'within ' + within + ' m of' : 'to')
       + ' the client, tap Deliver alive and hold '
       + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : 'until it finishes.');
@@ -3164,16 +3165,32 @@
     return r > 0 ? r : null;
   }
 
+  // Whether the server wants the target restrained for a handover
+  // (Config.Kidnap.RequireCoercion, sent as settings().kidnap.restrain).
+  // Only false says no: a server from before the flag always wanted it.
+  function mustRestrain() {
+    return (settings().kidnap || {}).restrain !== false;
+  }
+
   // What a hitman does to finish a contract only a live handover completes:
   // within `radius` (a running countdown's), or the server's where none is.
+  // With no restraint required, what the handover does need, in so many
+  // words: nothing tells them to cuff anybody.
   function deliverAliveSteps(radius) {
     var m = metres(radius);
     var seconds = Number((settings().kidnap || {}).seconds);
+    var hold = (seconds > 0 ? 'for ' + seconds + ' seconds' : 'until it finishes');
+    if (!mustRestrain()) {
+      return 'Bring them in alive: take them to the person who placed this contract, '
+        + (m ? 'stay within ' + m + ' m of that person with them' : 'stay close to that person with them')
+        + ', tap Deliver alive and hold ' + hold + '. They have to stay alive, conscious and '
+        + 'on their feet the whole time. Killing them does not count \u2014 they respawn and '
+        + 'the contract stays open.';
+    }
     return 'Bring them in alive: cuff them or get them into your vehicle, take them '
       + 'to the person who placed this contract, '
       + (m ? 'get within ' + m + ' m of that person' : 'get close to that person')
-      + ', tap Deliver alive and hold '
-      + (seconds > 0 ? 'for ' + seconds + ' seconds' : 'until it finishes')
+      + ', tap Deliver alive and hold ' + hold
       + '. Killing them does not count \u2014 they respawn and the contract stays open.';
   }
 

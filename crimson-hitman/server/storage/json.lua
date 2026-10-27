@@ -70,6 +70,14 @@ local alertsDirty = false
 --- is far too big to rewrite that often.
 local playtime = nil
 local playtimeDirty = false
+--- Each playtime row as it was last encoded, by citizen id: the file holds
+--- every character ever counted and a minute changes only those in the
+--- city, so the minute's write encodes only the rows that changed.
+local playtimeText = {}
+
+--- When this store last wrote the heartbeat (os.time()), nil before the
+--- first (JsonStore.heartbeat).
+local heartbeatWrittenAt = nil
 
 --- Whether records.json is known to be on disk: read at this start, or
 --- written since. The index says so (`records = true`), so a later start
@@ -329,6 +337,15 @@ local NEW, OLD = '.new', '.old'
 --- Said once a process: renames refused, so files are written in place.
 local renameRefusedSaid = false
 
+--- Whether this server's rename refuses a name that is taken (Windows),
+--- learned from the first swap that had to move the file aside: from then
+--- on the plain rename, which can only fail there, is not tried first.
+local renameKeepsTaken = false
+
+--- Files whose `.old` this store removed after its own last swap, so the
+--- next swap need not try to remove one first: [to] = true.
+local asideGone = {}
+
 --- The resource's folder on disk, for os.rename and os.remove. Both resolve
 --- a path against the server's working directory rather than the resource,
 --- as SaveResourceFile does (see JsonStore.prune), so they are handed the
@@ -348,22 +365,39 @@ end
 --- leave any of those steps half done, and none of them tears a file: the
 --- next start finds `to`, or `to`.new whole beside a missing `to`
 --- (recoverFile). A stale `to`.old from a swap stopped before its last step
---- is removed first, or Windows would refuse the move aside as well.
+--- is removed first, or Windows would refuse the move aside as well. Once a
+--- swap has shown that the rename keeps a taken name, the plain rename is
+--- not tried first again, and an `.old` this store removed itself is not
+--- removed again before the next swap.
 ---@return boolean moved
 local function moveOver(from, to)
     local base = folderOnDisk()
     if not base then return false end
     local source, target, aside = base .. '/' .. from, base .. '/' .. to, base .. '/' .. to .. OLD
 
-    local ok, moved = pcall(os.rename, source, target)
-    if ok and moved == true then return true end
+    local ok, moved
+    local tried = not renameKeepsTaken
+    if tried then
+        ok, moved = pcall(os.rename, source, target)
+        if ok and moved == true then return true end
+    end
 
-    if type(os.remove) == 'function' then pcall(os.remove, aside) end
+    -- Not where this store removed it itself after the last swap: two of
+    -- the seven file operations a write cost on Windows were this and the
+    -- plain rename above, each failing every time.
+    if not asideGone[to] and type(os.remove) == 'function' then pcall(os.remove, aside) end
+    asideGone[to] = nil
     local asideOk, setAside = pcall(os.rename, target, aside)
     setAside = asideOk and setAside == true
     ok, moved = pcall(os.rename, source, target)
     if ok and moved == true then
-        if setAside and type(os.remove) == 'function' then pcall(os.remove, aside) end
+        if setAside then
+            if tried then renameKeepsTaken = true end
+            if type(os.remove) == 'function' then
+                local removedOk, removed = pcall(os.remove, aside)
+                asideGone[to] = removedOk and removed == true or nil
+            end
+        end
         return true
     end
     -- Neither worked: the file goes back where it was, as it was.
@@ -1096,7 +1130,8 @@ local lastKnown = {}
 --- missing, which is not something to start up and hope about.
 function JsonStore.open()
     -- Read again from its own file when it is next asked for.
-    playtime, playtimeDirty = nil, false
+    playtime, playtimeDirty, heartbeatWrittenAt, playtimeText = nil, false, nil, {}
+    renameKeepsTaken, asideGone = false, {}
     -- Read twice, as a shard is, before believing there is no index.
     local raw = LoadResourceFile(resource, path())
     if raw == nil or raw == '' then raw = LoadResourceFile(resource, path()) end
@@ -1853,6 +1888,7 @@ local function playtimeData()
             :format(playtimePath(), playtimePath()))
     end
     decoded = decoded or {}
+    playtimeText = {}
     playtime = {
         since = tonumber(decoded.since),
         players_id = tonumber(decoded.players_id),
@@ -1866,7 +1902,24 @@ end
 ---@return string|nil file the file, when it could not be written
 local function savePlaytime()
     if not playtimeDirty or not playtime then return true end
-    if not writeFile(playtimePath(), playtime) then return false, playtimePath() end
+    local rows = {}
+    for cid, row in pairs(playtime.rows) do
+        local text = playtimeText[cid]
+        if not text then
+            text = json.encode(tostring(cid)) .. ':' .. json.encode(row)
+            playtimeText[cid] = text
+        end
+        rows[#rows + 1] = text
+    end
+    local fields = {}
+    if playtime.since ~= nil then fields[#fields + 1] = '"since":' .. json.encode(playtime.since) end
+    if playtime.players_id ~= nil then
+        fields[#fields + 1] = '"players_id":' .. json.encode(playtime.players_id)
+    end
+    fields[#fields + 1] = '"rows":{' .. table.concat(rows, ',') .. '}'
+    if not writeRaw(playtimePath(), '{' .. table.concat(fields, ',') .. '}') then
+        return false, playtimePath()
+    end
     playtimeDirty = false
     return true
 end
@@ -1902,7 +1955,10 @@ end
 
 function JsonStore.writePlaytime(rows)
     local data = playtimeData()
-    for i = 1, #rows do data.rows[rows[i].cid] = Util.copy(rows[i]) end
+    for i = 1, #rows do
+        data.rows[rows[i].cid] = Util.copy(rows[i])
+        playtimeText[rows[i].cid] = nil
+    end
     playtimeDirty = true
     return true
 end
@@ -2095,43 +2151,68 @@ local function heartbeatPath()
     return directory() .. '/heartbeat.json'
 end
 
+--- How often the tick's heartbeat is written, in seconds. The start and a
+--- stop write it whatever this says (`force`).
+JsonStore.HEARTBEAT_EVERY = 60
+
 ---
---- Written whole and renamed over, as every other file here is (writeRaw).
---- It was rewritten in place, and it is the file written most often: a
---- crash that left it empty left a start with no idea when the server went
---- down, so the downtime was charged to every running contract, and one
---- whose deadline fell inside it expired at the restart, its hitman's stake
---- forfeited, which is what the heartbeat is for. Quiet, as it always was:
---- a server that cannot write here cannot write the index either, and that
---- is said.
-function JsonStore.heartbeat(at)
-    writeRaw(heartbeatPath(), json.encode({ at = at }), true)
+--- One plain SaveResourceFile, at most once every HEARTBEAT_EVERY seconds.
+--- It was written whole and renamed over on every tick, as the files that
+--- hold money are (writeRaw): four file operations every ten seconds, and
+--- some 34 ms a tick on a Windows host, for seventeen bytes. A crash that
+--- tears it costs nothing: the start then dates the downtime from what else
+--- it read (JsonStore.lastHeartbeat), as it does for a missing one. The
+--- coarser stamp dates a downtime up to a minute early, which pauses the
+--- running contracts for that much longer, never shorter: no deadline is
+--- charged for time nobody could play. Quiet, as it always was: a server
+--- that cannot write here cannot write the index either, and that is said.
+---@param at integer os.time()
+---@param force boolean|nil written whatever the interval says: the start, a stop
+---@return boolean
+function JsonStore.heartbeat(at, force)
+    at = tonumber(at)
+    if not at then return false end
+    if not force and heartbeatWrittenAt and at >= heartbeatWrittenAt
+        and at - heartbeatWrittenAt < JsonStore.HEARTBEAT_EVERY then
+        return true
+    end
+    if SaveResourceFile(resource, heartbeatPath(), json.encode({ at = at }), -1) ~= false then
+        heartbeatWrittenAt = at
+    end
     return true
 end
 
 --- When the server was last known to be running, and, where the heartbeat
---- file itself was not whole, what that was read from instead: its last
---- whole copy, else the later of the newest audit row and the time the
---- index this start found was written. Each is a moment the server was
---- running, so the downtime is dated from no later than it began, and a
---- contract is paused for at least as long as nobody could play.
+--- file itself was not whole, what that was read from instead.
+---
+--- The latest of everything this start read that the server wrote while it
+--- ran: the heartbeat (or, torn, its last whole copy a version that renamed
+--- it left), the newest audit row, and when the index was written. Each is
+--- a moment the server was running, so the downtime is dated from no later
+--- than it began, and a contract is paused for at least as long as nobody
+--- could play. The heartbeat is written once a minute, so a row or an index
+--- written after it dates the end more closely.
 ---@return integer|nil at
----@return string|nil from nil when it is the heartbeat file itself
+---@return string|nil from nil when the heartbeat file itself was whole
 function JsonStore.lastHeartbeat()
     local function at(raw)
         local decoded = decodeTable(raw)
         return decoded and tonumber(decoded.at) or nil
     end
     local found = at(LoadResourceFile(resource, heartbeatPath()))
-    if found then return found end
-    local _, copy, from = recoverFile(heartbeatPath(), at, false)
-    if copy then return copy, from end
-    local audit, index = lastKnown.audit, lastKnown.index
-    if audit and (index == nil or audit >= index) then
-        return audit, 'the newest audit row'
+    local best, from = found, nil
+    if not found then
+        local _, copy, copyName = recoverFile(heartbeatPath(), at, false)
+        if copy then best, from = copy, copyName end
     end
-    if index then return index, ('the last time %s was written'):format(path()) end
-    return nil
+    local audit, index = lastKnown.audit, lastKnown.index
+    if audit and (best == nil or audit > best) then
+        best, from = audit, (not found) and 'the newest audit row' or nil
+    end
+    if index and (best == nil or index > best) then
+        best, from = index, (not found) and ('the last time %s was written'):format(path()) or nil
+    end
+    return best, from
 end
 
 --- The sequence is the index's, so this marks the index, not the records.

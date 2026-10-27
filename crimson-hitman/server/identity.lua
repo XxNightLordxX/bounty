@@ -218,6 +218,30 @@ function Identity.resolve(source)
     return actorOf(src, exports.qbx_core:GetPlayer(src))
 end
 
+--- The acting player's citizen id, job and record, without the account and
+--- the name resolve() also works out: for the maintenance tick's access
+--- check (Bridges.refreshAccess), which reads neither, for everyone online
+--- every ten seconds. Not for anything that compares accounts or shows a
+--- name.
+---@param source number
+---@return table|nil actor { source, cid, job, player }
+function Identity.resolveJobs(source)
+    local src = tonumber(source)
+    if not src or src <= 0 then return nil end
+    local player = exports.qbx_core:GetPlayer(src)
+    local data = player and player.PlayerData
+    if type(data) ~= 'table' then return nil end
+    local cid = Util.toCitizenId(data.citizenid)
+    if not cid then return nil end
+    Identity.beginSession(cid, true)
+    return {
+        source = src,
+        cid    = cid,
+        job    = data.job or { name = 'unemployed', type = 'none' },
+        player = player,
+    }
+end
+
 --- Account-level identifier, used for the anti-alt checks (§13.1).
 --- The license is stable across a player's characters, which is exactly the
 --- boundary those checks care about — citizenid is per character and would

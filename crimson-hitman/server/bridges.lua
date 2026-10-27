@@ -521,16 +521,20 @@ function Bridges.install(modules)
     ---
     --- So the answer is recomputed on the ordinary maintenance tick, which
     --- depends on no framework event at all. It costs one job read per
-    --- player and sends nothing unless the answer has moved.
+    --- player and sends nothing unless the answer has moved. Only the job:
+    --- each player's account identifiers and cleaned-up name were worked
+    --- out too, for everyone online every tick, and nothing here reads
+    --- either (Identity.resolveJobs).
     function Bridges.refreshAccess()
         local seen = {}
         local players = GetPlayers() or {}
+        local resolve = modules.identity.resolveJobs or modules.identity.resolve
 
         for i = 1, #players do
             local src = tonumber(players[i])
             if src then
                 seen[src] = true
-                local ok, actor = pcall(modules.identity.resolve, src)
+                local ok, actor = pcall(resolve, src)
                 if ok and actor then
                     -- Everyone online is remembered here too, not only on
                     -- the load events. After a restart of this resource

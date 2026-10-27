@@ -1215,13 +1215,13 @@ describe('maintenance jobs that time themselves', function()
         local main, modules = boot()
         Config.Debug = true
         local spend = clocked(modules)
-        modules.photos.expire = function() spend(20) end
+        modules.photos.expire = function() spend(40) end
 
         local said = capture(function() main.tick() end)
         eq(warnings(said, 'photos.expire'), 1, table.concat(said, '\n'))
         local line
         for _, l in ipairs(said) do if l:find('photos.expire', 1, true) then line = l end end
-        truthy(line:find('20.0 ms', 1, true), line)
+        truthy(line:find('40.0 ms', 1, true), line)
         truthy(line:find('Config.Diagnostics.SlowJobMs', 1, true), 'names the setting: ' .. line)
 
         said = capture(function()
@@ -1255,7 +1255,7 @@ describe('maintenance jobs that time themselves', function()
         Config.Debug = true
         local spend = clocked(modules)
         local real = modules.storage.liveContracts
-        modules.storage.liveContracts = function() spend(12) return real() end
+        modules.storage.liveContracts = function() spend(30) return real() end
         local thread = coroutine.wrap(Env.threads[1])
         local realWait = _G.Wait
         _G.Wait = coroutine.yield
@@ -1277,8 +1277,8 @@ describe('maintenance jobs that time themselves', function()
         local spend = clocked(modules)
         modules.photos.expire = function()
             spend(1)
-            -- Three round trips, other resources spending 4 ms in each.
-            for _ = 1, 3 do modules.timing.await(function() spend(4) end) end
+            -- Three round trips, other resources spending 10 ms in each.
+            for _ = 1, 3 do modules.timing.await(function() spend(10) end) end
         end
         local said = capture(function() main.tick() end)
         eq(warnings(said, 'photos.expire'), 0, table.concat(said, '\n'))
@@ -1288,7 +1288,7 @@ describe('maintenance jobs that time themselves', function()
         end
         truthy(row, 'timed')
         truthy(math.abs(row.last - 1) < 1e-6,
-            'its own millisecond, not the twelve spent waiting: ' .. row.last)
+            'its own millisecond, not the thirty spent waiting: ' .. row.last)
     end)
 
     it('charges each of two interleaved jobs only its own time', function()
@@ -1318,7 +1318,7 @@ describe('maintenance jobs that time themselves', function()
     it('lists the slowest jobs, with their numbers, in /ch-diag', function()
         local main, modules = boot()
         local spend = clocked(modules)
-        modules.photos.expire = function() spend(20) end
+        modules.photos.expire = function() spend(40) end
         modules.ratelimit.sweep = function() spend(2) end
         capture(function()
             main.tick()
@@ -1330,8 +1330,8 @@ describe('maintenance jobs that time themselves', function()
         truthy(out:find('maintenance jobs, slowest first', 1, true), out)
         local row = out:match('\n%s+(photos%.expire[^\n]*)')
         truthy(row, out)
-        truthy(row:find('max%s+20%.00'), 'its worst run: ' .. row)
-        truthy(row:find('avg%s+15%.00'), 'its average: ' .. row)
+        truthy(row:find('max%s+40%.00'), 'its worst run: ' .. row)
+        truthy(row:find('avg%s+25%.00'), 'its average: ' .. row)
         truthy(row:find('last%s+10%.00'), 'its last: ' .. row)
         truthy(row:find('runs 2', 1, true), row)
         truthy(row:find('SLOW', 1, true), 'over the limit: ' .. row)
@@ -1347,7 +1347,7 @@ describe('maintenance jobs that time themselves', function()
         truthy(out:find('maintenance jobs: not timed yet', 1, true), out)
     end)
 
-    it('takes a setting that is not a number as the shipped 5 ms, and says so', function()
+    it('takes a setting that is not a number as the shipped 25 ms, and says so', function()
         local said = capture(function()
             for name in pairs(package.loaded) do
                 if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
@@ -1363,7 +1363,7 @@ describe('maintenance jobs that time themselves', function()
             Config.Diagnostics.SlowJobMs = 'fast'
             require('server.main').start()
         end)
-        eq(Config.Diagnostics.SlowJobMs, 5)
+        eq(Config.Diagnostics.SlowJobMs, 25)
         truthy(table.concat(said, '\n'):find('Diagnostics.SlowJobMs', 1, true), table.concat(said, '\n'))
         resetConfig()
     end)
@@ -1381,7 +1381,7 @@ describe('maintenance jobs that time themselves', function()
         Config.Database.Mode = 'memory'
         Config.Diagnostics = nil
         capture(function() require('server.main').start() end)
-        eq(Config.Diagnostics.SlowJobMs, 5)
+        eq(Config.Diagnostics.SlowJobMs, 25)
         resetConfig()
     end)
 end)

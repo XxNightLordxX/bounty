@@ -320,6 +320,21 @@ local REFUSED_WORDS = {
         .. 'the same moment, and it got there first.',
 }
 
+--- The person who placed the contract, told a handover they were asked to
+--- stay for did not finish. They were told at the arm to stay where they
+--- were for the countdown, and nothing told them when it failed: they stood
+--- there, or walked off thinking it had paid. What they can see anyway, and
+--- nothing about the hitman beyond that.
+---@param state table the countdown
+local function tellPlacerStopped(state)
+    if not state.creatorCid then return end
+    pcall(Notify.toCitizen, state.creatorCid, 'Handover stopped',
+        ('The handover did not finish, so your contract is still open and the hitman can try '
+            .. 'again. For it to count, stay within %s m of them both for the whole %d seconds.')
+            :format(metres(state.radius), tonumber(Config.Kidnap.CountdownSeconds) or 0),
+        { bypassBudget = true })
+end
+
 function Kidnap.cancel(contractId, hitmanCid, reason)
     local k = key(contractId, hitmanCid)
     if not active[k] then return false end
@@ -382,6 +397,7 @@ function Kidnap.tick(deltaMs)
                         'The contract was stuck settling another payout, so the '
                         .. 'handover could not finish. Staff can see why.',
                         { bypassBudget = true })
+                    tellPlacerStopped(state)
                 end
             elseif not contract or contract.state ~= CH.STATE.ACCEPTED then
                 active[k] = nil
@@ -476,6 +492,7 @@ function Kidnap.tick(deltaMs)
                         remember(k, { outcome = 'failed', reason = reason })
                         Notify.toCitizen(state.hitmanCid, 'Handover failed', why,
                             { bypassBudget = true })
+                        tellPlacerStopped(state)
                     end
                 end
             end

@@ -26,11 +26,12 @@ only the contract that changed. `store.json.prev` and `records.json.prev` are
 those two files as the last start read them: a missing or unreadable
 `store.json` or `records.json` stops the start rather than lose what they
 held, and these are what to restore from. `heartbeat.json` is when the server
-was last seen running; where a crash left it empty, a start dates the
-downtime from its last whole copy, else from the newest audit row or the time
-`store.json` was last written, and says so in the console.
+was last seen running: written in place, once a minute and at every start and
+stop. A start dates the downtime from the latest of it, the newest audit row
+and the time `store.json` was last written; where a crash left the heartbeat
+empty or torn it says so in the console.
 
-Each of `store.json`, `records.json`, `contracts/<id>.json`, `heartbeat.json`
+Each of `store.json`, `records.json`, `contracts/<id>.json`, `playtime.json`
 and a day's audit file, when it is written whole, is written as `<file>.new`
 and then renamed over `<file>`, so a crash part-way through a write tears the
 copy and never the file. On Windows, where a rename will not replace a file,

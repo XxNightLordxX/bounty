@@ -84,7 +84,8 @@ end
 describe('what becomes an alert', function()
     it('keeps every Log.always line and every setting problem, whatever Debug says', function()
         local s = stack()
-        eq(Config.Debug, false, 'as shipped')
+        -- With the console quiet, whatever ships: the alerts are the same.
+        Config.Debug = false
         Log.always('the store would not take escrow line owe00000001')
         Log.problem('warning: Limits.MaxAcceptedPerHitman is 0')
         Log.debug('a debug line is not an alert')

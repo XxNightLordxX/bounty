@@ -436,6 +436,12 @@ local function buildListing(viewerCid, page)
             kidnap = {
                 radius = Config.Kidnap.Radius,
                 seconds = Config.Kidnap.CountdownSeconds,
+                -- Whether the target has to be cuffed or in the hitman's
+                -- vehicle too (Config.Kidnap.RequireCoercion, off as
+                -- shipped). Off, nothing the hitman reads tells them to
+                -- restrain anybody: alive, conscious and there is all a
+                -- handover needs.
+                restrain = Config.Kidnap.RequireCoercion and true or false,
             },
             -- How a contract placed now may be completed: 'alive' (live
             -- transfer only, with no bonus, so the Place form offers none)

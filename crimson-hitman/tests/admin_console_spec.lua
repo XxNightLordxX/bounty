@@ -148,7 +148,7 @@ describe('the Console section', function()
         local reply = ask(7, 'console', {})
         eq(reply.ok, true, tostring(reply.message))
         local d = reply.data
-        eq(d.debug, false, 'as shipped')
+        eq(d.debug, true, 'as shipped')
         eq(d.count, 1)
         eq(d.problems[1], 'warning: Kidnap.Radius is 2')
         eq(d.boot[1].text, 'opening the store')

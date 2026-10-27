@@ -305,7 +305,12 @@ local DYNAMIC = {
     handcuffed = true, passengerOfHitman = true,
 }
 
-for key in configSrc:gmatch('\n%s*([%w_]+)%s*=') do
+-- Keys set inside a section's table, and the ones the file sets on a
+-- section after it (`Config.Completion.DefibRange = 3.0`, under Advanced).
+local declaredKeys = {}
+for key in configSrc:gmatch('\n%s*([%w_]+)%s*=') do declaredKeys[#declaredKeys + 1] = key end
+for key in configSrc:gmatch('\nConfig%.%u[%w_]*%.([%w_]+)%s*=') do declaredKeys[#declaredKeys + 1] = key end
+for _, key in ipairs(declaredKeys) do
     if not DYNAMIC[key] and #key > 3 then
         if not allSource:find(key, 1, true) then
             failures[#failures + 1] =

@@ -11,20 +11,24 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 ## 1. It starts
 
-- [ ] With the shipped `Config.Debug = false`, `ensure crimson-hitman` prints
-      **nothing** to the server console, and once a contract is placed its
-      files are in `crimson-hitman/data/` (`store.json`, `contracts/`).
-      `ch-diag` in the server console ends with what the start would have
-      said, `started in json mode` (the shipped `Config.Database.Mode`) among it
-- [ ] Set `Config.Targeting.AllowNearby = true` and restart: the console prints
-      exactly one line, `[crimson-hitman] 1 setting(s) need attention; run
+- [ ] With the shipped `Config.Debug = true`, `ensure crimson-hitman` prints
+      the integration list and `started in json mode` (the shipped
+      `Config.Database.Mode`), and once a contract is placed its files are in
+      `crimson-hitman/data/` (`store.json`, `contracts/`). During normal play
+      no slow-job line appears unless a job really takes over 25 ms
+      (`Config.Diagnostics.SlowJobMs`)
+- [ ] Set `Config.Debug = false` and restart: the console prints **nothing**,
+      and `ch-diag` in the server console ends with what the start would have
+      said
+- [ ] With `Config.Debug = false`, set `Config.Targeting.AllowNearby = true` and
+      restart: the console prints exactly one line, `[crimson-hitman] 1 setting(s) need attention; run
       ch-diag (F8 or the server console) or open /hitmanadmin to see them`, and
       `ch-diag` lists the setting under *settings that need attention*. Put it
       back
-- [ ] Turn **Debug output in the server console** on in the admin panel
-      (**Features & limits → Audit and debug**) and restart: the console prints
-      the integration list, `started in json mode` and any warning in full, as
-      before. Turn it off again: nothing at the next restart
+- [ ] Turn **Debug output in the server console** off in the admin panel
+      (**Features & limits → Audit and debug**) and restart: nothing at the
+      restart. Turn it on again: the integration list, `started in json mode`
+      and any warning in full
 - [ ] No errors in `txAdmin` console on start or on a `restart crimson-hitman`
 - [ ] Restarting twice in a row is clean (recovery runs, nothing duplicates)
 - [ ] An admin with `crimson.admin` (`add_ace group.admin crimson.admin allow`)
@@ -425,11 +429,12 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
       target, alive, to the person who placed it. Killing them does not
       count.*
 - [ ] The hitman's card has **Deliver alive** alone, and reads (for a
-      hitman with jobs behind them too, not only a first one) *Bring them in alive: cuff them or get them
-      into your vehicle, take them to the person who placed this contract, get
-      within 12 m of that person, tap Deliver alive and hold for 30 seconds.
-      Killing them does not count — they respawn and the contract stays
-      open.* On an anonymous contract it adds *The person who placed it is
+      hitman with jobs behind them too, not only a first one) *Bring them in
+      alive: take them to the person who placed this contract, stay within
+      12 m of that person with them, tap Deliver alive and hold for 30
+      seconds. They have to stay alive, conscious and on their feet the whole
+      time. Killing them does not count — they respawn and the contract stays
+      open.* Nothing on it says to cuff anybody On an anonymous contract it adds *The person who placed it is
       anonymous — use Message to agree where to meet.*; on a named one it
       names them
 - [ ] As the hitman, open **Message** on that contract: the thread reads
@@ -441,10 +446,17 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
       under Mine say *A hitman took your contract. They'll bring the target to
       you alive — stay in the city and watch your messages.* When the
       handover starts you are told to stay within 12 m of them both for 30
-      seconds
-- [ ] Place a contract, take it with a second character, **restrain** the
-      target (cuffs) and bring them to the person who placed it: the handover
-      arms, counts down and pays the **whole reward**; the contract closes
+      seconds; if it fails, *Handover stopped* says the contract is still open
+- [ ] Place a contract, take it with a second character, and walk the target,
+      **not cuffed and on foot**, to the person who placed it: the handover
+      arms, counts down and pays the **whole reward**; the contract closes.
+      The target's phone gets no notice from it
+- [ ] Turn **Target must be restrained** on in the admin panel: the same walk
+      is refused (*The target must be restrained or in your vehicle.*), the
+      hitman's card now says *cuff them or get them into your vehicle*; cuff
+      the target with your police script and it arms and pays. Check in
+      `/ch-diag <target id>` or your cuff script that it sets QBox's
+      `ishandcuffed` metadata (qbx_police does). Turn it off again
 - [ ] With the phone closed during that countdown, the hitman's phone still
       gets *Handover paid* (*Delivered alive: $… released to you. Your $…
       stake has been returned.*) in its notification list. With their
@@ -457,8 +469,8 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
       (`placer`); a hitman quitting shows that and `kidnap_cancelled`
       (`hitman_dropped`). A `restart crimson-hitman` mid-countdown writes
       none of them
-- [ ] Again, with the target uncuffed in the **hitman's vehicle**: the
-      handover arms and pays the same
+- [ ] With **Target must be restrained** on, the target uncuffed in the
+      **hitman's vehicle**: the handover arms and pays the same
 - [ ] Again, but tap **Deliver alive** with the placer 30 m away: *The person
       who placed this contract must be online and within 12 m of you and the
       target.* With the placer logged off: the same for an anonymous placer,
@@ -472,8 +484,8 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
       there is no **Verify kill**, and nothing is paid; **Deliver alive** on
       the body says killing them does not count and to bring them in alive
       once they are back up; `/ch-timeline` on it shows no
-      `death_attributed`. Restrain them after the respawn and the handover
-      still pays
+      `death_attributed`. Bring them in alive after the respawn and the
+      handover still pays
 - [ ] The placer's **Change reward** offers no kidnapping bonus to raise;
       adding money still works, and it is paid on the handover
 - [ ] **Meeting point** (`Config.Kidnap.MeetingPoint = true`, as shipped).
@@ -689,15 +701,19 @@ uploads, and with neither. Restart the resource between them.
 
 ## 6. Kidnapping
 
-- [ ] Restrain the target (cuffs, or put them in your vehicle)
-- [ ] With hitman, target and creator together, the countdown starts
+- [ ] With hitman, target and creator together, the countdown starts (with
+      **Target must be restrained** on: only once the target is cuffed or in
+      the hitman's vehicle)
+- [ ] `restart crimson-hitman` mid-countdown: the countdown is gone, the
+      contract is still open with its reward and the stake held, and
+      **Deliver alive** arms again at once and pays once
 - [ ] Walking away pauses it and it recovers within the grace window
 - [ ] Walking away for longer fails the delivery
 - [ ] Completing pays **baseline + bonus** under `'either'`, and the whole
       reward under `'alive'` (4a)
 - [ ] Killing the target mid-countdown fails the delivery — no payout
 - [ ] Downing the target mid-countdown fails the delivery
-- [ ] A cuffed, conscious target under 20% health is refused as "too badly
+- [ ] A conscious target under 20% health is refused as "too badly
       hurt", not "alive and conscious"; patched up, the handover arms
 - [ ] Set the `progress` rate limit to 1 held, 1 a second in the panel and run
       a handover: the bar never vanishes, nothing says *Slow down*, and it
@@ -959,11 +975,15 @@ out, (c) while accepting with a stake, (d) during a handover countdown.
       80 ms at the shipped `Config.Completion.PhotoMaxBytes` (600000) and a
       fifth of a second at 1500000; these are estimates until you measure them
 - [ ] A kidnap countdown running does not spike it
-- [ ] No console line at all during normal play (place, take and deliver a
-      contract, open the app and the panel), and nothing in a player's F8;
-      `/ch-diag` lists the
-      slowest jobs, every one under `Config.Diagnostics.SlowJobMs` (5 ms),
-      in `mysql` mode too (time spent waiting on the database is not counted)
+- [ ] With `Config.Debug = false`, no console line at all during normal play
+      (place, take and deliver a contract, open the app and the panel), and
+      nothing in a player's F8; `/ch-diag` lists the slowest jobs, every one
+      under `Config.Diagnostics.SlowJobMs` (25 ms), in `mysql` mode too (time
+      spent waiting on the database is not counted). On a Windows host, note
+      `storage.heartbeat`, `storage.flush`, `expireContracts` (and its first
+      pass after a `restart crimson-hitman` with players online) and
+      `bridges.refreshAccess` there: the heartbeat is one small write a
+      minute now (`data/heartbeat.json`), not a swap every tick
 - [ ] With the staff webhook set, a gunfight between players no contract
       names posts nothing to it
 - [ ] On qbx_medical (no sc-ambulance), `/ch-diag <id>` says the death state
@@ -1231,8 +1251,10 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       `/ch-whois` alone answer their usage, and `/ch-diag <citizen id>` runs
       as that player (a made-up one says *Give a player id*, never runs as
       you). Both are in the log (`admin_timeline`, `admin_diagnose`)
-- [ ] Turn **Handcuffs count as restraint** off, then **The hitman's vehicle
-      counts as restraint**: the second is refused, saying no handover could
+- [ ] With **Target must be restrained** on, turn **Handcuffs count as
+      restraint** off, then **The hitman's vehicle counts as restraint**: the
+      second is refused (with it off both are marked as not applying, and
+      may both be off), saying no handover could
       complete and to change the handcuffs first. Turn **List the people
       nearby** on: the answer says what the start warns about it; restart, and
       the console counts it among the settings that need attention

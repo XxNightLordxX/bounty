@@ -3,7 +3,7 @@
 --- tests/run.lua starts every stack from config/config.lua with a few
 --- switches turned the other way (its CONFIG_DEFAULTS): kill photos on,
 --- contracts a kill completes too, three collections, no least reward, kill
---- photos sent as links. Most specs are about what those make possible. A
+--- photos sent as links, a handover's target restrained, Debug off. Most specs are about what those make possible. A
 --- test of what the owner's players meet puts the shipped values back with
 --- Shipped.apply() after newStack(), or opens its stack with
 --- Shipped.newStack(). newStack() puts the runner's config back for the
@@ -20,11 +20,12 @@ Shipped.VALUES = {
     { 'Completion', 'Fulfilment', 'alive' },
     { 'Completion', 'KillPhotos', false },
     { 'Completion', 'PhotoStorage', 'server' },
+    { 'Kidnap', 'RequireCoercion', false },
     { 'Limits', 'MaxPayoutSlots', 1 },
     { 'Limits', 'MinContractReward', 1000 },
     { 'Mugshot', 'Enabled', true },
     { 'WhitelistedView', 'Enabled', true },
-    { nil, 'Debug', false },
+    { nil, 'Debug', true },
 }
 
 --- Set every shipped value on the live Config.

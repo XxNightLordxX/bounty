@@ -1445,7 +1445,7 @@ describe('a safety switch added to a section the operator already had', function
         { 'Penalty', 'RequireDisclosureOnAccept' }, { 'Informant', 'RequireProximity' },
         { 'Bailout', 'BlockWhileIncapacitated' }, { 'Kidnap', 'RequireConscious' },
         { 'Kidnap', 'RejectDead' }, { 'Kidnap', 'RejectLastStand' },
-        { 'Kidnap', 'RequireCoercion' }, { 'Notifications', 'PushEnabled' },
+        { 'Notifications', 'PushEnabled' },
         { 'Advisory', 'AlwaysAlertTarget' }, { 'Relay', 'RequireMaskingForAnonymous' },
     }
 
@@ -1455,6 +1455,17 @@ describe('a safety switch added to a section the operator already had', function
             eq(Config[entry[1]][entry[2]], true,
                 'Config.' .. entry[1] .. '.' .. entry[2] .. ' was read as off')
         end
+        resetConfig()
+    end)
+
+    --- Restraint ships off (Config.Kidnap.RequireCoercion = false), so a
+    --- config that never had it gets what ships, and one that turned it on
+    --- keeps it.
+    it('fills the restraint rule as it ships, off, and keeps it on where it was turned on', function()
+        boot(function() Config.Kidnap.RequireCoercion = nil end)
+        eq(Config.Kidnap.RequireCoercion, false, 'filled as shipped')
+        boot(function() Config.Kidnap.RequireCoercion = true end)
+        eq(Config.Kidnap.RequireCoercion, true, 'the operator\'s own choice stands')
         resetConfig()
     end)
 

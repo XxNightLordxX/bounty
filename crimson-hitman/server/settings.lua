@@ -88,6 +88,9 @@ local NEEDS_OFF = {
     ['WhitelistedView.Enabled'] = 'Does not apply while the whitelisted-job view is off '
         .. '(WhitelistedView.Enabled): nobody has the view, so this changes nothing until it is '
         .. 'on again.',
+    ['Kidnap.RequireCoercion'] = 'Does not apply while Target must be restrained is off '
+        .. '(Kidnap.RequireCoercion): a handover needs no restraint, so this changes nothing '
+        .. 'until it is on again.',
 }
 
 --- Every key the panel may show, in the order it shows them.
@@ -202,14 +205,18 @@ local CATALOGUE = {
       inflight = AT_USE },
     { key = 'Kidnap.RequireCoercion', section = 'features', group = 'Handovers', kind = 'switch',
       label = 'Target must be restrained',
-      about = 'Cuffed, or in the hitman\'s own vehicle, for the whole countdown.',
+      about = 'Off (as shipped): the target only has to be alive, conscious, not downed and with '
+          .. 'the hitman, within the handover radius of the person who placed the contract, for '
+          .. 'the whole countdown. On: they also have to be cuffed, or in the hitman\'s own '
+          .. 'vehicle, the whole time.',
       inflight = AT_USE .. ' A countdown already running is checked by it on its next sample.' },
     { key = 'Kidnap.Coercion.handcuffed', section = 'features', group = 'Handovers', kind = 'switch',
       label = 'Handcuffs count as restraint', about = 'QBox \'ishandcuffed\' metadata. ' .. ONE_RESTRAINT,
-      inflight = AT_USE },
+      needs = 'Kidnap.RequireCoercion', inflight = AT_USE },
     { key = 'Kidnap.Coercion.passengerOfHitman', section = 'features', group = 'Handovers',
       kind = 'switch', label = 'The hitman\'s vehicle counts as restraint',
-      about = 'The target riding in the hitman\'s vehicle. ' .. ONE_RESTRAINT, inflight = AT_USE },
+      about = 'The target riding in the hitman\'s vehicle. ' .. ONE_RESTRAINT,
+      needs = 'Kidnap.RequireCoercion', inflight = AT_USE },
     { key = 'Kidnap.MeetingPoint', section = 'features', group = 'Handovers', kind = 'switch',
       label = 'Meeting point for the handover',
       about = 'On an alive-only contract a hitman holds, the person who placed it can set a '

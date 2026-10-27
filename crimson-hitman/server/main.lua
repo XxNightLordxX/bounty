@@ -267,7 +267,9 @@ local DEFAULTS = {
         RequireConscious = true,
         RejectDead = true,
         RejectLastStand = true,
-        RequireCoercion = true,
+        --- Off, as shipped: the target only has to be alive, conscious and
+        --- with the person who placed the contract for the countdown.
+        RequireCoercion = false,
         --- Absent, every detector reads as off, and with coercion required
         --- no delivery could ever succeed — silently. A set, so an operator
         --- who has one keeps exactly the detectors they left in it.
@@ -328,7 +330,7 @@ local DEFAULTS = {
     --- A whole section a config from before it had is filled from
     --- defaults.lua; this fills the key in one that has the section.
     Diagnostics = {
-        SlowJobMs = 5,
+        SlowJobMs = 25,
     },
     --- The same: a config with an Alerts section and not this key posts
     --- alerts to Discord, as shipped, where a webhook is set. Checked below.
@@ -849,8 +851,8 @@ local function validateConfig(quiet)
     local slowMs = tonumber(Config.Diagnostics.SlowJobMs)
     if not slowMs or slowMs ~= slowMs or slowMs < 0 then
         warn[#warn + 1] = ('Diagnostics.SlowJobMs is %s, not a number of milliseconds (0 for '
-            .. 'no warning); using 5.'):format(tostring(Config.Diagnostics.SlowJobMs))
-        slowMs = 5
+            .. 'no warning); using 25.'):format(tostring(Config.Diagnostics.SlowJobMs))
+        slowMs = 25
     end
     Config.Diagnostics.SlowJobMs = slowMs
 
@@ -990,9 +992,10 @@ local function validateConfig(quiet)
         Config.Immunity.GrandfatherDays = 3
     end
 
-    if not Config.Kidnap.RequireCoercion then
-        warn[#warn + 1] = 'Kidnap.RequireCoercion is off: a target can be "delivered" while walking freely'
-    end
+    -- Kidnap.RequireCoercion off is how this resource ships: a handover then
+    -- needs the target alive, conscious, not downed and within Radius of the
+    -- person who placed the contract (and of the hitman) for the whole
+    -- countdown. That is a choice, not a problem, so nothing is said of it.
     -- A restraint required and nothing that can show one: every handover is
     -- refused as not restrained, the target cuffed in the hitman's car too,
     -- so on 'alive' no accepted contract could ever complete and each ran to
@@ -1869,8 +1872,13 @@ function Recover()
         if lastAlive and not contract.paused_since and not overdue
             and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED
                  or contract.state == CH.STATE.COMPLETING) then
-            if Storage.startPause(contract.id, lastAlive) then
-                contract.paused_since = lastAlive
+            -- Never from before it was placed. The heartbeat is a stamp a
+            -- minute apart (json), so a contract placed after the last one
+            -- was paused from a moment it did not exist yet, and credited
+            -- the time between when the pause ended.
+            local from = math.min(now, math.max(lastAlive, tonumber(contract.created_at) or lastAlive))
+            if Storage.startPause(contract.id, from) then
+                contract.paused_since = from
                 paused = paused + 1
             end
         end
@@ -2017,8 +2025,8 @@ function Recover()
               paused = paused, never_placed = returned })
     end
 
-    -- Alive from here on.
-    if Storage.heartbeat then Storage.heartbeat(now) end
+    -- Alive from here on: written now, whatever the store's interval says.
+    if Storage.heartbeat then Storage.heartbeat(now, true) end
 
     return recovered, unstuck, finished
 end
@@ -2280,7 +2288,8 @@ function Tick()
     -- batch; before the flush, which writes json's file of it.
     if modules.playtime then job('playtime.pass', modules.playtime.pass) end
     -- When this process was last known to be running, so the next boot can
-    -- tell how long nobody could play. See Recover.
+    -- tell how long nobody could play. See Recover. The json store writes
+    -- it once a minute, not every tick (JsonStore.heartbeat).
     if Storage.heartbeat then job('storage.heartbeat', Storage.heartbeat, os.time()) end
     -- Last, and the one every other job used to stand in front of.
     if Storage.flush then job('storage.flush', Storage.flush) end
@@ -2334,14 +2343,87 @@ end
 local expiryFailureSaidAt = {}
 local EXPIRY_FAILURE_SAID_EVERY = 600
 
+--- A party to the contracts this pass looks at, asked of the framework once
+--- a pass, however many contracts name them: [cid] = actor, or false where
+--- they are not in the city. The same few players are on most of the
+--- board, and the pass asked qbx_core for both of every contract's parties,
+--- one export each carrying that player's whole record: four hundred for
+--- two hundred contracts on thirty players, which was the 35 ms of the
+--- first pass after a start.
+---@param pass table
+---@param cid string|nil
+---@return table|nil actor
+local function presentActor(pass, cid)
+    if cid == nil then return nil end
+    local known = pass.actors[cid]
+    if known == nil then
+        known = modules.identity.byCitizenId(cid) or false
+        pass.actors[cid] = known
+    end
+    return known or nil
+end
+
+--- What the pass makes of one contract: whether its lifetime is up, who is
+--- here, and whether its clock stops. Asked of the row the list gave first,
+--- and again of the row read back when there is something to do.
+---@return table { lifetime, targetActor, overdue, jailed, targetAvailable, paused }
+local function judge(contract, now, pass)
+    -- An anonymous creator's presence is not asked (§14.32).
+    -- Pausing for it moved the deadline on by exactly how long
+    -- they were away, and every viewer is sent the deadline:
+    -- their session, to the minute. The hitman loses nothing by
+    -- it. A kill needs only the target, and a handover to a
+    -- creator nobody can locate is as easily avoided by one who
+    -- is online and elsewhere as by one who has logged off.
+    local creatorOnline = contract.anon_creator == true
+        or presentActor(pass, contract.creator_cid) ~= nil
+    local targetActor = presentActor(pass, contract.target_cid)
+    -- Whether the deadline has gone while the clock ran, asked before any
+    -- pause. Once it has, nobody leaving or being jailed now stops the
+    -- clock: a pause begun after the deadline turned an expiry into one
+    -- the lifetime ended, which hands the hitman back a stake they had
+    -- already lost, and left them on a card saying Due now with nothing
+    -- they could do on it. Either order on its own — the expiry first,
+    -- or the party gone with the deadline still to come and then passed
+    -- — forfeits; the seconds between the deadline and this pass must
+    -- too.
+    local overdue = not contract.paused_since
+        and contract.deadline_at ~= nil and now > contract.deadline_at
+    -- A target in prison is as far out of reach as one who has
+    -- logged off, and the hitman's clock ran on while they
+    -- served their time.
+    local jailed = Config.Limits.PauseWhileTargetJailed and targetActor ~= nil
+        and not overdue and modules.identity.isJailed(targetActor)
+    local targetAvailable = targetActor ~= nil and not jailed
+    return {
+        lifetime = contract.expires_at ~= nil and now > contract.expires_at,
+        targetActor = targetActor, overdue = overdue, jailed = jailed,
+        targetAvailable = targetAvailable,
+        paused = not overdue and not (creatorOnline and targetAvailable),
+    }
+end
+
+--- Whether the pass has anything to do to a contract judged so: end it,
+--- or start or end its pause. Anything else only moves the next wake.
+local function acts(contract, verdict, now)
+    if verdict.lifetime then return true end
+    if verdict.paused then return not contract.paused_since end
+    return contract.paused_since ~= nil
+        or (contract.deadline_at ~= nil and now > contract.deadline_at)
+end
+
 --- One live contract's turn in the expiry pass. `pass` carries what the
---- pass works out across them: how many it resolved, and the soonest moment
---- worth waking for. Run in a pcall each, so one contract the store refuses
---- does not stop the pass for every contract after it.
+--- pass works out across them: how many it resolved, the soonest moment
+--- worth waking for, and the parties it has looked up. Run in a pcall each,
+--- so one contract the store refuses does not stop the pass for every
+--- contract after it.
 ---@param contract table as Storage.liveContracts listed it
 ---@param now integer
----@param pass table { resolved = integer, soonest = integer }
+---@param pass table { resolved = integer, soonest = integer, actors = table }
 local function expireOne(contract, now, pass)
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return end
+    local verdict = judge(contract, now, pass)
+
     -- Read again before acting on it. The list above was read once, and
     -- every write and every resolve for the contracts before this one is
     -- an await in which a player can act on this one: a payout claimed,
@@ -2350,10 +2432,16 @@ local function expireOne(contract, now, pass)
     -- claimed collection went back on offer and the next kill was paid
     -- out of a slot already settled — and the deadline check expired a
     -- contract its creator had just extended.
-    if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
+    --
+    -- Only where there is something to do. A contract the pass leaves as it
+    -- is was read again all the same, one query each on mysql for every
+    -- live contract on every pass: what it is waiting for comes from the
+    -- list, and a deadline moved later since only wakes the pass early.
+    if acts(contract, verdict, now) then
         contract = Storage.readContract(contract.id) or contract
+        if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return end
+        verdict = judge(contract, now, pass)
     end
-    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return end
 
     -- A due contract whose ending was refused (a claim running on it, a
     -- write that did not land) is looked at again on the next tick, not
@@ -2367,7 +2455,7 @@ local function expireOne(contract, now, pass)
     end
 
     -- The absolute ceiling applies whatever anyone's presence is.
-    if contract.expires_at and now > contract.expires_at then
+    if verdict.lifetime then
         -- Whether the hitmen failed is the paused deadline's
         -- question, not the lifetime's (§3.6, §14.18). The lifetime
         -- runs through every pause, so reaching it while the
@@ -2387,34 +2475,8 @@ local function expireOne(contract, now, pass)
         return
     end
 
-    -- An anonymous creator's presence is not asked (§14.32).
-    -- Pausing for it moved the deadline on by exactly how long
-    -- they were away, and every viewer is sent the deadline:
-    -- their session, to the minute. The hitman loses nothing by
-    -- it. A kill needs only the target, and a handover to a
-    -- creator nobody can locate is as easily avoided by one who
-    -- is online and elsewhere as by one who has logged off.
-    local creatorOnline = contract.anon_creator == true
-        or modules.identity.byCitizenId(contract.creator_cid) ~= nil
-    local targetActor = modules.identity.byCitizenId(contract.target_cid)
-    -- Whether the deadline has gone while the clock ran, asked before any
-    -- pause. Once it has, nobody leaving or being jailed now stops the
-    -- clock: a pause begun after the deadline turned an expiry into one
-    -- the lifetime ended, which hands the hitman back a stake they had
-    -- already lost, and left them on a card saying Due now with nothing
-    -- they could do on it. Either order on its own — the expiry first,
-    -- or the party gone with the deadline still to come and then passed
-    -- — forfeits; the seconds between the deadline and this pass must
-    -- too.
-    local overdue = not contract.paused_since
-        and contract.deadline_at ~= nil and now > contract.deadline_at
-    -- A target in prison is as far out of reach as one who has
-    -- logged off, and the hitman's clock ran on while they
-    -- served their time.
-    local jailed = Config.Limits.PauseWhileTargetJailed and targetActor ~= nil
-        and not overdue and modules.identity.isJailed(targetActor)
-    local targetAvailable = targetActor ~= nil and not jailed
-    local paused = not overdue and not (creatorOnline and targetAvailable)
+    local targetActor, overdue, jailed = verdict.targetActor, verdict.overdue, verdict.jailed
+    local targetAvailable, paused = verdict.targetAvailable, verdict.paused
 
     -- A sentence the pass cannot count yet: the target not inside the
     -- prison grounds yet (driven there, a fade, a few seconds of lag), or
@@ -2500,7 +2562,8 @@ function ExpireContracts()
 
     -- The soonest future moment worth waking for. Starts far out and is
     -- pulled in by every live contract's deadline.
-    local pass = { resolved = 0, soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600) }
+    local pass = { resolved = 0, soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600),
+                   actors = {} }
 
     for i = 1, #contracts do
         local ok, err = pcall(expireOne, contracts[i], now, pass)
@@ -2623,7 +2686,7 @@ AddEventHandler('onResourceStop', function(name)
     -- deadline Recover had not yet paused, and a contract that fell due in
     -- it expired at the first tick with the hitman's stake forfeited (W150).
     local served = modules.app and modules.app.ready == true and not modules.app.recoveryFailed
-    if served and Storage and Storage.heartbeat then pcall(Storage.heartbeat, os.time()) end
+    if served and Storage and Storage.heartbeat then pcall(Storage.heartbeat, os.time(), true) end
     if Storage and Storage.close then Storage.close() end
 end)
 
