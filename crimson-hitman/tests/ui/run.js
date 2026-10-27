@@ -10469,6 +10469,145 @@ async function main() {
     drewCleanly(asSent);
   })();
 
+  /* The handover's meeting point (server/meeting.lua). The placer's own
+     card offers Set meeting point here, asked first, and Clear; a hitman's
+     card says one is set and offers Set GPS. Neither sends, nor is sent,
+     where it is: the placer's game reads it, and the hitman's game marks it
+     (client/main.lua). */
+  await (async function () {
+    function meetingCard(extra) {
+      return Object.assign({
+        id: 'ct00000077', reason: 'Owes money', mode: 'competitive', state: 'accepted',
+        fulfilment: 'alive', reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0,
+        currentSlot: 1, hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes',
+        targetProtected: false, role: 'creator', penaltyAmount: 0,
+        deadline: Math.floor(Date.now() / 1000) + 3 * 3600,
+        hitmen: [{ alias: 'Operative #1', claims: 0 }]
+      }, extra || {});
+    }
+    function hitmanCard(extra) {
+      return meetingCard(Object.assign({ role: 'hitman', hitmen: undefined,
+        myAlias: 'Operative #1', creatorAnonymous: true }, extra || {}));
+    }
+    const board = { ok: true, data: { page: 1, pages: 1, contracts: [],
+      settings: { relay: true, calls: false, amendments: true, buyouts: true,
+        fulfilment: 'alive', killPhotos: false, kidnap: { radius: 12, seconds: 30 } } } };
+    async function mineWith(created, accepted, extra) {
+      const app = boot(Object.assign({ list: board, ledger: LEDGER,
+        mine: { ok: true, data: { created: created, accepted: accepted, onMe: [] } },
+        amendments: { ok: true, data: [] } }, extra || {}));
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+    function sentNamed(app, name) {
+      return app.sent.filter(function (entry) { return entry.name === name; });
+    }
+    function labels(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+
+    const unset = await mineWith([meetingCard({ creatorName: 'Vic Marlowe', meetingSet: false })],
+      [], { setMeeting: { ok: true, data: { set: true, moved: false } } });
+    it('placer: offers to set one where they stand, saying the hitman sees the spot', function () {
+      const text = unset.view.textContent;
+      truthy(text.indexOf('No meeting point set.') !== -1, text);
+      truthy(text.indexOf('Set meeting point here shows the hitman on this contract the spot '
+        + 'where you are standing.') !== -1, text);
+      truthy(labels(unset).indexOf('Set meeting point here') !== -1, labels(unset).join(' | '));
+      eq(labels(unset).indexOf('Clear'), -1, 'nothing to clear');
+    });
+    click(unset, 'Set meeting point here');
+    await settle();
+    it('placer: asks first, saying who will see it', function () {
+      const text = unset.view.textContent;
+      truthy(text.indexOf('Set the meeting point where you are standing?') !== -1, text);
+      truthy(text.indexOf('Every hitman on this contract will see this spot on their GPS. Stand '
+        + 'where you want to meet them, then tap Set.') !== -1, text);
+      eq(sentNamed(unset, 'setMeeting').length, 0, 'nothing sent before Set');
+    });
+    click(unset, 'Set');
+    await settle(); await settle();
+    it('placer: sends which contract and nothing of where, which the game reads', function () {
+      const posts = sentNamed(unset, 'setMeeting');
+      eq(posts.length, 1);
+      eq(JSON.stringify(Object.keys(posts[0].body)), JSON.stringify(['id']));
+      eq(posts[0].body.id, 'ct00000077');
+      truthy(unset.notice().indexOf('Meeting point set where you are standing.') !== -1,
+        unset.notice());
+    });
+
+    const anon = await mineWith([meetingCard({ creatorAnonymous: true, meetingSet: true })], [],
+      { clearMeeting: { ok: true, data: { cleared: true } } });
+    it('placer, anonymous: told the hitman sees the spot, not who they are', function () {
+      const text = anon.view.textContent;
+      truthy(text.indexOf('Meeting point set. The hitman can follow it on their GPS.') !== -1, text);
+      truthy(text.indexOf('the spot where you are standing, not who you are.') !== -1, text);
+      truthy(labels(anon).indexOf('Clear') !== -1, labels(anon).join(' | '));
+    });
+    click(anon, 'Clear');
+    await settle(); await settle();
+    it('placer: Clear clears it, at once', function () {
+      eq(sentNamed(anon, 'clearMeeting').length, 1);
+      eq(sentNamed(anon, 'clearMeeting')[0].body.id, 'ct00000077');
+      truthy(anon.notice().indexOf('Meeting point cleared.') !== -1, anon.notice());
+    });
+
+    const soon = await mineWith([meetingCard({ meetingSet: true })], [],
+      { setMeeting: { ok: false, err: 'meeting_too_soon', data: { retryAfter: 20 } } });
+    click(soon, 'Set meeting point here');
+    await settle();
+    click(soon, 'Set');
+    await settle(); await settle();
+    it('placer: a change inside the half minute says how long to wait', function () {
+      truthy(soon.notice().indexOf('The meeting point was changed a moment ago. Try again in '
+        + '20 seconds.') !== -1, soon.notice());
+    });
+
+    const off = await mineWith([meetingCard({})], []);
+    it('placer: no controls where the server sends none (off, or nobody on it)', function () {
+      eq(off.view.textContent.indexOf('eeting point'), -1, off.view.textContent);
+    });
+
+    const hit = await mineWith([], [hitmanCard({ meetingSet: true })], { meetingGps: { ok: true } });
+    it('hitman: says a meeting point is set, and offers Set GPS', function () {
+      truthy(hit.view.textContent.indexOf('Meeting point set') !== -1, hit.view.textContent);
+      truthy(labels(hit).indexOf('Set GPS') !== -1, labels(hit).join(' | '));
+      eq(labels(hit).indexOf('Set meeting point here'), -1, 'the placer\'s controls are theirs');
+    });
+    click(hit, 'Set GPS');
+    await settle(); await settle();
+    it('hitman: Set GPS has the game mark it, sending which contract alone', function () {
+      const posts = sentNamed(hit, 'meetingGps');
+      eq(posts.length, 1);
+      eq(JSON.stringify(Object.keys(posts[0].body)), JSON.stringify(['id']));
+      truthy(hit.notice().indexOf('The meeting point is marked on your GPS.') !== -1, hit.notice());
+    });
+
+    const gone = await mineWith([], [hitmanCard({ meetingSet: true })],
+      { meetingGps: { ok: false, err: 'no_meeting' } });
+    const readsBefore = sentNamed(gone, 'mine').length;
+    click(gone, 'Set GPS');
+    await settle(); await settle();
+    it('hitman: one cleared meanwhile is said, and the card read again', function () {
+      truthy(gone.notice().indexOf('No meeting point is set on this contract now.') !== -1,
+        gone.notice());
+      truthy(sentNamed(gone, 'mine').length > readsBefore, 'read again');
+    });
+
+    const none = await mineWith([], [hitmanCard({})]);
+    it('hitman: nothing of a meeting point while none is set', function () {
+      eq(none.view.textContent.indexOf('eeting point'), -1, none.view.textContent);
+      eq(labels(none).indexOf('Set GPS'), -1);
+    });
+
+    it('meeting point: every page drew cleanly', function () {
+      [unset, anon, soon, off, hit, gone, none].forEach(function (app) { drewCleanly(app); });
+    });
+  })();
+
   /* lb-phone's light theme, its default. It draws its status bar and home
      indicator onto the page in black, and the page is dark, so the page
      marks its root with the theme and the stylesheet lays a paper band

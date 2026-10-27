@@ -386,6 +386,36 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
       still pays
 - [ ] The placer's **Change reward** offers no kidnapping bonus to raise;
       adding money still works, and it is paid on the handover
+- [ ] **Meeting point** (`Config.Kidnap.MeetingPoint = true`, as shipped).
+      As the placer, before anybody takes the contract: your card under Mine
+      shows nothing about a meeting point. Once a hitman has it, it says *No
+      meeting point set.* and *Set meeting point here shows the hitman on this
+      contract the spot where you are standing.* (placed anonymously: *…, not
+      who you are.*). Tap **Set meeting point here**: it asks first, then says
+      *Meeting point set where you are standing.* Tap it again at once: *The
+      meeting point was changed a moment ago. Try again in N seconds.* Drive
+      off and tap it while moving: *Could not place a meeting point where you
+      are standing.*
+- [ ] As the hitman: your phone gets *Meeting point set* (it names nobody),
+      and your card says **Meeting point set** with **Set GPS**; tap it and
+      the spot where the placer stood is marked on your map. Move it as the
+      placer (after 30 seconds): *Meeting point moved*, and Set GPS marks the
+      new spot. **Clear** it: your card no longer says one is set, and no
+      phone notice rings
+- [ ] Nobody else sees it: on the board (as a third character), on the
+      target's On me, on a whitelisted-job player's view, in an advisory, and
+      in the admin panel's contract view for staff without
+      `Config.Admin.IdentityAce` there is no meeting point and no coordinates;
+      staff with it see *Meeting point* with the coordinates
+- [ ] It goes: the hitman walks away (on a contract only they held) and a
+      new hitman takes it: no meeting point on their card. Set one again and
+      void the contract from the panel: the contract leaves the hitman's Mine,
+      and the panel's contract view (with the identity ACE) shows no meeting
+      point. `restart crimson-hitman` with one set: it is still on the
+      hitman's card afterwards, and Set GPS still marks it
+- [ ] In the admin panel's Features, turn **Meeting point for the handover**
+      off: the placer's controls and the hitman's **Meeting point set** go;
+      turn it back on: a point set before is shown again
 - [ ] **One `'either'` smoke test** (on a copy, or set it back afterwards):
       set `Config.Completion.Fulfilment = 'either'` and restart. `/ch-diag`
       says `completion: either`, and counts any contract still open from the

@@ -1295,7 +1295,12 @@
         + (c.next_slot ? ' · next ' + c.next_slot : '')),
       h('dt', 'Bonus'), h('dd', num(c.bonus_percent) + '%'),
       h('dt', 'Stake'), h('dd', money(c.penalty_amount)),
-      h('dt', 'Buyout price'), h('dd', money(c.bailout_amount) + (c.buyout_queued ? ' · a buyout is queued' : '')));
+      h('dt', 'Buyout price'), h('dd', money(c.bailout_amount) + (c.buyout_queued ? ' · a buyout is queued' : '')),
+      // The handover's meeting point: where the client stood, sent to staff
+      // with the identity ACE alone, as who they are is.
+      c.meeting ? h('dt', 'Meeting point') : null,
+      c.meeting ? h('dd', 'x ' + String(Number(c.meeting.x)) + ', y '
+        + String(Number(c.meeting.y))) : null);
 
     return frag(head, answerBox(S.drawer.answer), h('div.drawer-body',
       actions,

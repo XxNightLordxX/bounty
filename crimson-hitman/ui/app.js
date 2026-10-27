@@ -448,6 +448,12 @@
       + 'to everybody else for a while before you can take it again.',
     // A proposal answered after it lapsed (answerProposal says it the same way).
     proposal_expired: 'That proposal ran out before it was answered.',
+    // The handover's meeting point (server/meeting.lua).
+    meeting_no_hitman: 'Nobody is on this contract now, so there is nobody to meet.',
+    meeting_not_here: 'Could not place a meeting point where you are standing. Stand still '
+      + 'for a moment and try again.',
+    meeting_too_soon: 'The meeting point was changed a moment ago. Try again shortly.',
+    no_meeting: 'No meeting point is set on this contract now.',
     relay_off: 'This server does not run messages through the app.',
     calls_off: 'This server does not place calls through the app.',
     // A feature staff turned off (proposals, the informant). Only new
@@ -1588,6 +1594,13 @@
         + durationText(back) + '; until then it is open to everybody else.';
     }
 
+    // How long until the meeting point may change again: once every half
+    // minute, whoever taps.
+    if (result.err === 'meeting_too_soon' && result.data && Number(result.data.retryAfter) > 0) {
+      return 'The meeting point was changed a moment ago. Try again '
+        + retryIn(result.data.retryAfter) + '.';
+    }
+
     // How long until the informant sells again after a restart.
     if (result.err === 'informant_warming' && result.data && Number(result.data.minutes) > 0) {
       var minutes = Math.ceil(Number(result.data.minutes));
@@ -2109,11 +2122,104 @@
       node.appendChild(el('div', 'notice ok', placerTakenText()));
     }
 
+    // Where to meet for the handover, on the same card. The server sends
+    // meetingSet only while one can be set here: an alive-only contract a
+    // hitman holds, on a server running the feature (Config.Kidnap
+    // .MeetingPoint). Absent, no controls.
+    if (mine && context !== 'board' && typeof contract.meetingSet === 'boolean') {
+      node.appendChild(placerMeeting(contract));
+    }
+
     node.appendChild(actionsFor(contract, context));
     // Only on the player's own cards: a dispute is about a contract they
     // are in, and the board is a listing, not a case file.
     if (context === 'mine' || context === 'onme') { appendRef(node, contract.id); }
     return node;
+  }
+
+  /* ---------- the handover's meeting point ----------
+     server/meeting.lua. The point is where the placer stands when they tap,
+     read by their own game (client/main.lua) and never by this page; Set
+     GPS has the hitman's game mark it, and this page never holds it. */
+
+  /* The placer's half, on their own card. What it shows the hitman is a
+     place, so the words say so before they tap: where they are standing,
+     and, placed anonymously, not who they are. */
+  function placerMeeting(contract) {
+    var box = el('div', 'meeting');
+    var set = contract.meetingSet === true;
+    box.appendChild(el('div', 'meeting-state ico i-pin', set
+      ? 'Meeting point set. The hitman can follow it on their GPS.'
+      : 'No meeting point set.'));
+    box.appendChild(el('div', 'hint', 'Set meeting point here shows the hitman on this '
+      + 'contract the spot where you are standing'
+      + (contract.creatorAnonymous ? ', not who you are.' : '.')));
+    var row = el('div', 'row meeting-actions');
+    var key = 'meeting:' + contract.id;
+    if (isBusy(key)) {
+      row.appendChild(actionButton('ghost ico i-pin', 'Set meeting point here', key, 'Setting\u2026'));
+    } else {
+      var here = el('button', 'ghost ico i-pin', 'Set meeting point here');
+      here.onclick = function () { setMeetingHere(contract); };
+      row.appendChild(here);
+    }
+    if (set) {
+      row.appendChild(actionButton('ghost ico i-xcircle', 'Clear', 'meetingClear:' + contract.id,
+        'Clearing\u2026', function () { return clearMeeting(contract); }));
+    }
+    box.appendChild(row);
+    return box;
+  }
+
+  /* Asked first: the spot goes to every hitman on the contract. */
+  function setMeetingHere(contract) {
+    ask('Set the meeting point where you are standing?',
+      'Every hitman on this contract will see this spot on their GPS'
+        + (contract.creatorAnonymous ? ', but not who you are' : '')
+        + '. Stand where you want to meet them, then tap Set.',
+      function () {
+        once('meeting:' + contract.id, function () {
+          return post('setMeeting', { id: contract.id }).then(function (r) {
+            if (!r.ok) { return fail(r); }
+            say(r.data && r.data.moved ? 'Meeting point moved to where you are standing.'
+              : 'Meeting point set where you are standing.', 'ok');
+            refresh();
+          });
+        });
+      }, { yes: 'Set', no: 'Not now' });
+  }
+
+  function clearMeeting(contract) {
+    return post('clearMeeting', { id: contract.id }).then(function (r) {
+      if (!r.ok) {
+        fail(r);
+        if (r.err === 'no_meeting') { refresh(); }
+        return;
+      }
+      say('Meeting point cleared.', 'ok');
+      refresh();
+    });
+  }
+
+  /* The hitman's half: that one is set, and Set GPS. */
+  function hitmanMeeting(contract) {
+    var box = el('div', 'meeting');
+    box.appendChild(el('div', 'meeting-state ico i-pin', 'Meeting point set'));
+    var row = el('div', 'row meeting-actions');
+    row.appendChild(actionButton('ghost ico i-pin', 'Set GPS', 'gps:' + contract.id,
+      'Setting GPS\u2026', function () {
+        return post('meetingGps', { id: contract.id }).then(function (r) {
+          if (!r.ok) {
+            fail(r);
+            // Cleared, or taken off, since the card was drawn.
+            if (r.err === 'no_meeting' || r.err === 'not_found') { refresh(); }
+            return;
+          }
+          say('The meeting point is marked on your GPS.', 'ok');
+        });
+      }));
+    box.appendChild(row);
+    return box;
   }
 
   /* The contract's reference, small, muted and selectable, for quoting to
@@ -2270,6 +2376,10 @@
       if (firstJob) { row.appendChild(firstJob); }
       var held = exclusiveReminder(contract);
       if (held) { row.appendChild(held); }
+
+      // Where the person who placed it wants to meet, when they set a
+      // point: said, never shown. Set GPS has the game mark it on the map.
+      if (contract.meetingSet === true) { row.appendChild(hitmanMeeting(contract)); }
 
       // The target has paid to close it and the buyout waits out its delay,
       // which is there so the hitman can finish first. The phone said so

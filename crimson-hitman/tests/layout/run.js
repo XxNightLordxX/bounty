@@ -148,6 +148,10 @@ function serverStub() {
   own[2].reward = { baseline: own[2].reward.baseline, bonus: 0 };
   own[2].hitmenActive = 1;
   own[2].hitmen = [{ alias: 'Operative #1' }];
+  // The handover's meeting point on both: set, so the placer's card carries
+  // Set meeting point here and Clear, and the hitman's carries Set GPS.
+  own[2].meetingSet = true;
+  taken[1].meetingSet = true;
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
@@ -637,6 +641,42 @@ async function main() {
     truthy(lone.beside === 1, 'it shares the line with ' + (lone.beside - 1) + ' other button(s)');
     atLeast(lone.width, lone.room - 1, 'Deliver alive across its row (px)');
     atLeast(lone.height, 36, 'Deliver alive height (px)');
+  });
+
+  /* The handover's meeting point at phone width, on both sides: the
+     placer's Set meeting point here and Clear, and the hitman's Set GPS,
+     each whole, inside its card and tall enough to tap. */
+  const meeting = await page.evaluate(function () {
+    return Array.prototype.slice.call(document.querySelectorAll('.meeting')).map(function (box) {
+      const card = box.closest('.card').getBoundingClientRect();
+      const buttons = Array.prototype.slice.call(box.querySelectorAll('button'));
+      const lines = Array.prototype.slice.call(box.querySelectorAll('div'));
+      return {
+        labels: buttons.map(function (b) { return b.textContent; }),
+        shortest: Math.min.apply(Math, buttons.map(function (b) {
+          return b.getBoundingClientRect().height;
+        })),
+        outside: buttons.concat(lines).filter(function (n) {
+          const r = n.getBoundingClientRect();
+          return r.left < card.left - 1 || r.right > card.right + 1;
+        }).length,
+        cut: buttons.concat(lines).filter(function (n) {
+          return n.scrollWidth > n.clientWidth + 1;
+        }).map(function (n) { return n.textContent.slice(0, 30); })
+      };
+    });
+  });
+
+  it('draws the meeting point on both sides at phone width, whole and tappable', function () {
+    const all = meeting.reduce(function (a, m) { return a.concat(m.labels); }, []);
+    truthy(all.indexOf('Set meeting point here') !== -1 && all.indexOf('Clear') !== -1,
+      'the placer\'s controls: ' + all.join(' | '));
+    truthy(all.indexOf('Set GPS') !== -1, 'the hitman\'s: ' + all.join(' | '));
+    meeting.forEach(function (m) {
+      truthy(m.outside === 0, m.outside + ' part(s) outside the card: ' + m.labels.join(', '));
+      truthy(m.cut.length === 0, 'cut off: ' + m.cut.join(' | '));
+      atLeast(m.shortest, 36, 'meeting button height (px)');
+    });
   });
 
   await page.click('[data-tab="place"]');

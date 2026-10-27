@@ -563,6 +563,9 @@ local UI_EVENTS = {
     'rewardOptions', 'mugshotImage',
     'create', 'accept', 'abandon', 'cancel', 'revise',
     'armKidnap', 'kidnapProgress',
+    -- Clearing the handover's meeting point. Setting it and Set GPS are
+    -- answered here (crimson:setMeeting, crimson:meetingGps), below.
+    'clearMeeting',
     -- Verify kill with kill photos off (Config.Completion.KillPhotos): no
     -- token and no picture, so nothing here is held back from the page.
     'verifyKill',
@@ -676,6 +679,39 @@ for _, event in ipairs(UI_EVENTS) do
         end)
     end)
 end
+
+--------------------------------------------------------------------------
+-- The handover's meeting point (server/meeting.lua)
+--------------------------------------------------------------------------
+
+--- Set meeting point here: where this player's character stands, read here
+--- on the tap and never taken from the page, and believed by the server only
+--- within a few metres of where it sees them. One read, on the tap: nothing
+--- here runs while the app is closed.
+RegisterNUICallback('crimson:setMeeting', function(data, cb)
+    local id = type(data) == 'table' and data.id or nil
+    local coords = GetEntityCoords(PlayerPedId())
+    App.request('setMeeting', { id = id, x = coords.x + 0.0, y = coords.y + 0.0,
+                                z = coords.z + 0.0 }, cb)
+end)
+
+--- Set GPS: the server answers an active hitman of the contract with where
+--- the meeting point is, and it is marked on their map here. The page is
+--- told only that it was: the coordinates go no further than this.
+RegisterNUICallback('crimson:meetingGps', function(data, cb)
+    local id = type(data) == 'table' and data.id or nil
+    App.request('meetingWaypoint', { id = id }, function(result)
+        local where = type(result) == 'table' and result.ok == true
+            and type(result.data) == 'table' and result.data or nil
+        local x, y = where and tonumber(where.x), where and tonumber(where.y)
+        if x and y then
+            SetNewWaypoint(x + 0.0, y + 0.0)
+            return cb({ ok = true, event = 'meetingWaypoint' })
+        end
+        cb({ ok = false, event = 'meetingWaypoint',
+             err = type(result) == 'table' and result.err or 'no_meeting' })
+    end)
+end)
 
 --- Save the kill photo the player has open to their phone's Photos.
 ---

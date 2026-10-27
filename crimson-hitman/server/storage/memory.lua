@@ -103,6 +103,13 @@ local TERMS = { 'fulfilment_rule' }
 --- what the bulletin said.
 local ADVISED = { 'advised_posted_at', 'advised_hitmen' }
 
+--- The handover's meeting point (server/meeting.lua): where, to the metre,
+--- and when the placer last changed it. Moves only through setMeeting,
+--- clearMeeting and dropMeeting, so a copy read before the placer set one
+--- and written after cannot take it back, and one read before it was taken
+--- off a contract that ended cannot put it back.
+local MEETING = { 'meeting_x', 'meeting_y', 'meeting_at' }
+
 function Memory.writeContract(contract)
     local existing = db.contracts[contract.id]
     if existing and existing ~= contract then
@@ -121,6 +128,9 @@ function Memory.writeContract(contract)
         end
         for i = 1, #ADVISED do
             contract[ADVISED[i]] = existing[ADVISED[i]]
+        end
+        for i = 1, #MEETING do
+            contract[MEETING[i]] = existing[MEETING[i]]
         end
     end
     db.contracts[contract.id] = contract
@@ -278,6 +288,44 @@ function Memory.setAdvised(id, fields)
         if not ADVISED_FIELD[k] then error('setAdvised: not an advisory field: ' .. tostring(k)) end
         c[k] = v
     end
+    return true
+end
+
+--- Set the meeting point, only on a contract a hitman holds (accepted) and
+--- only when it last changed no later than `notBefore`: the rule of one
+--- change every Meeting.EVERY_SECONDS, kept by the write itself, so two
+--- requests read at the same moment cannot both land.
+---@param x integer
+---@param y integer
+---@param at integer os.time() of the change
+---@param notBefore integer the latest meeting_at that allows it
+---@return boolean set
+function Memory.setMeeting(id, x, y, at, notBefore)
+    local c = db.contracts[id]
+    if not c or c.state ~= 'accepted' then return false end
+    if c.meeting_at ~= nil and c.meeting_at > notBefore then return false end
+    c.meeting_x, c.meeting_y, c.meeting_at = x, y, at
+    return true
+end
+
+--- The placer clears it: only one that is set, under the same rule.
+---@return boolean cleared
+function Memory.clearMeeting(id, at, notBefore)
+    local c = db.contracts[id]
+    if not c or c.meeting_x == nil then return false end
+    if c.meeting_at ~= nil and c.meeting_at > notBefore then return false end
+    c.meeting_x, c.meeting_y, c.meeting_at = nil, nil, at
+    return true
+end
+
+--- Take it off a contract nobody can meet on any more: one that ended, or
+--- one the last hitman left. Whatever the rule says, and when it last
+--- changed is kept.
+---@return boolean dropped whether one was there
+function Memory.dropMeeting(id)
+    local c = db.contracts[id]
+    if not c or c.meeting_x == nil then return false end
+    c.meeting_x, c.meeting_y = nil, nil
     return true
 end
 

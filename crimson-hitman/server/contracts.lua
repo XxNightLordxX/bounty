@@ -309,6 +309,23 @@ local function settleStakes(contractId, creatorCid, forfeit, contract)
     return outcomes
 end
 
+--- Take the handover's meeting point (server/meeting.lua) off a contract
+--- nobody can meet on any more: one that ended, or one no hitman is active
+--- on. Never raises, since nothing here may stop an ending or a walk-away:
+--- a store that would not answer leaves the point where it is, said in the
+--- console, and nobody is shown it there (the projection shows it only to
+--- an active hitman of a live contract, and the next start's repair takes
+--- it off a contract nobody holds).
+---@param contractId string
+local function dropMeeting(contractId)
+    if not Storage.dropMeeting then return end
+    local ok, err = pcall(Storage.dropMeeting, contractId)
+    if not ok then
+        Log.always(('contract %s: its meeting point could not be taken off: %s')
+            :format(tostring(contractId), Util.dbError(err)))
+    end
+end
+
 --- Everything that must happen exactly once when a contract ends, whichever
 --- path got it there. Routing every terminal transition through here is what
 --- stops a new path forgetting a step — the completion path already did.
@@ -324,6 +341,11 @@ end
 ---@return table[] stakes where each stake still on it went (settleStakes), so the
 --- claim that ended it can tell its winner where theirs went
 local function finalise(contractId, contract, forfeitStakes, ending, winnerCid)
+    -- Nobody meets on it any more. First, so an ending that raises part-way
+    -- has already taken it off; one that stops before this holds its escrow
+    -- still, and its recovery takes it off (Contracts.recoverEnded).
+    dropMeeting(contractId)
+
     -- Read before the stakes settle, while the hitman records still say who
     -- was on this contract: they are who needs their card to change.
     local hitmanCids = {}
@@ -2113,10 +2135,11 @@ local function walkAway(actor, contractId)
         end
     end
 
-    local remaining = 0
+    local remaining, active = 0, 0
     local hitmen = Storage.readHitmen(contractId)
     for i = 1, #hitmen do
         if holds(hitmen[i]) then remaining = remaining + 1 end
+        if hitmen[i].state == 'active' then active = active + 1 end
     end
 
     -- With nobody left holding it, an exclusive contract goes back on the
@@ -2136,6 +2159,12 @@ local function walkAway(actor, contractId)
             end
         end
     end
+
+    -- The last active hitman gone: the meeting point was for them, and the
+    -- next to take it up never sees where the placer stood for this one.
+    -- After the board, so a point set in between, while it still read
+    -- accepted, is taken off with it (Storage.setMeeting refuses one after).
+    if active == 0 then dropMeeting(contractId) end
 
     if Progression then Progression.onFailed(actor.cid) end
 
@@ -2266,16 +2295,19 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     end
     local given = moved > 0 and stake or 0
 
-    local remaining, others = 0, {}
+    local remaining, active, others = 0, 0, {}
     for _, h in ipairs(Storage.readHitmen(contractId)) do
         if holds(h) then
             remaining = remaining + 1
             if h.hitman_cid ~= current.hitman_cid then others[#others + 1] = h.hitman_cid end
         end
+        if h.state == 'active' then active = active + 1 end
     end
     if remaining == 0 then
         Contracts.transition(contractId, CH.STATE.ACCEPTED, CH.STATE.ACTIVE, 'idle_hold_released')
     end
+    -- The last active hitman gone, as walking away (walkAway).
+    if active == 0 then dropMeeting(contractId) end
 
     if Contracts.onHitmanLeft then
         Contracts.onHitmanLeft(contractId, current.hitman_cid, 'idle_hold_released')
@@ -2337,8 +2369,9 @@ local function repairHeldUnlocked(contractId)
         and contract.state ~= CH.STATE.ACCEPTED) then
         return false
     end
-    local holders, lines, given = 0, nil, 0
+    local holders, active, lines, given = 0, 0, nil, 0
     for _, h in ipairs(Storage.readHitmen(contractId) or {}) do
+        if h.state == 'active' then active = active + 1 end
         if holds(h) then
             holders = holders + 1
         elseif walkedAway(h) then
@@ -2350,6 +2383,11 @@ local function repairHeldUnlocked(contractId)
     local reopened = holders == 0 and contract.mode == CH.MODE.EXCLUSIVE
         and contract.state == CH.STATE.ACCEPTED and not Escrow.claimRunning(contractId)
         and Contracts.transition(contractId, CH.STATE.ACCEPTED, CH.STATE.ACTIVE, 'holder_gone')
+    -- And the meeting point an abandon or a release that stopped part-way
+    -- left on a contract no hitman is active on (dropMeeting): every start
+    -- asks this of every live contract, so a crash in between does not show
+    -- it to the next hitman to take it up. Only where one is set.
+    if active == 0 and contract.meeting_x ~= nil then dropMeeting(contractId) end
     if given == 0 and not reopened then return false end
 
     -- The client was told nothing when the abandon stopped: told now, of
@@ -3830,6 +3868,9 @@ function Contracts.recoverEnded(contractId, reason)
 
     if contract.state == CH.STATE.COMPLETING
         and (contract.next_slot or 1) > (contract.payout_slots or 1) then
+        -- What finalise takes off first, which an ending that stopped never
+        -- reached.
+        if contract.meeting_x ~= nil then dropMeeting(contractId) end
         releaseUntouched(contract, false, reason)
         contract.resolved_at = contract.resolved_at or os.time()
         contract.resolution = contract.resolution or 'completed'
@@ -3859,6 +3900,7 @@ function Contracts.recoverEnded(contractId, reason)
     end
 
     if CH.TERMINAL[contract.state] then
+        if contract.meeting_x ~= nil then dropMeeting(contractId) end
         -- Whether an expiry forfeits is the deadline's question, asked the
         -- way the tick asked it (§3.6, §14.18). Every EXPIRED contract used
         -- to forfeit here, so a crash while ending one that had only reached

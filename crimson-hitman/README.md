@@ -11,6 +11,13 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Meeting point for the handover** (`Config.Kidnap.MeetingPoint`, shipped
+  on): on an alive-only contract a hitman holds, the person who placed it can
+  tap **Set meeting point here** on their card, where they are standing, and
+  clear it. Only the hitmen on that contract see that one is set, with **Set
+  GPS** to put it on their map, and are told on their phone when it is set or
+  moved; nobody else sees it but staff with the identity ACE, in the admin
+  panel's view of that contract (see *Live transfer only*).
 - **Alerts:** every line the server console prints whatever `Config.Debug`
   says (money at risk or left for staff, a write that failed, a job that keeps
   failing, each setting that needs attention) is kept as an alert in the admin
@@ -392,6 +399,7 @@ restart only once it says `database: answering`. For backups use
 | `Config.WhitelistedView.Enabled` | The whitelisted-job view (`true`, as shipped): players on a job the app bars open it to one read-only screen, the contracts on them and (for those the advisory reaches) on other whitelisted-job members, and the buyout on their own. `false` closes the app to them as before, and `Config.HideAppFromBlockedJobs` then decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features, kept across restarts |
 | `Config.HideAppFromBlockedJobs` | Whether a barred player's phone shows the app at all (`true`, as shipped: hidden). Applies only while the whitelisted-job view is off; with it on they have the app, showing that one screen, and the admin panel marks this as not applying |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry. `TriggerJobNames` ships with every name in `Config.BlockedJobNames`, so a barred job whose type `qbx_core` leaves out still counts; a barred job in neither trigger list is warned about at startup. The app words a protected target by the kind of job (law enforcement, emergency services, legal), never as a sworn officer unless they are one, and says only what placing or accepting will do under the switches now. `FlagListing` marks the card itself (its chip, its notice and its styling). The target's own notice says *Your department has been advised* only where their job receives the advisory, and *Law enforcement has been advised* otherwise |
+| `Config.Kidnap.MeetingPoint` | Whether the person who placed an alive-only contract can set a meeting point for the handover where they stand (`true`, as shipped). Only the hitmen on that contract see it, on their GPS; nobody else does but staff with `Config.Admin.IdentityAce`, in the admin panel's contract view. Off hides the controls and keeps any point already set. See *Live transfer only* |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
 | `Config.Limits.MaxPayoutSlots` | How many times one contract can be collected: `1` (as shipped; each contract is collected once), `2` or `3`. At 1 the Place form shows no extra-collection controls at all; at 2 or 3 the creator chooses how many, each funded and escrowed up front. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup; the admin panel takes 1 to 3. Contracts already placed keep the number they were placed with, and can still give their last collection back |
 | `Config.Limits.MinContractReward` | The least a new contract's reward may be worth in money (1000 as shipped; `0` turns it off): cash, bank and dirty money summed across every payout, the kidnapping bonus included. Items and weapons do not count, since nothing prices them. A contract worth less is refused (`reward_too_small`) and the app says the figure, on the Place form before anything is typed and in the refusal; a reward cannot be taken back out below it either, by Withdraw part or by giving back a payout. Without it two one-dollar contracts from two accounts fill a target's `Config.Limits.MaxActiveContractsPerTarget` and nobody else can list them until both close. Anything that is not a whole number of dollars is read as 1000, and one above `Config.MaxContractValue` is held to it, with a warning at startup |
@@ -472,6 +480,40 @@ none of these lines calls that person "the client":
   and, on a contract still running, when they may collect again. It is kept
   for their next login if they are away, and their **Ledger** says how many
   payments wait for them to make room.
+
+**Meeting point.** With `Config.Kidnap.MeetingPoint = true` (as shipped), the
+person who placed an alive-only contract can say where the hitman should bring
+the target, once a hitman has it:
+
+- **Their card under Mine** says *No meeting point set.* (or *Meeting point
+  set. The hitman can follow it on their GPS.*) and offers **Set meeting point
+  here**, with **Clear** once one is set. It says what it shows before they
+  tap: *Set meeting point here shows the hitman on this contract the spot where
+  you are standing.*, and, placed anonymously, *…, not who you are.* The tap
+  asks first: *Every hitman on this contract will see this spot on their GPS.*
+- **The point is where they stand**, read by their own game when they tap,
+  and believed by the server only within 5 metres of where it sees their
+  character and inside the map (a car on the move, or figures a client made
+  up, are refused: *Could not place a meeting point where you are standing.*).
+  It is kept to the metre, as coordinates only: no name, no street and
+  nothing anybody types.
+- **Only the hitmen active on that contract** are shown it: their card says
+  **Meeting point set** with **Set GPS**, which has their game mark it on the
+  map, and their phone is told *Meeting point set* (or *Meeting point moved*)
+  within the notice budget (`Config.Notifications`), worded the same whoever
+  placed it. The coordinates are on no card: the board, the target's own view,
+  the whitelisted-job view, the law enforcement advisory and every staff view
+  leave it out, and only the contract's view in the admin panel shows it, to
+  staff with `Config.Admin.IdentityAce`.
+- **It changes at most once every 30 seconds** (setting, moving or clearing),
+  and goes when the contract ends in any way, when the last active hitman on
+  it leaves (a hitman who takes it up after never sees where the placer stood
+  for the one before), or when the placer clears it.
+- It is kept on the contract in every storage mode (`meeting_x`, `meeting_y`,
+  `meeting_at` on `crimson_contracts` in `mysql` mode, added by the start to an
+  older table), so a restart keeps it. **Meeting point for the handover** in
+  the admin panel's Features turns it off: the controls are hidden and changes
+  refused, and a point already set is kept, shown again when it is back on.
 
 Set it to `'either'` to turn kills back on: then a kill, verified with
 **Verify kill**, or a live handover completes a contract, and a handover pays

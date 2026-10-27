@@ -269,6 +269,9 @@ local DEFAULTS = {
             handcuffed = true,
             passengerOfHitman = true,
         },
+        --- Absent, the placer of an alive-only contract could not set a
+        --- meeting point for the handover, as shipped they can. Checked below.
+        MeetingPoint = true,
     },
     --- The board's page size, read straight into arithmetic in
     --- Projection.listing. Absent, it takes down `list` — the app's home
@@ -733,6 +736,9 @@ local function validateConfig(quiet)
         -- Off is nothing sent outside the server.
         { section = 'Alerts', key = 'ToDiscord',
           off = 'no alert is posted to Discord; the admin panel still lists every one' },
+        -- Off is the side that shows a hitman nothing of where the placer is.
+        { section = 'Kidnap', key = 'MeetingPoint',
+          off = 'nobody can set a meeting point for a handover, and none is shown' },
     }) do
         local value = Config[switch.section][switch.key]
         if type(value) ~= 'boolean' then
@@ -1549,6 +1555,7 @@ function StartCrimsonHitman()
     local timing     = CrimsonBoot.require('server.timing')
     local panel      = CrimsonBoot.require('server.panel')
     local alerts     = CrimsonBoot.require('server.alerts')
+    local meeting    = CrimsonBoot.require('server.meeting')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1586,6 +1593,9 @@ function StartCrimsonHitman()
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify })
+    -- The handover's meeting point (server/meeting.lua): the placer sets it,
+    -- the hitmen on the contract are told.
+    meeting.init({ storage = Storage, notify = notify, audit = audit })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -1603,6 +1613,8 @@ function StartCrimsonHitman()
         -- Every line printed whatever Config.Debug says, kept as an alert
         -- for the panel and posted to Discord (server/alerts.lua).
         alerts = alerts,
+        -- The handover's meeting point, for the app's requests.
+        meeting = meeting,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {

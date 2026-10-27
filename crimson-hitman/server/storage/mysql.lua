@@ -334,6 +334,14 @@ local SCHEMA = {
         -- Added to existing databases by migrate; NULL where none went.
         advised_posted_at INT,
         advised_hitmen INT,
+        -- The handover's meeting point (server/meeting.lua), where the
+        -- person who placed it stood, to the metre, and when they last
+        -- changed it. Move only through setMeeting, clearMeeting and
+        -- dropMeeting. Added to existing databases by migrate; NULL where
+        -- none is set.
+        meeting_x INT,
+        meeting_y INT,
+        meeting_at INT,
         INDEX idx_state (state),
         INDEX idx_target (target_cid),
         INDEX idx_creator (creator_cid),
@@ -1381,6 +1389,43 @@ function MySQLStore.setAdvised(id, fields)
         if fields[column] ~= nil then db.update(sql, { fields[column], id }) end
     end
     return true
+end
+
+--- The handover's meeting point, which moves ONLY through these three,
+--- never through writeContract (which does not name its columns at all).
+--- Set only on a contract a hitman holds, and only when it last changed no
+--- later than `notBefore`: one change every Meeting.EVERY_SECONDS, kept by
+--- the statement itself, so two requests read at the same moment cannot
+--- both land. Matched rows, as oxmysql's update answers them (OXMYSQL.md
+--- §3): the same point set again counts.
+---@return boolean set
+function MySQLStore.setMeeting(id, x, y, at, notBefore)
+    local affected = db.update([[
+        UPDATE crimson_contracts SET meeting_x = ?, meeting_y = ?, meeting_at = ?
+        WHERE id = ? AND state = 'accepted' AND (meeting_at IS NULL OR meeting_at <= ?)
+    ]], { x, y, at, id, notBefore })
+    return (tonumber(affected) or 0) > 0
+end
+
+--- The placer clears it: only one that is set, under the same rule.
+---@return boolean cleared
+function MySQLStore.clearMeeting(id, at, notBefore)
+    local affected = db.update([[
+        UPDATE crimson_contracts SET meeting_x = NULL, meeting_y = NULL, meeting_at = ?
+        WHERE id = ? AND meeting_x IS NOT NULL AND (meeting_at IS NULL OR meeting_at <= ?)
+    ]], { at, id, notBefore })
+    return (tonumber(affected) or 0) > 0
+end
+
+--- Taken off a contract nobody can meet on any more: one that ended, or one
+--- the last hitman left. When it last changed is kept.
+---@return boolean dropped whether one was there
+function MySQLStore.dropMeeting(id)
+    local affected = db.update([[
+        UPDATE crimson_contracts SET meeting_x = NULL, meeting_y = NULL
+        WHERE id = ? AND meeting_x IS NOT NULL
+    ]], { id })
+    return (tonumber(affected) or 0) > 0
 end
 
 --- A TINYINT(1) column as the boolean the rest of the resource compares

@@ -723,6 +723,25 @@ Config.Kidnap = {
     --- ziptie scripts, by its name: RestraintProvider = 'my_ropes'. Leave
     --- nil if unused.
     RestraintProvider  = nil,
+    --- The handover's meeting point. On a contract placed under 'alive',
+    --- while a hitman holds it, the person who placed it can tap Set meeting
+    --- point here on their card: where they are standing, read by their own
+    --- game and checked by the server against where it sees them (within 5
+    --- metres, and on the map), kept to the metre. Coordinates only, never a
+    --- name, a street or anything typed. Only the hitmen active on that
+    --- contract see that one is set, and Set GPS marks it on their map; each
+    --- is told on their phone when it is set or moved (within the notice
+    --- budget, Config.Notifications). Nobody else sees it: not the board,
+    --- the target, the whitelisted-job view, the advisory, or staff without
+    --- Config.Admin.IdentityAce. It shows where the placer stood, not who
+    --- they are, so an anonymous placer stays anonymous; their card tells
+    --- them the hitmen will see the spot. It changes at most once every 30
+    --- seconds, and is taken off when the contract ends in any way, when the
+    --- last hitman on it leaves, or when the placer clears it. Off: the
+    --- controls are hidden and changes refused; a point already set is kept,
+    --- and shown again if this is turned back on. Also in the admin panel's
+    --- Features.
+    MeetingPoint       = true,
 }
 
 --------------------------------------------------------------------------

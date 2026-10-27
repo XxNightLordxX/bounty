@@ -267,6 +267,16 @@ function Projection.contract(contract, viewerCid)
                 }
             end
         end
+        -- The handover's meeting point (server/meeting.lua): whether one is
+        -- set, for the controls on an alive-only contract a hitman holds,
+        -- while Config.Kidnap.MeetingPoint is on. Absent, no controls. Never
+        -- where it is: they stood there, and the page does not need it.
+        if Config.Kidnap.MeetingPoint == true
+            and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE
+            and (contract.state == CH.STATE.ACCEPTED or contract.state == CH.STATE.COMPLETING)
+            and activeHitmen > 0 then
+            out.meetingSet = contract.meeting_x ~= nil
+        end
     elseif role == 'hitman' then
         local mine = Storage.readHitman(contract.id, viewerCid)
         out.myAlias = mine and mine.alias or nil
@@ -280,6 +290,15 @@ function Projection.contract(contract, viewerCid)
             and Comms.lastMessageAt(contract.id, viewerCid, viewerCid) or nil
         if Kidnap then
             out.kidnapProgress = Kidnap.progress(contract.id, viewerCid)
+        end
+        -- That the person who placed it set a meeting point for the
+        -- handover, and nothing of where: Set GPS asks the server for it
+        -- (Meeting.waypoint) and their game marks it on the map, so the
+        -- coordinates are never on a card. An active hitman of a live
+        -- contract only (role 'hitman'), and only while the feature is on.
+        if Config.Kidnap.MeetingPoint == true and contract.meeting_x ~= nil
+            and not CH.TERMINAL[contract.state] then
+            out.meetingSet = true
         end
         -- The target's buyout waiting out its delay, counted down on their
         -- card. Their one word of it was a phone notice (Notify.buyoutQueued)
@@ -524,7 +543,11 @@ local function buildListing(viewerCid, page)
     }
     local from = ((page - 1) * pageSize) + 1
     for i = from, math.min(from + pageSize - 1, #visible) do
-        out.contracts[#out.contracts + 1] = Projection.contract(visible[i], viewerCid)
+        local row = Projection.contract(visible[i], viewerCid)
+        -- Never on the board, not even to its placer or a hitman on it:
+        -- their own cards under Mine carry it.
+        row.meetingSet = nil
+        out.contracts[#out.contracts + 1] = row
     end
     return out
 end
@@ -923,9 +946,9 @@ Projection.ALLOWED_KEYS = {
         creatorName = true, creatorAnonymous = true,
     },
     creator = { bailoutAmount = true, hitmen = true, valueHeld = true,
-                informantAnswer = true, informantLeft = true },
+                informantAnswer = true, informantLeft = true, meetingSet = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
-                buyoutClosesIn = true, lastMessageAt = true },
+                buyoutClosesIn = true, lastMessageAt = true, meetingSet = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true,
                 informantLeft = true },

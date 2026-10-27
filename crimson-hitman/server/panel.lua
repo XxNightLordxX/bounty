@@ -935,6 +935,11 @@ H.contract = function(src, data)
             client = { name = r.name(contract.creator_name, contract.anon_creator == true),
                        cid = canIdentify and contract.creator_cid or nil },
             target = { name = contract.target_name, cid = canIdentify and contract.target_cid or nil },
+            -- The handover's meeting point (server/meeting.lua): where the
+            -- client stood, so with IdentityAce only, as who they are is.
+            -- Without it, not even whether one is set.
+            meeting = canIdentify and contract.meeting_x ~= nil
+                and { x = tonumber(contract.meeting_x), y = tonumber(contract.meeting_y) } or nil,
         },
         escrow = escrow, hitmen = operatives, amendments = amendments,
         timeline = timeline, stuck = stuck,

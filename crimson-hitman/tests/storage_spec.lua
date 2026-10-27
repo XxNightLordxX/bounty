@@ -2702,6 +2702,48 @@ describe('json sharding', function()
     end)
 end)
 
+--- The handover's meeting point (server/meeting.lua) moves only through its
+--- own three writes, each a compare-and-set where it has to be one: set only
+--- on a contract a hitman holds and outside the 30 seconds since the last
+--- change, cleared only when set, and never put back or taken back by a copy
+--- of the contract read before.
+describe('the handover meeting point, in every backend', function()
+    it('is set, moved, cleared and dropped by its own writes alone', function()
+        for _, b in ipairs(backends()) do
+            local m = b.store
+            m.insertContract(contractFixture('ctmeet01'))
+            falsy(m.setMeeting('ctmeet01', 10, -20, 1000, 970), b.name .. ': nobody holds it')
+            truthy(m.compareSetContractState('ctmeet01', CH.STATE.ACTIVE, CH.STATE.ACCEPTED))
+            local stale = {}
+            for k, v in pairs(m.readContract('ctmeet01')) do stale[k] = v end
+
+            truthy(m.setMeeting('ctmeet01', 10, -20, 1000, 970), b.name .. ': set')
+            falsy(m.setMeeting('ctmeet01', 11, -21, 1010, 980), b.name .. ': again inside the rule')
+            m.writeContract(stale)
+            local read = m.readContract('ctmeet01')
+            eq(tonumber(read.meeting_x), 10, b.name .. ': a copy read before took it back')
+            eq(tonumber(read.meeting_y), -20, b.name)
+            eq(tonumber(read.meeting_at), 1000, b.name)
+
+            truthy(m.setMeeting('ctmeet01', 11, -21, 1030, 1000), b.name .. ': moved after it')
+            falsy(m.clearMeeting('ctmeet01', 1040, 1010), b.name .. ': cleared inside it')
+            truthy(m.clearMeeting('ctmeet01', 1060, 1030), b.name .. ': cleared after it')
+            read = m.readContract('ctmeet01')
+            eq(read.meeting_x, nil, b.name)
+            eq(tonumber(read.meeting_at), 1060, b.name .. ': when it changed')
+            falsy(m.clearMeeting('ctmeet01', 1100, 1070), b.name .. ': nothing to clear')
+
+            truthy(m.setMeeting('ctmeet01', 5, 6, 1100, 1070), b.name)
+            truthy(m.dropMeeting('ctmeet01'), b.name .. ': dropped')
+            falsy(m.dropMeeting('ctmeet01'), b.name .. ': nothing left to drop')
+            read = m.readContract('ctmeet01')
+            eq(read.meeting_x, nil, b.name)
+            eq(read.meeting_y, nil, b.name)
+            eq(tonumber(read.meeting_at), 1100, b.name .. ': when it last changed is kept')
+        end
+    end)
+end)
+
 --- The SQL an owner can import by hand is the SQL mysql mode runs.
 ---
 --- install/sql/crimson_hitman.sql is for a database user that may not
@@ -2809,6 +2851,9 @@ describe('every mysql statement is executable', function()
             function() m.compareSetContractState('c1','active','accepted') end,
             function() m.setAdvised('c1', { advised_posted_at = 1 }) end,
             function() m.setAdvised('c1', { advised_hitmen = 2 }) end,
+            function() m.setMeeting('c1', 10, -20, 100, 70) end,
+            function() m.clearMeeting('c1', 130, 100) end,
+            function() m.dropMeeting('c1') end,
             function() m.writeEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
             function() m.insertEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
             function() m.insertEscrow('c1', { { id='c1:8', contract_id='c1', slot=1, portion='baseline', source='cash', amount=1, state='held' }, { id='c1:9', contract_id='c1', slot=1, portion='baseline', source='cash', amount=1, state='held' } }) end,

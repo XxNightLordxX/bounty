@@ -182,7 +182,9 @@ function contractDetail(extra, identity) {
       bailout_amount: 90000, penalty_amount: 2500, bonus_percent: 0, slots: 2, claimed: 1, next_slot: 2,
       buyout_queued: false, target_protected: true, anonymous: true,
       client: identity ? { name: 'Vic Marlowe', cid: 'CREATOR1' } : { name: 'Anonymous' },
-      target: identity ? { name: 'Dana Reyes', cid: 'TARGET01' } : { name: 'Dana Reyes' } },
+      target: identity ? { name: 'Dana Reyes', cid: 'TARGET01' } : { name: 'Dana Reyes' },
+      // The handover's meeting point, sent with the identity ACE alone.
+      meeting: identity ? { x: 1234, y: -568 } : undefined },
     escrow: [
       { id: 'ct00000001:1', contract: 'ct00000001', slot: 1, portion: 'baseline', source: 'cash', amount: 5000,
         quantity: null, state: 'settled', settled_to: 'operative Ghost', raised: 0, parked: false, owes: 0 },
@@ -805,6 +807,10 @@ async function main() {
       has(app.text(app.drawer()), 'CREATOR1');
       has(app.text(app.drawer()), 'HITMAN01');
     });
+    it('with identity: and the meeting point the server sent, where the client stood', function () {
+      has(app.text(app.drawer()), 'Meeting point');
+      has(app.text(app.drawer()), 'x 1234, y -568');
+    });
     app.click(app.button('Whois', app.drawer()));
     await settled();
     it('and whois answers in the drawer', function () {
@@ -1015,6 +1021,7 @@ async function main() {
       has(text, 'extend_deadline', 'the open proposal');
       has(text, 'law enforcement');
       has(text, 'Ghost');
+      lacks(text, 'Meeting point', 'no meeting point line where the server sent none');
     });
     it('each stuck line offers exactly what the server says settles it', function () {
       const lines = drawer.querySelectorAll('.stuck-line');

@@ -258,6 +258,21 @@ CH.ERR = {
     --- The caller is on a call already: a second tap before the first
     --- answered, or a call they have not hung up. Nothing was dialled.
     ALREADY_IN_CALL      = 'already_in_call',
+    --- The handover's meeting point (server/meeting.lua). Nobody is on the
+    --- contract to meet: a point is set only while a hitman holds it.
+    MEETING_NO_HITMAN    = 'meeting_no_hitman',
+    --- Where the placer's game said they stand is not where the server sees
+    --- them (more than a few metres apart, as a moving car is), or is off
+    --- the map. Nothing was set.
+    MEETING_NOT_HERE     = 'meeting_not_here',
+    --- The meeting point on this contract changed less than
+    --- Meeting.EVERY_SECONDS ago. Sent with { retryAfter = seconds }. Its
+    --- own code: rate_limited is worded "Slow down" for a player tapping too
+    --- fast, and this is a rule about the contract.
+    MEETING_TOO_SOON     = 'meeting_too_soon',
+    --- No meeting point is set on this contract now: cleared by the placer,
+    --- or taken off when the last hitman left.
+    NO_MEETING           = 'no_meeting',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

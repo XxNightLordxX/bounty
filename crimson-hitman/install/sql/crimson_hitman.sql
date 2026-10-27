@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS crimson_contracts (
     -- Added to existing databases by migrate; NULL where none went.
     advised_posted_at INT,
     advised_hitmen INT,
+    -- The handover's meeting point (server/meeting.lua), where the
+    -- person who placed it stood, to the metre, and when they last
+    -- changed it. Move only through setMeeting, clearMeeting and
+    -- dropMeeting. Added to existing databases by migrate; NULL where
+    -- none is set.
+    meeting_x INT,
+    meeting_y INT,
+    meeting_at INT,
     INDEX idx_state (state),
     INDEX idx_target (target_cid),
     INDEX idx_creator (creator_cid),

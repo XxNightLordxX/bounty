@@ -2045,6 +2045,10 @@ local TERMS = { 'fulfilment_rule' }
 --- through setAdvised; see the memory backend.
 local ADVISED = { 'advised_posted_at', 'advised_hitmen' }
 
+--- The handover's meeting point, which moves only through setMeeting,
+--- clearMeeting and dropMeeting; see the memory backend.
+local MEETING = { 'meeting_x', 'meeting_y', 'meeting_at' }
+
 function JsonStore.writeContract(c)
     local existing = db.contracts[c.id]
     if existing and existing ~= c then
@@ -2063,6 +2067,9 @@ function JsonStore.writeContract(c)
         end
         for i = 1, #ADVISED do
             c[ADVISED[i]] = existing[ADVISED[i]]
+        end
+        for i = 1, #MEETING do
+            c[MEETING[i]] = existing[MEETING[i]]
         end
     end
     db.contracts[c.id] = c
@@ -2207,6 +2214,38 @@ function JsonStore.setAdvised(id, fields)
         if not ADVISED_FIELD[k] then error('setAdvised: not an advisory field: ' .. tostring(k)) end
         c[k] = v
     end
+    touch(true, id)
+    return true
+end
+
+--- Set the meeting point, a compare-and-set; see the memory backend.
+--- Written to disk at once, as an advisory's record is: a restart keeps it.
+function JsonStore.setMeeting(id, x, y, at, notBefore)
+    local c = db.contracts[id]
+    if not c or c.state ~= 'accepted' then return false end
+    if c.meeting_at ~= nil and c.meeting_at > notBefore then return false end
+    c.meeting_x, c.meeting_y, c.meeting_at = x, y, at
+    touch(true, id)
+    return true
+end
+
+--- The placer clears it; see the memory backend.
+function JsonStore.clearMeeting(id, at, notBefore)
+    local c = db.contracts[id]
+    if not c or c.meeting_x == nil then return false end
+    if c.meeting_at ~= nil and c.meeting_at > notBefore then return false end
+    c.meeting_x, c.meeting_y, c.meeting_at = nil, nil, at
+    touch(true, id)
+    return true
+end
+
+--- Take it off a contract nobody can meet on any more; see the memory
+--- backend. Nothing is written for a contract that has none, so an ending
+--- costs no save for it.
+function JsonStore.dropMeeting(id)
+    local c = db.contracts[id]
+    if not c or c.meeting_x == nil then return false end
+    c.meeting_x, c.meeting_y = nil, nil
     touch(true, id)
     return true
 end

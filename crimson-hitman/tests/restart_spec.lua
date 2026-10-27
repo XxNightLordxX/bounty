@@ -100,6 +100,39 @@ describe('giving the last collection back, on every backend', function()
     end)
 end)
 
+--- The handover's meeting point is on the contract's own row, so a restart
+--- keeps it, still shown to the hitman on it, and the rule of one change
+--- every 30 seconds with it.
+describe('the handover meeting point across a restart', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is kept, and shown to the hitman on it alone', function()
+            local _, s = boot(mode)
+            Config.Completion.Fulfilment = 'alive'
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+                mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
+            truthy(c, 'placed')
+            truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
+            Env.players[1]._coords = { x = 100.0, y = -200.0, z = 30.0 }
+            local set, err = s.meeting.set(f.creator, { id = c.id, x = 100.2, y = -200.4, z = 30.0 })
+            truthy(set, tostring(err))
+
+            local _, after = restart(mode, s)
+            local row = after.storage.readContract(c.id)
+            eq(tonumber(row.meeting_x), 100, mode .. ': lost to the restart')
+            eq(tonumber(row.meeting_y), -200, mode)
+            eq(after.projection.contract(row, 'HITMAN01').meetingSet, true, mode)
+            eq(after.projection.contract(row, 'TARGET01').meetingSet, nil, mode)
+            local where = after.meeting.waypoint(after.identity.resolve(3), { id = c.id })
+            eq(where and where.x, 100, mode .. ': Set GPS')
+            local again, tooSoon = after.meeting.set(after.identity.resolve(1),
+                { id = c.id, x = 100.2, y = -200.4, z = 30.0 })
+            falsy(again, mode)
+            eq(tooSoon, CH.ERR.MEETING_TOO_SOON, mode .. ': and the rule with it')
+        end)
+    end
+end)
+
 --- W067: an agreed change the process died applying. Left open, the next
 --- Agree applied it a second time; it is closed as 'unknown' at the start,
 --- and both sides are told to look at the contract.

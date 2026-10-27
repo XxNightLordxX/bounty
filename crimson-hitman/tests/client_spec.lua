@@ -2844,3 +2844,53 @@ describe('the pass a login schedules', function()
         eq(reads, 1)
     end)
 end)
+
+--- The handover's meeting point (server/meeting.lua): where the placer
+--- stands is read by their own game on the tap, never taken from the page;
+--- and Set GPS marks the point on the hitman's map without handing the page
+--- the coordinates.
+describe('the handover meeting point on the client', function()
+    it('sends where the character stands, never what the page sent', function()
+        Env.reset()
+        Client.boot()
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01' })
+        Env.players[3]._coords = { x = 1234.4, y = -567.6, z = 30.0 }
+        Client.nuiCall('crimson:setMeeting', { id = 'ct00000001', x = 1, y = 2, z = 3 })
+        local asked = Client.toServer[#Client.toServer]
+        eq(asked.name, 'crimson-hitman:setMeeting')
+        eq(asked.args[1].id, 'ct00000001')
+        eq(asked.args[1].x, 1234.4, 'its own read, not the page\'s')
+        eq(asked.args[1].y, -567.6)
+        eq(asked.args[1].z, 30.0)
+        truthy(Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid,
+            event = 'setMeeting', ok = true, data = { set = true, moved = false } }))
+        truthy(Client.answered, 'the page is answered')
+        eq(Client.answer.ok, true)
+    end)
+
+    it('marks Set GPS on the map and hands the page no coordinates', function()
+        Env.reset()
+        Client.boot()
+        local marked, real = {}, _G.SetNewWaypoint
+        _G.SetNewWaypoint = function(x, y) marked[#marked + 1] = { x = x, y = y } end
+        Client.nuiCall('crimson:meetingGps', { id = 'ct00000001' })
+        local asked = Client.toServer[#Client.toServer]
+        eq(asked.name, 'crimson-hitman:meetingWaypoint')
+        Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid,
+            event = 'meetingWaypoint', ok = true, data = { x = 1234, y = -568 } })
+        eq(#marked, 1, 'marked once')
+        eq(marked[1].x, 1234)
+        eq(marked[1].y, -568)
+        truthy(Client.answered)
+        eq(Client.answer.ok, true)
+        eq(Client.answer.data, nil, 'the page is told it was marked, and nothing of where')
+
+        Client.nuiCall('crimson:meetingGps', { id = 'ct00000001' })
+        asked = Client.toServer[#Client.toServer]
+        Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid,
+            event = 'meetingWaypoint', ok = false, err = 'no_meeting' })
+        _G.SetNewWaypoint = real
+        eq(#marked, 1, 'nothing marked on a refusal')
+        eq(Client.answer.err, 'no_meeting', 'and the page is told why')
+    end)
+end)

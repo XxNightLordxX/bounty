@@ -196,6 +196,14 @@ local CATALOGUE = {
     { key = 'Kidnap.Coercion.passengerOfHitman', section = 'features', group = 'Handovers',
       kind = 'switch', label = 'The hitman\'s vehicle counts as restraint',
       about = 'The target riding in the hitman\'s vehicle. ' .. ONE_RESTRAINT, inflight = AT_USE },
+    { key = 'Kidnap.MeetingPoint', section = 'features', group = 'Handovers', kind = 'switch',
+      label = 'Meeting point for the handover',
+      about = 'On an alive-only contract a hitman holds, the person who placed it can set a '
+          .. 'meeting point where they stand, and clear it. Only the hitmen on that contract '
+          .. 'see it, on their GPS: not the board, the target, the whitelisted-job view or the '
+          .. 'advisory, and staff only with the identity ACE.',
+      inflight = 'Read at every use, with no restart. Off hides the controls and refuses changes; '
+          .. 'points already set are kept, and shown again when it is turned back on.' },
 
     { key = 'Penalty.RequireDisclosureOnAccept', section = 'features', group = 'Stakes',
       kind = 'switch', label = 'Accept must echo the stake shown',

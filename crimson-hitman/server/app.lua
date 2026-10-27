@@ -1240,6 +1240,26 @@ function App.register()
         return progress
     end)
 
+    -- The handover's meeting point (server/meeting.lua,
+    -- Config.Kidnap.MeetingPoint). Set by the person who placed an
+    -- alive-only contract where they stand: x, y and z read by their own
+    -- game (client/main.lua, crimson:setMeeting) and checked against where
+    -- the server sees them. Cleared by them, or taken off by the server when
+    -- nobody can meet on it any more. Read only by an active hitman, for Set
+    -- GPS, whose game marks it on the map and tells the page nothing more.
+    handler('setMeeting', 'amend', function(actor, payload)
+        return deps.meeting.set(actor,
+            { id = payload.id, x = payload.x, y = payload.y, z = payload.z })
+    end)
+
+    handler('clearMeeting', 'amend', function(actor, payload)
+        return deps.meeting.clear(actor, { id = payload.id })
+    end)
+
+    handler('meetingWaypoint', 'load', function(actor, payload)
+        return deps.meeting.waypoint(actor, { id = payload.id })
+    end)
+
     -- Target counter-play ----------------------------------------------
 
     -- The On me button, and the same button on the whitelisted-job view's
