@@ -43,6 +43,11 @@ local ADDED = {
     -- the bulletin when a contract on an officer is called off.
     ['Restart'] = { PauseBeforeSeconds = 1800, MaxHoldMinutes = 45 },
     ['Advisory.OnCancel'] = true,
+    -- The owner's switches: anonymity off entirely, and every informant
+    -- feature off at once.
+    ['Anonymity.AllowAnonymousPlacer'] = true,
+    ['Anonymity.AllowAnonymousHitman'] = true,
+    ['InformantsEnabled'] = true,
 }
 
 --- A config file's text run on its own, into a table of its own.

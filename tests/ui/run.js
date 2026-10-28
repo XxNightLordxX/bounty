@@ -4873,6 +4873,40 @@ async function main() {
       truthy(named.app.notice().indexOf('under your name') !== -1, named.app.notice());
     });
 
+    /* Anonymity turned off by the server (Config.Anonymity.AllowAnonymousPlacer
+       and AllowAnonymousHitman): the option is not drawn at all, rather
+       than drawn disabled, and nothing anonymous or priced is sent. */
+    const placerOff = await place({ anonymity: { placer: false, hitman: true },
+      anonymityFees: { creator: 7500, hitman: 0 } });
+    it('draws no Place anonymously option where the server does not allow it', function () {
+      falsy(placerOff.view.textContent.indexOf('Place anonymously') !== -1,
+        placerOff.view.textContent);
+      falsy(live(placerOff, 'anon'), 'no checkbox');
+      truthy(live(feeFree, 'anon'), 'a checkbox where allowed');
+      falsy(placerOff.view.textContent.indexOf('$7,500') !== -1, 'and no fee quoted');
+      truthy(feeFree.view.textContent.indexOf('Place anonymously') !== -1, 'drawn where allowed');
+    });
+
+    const hitmanOff = await accepting({ anonymity: { placer: true, hitman: false },
+      anonymityFees: { creator: 0, hitman: 1000 } }, { ok: true, data: { myAnonymous: false } });
+    it('offers no Anonymously choice on Accept where the server does not allow it', function () {
+      falsy(hitmanOff.app.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && (n.textContent === 'Anonymously'
+          || n.textContent === 'Under my name');
+      }), hitmanOff.app.view.textContent);
+      falsy(hitmanOff.app.view.textContent.indexOf('$1,000') !== -1, 'no fee quoted');
+      truthy(hitmanOff.app.view.textContent.indexOf('will see your name') !== -1,
+        hitmanOff.app.view.textContent);
+    });
+    click(hitmanOff.app, 'Accept');
+    await settle(); await settle();
+    it('takes it under the name, sending no anonymity and no fee', function () {
+      const sent = hitmanOff.sent();
+      truthy(sent, 'sent');
+      eq(sent.anonymous, false);
+      eq(sent.shown.hitmanFee, 0);
+    });
+
     /* A contract on an officer, on a server that advises nobody. The page
        said their department had been told. */
     async function onOfficer(settings) {
@@ -10871,14 +10905,26 @@ async function main() {
     const away = await hitmanWith(tipCard({ locationTip: { left: 3, targetAway: true } }));
     const off = await hitmanWith(tipCard({ locationTip: undefined }), {},
       Object.assign({}, TIP_RULES, { enabled: false }));
-    it('hitman: says why it cannot be bought: the most, the target away, switched off', function () {
+    const offShowing = await hitmanWith(tipCard({ locationTip: { secondsLeft: 300 } }), {},
+      Object.assign({}, TIP_RULES, { enabled: false }));
+    it('hitman: says why it cannot be bought: the most, the target away', function () {
       [[most, 'You have bought the most informant tips allowed on this contract (3).'],
-       [away, 'The target is not in the city right now, so there is nobody to place.'],
-       [off, 'Informant tips are turned off on this server.']].forEach(function (pair) {
-        const offer = button(pair[0], 'Buy informant tip');
-        truthy(offer && offer.disabled, 'disabled: ' + pair[1]);
-        truthy(pair[0].view.textContent.indexOf(pair[1]) !== -1, pair[0].view.textContent);
+       [away, 'The target is not in the city right now, so there is nobody to place.']]
+        .forEach(function (pair) {
+          const offer = button(pair[0], 'Buy informant tip');
+          truthy(offer && offer.disabled, 'disabled: ' + pair[1]);
+          truthy(pair[0].view.textContent.indexOf(pair[1]) !== -1, pair[0].view.textContent);
+        });
+    });
+    it('hitman: switched off, no tip button at all, and a tip on the map keeps Set GPS', function () {
+      ['Buy informant tip', 'Get informant tip'].forEach(function (label) {
+        falsy(button(off, label), 'no button: ' + off.view.textContent);
+        falsy(button(offShowing, label), 'no button beside the tip on the map');
       });
+      falsy(/informant tip/i.test(off.view.textContent), off.view.textContent);
+      truthy(/Informant tip on your map until \d\d:\d\d\./.test(offShowing.view.textContent),
+        offShowing.view.textContent);
+      truthy(button(offShowing, 'Set GPS'), 'Set GPS');
     });
 
     const soon = await hitmanWith(tipCard(), { locationTip: { ok: false, err: 'tip_cooldown',

@@ -256,6 +256,12 @@ local DEFAULTS = {
         PauseBeforeSeconds = 1800,
         MaxHoldMinutes = 45,
     },
+    --- The two anonymity switches, added to a section every config has.
+    --- Absent is not a decision: both are offered, as shipped. Checked below.
+    Anonymity = {
+        AllowAnonymousPlacer = true,
+        AllowAnonymousHitman = true,
+    },
     --- Read inside the purchase. A missing price is not a free informant;
     --- it is one nobody can buy. A missing chance is the shipped one, not a
     --- look-up that can never find anybody.
@@ -825,6 +831,18 @@ local function validateConfig(quiet)
         -- Off is the side that sells nobody a target's rough area.
         { section = 'LocationTip', key = 'Enabled',
           off = 'no informant tip is sold; one already bought stays on its buyer\'s map' },
+        -- The two informants, read as plain truths the same way: a string
+        -- 'false' was a look-up the server sold while the page hid it.
+        { section = 'Informant', key = 'Enabled',
+          off = 'no target may buy a look-up on who is after them; names found stay shown' },
+        { section = 'PlacerInformant', key = 'Enabled',
+          off = 'no placer may buy a look-up on who took it; names found stay shown' },
+        -- Off is the side that offers nobody anonymity: placed and taken
+        -- under their names, and nothing charged for it. Never retroactive.
+        { section = 'Anonymity', key = 'AllowAnonymousPlacer',
+          off = 'no contract can be placed anonymously; ones placed so stay anonymous' },
+        { section = 'Anonymity', key = 'AllowAnonymousHitman',
+          off = 'no contract can be accepted anonymously; operatives already so stay anonymous' },
     }) do
         local value = Config[switch.section][switch.key]
         if type(value) ~= 'boolean' then
@@ -833,6 +851,16 @@ local function validateConfig(quiet)
                     and ('"' .. value .. '"') or tostring(value), switch.off)
             Config[switch.section][switch.key] = false
         end
+    end
+
+    -- The master switch over the three informant features (Util.informantOn).
+    -- Off is the side that sells nothing, as each of theirs is.
+    if type(Config.InformantsEnabled) ~= 'boolean' then
+        warn[#warn + 1] = ('InformantsEnabled is %s, not true or false; it is read as false: '
+            .. 'no informant feature is offered (the target\'s, the placer\'s or the tip).')
+            :format(type(Config.InformantsEnabled) == 'string'
+                and ('"' .. Config.InformantsEnabled .. '"') or tostring(Config.InformantsEnabled))
+        Config.InformantsEnabled = false
     end
 
     -- The informant tip (server/locationtip.lua). Telling the target is the

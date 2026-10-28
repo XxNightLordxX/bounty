@@ -376,6 +376,32 @@ function Util.killPhotos()
     return type(completion) == 'table' and completion.KillPhotos == true
 end
 
+--- Whether one of the three informant features is on: its own switch
+--- (Config.Informant, Config.PlacerInformant or Config.LocationTip, by
+--- section name) and the master switch over all three
+--- (Config.InformantsEnabled). Read at every use, so the admin panel's
+--- switches apply to the next action; anything but true is off.
+---@param section string 'Informant' | 'PlacerInformant' | 'LocationTip'
+---@return boolean
+function Util.informantOn(section)
+    if not Config or Config.InformantsEnabled ~= true then return false end
+    local block = Config[section]
+    return type(block) == 'table' and block.Enabled == true
+end
+
+--- Whether a new anonymous placing ('placer') or acceptance ('hitman') is
+--- offered (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman).
+--- Read at every use; anything but true is off. Never retroactive: what was
+--- placed or taken anonymously stays anonymous.
+---@param role string 'placer' | 'hitman'
+---@return boolean
+function Util.anonymityAllowed(role)
+    local anonymity = Config and Config.Anonymity
+    if type(anonymity) ~= 'table' then return false end
+    if role == 'placer' then return anonymity.AllowAnonymousPlacer == true end
+    return anonymity.AllowAnonymousHitman == true
+end
+
 --- Count digits, used to blunt phone numbers and addresses in free text (§14.30).
 function Util.digitCount(text)
     local n = 0

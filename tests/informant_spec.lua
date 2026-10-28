@@ -870,3 +870,110 @@ describe('the informants in the admin panel', function()
         eq(settings.informant.needsProximity, nil)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Every informant feature at once (Config.InformantsEnabled)
+--------------------------------------------------------------------------
+
+describe('every informant feature switched off at once', function()
+    local function notices()
+        return #(Natives.calls.notifications or {})
+    end
+
+    it('is the first switch of the Informant group, and the three need it', function()
+        local s = newStack()
+        local first
+        for _, entry in ipairs(s.settings.CATALOGUE) do
+            if entry.group == 'Informant' and entry.section == 'features' then
+                first = first or entry
+            end
+            if entry.key == 'Informant.Enabled' or entry.key == 'PlacerInformant.Enabled'
+                or entry.key == 'LocationTip.Enabled' then
+                eq(entry.needs, 'InformantsEnabled', entry.key)
+            end
+        end
+        eq(first and first.key, 'InformantsEnabled')
+        eq(first.kind, 'switch')
+    end)
+
+    it('refuses all three with nothing charged, offers none on any card, and tells nobody', function()
+        local s, f, c = setup()
+        local placerAt = placerPick(s, c)
+        local targetAt = targetPick(s, c)
+        truthy(placerAt and targetAt, 'both offered while on')
+        Env.players[3].PlayerData.money.bank = 100000
+        truthy(s.settings.set('InformantsEnabled', false, 'ADMIN001'))
+        eq(s.storage.readSettings().InformantsEnabled.value, false, 'kept in the store')
+        eq(Config.Informant.Enabled, true, 'its own switches untouched')
+        local money, told = total(s), notices()
+        eq(select(2, s.informant.buy(f.target, c.id, targetShown(), targetAt)), CH.ERR.FEATURE_OFF)
+        eq(select(2, s.informant.placerBuy(f.creator, c.id, placerShown(), placerAt)),
+            CH.ERR.FEATURE_OFF)
+        eq(select(2, s.locationTip.buy(f.hitman, c.id, { cost = Config.LocationTip.Cost,
+            account = Config.LocationTip.Account })), CH.ERR.FEATURE_OFF)
+        eq(total(s), money, 'nothing charged')
+        eq(notices(), told, 'no notice to anybody')
+        eq(#alerts(), 0)
+        local settings = s.projection.listing(f.hitman.cid).settings
+        eq(settings.informant, nil)
+        eq(settings.placerInformant, nil)
+        eq(settings.locationTip.enabled, false)
+        eq(view(s, c, 'TARGET01').informantPicks, nil, 'no picker on the target\'s card')
+        eq(view(s, c, 'CREATOR1').placerInformantPicks, nil, 'none on the placer\'s')
+        eq(view(s, c, 'HITMAN01').locationTip, nil, 'no tip on the hitman\'s')
+
+        truthy(s.settings.set('InformantsEnabled', true, 'ADMIN001'))
+        truthy(targetPick(s, c), 'on again, offered again')
+        truthy(s.projection.listing(f.hitman.cid).settings.placerInformant)
+    end)
+
+    it('is read as off when it is not true or false, and said so at the start', function()
+        local check = require('crimson-hitman.server.main').checkCandidate
+        local function copy(t)
+            if type(t) ~= 'table' then return t end
+            local out = {}
+            for k, v in pairs(t) do out[k] = copy(v) end
+            return out
+        end
+        for _, bad in ipairs({ 'yes', 1 }) do
+            local candidate = copy(Config)
+            candidate.InformantsEnabled = bad
+            local _, _, warn = check(candidate)
+            truthy(table.concat(warn, '\n'):find('InformantsEnabled is', 1, true), tostring(bad))
+        end
+        for _, path in ipairs({ { 'Informant', 'Enabled' }, { 'PlacerInformant', 'Enabled' } }) do
+            local candidate = copy(Config)
+            candidate[path[1]][path[2]] = 'false'
+            local _, _, warn = check(candidate)
+            truthy(table.concat(warn, '\n'):find(path[1] .. '.Enabled is', 1, true),
+                path[1] .. ': a string is not a switch')
+        end
+    end)
+end)
+
+describe('each informant switched off on its own', function()
+    it('the target\'s: refused with nothing charged, and no picker on the card', function()
+        local s, f, c = setup()
+        local pick = targetPick(s, c)
+        truthy(s.settings.set('Informant.Enabled', false, 'ADMIN001'))
+        local before = bank(2)
+        eq(select(2, s.informant.buy(f.target, c.id, targetShown(), pick)), CH.ERR.FEATURE_OFF)
+        eq(bank(2), before, 'nothing charged')
+        eq(view(s, c, 'TARGET01').informantPicks, nil, 'no picker')
+        eq(s.projection.listing(f.target.cid).settings.informant, nil, 'and the page is told')
+        truthy(view(s, c, 'CREATOR1').placerInformantPicks, 'the placer\'s is its own switch')
+    end)
+
+    it('the placer\'s: refused with nothing charged, and no picker on the card', function()
+        local s, f, c = setup()
+        local pick = placerPick(s, c)
+        truthy(s.settings.set('PlacerInformant.Enabled', false, 'ADMIN001'))
+        local before = bank(1)
+        eq(select(2, s.informant.placerBuy(f.creator, c.id, placerShown(), pick)),
+            CH.ERR.FEATURE_OFF)
+        eq(bank(1), before, 'nothing charged')
+        eq(#alerts(), 0, 'no operative told')
+        eq(view(s, c, 'CREATOR1').placerInformantPicks, nil, 'no picker')
+        truthy(view(s, c, 'TARGET01').informantPicks, 'the target\'s is its own switch')
+    end)
+end)

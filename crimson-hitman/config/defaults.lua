@@ -158,9 +158,11 @@ ConfigDefaults.Penalty = {
 }
 
 ConfigDefaults.Anonymity = {
-    CreatorFee = 0,       -- fee to place anonymously; 0 = free
-    HitmanFee  = 0,       -- fee to accept anonymously; 0 = free
-    FeeAccount = 'bank',  -- 'cash' | 'bank'
+    AllowAnonymousPlacer = true,    -- a contract may be placed anonymously
+    AllowAnonymousHitman = true,    -- a contract may be accepted anonymously
+    CreatorFee           = 0,       -- fee to place anonymously; 0 = free
+    HitmanFee            = 0,       -- fee to accept anonymously; 0 = free
+    FeeAccount           = 'bank',  -- 'cash' | 'bank'
 }
 
 ConfigDefaults.Amendments = {
@@ -187,6 +189,8 @@ ConfigDefaults.Bailout = {
     BlockWhileIncapacitated = true,       -- no buyout while dead or downed
     Command                 = 'cleanse',  -- the buyout command, for players who cannot open the app
 }
+
+ConfigDefaults.InformantsEnabled = true  -- master switch: false turns off all three informant features
 
 ConfigDefaults.Informant = {
     Enabled                 = true,    -- a target may pay to find out who is after them

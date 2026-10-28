@@ -988,6 +988,13 @@ local function shownTermsRefusal(req, rule, fee, feeAccount)
 end
 
 local function createUnlocked(actor, req, targetActor)
+    -- Placing anonymously, where the server has turned it off
+    -- (Config.Anonymity.AllowAnonymousPlacer): refused before anything is
+    -- read, charged or held, so no fee and no escrow. Read here, at the
+    -- tap, never from the page.
+    if req.anonymous == true and not Util.anonymityAllowed('placer') then
+        return nil, CH.ERR.ANONYMITY_OFF
+    end
     -- What it costs and how it is completed, read once, before anything
     -- else: the echo is checked against them, and the fee charged and the
     -- rule stored below are these same figures, whatever the panel does in
@@ -1451,6 +1458,20 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     if stint and not previousAnon and anonymous then
         anonymous = false
         renamed = true
+    end
+
+    -- Accepting anonymously, where the server has turned it off
+    -- (Config.Anonymity.AllowAnonymousHitman): refused before anything is
+    -- taken, no fee, no stake, no row. Not retroactive: a hitman back on a
+    -- contract they held anonymously comes back under the same alias, still
+    -- anonymous and charged nothing again (paidBefore, below). Naming them
+    -- now would name the anonymous stint the client has already seen.
+    if not Util.anonymityAllowed('hitman') then
+        if stint and previousAnon == true then
+            anonymous = true
+        elseif anonymous then
+            return false, CH.ERR.ANONYMITY_OFF
+        end
     end
 
     local held = Storage.countHitmanContracts(actor.cid, LIVE_STATES)

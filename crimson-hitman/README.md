@@ -11,6 +11,13 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Anonymity and the informants can be switched off entirely**:
+  `Config.Anonymity.AllowAnonymousPlacer` and `AllowAnonymousHitman` turn off
+  placing and accepting anonymously (the option is gone from the app, the
+  server refuses one with nothing charged, and nothing anonymous already is
+  unmasked), and `Config.InformantsEnabled` turns off the target's informant,
+  the placer's informant and the informant tip at once. All three are
+  switches in the admin panel's **Features**.
 - **The clock runs only with everyone in**: a contract's deadline counts
   down only while its placer (named or anonymous), its target (out of
   prison) and at least one operative holding it are all in the city. With
@@ -586,6 +593,8 @@ moment the contract is placed until it ends.
 | `Config.Penalty.MaxFractionOfEscrow` | `2.0` | And at most this many times the contract's money escrow; the lower of the two wins. |
 | `Config.Penalty.RequireDisclosureOnAccept` | `true` | Accepting must echo back the stake the hitman was shown, so a contract repriced while they read it is refused rather than charged at the new figure. Only on contracts that carry a stake. |
 | `Config.Penalty.MinWindowMinutes` | `30` | A staked acceptance is refused with less than this left before the deadline, so a hitman cannot lose a stake on a contract set to run out in minutes. |
+| `Config.Anonymity.AllowAnonymousPlacer` | `true` | A contract may be placed anonymously. Off, the Place form has no *Place anonymously* option and the server refuses an anonymous placing as `anonymity_off`, before anything is taken: no fee, no escrow. Not retroactive: contracts already placed anonymously stay anonymous. The admin panel's switch applies at once and is kept across restarts. |
+| `Config.Anonymity.AllowAnonymousHitman` | `true` | A contract may be accepted anonymously. Off, Accept offers no *Anonymously* choice and the server refuses an anonymous acceptance as `anonymity_off`, before anything is taken: no fee, no stake. Every new operative is then named to the person who placed the contract: the roster on their **Mine** card, their threads and the *accepted* notice show *Operative #1 (their name)*. Either way an operative is shown to the target only as *Operative #1* (unless the target's informant finds them out), and never by name on the board, to other hitmen or to law enforcement. Not retroactive: operatives already anonymous stay anonymous, and one coming back to a contract they held anonymously comes back under the same alias, still anonymous and charged nothing. |
 | `Config.Anonymity.CreatorFee` / `HitmanFee` | `0` / `0` | Flat fees to place or accept anonymously; `0` is free. Charged as the app showed them: a fee changed from the admin panel since is refused, nothing taken, with the fee now. A create that fails takes none. |
 | `Config.Anonymity.FeeAccount` | `'bank'` | `'cash'` or `'bank'`: where the fees are taken from. |
 | `Config.Amendments.Enabled` | `true` | Placer and hitman may propose and agree changes to a running contract. |
@@ -609,6 +618,7 @@ was in when it was bought (`Config.LocationTip`, not to be confused with
 | `Config.Bailout.ProcessingDelaySeconds` | `120` | Once a hitman holds the contract, a buyout takes effect only after this long, so a target cannot pull it out from under them mid-fight. A kill made before it ran out and still waiting to be verified, or a handover armed before it and still counting, holds it off until that finishes, for at most two `PhotoTokenLifetimeSeconds` more. |
 | `Config.Bailout.BlockWhileIncapacitated` | `true` | No buyout while the target is dead or downed. |
 | `Config.Bailout.Command` | `'cleanse'` | A command for players who cannot open the app: it lists every contract on them **On me** would show and buys one out, exactly as the button does. There whatever `Config.Admin.Enabled` says; it is not a staff tool. |
+| `Config.InformantsEnabled` | `true` | The master switch over all three informant features: the target's informant (`Config.Informant`), the placer's informant (`Config.PlacerInformant`) and the informant tip (`Config.LocationTip`). Off, each is off whatever its own `Enabled` says: purchases are refused as `feature_off` with nothing charged, every button and picker is gone from every card, and no notice, operative alert or law enforcement tip bulletin is sent, since nothing is bought. Names already found stay shown, and a tip already bought stays on its buyer's map until its `ShowMinutes` run out (it was paid for), then comes off as usual. In the admin panel at the top of the Informant group. |
 | `Config.Informant.Enabled` | `true` | **The target's informant.** A target may pay for a look-up on who is after them: one operative on the contract, picked from **On me** as *Operative #1*, *Operative #2* (every operative on it, wherever they have been), or the person who placed it. A placer who put their name to the contract is already known, and is not sold. Never offered to a member of a whitelisted job (by the flag the contract recorded, or a barred job held now): the server refuses it as `informant_protected`, nothing charged, and their buyout stays. Turned off, new look-ups are refused and a name already found stays shown. |
 | `Config.Informant.Cost` | `25000` | The price of one look-up, paid whatever it finds. The price the dialog quotes is the price charged: one changed from the admin panel since is refused, nothing taken, with the price now. `0` is free, and the app says so. |
 | `Config.Informant.Account` | `'bank'` | `'cash'` or `'bank'`. |
@@ -625,7 +635,7 @@ was in when it was bought (`Config.LocationTip`, not to be confused with
 | `Config.PlacerInformant.RevealMode` | `'name'` | `'name'` names the operative; `'description'` describes them. |
 | `Config.PlacerInformant.MaxPurchasesPerContract` | `2` | Look-ups per placer on one contract. |
 | `Config.PlacerInformant.CooldownMinutes` | `10` | The wait between two look-ups on one contract; the card says how long is left. |
-| `Config.LocationTip.Enabled` | `true` | A hitman holding a live contract (accepted, and still on it) may buy an informant tip: the rough area its target was in at that moment, as a circle on their map. Nobody else may: not the target, not the person who placed it, not a barred job. Off, no tip is sold and the button says so; one already bought stays on its buyer's map until it runs out. |
+| `Config.LocationTip.Enabled` | `true` | A hitman holding a live contract (accepted, and still on it) may buy an informant tip: the rough area its target was in at that moment, as a circle on their map. Nobody else may: not the target, not the person who placed it, not a barred job. Off (or `Config.InformantsEnabled` off), no tip is sold and the button is gone from every card, so no target notice or tip bulletin is sent; one already bought stays on its buyer's map, with its Set GPS, until it runs out, and is then cleared from the map as usual. |
 | `Config.LocationTip.Cost` | `25000` | The price the button quotes is the price charged: one changed from the admin panel since is refused, nothing taken, with the price now. Charged last, after every check, once however often it is tapped, and given back if the tip cannot be delivered (the contract ended, or the hitman was taken off it, meanwhile). The money goes to nobody: it is taken out of the economy, as the informant's fee is. `0` is free. |
 | `Config.LocationTip.Account` | `'bank'` | `'cash'` or `'bank'`. |
 | `Config.LocationTip.RadiusMeters` | `350` | The circle's radius in metres, so 700 m across as shipped. Its centre is drawn at a random distance of up to three quarters of this from where the server sees the target, in a random direction: the target is inside it and almost never at its middle, so the hitman still has to search. 100 to 2000. |

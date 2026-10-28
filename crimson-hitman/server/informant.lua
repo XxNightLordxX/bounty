@@ -278,7 +278,8 @@ local targetBuy
 function Informant.buy(actor, contractId, shown, pick)
     -- Turned off, from the admin panel or config.lua: new purchases only.
     -- A name already found stays shown.
-    if not Config.Informant.Enabled then return false, CH.ERR.FEATURE_OFF end
+    -- Its own switch, or the master switch over all three (Util.informantOn).
+    if not Util.informantOn('Informant') then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if type(pick) ~= 'string' or pick == '' or #pick > 64 then return false, CH.ERR.INVALID_INPUT end
@@ -410,7 +411,7 @@ end
 ---@param hitmen table[] the contract's rows, as the projection read them
 ---@return table[]|nil
 function Informant.targetPicks(contract, cid, hitmen)
-    if Config.Informant.Enabled ~= true or contract.target_cid ~= cid then return nil end
+    if not Util.informantOn('Informant') or contract.target_cid ~= cid then return nil end
     if contract.target_protected == true or CH.TERMINAL[contract.state] then return nil end
     local record = recordFor(contract.id, cid)
     local picks = record and record.picks or {}
@@ -520,7 +521,7 @@ local placerBuyUnlocked
 ---@return string|nil err
 ---@return table|nil data
 function Informant.placerBuy(actor, contractId, shown, pick)
-    if not Config.PlacerInformant.Enabled then return false, CH.ERR.FEATURE_OFF end
+    if not Util.informantOn('PlacerInformant') then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if type(pick) ~= 'string' or pick == '' or #pick > 64 then return false, CH.ERR.INVALID_INPUT end
@@ -643,7 +644,7 @@ function Informant.placerView(contract, cid, hitmen)
             out.found[#out.found + 1] = { label = labelOf(h), text = answerText(answer) }
         end
     end
-    if Config.PlacerInformant.Enabled ~= true or CH.TERMINAL[contract.state] then return out end
+    if not Util.informantOn('PlacerInformant') or CH.TERMINAL[contract.state] then return out end
     out.picks = {}
     for i = 1, #hitmen do
         local h = hitmen[i]

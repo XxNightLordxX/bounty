@@ -242,6 +242,10 @@ CH.ERR = {
     --- a feature that may stay off for good. Only new actions are refused:
     --- whatever was already under way finishes under the rules it began.
     FEATURE_OFF          = 'feature_off',
+    --- An anonymous placing or acceptance on a server that has turned it off
+    --- (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman). Refused
+    --- before anything is taken: no fee, no escrow, no stake, no row.
+    ANONYMITY_OFF        = 'anonymity_off',
     --- An informant tip (Config.LocationTip) asked for while the target is
     --- not in the city: there is nobody to place on the map. Nothing was
     --- charged.

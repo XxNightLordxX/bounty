@@ -88,6 +88,8 @@ local NEEDS_OFF = {
     ['WhitelistedView.Enabled'] = 'Does not apply while the whitelisted-job view is off '
         .. '(WhitelistedView.Enabled): nobody has the view, so this changes nothing until it is '
         .. 'on again.',
+    ['InformantsEnabled'] = 'Does not apply while every informant feature is off '
+        .. '(InformantsEnabled): none is offered, so this changes nothing until it is on again.',
     ['Kidnap.RequireCoercion'] = 'Does not apply while Target must be restrained is off '
         .. '(Kidnap.RequireCoercion): a handover needs no restraint, so this changes nothing '
         .. 'until it is on again.',
@@ -309,21 +311,46 @@ local CATALOGUE = {
       about = 'No call to or from an anonymous party on a phone that cannot hide the number.',
       inflight = AT_USE },
 
+    { key = 'Anonymity.AllowAnonymousPlacer', section = 'features', group = 'Anonymity',
+      kind = 'switch', label = 'Placing anonymously',
+      about = 'A contract may be placed anonymously. Off, the Place form has no such option and '
+          .. 'the server refuses one, charging nothing.',
+      inflight = 'Read at every placing, with no restart. Contracts already placed anonymously '
+          .. 'stay anonymous: it is not retroactive.' },
+    { key = 'Anonymity.AllowAnonymousHitman', section = 'features', group = 'Anonymity',
+      kind = 'switch', label = 'Accepting anonymously',
+      about = 'A contract may be accepted anonymously. Off, Accept has no such option and the '
+          .. 'server refuses one, charging nothing: every new operative is named to the person '
+          .. 'who placed the contract.',
+      inflight = 'Read at every acceptance, with no restart. Operatives already anonymous stay '
+          .. 'anonymous, and one coming back to a contract they held anonymously comes back '
+          .. 'under the same alias.' },
+
     { key = 'Amendments.Enabled', section = 'features', group = 'Proposals', kind = 'switch',
       label = 'Proposals', about = 'Changes to a contract that need the other side\'s agreement.',
       inflight = 'Proposals already open can still be answered and run out as before; new ones '
           .. 'are refused while it is off.' },
 
+    { key = 'InformantsEnabled', section = 'features', group = 'Informant', kind = 'switch',
+      label = 'Every informant feature',
+      about = 'The master switch over the target\'s informant, the placer\'s informant and the '
+          .. 'informant tip. Off turns all three off at once, whatever their own switches say.',
+      inflight = 'Names already found stay shown, and a tip already bought stays on its buyer\'s '
+          .. 'map until it runs out; new look-ups and tips are refused, and their buttons are '
+          .. 'gone, while it is off.' },
     { key = 'Informant.Enabled', section = 'features', group = 'Informant', kind = 'switch',
+      needs = 'InformantsEnabled',
       label = 'Target\'s informant',
       about = 'A target may pay for a chance to find out who is after them.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
     { key = 'PlacerInformant.Enabled', section = 'features', group = 'Informant', kind = 'switch',
+      needs = 'InformantsEnabled',
       label = 'Placer\'s informant',
       about = 'The person who placed a contract may pay for a chance to find out who took it.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
 
     { key = 'LocationTip.Enabled', section = 'features', group = 'Informant tip', kind = 'switch',
+      needs = 'InformantsEnabled',
       label = 'Informant tip',
       about = 'A hitman on a contract may pay for the rough area the target was in.',
       inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '

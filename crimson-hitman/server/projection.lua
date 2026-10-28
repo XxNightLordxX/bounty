@@ -96,7 +96,7 @@ local function informantFor(contract, viewerCid, hitmen)
     if not Informant then return nil, nil, nil end
     local found, left = Informant.answerFor(contract.id, viewerCid)
     local picks = Informant.targetPicks(contract, viewerCid, hitmen)
-    if Config.Informant.Enabled ~= true or contract.target_protected == true then
+    if not Util.informantOn('Informant') or contract.target_protected == true then
         left, picks = nil, nil
     end
     return (#found > 0) and found or nil, left, picks
@@ -492,6 +492,14 @@ local function buildListing(viewerCid, page)
                 hitman = Config.Anonymity.HitmanFee or 0,
                 account = Config.Anonymity.FeeAccount or 'bank',
             },
+            -- Whether placing and accepting anonymously are offered at all
+            -- (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman).
+            -- Off, the page draws no such option; the server refuses one
+            -- sent anyway (anonymity_off), so this only decides the drawing.
+            anonymity = {
+                placer = Util.anonymityAllowed('placer'),
+                hitman = Util.anonymityAllowed('hitman'),
+            },
             -- Whether this server runs buyouts at all, so the page can tell
             -- "the client offered none" from "there are none here".
             buyouts = Config.Bailout.Enabled == true,
@@ -553,7 +561,7 @@ local function buildListing(viewerCid, page)
             -- And the least a shortening may leave on it: the server refuses
             -- a cut that leaves less, so the box stops short of it.
             deadlineMinLeftMinutes = math.floor(Util.CLOCK_STEP / 60),
-            informant = Config.Informant.Enabled == true and {
+            informant = Util.informantOn('Informant') and {
                 cost = Config.Informant.Cost,
                 account = Config.Informant.Account,
                 maxPerContract = Config.Informant.MaxPurchasesPerContract,
@@ -570,7 +578,7 @@ local function buildListing(viewerCid, page)
             -- the button can quote the price and the size of the area, and
             -- say why it cannot be bought while the server sells none.
             locationTip = type(Config.LocationTip) == 'table' and {
-                enabled = Config.LocationTip.Enabled == true,
+                enabled = Util.informantOn('LocationTip'),
                 cost = Config.LocationTip.Cost,
                 account = Config.LocationTip.Account,
                 radius = Config.LocationTip.RadiusMeters,
@@ -581,7 +589,7 @@ local function buildListing(viewerCid, page)
             } or nil,
             -- The placer's informant, the same way: its price, its two
             -- chances (found out, and then noticed), its cap and its wait.
-            placerInformant = Config.PlacerInformant.Enabled == true and {
+            placerInformant = Util.informantOn('PlacerInformant') and {
                 cost = Config.PlacerInformant.Cost,
                 account = Config.PlacerInformant.Account,
                 chance = Config.PlacerInformant.RevealChancePercent,

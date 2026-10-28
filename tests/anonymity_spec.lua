@@ -1266,3 +1266,112 @@ describe('every channel a player not entitled to it can read', function()
         eq(#problems, 0, table.concat(problems, '\n'))
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Anonymity switched off (Config.Anonymity.AllowAnonymousPlacer and
+-- AllowAnonymousHitman)
+--------------------------------------------------------------------------
+
+describe('anonymity switched off', function()
+    local function wealth(src)
+        local m = Env.players[src].PlayerData.money
+        return m.cash + m.bank
+    end
+
+    local function turn(s, key, value)
+        local ok, err, why = s.settings.set(key, value, 'ADMIN001', 'ADMIN001')
+        truthy(ok, ('%s: %s %s'):format(key, tostring(err), tostring(why)))
+    end
+
+    local function place(s, f, anonymous)
+        return s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, anonymous = anonymous,
+        })
+    end
+
+    it('refuses an anonymous placing with nothing charged, and places one under the name', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Anonymity.CreatorFee = 500
+        turn(s, 'Anonymity.AllowAnonymousPlacer', false)
+        local before = wealth(1)
+        local placed, err = place(s, f, true)
+        falsy(placed, 'not placed')
+        eq(err, CH.ERR.ANONYMITY_OFF)
+        eq(wealth(1), before, 'no fee and no escrow taken')
+        eq(#s.storage.liveContracts(), 0, 'nothing placed')
+        local named = place(s, f, false)
+        truthy(named, 'under the name it is placed')
+        eq(named.anon_creator, false)
+        eq(before - wealth(1), 5000, 'the reward alone, no fee')
+    end)
+
+    it('refuses an anonymous acceptance from the page with nothing charged, and takes it named', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f, false)
+        Config.Anonymity.HitmanFee, Config.Anonymity.FeeAccount = 1000, 'bank'
+        turn(s, 'Anonymity.AllowAnonymousHitman', false)
+        local before = wealth(3)
+        local reply = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 0,
+            shown = { hitmanFee = 1000, feeAccount = 'bank' } })
+        eq(reply and reply.err, CH.ERR.ANONYMITY_OFF)
+        eq(wealth(3), before, 'no fee taken')
+        eq(#s.storage.readHitmen(c.id), 0, 'and no row written')
+        local taken = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 0 })
+        truthy(taken and taken.ok, tostring(taken and taken.err))
+        eq(taken.data.myAnonymous, false)
+        eq(wealth(3), before, 'named, nothing charged')
+    end)
+
+    it('is two panel switches that apply at once, are kept, and tell the page', function()
+        local s = newStack()
+        local f = fixture(s)
+        local entries = {}
+        for _, entry in ipairs(s.settings.CATALOGUE) do entries[entry.key] = entry end
+        for _, key in ipairs({ 'Anonymity.AllowAnonymousPlacer', 'Anonymity.AllowAnonymousHitman' }) do
+            truthy(entries[key], key .. ' is in the panel')
+            eq(entries[key].section, 'features')
+            eq(entries[key].group, 'Anonymity')
+            eq(entries[key].kind, 'switch')
+        end
+        local shown = s.projection.listing(f.hitman.cid).settings.anonymity
+        eq(shown.placer, true); eq(shown.hitman, true)
+        turn(s, 'Anonymity.AllowAnonymousPlacer', false)
+        turn(s, 'Anonymity.AllowAnonymousHitman', false)
+        eq(Config.Anonymity.AllowAnonymousPlacer, false)
+        local kept = s.storage.readSettings()
+        eq(kept['Anonymity.AllowAnonymousPlacer'].value, false, 'kept in the store')
+        eq(kept['Anonymity.AllowAnonymousHitman'].value, false)
+        shown = s.projection.listing(f.hitman.cid).settings.anonymity
+        eq(shown.placer, false); eq(shown.hitman, false)
+        turn(s, 'Anonymity.AllowAnonymousPlacer', true)
+        truthy(place(s, f, true), 'on again, placed anonymously')
+        falsy(s.settings.set('Anonymity.AllowAnonymousHitman', 'no', 'ADMIN001'),
+            'not a true or false')
+    end)
+
+    it('leaves what is already anonymous anonymous, a returning operative included', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f, true)
+        truthy(c and c.anon_creator, 'placed anonymously')
+        truthy(s.contracts.accept(f.hitman, c.id, true), 'taken anonymously')
+        turn(s, 'Anonymity.AllowAnonymousPlacer', false)
+        turn(s, 'Anonymity.AllowAnonymousHitman', false)
+        local contract = s.storage.readContract(c.id)
+        eq(contract.anon_creator, true, 'the placing stays anonymous')
+        eq(s.projection.contract(contract, 'HITMAN01').creatorName, nil, 'no name to the hitman')
+        local roster = s.projection.contract(contract, 'CREATOR1').hitmen
+        eq(#roster, 1)
+        eq(roster[1].name, nil, 'and the operative stays nameless to the client')
+        truthy(s.contracts.abandon(f.hitman, c.id), 'walked away')
+        Env.advance(Config.Limits.ExclusiveIdleReleaseSeconds + 1)
+        local back = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 0 })
+        truthy(back and back.ok, tostring(back and back.err))
+        eq(back.data.myAnonymous, true, 'back under the same alias, still anonymous')
+        roster = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hitmen
+        eq(roster[1].name, nil, 'never named after the fact')
+    end)
+end)

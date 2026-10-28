@@ -598,6 +598,33 @@ describe('an informant tip coming off the map', function()
         eq(s.projection.accepted('HITMAN01')[1].locationTip.secondsLeft, nil, 'and off the card')
     end)
 
+    -- Switched off with a tip on the map, by its own switch or the master
+    -- switch over every informant feature: the tip was paid for, so it stays
+    -- until its time runs out and is then cleared as any other; nothing more
+    -- is offered or sold meanwhile, and nobody is told anything.
+    it('switched off while one is on the map: kept until it runs out, then cleared', function()
+        for _, key in ipairs({ 'LocationTip.Enabled', 'InformantsEnabled' }) do
+            local s, _, c = taken({ bridges = true })
+            truthy(buy(3, c).ok)
+            truthy(s.settings.set(key, false, 'ADMIN001'), key)
+            local card = s.projection.accepted('HITMAN01')[1].locationTip
+            eq(card.secondsLeft, 600, key .. ': still on the card for its time')
+            eq(card.left, nil, key .. ': nothing more offered')
+            eq(s.projection.listing('HITMAN01', 1).settings.locationTip.enabled, false)
+            local before = bank(3)
+            local r = buy(3, c)
+            eq(r.err, CH.ERR.FEATURE_OFF, key .. ': refused')
+            eq(bank(3), before, key .. ': nothing charged')
+            eq(#noticesTo(2), 0, key .. ': the target is told nothing')
+            Env.clientEvents = {}
+            Env.advance(601)
+            eq(#eventsNamed('crimson-hitman:locationTipClear', 3), 1,
+                key .. ': cleared from the map once its time is up')
+            eq(s.projection.accepted('HITMAN01')[1].locationTip, nil,
+                key .. ': and nothing of a tip left on the card')
+        end
+    end)
+
     it('when the contract ends, with its records', function()
         local s, _, c = taken({ bridges = true })
         truthy(buy(3, c).ok)

@@ -51,11 +51,12 @@ function LocationTip.init(deps)
     byContract, clearTimers = {}, {}
 end
 
---- Whether new tips are sold (Config.LocationTip.Enabled), read at every
---- use so the admin panel's switch applies at once.
+--- Whether new tips are sold (Config.LocationTip.Enabled, and the master
+--- switch Config.InformantsEnabled), read at every use so the admin panel's
+--- switches apply at once.
 ---@return boolean
 function LocationTip.enabled()
-    return type(Config.LocationTip) == 'table' and Config.LocationTip.Enabled == true
+    return Util.informantOn('LocationTip')
 end
 
 local function setting(key, fallback)

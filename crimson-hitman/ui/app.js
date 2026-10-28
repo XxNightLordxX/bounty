@@ -470,6 +470,8 @@
     // A feature staff turned off (proposals, the informant). Only new
     // actions are refused; whatever was under way carries on.
     feature_off: 'That is turned off by the server right now.',
+    // Placing or taking a contract anonymously, turned off by the server.
+    anonymity_off: 'This server does not allow that anonymously any more. Nothing was taken.',
     /* The informants' refusals. Nothing was charged for any of them. A pick
        that is not an operative on the contract now: forged, from before a
        restart, or one who has left. */
@@ -2424,6 +2426,11 @@
       box.appendChild(gps);
     }
 
+    // Turned off by the server (Config.LocationTip.Enabled, or every
+    // informant feature with Config.InformantsEnabled): no button at all. A
+    // tip already bought stays on the map until it runs out, and says so.
+    if (rules.enabled !== true) { return showing > 0 ? box : null; }
+
     var blocked = tipBlocked(rules, own, contract);
     var key = 'tip:' + contract.id;
     var buy;
@@ -3321,11 +3328,16 @@
 
     function chooseAnonymity() {
       feeAccount = anonymityAccount();
-      shownFee = anonymityFee('hitman');
+      // Where the server does not allow accepting anonymously, the dialog
+      // offers no such choice and quotes no fee: Accept takes it under the
+      // hitman's name.
+      var offered = anonymityOffered('hitman');
+      shownFee = offered ? anonymityFee('hitman') : 0;
       state.dialog = {
         kind: 'choice',
-        question: 'Take this one anonymously?',
-        detail: 'The person who placed it will see an operative, not your name.'
+        question: offered ? 'Take this one anonymously?' : 'Take this contract?',
+        detail: (offered ? 'The person who placed it will see an operative, not your name.'
+          : 'The person who placed it will see your name.')
           // What finishes it, before it is taken: the card's chip says it,
           // and this is where a hitman agrees to the terms. One used to
           // being paid for a kill would otherwise find out after making one.
@@ -3350,9 +3362,11 @@
           // nothing on the dialog said when it was.
           + (bandOf(contract) ? ' It has ' + bandOf(contract).text.toLowerCase() + '.' : '')
           + exclusiveRule(contract),
-        options: [
+        options: offered ? [
           { label: 'Anonymously', primary: true, run: function () { take(true); } },
           { label: 'Under my name', run: function () { take(false); } }
+        ] : [
+          { label: 'Accept', primary: true, run: function () { take(false); } }
         ],
         // Drawn again from the settings when they change while it is open
         // (readBoard), so the fee it shows, and sends back, is the fee now.
@@ -6560,6 +6574,9 @@
 
   function viewPlace(view) {
     var form = el('div', 'place-form');
+    // A server that does not allow placing anonymously draws no such option,
+    // and a draft ticked before it was turned off is placed under the name.
+    if (!anonymityOffered('creator')) { state.draft.anon = false; }
 
     // What the creator actually has, read server-side, so an over-budget
     // contract is obvious before they submit rather than after.
@@ -6831,26 +6848,29 @@
     var clock = el('div', 'hint', clockHint());
     terms.appendChild(clock);
 
-    var anon = document.createElement('input');
-    anon.type = 'checkbox'; anon.id = 'anon';
-    anon.checked = state.draft.anon === true;
-    anon.onclick = function () {
-      state.draft.anon = anon.checked;
-      clock.textContent = clockHint();
-      // The item pickers hold back what names its owner while it is ticked;
-      // renderSlots brings the total up to date too.
-      renderSlots();
-    };
-    // A label, so the words toggle it too. The box on its own is a twenty
-    // pixel target on a phone screen, which is a coin toss.
-    var toggle = document.createElement('label');
-    toggle.className = 'toggle';
-    toggle.htmlFor = 'anon';
-    toggle.appendChild(anon);
-    toggle.appendChild(el('span', null, 'Place anonymously'
-      + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator'))
-        + ' from your ' + anonymityAccount() + ')' : '')));
-    terms.appendChild(toggle);
+    // Not drawn at all where the server does not allow it (anonymityOffered).
+    var anon = anonymityOffered('creator') ? document.createElement('input') : null;
+    if (anon) {
+      anon.type = 'checkbox'; anon.id = 'anon';
+      anon.checked = state.draft.anon === true;
+      anon.onclick = function () {
+        state.draft.anon = anon.checked;
+        clock.textContent = clockHint();
+        // The item pickers hold back what names its owner while it is ticked;
+        // renderSlots brings the total up to date too.
+        renderSlots();
+      };
+      // A label, so the words toggle it too. The box on its own is a twenty
+      // pixel target on a phone screen, which is a coin toss.
+      var toggle = document.createElement('label');
+      toggle.className = 'toggle';
+      toggle.htmlFor = 'anon';
+      toggle.appendChild(anon);
+      toggle.appendChild(el('span', null, 'Place anonymously'
+        + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator'))
+          + ' from your ' + anonymityAccount() + ')' : '')));
+      terms.appendChild(toggle);
+    }
     form.appendChild(terms);
 
     // What placing it takes, right above the button that takes it. Filled
@@ -8025,6 +8045,16 @@
 
   // Whether the Place form is set to place anonymously.
   function placingAnonymously() { return state.draft.anon === true; }
+
+  /* Whether the server offers anonymity for this role ('creator' on placing,
+     'hitman' on accepting): Config.Anonymity.AllowAnonymousPlacer and
+     AllowAnonymousHitman, as the listing's settings carry them. Off, the
+     option is not drawn at all. A server that does not say offers it. */
+  function anonymityOffered(role) {
+    var allowed = settings().anonymity;
+    if (!allowed || typeof allowed !== 'object') { return true; }
+    return allowed[role === 'creator' ? 'placer' : 'hitman'] !== false;
+  }
 
   /* The first item staged on any payout whose stack says whose it is (the
      wallet's namesOwner, Escrow.namesOwner on the server), or null. */
