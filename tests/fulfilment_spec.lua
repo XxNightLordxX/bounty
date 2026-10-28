@@ -684,8 +684,7 @@ describe('the shipped switches, from the Place form to paid', function()
         local file = Shipped.fromFile()
         for _, entry in ipairs(Shipped.VALUES) do
             local section, key, value = entry[1], entry[2], entry[3]
-            local shipped = file[key]
-            if section then shipped = file[section][key] end
+            local shipped = Shipped.section(file, section)[key]
             eq(shipped, value, ('Config.%s%s'):format(section and (section .. '.') or '', key))
         end
     end)

@@ -159,11 +159,19 @@ Config.Penalty = {
 }
 
 Config.Anonymity = {
-    AllowAnonymousPlacer = true,    -- a contract may be placed anonymously
-    AllowAnonymousHitman = true,    -- a contract may be accepted anonymously
+    AllowAnonymousPlacer = false,   -- a contract may be placed anonymously
+    AllowAnonymousHitman = false,   -- a contract may be accepted anonymously
+    ShowOperativeNames   = true,    -- the target sees a named operative's name
     CreatorFee           = 0,       -- fee to place anonymously; 0 = free
     HitmanFee            = 0,       -- fee to accept anonymously; 0 = free
     FeeAccount           = 'bank',  -- 'cash' | 'bank'
+    -- The same three, in place of the above, where the target is on a
+    -- whitelisted job (as the contract records it, like the advisory).
+    WhitelistedTargets = {
+        AllowAnonymousPlacer = false,  -- such a contract may be placed anonymously
+        AllowAnonymousHitman = false,  -- such a contract may be accepted anonymously
+        ShowOperativeNames   = true,   -- such a target sees a named operative's name
+    },
 }
 
 Config.Amendments = {
@@ -191,10 +199,10 @@ Config.Bailout = {
     Command                 = 'cleanse',  -- the buyout command, for players who cannot open the app
 }
 
-Config.InformantsEnabled = true  -- master switch: false turns off all three informant features
+Config.InformantsEnabled = true  -- master switch; on, each feature's own switch decides
 
 Config.Informant = {
-    Enabled                 = true,    -- a target may pay to find out who is after them
+    Enabled                 = false,   -- a target may pay to find out who is after them
     Cost                    = 25000,   -- price of one look-up, paid win or lose; 0 = free
     Account                 = 'bank',  -- 'cash' | 'bank'
     RevealMode              = 'name',  -- 'name' | 'description'
@@ -205,7 +213,7 @@ Config.Informant = {
 }
 
 Config.PlacerInformant = {
-    Enabled                 = true,    -- the placer may pay to find out who took it
+    Enabled                 = false,   -- the placer may pay to find out who took it
     Cost                    = 25000,   -- price of one look-up, paid win or lose; 0 = free
     Account                 = 'bank',  -- 'cash' | 'bank'
     RevealChancePercent     = 20,      -- chance one look-up names the operative, 0-100
@@ -216,7 +224,7 @@ Config.PlacerInformant = {
 }
 
 Config.LocationTip = {
-    Enabled                 = true,    -- a hitman on a contract may buy the target's rough area
+    Enabled                 = false,   -- a hitman on a contract may buy the target's rough area
     Cost                    = 25000,   -- price; 0 = free
     Account                 = 'bank',  -- 'cash' | 'bank'
     RadiusMeters            = 350,     -- metres; the area shown is twice this across
@@ -224,6 +232,12 @@ Config.LocationTip = {
     CooldownMinutes         = 10,      -- minutes between two tips on one contract
     MaxPurchasesPerContract = 3,       -- tips per hitman per contract
     NotifyTarget            = true,    -- tell the target someone knows their rough area
+}
+
+Config.InformantsWhitelistedTargets = {  -- the three above, where the target is on a whitelisted job
+    Informant       = false,  -- such a target may buy the target's informant
+    PlacerInformant = false,  -- the placer of such a contract may buy the placer's informant
+    LocationTip     = false,  -- a hitman on such a contract may buy an informant tip
 }
 
 -- ============================================================================

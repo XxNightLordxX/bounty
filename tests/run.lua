@@ -139,6 +139,48 @@ CONFIG_DEFAULTS.Kidnap.RequireCoercion = true
 --- held to config.lua by Shipped.VALUES.
 CONFIG_DEFAULTS.Debug = false
 
+--- And with placing and accepting anonymously allowed, though the resource
+--- ships both off (Config.Anonymity.AllowAnonymousPlacer and
+--- AllowAnonymousHitman = false, the owner's request).
+---
+--- Anonymity is what a great many specs guard: that an anonymous placer or
+--- operative is named to nobody, on any channel, through every ending. They
+--- were written placing and accepting anonymously, and with both switches
+--- off every one of those would be refused as anonymity_off before reaching
+--- what it tests. Set on here explicitly so they keep guarding it. What the
+--- shipped off does is the business of the specs that set it
+--- (anonymity_spec, "anonymity switched off" and "as shipped"), and the
+--- shipped values are held to config.lua by Shipped.VALUES.
+CONFIG_DEFAULTS.Anonymity.AllowAnonymousPlacer = true
+CONFIG_DEFAULTS.Anonymity.AllowAnonymousHitman = true
+--- The same two for a target on a whitelisted job
+--- (Config.Anonymity.WhitelistedTargets), for the specs that place and
+--- take contracts on officers anonymously.
+CONFIG_DEFAULTS.Anonymity.WhitelistedTargets.AllowAnonymousPlacer = true
+CONFIG_DEFAULTS.Anonymity.WhitelistedTargets.AllowAnonymousHitman = true
+
+--- And with the three informant features on for civilian targets, though
+--- the resource ships them off (Config.Informant, Config.PlacerInformant
+--- and Config.LocationTip .Enabled = false, the owner's request).
+---
+--- The informant, placer's informant and tip specs are about what each
+--- sells, charges and tells, and every one of them was written with the
+--- feature on; off, each is refused as feature_off before reaching what it
+--- tests. Set on here explicitly so they keep guarding it. Whitelisted-job
+--- targets keep the shipped off (Config.InformantsWhitelistedTargets), which
+--- is today's rule for them (informant_protected). What the shipped off does
+--- is the business of the specs that set it (informant_spec "as shipped"),
+--- and the shipped values are held to config.lua by Shipped.VALUES.
+CONFIG_DEFAULTS.Informant.Enabled = true
+CONFIG_DEFAULTS.PlacerInformant.Enabled = true
+CONFIG_DEFAULTS.LocationTip.Enabled = true
+--- And the placer's informant and the tip on for whitelisted-job targets
+--- too, as both were for every target before the per-target switches: the
+--- specs that tip off on an officer, and tell law enforcement so, were
+--- written that way. The target's informant stays off for them, as it was.
+CONFIG_DEFAULTS.InformantsWhitelistedTargets.PlacerInformant = true
+CONFIG_DEFAULTS.InformantsWhitelistedTargets.LocationTip = true
+
 --- Restore in place, recursing into tables that exist in both. Assigning a
 --- fresh table would leave anything holding a subtable — a module that did
 --- `local rules = Config.Sources.item` at load — looking at a detached copy.

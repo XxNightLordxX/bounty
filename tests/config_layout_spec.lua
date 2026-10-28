@@ -21,9 +21,16 @@ local CHANGED = {
     ['Informant.RequireProximity'] = { true, nil },
     ['Informant.ProximityWindowMinutes'] = { 10, nil },
     ['Informant.RevealChancePercent'] = { nil, 10 },
+    -- Every informant feature ships off (the owner's request); the master
+    -- switch stays on, so turning one on is enough.
+    ['Informant.Enabled'] = { true, false },
+    -- Anonymity ships off (the owner's request): new since the rewrite, and
+    -- shipped false, so listed here (ADDED reads a false as absent).
+    ['Anonymity.AllowAnonymousPlacer'] = { nil, false },
+    ['Anonymity.AllowAnonymousHitman'] = { nil, false },
     -- The placer's informant, new, and its own rate-limit bucket.
     ['PlacerInformant'] = { nil, {
-        Enabled = true, Cost = 25000, Account = 'bank', RevealChancePercent = 20,
+        Enabled = false, Cost = 25000, Account = 'bank', RevealChancePercent = 20,
         AlertChancePercent = 20, RevealMode = 'name', MaxPurchasesPerContract = 2,
         CooldownMinutes = 10,
     } },
@@ -34,7 +41,7 @@ local CHANGED = {
 --- them under (a whole new section or record), with what they ship as.
 local ADDED = {
     ['LocationTip'] = {
-        Enabled = true, Cost = 25000, Account = 'bank', RadiusMeters = 350, ShowMinutes = 10,
+        Enabled = false, Cost = 25000, Account = 'bank', RadiusMeters = 350, ShowMinutes = 10,
         CooldownMinutes = 10, MaxPurchasesPerContract = 3, NotifyTarget = true,
     },
     ['Cooldowns.locationTip'] = { per = 60, burst = 2 },
@@ -44,9 +51,17 @@ local ADDED = {
     ['Restart'] = { PauseBeforeSeconds = 1800, MaxHoldMinutes = 45 },
     ['Advisory.OnCancel'] = true,
     -- The owner's switches: anonymity off entirely, and every informant
-    -- feature off at once.
-    ['Anonymity.AllowAnonymousPlacer'] = true,
-    ['Anonymity.AllowAnonymousHitman'] = true,
+    -- feature off at once. Anonymity ships off (the owner's request), and
+    -- a named operative is shown to the target by name.
+    ['Anonymity.ShowOperativeNames'] = true,
+    -- The same three where the target is on a whitelisted job, and the
+    -- three informant features there.
+    ['Anonymity.WhitelistedTargets'] = {
+        AllowAnonymousPlacer = false, AllowAnonymousHitman = false, ShowOperativeNames = true,
+    },
+    ['InformantsWhitelistedTargets'] = {
+        Informant = false, PlacerInformant = false, LocationTip = false,
+    },
     ['InformantsEnabled'] = true,
 }
 

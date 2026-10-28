@@ -24,6 +24,10 @@ local JPEG = '\255\216\255\224\0\16JFIF\0\1\1\0\0\1' .. ('\0\7\255kill'):rep(10)
 --- only (reads), and crimson.admin with crimson.identity.
 local function stack()
     local s = Shipped.newStack()
+    -- Anonymous contracts are what the scrubbing is for: placing
+    -- anonymously allowed, explicitly, though the resource ships it off.
+    Config.Anonymity.AllowAnonymousPlacer = true
+    Config.Anonymity.AllowAnonymousHitman = true
     local f = fixture(s)
     Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001',
         firstname = 'Sam', lastname = 'Steward' })

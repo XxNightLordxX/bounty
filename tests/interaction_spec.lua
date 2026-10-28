@@ -112,6 +112,9 @@ describe('informant data', function()
 
     it('charges the premium', function()
         local s, f, c = seeded()
+        -- The operative an alias to the target, as the informant sells them
+        -- (named operatives shown to the target are not sold).
+        Config.Anonymity.ShowOperativeNames = false
         s.informant.setRandom(function() return 100 end)
         Env.players[2].PlayerData.money.bank = 100000
         truthy(s.informant.buy(f.target, c.id, nil, pickOf(s, c)))

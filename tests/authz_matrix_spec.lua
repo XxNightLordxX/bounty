@@ -598,7 +598,13 @@ MATRIX.informant = {
     -- Every look-up forced to find nothing: a name a look-up finds is what
     -- was paid for, not a leak, and informant_spec says who may learn one.
     -- What this row is about is who may buy at all.
-    arrange = function(w) w.s.informant.setRandom(function() return 100 end) end,
+    -- The operative an alias to the target in both passes, as the
+    -- informant sells them (one named to the target is not sold).
+    arrange = function(w)
+        w.s.informant.setRandom(function() return 100 end)
+        Config.Anonymity.ShowOperativeNames = false
+        Config.Anonymity.WhitelistedTargets.ShowOperativeNames = false
+    end,
     -- With the price quoted, as the page sends it, and the operative the
     -- target's card offers (a handle the server minted).
     payload = function(w, role, contract)

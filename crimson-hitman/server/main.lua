@@ -256,21 +256,34 @@ local DEFAULTS = {
         PauseBeforeSeconds = 1800,
         MaxHoldMinutes = 45,
     },
-    --- The two anonymity switches, added to a section every config has.
-    --- Absent is not a decision: both are offered, as shipped. Checked below.
+    --- The anonymity switches, added to a section every config has. Absent
+    --- is not a decision: as shipped, neither placing nor accepting
+    --- anonymously is offered, and a named operative is shown to the target
+    --- by name. Checked below.
     Anonymity = {
-        AllowAnonymousPlacer = true,
-        AllowAnonymousHitman = true,
+        AllowAnonymousPlacer = false,
+        AllowAnonymousHitman = false,
+        ShowOperativeNames = true,
+        --- Their counterparts for a target on a whitelisted job, shipped
+        --- the same.
+        WhitelistedTargets = {
+            AllowAnonymousPlacer = false,
+            AllowAnonymousHitman = false,
+            ShowOperativeNames = true,
+        },
     },
     --- Read inside the purchase. A missing price is not a free informant;
     --- it is one nobody can buy. A missing chance is the shipped one, not a
-    --- look-up that can never find anybody.
+    --- look-up that can never find anybody. Absent switches are off, as
+    --- shipped.
     Informant = {
+        Enabled = false,
         Cost = 25000,
         MaxPurchasesPerContract = 2,
         RevealChancePercent = 10,
     },
     PlacerInformant = {
+        Enabled = false,
         Cost = 25000,
         MaxPurchasesPerContract = 2,
         RevealChancePercent = 20,
@@ -280,6 +293,7 @@ local DEFAULTS = {
     --- Read inside the purchase and on every hitman's card, as the
     --- informant's are: a missing price is not a free tip.
     LocationTip = {
+        Enabled = false,
         Cost = 25000,
         Account = 'bank',
         RadiusMeters = 350,
@@ -287,6 +301,13 @@ local DEFAULTS = {
         CooldownMinutes = 10,
         MaxPurchasesPerContract = 3,
         NotifyTarget = true,
+    },
+    --- The three informant features where the target is on a whitelisted
+    --- job. Absent is off, as shipped. Checked below.
+    InformantsWhitelistedTargets = {
+        Informant = false,
+        PlacerInformant = false,
+        LocationTip = false,
     },
     --- Compared against a count in Kidnap.arm, so a missing one is not a
     --- disabled cap but a comparison against nil: every attempt to start a
@@ -843,13 +864,40 @@ local function validateConfig(quiet)
           off = 'no contract can be placed anonymously; ones placed so stay anonymous' },
         { section = 'Anonymity', key = 'AllowAnonymousHitman',
           off = 'no contract can be accepted anonymously; operatives already so stay anonymous' },
+        -- Off is the side that names nobody to the target: every operative
+        -- is an alias to them, as before the switch.
+        { section = 'Anonymity', key = 'ShowOperativeNames',
+          off = 'the target sees every operative by alias only, named or not' },
+        -- The same three where the target is on a whitelisted job.
+        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'AllowAnonymousPlacer',
+          off = 'no contract on a whitelisted job can be placed anonymously' },
+        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'AllowAnonymousHitman',
+          off = 'no contract on a whitelisted job can be accepted anonymously' },
+        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'ShowOperativeNames',
+          off = 'a target on a whitelisted job sees every operative by alias only' },
+        -- The three informant features where the target is on a whitelisted
+        -- job: off sells nothing there, as each general one does.
+        { section = 'InformantsWhitelistedTargets', key = 'Informant',
+          off = 'no target on a whitelisted job may buy the target\'s informant' },
+        { section = 'InformantsWhitelistedTargets', key = 'PlacerInformant',
+          off = 'no placer of a contract on a whitelisted job may buy the placer\'s informant' },
+        { section = 'InformantsWhitelistedTargets', key = 'LocationTip',
+          off = 'no informant tip is sold on a contract on a whitelisted job' },
     }) do
-        local value = Config[switch.section][switch.key]
+        local block = Config[switch.section]
+        local name = switch.section
+        if switch.sub then
+            -- A WhitelistedTargets that is not a table is one with every
+            -- switch absent, read the safe way below.
+            if type(block[switch.sub]) ~= 'table' then block[switch.sub] = {} end
+            block, name = block[switch.sub], name .. '.' .. switch.sub
+        end
+        local value = block[switch.key]
         if type(value) ~= 'boolean' then
             warn[#warn + 1] = ('%s.%s is %s, not true or false; it is read as false: %s.')
-                :format(switch.section, switch.key, type(value) == 'string'
+                :format(name, switch.key, type(value) == 'string'
                     and ('"' .. value .. '"') or tostring(value), switch.off)
-            Config[switch.section][switch.key] = false
+            block[switch.key] = false
         end
     end
 

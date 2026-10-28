@@ -64,7 +64,8 @@ end
 
 local function targetPick(s, c, label)
     for _, p in ipairs(view(s, c, 'TARGET01').informantPicks or {}) do
-        if p.pick ~= 'placer' and (not label or p.label == label) then return p.pick end
+        if p.pick ~= 'placer' and (not label or p.label == label
+            or p.label:sub(1, #label + 2) == label .. ' (') then return p.pick end
     end
     return nil
 end
@@ -816,6 +817,8 @@ describe('the informants in the admin panel', function()
         Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
         Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
         resetConfig()
+        -- Off for whitelisted-job targets too, so none is sold anywhere.
+        Config.InformantsWhitelistedTargets.PlacerInformant = false
         Config.Database.Mode = 'json'
         local again = require('server.main').start()
         eq(Config.PlacerInformant.Enabled, false)
@@ -975,5 +978,189 @@ describe('each informant switched off on its own', function()
         eq(#alerts(), 0, 'no operative told')
         eq(view(s, c, 'CREATOR1').placerInformantPicks, nil, 'no picker')
         truthy(view(s, c, 'TARGET01').informantPicks, 'the target\'s is its own switch')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Shipped off, and decided per target: Config.Informant / PlacerInformant /
+-- LocationTip .Enabled for civilian targets, and
+-- Config.InformantsWhitelistedTargets for a target on a whitelisted job
+-- (the flag the contract recorded, as the advisory reads it).
+--------------------------------------------------------------------------
+
+describe('the informant features, per target', function()
+    local Shipped = require('tests.harness.shipped')
+
+    --- A contract taken under a name, on a civilian or (`officer`) on a
+    --- target the contract recorded as on a whitelisted job.
+    local function on(officer, s)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c, 'placed')
+        if officer then
+            local row = s.storage.readContract(c.id)
+            row.target_protected = true
+            s.storage.writeContract(row)
+        end
+        -- Anonymously, so the target's informant has somebody to sell.
+        Config.Anonymity.AllowAnonymousHitman = true
+        Config.Anonymity.WhitelistedTargets.AllowAnonymousHitman = true
+        truthy(s.contracts.accept(f.hitman, c.id, true), 'taken')
+        for _, src in ipairs({ 1, 2, 3 }) do Env.players[src].PlayerData.money.bank = 100000 end
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        return f, c
+    end
+
+    --- The three purchases' refusals, by feature.
+    local function tried(s, f, c)
+        local out = {}
+        local pick = targetPick(s, c) or 'op_none'
+        out.Informant = select(2, s.informant.buy(f.target, c.id, targetShown(), pick))
+        local placerAt = placerPick(s, c) or 'op_none'
+        out.PlacerInformant = select(2, s.informant.placerBuy(f.creator, c.id, placerShown(), placerAt))
+        out.LocationTip = select(2, s.locationTip.buy(f.hitman, c.id,
+            { cost = Config.LocationTip.Cost, account = Config.LocationTip.Account }))
+        return out
+    end
+
+    local OFF = { Informant = CH.ERR.FEATURE_OFF, PlacerInformant = CH.ERR.FEATURE_OFF,
+                  LocationTip = CH.ERR.FEATURE_OFF }
+
+    it('ships all three off, for every target, with nothing charged and nothing drawn', function()
+        for _, officer in ipairs({ false, true }) do
+            local s = Shipped.newStack()
+            local f, c = on(officer, s)
+            local money = total(s)
+            local errs = tried(s, f, c)
+            eq(errs.Informant, CH.ERR.FEATURE_OFF, 'the target\'s')
+            eq(errs.PlacerInformant, CH.ERR.FEATURE_OFF, 'the placer\'s')
+            eq(errs.LocationTip, CH.ERR.FEATURE_OFF, 'the tip')
+            eq(total(s), money, 'nothing charged')
+            local settings = s.projection.listing(f.hitman.cid).settings
+            eq(settings.informant, nil)
+            eq(settings.placerInformant, nil)
+            eq(settings.locationTip.enabled, false)
+            eq(view(s, c, 'TARGET01').informantPicks, nil)
+            eq(view(s, c, 'CREATOR1').placerInformantPicks, nil)
+            eq(view(s, c, 'HITMAN01').locationTip, nil)
+            eq(Config.InformantsEnabled, true, 'the master switch ships on')
+        end
+    end)
+
+    --- Every feature off, then the given switches on.
+    local function only(s, switches)
+        for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
+            Config[section].Enabled = false
+            Config.InformantsWhitelistedTargets[section] = false
+        end
+        for _, path in ipairs(switches) do
+            truthy(s.settings.set(path, true, 'ADMIN001'), path)
+        end
+    end
+
+    it('each general switch on sells it on contracts on civilians only', function()
+        for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
+            for _, officer in ipairs({ false, true }) do
+                local s = newStack()
+                only(s, { section .. '.Enabled' })
+                local f, c = on(officer, s)
+                local money = total(s)
+                local err = tried(s, f, c)[section]
+                if officer then
+                    eq(err, section == 'Informant' and CH.ERR.INFORMANT_PROTECTED or CH.ERR.FEATURE_OFF,
+                        section .. ': refused on a whitelisted-job target')
+                    eq(total(s), money, section .. ': nothing charged')
+                else
+                    truthy(err ~= CH.ERR.FEATURE_OFF and err ~= CH.ERR.INFORMANT_PROTECTED,
+                        section .. ': sold on a civilian: ' .. tostring(err))
+                end
+            end
+        end
+    end)
+
+    it('each whitelisted switch on sells it on contracts on whitelisted-job targets only', function()
+        for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
+            for _, officer in ipairs({ false, true }) do
+                local s = newStack()
+                only(s, { 'InformantsWhitelistedTargets.' .. section })
+                local f, c = on(officer, s)
+                local money = total(s)
+                local err = tried(s, f, c)[section]
+                if officer then
+                    truthy(err ~= CH.ERR.FEATURE_OFF and err ~= CH.ERR.INFORMANT_PROTECTED,
+                        section .. ': sold on a whitelisted-job target: ' .. tostring(err))
+                else
+                    eq(err, CH.ERR.FEATURE_OFF, section .. ': refused on a civilian')
+                    eq(total(s), money, section .. ': nothing charged')
+                end
+            end
+        end
+    end)
+
+    it('offers an officer target the informant on On me only while theirs is on', function()
+        local s = newStack()
+        only(s, { 'Informant.Enabled' })
+        local _, c = on(true, s)
+        eq(view(s, c, 'TARGET01').informantPicks, nil, 'the general switch is not theirs')
+        truthy(s.settings.set('InformantsWhitelistedTargets.Informant', true, 'ADMIN001'))
+        truthy(view(s, c, 'TARGET01').informantPicks, 'theirs on: offered')
+        local before = bank(2)
+        force(s, HIT)
+        local ok, err = s.informant.buy(s.identity.resolve(2), c.id, targetShown(), targetPick(s, c))
+        truthy(ok, tostring(err))
+        eq(before - bank(2), Config.Informant.Cost, 'charged as any target is')
+    end)
+
+    it('the master switch off beats both', function()
+        for _, officer in ipairs({ false, true }) do
+            local s = newStack()
+            only(s, { 'Informant.Enabled', 'PlacerInformant.Enabled', 'LocationTip.Enabled',
+                'InformantsWhitelistedTargets.Informant',
+                'InformantsWhitelistedTargets.PlacerInformant',
+                'InformantsWhitelistedTargets.LocationTip' })
+            truthy(s.settings.set('InformantsEnabled', false, 'ADMIN001'))
+            local f, c = on(officer, s)
+            local money = total(s)
+            local errs = tried(s, f, c)
+            for section, err in pairs(OFF) do eq(errs[section], err, section) end
+            eq(total(s), money, 'nothing charged')
+        end
+    end)
+
+    it('draws no tip button on a contract its switch is off for, while others sell', function()
+        local s = newStack()
+        only(s, { 'LocationTip.Enabled' })
+        local _, c = on(true, s)
+        eq(s.projection.listing('HITMAN01').settings.locationTip.enabled, true,
+            'the server sells tips elsewhere')
+        local card = view(s, c, 'HITMAN01').locationTip
+        eq(card and card.off, true, 'but not on this one, and the card says so')
+        eq(card.left, nil, 'nothing offered')
+    end)
+
+    it('is a panel group of three switches that apply at once and are kept', function()
+        local s = newStack()
+        local found = 0
+        for _, entry in ipairs(s.settings.CATALOGUE) do
+            if entry.group == 'Informants (whitelisted-job targets)' then
+                found = found + 1
+                eq(entry.section, 'features')
+                eq(entry.kind, 'switch')
+                eq(entry.needs, 'InformantsEnabled')
+            end
+        end
+        eq(found, 3)
+        for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
+            local key = 'InformantsWhitelistedTargets.' .. section
+            -- The other way from where it stands, so the change is real.
+            local want = Config.InformantsWhitelistedTargets[section] ~= true
+            truthy(s.settings.set(key, want, 'ADMIN001'), key)
+            eq(Config.InformantsWhitelistedTargets[section], want)
+            eq(s.storage.readSettings()[key].value, want, 'kept in the store')
+            falsy(s.settings.set(key, 'yes', 'ADMIN001'), 'not a true or false')
+        end
     end)
 end)

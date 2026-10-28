@@ -190,7 +190,9 @@ describe('the whitelisted-job view', function()
     it('carries no more than the advisory: no placer, hitman, reason, place, photo or reward', function()
         local w = world()
         -- A named placer and a named hitman on the officer's own contract,
-        -- the case with most to leak.
+        -- the case with most to leak. Their own entry names both, as On me
+        -- does (anonymity off for the contract, names shown to the target);
+        -- a colleague's never does.
         truthy(w.s.contracts.accept(w.f.hitman, w.mine.id, false))
         local data = view()
         local keys = w.s.projection.WHITELISTED_KEYS
@@ -205,7 +207,10 @@ describe('the whitelisted-job view', function()
         -- And by value, whatever key it might hide under.
         for _, leak in ipairs({ 'Vic Marlowe', 'Rook Ash', 'Operative', 'Owes the Lost MC',
                                  'CREATOR1', 'HITMAN01', 'TARGET01' }) do
-            falsy(contains(data, leak), 'the view carries ' .. leak)
+            falsy(contains(data.colleagues, leak), 'a colleague\'s entry carries ' .. leak)
+        end
+        for _, leak in ipairs({ 'Owes the Lost MC', 'CREATOR1', 'HITMAN01', 'TARGET01' }) do
+            falsy(contains(data.onYou, leak), 'their own entry carries ' .. leak)
         end
         falsy(contains(data, 5001), 'nor the reward figure')
     end)
@@ -1477,5 +1482,67 @@ describe('a player barred by a job they hold', function()
         w.s.audit.flush()
         eq(#(w.s.storage.auditByAction('gate_list', 200) or {}), before, 'no refusal written down')
         eq(#(w.s.storage.auditByAction('gate_whitelistedView', 200) or {}), 0)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Who is after an officer, on their own entry (anonymity off for the
+-- contract: Config.Anonymity.WhitelistedTargets)
+--------------------------------------------------------------------------
+
+describe('the whitelisted-job view, with names', function()
+    local NAMES = { 'Vic Marlowe', 'Rook Ash', 'Nel Vey' }
+
+    it('names a named placer and named operatives to the officer target, never to colleagues or bulletins', function()
+        local w = world()
+        -- A second operative on the officer's contract, anonymously: an alias.
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:hh2',
+            cash = 50000, bank = 50000, firstname = 'Nel', lastname = 'Vey' })
+        Env.clientEvents = {}
+        truthy(w.s.contracts.accept(w.f.hitman, w.mine.id, false), 'Rook Ash, named')
+        truthy(w.s.contracts.accept(w.s.identity.resolve(4), w.mine.id, true), 'Nel Vey, anonymous')
+        -- Every bulletin and notice the acceptances sent to anybody but the
+        -- placer and the operatives themselves: no name.
+        for _, event in ipairs(Env.clientEvents) do
+            if event.target ~= 1 and event.target ~= 3 and event.target ~= 4 then
+                for _, leak in ipairs(NAMES) do
+                    falsy(contains(event.args, leak), event.name .. ' to ' .. tostring(event.target)
+                        .. ' carries ' .. leak)
+                end
+            end
+        end
+        for _, sent in ipairs(Natives.calls.dispatch or {}) do
+            for _, leak in ipairs(NAMES) do
+                falsy(contains(sent, leak), 'sc-dispatch carries ' .. leak)
+            end
+        end
+        truthy(#(Natives.calls.dispatch or {}) > 0, 'a bulletin went out')
+
+        local own = view(11).onYou[1]
+        eq(own.id, w.mine.id)
+        eq(own.creatorName, 'Vic Marlowe', 'the named placer, as On me shows them')
+        eq(#own.operatives, 1, 'the named operative alone')
+        eq(own.operatives[1].name, 'Rook Ash')
+        falsy(contains(own, 'Nel Vey'), 'the anonymous one never named')
+
+        -- A colleague's view of the same contract carries none of it.
+        local colleague = view(12)
+        for _, leak in ipairs({ 'Vic Marlowe', 'Rook Ash', 'Nel Vey', 'Operative' }) do
+            falsy(contains(colleague.colleagues, leak), 'a colleague\'s entry carries ' .. leak)
+        end
+    end)
+
+    it('names no operative while names are not shown to them, and no anonymous placer', function()
+        local w = world()
+        truthy(w.s.contracts.accept(w.f.hitman, w.mine.id, false), 'taken named')
+        Config.Anonymity.WhitelistedTargets.ShowOperativeNames = false
+        local own = view(11).onYou[1]
+        eq(own.operatives, nil, 'no operative named with the switch off')
+        eq(own.creatorName, 'Vic Marlowe', 'the named placer still')
+        -- An anonymous placer, on the officer, stays so.
+        local row = w.s.storage.readContract(w.mine.id)
+        row.anon_creator = true
+        w.s.storage.writeContract(row)
+        eq(view(11).onYou[1].creatorName, nil, 'an anonymous placer is never named')
     end)
 end)

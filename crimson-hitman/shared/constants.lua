@@ -264,6 +264,10 @@ CH.ERR = {
     --- The target's informant asked about a placer who put their name to
     --- the contract: already known, so not sold.
     PLACER_KNOWN         = 'placer_known',
+    --- The target's informant asked about an operative who took the
+    --- contract under their name, while names are shown to the target
+    --- (Config.Anonymity.ShowOperativeNames): already known, so not sold.
+    OPERATIVE_KNOWN      = 'operative_known',
     --- An informant asked about somebody the buyer already knows: found out
     --- by an earlier look-up, or (the placer's) an operative who took it
     --- under their name. Nothing is charged.

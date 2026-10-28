@@ -3,7 +3,9 @@
 --- tests/run.lua starts every stack from config/config.lua with a few
 --- switches turned the other way (its CONFIG_DEFAULTS): kill photos on,
 --- contracts a kill completes too, three collections, no least reward, kill
---- photos sent as links, a handover's target restrained, Debug off. Most specs are about what those make possible. A
+--- photos sent as links, a handover's target restrained, Debug off,
+--- placing and accepting anonymously allowed, the three informant
+--- features on for civilian targets. Most specs are about what those make possible. A
 --- test of what the owner's players meet puts the shipped values back with
 --- Shipped.apply() after newStack(), or opens its stack with
 --- Shipped.newStack(). newStack() puts the runner's config back for the
@@ -26,14 +28,39 @@ Shipped.VALUES = {
     { 'Mugshot', 'Enabled', true },
     { 'WhitelistedView', 'Enabled', true },
     { nil, 'Debug', true },
+    { 'Anonymity', 'AllowAnonymousPlacer', false },
+    { 'Anonymity', 'AllowAnonymousHitman', false },
+    { 'Anonymity', 'ShowOperativeNames', true },
+    { 'Informant', 'Enabled', false },
+    { 'PlacerInformant', 'Enabled', false },
+    { 'LocationTip', 'Enabled', false },
+    { 'Anonymity.WhitelistedTargets', 'AllowAnonymousPlacer', false },
+    { 'Anonymity.WhitelistedTargets', 'AllowAnonymousHitman', false },
+    { 'Anonymity.WhitelistedTargets', 'ShowOperativeNames', true },
+    { 'InformantsWhitelistedTargets', 'Informant', false },
+    { 'InformantsWhitelistedTargets', 'PlacerInformant', false },
+    { 'InformantsWhitelistedTargets', 'LocationTip', false },
 }
+
+--- The table a section names in a config, dotted for a record inside one
+--- ('Anonymity.WhitelistedTargets'); the config itself for nil.
+---@param config table
+---@param section string|nil
+---@return table|nil
+function Shipped.section(config, section)
+    local node = config
+    if not section then return node end
+    for part in section:gmatch('[^%.]+') do
+        node = type(node) == 'table' and node[part] or nil
+    end
+    return node
+end
 
 --- Set every shipped value on the live Config.
 function Shipped.apply()
     for _, entry in ipairs(Shipped.VALUES) do
         local section, key, value = entry[1], entry[2], entry[3]
-        local into = section and Config[section] or Config
-        into[key] = value
+        Shipped.section(Config, section)[key] = value
     end
 end
 

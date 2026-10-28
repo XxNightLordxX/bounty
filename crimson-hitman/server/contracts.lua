@@ -989,10 +989,13 @@ end
 
 local function createUnlocked(actor, req, targetActor)
     -- Placing anonymously, where the server has turned it off
-    -- (Config.Anonymity.AllowAnonymousPlacer): refused before anything is
-    -- read, charged or held, so no fee and no escrow. Read here, at the
-    -- tap, never from the page.
-    if req.anonymous == true and not Util.anonymityAllowed('placer') then
+    -- (Config.Anonymity.AllowAnonymousPlacer, or its WhitelistedTargets
+    -- counterpart where the target is on a whitelisted job now, as the
+    -- contract will record it): refused before anything is read, charged
+    -- or held, so no fee and no escrow. Read here, at the tap, never from
+    -- the page.
+    if req.anonymous == true
+        and not Util.anonymityAllowed('placer', Identity.protectedBy(targetActor) ~= nil) then
         return nil, CH.ERR.ANONYMITY_OFF
     end
     -- What it costs and how it is completed, read once, before anything
@@ -1461,12 +1464,14 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     end
 
     -- Accepting anonymously, where the server has turned it off
-    -- (Config.Anonymity.AllowAnonymousHitman): refused before anything is
-    -- taken, no fee, no stake, no row. Not retroactive: a hitman back on a
-    -- contract they held anonymously comes back under the same alias, still
-    -- anonymous and charged nothing again (paidBefore, below). Naming them
-    -- now would name the anonymous stint the client has already seen.
-    if not Util.anonymityAllowed('hitman') then
+    -- (Config.Anonymity.AllowAnonymousHitman, or its WhitelistedTargets
+    -- counterpart on a contract that recorded its target as on a
+    -- whitelisted job): refused before anything is taken, no fee, no stake,
+    -- no row. Not retroactive: a hitman back on a contract they held
+    -- anonymously comes back under the same alias, still anonymous and
+    -- charged nothing again (paidBefore, below). Naming them now would name
+    -- the anonymous stint the client has already seen.
+    if not Util.anonymityAllowed('hitman', contract.target_protected == true) then
         if stint and previousAnon == true then
             anonymous = true
         elseif anonymous then

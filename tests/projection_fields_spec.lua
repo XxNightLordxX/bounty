@@ -114,6 +114,9 @@ local CONDITIONAL = {
     -- target's, when they were told one was bought (location_tip_spec).
     locationTip      = 'hitman-only, on their own card, where tips are sold or one is showing',
     tippedAt         = 'target-only, and only once they were told a tip was bought',
+    -- The operatives who took it under their name, shown to the target
+    -- while Config.Anonymity.ShowOperativeNames is on (anonymity_spec).
+    operatives       = 'target-only, while names are shown and a named operative is on it',
 }
 
 --- Which roles see a contract at all, and through which projection call.

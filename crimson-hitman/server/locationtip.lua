@@ -53,10 +53,15 @@ end
 
 --- Whether new tips are sold (Config.LocationTip.Enabled, and the master
 --- switch Config.InformantsEnabled), read at every use so the admin panel's
---- switches apply at once.
+--- switches apply at once. With a contract, on that contract: one whose
+--- target is on a whitelisted job reads
+--- Config.InformantsWhitelistedTargets.LocationTip instead. Without one,
+--- whether any tip is sold at all.
+---@param contract table|nil
 ---@return boolean
-function LocationTip.enabled()
-    return Util.informantOn('LocationTip')
+function LocationTip.enabled(contract)
+    if contract == nil then return Util.informantAnyOn('LocationTip') end
+    return Util.informantOn('LocationTip', contract.target_protected == true)
 end
 
 local function setting(key, fallback)
@@ -267,6 +272,9 @@ buyUnlocked = function(actor, contractId, shown)
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
         return false, CH.ERR.ALREADY_SETTLED
     end
+    -- Off for this contract (a target on a whitelisted job reads its own
+    -- switch): refused before anything is charged.
+    if not LocationTip.enabled(contract) then return false, CH.ERR.FEATURE_OFF end
     -- On hold by staff (server/freeze.lua): nothing is charged.
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
         return false, CH.ERR.CONTRACT_FROZEN
@@ -399,9 +407,13 @@ function LocationTip.cardFor(contract, cid)
     if CH.TERMINAL[contract.state] then return nil end
     local now = os.time()
     local count, newest, showing = boughtBy(contract.id, cid, now)
-    local on = LocationTip.enabled()
-    if not on and not showing then return nil end
-    local out = {}
+    local on = LocationTip.enabled(contract)
+    -- Off for this contract while the server sells them elsewhere: said, so
+    -- the card draws no button.
+    if not on and not showing then
+        return LocationTip.enabled() and { off = true } or nil
+    end
+    local out = { off = (not on) or nil }
     if showing then
         out.secondsLeft = (tonumber(showing.expires_at) or 0) - now
         out.expiresAt = tonumber(showing.expires_at)

@@ -4218,6 +4218,36 @@ async function main() {
       return app;
     }
 
+    /* Named operatives shown to the target (Config.Anonymity.ShowOperativeNames):
+       by alias and name on their On me card; one taken anonymously is not
+       sent at all, and stays an alias in the informant's list. */
+    const namedOp = await onMeWith({}, { hitmenActive: 2,
+      operatives: [{ alias: 'Operative #1', name: 'Rook Ash' }],
+      informantPicks: [{ pick: OP1, label: 'Operative #1 (Rook Ash)', known: true, named: true },
+                       { pick: 'op_2', label: 'Operative #2' },
+                       { pick: 'placer', label: 'The person who placed it' }] });
+    it('shows the target a named operative by name on their card', function () {
+      truthy(namedOp.view.textContent.indexOf('Operative #1: Rook Ash') !== -1,
+        namedOp.view.textContent);
+    });
+    click(namedOp, 'Buy informant data');
+    it('marks a named operative known in the informant\'s list, the other for sale', function () {
+      const known = buttonNamed(namedOp, 'Operative #1 (Rook Ash)');
+      truthy(known && known.disabled, 'not sold');
+      truthy(namedOp.view.textContent.indexOf('Took it under their name: you know who it is.') !== -1,
+        namedOp.view.textContent);
+      const other = buttonNamed(namedOp, 'Operative #2');
+      truthy(other && !other.disabled, 'the anonymous one is offered');
+    });
+    const opKnown = await onMeWith({}, null, { informant: { ok: false, err: 'operative_known' } });
+    click(opKnown, 'Buy informant data');
+    payFor(opKnown, 'Operative #1');
+    await settle(); await settle();
+    it('says the operative_known refusal in its own words', function () {
+      eq(opKnown.notice(), 'They took it under their name, so you already know who it is. '
+        + 'Nothing was taken.');
+    });
+
     const targetOff = await onMeWith({ informant: undefined });
     it('does not offer the target\'s informant where the server has none', function () {
       falsy(buttonNamed(targetOff, 'Buy informant data'), targetOff.view.textContent);
@@ -4905,6 +4935,71 @@ async function main() {
       truthy(sent, 'sent');
       eq(sent.anonymous, false);
       eq(sent.shown.hitmanFee, 0);
+    });
+
+    /* A target on a whitelisted job reads its own anonymity switches
+       (Config.Anonymity.WhitelistedTargets, settings.anonymity.whitelisted):
+       the Place form drops the option once such a target is picked, and the
+       accept dialog on such a contract offers none. A civilian keeps the
+       general ones. */
+    const WL_OFF = { anonymity: { placer: true, hitman: true, namesToTarget: true,
+      whitelisted: { placer: false, hitman: false, namesToTarget: true } } };
+    async function placePicking(person) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: WL_OFF } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        browseTargets: { ok: true, data: { people: [person], total: 1, page: 1, pages: 1 } },
+        rewardOptions: wallet()
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+      const before = app.view.textContent.indexOf('Place anonymously') !== -1;
+      const row = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && /\bperson\b/.test(n.className || '')
+          && n.textContent.indexOf(person.name) !== -1;
+      })[0];
+      truthy(row, 'the person is listed: ' + app.view.textContent);
+      row.onclick();
+      await settle();
+      return { app: app, before: before,
+               after: app.view.textContent.indexOf('Place anonymously') !== -1 };
+    }
+    const officerPicked = await placePicking({ handle: 'h_officer', name: 'Olive Ward',
+      protected: true, protectedAs: 'law' });
+    const civilianPicked = await placePicking({ handle: 'h_civ', name: 'Dana Reyes' });
+    it('hides Place anonymously once a whitelisted-job target is picked', function () {
+      truthy(officerPicked.before, 'offered before a pick, by the general switch');
+      falsy(officerPicked.after, 'gone for an officer: ' + officerPicked.app.view.textContent);
+      truthy(civilianPicked.after, 'kept for a civilian');
+    });
+
+    async function acceptingOn(targetProtected) {
+      const board = JSON.parse(JSON.stringify(BOARD));
+      board.data.settings = Object.assign({}, board.data.settings, WL_OFF, { warnHitman: false });
+      board.data.contracts[0].targetProtected = targetProtected;
+      const app = boot({ list: board, mine: MINE, ledger: LEDGER,
+        accept: { ok: true, data: { myAnonymous: false } } });
+      await settle(); await settle();
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+      })[0].onclick();
+      return app;
+    }
+    const onWhitelisted = await acceptingOn(true);
+    const onCivilian = await acceptingOn(false);
+    it('offers no Anonymously choice on a contract on a whitelisted-job target', function () {
+      const named = function (app, label) {
+        return app.view.all().some(function (n) {
+          return n.tagName === 'BUTTON' && n.textContent === label;
+        });
+      };
+      falsy(named(onWhitelisted, 'Anonymously'), onWhitelisted.view.textContent);
+      truthy(onWhitelisted.view.textContent.indexOf('So will the target.') !== -1,
+        'and says the target sees the name: ' + onWhitelisted.view.textContent);
+      truthy(named(onCivilian, 'Anonymously'), 'a civilian\'s keeps it');
     });
 
     /* A contract on an officer, on a server that advises nobody. The page
@@ -10901,12 +10996,22 @@ async function main() {
         showing.notice());
     });
 
+    const hitmanWithOn = await hitmanWith(tipCard());
     const most = await hitmanWith(tipCard({ locationTip: { left: 0 } }));
     const away = await hitmanWith(tipCard({ locationTip: { left: 3, targetAway: true } }));
     const off = await hitmanWith(tipCard({ locationTip: undefined }), {},
       Object.assign({}, TIP_RULES, { enabled: false }));
     const offShowing = await hitmanWith(tipCard({ locationTip: { secondsLeft: 300 } }), {},
       Object.assign({}, TIP_RULES, { enabled: false }));
+    /* Sold elsewhere, but off on this contract (a target on a whitelisted job
+       reads Config.InformantsWhitelistedTargets.LocationTip): no button. */
+    const offHere = await hitmanWith(tipCard({ targetProtected: true, locationTip: { off: true } }));
+    it('hitman: no tip button on a contract its switch is off for', function () {
+      falsy(button(offHere, 'Buy informant tip'), offHere.view.textContent);
+      falsy(button(offHere, 'Get informant tip'), offHere.view.textContent);
+      truthy(button(hitmanWithOn, 'Buy informant tip') || button(hitmanWithOn, 'Get informant tip'),
+        'drawn where it is on');
+    });
     it('hitman: says why it cannot be bought: the most, the target away', function () {
       [[most, 'You have bought the most informant tips allowed on this contract (3).'],
        [away, 'The target is not in the city right now, so there is nobody to place.']]
@@ -11059,6 +11164,49 @@ async function main() {
       falsy(labels.some(function (l) { return /informant/i.test(l); }), labels.join(' | '));
       truthy(labels.indexOf('Buy out \u2014 $15,000') !== -1, 'the buyout stays: ' + labels.join(' | '));
       falsy(/informant/i.test(app.view.textContent), app.view.textContent);
+      drewCleanly(app);
+    });
+  })();
+
+  /* An officer target's own entry, where anonymity is off for the contract:
+     the named placer and the named operatives, as On me shows them, and the
+     informant where the server sells it to a member of a whitelisted job
+     (Config.InformantsWhitelistedTargets.Informant). A colleague's entry
+     never carries a name. */
+  await (async function whitelistedViewNames() {
+    let bought = null;
+    const own = jobView().data.onYou[0];
+    const app = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: function () {
+        return jobView({
+          onYou: [Object.assign({}, own, { hitmenActive: 1, creatorName: 'Vic Marlowe',
+            operatives: [{ alias: 'Operative #1', name: 'Rook Ash' }], informantLeft: 2,
+            informantPicks: [{ pick: 'op_2', label: 'Operative #2' }] })],
+          settings: { buyouts: true, buyoutDelaySeconds: 120,
+            informant: { cost: 25000, account: 'bank', chance: 10, maxPerContract: 2 } } });
+      },
+      informant: function (body) { bought = body; return { ok: true, data: { found: false } }; }
+    });
+    await settle(); await settle(); await settle();
+    it('names the placer and the named operative on the officer\'s own entry', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Placed by Vic Marlowe') !== -1, text);
+      truthy(text.indexOf('Operative #1: Rook Ash') !== -1, text);
+      eq(text.split('Vic Marlowe').length - 1, 1, 'on their own entry alone');
+    });
+    it('offers their informant where the server sells it to them', function () {
+      truthy(app.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), app.view.textContent);
+    });
+    click(app, 'Buy informant data');
+    click(app, 'Operative #2');
+    click(app, 'Pay $25,000');
+    click(app, 'Tap again to pay $25,000');
+    await settle(); await settle();
+    it('buys it through the same request as On me', function () {
+      truthy(bought && bought.pick === 'op_2', JSON.stringify(bought));
       drewCleanly(app);
     });
   })();

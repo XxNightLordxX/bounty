@@ -133,6 +133,13 @@ local function labelOf(row)
     return type(row.alias) == 'string' and row.alias or 'An operative'
 end
 
+--- Whether the target is already shown this operative's name: one who took
+--- the contract under it, while Config.Anonymity.ShowOperativeNames is on.
+--- One who took it anonymously never is.
+local function namedToTarget(contract, row)
+    return row.anon ~= true and Util.operativeNamesShown(contract.target_protected == true)
+end
+
 --- What a look-up that found somebody tells the buyer, by RevealMode: a
 --- name, or what the informant saw of them. A citizen id never.
 ---
@@ -255,9 +262,10 @@ local function rememberPaid(contractId, cid, record, action)
     end
 end
 
---- Whether this target may not use the informant at all: a member of a
---- whitelisted job, by the flag the contract recorded when it was placed or
---- by a barred job they hold now. Their buyout stays.
+--- Whether this target counts as a member of a whitelisted job for the
+--- informant: by the flag the contract recorded when it was placed, or by a
+--- barred job they hold now. Sold to them only while
+--- Config.InformantsWhitelistedTargets.Informant is on; their buyout stays.
 local function shielded(contract, actor)
     return contract.target_protected == true or (Identity.isBarred and Identity.isBarred(actor)) == true
 end
@@ -278,8 +286,10 @@ local targetBuy
 function Informant.buy(actor, contractId, shown, pick)
     -- Turned off, from the admin panel or config.lua: new purchases only.
     -- A name already found stays shown.
-    -- Its own switch, or the master switch over all three (Util.informantOn).
-    if not Util.informantOn('Informant') then return false, CH.ERR.FEATURE_OFF end
+    -- Its own switch, or the master switch over all three (Util.informantOn):
+    -- off for every target, civilian and whitelisted-job alike. Which of
+    -- the two applies is decided once the contract is read (targetBuy).
+    if not Util.informantAnyOn('Informant') then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if type(pick) ~= 'string' or pick == '' or #pick > 64 then return false, CH.ERR.INVALID_INPUT end
@@ -301,7 +311,14 @@ targetBuy = function(actor, contractId, shown, pick)
     if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     -- On hold by staff (server/freeze.lua): nothing is charged.
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
-    if shielded(contract, actor) then return false, CH.ERR.INFORMANT_PROTECTED end
+    -- The switch for this target: a member of a whitelisted job reads
+    -- Config.InformantsWhitelistedTargets.Informant, refused as before
+    -- (informant_protected) while it is off; anybody else the general one.
+    if shielded(contract, actor) then
+        if not Util.informantOn('Informant', true) then return false, CH.ERR.INFORMANT_PROTECTED end
+    elseif not Util.informantOn('Informant', false) then
+        return false, CH.ERR.FEATURE_OFF
+    end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
 
     -- Who the look-up is about. Every operative on it is offered, wherever
@@ -314,6 +331,8 @@ targetBuy = function(actor, contractId, shown, pick)
     else
         row = operativeFor(contractId, pick)
         if not row then return false, CH.ERR.OPERATIVE_GONE end
+        -- One already shown to them by name, as a named placer is.
+        if namedToTarget(contract, row) then return false, CH.ERR.OPERATIVE_KNOWN end
         key, label = row.hitman_cid, labelOf(row)
     end
 
@@ -404,15 +423,23 @@ end
 
 --- What the target may pick on this contract: every active operative, by
 --- handle and alias, and the person who placed it. `known` where the answer
---- is already theirs (found before, or a placer who put their name to it),
---- which is not sold. Nothing for a target the informant is not open to.
+--- is already theirs (found before, a placer who put their name to it, or
+--- an operative who took it under theirs while names are shown to the
+--- target), which is not sold; `named` for the last two, where the label
+--- carries the name. Nothing for a target the informant is not open to.
 ---@param contract table
 ---@param cid string the target
 ---@param hitmen table[] the contract's rows, as the projection read them
+---@param protected boolean|nil read as on a whitelisted job whatever the
+--- contract recorded (a target barred by a job held now); nil reads the flag
 ---@return table[]|nil
-function Informant.targetPicks(contract, cid, hitmen)
-    if not Util.informantOn('Informant') or contract.target_cid ~= cid then return nil end
-    if contract.target_protected == true or CH.TERMINAL[contract.state] then return nil end
+function Informant.targetPicks(contract, cid, hitmen, protected)
+    if contract.target_cid ~= cid or CH.TERMINAL[contract.state] then return nil end
+    -- A target on a whitelisted job by the contract's flag reads
+    -- Config.InformantsWhitelistedTargets.Informant; anybody else the
+    -- general switch.
+    if protected == nil then protected = contract.target_protected == true end
+    if not Util.informantOn('Informant', protected) then return nil end
     local record = recordFor(contract.id, cid)
     local picks = record and record.picks or {}
     local out = {}
@@ -422,8 +449,12 @@ function Informant.targetPicks(contract, cid, hitmen)
             local handle = handleOf(contract.id, h.hitman_cid)
             if handle then
                 local asked = picks[h.hitman_cid]
-                out[#out + 1] = { pick = handle, label = labelOf(h),
-                                  known = (asked and asked.found) == true }
+                local named = namedToTarget(contract, h) and type(h.hitman_name) == 'string'
+                out[#out + 1] = { pick = handle,
+                                  label = named and (labelOf(h) .. ' (' .. h.hitman_name .. ')')
+                                      or labelOf(h),
+                                  known = named or (asked and asked.found) == true,
+                                  named = named or nil }
             end
         end
     end
@@ -521,7 +552,9 @@ local placerBuyUnlocked
 ---@return string|nil err
 ---@return table|nil data
 function Informant.placerBuy(actor, contractId, shown, pick)
-    if not Util.informantOn('PlacerInformant') then return false, CH.ERR.FEATURE_OFF end
+    -- Off for every target; which switch applies to this contract is read
+    -- with it (placerBuyUnlocked).
+    if not Util.informantAnyOn('PlacerInformant') then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if type(pick) ~= 'string' or pick == '' or #pick > 64 then return false, CH.ERR.INVALID_INPUT end
@@ -540,6 +573,11 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
     -- The placer's, named or anonymous, and nobody else's: never a hitman
     -- on it or its target.
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
+    -- On a contract on a whitelisted job, Config.InformantsWhitelistedTargets
+    -- .PlacerInformant decides it; on any other, the general switch.
+    if not Util.informantOn('PlacerInformant', contract.target_protected == true) then
+        return false, CH.ERR.FEATURE_OFF
+    end
     if Identity.isBarred and Identity.isBarred(actor) then return false, CH.ERR.BLACKLISTED_JOB end
     -- On hold by staff (server/freeze.lua): nothing is charged.
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
@@ -644,7 +682,8 @@ function Informant.placerView(contract, cid, hitmen)
             out.found[#out.found + 1] = { label = labelOf(h), text = answerText(answer) }
         end
     end
-    if not Util.informantOn('PlacerInformant') or CH.TERMINAL[contract.state] then return out end
+    if not Util.informantOn('PlacerInformant', contract.target_protected == true)
+        or CH.TERMINAL[contract.state] then return out end
     out.picks = {}
     for i = 1, #hitmen do
         local h = hitmen[i]

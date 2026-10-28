@@ -740,6 +740,11 @@ describe('the target\'s alert, kept and checked when it falls due', function()
     local Shipped = require('tests.harness.shipped')
 
     local function place(s, actor, reason)
+        -- Placed anonymously on a shipped stack, which allows no anonymous
+        -- placing (Config.Anonymity.AllowAnonymousPlacer = false): on here,
+        -- explicitly, so these keep covering the anonymous placer's alert.
+        Config.Anonymity.AllowAnonymousPlacer = true
+        Config.Anonymity.WhitelistedTargets.AllowAnonymousPlacer = true
         local c, err = s.contracts.create(actor or s.identity.resolve(1), {
             targetCid = 'TARGET01', reason = reason or 'x', anonymous = true,
             reward = { baseline = { cash = 5000 } },

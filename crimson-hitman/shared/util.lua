@@ -376,30 +376,79 @@ function Util.killPhotos()
     return type(completion) == 'table' and completion.KillPhotos == true
 end
 
---- Whether one of the three informant features is on: its own switch
---- (Config.Informant, Config.PlacerInformant or Config.LocationTip, by
---- section name) and the master switch over all three
---- (Config.InformantsEnabled). Read at every use, so the admin panel's
---- switches apply to the next action; anything but true is off.
+--- Whether one of the three informant features is on for a contract: the
+--- master switch over all three (Config.InformantsEnabled), and then, on a
+--- contract whose target is on a whitelisted job (the protected flag it
+--- recorded, as the advisory reads it), Config.InformantsWhitelistedTargets
+--- [section]; on any other, its own switch (Config.Informant,
+--- Config.PlacerInformant or Config.LocationTip .Enabled, by section name).
+--- Read at every use, so the admin panel's switches apply to the next
+--- action; anything but true is off.
 ---@param section string 'Informant' | 'PlacerInformant' | 'LocationTip'
+---@param protected boolean|nil the target is on a whitelisted job
 ---@return boolean
-function Util.informantOn(section)
+function Util.informantOn(section, protected)
     if not Config or Config.InformantsEnabled ~= true then return false end
+    if protected == true then
+        local whitelisted = Config.InformantsWhitelistedTargets
+        return type(whitelisted) == 'table' and whitelisted[section] == true
+    end
     local block = Config[section]
     return type(block) == 'table' and block.Enabled == true
 end
 
---- Whether a new anonymous placing ('placer') or acceptance ('hitman') is
---- offered (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman).
---- Read at every use; anything but true is off. Never retroactive: what was
---- placed or taken anonymously stays anonymous.
----@param role string 'placer' | 'hitman'
+--- Whether one of the three informant features is on for any target at
+--- all, civilian or on a whitelisted job: what the page is told of its
+--- price and rules, and the first refusal, before a contract is read.
+---@param section string 'Informant' | 'PlacerInformant' | 'LocationTip'
 ---@return boolean
-function Util.anonymityAllowed(role)
+function Util.informantAnyOn(section)
+    return Util.informantOn(section, false) or Util.informantOn(section, true)
+end
+
+--- The anonymity switches that apply to a contract: on one whose target is
+--- on a whitelisted job (the protected flag the contract records, or the
+--- target's job at placement), Config.Anonymity.WhitelistedTargets, in place
+--- of the general ones; on any other, Config.Anonymity itself.
+---@param protected boolean|nil the target is on a whitelisted job
+---@return table|nil
+local function anonymityRules(protected)
     local anonymity = Config and Config.Anonymity
-    if type(anonymity) ~= 'table' then return false end
-    if role == 'placer' then return anonymity.AllowAnonymousPlacer == true end
-    return anonymity.AllowAnonymousHitman == true
+    if type(anonymity) ~= 'table' then return nil end
+    if protected == true then
+        local whitelisted = anonymity.WhitelistedTargets
+        return type(whitelisted) == 'table' and whitelisted or nil
+    end
+    return anonymity
+end
+
+--- Whether a new anonymous placing ('placer') or acceptance ('hitman') is
+--- offered (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman,
+--- or their Config.Anonymity.WhitelistedTargets counterparts on a contract
+--- whose target is on a whitelisted job). Read at every use; anything but
+--- true is off. Never retroactive: what was placed or taken anonymously
+--- stays anonymous.
+---@param role string 'placer' | 'hitman'
+---@param protected boolean|nil the target is on a whitelisted job
+---@return boolean
+function Util.anonymityAllowed(role, protected)
+    local rules = anonymityRules(protected)
+    if not rules then return false end
+    if role == 'placer' then return rules.AllowAnonymousPlacer == true end
+    return rules.AllowAnonymousHitman == true
+end
+
+--- Whether an operative who accepted under their name is shown by it to the
+--- contract's target (Config.Anonymity.ShowOperativeNames, or
+--- Config.Anonymity.WhitelistedTargets.ShowOperativeNames on a contract
+--- whose target is on a whitelisted job). Read at every use; anything but
+--- true is off, and the target sees aliases only. Never an operative who
+--- accepted anonymously.
+---@param protected boolean|nil the target is on a whitelisted job
+---@return boolean
+function Util.operativeNamesShown(protected)
+    local rules = anonymityRules(protected)
+    return rules ~= nil and rules.ShowOperativeNames == true
 end
 
 --- Count digits, used to blunt phone numbers and addresses in free text (§14.30).

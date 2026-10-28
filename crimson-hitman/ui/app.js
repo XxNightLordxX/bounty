@@ -479,6 +479,9 @@
     // The target's informant on a placer who put their name to it.
     placer_known: 'They placed it under their name, so you already know who it is. '
       + 'Nothing was taken.',
+    // The target's informant on an operative already shown to them by name.
+    operative_known: 'They took it under their name, so you already know who it is. '
+      + 'Nothing was taken.',
     already_revealed: 'You already know who that is. Nothing was taken.',
     // A member of a whitelisted job, to whom the informant is not sold.
     informant_protected: 'The informant does not work for members of a whitelisted job. '
@@ -1090,6 +1093,9 @@
      notice: it compares this against what it is about to draw. A photo kept
      in the app is not one of these: closing it only closes it. */
   var proofShown = null;
+  /* Draws the Place form's anonymous option again for the target picked
+     (viewPlace sets it), where their whitelisted job changes the rule. */
+  var placeAnonSync = null;
 
   // What the client's Ledger row says once the photo is no longer waiting.
   var PROOF_WORDS = {
@@ -2160,6 +2166,15 @@
           meta.appendChild(chip(h.alias + ' · ' + h.record.standing, null, 'i-user'));
         }
       });
+    } else if (contract.role === 'target') {
+      // The operatives on it who took it under their name, where the server
+      // shows those to the target (Config.Anonymity.ShowOperativeNames). One
+      // who took it anonymously is never listed, and stays an alias.
+      asList(contract.operatives).forEach(function (o) {
+        if (o && o.name) {
+          meta.appendChild(chip((o.alias || 'An operative') + ': ' + o.name, 'hot', 'i-user'));
+        }
+      });
     }
     // What accepting costs, on the listing, before the accept button —
     // §14.18. The server used to send this to the creator alone while
@@ -2429,7 +2444,9 @@
     // Turned off by the server (Config.LocationTip.Enabled, or every
     // informant feature with Config.InformantsEnabled): no button at all. A
     // tip already bought stays on the map until it runs out, and says so.
-    if (rules.enabled !== true) { return showing > 0 ? box : null; }
+    // Off for this contract alone (a target on a whitelisted job reads its
+    // own switch, Config.InformantsWhitelistedTargets.LocationTip): the same.
+    if (rules.enabled !== true || (own && own.off === true)) { return showing > 0 ? box : null; }
 
     var blocked = tipBlocked(rules, own, contract);
     var key = 'tip:' + contract.id;
@@ -3331,13 +3348,18 @@
       // Where the server does not allow accepting anonymously, the dialog
       // offers no such choice and quotes no fee: Accept takes it under the
       // hitman's name.
-      var offered = anonymityOffered('hitman');
+      var offered = anonymityOffered('hitman', contract.targetProtected === true);
       shownFee = offered ? anonymityFee('hitman') : 0;
       state.dialog = {
         kind: 'choice',
         question: offered ? 'Take this one anonymously?' : 'Take this contract?',
         detail: (offered ? 'The person who placed it will see an operative, not your name.'
           : 'The person who placed it will see your name.')
+          // And the target too, where the server shows named operatives to
+          // them (Config.Anonymity.ShowOperativeNames).
+          + (namesToTarget(contract.targetProtected === true)
+            ? (offered ? ' Under your name, the target sees it too.' : ' So will the target.')
+            : '')
           // What finishes it, before it is taken: the card's chip says it,
           // and this is where a hitman agrees to the terms. One used to
           // being paid for a kill would otherwise find out after making one.
@@ -4250,7 +4272,9 @@
     }
     var options = asList(contract.informantPicks).map(function (p) {
       return { pick: p.pick, label: p.label, disabled: !!p.known,
-               note: p.known ? (p.named ? 'Placed under their name: you know who it is.'
+               note: p.known ? (p.named ? (p.pick === 'placer'
+                 ? 'Placed under their name: you know who it is.'
+                 : 'Took it under their name: you know who it is.')
                  : 'Your informant already found out.') : null };
     });
     askPick('Buy informant data?', detail, options, function (pick) {
@@ -6258,13 +6282,30 @@
     }
     var clock = clockChip(entry);
     if (clock) { meta.appendChild(clock); }
+    // Their own entry only, as On me shows it: a placer who put their name
+    // to it, and the operatives who took it under theirs where the server
+    // shows those to the target. A colleague's entry never carries either.
+    if (own) {
+      if (entry.creatorName) {
+        meta.appendChild(chip('Placed by ' + entry.creatorName, null, 'i-briefcase'));
+      }
+      asList(entry.operatives).forEach(function (o) {
+        if (o && o.name) {
+          meta.appendChild(chip((o.alias || 'An operative') + ': ' + o.name, 'hot', 'i-user'));
+        }
+      });
+    }
     node.appendChild(meta);
 
     if (own) {
+      // What their informant found, and the look-up itself, where the server
+      // sells it to a member of a whitelisted job.
+      informantFound(node, entry.informantFound);
       var row = el('div', 'row actions');
       // As On me says it, for a target the app shows only this view.
       if (entry.tippedAt) { row.appendChild(tipToldNotice(entry.tippedAt)); }
       appendBuyout(row, entry);
+      if (informantOffered(entry)) { row.appendChild(informantButton(entry)); }
       node.appendChild(row);
     } else if (entry.tipAdvisedAt) {
       // The bulletin said a hitman bought an informant tip on them: when,
@@ -6848,9 +6889,16 @@
     var clock = el('div', 'hint', clockHint());
     terms.appendChild(clock);
 
-    // Not drawn at all where the server does not allow it (anonymityOffered).
-    var anon = anonymityOffered('creator') ? document.createElement('input') : null;
-    if (anon) {
+    // Not drawn at all where the server does not allow it for the target
+    // picked (anonymityOffered): one on a whitelisted job reads its own
+    // switch (settings().anonymity.whitelisted), by the mark the pick
+    // already carries. Drawn again when the pick changes (placeAnonSync).
+    var anonSlot = el('div', null);
+    terms.appendChild(anonSlot);
+    function drawAnonOption() {
+      anonSlot.innerHTML = '';
+      if (!anonymityOffered('creator', state.draft.targetProtected === true)) { return; }
+      var anon = document.createElement('input');
       anon.type = 'checkbox'; anon.id = 'anon';
       anon.checked = state.draft.anon === true;
       anon.onclick = function () {
@@ -6869,8 +6917,20 @@
       toggle.appendChild(el('span', null, 'Place anonymously'
         + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator'))
           + ' from your ' + anonymityAccount() + ')' : '')));
-      terms.appendChild(toggle);
+      anonSlot.appendChild(toggle);
     }
+    drawAnonOption();
+    // A pick that changes the rule: the option drawn again, and a box
+    // ticked under the other rule unticked where this one allows none.
+    placeAnonSync = function () {
+      if (!anonymityOffered('creator', state.draft.targetProtected === true)
+          && state.draft.anon === true) {
+        state.draft.anon = false;
+        clock.textContent = clockHint();
+        renderSlots();
+      }
+      drawAnonOption();
+    };
     form.appendChild(terms);
 
     // What placing it takes, right above the button that takes it. Filled
@@ -8046,14 +8106,38 @@
   // Whether the Place form is set to place anonymously.
   function placingAnonymously() { return state.draft.anon === true; }
 
+  /* The anonymity switches that apply to a target: on one on a whitelisted
+     job (the pick's protected mark, a contract's targetProtected), the
+     server's Config.Anonymity.WhitelistedTargets, carried as
+     settings().anonymity.whitelisted; on anyone else, the general ones. The
+     server decides at the tap either way. */
+  function anonymityRules(targetProtected) {
+    var allowed = settings().anonymity;
+    if (!allowed || typeof allowed !== 'object') { return null; }
+    if (targetProtected === true) {
+      return allowed.whitelisted && typeof allowed.whitelisted === 'object'
+        ? allowed.whitelisted : allowed;
+    }
+    return allowed;
+  }
+
+  /* Whether an operative who accepts under their name is shown by it to the
+     target too (Config.Anonymity.ShowOperativeNames). A server that does
+     not say does not. */
+  function namesToTarget(targetProtected) {
+    var rules = anonymityRules(targetProtected);
+    return !!(rules && rules.namesToTarget === true);
+  }
+
   /* Whether the server offers anonymity for this role ('creator' on placing,
      'hitman' on accepting): Config.Anonymity.AllowAnonymousPlacer and
-     AllowAnonymousHitman, as the listing's settings carry them. Off, the
-     option is not drawn at all. A server that does not say offers it. */
-  function anonymityOffered(role) {
-    var allowed = settings().anonymity;
-    if (!allowed || typeof allowed !== 'object') { return true; }
-    return allowed[role === 'creator' ? 'placer' : 'hitman'] !== false;
+     AllowAnonymousHitman, as the listing's settings carry them, or their
+     whitelisted-target counterparts for a target on a whitelisted job. Off,
+     the option is not drawn at all. A server that does not say offers it. */
+  function anonymityOffered(role, targetProtected) {
+    var rules = anonymityRules(targetProtected);
+    if (!rules) { return true; }
+    return rules[role === 'creator' ? 'placer' : 'hitman'] !== false;
   }
 
   /* The first item staged on any payout whose stack says whose it is (the
@@ -8384,6 +8468,8 @@
         state.draft.targetProtected = person.protected === true;
         state.draft.targetProtectedAs = person.protectedAs;
         state.draft.targetName = person.name;
+        // The anonymity rule for this target (a whitelisted job's own).
+        if (placeAnonSync) { placeAnonSync(); }
         // The chosen name stays visible rather than the list vanishing, so
         // the player can see who they picked and change their mind.
         renderPeople([person], null);

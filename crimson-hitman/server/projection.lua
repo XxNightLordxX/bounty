@@ -86,20 +86,40 @@ end
 ---
 --- What was found stays shown whatever Config.Informant.Enabled says: it was
 --- paid for under the rules of the moment it was bought. The picks and the
---- count only while the server sells look-ups, and never to a target the
---- informant is not open to (a member of a whitelisted job, by the flag the
---- contract recorded): their card does not offer it at all.
+--- count only while the server sells look-ups to this target: a member of a
+--- whitelisted job (by the flag the contract recorded, or `protected`) only
+--- while Config.InformantsWhitelistedTargets.Informant is on, anybody else
+--- while Config.Informant.Enabled is. Otherwise their card does not offer
+--- it at all.
 ---@return table[]|nil found { label, text }
 ---@return integer|nil left
 ---@return table[]|nil picks { pick, label, known }
-local function informantFor(contract, viewerCid, hitmen)
+local function informantFor(contract, viewerCid, hitmen, protected)
     if not Informant then return nil, nil, nil end
+    if protected == nil then protected = contract.target_protected == true end
     local found, left = Informant.answerFor(contract.id, viewerCid)
-    local picks = Informant.targetPicks(contract, viewerCid, hitmen)
-    if not Util.informantOn('Informant') or contract.target_protected == true then
+    local picks = Informant.targetPicks(contract, viewerCid, hitmen, protected)
+    if not Util.informantOn('Informant', protected) then
         left, picks = nil, nil
     end
     return (#found > 0) and found or nil, left, picks
+end
+
+--- The operatives on a contract who took it under their name, by alias and
+--- name, for its target, while Config.Anonymity.ShowOperativeNames (or its
+--- WhitelistedTargets counterpart on a contract on a whitelisted job) is
+--- on; nil otherwise. Never one who took it anonymously.
+---@return table[]|nil { alias, name }
+local function namedOperatives(contract, hitmen)
+    if not Util.operativeNamesShown(contract.target_protected == true) then return nil end
+    local named = {}
+    for i = 1, #hitmen do
+        local h = hitmen[i]
+        if h.state == 'active' and h.anon ~= true and type(h.hitman_name) == 'string' then
+            named[#named + 1] = { alias = h.alias, name = h.hitman_name }
+        end
+    end
+    return #named > 0 and named or nil
 end
 
 --- A single contract, projected for one viewer.
@@ -364,6 +384,13 @@ function Projection.contract(contract, viewerCid)
         end
         out.informantFound, out.informantLeft, out.informantPicks =
             informantFor(contract, viewerCid, hitmen)
+        -- The operatives on it who took it under their name, by alias and
+        -- name, while names are shown to the target
+        -- (Config.Anonymity.ShowOperativeNames, or its WhitelistedTargets
+        -- counterpart on a contract on a whitelisted job). Never one who
+        -- took it anonymously, who stays an alias; with the switch off,
+        -- absent.
+        out.operatives = namedOperatives(contract, hitmen)
         -- When they were last told somebody was tipped off about their rough
         -- area (server/locationtip.lua). Never who, never where.
         out.tippedAt = LocationTip and LocationTip.toldAt(contract.id) or nil
@@ -499,6 +526,20 @@ local function buildListing(viewerCid, page)
             anonymity = {
                 placer = Util.anonymityAllowed('placer'),
                 hitman = Util.anonymityAllowed('hitman'),
+                -- Whether accepting under a name shows it to the target too
+                -- (Config.Anonymity.ShowOperativeNames), for the accept
+                -- dialog's words.
+                namesToTarget = Util.operativeNamesShown(),
+                -- The same three for a target on a whitelisted job
+                -- (Config.Anonymity.WhitelistedTargets), which apply in
+                -- their place there. The page picks by what it already
+                -- shows: the picked target's protected mark, and a
+                -- contract's targetProtected. Nothing about any target.
+                whitelisted = {
+                    placer = Util.anonymityAllowed('placer', true),
+                    hitman = Util.anonymityAllowed('hitman', true),
+                    namesToTarget = Util.operativeNamesShown(true),
+                },
             },
             -- Whether this server runs buyouts at all, so the page can tell
             -- "the client offered none" from "there are none here".
@@ -561,7 +602,7 @@ local function buildListing(viewerCid, page)
             -- And the least a shortening may leave on it: the server refuses
             -- a cut that leaves less, so the box stops short of it.
             deadlineMinLeftMinutes = math.floor(Util.CLOCK_STEP / 60),
-            informant = Util.informantOn('Informant') and {
+            informant = Util.informantAnyOn('Informant') and {
                 cost = Config.Informant.Cost,
                 account = Config.Informant.Account,
                 maxPerContract = Config.Informant.MaxPurchasesPerContract,
@@ -578,7 +619,7 @@ local function buildListing(viewerCid, page)
             -- the button can quote the price and the size of the area, and
             -- say why it cannot be bought while the server sells none.
             locationTip = type(Config.LocationTip) == 'table' and {
-                enabled = Util.informantOn('LocationTip'),
+                enabled = Util.informantAnyOn('LocationTip'),
                 cost = Config.LocationTip.Cost,
                 account = Config.LocationTip.Account,
                 radius = Config.LocationTip.RadiusMeters,
@@ -589,7 +630,7 @@ local function buildListing(viewerCid, page)
             } or nil,
             -- The placer's informant, the same way: its price, its two
             -- chances (found out, and then noticed), its cap and its wait.
-            placerInformant = Util.informantOn('PlacerInformant') and {
+            placerInformant = Util.informantAnyOn('PlacerInformant') and {
                 cost = Config.PlacerInformant.Cost,
                 account = Config.PlacerInformant.Account,
                 chance = Config.PlacerInformant.RevealChancePercent,
@@ -941,6 +982,17 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
             -- As On me says it: when they were told somebody was tipped off
             -- about their rough area. Never who, never where.
             entry.tippedAt = LocationTip and LocationTip.toldAt(c.id) or nil
+            -- And who is after them, as On me shows it: a placer who put
+            -- their name to it, and the operatives who took it under theirs
+            -- while names are shown to the target. Their own entry only;
+            -- a colleague's never carries a name.
+            if c.anon_creator ~= true then entry.creatorName = c.creator_name end
+            local hitmen = Storage.readHitmen(c.id)
+            entry.operatives = namedOperatives(c, hitmen)
+            -- Their informant, as On me offers it, where it is sold to a
+            -- member of a whitelisted job (InformantsWhitelistedTargets).
+            entry.informantFound, entry.informantLeft, entry.informantPicks =
+                informantFor(c, viewerCid, hitmen, true)
             onYou[#onYou + 1] = entry
         end
     end
@@ -978,6 +1030,17 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
         settings = {
             buyouts = Config.Bailout.Enabled == true,
             buyoutDelaySeconds = Config.Bailout.ProcessingDelaySeconds or 0,
+            -- What the informant dialog reads, where it is sold to a member
+            -- of a whitelisted job at all.
+            informant = Util.informantOn('Informant', true) and {
+                cost = Config.Informant.Cost,
+                account = Config.Informant.Account,
+                maxPerContract = Config.Informant.MaxPurchasesPerContract,
+                chance = Config.Informant.RevealChancePercent,
+                repeatFreeMinutes = Config.Informant.RerollLockMinutes,
+                askEverySeconds = Config.Cooldowns.informant
+                    and Config.Cooldowns.informant.per or nil,
+            } or nil,
         },
         alerts = Notify.viewAlertsAllowed() and { on = Notify.viewAlertsOn(viewerCid) } or nil,
     }
@@ -990,7 +1053,9 @@ Projection.WHITELISTED_KEYS = {
     entry = { targetName = true, targetJob = true, postedAt = true, state = true,
               hitmenActive = true, timeLeft = true, tipAdvisedAt = true },
     own   = { id = true, bailoutAmount = true, bailoutAvailable = true,
-              bailoutPaid = true, bailoutSecondsLeft = true, tippedAt = true },
+              bailoutPaid = true, bailoutSecondsLeft = true, tippedAt = true,
+              creatorName = true, operatives = true, informantFound = true,
+              informantLeft = true, informantPicks = true },
 }
 
 --- The four reads a player's app makes, each with escrow memoised for the
@@ -1070,7 +1135,8 @@ Projection.ALLOWED_KEYS = {
                 locationTip = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantFound = true,
-                informantLeft = true, informantPicks = true, tippedAt = true },
+                informantLeft = true, informantPicks = true, tippedAt = true,
+                operatives = true },
     public  = { barred = true },
 }
 
