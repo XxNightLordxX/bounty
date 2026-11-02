@@ -267,6 +267,10 @@ function Intent.holds(recipientCid, line)
     if type(line) ~= 'table' then return false end
     if line.portion ~= CH.PORTION.BASELINE and line.portion ~= CH.PORTION.BONUS then return false end
     if not loaded then load() end
+    -- The store could not be read: whether a hold stands is unknown, so
+    -- the payout waits until a read succeeds. Answered 'not held', a hold
+    -- written before a restart paid out the moment the store hiccupped.
+    if not loaded then return Intent.enabled() end
     local key = keyOf(line.contract_id, recipientCid)
     local row = holds[key]
     if not row then return false end
@@ -281,6 +285,7 @@ end
 ---@return integer|nil releasesAt
 function Intent.releasesAt(recipientCid, line)
     if not Intent.holds(recipientCid, line) then return nil end
+    if not loaded then return nil end
     local row = holds[keyOf(line.contract_id, recipientCid)]
     if not row then return nil end
     local minutes = math.floor(tonumber(cfg().HoldMaxMinutes) or 0)

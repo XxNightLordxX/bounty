@@ -193,6 +193,18 @@ even less than a dollar's worth, leaves the line for staff at once.
 **Load.** Nothing per frame while idle; loops sleep until due, share their
 reads and cap their passes; optional features cost nothing while off.
 
+### Deliberate trade-offs
+
+These were reviewed and left as they are on purpose:
+
+- **Freeze and pause end ordering.** Ending a staff freeze, the app pause or the restart hold clears the hold record before the lifetime give-back (`server/freeze.lua`). Reversing it would turn a crash between the two steps from a lost give-back into a double one. Neither is safe, and a lost give-back is the smaller harm.
+- **17mov mugshot refresh.** The headshot refreshes on the qb-clothing, illenium and rcore appearance events only. 17mov_CharacterSystem is escrowed and its saved-appearance event name cannot be verified, so it is not guessed. On a 17mov server the headshot refreshes on its normal timer instead.
+- **Boot recovery re-reads per contract.** Crash recovery reads each contract and roster again under that contract's lock before it moves money. This is slower than one batched read, but it never acts on a row another step has just changed.
+- **Config validators stay per feature.** `fits` and `says` in imp_board, imp_staffeco, imp_tips, rp_consequences and rp_places use different rule shapes, messages, text rules and list caps. One shared helper would change what the panel accepts or how it words a refusal.
+- **No by-age index for the json prune.** The prune walks every contract, but only every 10 minutes (more often only while a backlog drains), so an index would be fragile for little gain.
+- **Dirty-money cash settle.** If staff turn dirty payouts off and then settle a part-delivered line in cash or bank, the part of a dollar already given as items cannot be expressed in dollars, so the hitman can end up less than $1 ahead. Item-to-item deliveries are exact (`deliver_part`).
+- **Intent hold when the store cannot be read.** A proof-of-intent hold whose rows cannot be read is treated as holding (the payout waits) until a read succeeds. This is safer than paying a held line out.
+
 ## Integration: events and protocols
 
 **Exports.** None. Nothing here is meant to be called by another resource:

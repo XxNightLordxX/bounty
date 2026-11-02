@@ -252,7 +252,8 @@ local function nearby(actor)
         if src and src ~= actor.source then
             local okT, theirs = pcall(GetPlayerRoutingBucket, src)
             local coords = Places.coordsOf(src)
-            if coords and (not okB or not okT or theirs == bucket) then
+            local listable = not (deps.app and deps.app.brokerMayList) or deps.app.brokerMayList(src)
+            if coords and listable and (not okB or not okT or theirs == bucket) then
                 local d2 = Util.dist2(mine, coords)
                 if d2 <= radius * radius then
                     local person = deps.identity.resolve(src)

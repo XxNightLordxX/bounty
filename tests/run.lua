@@ -568,7 +568,7 @@ function _G.newStack()
     playtime.init({ storage = storage, identity = identity })
     rpPlaces.init({ settings = settings })
     rpRumours.init({ storage = storage, identity = identity, audit = audit, notify = notify,
-                     projection = projection })
+                     projection = projection, app = app })
     rpBurner.init({ audit = audit })
     rpInformant.init({ audit = audit })
     rpReason.init({ storage = storage, review = review, contracts = contracts })
@@ -695,7 +695,7 @@ local suites = {
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
     'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec', 'perf_round3_spec',
-    'workflow3_spec',
+    'final_verify_spec', 'workflow3_spec',
     'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec',
     'docs_spec',
 }

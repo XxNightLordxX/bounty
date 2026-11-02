@@ -2049,7 +2049,7 @@ function StartCrimsonHitman()
     -- the reason rules (server/rp_*.lua).
     rpPlaces.init({ settings = settings })
     rpRumours.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
-                     projection = projection })
+                     projection = projection, app = app })
     rpBurner.init({ audit = audit })
     rpInformant.init({ audit = audit })
     rpReason.init({ storage = Storage, review = review, contracts = contracts })

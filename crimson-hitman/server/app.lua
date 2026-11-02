@@ -277,6 +277,21 @@ local function nearbyNameable(src, ped, bucket)
     return masks[tonumber(src) or src] == false
 end
 
+--- For the broker's nearby list (server/rp_rumours.lua): whether a player
+--- may be offered at all. Invisible (noclip, spectating staff) never; one
+--- whose client said they are masked never. Unlike the nearby list, a
+--- player whose mask state was never reported is offered, because the
+--- broker list shows only a handle and a distance, never a name.
+---@param src number
+---@return boolean
+function App.brokerMayList(src)
+    local okP, ped = pcall(GetPlayerPed, src)
+    if not okP or not ped or ped == 0 then return false end
+    local seen, visible = pcall(IsEntityVisible, ped)
+    if not seen or not visible then return false end
+    return masks[tonumber(src) or src] ~= true
+end
+
 --- Whether this player is on a live contract: placed it, holds it as a
 --- hitman, or is named on one they have been shown (Notify.shownToTarget,
 --- so the nearby list closing cannot date a placement the target's On me

@@ -214,8 +214,8 @@ function Heat.bulletin(now)
     end
     if not any then return false end
     lastBulletin = now
-    local title = tostring(cfg.BulletinTitle or 'Intelligence bulletin'):sub(1, 60)
-    local text = tostring(cfg.BulletinText or ''):sub(1, 160)
+    local title = Util.sanitizeText(tostring(cfg.BulletinTitle or 'Intelligence bulletin'), 60)
+    local text = Util.sanitizeText(tostring(cfg.BulletinText or ''), 160)
     local told = 0
     for _, actor in ipairs(Identity.online() or {}) do
         if not known[actor.cid] and Identity.isAdvisoryRecipient(actor.job) then
