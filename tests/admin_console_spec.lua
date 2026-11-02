@@ -149,7 +149,7 @@ describe('the Console section', function()
         Env.advance(5)
         Log.debug('slow job expiry')
         Log.debug('slow job expiry')
-        local reply = ask(7, 'console', {})
+        local reply = ask(6, 'console', {})
         eq(reply.ok, true, tostring(reply.message))
         local d = reply.data
         eq(d.debug, true, 'as shipped')
@@ -166,15 +166,20 @@ describe('the Console section', function()
         eq(slow.times, 2)
         eq(slow.at, said + 5)
         eq(d.bootKept, Log.BOOT_KEPT)
-        truthy(s.panel.OPS.console == 'read', 'a read')
+        truthy(s.panel.OPS.console == 'developer', 'the Developer section\'s')
     end)
 
-    it('needs the ACE or one of the extra ACEs to read, and asks nothing more', function()
+    it('needs the developer ACE, or the staff ACE itself, to read', function()
         stack()
+        Env.aces[9] = { command = true, ['crimson.developer'] = true }
         Log.always('a line')
         eq(ask(3, 'console', {}).err, 'not_allowed', 'a player reads nothing')
-        eq(ask(7, 'console', {}).ok, true, 'an extra ACE reads')
-        eq(ask(6, 'console', {}).ok, true)
+        local refused = ask(7, 'console', {})
+        eq(refused.err, 'developer_required', 'an extra ACE alone does not open the Developer section')
+        truthy(refused.message:find('add_ace group.admin crimson.developer allow', 1, true), refused.message)
+        eq(ask(9, 'console', {}).ok, true, 'the developer ACE reads')
+        eq(ask(6, 'console', {}).ok, true, 'the staff ACE itself still reads: nobody is locked out')
+        Env.aces[9] = nil
     end)
 
     it('scrubs the lines for staff without IdentityAce, exactly as the Alerts do', function()
@@ -210,7 +215,7 @@ describe('the Console section', function()
         Log.always('crimson-hitman was unable to execute a query!\nQuery: UPDATE crimson_contracts '
             .. 'SET reason = ? WHERE id = ?\n["Vic Marlowe owes","ct00000001"]\nDeadlock found')
         Log.debug('served at https://photos.example.com/crimson-hitman/p/unguessableName.jpg')
-        for _, src in ipairs({ 6, 7, 8 }) do
+        for _, src in ipairs({ 6, 8 }) do
             local reply = ask(src, 'console', {})
             eq(reply.ok, true)
             for _, text in ipairs(strings(reply)) do
@@ -230,7 +235,7 @@ describe('the Console section', function()
         stack()
         Log.started()
         Log.always(('left for staff: see /%s'):format(Config.Admin.Commands.stuck))
-        local text = ask(7, 'console', {}).data.recent[1].text
+        local text = ask(6, 'console', {}).data.recent[1].text
         falsy(text:find('/' .. Config.Admin.Commands.stuck, 1, true), text)
         truthy(text:find('Stuck escrow', 1, true), text)
     end)

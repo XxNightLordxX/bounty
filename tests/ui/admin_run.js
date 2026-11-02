@@ -101,9 +101,20 @@ function commandMentions(app) {
   return found;
 }
 
+const PERMISSIONS = [
+  { ace: 'crimson.admin', name: 'Staff ACE (Config.Admin.Ace)', held: true, unlocks: 'Opens this panel.',
+    grant: 'Grant it with add_ace group.admin crimson.admin allow, pasted into the server console.' },
+  { ace: 'crimson.identity', name: 'Identity ACE (Config.Admin.IdentityAce)', held: false,
+    unlocks: 'Shows who is behind an anonymous party.',
+    grant: 'Grant it with add_ace identifier.license:<their licence> crimson.identity allow for one person.' },
+  { ace: 'crimson.developer', name: 'Developer ACE (Config.Admin.DeveloperAce)', held: false,
+    unlocks: 'Opens the Developer section.', grant: 'Grant it with add_ace group.admin crimson.developer allow.' }
+];
+
 function access(extra) {
   return Object.assign({ canWrite: true, canIdentify: true, pageSize: 25, refreshSeconds: 10,
-    recovery: 'ready', version: '1.1.0' }, extra || {});
+    recovery: 'ready', version: '1.1.0', canDevelop: true, developerAce: 'crimson.developer',
+    permissions: PERMISSIONS }, extra || {});
 }
 const FULL = access();
 const ADMIN = access({ canIdentify: false });
@@ -276,44 +287,65 @@ function player() {
 function settingsView(extra) {
   return { ok: true, data: Object.assign({
     features: [
-      { key: 'Sources.cash.enabled', group: 'Rewards', label: 'Cash rewards', about: 'Cash may be put up.',
+      { key: 'Sources.cash.enabled', category: 'features', group: 'Rewards', label: 'Cash rewards', about: 'Cash may be put up.',
         kind: 'switch', live: true, inflight: 'Things already under way finish under the rules they started with.',
         value: true, default: true, source: 'config' },
-      { key: 'Bailout.Enabled', group: 'Buyouts', label: 'Buyouts', about: 'A target may pay.', kind: 'switch',
+      { key: 'Bailout.Enabled', category: 'features', group: 'Buyouts', label: 'Buyouts', about: 'A target may pay.', kind: 'switch',
         live: true, inflight: 'A buyout already paid still closes the contract.', value: false, default: true,
+        shipped: true, hasShipped: true,
         source: 'panel', by: 'ADMIN001', at: NOW - 300 },
-      { key: 'App.DefaultInstalled', group: 'The app', label: 'Put the app on every home screen', kind: 'switch',
+      { key: 'App.DefaultInstalled', category: 'features', group: 'The app', label: 'Put the app on every home screen', kind: 'switch',
         live: false, inflight: 'Applies after restart.', value: false, default: false, source: 'config' },
-      { key: 'Completion.Fulfilment', group: 'Completion', label: 'How contracts are completed', kind: 'choice',
+      { key: 'Completion.Fulfilment', category: 'rules-limits', group: 'Completion', label: 'How contracts are completed', kind: 'choice',
         choices: ['alive', 'either'], live: true, inflight: 'Each contract keeps its rule.', value: 'alive',
         default: 'alive', source: 'config' },
-      { key: 'Relay.Enabled', group: 'Messages and calls', label: 'Messages ' + XSS, kind: 'switch', live: true,
+      { key: 'Relay.Enabled', category: 'features', group: 'Messages and calls', label: 'Messages ' + XSS, kind: 'switch', live: true,
         value: true, default: true, source: 'config', ignored: 'has to be on or off' },
-      { key: 'Completion.KillPhotos', group: 'Completion', label: 'Kill photos', kind: 'switch', live: true,
+      { key: 'Completion.KillPhotos', category: 'features', group: 'Completion', label: 'Kill photos', kind: 'switch', live: true,
         inflight: 'Read at the next Verify kill, with no restart.', value: false, default: false,
         source: 'config' },
-      { key: 'Completion.PhotoStorage', group: 'Completion', label: 'Where kill photos are kept',
+      { key: 'Completion.PhotoStorage', category: 'developer', group: 'Completion', label: 'Where kill photos are kept',
         kind: 'choice', choices: ['server', 'host'], live: true, value: 'server', default: 'server',
         source: 'config', inflight: 'Photos already kept stay where they are.',
         inactive: 'Does not apply while kill photos are off (Completion.KillPhotos).' }
     ],
     limits: [
-      { key: 'Limits.MaxAcceptedPerHitman', group: 'Contract limits', label: 'Contracts a hitman may hold',
+      { key: 'Limits.MaxAcceptedPerHitman', category: 'rules-limits', group: 'Contract limits', label: 'Contracts a hitman may hold',
         kind: 'number', integer: true, min: 1, max: 50, live: true, inflight: 'Lowering it never cancels anything.',
         value: 3, default: 3, source: 'config' },
-      { key: 'Penalty.MaxFractionOfEscrow', group: 'Stakes', label: 'Largest stake, as a share', kind: 'number',
+      { key: 'Penalty.MaxFractionOfEscrow', category: 'rules-rewards', money: 'Escrow', group: 'Stakes', label: 'Largest stake, as a share', kind: 'number',
         min: 0, max: 10, live: true, value: 0.5, default: 0.5, source: 'config' },
-      { key: 'Advisory.RecipientJobNames', group: 'Advisory job lists', label: 'Job names that receive advisories',
-        kind: 'list', live: true, value: ['police'], default: [], source: 'panel', by: 'ADMIN001', at: NOW - 60 }
+      { key: 'Advisory.RecipientJobNames', category: 'rules-targeting', group: 'Advisory job lists', label: 'Job names that receive advisories',
+        kind: 'list', live: true, value: ['police'], default: [], shipped: ['police', 'sheriff'], hasShipped: true,
+        source: 'panel', by: 'ADMIN001', at: NOW - 60 },
+      { key: 'Notifications.ParanoidAlertJitter', category: 'rules-timers', group: 'Notifications',
+        label: 'Wait before "eyes on you" (s, from-to)', kind: 'range', integer: true, min: 0, max: 86400, live: true,
+        inflight: 'Read each time it is used.', value: { min: 60, max: 600 }, default: { min: 60, max: 600 },
+        shipped: { min: 60, max: 600 }, hasShipped: true, source: 'config' },
+      { key: 'Bailout.Command', category: 'rules-limits', group: 'Buyouts', label: 'Buyout command', kind: 'text',
+        live: false, inflight: 'Read once at start: kept now, and in force after the next restart.',
+        value: 'cleanse', default: 'cleanse', shipped: 'cleanse', hasShipped: true, source: 'config' },
+      { key: 'Cooldowns.create.per', category: 'developer', group: 'Rate limits', label: 'create: refill window (s)',
+        about: 'Placing a contract. A full allowance refills over this many seconds: longer is stricter.',
+        kind: 'number', min: 0.5, max: 3600, live: true, inflight: 'Read each time it is used.', stricter: 'up',
+        value: 60, default: 60, shipped: 60, hasShipped: true, source: 'config' },
+      { key: 'Cooldowns.create.burst', category: 'developer', group: 'Rate limits', label: 'create: requests held',
+        about: 'Placing a contract. How many it allows at once.', kind: 'number', integer: true, min: 1, max: 200,
+        live: true, inflight: 'Read each time it is used.', stricter: 'down', value: 2, default: 2, shipped: 2,
+        hasShipped: true, source: 'config' }
     ],
     readonly: [
-      { key: 'Admin.Enabled', group: 'Staff', label: 'Staff tools', kind: 'switch', live: true,
+      { key: 'Admin.Enabled', category: 'developer', group: 'Staff', label: 'Staff tools', kind: 'switch', live: true,
         readonly: 'Turning the staff tools off from the staff tools would lock you out.', value: true,
         default: true, source: 'config' },
-      { key: 'Cooldowns.admin.burst', group: 'Staff', label: 'admin: requests held', kind: 'number',
+      { key: 'Cooldowns.admin.burst', category: 'developer', group: 'Staff', label: 'admin: requests held', kind: 'number',
         integer: true, min: 1, max: 200, live: true, value: 30, default: 30, source: 'config',
         readonly: 'The staff panel\'s own allowance, which every request it makes spends.',
-        ignored: 'The staff panel\'s own allowance, which every request it makes spends.' }
+        ignored: 'The staff panel\'s own allowance, which every request it makes spends.' },
+      { key: 'convar:crimson_hitman_webhook', category: 'developer', group: 'Edit in config.lua',
+        label: 'Secret: crimson_hitman_webhook', kind: 'text', denied: true, secret: true, value: 'set',
+        readonly: 'The Discord webhook for the log: a secret, set in server.cfg with set (never setr).',
+        source: 'config' }
     ],
     overrides: 2
   }, extra || {}) };
@@ -366,7 +398,7 @@ function bodyOf(html) {
   return inner.replace(/<script[\s\S]*?<\/script>/gi, '');
 }
 
-function boot(server) {
+function boot(server, opts) {
   const document = markup.install(makeDocument());
   document.body.innerHTML = bodyOf(PAGE_HTML);
   const sent = [];
@@ -380,6 +412,7 @@ function boot(server) {
     location: { hostname: 'cfx-nui-somewhere-else' },
     addEventListener: function (type, fn) { (windowListeners[type] = windowListeners[type] || []).push(fn); }
   };
+  if (opts && opts.storage) window.localStorage = opts.storage;
 
   const sandbox = {
     document: document,
@@ -420,7 +453,7 @@ function boot(server) {
   vm.runInContext(PAGE_JS, sandbox, { filename: 'admin.js' });
 
   const app = {
-    document, sent, urls, timers, thrown, server,
+    document, sent, urls, timers, thrown, server, window,
     body: document.body,
     $: function (selector) { return document.body.querySelector(selector); },
     $$: function (selector) { return document.body.querySelectorAll(selector); },
@@ -481,7 +514,12 @@ function boot(server) {
     main: function () { return document.getElementById('main').textContent; },
     drawer: function () { return document.getElementById('drawer'); },
     toasts: function () { return document.getElementById('toasts').textContent; },
-    nav: function (section) { app.click(document.getElementById('nav-' + section)); }
+    /** A view by its sub-tab: the old Features & limits is Features now,
+        its limits under Rules, its read-only values under Developer. */
+    nav: function (section) {
+      const view = { settings: 'features' }[section] || section;
+      app.click(document.getElementById('nav-' + view));
+    }
   };
   return app;
 }
@@ -837,7 +875,7 @@ async function main() {
     const found = [];
     app.open(FULL);
     await settled();
-    const visits = ['contracts', 'reviews', 'logs', 'settings'];
+    const visits = ['contracts', 'reviews', 'logs', 'features', 'limits', 'devsettings', 'help', 'permissions'];
     for (const section of visits) {
       app.nav(section);
       await settled();
@@ -1863,30 +1901,33 @@ async function main() {
     clean(app, 'playtime, read only');
   })();
 
-  /* ---- features, limits & settings ---- */
+  /* ---- settings: Rules, Features, Developer ---- */
   await (async function () {
     const server = standardServer();
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('settings');
+    app.nav('features');
     await settled();
-    it('lists every feature switch by group, with its default and where it comes from', function () {
+    it('Features lists the switches by group, each with its value, config.lua\'s and where it comes from', function () {
       const text = app.main();
       ['Rewards', 'Buyouts', 'The app', 'Completion'].forEach(function (g) { has(text, g); });
       has(text, 'Config.Bailout.Enabled');
       has(app.text(app.byId('st-row-Bailout.Enabled')), 'changed from the panel');
       has(app.text(app.byId('st-row-Bailout.Enabled')), 'config.lua: On');
+      has(app.text(app.byId('st-row-Bailout.Enabled')), 'Now: Off');
+      has(app.text(app.byId('st-row-Bailout.Enabled')), 'default: On');
       has(app.text(app.byId('st-row-Bailout.Enabled')), 'set by ADMIN001');
       has(app.text(app.byId('st-row-App.DefaultInstalled')), 'applies after restart');
       has(app.text(app.byId('st-row-Relay.Enabled')), 'not applied');
       has(app.text(app.byId('st-row-Sources.cash.enabled')), 'Under way:');
-      has(app.text(app.byId('st-row-Completion.PhotoStorage')), 'does not apply now',
-        'a key whose switch is off says so beside it');
-      has(app.text(app.byId('st-row-Completion.PhotoStorage')),
-        'Does not apply while kill photos are off');
       lacks(app.text(app.byId('st-row-Completion.KillPhotos')), 'does not apply now',
         'and the switch itself does not');
+      falsy(app.byId('st-row-Completion.Fulfilment'), 'a choice is a rule, not a switch');
+      falsy(app.byId('st-row-Limits.MaxAcceptedPerHitman'), 'and a number is not here either');
+    });
+    it('each feature group says in one line what it controls', function () {
+      has(app.text(app.$('.st-group[data-group="buyouts"]')), 'Whether a target may buy a contract out.');
     });
     app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
     await settled();
@@ -1901,12 +1942,6 @@ async function main() {
     it('and back on', function () {
       eq(app.last('setSetting').data, { key: 'Bailout.Enabled', value: true });
     });
-    app.click(app.byId('st-row-Completion.Fulfilment').querySelectorAll('.seg-btn')
-      .filter(function (b) { return b.getAttribute('data-value') === 'either'; })[0]);
-    await settled();
-    it('a choice sets one of its choices', function () {
-      eq(app.last('setSetting').data, { key: 'Completion.Fulfilment', value: 'either' });
-    });
     const reset = app.button('Reset to config.lua', app.byId('st-row-Bailout.Enabled'));
     app.click(reset);
     await settled();
@@ -1916,11 +1951,43 @@ async function main() {
     it('and puts the key back to config.lua', function () {
       eq(app.last('resetSetting').data, { key: 'Bailout.Enabled' });
     });
+    const sets0 = app.requests('setSetting').length;
+    const toDefault = app.button('Reset to default', app.byId('st-row-Bailout.Enabled'));
+    app.click(toDefault);
+    await settled();
+    it('Reset to default shows where the value is not the shipped one, and takes two clicks', function () {
+      eq(app.requests('setSetting').length, sets0);
+      truthy(toDefault.classList.contains('is-armed'));
+      has(app.text(toDefault), 'Click again: back to On');
+      lacks(app.text(app.byId('st-row-Sources.cash.enabled')), 'Reset to default', 'not where they are the same');
+    });
+    app.click(toDefault);
+    await settled();
+    it('and the second sets the shipped value through the ordinary change', function () {
+      eq(app.requests('setSetting').length, sets0 + 1);
+      eq(app.last('setSetting').data, { key: 'Bailout.Enabled', value: true });
+    });
 
-    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'limits'; })[0]);
+    app.nav('limits');
+    await settled();
+    app.click(app.byId('st-row-Completion.Fulfilment').querySelectorAll('.seg-btn')
+      .filter(function (b) { return b.getAttribute('data-value') === 'either'; })[0]);
+    await settled();
+    it('Rules: Limits has the choices, and a choice sets one of its choices', function () {
+      eq(app.last('setSetting').data, { key: 'Completion.Fulfilment', value: 'either' });
+    });
+    it('a key read once at start says it applies after a restart', function () {
+      has(app.text(app.byId('st-row-Bailout.Command')), 'applies after restart');
+      truthy(app.byId('st-row-Bailout.Command').querySelector('.is-restart'), 'as a badge');
+    });
+    app.type(app.byId('st-row-Bailout.Command').querySelector('input'), 'buyout');
+    app.click(app.button('Save', app.byId('st-row-Bailout.Command')));
+    await settled();
+    it('a text key goes as the word typed', function () {
+      eq(app.last('setSetting').data, { key: 'Bailout.Command', value: 'buyout' });
+    });
     const limit = app.byId('st-row-Limits.MaxAcceptedPerHitman');
-    const box = limit.querySelector('input');
-    app.type(box, '0');
+    app.type(limit.querySelector('input'), '0');
     app.click(app.button('Save', limit));
     await settled();
     const sets = app.requests('setSetting').length;
@@ -1944,22 +2011,116 @@ async function main() {
       has(app.text(app.byId('st-row-Limits.MaxAcceptedPerHitman')), 'above what the start allows');
     });
     server.setSetting = standardServer().setSetting;
+
+    app.nav('money');
+    await settled();
+    it('Rewards & money groups each money setting under its money group', function () {
+      has(app.text(app.$('.st-group[data-group="escrow"]')), 'Largest stake, as a share');
+    });
     app.type(app.byId('st-row-Penalty.MaxFractionOfEscrow').querySelector('input'), '0.75');
     app.click(app.button('Save', app.byId('st-row-Penalty.MaxFractionOfEscrow')));
     await settled();
     it('a fraction goes where the key takes one', function () {
       eq(app.last('setSetting').data, { key: 'Penalty.MaxFractionOfEscrow', value: 0.75 });
     });
-    app.type(app.byId('st-row-Advisory.RecipientJobNames').querySelector('input'), 'police, sheriff');
-    app.click(app.button('Save', app.byId('st-row-Advisory.RecipientJobNames')));
+
+    // A job list: names added and removed, saved on the second click.
+    app.nav('targeting');
     await settled();
-    it('a job list goes as names', function () {
-      eq(app.last('setSetting').data, { key: 'Advisory.RecipientJobNames', value: ['police', 'sheriff'] });
+    const jobs = function () { return app.byId('st-row-Advisory.RecipientJobNames'); };
+    app.type(jobs().querySelector('input'), 'sheriff');
+    app.click(app.button('Add', jobs()));
+    app.type(jobs().querySelector('input'), 'bcso');
+    app.key(jobs().querySelector('input'), 'Enter');
+    await settled();
+    it('a list adds names to what is being edited, and sends nothing yet', function () {
+      has(app.text(jobs()), 'sheriff');
+      has(app.text(jobs()), 'bcso');
+      eq(app.requests('setSetting').filter(function (r) { return r.data.key === 'Advisory.RecipientJobNames'; }).length, 0);
     });
-    app.type(app.byId('st-q'), 'stake');
-    it('Find a setting hides what does not match', function () {
+    app.click(jobs().querySelectorAll('button[data-act="st-list-del"]')
+      .filter(function (b) { return b.getAttribute('data-value') === 'police'; })[0]);
+    await settled();
+    it('and removes one', function () {
+      eq(jobs().querySelectorAll('button[data-act="st-list-del"]').map(function (b) {
+        return b.getAttribute('data-value');
+      }), ['sheriff', 'bcso']);
+    });
+    const listSets = app.requests('setSetting').length;
+    app.click(app.byId('st-save-Advisory.RecipientJobNames'));
+    await settled();
+    it('saving a list takes two clicks', function () {
+      eq(app.requests('setSetting').length, listSets);
+      truthy(app.byId('st-save-Advisory.RecipientJobNames').classList.contains('is-armed'));
+    });
+    app.click(app.byId('st-save-Advisory.RecipientJobNames'));
+    await settled();
+    it('and the second sends the list as names', function () {
+      eq(app.last('setSetting').data, { key: 'Advisory.RecipientJobNames', value: ['sheriff', 'bcso'] });
+    });
+    server.setSetting = { ok: false, err: 'invalid_value',
+      message: 'Not changed: Advisory.RecipientJobNames names letters, digits, - and _ only, up to 32 long.' };
+    app.type(jobs().querySelector('input'), 'bad name!');
+    app.click(app.button('Add', jobs()));
+    app.click(app.byId('st-save-Advisory.RecipientJobNames'));
+    app.click(app.byId('st-save-Advisory.RecipientJobNames'));
+    await settled();
+    it('a bad name is the server\'s to refuse, and its refusal shows on the row', function () {
+      has(app.text(jobs()), 'names letters, digits, - and _ only');
+    });
+    server.setSetting = standardServer().setSetting;
+
+    // A from-to pair.
+    app.nav('timers');
+    await settled();
+    const jitter = function () { return app.byId('st-row-Notifications.ParanoidAlertJitter'); };
+    const inputs = jitter().querySelectorAll('input');
+    app.type(inputs[0], '900');
+    app.type(inputs[1], '100');
+    const rangeSets = app.requests('setSetting').length;
+    app.click(app.byId('st-save-Notifications.ParanoidAlertJitter'));
+    await settled();
+    it('a pair with its from above its to is refused before it is sent', function () {
+      eq(app.requests('setSetting').length, rangeSets);
+      has(app.text(jitter()), 'has its from above its to');
+    });
+    app.type(jitter().querySelectorAll('input')[0], '30');
+    app.type(jitter().querySelectorAll('input')[1], '300');
+    app.click(app.byId('st-save-Notifications.ParanoidAlertJitter'));
+    app.click(app.byId('st-save-Notifications.ParanoidAlertJitter'));
+    await settled();
+    it('and a good one goes as from and to, on the second click', function () {
+      eq(app.last('setSetting').data, { key: 'Notifications.ParanoidAlertJitter', value: { min: 30, max: 300 } });
+    });
+
+    // Search: label, key, description and group.
+    app.nav('limits');
+    await settled();
+    app.type(app.byId('st-q'), 'hitman may hold');
+    it('the search finds a label', function () {
+      eq(app.byId('st-row-Limits.MaxAcceptedPerHitman').hidden, false);
+      eq(app.byId('st-row-Completion.Fulfilment').hidden, true);
+    });
+    app.type(app.byId('st-q'), 'completion.fulf');
+    it('a key', function () {
+      eq(app.byId('st-row-Completion.Fulfilment').hidden, false);
       eq(app.byId('st-row-Limits.MaxAcceptedPerHitman').hidden, true);
-      eq(app.byId('st-row-Penalty.MaxFractionOfEscrow').hidden, false);
+    });
+    app.type(app.byId('st-q'), 'contract limits');
+    it('a group', function () {
+      eq(app.byId('st-row-Limits.MaxAcceptedPerHitman').hidden, false);
+      eq(app.byId('st-row-Completion.Fulfilment').hidden, true);
+    });
+    app.nav('features');
+    await settled();
+    it('and keeps what was typed from section to section', function () {
+      eq(app.byId('st-q').value, 'contract limits');
+      eq(app.byId('st-none').hidden, false, 'saying nothing matches');
+    });
+    app.type(app.byId('st-q'), 'cash may be put');
+    it('and a description', function () {
+      eq(app.byId('st-row-Sources.cash.enabled').hidden, false);
+      eq(app.byId('st-row-Bailout.Enabled').hidden, true);
     });
     const all = app.button('Reset all to config.lua');
     app.click(all);
@@ -1972,8 +2133,10 @@ async function main() {
       has(app.toasts(), 'Every setting is back to what config.lua says (2 were changed).');
     });
     app.type(app.byId('st-q'), '');
-    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'readonly'; })[0]);
-    it('a read-only key shows why, and no control', function () {
+
+    app.nav('devsettings');
+    await settled();
+    it('Developer holds the read-only values: one shows why, and no control', function () {
       const row = app.byId('st-row-Admin.Enabled');
       has(app.text(row), 'would lock you out');
       eq(row.querySelectorAll('button').length, 0);
@@ -1985,12 +2148,206 @@ async function main() {
       eq(row.querySelectorAll('input').length, 0, 'still nothing to change it with');
       truthy(app.button('Reset to config.lua', row), 'only the reset');
     });
+    it('a secret shows as set or not, never its value, with edit in config.lua', function () {
+      const row = app.byId('st-row-convar:crimson_hitman_webhook');
+      has(app.text(row), 'edit in config.lua');
+      has(app.text(row), 'set');
+      eq(row.querySelectorAll('input').length, 0);
+    });
+    it('a key whose switch is off says so beside it', function () {
+      has(app.text(app.byId('st-row-Completion.PhotoStorage')), 'does not apply now');
+      has(app.text(app.byId('st-row-Completion.PhotoStorage')), 'Does not apply while kill photos are off');
+    });
+    it('a rate limit is one row with its per and burst', function () {
+      const row = app.byId('st-map-create');
+      truthy(row, 'the map row');
+      eq(row.querySelectorAll('input').length, 2);
+      falsy(app.byId('st-row-Cooldowns.create.per'), 'not two rows');
+    });
+    app.type(app.byId('st-map-create').querySelectorAll('input')[1], '1');
+    const mapSets = app.requests('setSetting').length;
+    app.click(app.byId('st-save-Cooldowns.create'));
+    await settled();
+    it('saving a rate limit takes two clicks', function () { eq(app.requests('setSetting').length, mapSets); });
+    app.click(app.byId('st-save-Cooldowns.create'));
+    await settled();
+    it('and sends only what changed, as its own setting', function () {
+      eq(app.requests('setSetting').length, mapSets + 1);
+      eq(app.last('setSetting').data, { key: 'Cooldowns.create.burst', value: 1 });
+    });
     clean(app, 'settings');
+  })();
+
+  /* ---- the sections ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    const views = ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck', 'actions', 'tools',
+      'timers', 'money', 'limits', 'targeting', 'features', 'logs', 'alerts', 'devsettings', 'console',
+      'diagnostics', 'permissions'];
+    it('six sections, in order, each a button', function () {
+      eq(app.$$('.nav-btn').map(function (b) { return b.getAttribute('data-group'); }),
+        ['live', 'actions', 'rules', 'features', 'logs', 'developer']);
+    });
+    app.click(app.byId('grp-rules'));
+    await settled();
+    it('a section opens on its first sub-tab, showing only its own', function () {
+      eq(app.byId('nav-timers').getAttribute('aria-current'), 'page');
+      eq(app.byId('nav-money').hidden, false);
+      eq(app.byId('nav-overview').hidden, true);
+    });
+    const reached = [];
+    for (const view of views) {
+      app.nav(view);
+      await settled();
+      if (app.byId('nav-' + view).getAttribute('aria-current') === 'page' && app.main().length > 20) reached.push(view);
+    }
+    it('every view the panel had is still a sub-tab, and the new ones too', function () {
+      eq(reached, views);
+    });
+    app.nav('limits');
+    await settled();
+    app.click(app.byId('grp-live'));
+    await settled();
+    app.click(app.byId('grp-rules'));
+    await settled();
+    it('and on the one last open in it after', function () {
+      eq(app.byId('nav-limits').getAttribute('aria-current'), 'page');
+    });
+    app.click(app.byId('grp-features'));
+    await settled();
+    it('a section of one view has no strip of sub-tabs', function () { eq(app.byId('subnav').hidden, true); });
+    clean(app, 'the sections');
+  })();
+
+  await (async function () {
+    const kept = {};
+    const storage = { getItem: function (k) { return k in kept ? kept[k] : null; },
+                      setItem: function (k, v) { kept[k] = String(v); } };
+    const first = boot(standardServer(), { storage: storage });
+    first.open(ADMIN);
+    await settled();
+    first.nav('targeting');
+    await settled();
+    const again = boot(standardServer(), { storage: storage });
+    again.open(ADMIN);
+    await settled();
+    it('the last section and sub-tab are remembered in this browser', function () {
+      eq(again.byId('nav-targeting').getAttribute('aria-current'), 'page');
+      eq(again.byId('grp-rules').getAttribute('aria-current'), 'page');
+    });
+    const broken = boot(standardServer(), { storage: { getItem: function () { throw new Error('denied'); },
+      setItem: function () { throw new Error('denied'); } } });
+    broken.open(ADMIN);
+    await settled();
+    it('and storage that throws is no storage, never a fault', function () {
+      eq(broken.byId('nav-overview').getAttribute('aria-current'), 'page');
+      clean(broken, 'storage that throws');
+    });
+  })();
+
+  /* ---- Developer, and Permissions ---- */
+  await (async function () {
+    const server = standardServer();
+    const app = boot(server);
+    app.open(access({ canWrite: false, canIdentify: false, canDevelop: false,
+      permissions: PERMISSIONS.map(function (p) { return Object.assign({}, p, { held: p.ace === 'crimson.admin' }); }) }));
+    await settled();
+    it('without the developer ACE the section is Permissions alone', function () {
+      has(app.text(app.byId('grp-developer')), 'Permissions');
+      lacks(app.text(app.byId('grp-developer')), 'Developer');
+    });
+    app.click(app.byId('grp-developer'));
+    await settled();
+    it('with no console, diagnostics or developer settings in it', function () {
+      eq(app.byId('nav-console').hidden, true);
+      eq(app.byId('nav-devsettings').hidden, true);
+      eq(app.byId('nav-diagnostics').hidden, true);
+      eq(app.byId('nav-permissions').getAttribute('aria-current'), 'page');
+    });
+    app.nav('console');
+    await settled();
+    it('and a developer view asked for anyway is Permissions, with nothing asked of the server', function () {
+      eq(app.byId('nav-permissions').getAttribute('aria-current'), 'page');
+      eq(app.requests('console').length, 0);
+    });
+    it('Permissions lists each ACE, whether it is held, and how to grant one that is not', function () {
+      const rows = app.$$('.perm-row');
+      eq(rows.map(function (r) { return r.getAttribute('data-ace'); }),
+        ['crimson.admin', 'crimson.identity', 'crimson.developer']);
+      has(app.text(rows[0]), 'You hold it');
+      has(app.text(rows[1]), 'You do not hold it');
+      has(app.text(rows[2]), 'add_ace group.admin crimson.developer allow');
+      lacks(app.text(rows[0]), 'To grant it');
+    });
+    it('and has nothing on it that changes anything', function () {
+      eq(app.byId('main').querySelectorAll('input').length, 0);
+      eq(app.byId('main').querySelectorAll('button').length, 0);
+    });
+    clean(app, 'permissions');
+
+    const owner = boot(standardServer());
+    owner.open(access({ developerByAce: false,
+      developerHint: 'To give the Developer section to its own people: grant it with add_ace group.admin crimson.developer allow.' }));
+    await settled();
+    owner.nav('devsettings');
+    await settled();
+    it('the staff ACE still sees Developer, with one line on granting its own ACE', function () {
+      has(owner.main(), 'add_ace group.admin crimson.developer allow');
+    });
+    clean(owner, 'developer through the staff ACE');
+  })();
+
+  /* ---- How it works ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('help');
+    await settled();
+    const help = app.window.CH_ADMIN_HELP;
+    it('How it works is a card per subject, each three to six sentences', function () {
+      eq(app.$$('.help-card').length, help.length);
+      truthy(help.length >= 8, help.length + ' cards');
+      ['lifecycle', 'clock', 'anonymity', 'informant', 'buyout', 'freeze', 'advisor', 'escrow'].forEach(function (w) {
+        truthy(help.some(function (c) { return (c.title + ' ' + c.text).toLowerCase().indexOf(w) !== -1
+          || (w === 'lifecycle' && /start to finish/.test(c.title)); }), 'a card on ' + w);
+      });
+      help.forEach(function (c) {
+        const n = (c.text.match(/[.!?](\s|$)/g) || []).length;
+        truthy(n >= 3 && n <= 6, c.title + ' has ' + n + ' sentences');
+      });
+    });
+    // Every link names the view its key is shown in, as server/settings.lua
+    // categorises it.
+    const settingsLua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'settings.lua'), 'utf8');
+    const VIEW = { 'rules-timers': 'timers', 'rules-rewards': 'money', 'rules-limits': 'limits',
+      'rules-targeting': 'targeting', features: 'features', developer: 'devsettings' };
+    const wrong = [];
+    help.forEach(function (c) {
+      c.links.forEach(function (l) {
+        const at = settingsLua.indexOf("key = '" + l.key + "'");
+        const cat = at === -1 ? null : /category = '([\w-]+)'/.exec(settingsLua.slice(at, at + 400));
+        if (!cat || VIEW[cat[1]] !== l.view) wrong.push(l.key + ' -> ' + l.view + ' (' + (cat && cat[1]) + ')');
+      });
+    });
+    it('every link names the section its setting is in', function () { eq(wrong, []); });
+    const link = app.$$('button[data-act="help-jump"]').filter(function (b) {
+      return b.getAttribute('data-key') === 'Advisory.RecipientJobNames';
+    })[0];
+    app.click(link);
+    await settled();
+    it('and lands on that setting, marked', function () {
+      eq(app.byId('nav-targeting').getAttribute('aria-current'), 'page');
+      truthy(app.byId('st-row-Advisory.RecipientJobNames').classList.contains('is-focus'));
+    });
+    clean(app, 'how it works');
   })();
 
   await (async function () {
     const view = settingsView();
-    view.data.limits.push({ key: 'Ledger.PhotoRetentionDays', group: 'Ledger',
+    view.data.limits.push({ key: 'Ledger.PhotoRetentionDays', category: 'rules-timers', group: 'Ledger',
       label: 'Days an unopened kill photo is kept (0 forever)', kind: 'number', integer: true, min: 0, max: 365,
       live: true, inflight: 'Looked at every ten minutes.', value: 30, default: 30, source: 'config',
       destroys: 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the next sweep, for good.' });
@@ -1998,9 +2355,8 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('settings');
+    app.nav('timers');
     await settled();
-    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'limits'; })[0]);
     const row = function () { return app.byId('st-row-Ledger.PhotoRetentionDays'); };
     it('a setting whose lowering deletes says so on its row', function () {
       has(app.text(row()), 'Lowering it deletes for good');
@@ -2198,7 +2554,9 @@ async function main() {
         app.open(who);
         await settled();
         sweep(app, 'overview');
-        for (const section of ['contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players', 'settings', 'tools']) {
+        for (const section of ['contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players', 'frozen',
+          'actions', 'tools', 'help', 'timers', 'money', 'limits', 'targeting', 'features', 'devsettings',
+          'diagnostics', 'permissions']) {
           app.nav(section);
           await settled();
           sweep(app, section);
@@ -2254,12 +2612,13 @@ async function main() {
         await settled();
         sweep(app, 'a player');
         // Every settings tab, and a change answered.
-        app.nav('settings');
-        await settled();
-        for (const tab of ['features', 'limits', 'readonly']) {
-          const seg = app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === tab; })[0];
-          if (seg) { app.click(seg); await settled(); sweep(app, 'settings ' + tab); }
+        for (const tab of ['features', 'timers', 'money', 'limits', 'targeting', 'devsettings']) {
+          app.nav(tab);
+          await settled();
+          sweep(app, 'settings ' + tab);
         }
+        app.nav('features');
+        await settled();
         const sw = app.$$('.switch').filter(function (b) { return !b.disabled; })[0];
         if (sw) { app.click(sw); await settled(); sweep(app, 'a setting changed'); }
         // The tools, each run.
@@ -2581,8 +2940,8 @@ async function main() {
     await settled();
     app.click(app.button('Run it'));
     await settled();
-    it('Run it runs the diagnosis', function () {
-      eq(app.byId('nav-tools').getAttribute('aria-current'), 'page');
+    it('Run it runs the diagnosis, under Developer for staff who have it', function () {
+      eq(app.byId('nav-diagnostics').getAttribute('aria-current'), 'page');
       eq(app.requests('diag').length, 1);
       has(app.main(), 'photo hosts: 0');
     });
@@ -2655,9 +3014,8 @@ async function main() {
     const app = boot(standardServer({ settings: view }));
     app.open(FULL);
     await settled();
-    app.nav('settings');
+    app.nav('limits');
     await settled();
-    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'limits'; })[0]);
     const row = function (key) { return app.byId('st-row-' + key); };
     const sets = app.requests('setSetting').length;
     app.type(row('Ledger.PhotoRetentionDays').querySelector('input'), '9');

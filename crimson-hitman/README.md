@@ -11,6 +11,17 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **The staff panel is grouped by who uses it**: six sections (Live, Staff
+  actions, Rules, Features, Logs & alerts, Developer), each with its views as
+  tabs, a search box on every settings page, each setting's shipped default
+  with **Reset to default**, a **How it works** page and a read-only
+  **Permissions** page. Close to every setting in `config.lua` is now
+  changeable from it (a few are deny-listed: ACE names, the storage mode and
+  folder, secrets), and `config.lua` is reordered to match the panel, with no
+  value changed. The new `Config.Admin.DeveloperAce` (`crimson.developer`)
+  opens the Developer section; `crimson.admin` keeps it too, so nobody is
+  locked out. See *Admin panel*.
+
 - **Anonymity is off as shipped, and named operatives are shown to the
   target**: `Config.Anonymity.AllowAnonymousPlacer` and `AllowAnonymousHitman`
   now ship `false`, so contracts are placed and taken under a name unless you
@@ -510,7 +521,7 @@ contract is finished), `Config.Database.Mode` (where everything is kept),
 (who may use the app), `Config.Limits.MaxPayoutSlots` and
 `Config.Limits.MinContractReward` (what a contract pays), and
 `Config.Debug` (what the console prints). Most settings can also be changed
-live in the admin panel (`/hitmanadmin`, **Features & limits**), which keeps
+live in the admin panel (`/hitmanadmin`, **Rules** and **Features**), which keeps
 them across restarts; a setting the panel has changed is marked there.
 
 ### Dirty money
@@ -527,32 +538,71 @@ face value would turn every contract into a risk-free laundering rail, so:
 ## Configuration reference
 
 The full explanation of every setting in `config/config.lua`, in the file's
-own sections and order. *Shipped* is the value the file ships with.
+own sections and order, which are the admin panel's. *Shipped* is the value the file ships with.
 `config/defaults.lua` holds the same values: it is not the file to edit, and
 it only fills a whole section missing from an older `config.lua`. A setting
 read only by the kill paths (`'either'`, kill photos) says so.
 
-### Access
+### Debug and storage
 
-Who may open the app. Jobs are barred by **type** as well as by name, so a
-police job added later is barred with no edit here.
+The console output, and where contracts and money are kept.
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.BlockedJobTypes` | `leo`, `police`, `ems`, `fire` | Job types barred from the app. |
-| `Config.BlockedJobNames` | the server's police, sheriff, SAST, FIB, EMS, fire, DOJ and lawyer jobs | Job names barred as well, from this server's sc-police and sc-dispatch configs. A job held through sc-multijob counts too, read as off duty. |
-| `Config.BlockOffDuty` | `true` | A barred job stays barred off duty: an officer who clocks off is still an officer to everyone they arrested. |
-| `Config.HideAppFromBlockedJobs` | `true` | Whether a barred player's phone shows the app at all. Turning it off grants nobody access (every request from a barred job is still refused); it only shows the icon. Applies only while the whitelisted-job view is off; the admin panel marks it as not applying while the view is on. |
-| `Config.WhitelistedView.Enabled` | `true` | **The whitelisted-job view.** A player on a barred job can install and open the app and sees one read-only screen: the contracts on them and, for those the advisory reaches (`Config.Advisory.RecipientJobTypes` / `RecipientJobNames`, while `Config.Advisory.Enabled` is on), the contracts on other whitelisted-job members, each with no more than the bulletins sent about it said (the name and job; when it was posted and when it runs out at the latest, where a posting bulletin went; open, or taken by the count the latest acceptance bulletin carried), and nothing about one no bulletin was sent for. Never who placed it, a hitman, the reason, a location, a photo or the reward. On a contract on them they also get the buyout, through the same server path as **On me** and `/cleanse`. A job change moves a player in or out at once; one there by a job they hold but are not working is told which, and how to get the whole app back. `false` closes the app to them, and `HideAppFromBlockedJobs` decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features. |
-| `Config.WhitelistedView.Alerts` | `true` | Whether a player on that screen may turn on **Notify me** (off for each character until they do, and kept across restarts). With it on they get a phone notice when a new entry appears: a contract on them at the end of the same wait their own alert keeps (`Config.Notifications.ParanoidAlertJitter`), never sooner, and one on another whitelisted-job member the moment the advisory bulletin that lists it goes out. It names who the contract is on and their job, nothing else; within the notice budget, once per contract; changing it spends `Config.Cooldowns.message`. `false` hides the toggle and sends nothing, notices still waiting included; each choice is kept for when it is back on. Anything but `true` or `false` is read as `false`, with a warning at startup. |
-| `Config.App.DefaultInstalled` | `false` | `true` puts the app on every eligible player's home screen (lb-phone's `defaultApp`), and lb-phone then does not let them remove it; `false` leaves it in the phone's App Store for each player to find. Nothing tells a player it exists either way (a target included, whose only answer to their alert is in this app), so say so in your server's guide. Barred jobs get it only for the whitelisted-job view, or with `HideAppFromBlockedJobs` off. Read by each player's game when the app is added, so a change reaches them at the next restart of this resource or lb-phone, or their next join. |
+| `Config.Database.Mode` | `'json'` | `'json'` keeps everything in files under `Directory` and needs no database: contracts and escrow survive a restart as on mysql, but it does not scale to thousands of live contracts and cannot be shared between two servers. `'mysql'` (oxmysql) makes its `crimson_*` tables at the first start, creating or altering only what is missing; a user without CREATE and ALTER starts on tables imported from `install/sql/crimson_hitman.sql`. Its columns hold money up to 2147483647, text up to 255 characters, and times until 2038-01-19. `'memory'` keeps nothing and releases all open escrow at a stop (testing only). Modes do not share data, so the start refuses to begin in a new mode while the old one still holds players' money, and says where: see *Changing storage mode*. |
+| `Config.Database.AllowModeSwitch` | `false` | Start in the mode above even though another mode still holds money. That money is then invisible and nothing returns it: only for a server that has settled it by hand. |
+| `Config.Database.QueryTimeoutSeconds` | `10` | mysql: how long one statement may go unanswered before this resource stops waiting for it (oxmysql has no limit, and never answers while MariaDB is unreachable). Keep it under the phone's 15 s wait: above 12 the start warns, and anything that is not 0 or more is read as 10. `0` waits for ever. A payout claim that raised is finished by the tick twice this long after (10 s at 0). Read-only in the admin panel. See *When the database stops answering*. |
+| `Config.Database.Json.Directory` | `'data'` | The folder inside the resource. An update that replaces the resource folder takes it with it: keep `data/` (see *Updating*). The server remembers outside the folder that the store has run and refuses to start empty; `set crimson_hitman_new_store 1` in the console starts empty on purpose, once. |
+| `Config.Database.Json.SyncOnFinancialWrite` | `true` | Write a money change to disk at once rather than at the next flush. |
+| `Config.Debug` | `true` | Debug lines in the server console: start progress, each setting problem in full, page faults with their stack, and a line for a maintenance job slower than `Config.Diagnostics.SlowJobMs`. `false` keeps the console quiet: only refusing to start, money left for staff, a write that failed (a money job that raised, once every five minutes each) and one line counting the settings that need attention. Each player's game reads it from `config.lua` too: on, their F8 also shows the app's own faults there (lb-phone refusing to register the app, say); off, nothing but a staff command's answer. `/ch-diag` (and **Run the diagnosis** in the admin panel) lists all of it either way. In the admin panel's Features as *Debug output in the server console*, kept across restarts. See *Console output*. |
 
-### Completion and handovers
+### Rules: Timers
 
-How a contract is finished. As shipped it is live transfer only, and no
-restraint is required: the hitman brings the target, alive, to the person
-who placed the contract, and the three stay within `Config.Kidnap.Radius`
-of each other for `Config.Kidnap.CountdownSeconds`.
+How long things last. The deadline runs only while the placer, the target and one operative are all in the city, and every contract pauses before a txAdmin restart.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.Limits.DefaultDeadlineSeconds` | `10800` | How long a contract runs before it expires, unless the client extends it. It counts down only while all three are in the city: the placer (named or anonymous), the target (out of prison) and at least one operative holding it (one is enough on a competitive contract). With nobody holding it yet, it does not run; it is moved on by every pause. Once it has gone with the clock running, nobody leaving stops it. Players never see it: every card shows a rough band of the run time left (*More than 2 hours left*, *1–2 hours left*, *Under 1 hour left*, *Under 15 minutes left*), which moves only while the clock runs; staff see the exact times in the admin panel. A kill made before it and still waiting to be verified, or a handover armed before it and still counting, holds the expiry off until it finishes, for at most two `PhotoTokenLifetimeSeconds`. |
+| `Config.Limits.ContractLifetimeSeconds` | `172800` | The absolute ceiling, pauses included, from the end of the five minutes a contract is placed in. Separate from the deadline above: it keeps running whoever is away, and is what ends a contract left on the board with nobody holding it. Reaching it while the deadline still has time on it hands the hitman's stake back. |
+| `Config.Restart.PauseBeforeSeconds` | `1800` | Every live contract is paused from the first txAdmin restart warning (`txAdmin:events:scheduledRestart`, sent 30, 15, 10, 5, 4, 3, 2 and 1 minutes before) with at most this many seconds to go: deadlines stop, and nothing expires (the lifetime included), no queued buyout pays out and no handover finishes or is armed until the server is back. Players get one notice, *Contracts are paused until the server restart.* The pause ends when the resource starts again; the time it lasted is added back to every deadline. `0` turns it off; 0 to 3600. |
+| `Config.Restart.MaxHoldMinutes` | `45` | The pause ends anyway when the restart has not come this long after it began, or at once when staff skip it in txAdmin (`txAdmin:events:scheduledRestartSkipped`, or the older `skippedNextScheduledRestart`). A pause never ends another: a contract on hold by staff, or with a party away, stays stopped. 1 to 240. |
+| `Config.Limits.TargetCooldownAfterResolveSeconds` | `1800` | How long nobody may place a contract on a person after one on them closes; not after one nobody took up that was withdrawn or ran out (that cost the target nothing). |
+| `Config.Limits.SameCreatorSameTargetCooldownSeconds` | `7200` | How long the same placer, on any character, waits before placing on the same target again. |
+| `Config.Limits.ExclusiveIdleReleaseSeconds` | `1800` | An exclusive contract goes back on the board when its one hitman has not been near the target for this long (counted only while the client and the target are both in the city); their stake goes to the client and they may not take it again on any character. A full competitive contract releases its idlest hitman the same way, and a hitman who walks away from an exclusive one may not take it again for this long. Without it a target's friend could take the contract and sit on it. `0` turns it off. |
+| `Config.Limits.ExclusiveAttemptWindowSeconds` | `7200` | And one who is near the target but makes no attempt (no hit landed, no handover armed) for this long is released the same way. `0` turns it off; with the idle release off and this on, the start says so. |
+| `Config.Limits.PauseWhileTargetJailed` | `true` | The deadline stops while the target is in prison, and is moved on by the time served; the lifetime still ends it. In prison means a sentence (`injail` metadata, as sc-police writes it) **and** standing inside `JailZone`: sc-police lets a client write the sentence itself. |
+| `Config.Limits.JailZone` | `{ x = 1693.3, y = 2569.5, radius = 300 }` | The prison grounds, as a centre and a radius in metres: Bolingbroke. Set it to your prison. |
+
+### Rules: Rewards and money
+
+What a reward may be made of and how big it may be, payouts, stakes and buyouts. Every reward is held in escrow from the moment the contract is placed until it ends.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.Sources` | all on: cash 250000, bank 500000, dirty 250000 (`black_money`), 10 item stacks of up to 100, 3 weapons | What a reward may be paid in, each with its switch and its ceiling. Escrow pays out in exactly the sources it holds (see *Dirty money*). |
+| `Config.MaxContractValue` | `1000000` | The most a contract may hold, counted in money across every source. In mysql mode every amount is an INT column, so this, each source's `max`, `Config.Bailout.AbsoluteMax`, `Config.Penalty.MaxAmount`, the anonymity fees and `Config.Informant.Cost` are held to 2147483647 there, with a warning at startup. |
+| `Config.EscrowBlacklist` | phone, ID card, licences, handcuffs, `identification`, `lawyerpass`, `money` | Items that may never be put in a reward. An item reaches the hitman with its metadata, so list anything whose metadata names its owner (identity documents, phones kept as unique items such as lb-phone's `phone_*`, bank cards, keys or passes that store an owner or a plate). On an anonymous contract an item whose metadata names the client is refused anyway. `money` is cash on Qbox; every item in the `inventory:accounts` convar is refused whatever this says, so cash only goes up through the cash source. |
+| `Config.Limits.MaxPayoutSlots` | `1` | Each contract pays out once. `2` or `3` lets the placer fund that many collections, each escrowed up front; at 1 the Place form shows no collection controls. The admin panel can raise it to 2 or 3. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup. Contracts already placed keep their number and can still give their last collection back. |
+| `Config.Limits.MinContractReward` | `1000` | The least a new contract's reward may be worth in money (cash, bank and dirty money across every payout, the kidnapping bonus included; items and weapons do not count). A contract worth less is refused (`reward_too_small`) and the app says the figure; a reward cannot be taken back out below it either. Without it two one-dollar contracts from two accounts fill a target's `MaxActiveContractsPerTarget`. `0` turns it off. Anything that is not a whole number of dollars is read as 1000, and one above `MaxContractValue` is held to it, with a warning at startup. |
+| `Config.Limits.SlotCooldownSeconds` | `600` | The same hitman may not claim two payouts on one contract inside this window. |
+| `Config.Bonus.maxPercent` | `200` | Under `'either'`: the most a kidnapping bonus may add, as a percentage of each money source. Live transfer only pays the whole reward on delivery, so there is no bonus there. |
+| `Config.Penalty.MaxAmount` | `100000` | The most stake a placer may ask a hitman to put up. Unclamped, an "accept" would be an uncapped transfer from the hitman to the creator, forfeit on abandonment or expiry. |
+| `Config.Penalty.MaxFractionOfEscrow` | `2.0` | And at most this many times the contract's money escrow; the lower of the two wins. |
+| `Config.Penalty.RequireDisclosureOnAccept` | `true` | Accepting must echo back the stake the hitman was shown, so a contract repriced while they read it is refused rather than charged at the new figure. Only on contracts that carry a stake. |
+| `Config.Penalty.MinWindowMinutes` | `30` | A staked acceptance is refused with less than this left before the deadline, so a hitman cannot lose a stake on a contract set to run out in minutes. |
+| `Config.Bailout.Enabled` | `true` | A target may buy out a contract on them, from **On me** or `/cleanse`. |
+| `Config.Bailout.MinMultiplier` / `MaxMultiplier` | `1.0` / `3.0` | The placer names the buyout price, and the server clamps it to this range of multiples of the escrow value, so a buyout cannot be an uncapped transfer between two cooperating players. |
+| `Config.Bailout.AbsoluteMax` | `500000` | The most a buyout may cost, in money. |
+| `Config.Bailout.ProcessingDelaySeconds` | `120` | Once a hitman holds the contract, a buyout takes effect only after this long, so a target cannot pull it out from under them mid-fight. A kill made before it ran out and still waiting to be verified, or a handover armed before it and still counting, holds it off until that finishes, for at most two `PhotoTokenLifetimeSeconds` more. |
+| `Config.Bailout.BlockWhileIncapacitated` | `true` | No buyout while the target is dead or downed. |
+| `Config.Bailout.Command` | `'cleanse'` | A command for players who cannot open the app: it lists every contract on them **On me** would show and buys one out, exactly as the button does. There whatever `Config.Admin.Enabled` says; it is not a staff tool. |
+| `Config.PendingEscrow.MaxRetriesPerLogin` | `5` | Owed payouts one retry pass tries: the one at a login and the one every 30 seconds for a player online. At least 1, or it is read as 1 with a warning. A payout whose give raises is checked against the player's inventory or balance; after three raises with nothing arriving, or one only part arrived, it waits for staff in `/ch-stuck` (`/ch-settle pay` gives only the rest). |
+| `Config.PendingEscrow.LoginRetryDelayMs` | `5000` | How long after a login (or a restart with players connected) owed payouts are handed over, plus up to two seconds at random per player. |
+| `Config.Limits.MaxEscrowLines` | `60` | Escrow lines one contract may hold across every payout, portion and top-up, which bounds what one contract can cost the store. |
+
+### Rules: Limits
+
+How many contracts a player may place, take or carry, and how one is finished. As shipped it is live transfer only, and no restraint is required: the hitman brings the target, alive, to the person who placed the contract, and the three stay within `Config.Kidnap.Radius` of each other for `Config.Kidnap.CountdownSeconds`.
 
 | Setting | Shipped | What it does |
 |---|---|---|
@@ -577,40 +627,56 @@ of each other for `Config.Kidnap.CountdownSeconds`.
 | `Config.Kidnap.RejectLastStand` | `true` | A downed (last stand) target is refused. |
 | `Config.Kidnap.MinTargetHealthPercent` | `20` | Below this (health above the 100 that is dead, out of 100) the target is too badly hurt to hand over, and the hitman is told so. Qbox gives no health back on its own, so a target shot during the abduction needs patching up first. |
 | `Config.Kidnap.RearmCooldownSeconds` | `60` | How long a hitman waits before arming again after a handover failed on that contract; without it a hitman could hold a target in a loop at no cost. A restart clears it. |
-
-### Rewards and limits
-
-What a reward may be made of, how big it may be, and how many contracts a
-player may place, take or carry. Every reward is held in escrow from the
-moment the contract is placed until it ends.
-
-| Setting | Shipped | What it does |
-|---|---|---|
-| `Config.Sources` | all on: cash 250000, bank 500000, dirty 250000 (`black_money`), 10 item stacks of up to 100, 3 weapons | What a reward may be paid in, each with its switch and its ceiling. Escrow pays out in exactly the sources it holds (see *Dirty money*). |
-| `Config.MaxContractValue` | `1000000` | The most a contract may hold, counted in money across every source. In mysql mode every amount is an INT column, so this, each source's `max`, `Config.Bailout.AbsoluteMax`, `Config.Penalty.MaxAmount`, the anonymity fees and `Config.Informant.Cost` are held to 2147483647 there, with a warning at startup. |
-| `Config.EscrowBlacklist` | phone, ID card, licences, handcuffs, `identification`, `lawyerpass`, `money` | Items that may never be put in a reward. An item reaches the hitman with its metadata, so list anything whose metadata names its owner (identity documents, phones kept as unique items such as lb-phone's `phone_*`, bank cards, keys or passes that store an owner or a plate). On an anonymous contract an item whose metadata names the client is refused anyway. `money` is cash on Qbox; every item in the `inventory:accounts` convar is refused whatever this says, so cash only goes up through the cash source. |
-| `Config.Limits.MaxPayoutSlots` | `1` | Each contract pays out once. `2` or `3` lets the placer fund that many collections, each escrowed up front; at 1 the Place form shows no collection controls. The admin panel can raise it to 2 or 3. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup. Contracts already placed keep their number and can still give their last collection back. |
-| `Config.Limits.MinContractReward` | `1000` | The least a new contract's reward may be worth in money (cash, bank and dirty money across every payout, the kidnapping bonus included; items and weapons do not count). A contract worth less is refused (`reward_too_small`) and the app says the figure; a reward cannot be taken back out below it either. Without it two one-dollar contracts from two accounts fill a target's `MaxActiveContractsPerTarget`. `0` turns it off. Anything that is not a whole number of dollars is read as 1000, and one above `MaxContractValue` is held to it, with a warning at startup. |
 | `Config.Limits.MaxActiveContractsPerCreator` | `3` | Live contracts one player may have placed. |
 | `Config.Limits.MaxAcceptedPerHitman` | `3` | Live contracts one hitman may hold. |
 | `Config.Limits.MaxActiveContractsPerTarget` | `2` | Live contracts on one person, and one player (on any character) may place only one of them. While the target is in the city, a contract nobody holds whose named client is away does not count. |
 | `Config.Limits.MaxHitmenPerContract` | `5` | Hitmen on one competitive contract. |
-| `Config.Limits.DefaultDeadlineSeconds` | `10800` | How long a contract runs before it expires, unless the client extends it. It counts down only while all three are in the city: the placer (named or anonymous), the target (out of prison) and at least one operative holding it (one is enough on a competitive contract). With nobody holding it yet, it does not run; it is moved on by every pause. Once it has gone with the clock running, nobody leaving stops it. Players never see it: every card shows a rough band of the run time left (*More than 2 hours left*, *1–2 hours left*, *Under 1 hour left*, *Under 15 minutes left*), which moves only while the clock runs; staff see the exact times in the admin panel. A kill made before it and still waiting to be verified, or a handover armed before it and still counting, holds the expiry off until it finishes, for at most two `PhotoTokenLifetimeSeconds`. |
-| `Config.Limits.ContractLifetimeSeconds` | `172800` | The absolute ceiling, pauses included, from the end of the five minutes a contract is placed in. Separate from the deadline above: it keeps running whoever is away, and is what ends a contract left on the board with nobody holding it. Reaching it while the deadline still has time on it hands the hitman's stake back. |
-| `Config.Restart.PauseBeforeSeconds` | `1800` | Every live contract is paused from the first txAdmin restart warning (`txAdmin:events:scheduledRestart`, sent 30, 15, 10, 5, 4, 3, 2 and 1 minutes before) with at most this many seconds to go: deadlines stop, and nothing expires (the lifetime included), no queued buyout pays out and no handover finishes or is armed until the server is back. Players get one notice, *Contracts are paused until the server restart.* The pause ends when the resource starts again; the time it lasted is added back to every deadline. `0` turns it off; 0 to 3600. |
-| `Config.Restart.MaxHoldMinutes` | `45` | The pause ends anyway when the restart has not come this long after it began, or at once when staff skip it in txAdmin (`txAdmin:events:scheduledRestartSkipped`, or the older `skippedNextScheduledRestart`). A pause never ends another: a contract on hold by staff, or with a party away, stays stopped. 1 to 240. |
-| `Config.Limits.TargetCooldownAfterResolveSeconds` | `1800` | How long nobody may place a contract on a person after one on them closes; not after one nobody took up that was withdrawn or ran out (that cost the target nothing). |
-| `Config.Limits.SameCreatorSameTargetCooldownSeconds` | `7200` | How long the same placer, on any character, waits before placing on the same target again. |
-| `Config.Limits.SlotCooldownSeconds` | `600` | The same hitman may not claim two payouts on one contract inside this window. |
-| `Config.Limits.ExclusiveIdleReleaseSeconds` | `1800` | An exclusive contract goes back on the board when its one hitman has not been near the target for this long (counted only while the client and the target are both in the city); their stake goes to the client and they may not take it again on any character. A full competitive contract releases its idlest hitman the same way, and a hitman who walks away from an exclusive one may not take it again for this long. Without it a target's friend could take the contract and sit on it. `0` turns it off. |
-| `Config.Limits.ExclusiveAttemptWindowSeconds` | `7200` | And one who is near the target but makes no attempt (no hit landed, no handover armed) for this long is released the same way. `0` turns it off; with the idle release off and this on, the start says so. |
-| `Config.Limits.PauseWhileTargetJailed` | `true` | The deadline stops while the target is in prison, and is moved on by the time served; the lifetime still ends it. In prison means a sentence (`injail` metadata, as sc-police writes it) **and** standing inside `JailZone`: sc-police lets a client write the sentence itself. |
-| `Config.Limits.JailZone` | `{ x = 1693.3, y = 2569.5, radius = 300 }` | The prison grounds, as a centre and a radius in metres: Bolingbroke. Set it to your prison. |
-| `Config.Bonus.maxPercent` | `200` | Under `'either'`: the most a kidnapping bonus may add, as a percentage of each money source. Live transfer only pays the whole reward on delivery, so there is no bonus there. |
-| `Config.Penalty.MaxAmount` | `100000` | The most stake a placer may ask a hitman to put up. Unclamped, an "accept" would be an uncapped transfer from the hitman to the creator, forfeit on abandonment or expiry. |
-| `Config.Penalty.MaxFractionOfEscrow` | `2.0` | And at most this many times the contract's money escrow; the lower of the two wins. |
-| `Config.Penalty.RequireDisclosureOnAccept` | `true` | Accepting must echo back the stake the hitman was shown, so a contract repriced while they read it is refused rather than charged at the new figure. Only on contracts that carry a stake. |
-| `Config.Penalty.MinWindowMinutes` | `30` | A staked acceptance is refused with less than this left before the deadline, so a hitman cannot lose a stake on a contract set to run out in minutes. |
+| `Config.Reason.Mode` | `'freetext'` | `'preset'` (a choice from `Presets`), `'freetext'` or `'off'`. |
+| `Config.Reason.MaxLength` | `140` | Characters. In mysql mode at most 255, the column's size; above it is read as 255, with a warning at startup. |
+| `Config.Reason.MaxDigits` | `6` | Digits a reason may hold, so it cannot carry a phone number. |
+| `Config.Reason.Presets` | six reasons | The choices in `'preset'` mode. |
+| `Config.Reason.PatternDenylist` | links, Discord invites, `@` handles | Lua patterns a reason may not contain. |
+| `Config.Ledger.Depth` / `MaxDepthHardCap` | `10` / `25` | Ledger rows kept per player, and the ceiling on that. |
+| `Config.Ledger.StorePhotos` | `true` | With kill photos on: keep the photo for the client who placed the contract (only they ever see it). Off, they are told the contract was fulfilled and there is no photo, and on `'server'` storage none is written. |
+| `Config.Ledger.PhotoRetentionDays` | `7` | How long a kill photo the client has not opened is kept; the ledger row stays. On `'host'` storage only the link is forgotten. Not a photo kept in the app or saved to their phone's Photos. `0` keeps it until its row goes. Looked at every ten minutes. |
+| `Config.Listing.PageSize` | `15` | Contracts per board page. |
+
+### Rules: Targeting
+
+Who may open the app and who can be named as a target. Jobs are barred by **type** as well as by name, so a police job added later is barred with no edit here.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.BlockedJobTypes` | `leo`, `police`, `ems`, `fire` | Job types barred from the app. |
+| `Config.BlockedJobNames` | the server's police, sheriff, SAST, FIB, EMS, fire, DOJ and lawyer jobs | Job names barred as well, from this server's sc-police and sc-dispatch configs. A job held through sc-multijob counts too, read as off duty. |
+| `Config.BlockOffDuty` | `true` | A barred job stays barred off duty: an officer who clocks off is still an officer to everyone they arrested. |
+| `Config.HideAppFromBlockedJobs` | `true` | Whether a barred player's phone shows the app at all. Turning it off grants nobody access (every request from a barred job is still refused); it only shows the icon. Applies only while the whitelisted-job view is off; the admin panel marks it as not applying while the view is on. |
+| `Config.WhitelistedView.Enabled` | `true` | **The whitelisted-job view.** A player on a barred job can install and open the app and sees one read-only screen: the contracts on them and, for those the advisory reaches (`Config.Advisory.RecipientJobTypes` / `RecipientJobNames`, while `Config.Advisory.Enabled` is on), the contracts on other whitelisted-job members, each with no more than the bulletins sent about it said (the name and job; when it was posted and when it runs out at the latest, where a posting bulletin went; open, or taken by the count the latest acceptance bulletin carried), and nothing about one no bulletin was sent for. Never who placed it, a hitman, the reason, a location, a photo or the reward. On a contract on them they also get the buyout, through the same server path as **On me** and `/cleanse`. A job change moves a player in or out at once; one there by a job they hold but are not working is told which, and how to get the whole app back. `false` closes the app to them, and `HideAppFromBlockedJobs` decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features. |
+| `Config.WhitelistedView.Alerts` | `true` | Whether a player on that screen may turn on **Notify me** (off for each character until they do, and kept across restarts). With it on they get a phone notice when a new entry appears: a contract on them at the end of the same wait their own alert keeps (`Config.Notifications.ParanoidAlertJitter`), never sooner, and one on another whitelisted-job member the moment the advisory bulletin that lists it goes out. It names who the contract is on and their job, nothing else; within the notice budget, once per contract; changing it spends `Config.Cooldowns.message`. `false` hides the toggle and sends nothing, notices still waiting included; each choice is kept for when it is back on. Anything but `true` or `false` is read as `false`, with a warning at startup. |
+| `Config.Targeting.MinQueryLength` | `3` | Letters before a name search runs, so the search is a lookup rather than an enumeration. |
+| `Config.Targeting.MaxResults` | `8` | Names a search returns. |
+| `Config.Targeting.AllowBrowseAll` | `true` | Lets a player browse everyone online by name, which is a roster: anybody holding the app can read the name of every player in the city and whether they are law enforcement. It hands out no citizen ids (opaque, per-searcher, expiring handles), no positions, no jobs beyond the protected flag, nobody sharing the browser's own account, and it is rate-limited. `false` goes back to a typed name. |
+| `Config.Targeting.BrowsePageSize` | `30` | Names per page when browsing. |
+| `Config.Targeting.AllowNearby` | `false` | Lets a player list the names of the people around them, and **puts names to people through walls, in the dark and in disguise**: a target could name the hitman closing in, a hitman the anonymous client at a handover. On, it leaves out other routing buckets, invisible players and anyone masked (each player's game says when their mask goes on; one that has not said is left off), closes the list to the parties of a live contract and for `NearbyClosedAfterSeconds` after it ends, and gives distance only in 10 m bands. What it cannot stop is a friend on no contract reading the names around a target, which is why it ships off; the start warns while it is on. |
+| `Config.Targeting.NearbyRadius` | `30.0` | Metres for the nearby list. |
+| `Config.Targeting.MaxNearby` | `12` | Names in the nearby list, nearest band first. |
+| `Config.Targeting.NearbyClosedAfterSeconds` | `1800` | How long the nearby list stays closed to a contract's parties after it ends, since a handover ends with all three standing together. A target counts only for an ending they were told of. |
+| `Config.Targeting.AllowProtectedJobTargets` | `true` | Officers may be targeted: putting a hit on a cop is criminal roleplay, and the advisory is what makes it fair. `false` refuses such contracts. |
+| `Config.Immunity.MinTargetPlaytimeHours` | `5` | Hours a character must have played before anybody can name them (until then: *They are too new to the city to be a target yet.*). Counted by this resource unless `PlaytimeProvider` or a playtime figure in QBox metadata answers; characters that existed before the count started are grandfathered. Staff see and set a character's counted hours in the admin panel (Players). `0` turns it off. See *New players and playtime*. |
+| `Config.Immunity.MinTargetSessionMinutes` | `10` | And this many minutes in the city this session. |
+| `Config.Immunity.PostRespawnSeconds` | `300` | A target is protected this long after a respawn; a live handover is exempt. |
+| `Config.Immunity.AfterBailoutSeconds` | `3600` | Nobody may place a contract on a target this long after they bought one out, so a placer cannot simply re-list them. |
+| `Config.Immunity.PlaytimeProvider` | `nil` | Leave `nil` and this resource counts playtime itself (once a minute and at every logout and stop, in `data/playtime.json` or `crimson_playtime`). To use another script give its resource and export, `{ resource = 'my_playtime', export = 'GetMinutes' }`, called as `exports.my_playtime:GetMinutes(citizenid)`: it must return total **minutes**. If it errors or returns no number, QBox metadata and then this resource's own count are used; where nothing can answer yet the rule is skipped for that character, never refusing everyone. |
+| `Config.Immunity.GrandfatherDays` | `3` | Read only where qbx_core's `players` table cannot be read when the count first starts: then every character first seen in this many days is grandfathered, and **a brand-new character made in those days is not protected**. `0` grandfathers nobody. Anything that is not 0 or more days is read as 3, with a warning at startup. |
+| `Config.Mugshot.Enabled` | `true` | Target headshots on the board, rendered by each target's own game with MugShotBase64 (without that resource none is asked for or accepted). Off, none is asked for, one sent anyway is refused unread, and every card shows the placeholder. Anything but `true` or `false` is read as `false`, with a warning at startup. |
+| `Config.Mugshot.RemoveBackground` | `false` | Cut the background out of headshots. On, MugShotBase64 loads a 2.6 MB model into the **target's** game for every render and never frees it, set off by other players viewing a board that names them: a hitch they did nothing to cause, not shown in this resource's resmon. Off, the headshot keeps the grey backdrop at its full size (about 128 px). |
+
+### Features: Anonymity
+
+Placing and accepting anonymously, its fees, and the same switches where the target is on a whitelisted job.
+
+| Setting | Shipped | What it does |
+|---|---|---|
 | `Config.Anonymity.AllowAnonymousPlacer` | `false` | A contract may be placed anonymously. Off, the Place form has no *Place anonymously* option and the server refuses an anonymous placing as `anonymity_off`, before anything is taken: no fee, no escrow. Not retroactive: contracts already placed anonymously stay anonymous. The admin panel's switch applies at once and is kept across restarts. |
 | `Config.Anonymity.AllowAnonymousHitman` | `false` | A contract may be accepted anonymously. Off, Accept offers no *Anonymously* choice and the server refuses an anonymous acceptance as `anonymity_off`, before anything is taken: no fee, no stake. Every new operative is then named to the person who placed the contract: the roster on their **Mine** card, their threads and the *accepted* notice show *Operative #1 (their name)*. A named operative is shown to the target by name only while `Config.Anonymity.ShowOperativeNames` is on; otherwise the target sees *Operative #1* (unless the target's informant finds them out). Never by name on the board, to other hitmen or to law enforcement. Not retroactive: operatives already anonymous stay anonymous, and one coming back to a contract they held anonymously comes back under the same alias, still anonymous and charged nothing. |
 | `Config.Anonymity.ShowOperativeNames` | `true` | An operative who accepted under their name is shown by it to the contract's target as well as to the person who placed it: on the target's **On me** card (*Operative #1: their name*) and in the target's informant list, where that operative is marked as known and is not sold (refused as `operative_known`, nothing charged). Off, the target sees every operative as an alias, as before. An operative who accepted anonymously keeps their alias either way. Never shown on the board, to other hitmen, to law enforcement (the advisory, the whitelisted-job view) or on Discord. The admin panel's switch applies at once and is kept across restarts. |
@@ -619,27 +685,13 @@ moment the contract is placed until it ends.
 | `Config.Anonymity.WhitelistedTargets.ShowOperativeNames` | `true` | `Config.Anonymity.ShowOperativeNames` for such a contract, in its place: a target on a whitelisted job sees a named operative by name on **On me** and on their own whitelisted-job view entry, which also names a placer who put their name to it. Never on a colleague's entry or in a law enforcement bulletin. |
 | `Config.Anonymity.CreatorFee` / `HitmanFee` | `0` / `0` | Flat fees to place or accept anonymously; `0` is free. Charged as the app showed them: a fee changed from the admin panel since is refused, nothing taken, with the fee now. A create that fails takes none. |
 | `Config.Anonymity.FeeAccount` | `'bank'` | `'cash'` or `'bank'`: where the fees are taken from. |
-| `Config.Amendments.Enabled` | `true` | Placer and hitman may propose and agree changes to a running contract. |
-| `Config.Amendments.ProposalExpirySeconds` | `300` | A proposal nobody answers lapses after this. |
-| `Config.Amendments.MaxOpenPerContract` | `1` | Proposals open on one contract at once. |
-| `Config.Amendments.CancelCooldownSeconds` | `300` | How long after cancelling a proposal before another. |
 
-### Buyouts
+### Features: Informants
 
-What a target can pay for: buying the contract out, and a look-up on who is
-after them. The look-up the person who placed a contract can buy on who took
-it. And what a hitman can pay for: an informant tip, the rough area the target
-was in when it was bought (`Config.LocationTip`, not to be confused with
-`Config.Informant`, which a target buys).
+Three paid look-ups: the target's (who is after me, `Config.Informant`), the placer's (who took it, `Config.PlacerInformant`) and the hitman's informant tip (the target's rough area, `Config.LocationTip`). Each ships off.
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Bailout.Enabled` | `true` | A target may buy out a contract on them, from **On me** or `/cleanse`. |
-| `Config.Bailout.MinMultiplier` / `MaxMultiplier` | `1.0` / `3.0` | The placer names the buyout price, and the server clamps it to this range of multiples of the escrow value, so a buyout cannot be an uncapped transfer between two cooperating players. |
-| `Config.Bailout.AbsoluteMax` | `500000` | The most a buyout may cost, in money. |
-| `Config.Bailout.ProcessingDelaySeconds` | `120` | Once a hitman holds the contract, a buyout takes effect only after this long, so a target cannot pull it out from under them mid-fight. A kill made before it ran out and still waiting to be verified, or a handover armed before it and still counting, holds it off until that finishes, for at most two `PhotoTokenLifetimeSeconds` more. |
-| `Config.Bailout.BlockWhileIncapacitated` | `true` | No buyout while the target is dead or downed. |
-| `Config.Bailout.Command` | `'cleanse'` | A command for players who cannot open the app: it lists every contract on them **On me** would show and buys one out, exactly as the button does. There whatever `Config.Admin.Enabled` says; it is not a staff tool. |
 | `Config.InformantsEnabled` | `true` | The master switch over all three informant features: the target's informant (`Config.Informant`), the placer's informant (`Config.PlacerInformant`) and the informant tip (`Config.LocationTip`). Off, each is off whatever its own `Enabled` says: purchases are refused as `feature_off` with nothing charged, every button and picker is gone from every card, and no notice, operative alert or law enforcement tip bulletin is sent, since nothing is bought. Names already found stay shown, and a tip already bought stays on its buyer's map until its `ShowMinutes` run out (it was paid for), then comes off as usual. In the admin panel at the top of the Informant group. |
 | `Config.Informant.Enabled` | `false` | **The target's informant**, for civilian targets. A target may pay for a look-up on who is after them: one operative on the contract, picked from **On me** as *Operative #1*, *Operative #2* (every operative on it, wherever they have been), or the person who placed it. A placer who put their name to the contract is already known, and is not sold, nor is an operative who took it under theirs while `Config.Anonymity.ShowOperativeNames` is on. A member of a whitelisted job (by the flag the contract recorded, or a barred job held now) is decided by `Config.InformantsWhitelistedTargets.Informant` instead: off, as shipped, the server refuses it as `informant_protected`, nothing charged, and their buyout stays. Turned off, new look-ups are refused and a name already found stays shown. |
 | `Config.Informant.Cost` | `25000` | The price of one look-up, paid whatever it finds. The price the dialog quotes is the price charged: one changed from the admin panel since is refused, nothing taken, with the price now. `0` is free, and the app says so. |
@@ -669,49 +721,12 @@ was in when it was bought (`Config.LocationTip`, not to be confused with
 | `Config.InformantsWhitelistedTargets.PlacerInformant` | `false` | The placer's informant on a contract on a whitelisted job, in place of `Config.PlacerInformant.Enabled`. Off, it is refused as `feature_off`, nothing charged, and no button is drawn. |
 | `Config.InformantsWhitelistedTargets.LocationTip` | `false` | The informant tip on a contract on a whitelisted job, in place of `Config.LocationTip.Enabled`. Off, it is refused as `feature_off`, nothing charged, and no button is drawn; no tip bulletin goes to law enforcement, since none is sold. |
 
-### Targeting
+### Features: Advisory
 
-Who can be named as a target, how a placer finds them, what the board shows
-and what may be written as the reason.
-
-| Setting | Shipped | What it does |
-|---|---|---|
-| `Config.Targeting.MinQueryLength` | `3` | Letters before a name search runs, so the search is a lookup rather than an enumeration. |
-| `Config.Targeting.MaxResults` | `8` | Names a search returns. |
-| `Config.Targeting.AllowBrowseAll` | `true` | Lets a player browse everyone online by name, which is a roster: anybody holding the app can read the name of every player in the city and whether they are law enforcement. It hands out no citizen ids (opaque, per-searcher, expiring handles), no positions, no jobs beyond the protected flag, nobody sharing the browser's own account, and it is rate-limited. `false` goes back to a typed name. |
-| `Config.Targeting.BrowsePageSize` | `30` | Names per page when browsing. |
-| `Config.Targeting.AllowNearby` | `false` | Lets a player list the names of the people around them, and **puts names to people through walls, in the dark and in disguise**: a target could name the hitman closing in, a hitman the anonymous client at a handover. On, it leaves out other routing buckets, invisible players and anyone masked (each player's game says when their mask goes on; one that has not said is left off), closes the list to the parties of a live contract and for `NearbyClosedAfterSeconds` after it ends, and gives distance only in 10 m bands. What it cannot stop is a friend on no contract reading the names around a target, which is why it ships off; the start warns while it is on. |
-| `Config.Targeting.NearbyRadius` | `30.0` | Metres for the nearby list. |
-| `Config.Targeting.MaxNearby` | `12` | Names in the nearby list, nearest band first. |
-| `Config.Targeting.NearbyClosedAfterSeconds` | `1800` | How long the nearby list stays closed to a contract's parties after it ends, since a handover ends with all three standing together. A target counts only for an ending they were told of. |
-| `Config.Targeting.AllowProtectedJobTargets` | `true` | Officers may be targeted: putting a hit on a cop is criminal roleplay, and the advisory is what makes it fair. `false` refuses such contracts. |
-| `Config.Immunity.MinTargetPlaytimeHours` | `5` | Hours a character must have played before anybody can name them (until then: *They are too new to the city to be a target yet.*). Counted by this resource unless `PlaytimeProvider` or a playtime figure in QBox metadata answers; characters that existed before the count started are grandfathered. Staff see and set a character's counted hours in the admin panel (Players). `0` turns it off. See *New players and playtime*. |
-| `Config.Immunity.MinTargetSessionMinutes` | `10` | And this many minutes in the city this session. |
-| `Config.Immunity.PostRespawnSeconds` | `300` | A target is protected this long after a respawn; a live handover is exempt. |
-| `Config.Immunity.AfterBailoutSeconds` | `3600` | Nobody may place a contract on a target this long after they bought one out, so a placer cannot simply re-list them. |
-| `Config.Immunity.PlaytimeProvider` | `nil` | Leave `nil` and this resource counts playtime itself (once a minute and at every logout and stop, in `data/playtime.json` or `crimson_playtime`). To use another script give its resource and export, `{ resource = 'my_playtime', export = 'GetMinutes' }`, called as `exports.my_playtime:GetMinutes(citizenid)`: it must return total **minutes**. If it errors or returns no number, QBox metadata and then this resource's own count are used; where nothing can answer yet the rule is skipped for that character, never refusing everyone. |
-| `Config.Immunity.GrandfatherDays` | `3` | Read only where qbx_core's `players` table cannot be read when the count first starts: then every character first seen in this many days is grandfathered, and **a brand-new character made in those days is not protected**. `0` grandfathers nobody. Anything that is not 0 or more days is read as 3, with a warning at startup. |
-| `Config.Mugshot.Enabled` | `true` | Target headshots on the board, rendered by each target's own game with MugShotBase64 (without that resource none is asked for or accepted). Off, none is asked for, one sent anyway is refused unread, and every card shows the placeholder. Anything but `true` or `false` is read as `false`, with a warning at startup. |
-| `Config.Mugshot.RemoveBackground` | `false` | Cut the background out of headshots. On, MugShotBase64 loads a 2.6 MB model into the **target's** game for every render and never frees it, set off by other players viewing a board that names them: a hitch they did nothing to cause, not shown in this resource's resmon. Off, the headshot keeps the grey backdrop at its full size (about 128 px). |
-| `Config.Reason.Mode` | `'freetext'` | `'preset'` (a choice from `Presets`), `'freetext'` or `'off'`. |
-| `Config.Reason.MaxLength` | `140` | Characters. In mysql mode at most 255, the column's size; above it is read as 255, with a warning at startup. |
-| `Config.Reason.MaxDigits` | `6` | Digits a reason may hold, so it cannot carry a phone number. |
-| `Config.Reason.Presets` | six reasons | The choices in `'preset'` mode. |
-| `Config.Reason.PatternDenylist` | links, Discord invites, `@` handles | Lua patterns a reason may not contain. |
-
-### Notifications
-
-Phone notices, the advisory officers get when one of them is targeted, and
-the anonymous messages and calls between the parties.
+The law enforcement advisory officers get when one of them, or another whitelisted-job member, is targeted.
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Notifications.ParanoidAlert` | `true` | The target's alert, *You feel eyes on you*, once the wait below is over; kept for their next login if they are away, and not sent if this is switched off while it waits. A target is sent *A price on your head has lapsed* only for a contract they were told of and shown. |
-| `Config.Notifications.ParanoidAlertJitter` | `{ min = 60, max = 600 }` | Seconds the alert waits after the contract is placed, drawn per contract, so it does not date the placement for somebody who paid to stay unnamed. The same wait holds back everything else the target could date it from, whether or not `ParanoidAlert` is on: **On me**, `/cleanse`, and the request for their headshot. An officer is not held back once a bulletin goes out about it. Kept in memory: after a restart a contract placed less than `max` seconds before is held back again for a fresh wait. |
-| `Config.Notifications.ParanoidCooldownMinutes` | `30` | At most one alert per target in this long, however many contracts are placed, counted from when it is sent. |
-| `Config.Notifications.MaxPerRecipientPerMinute` / `MaxPerRecipientPerHour` | `6` / `40` | Phone notifications one player can be sent. Messages and call requests count apart from everything else, so a conversation never silences a contract notice; a message into a muted thread is counted and not sent. A contract notice past them is kept and sent once the minute opens, never dropped; receipts and endings are outside them. |
-| `Config.Notifications.PushEnabled` | `true` | Nudge an open app when a contract it shows changes state; a push carries a reason and nothing else, and the app reads again. |
-| `Config.Notifications.PushMinIntervalSeconds` | `1` | The floor between two pushes to one player: changes inside it cause one refresh. |
 | `Config.Advisory.Enabled` | `true` | Officers are told when one of them is targeted. |
 | `Config.Advisory.TriggerJobTypes` / `TriggerJobNames` | law enforcement, EMS and fire types; every barred name | Jobs whose targeting raises an advisory. Every name in `Config.BlockedJobNames` is in `TriggerJobNames`, so a barred job whose type qbx_core leaves out still counts, is flagged on the listing and is listed on the whitelisted-job view; a barred job in neither list is warned about at start. |
 | `Config.Advisory.RecipientJobTypes` / `RecipientJobNames` | law enforcement only | Who receives the advisory; EMS are not a response unit for a contract killing. |
@@ -722,65 +737,71 @@ the anonymous messages and calls between the parties.
 | `Config.Advisory.OnCancel` | `true` | When a contract on a member of a whitelisted job is cancelled by its placer (on their own, or by an agreed cancel) or voided by staff with its escrow handed back, law enforcement is told on their phones and over sc-dispatch: *THREAT ADVISORY — CANCELLED: The contract on <RANK> <target name> has been called off.* The targeted officer is told *The contract on you has been called off.* Never the placer or any operative. The contract's earlier dispatch calls are cleared first, and the whitelisted-job view stops listing it. Needs `Advisory.Enabled`. |
 | `Config.Advisory.WarnCreator` / `WarnHitman` | `true` / `true` | Warn the placer before escrow is taken, and the hitman before they accept, that the target holds a protected job, by its kind (law enforcement, emergency services, legal). A target who took one after being picked is refused until the placer has seen the warning. |
 | `Config.Advisory.FlagListing` | `true` | Mark the board card itself (its chip, its notice and its styling). |
+
+### Features: Everything else
+
+The app itself, proposals, phone notices, the anonymous messages and calls, progression and the alerts staff get.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.App.DefaultInstalled` | `false` | `true` puts the app on every eligible player's home screen (lb-phone's `defaultApp`), and lb-phone then does not let them remove it; `false` leaves it in the phone's App Store for each player to find. Nothing tells a player it exists either way (a target included, whose only answer to their alert is in this app), so say so in your server's guide. Barred jobs get it only for the whitelisted-job view, or with `HideAppFromBlockedJobs` off. Read by each player's game when the app is added, so a change reaches them at the next restart of this resource or lb-phone, or their next join. |
+| `Config.Amendments.Enabled` | `true` | Placer and hitman may propose and agree changes to a running contract. |
+| `Config.Amendments.ProposalExpirySeconds` | `300` | A proposal nobody answers lapses after this. |
+| `Config.Amendments.MaxOpenPerContract` | `1` | Proposals open on one contract at once. |
+| `Config.Amendments.CancelCooldownSeconds` | `300` | How long after cancelling a proposal before another. |
+| `Config.Notifications.ParanoidAlert` | `true` | The target's alert, *You feel eyes on you*, once the wait below is over; kept for their next login if they are away, and not sent if this is switched off while it waits. A target is sent *A price on your head has lapsed* only for a contract they were told of and shown. |
+| `Config.Notifications.ParanoidAlertJitter` | `{ min = 60, max = 600 }` | Seconds the alert waits after the contract is placed, drawn per contract, so it does not date the placement for somebody who paid to stay unnamed. The same wait holds back everything else the target could date it from, whether or not `ParanoidAlert` is on: **On me**, `/cleanse`, and the request for their headshot. An officer is not held back once a bulletin goes out about it. Kept in memory: after a restart a contract placed less than `max` seconds before is held back again for a fresh wait. |
+| `Config.Notifications.ParanoidCooldownMinutes` | `30` | At most one alert per target in this long, however many contracts are placed, counted from when it is sent. |
+| `Config.Notifications.MaxPerRecipientPerMinute` / `MaxPerRecipientPerHour` | `6` / `40` | Phone notifications one player can be sent. Messages and call requests count apart from everything else, so a conversation never silences a contract notice; a message into a muted thread is counted and not sent. A contract notice past them is kept and sent once the minute opens, never dropped; receipts and endings are outside them. |
+| `Config.Notifications.PushEnabled` | `true` | Nudge an open app when a contract it shows changes state; a push carries a reason and nothing else, and the app reads again. |
+| `Config.Notifications.PushMinIntervalSeconds` | `1` | The floor between two pushes to one player: changes inside it cause one refresh. |
 | `Config.Relay.Enabled` | `true` | Anonymous messages between the parties of a contract. |
 | `Config.Relay.MaxLength` | `200` | Characters a message. In mysql mode at most 255; above it is read as 255, with a warning at startup. |
 | `Config.Relay.MaxMessagesPerThread` | `100` | The newest messages a thread keeps; every read sends the whole thread to a phone. |
 | `Config.Relay.AllowMaskedCalls` | `true` | Calls through lb-phone's server export `CreateCall`, showing the caller's alias; the thread gets a **Hang up** button. Whether `CreateCall` exists is probed; without it there is no **Call**. |
 | `Config.Relay.CallExport` | `nil` | Leave it `nil`. Set `{ resource, export }` only to use a call export of your own, called as `exports[resource][export](callerSource, targetNumber, anonymous)`; one that does not resolve dials nothing. |
 | `Config.Relay.RequireMaskingForAnonymous` | `true` | Refuse a call when either party is anonymous and the phone cannot suppress caller identity. Off, the call is placed from the anonymous party's own number. |
+| `Config.Alerts.ToDiscord` | `true` | Every line the console prints whatever `Config.Debug` says, and every setting that needs attention, is kept as an alert in the panel's Alerts (and in the store, across restarts; at most 500, the oldest acknowledged first). This also posts each to Discord: set `set crimson_hitman_alert_webhook "https://discord.com/api/webhooks/..."` in server.cfg (**`set`, never `setr`**, which sends the value to every player); without it the staff webhook `crimson_hitman_webhook` is used, and with neither nothing is posted. At most one post every 10 seconds, scrubbed of citizen ids, accounts, names and links. |
+| `Config.Progression.Enabled` / `Resource` | `true` / `'sc-blackmarket'` | Feed completions into the server's criminal progression; off by itself where that resource is not running. |
+| `Config.Progression.TrustPerElimination` / `TrustPerKidnapping` | `10` / `20` | Trust given per kill and per live handover. |
+| `Config.AntiCollusion.BlockSameAccount` | `true` | One account (the license) may not be two parties to a contract. Households are deliberately not considered. |
 
-### Admin panel
+### Staff and permissions
 
-Staff tools: `/hitmanadmin` and the F8 commands (see *Staff commands* and
-*Admin panel*).
+Staff tools: `/hitmanadmin` and the F8 commands (see *Staff commands* and *Admin panel*). ACE names are never changed from the panel.
 
 | Setting | Shipped | What it does |
 |---|---|---|
 | `Config.Admin.Enabled` | `true` | The staff commands and the admin panel. |
 | `Config.Admin.Ace` | `'crimson.admin'` | The ACE for staff, and for everything that writes or moves money. The server console is always allowed. |
 | `Config.Admin.IdentityAce` | `'crimson.identity'` | Reading who is behind an anonymous party, gated apart and given to fewer people. Without it every staff view names each party by their place on the contract, and an anonymous one as Anonymous. |
+| `Config.Admin.DeveloperAce` | `crimson.developer` | Opens the admin panel's **Developer** section (console, diagnostics, storage, debug, rate limits and the read-only values). Staff holding `Config.Admin.Ace` see it too, so a server that never grants it locks nobody out; the panel then says how to grant it. Never changed from the panel. |
 | `Config.Admin.ExtraAces` | `{ 'command' }` | Extra ACEs that open the read-only commands (diag, timeline, stuck, contracts) and the admin panel to read; void, settle, whois and every write need `Ace` itself. `command` is the ACE most admin groups already carry, so an owner can run the diagnosis before setting anything up. |
 | `Config.Admin.Commands` | `ch-timeline`, `ch-void`, `ch-stuck`, `ch-settle`, `ch-whois`, `ch-contracts`, `ch-diag`, `ch-refresh`, `ch-review`, `hitmanadmin` | Command names, without the slash. Answers print in F8 or the server console, never in chat. `refresh` brings every wait forward on a test server and needs `Ace` itself; `review` moves money and needs it too; `panel` opens the admin panel. |
 | `Config.Admin.PanelPageSize` | `25` | Rows per page in the panel's lists. |
 | `Config.Admin.PanelRefreshSeconds` | `10` | How often the overview refreshes while open. |
 | `Config.Admin.TimelineRows` | `200` | Audit rows read for one contract's timeline. |
-| `Config.Alerts.ToDiscord` | `true` | Every line the console prints whatever `Config.Debug` says, and every setting that needs attention, is kept as an alert in the panel's Alerts (and in the store, across restarts; at most 500, the oldest acknowledged first). This also posts each to Discord: set `set crimson_hitman_alert_webhook "https://discord.com/api/webhooks/..."` in server.cfg (**`set`, never `setr`**, which sends the value to every player); without it the staff webhook `crimson_hitman_webhook` is used, and with neither nothing is posted. At most one post every 10 seconds, scrubbed of citizen ids, accounts, names and links. |
 
 The staff webhook for financial movements and rejected attempts is
 `set crimson_hitman_webhook "..."` in server.cfg. Never put either webhook in
 `config.lua`: every player's game downloads it.
 
-### Advanced
+### Advanced and developer
 
-Storage, logging, rate limits and timings. The shipped values suit most
-servers.
+Logging, diagnostics, rate limits, json tuning and the timings of the kill and handover checks. The shipped values suit most servers.
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Database.Mode` | `'json'` | `'json'` keeps everything in files under `Directory` and needs no database: contracts and escrow survive a restart as on mysql, but it does not scale to thousands of live contracts and cannot be shared between two servers. `'mysql'` (oxmysql) makes its `crimson_*` tables at the first start, creating or altering only what is missing; a user without CREATE and ALTER starts on tables imported from `install/sql/crimson_hitman.sql`. Its columns hold money up to 2147483647, text up to 255 characters, and times until 2038-01-19. `'memory'` keeps nothing and releases all open escrow at a stop (testing only). Modes do not share data, so the start refuses to begin in a new mode while the old one still holds players' money, and says where: see *Changing storage mode*. |
-| `Config.Database.AllowModeSwitch` | `false` | Start in the mode above even though another mode still holds money. That money is then invisible and nothing returns it: only for a server that has settled it by hand. |
-| `Config.Database.QueryTimeoutSeconds` | `10` | mysql: how long one statement may go unanswered before this resource stops waiting for it (oxmysql has no limit, and never answers while MariaDB is unreachable). Keep it under the phone's 15 s wait: above 12 the start warns, and anything that is not 0 or more is read as 10. `0` waits for ever. A payout claim that raised is finished by the tick twice this long after (10 s at 0). Read-only in the admin panel. See *When the database stops answering*. |
-| `Config.Database.Json.Directory` | `'data'` | The folder inside the resource. An update that replaces the resource folder takes it with it: keep `data/` (see *Updating*). The server remembers outside the folder that the store has run and refuses to start empty; `set crimson_hitman_new_store 1` in the console starts empty on purpose, once. |
-| `Config.Database.Json.SyncOnFinancialWrite` | `true` | Write a money change to disk at once rather than at the next flush. |
 | `Config.Database.Json.WarnContractCount` | `2000` | Warn above this many contracts kept. |
 | `Config.Database.Json.MaxDirtyShardsPerFlush` | `25` | How many changed contract files one ordinary flush writes; the rest go on the next one. A stop, and a money write with `SyncOnFinancialWrite`, write all of them. A file the disk refuses is retried at the next flush. |
-| `Config.PendingEscrow.MaxRetriesPerLogin` | `5` | Owed payouts one retry pass tries: the one at a login and the one every 30 seconds for a player online. At least 1, or it is read as 1 with a warning. A payout whose give raises is checked against the player's inventory or balance; after three raises with nothing arriving, or one only part arrived, it waits for staff in `/ch-stuck` (`/ch-settle pay` gives only the rest). |
-| `Config.PendingEscrow.LoginRetryDelayMs` | `5000` | How long after a login (or a restart with players connected) owed payouts are handed over, plus up to two seconds at random per player. |
 | `Config.Audit.LogAllActions` | `true` | Audit every action; money and staff actions are always audited. |
 | `Config.Audit.LogReasonText` | `true` | Keep the reason text in the audit log. |
 | `Config.Audit.FlushIntervalMs` / `MaxQueueSize` | `10000` / `5000` | How often queued audit rows are written, and the most queued. |
 | `Config.Audit.RetentionDays` | `30` | Days the audit log is kept (json: a day's file goes once the whole day is older; mysql: at most 5,000 rows a tick). `0` keeps it forever. |
 | `Config.Audit.ContractRetentionDays` | `30` | Days a finished contract and its rows are kept. Only removed once finished, past this age, holding no unsettled escrow, owing nobody anything on login, and named by no open review item. Ledger history is not touched. `0` keeps them forever. |
 | `Config.Audit.ContractsPrunedPerTick` | `200` | Finished contracts removed per tick, so a first prune of a long-lived store does not stall the server. |
-| `Config.Ledger.Depth` / `MaxDepthHardCap` | `10` / `25` | Ledger rows kept per player, and the ceiling on that. |
-| `Config.Ledger.StorePhotos` | `true` | With kill photos on: keep the photo for the client who placed the contract (only they ever see it). Off, they are told the contract was fulfilled and there is no photo, and on `'server'` storage none is written. |
-| `Config.Ledger.PhotoRetentionDays` | `7` | How long a kill photo the client has not opened is kept; the ledger row stays. On `'host'` storage only the link is forgotten. Not a photo kept in the app or saved to their phone's Photos. `0` keeps it until its row goes. Looked at every ten minutes. |
-| `Config.Progression.Enabled` / `Resource` | `true` / `'sc-blackmarket'` | Feed completions into the server's criminal progression; off by itself where that resource is not running. |
-| `Config.Progression.TrustPerElimination` / `TrustPerKidnapping` | `10` / `20` | Trust given per kill and per live handover. |
-| `Config.AntiCollusion.BlockSameAccount` | `true` | One account (the license) may not be two parties to a contract. Households are deliberately not considered. |
 | `Config.RateLimit.Key` | `'license'` | What an action allowance is counted against: `'license'` per account, so switching character does not reset it; `'citizenid'` per character. |
 | `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, each informant (`informant`, `placerInformant`), informant tips (`locationTip`), messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
-| `Config.Listing.PageSize` | `15` | Contracts per board page. |
 | `Config.Diagnostics.SlowJobMs` | `25` | Every maintenance job (the ten-second tick's, and the death sampler's pass) times itself; one slower than this many milliseconds prints one Debug line naming it, at most every five minutes per job. `/ch-diag` and the admin panel list every job's worst, average and last times either way. Only time on the server thread counts, never database waits. `0` turns the line off. |
 | `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `1280` / `600000` | `'server'` storage: the app shrinks each kill photo until its longest side is at most this many pixels (320 to 4096) and it weighs at most this many bytes (50000 to 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way; the server decodes and encodes it on its main thread, about 80 ms each at the default (estimates; measure yours with the in-game checklist). |
 | `Config.Completion.PhotoHostRefreshSeconds` | `300` | `'host'` storage: how often the image host allowlist is read again from lb-phone's upload config. |
@@ -795,18 +816,11 @@ servers.
 | `Config.Kidnap.MaxTotalGraceMs` | `3000` | How long, in all, a handover may break (someone stepping out of range, a sample failing) before it fails. One budget for the whole countdown, so a hitman cannot dip in and out. |
 | `Config.Kidnap.TickMs` | `1000` | How often a running handover is checked. |
 | `Config.Kidnap.MaxConcurrentCountdowns` | `20` | Handovers counting at once across the server; past it a new one is refused rather than one in progress shed. |
-| `Config.Limits.MaxEscrowLines` | `60` | Escrow lines one contract may hold across every payout, portion and top-up, which bounds what one contract can cost the store. |
 | `Config.Limits.MaxDeadlineSkipSeconds` | `600` | The longest the expiry pass sleeps when no contract has a nearer deadline. |
 | `Config.Bailout.MaxSettleAttempts` | `10` | How many ticks a queued buyout waits on a contract mid-claim before giving up (a claim resolves within a tick or two, so this matters after a crash). A settle that raises counts the same way; past it the buyout is refunded while its contract is open, cleared where it was paid, and otherwise left for staff (`/ch-review`). |
 | `Config.Mugshot.MinRefreshMinutes` / `RenderTimeoutMs` | `5` / `8000` | Least time between two headshots of one target, and how long one may take. |
 | `Config.Mugshot.MaxImageBytes` | `98304` | The largest headshot accepted (one refused for size is logged as `mugshot_too_large` with its bytes). It comes from a player's client, so it is bounded and format-checked before anyone else sees it. |
 | `Config.Mugshot.AllowedMime` | PNG, JPEG, WebP | An explicit list: a pattern on the type would also take `image/svg+xml`. |
-
-### Debug
-
-| Setting | Shipped | What it does |
-|---|---|---|
-| `Config.Debug` | `true` | Debug lines in the server console: start progress, each setting problem in full, page faults with their stack, and a line for a maintenance job slower than `Config.Diagnostics.SlowJobMs`. `false` keeps the console quiet: only refusing to start, money left for staff, a write that failed (a money job that raised, once every five minutes each) and one line counting the settings that need attention. Each player's game reads it from `config.lua` too: on, their F8 also shows the app's own faults there (lb-phone refusing to register the app, say); off, nothing but a staff command's answer. `/ch-diag` (and **Run the diagnosis** in the admin panel) lists all of it either way. In the admin panel's Features as *Debug output in the server console*, kept across restarts. See *Console output*. |
 
 ---
 
@@ -1873,8 +1887,8 @@ panel.
 
 `/hitmanadmin` (`Config.Admin.Commands.panel`) opens a full-screen panel in
 game: everything the staff commands do, each as a button, an overview, the
-audit log, a player lookup, and every feature switch and limit, changed live
-and kept across restarts. Nothing in it is a command, and nothing in it names
+audit log, a player lookup, and (close to) every setting in `config.lua`,
+changed live and kept across restarts, grouped by who uses it. Nothing in it is a command, and nothing in it names
 one: where an answer sends you next, it names the section or button (*see
 Stuck escrow*), while the same answer to a command in F8 keeps the command's
 words. It is this resource's own page (`ui/admin.html`), apart from the
@@ -1888,8 +1902,9 @@ next request.
 
 | Permission | What it opens |
 |---|---|
-| `crimson.admin` (`Config.Admin.Ace`), or one of `Config.Admin.ExtraAces` | Opening the panel, and every section that reads: the overview, contracts and their detail, Stuck escrow, the review queue, the alerts, the console, the audit log, players, the settings (to look at), the diagnosis |
-| `crimson.admin` itself | Everything that writes: void, settle, resolve a review item, acknowledge an alert, send a test alert, change or reset a setting, remove the kill photos kept from before, the timer refresh, flushing the log |
+| `crimson.admin` (`Config.Admin.Ace`), or one of `Config.Admin.ExtraAces` | Opening the panel, and every section that reads: the overview, contracts and their detail, Stuck escrow, the review queue, the alerts, the audit log, players, the Rules and Features settings (to look at), the diagnosis under Tools, Permissions |
+| `crimson.developer` (`Config.Admin.DeveloperAce`), or `crimson.admin` itself | The **Developer** section: the console, diagnostics, and the developer settings (debug, storage, rate limits, timings, the read-only values). The server refuses the console and leaves the developer settings out of what it sends for staff without it. Staff holding `crimson.admin` always have it, so a server that never grants `crimson.developer` locks nobody out: they see a one-line note on how to grant it to its own people (`add_ace group.admin crimson.developer allow`) |
+| `crimson.admin` itself | Everything that writes: void, settle, resolve a review item, freeze, acknowledge an alert, send a test alert, change or reset a setting, remove the kill photos kept from before, the timer refresh, flushing the log |
 | `crimson.identity` (`Config.Admin.IdentityAce`) as well | Who is behind an anonymous client or hitman, anywhere in the panel; every citizen id; finding a player's rows in the log; whois |
 
 Without `crimson.identity` an anonymous party is shown as *Anonymous*, every
@@ -1923,19 +1938,54 @@ reason given), and the overview and searches read afresh after it. While the ser
 recovering from a restart, or after recovery failed, every write except
 flushing the log is refused, in the commands' own words.
 
-**Sections.**
+**Sections, by who uses them.** Six buttons down the side (along the top on
+a phone), each holding its views as tabs; the panel remembers the last section
+and tab you had open, in this game's browser storage only.
 
-| Section | What it shows | What you can do |
+| Section | Holds | For |
+|---|---|---|
+| **Live** | How it works, Overview, Contracts, Players, Frozen players, Needs review, Stuck escrow | Everybody on shift: what is happening now |
+| **Staff actions** | All staff actions (freeze and unfreeze, void, refund or pay, deadlines, tools, settings: each card opens the place it is done), Tools | Staff who change things. A deadline is extended by the contract's client in the app; staff stop its clock with a freeze, end it with a void, or on a test server bring every wait forward |
+| **Rules** | Timers, Rewards & money (grouped as Rewards, Payouts, Buyouts, Informant prices, Anonymity fees and Escrow), Limits, Targeting | The owner: how the game is tuned |
+| **Features** | Every on/off switch, Anonymity first, then the informants, the advisory and the rest, each group with a line on what it controls | The owner: what is switched on |
+| **Logs & alerts** | Logs (with its search), Alerts & Discord | Whoever follows up |
+| **Developer** | Settings (debug, storage, rate limits as per/burst pairs, timings, and the read-only values), Console, Diagnostics (slow-job timings and the diagnosis), Permissions | `crimson.developer`, or `crimson.admin`. Everybody else has **Permissions** alone, in its place |
+
+Rules, Features and Developer's settings each have a search box, which
+filters by name, key, description and group as you type. Every row shows its
+value now, what `config.lua` says and the shipped default from
+`config/defaults.lua`, with **Reset to default** (two clicks, through the same
+change as any other) where the value is not the shipped one. A key read only
+at start says *applies after restart*. Lists of names are edited by adding
+and removing names, then **Save list** with two clicks; a from-to pair
+(`Config.Notifications.ParanoidAlertJitter`) and each rate limit's `per` and
+`burst` are saved together with two clicks. The server checks every value as
+the start checks `config.lua`. Never changed from the panel, and shown
+read-only with *edit in config.lua* (`Settings.DENY` in `server/settings.lua`):
+the ACE names, `Config.Database.Mode` and `Config.Database.Json.Directory`,
+the integrations called by name (`RestraintProvider`, `PlaytimeProvider`,
+`CallExport`, `DeathStateProviders`), `Config.Reason.PatternDenylist`, and the
+Discord webhooks, shown only as *set* or *not set*.
+
+**Permissions** lists every ACE this resource checks (`Config.Admin.Ace`,
+`IdentityAce`, `DeveloperAce` and each of `ExtraAces`), what each opens,
+whether you hold it, and the exact line that grants it. Nothing on it changes
+anything. **How it works** has a short card on each part of the game, each
+linking to the settings that control it.
+
+**Each view.**
+
+| View | What it shows | What you can do |
 |---|---|---|
 | **Overview** | Contracts by state (counted by the store, one `GROUP BY` on mysql); operatives on contracts now, and how many contracts they hold (a contract two of them hold counts once); money held in escrow by account, and items and weapons held; owed deliveries (lines, players, and how many are in a retry queue); the lines waiting for staff, headed by the ones left for you to settle, with the ones that need nothing (queued since, or an ending settling itself) said apart, and a button to **Stuck escrow**; open review items; open alerts, with a button to **Alerts**; kill photos waiting, kept and served, with their size; the storage mode (with a warning in `memory` mode, which keeps nothing across a restart), the rule new contracts are placed under and the recovery state; the slowest maintenance jobs; what the diagnosis says wants doing, the settings that need attention among it, and **Run it**, which runs it; how many settings changed from the panel are in force, and how many the store holds that were not applied. After a recovery that failed, the waiting lines say so and that the resource needs a restart; a listing that could not be read says that. A state chip lists the contracts in that state alone, whatever was typed in Contracts before. Refreshes itself every `Config.Admin.PanelRefreshSeconds` (10) while open | — |
 | **Contracts** | Search by contract id, citizen id or name, and filter by state, completion rule and date; `Config.Admin.PanelPageSize` (25) a page, newest first. The detail: terms, payouts, every escrow line with its state and what it owes and what arrived, the operatives with what each has at stake now (their stake lines not yet settled), open proposals, the lines `/ch-stuck` lists for it with what settles each, and its audit timeline. A contract id with escrow and no contract record (one never stored) opens as its lines alone, with what settles each, so every line the overview counts as left for you can be settled here | **Void** with a reason, as `/ch-void`; **settle** a listed stuck line `pay`, `pay <amount>`, `return` or `delivered`, as `/ch-settle`, with only the buttons the server accepts for that line (only **Pay** for one nothing of which was given). Both answer in the commands' exact words |
 | **Stuck escrow** | Every escrow line waiting for staff, as `/ch-stuck` lists it (the badge beside it counts the ones left for you to settle): what each holds, whom it is owed to, why it waits and whether its arrival is known, each naming its contract, which opens its view; and how many items wait in the review queue, with a button to it. Nothing is listed while the server is recovering from a restart, and after a recovery that failed it says so. Read again after a settle in a contract's view opened from it, when that view closes, and at each overview refresh while it is on screen | **Settle** each line `pay`, `pay <amount>`, `return`, `return <citizenid>` or `delivered`, as `/ch-settle`, with two clicks, each line offering only what the server accepts for it (only **Pay** for one nothing of which was given, **Return to** for one owed to a citizen id no character has); its answer stays beside it and the list is read again |
 | **Needs review** | The review queue's open items with what is known and what the store says now, and the latest resolved ones with how, by whom and when. One being resolved says what was decided and by whom; one the store has not taken yet is drawn with its form off until it has | **Refund**, **pay** or **dismiss** (with a note), as `/ch-review`: given once, however often it is asked. **Finish as decided** for one a resolution stopped part-way, and nothing else |
 | **Alerts** | Every line the server console printed whatever `Config.Debug` says (money at risk or left for staff, a stuck or parked escrow line, an item opened in the review queue, a write that failed or read back wrong, a job that keeps failing, the start refusing or recovering, the raise summaries) and every setting that needs attention, as an alert: open ones newest first, or the acknowledged ones apart, the newest 100 at a time. Each says what was said (a block of lines, such as `BOOT RECOVERY FAILED` and the lines under it, is one alert), whether it needs staff or is a setting, when it was first and last said and how many times (the same line again, its numbers aside, is counted on the open alert rather than listed twice), the contract it names (which opens its view), and who acknowledged it and when. Its text is scrubbed for staff without `crimson.identity` as every other view is, and a staff command in it is put as the section that does it. The badge beside it, and the overview's **Alerts** tile, count the open ones. Kept in the store your server runs (`data/records.json`, the `crimson_alerts` table, or memory), so they survive a restart: at most 500, the oldest acknowledged pruned first, and an unacknowledged one never within 30 days of the last time it was said (only a loop filling 5,000 would). Also where posting to Discord stands: off, no webhook set, or which webhook (never its address), the last post, and a post given up after three tries with how many alerts it carried. Read again at each overview refresh while it is on screen | **Acknowledge** one, or **Acknowledge all shown**, each with two clicks: a write, audited (`admin_alerts_acknowledged`, with how many and which), and rate-limited as every write is; it works while recovery holds other writes back. A line said again after its alert was acknowledged opens a new one. **Send a test alert** puts one in the next post to Discord (`admin_alert_test`, sent or not) |
-| **Console** | What this resource said in the server console since its last start, as the server keeps it (`shared/log.lua`): the settings that need attention found at start, everything the start said (and, past 120 lines, how many more), and the newest forty lines since and the newest forty printed whatever Debug says, newest first, each marked *Always* (printed whatever `Config.Debug` says), *Problem* (a setting that needs attention) or *Debug* (printed only with it on), with when it was last said and how many times (the same line again is counted on it). Says whether Debug output is on. Kept in memory, so a restart begins it again. Its lines are scrubbed for staff without `crimson.identity` exactly as the Alerts are, and a staff command in them is put as the section that does it. Nobody, `crimson.identity` or not, sees a webhook's address, the value of a secret convar (`crimson_hitman_webhook`, `crimson_hitman_alert_webhook`, `mysql_connection_string`), a password, or the values a database statement was sent: a web address keeps only its host, and a database error the server's words and the start of the statement. Read again at each overview refresh while it is on screen, and drawn again only when a line changed | Filter by kind (**All**, **Always**, **Problems**, **Debug**) and by text, as you type; **Refresh**; **Copy** puts the lines shown on the clipboard as plain text, in the order shown, with their kinds, times and counts. Nothing here writes |
+| **Console** (Developer) | What this resource said in the server console since its last start, as the server keeps it (`shared/log.lua`): the settings that need attention found at start, everything the start said (and, past 120 lines, how many more), and the newest forty lines since and the newest forty printed whatever Debug says, newest first, each marked *Always* (printed whatever `Config.Debug` says), *Problem* (a setting that needs attention) or *Debug* (printed only with it on), with when it was last said and how many times (the same line again is counted on it). Says whether Debug output is on. Kept in memory, so a restart begins it again. Its lines are scrubbed for staff without `crimson.identity` exactly as the Alerts are, and a staff command in them is put as the section that does it. Nobody, `crimson.identity` or not, sees a webhook's address, the value of a secret convar (`crimson_hitman_webhook`, `crimson_hitman_alert_webhook`, `mysql_connection_string`), a password, or the values a database statement was sent: a web address keeps only its host, and a database error the server's words and the start of the statement. Read again at each overview refresh while it is on screen, and drawn again only when a line changed | Filter by kind (**All**, **Always**, **Problems**, **Debug**) and by text, as you type; **Refresh**; **Copy** puts the lines shown on the clipboard as plain text, in the order shown, with their kinds, times and counts. Nothing here writes |
 | **Logs** | The audit log, newest first, a page at a time, filtered by kind, part of the action, contract id, citizen id (with `crimson.identity`) and time. Read from whichever store keeps it (the json day files, the `crimson_audit` table, or memory); a page follows on from the last even when old rows age out in between. A contract id or citizen id box is marked, and asks nothing, until it holds a whole one | — |
 | **Players** | By server id or citizen id (in any case: it is read as the server keeps it): their contracts (as `/ch-contracts`), their record (with `crimson.identity`), what they are owed and whether it is queued for them, how many notices wait for their next login, and their **Playtime**: the hours counted here, the floor, whether they are grandfathered (from before the count) and, where an export or QBox metadata answers for them instead, that the rule reads that. A citizen id nobody in the city has and nothing you may see names answers *not found* | **Whois** on a contract, with `crimson.identity`. **Set hours** and **Reset to 0** under Playtime, each with two clicks: a write (`crimson.admin` itself), not `crimson.identity`, audited (`admin_playtime_set`); a citizen id no character has is refused (see *New players and playtime*) |
-| **Features, limits & settings** | Every on/off switch in `config.lua`, grouped by section, with a line on what it does and what turning it off does to things already under way, and the two multi-choice features (`Config.Completion.Fulfilment`, `Config.Completion.PhotoStorage`). Then the limits: every number in `Config.Limits`, the anonymity fees and their account, the informant's price, the stake ceilings, the handover countdown, radius and health floor, buyout pricing, the targeting radii and page sizes, `Config.Ledger.PhotoRetentionDays`, the advisory job lists and every rate limit. Each with its value now, what `config.lua` says, and whether the value comes from `config.lua` or the panel. Every rate limit says what it gates (the background ones, death, headshots and the handover countdown, are refused without a word to the player). A value the start would refuse is refused in its words, once, with the key to change first; a warning the start gives about a value (the nearby list on, say) is said with the change. A row the store holds for a key this version does not list is shown read-only, with why. Under **Kill photos**, while they are off and the store still holds kill photos from before (records, whatever became of each photo): how many, how many have a file on this server, how many were on lb-phone's image host and how many are open on a phone right now | **Change** one, **reset** one, **reset all** (offered whenever the store holds a row, applied or not). **Remove the N kill photos kept from before**, with two clicks, the second naming the count: every record is deleted on your store (memory, `data/records.json` or `crimson_photos`); a photo kept on this server (`'server'` storage) has its file in `data/photos/` deleted; one on lb-phone's image host (`'host'` storage) is only forgotten, since the host gives a resource no way to delete it, so the picture stays there (delete it on the host if it must go); one open on a phone right now is left to that view and removed when it closes, however it closes (Delete, or time running out; *Keep in the app* answers that it is gone), never while it is shown. A write (`crimson.admin` itself, the write allowance), audited (`admin_photos_removed`, with how many and how many files and links), refused while kill photos are on, and safe to run again: it removes what is left, or nothing. A view still open across a restart is not remembered: it closes as usual, and the button offers the record again. The same value again changes nothing and tells nobody. Lowering a photo retention, or making a rate limit stricter, takes two clicks, the first saying what the second does; anything typed after the first arms it again. The rate limits the app cannot work without have a floor: `load` at least 6 held and a refill of one every 5 seconds, `progress` one a second, `death` 2 held |
+| **Rules, Features, Developer: Settings** | Every on/off switch in `config.lua` (under Features, or Developer for Debug), grouped by section, with a line on what it does and what turning it off does to things already under way, and the two multi-choice features (`Config.Completion.Fulfilment`, `Config.Completion.PhotoStorage`). Then the limits: every number in `Config.Limits`, the anonymity fees and their account, the informant's price, the stake ceilings, the handover countdown, radius and health floor, buyout pricing, the targeting radii and page sizes, `Config.Ledger.PhotoRetentionDays`, the advisory job lists and every rate limit. Each with its value now, what `config.lua` says, and whether the value comes from `config.lua` or the panel. Every rate limit says what it gates (the background ones, death, headshots and the handover countdown, are refused without a word to the player). A value the start would refuse is refused in its words, once, with the key to change first; a warning the start gives about a value (the nearby list on, say) is said with the change. A row the store holds for a key this version does not list is shown read-only, with why. Under **Kill photos**, while they are off and the store still holds kill photos from before (records, whatever became of each photo): how many, how many have a file on this server, how many were on lb-phone's image host and how many are open on a phone right now | **Change** one, **reset** one, **reset all** (offered whenever the store holds a row, applied or not). **Remove the N kill photos kept from before**, with two clicks, the second naming the count: every record is deleted on your store (memory, `data/records.json` or `crimson_photos`); a photo kept on this server (`'server'` storage) has its file in `data/photos/` deleted; one on lb-phone's image host (`'host'` storage) is only forgotten, since the host gives a resource no way to delete it, so the picture stays there (delete it on the host if it must go); one open on a phone right now is left to that view and removed when it closes, however it closes (Delete, or time running out; *Keep in the app* answers that it is gone), never while it is shown. A write (`crimson.admin` itself, the write allowance), audited (`admin_photos_removed`, with how many and how many files and links), refused while kill photos are on, and safe to run again: it removes what is left, or nothing. A view still open across a restart is not remembered: it closes as usual, and the button offers the record again. The same value again changes nothing and tells nobody. Lowering a photo retention, or making a rate limit stricter, takes two clicks, the first saying what the second does; anything typed after the first arms it again. The rate limits the app cannot work without have a floor: `load` at least 6 held and a refill of one every 5 seconds, `progress` one a second, `death` 2 held |
 | **Tools** | — | **Bring timers forward** (`/ch-refresh`, test servers), **Run the diagnosis** and read it (`/ch-diag`, with the settings that need attention and what the console said), **Flush the audit log** (its answer says when the store did not save, and which file it could not write) |
 
 **Every command is a button.** The server keeps the list (`Panel.COMMANDS`,
@@ -1947,7 +1997,7 @@ one.
 | `/ch-timeline` | A contract's view (a row in Contracts, or any contract id shown) | read | — | `admin_panel_contract` |
 | `/ch-contracts` | Players: **Look up** | read | — | `admin_contracts` |
 | `/ch-stuck` | **Stuck escrow** | read | — | `admin_stuck` |
-| `/ch-diag` | Tools: **Run the diagnosis** | read | — | — |
+| `/ch-diag` | Tools, or Developer: Diagnostics: **Run the diagnosis** | read | — | — |
 | `/ch-void` | A contract's view: **Void contract** | write | yes | `admin_void` |
 | `/ch-settle` | Stuck escrow, or a contract's view: **Pay**, **Pay amount**, **Return**, **Return to**, **Delivered** | write | yes | `admin_settle_line` |
 | `/ch-review` | Needs review: **Refund**, **Pay**, **Dismiss** | write | yes | `review_resolved` |
@@ -2177,7 +2227,7 @@ resource (`GetParentResourceName()`):
 
 | op | Needs | `data` sent | `data` answered |
 |---|---|---|---|
-| `access` | read | — | `{ canWrite, canIdentify, pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version }` (no command names: the page is buttons only) |
+| `access` | read | — | `{ canWrite, canIdentify, canDevelop, developerAce, developerByAce, developerHint?, permissions = [{ ace, name, held, unlocks, grant }], pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version }` (no command names: the page is buttons only; read-only metadata for the sections and the Permissions page) |
 | `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering; `leftForStaff` counts the lines something settles by hand, `total` every line listed)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, alerts = { open }, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
 | `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
 | `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid }` |
@@ -2189,8 +2239,8 @@ resource (`GetParentResourceName()`):
 | `logs` | read | `{ kind?, action?, contract?, actor?, from?, to?, limit?, cursor? }` | `{ rows = [row], next }`: pass `next` back as `cursor` for the page after; absent on the last |
 | `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }` (with `crimson.identity` only)`, owed = [line + queued], pending, notices = { count, titles } }`; `not_found` for a citizen id nobody in the city has and nothing shown names |
 | `whois` | identity | `{ id }` | `{ creator = { cid, name, anonymous }, target = { cid, name }, hitmen = [{ alias, cid, name, anonymous, state }] }` |
-| `settings` | read | — | `{ features = [setting], limits = [setting], readonly = [setting], overrides, keptPhotos? = { count, open, links, files, waiting } }` (`keptPhotos` only while kill photos are off and some are kept from before) |
-| `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, or a list of job names) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value`, `store_failed` or `busy` (another change is being saved), with why in `message` |
+| `settings` | read | — | each `setting` carries its `category` (`rules-timers`, `rules-rewards`, `rules-limits`, `rules-targeting`, `features`, `developer`), `money` (its Rewards & money group), and `shipped`/`hasShipped` (defaults.lua's value); developer rows only for staff with the developer ACE. `{ features = [setting], limits = [setting], readonly = [setting], overrides, keptPhotos? = { count, open, links, files, waiting } }` (`keptPhotos` only while kill photos are off and some are kept from before) |
+| `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, a word for a `text` key, a list of names, or `{ min, max }` for a `range` key; a key on `Settings.DENY` is refused `read_only`, and a developer-category key needs the developer ACE) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value`, `store_failed` or `busy` (another change is being saved), with why in `message` |
 | `resetSetting` | write | `{ key }` | `{ key, value, old, source }`; also `not_overridden` and `busy` |
 | `resetSettings` | write | — | `{ keys }` |
 | `refresh` | write | — | `{ lines }` |
@@ -2199,7 +2249,7 @@ resource (`GetParentResourceName()`):
 | `alerts` | read | `{ state = 'open'\|'acknowledged' }` | `{ state, rows = [{ id, level = 'always'\|'problem', text, contract, count, first_at, last_at, acknowledged_by, acknowledged_at }]` (newest first, at most `limit`; without `crimson.identity`, `text` scrubbed and `acknowledged_by` is `'a staff member'` rather than their citizen id)`, open, acknowledged, limit, discord = { on, webhook = 'alert'\|'staff'\|nil, waiting, posting, posted, lastOkAt, lastFail = { at, tries, status, alerts, test } } }` (never a webhook's address) |
 | `ackAlerts` | write | `{ ids = [id] }` (at most 100) | `{ done, already, missing }`; audited `admin_alerts_acknowledged` when it acknowledged any |
 | `testAlert` | write | — | `{ seconds }`; refused `no_webhook` or `discord_off`. Audited `admin_alert_test` either way |
-| `console` | read | — | `{ at, debug, count, problems = [text], boot = [{ text, kind = 'always'\|'debug' }], bootLeft, recent = [{ text, kind = 'always'\|'debug', at, times }]` (oldest first)`, bootKept, recentKept, alwaysKept }`: what `shared/log.lua` keeps (`Log.view`), every line without a webhook's address, a secret convar's value or a statement's values, and scrubbed without `crimson.identity` |
+| `console` | developer (`crimson.developer`, or `crimson.admin` itself; refused `developer_required` with the grant line) | — | `{ at, debug, count, problems = [text], boot = [{ text, kind = 'always'\|'debug' }], bootLeft, recent = [{ text, kind = 'always'\|'debug', at, times }]` (oldest first)`, bootKept, recentKept, alwaysKept }`: what `shared/log.lua` keeps (`Log.view`), every line without a webhook's address, a secret convar's value or a statement's values, and scrubbed without `crimson.identity` |
 | `removePhotos` | write | — | `{ removed, files, links, left, waiting }` (`left`: files that could not be deleted; `waiting`: open on a phone, removed when that view closes); refused `photos_on` while kill photos are on. Audited `admin_photos_removed`, with the count, every time |
 
 `line` (an escrow line) is `{ id, contract, slot, portion, source, amount?,

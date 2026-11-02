@@ -265,8 +265,34 @@
 
   /* ---------- state ---------------------------------------------------- */
 
-  var SECTIONS = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players',
-                  'settings', 'tools'];
+  /* Six sections by who uses them, each holding views as sub-tabs. Every
+     view the panel had is still one; the settings are split by category
+     (the catalogue's `category`, server/settings.lua). Developer is only for
+     staff the server says may open it (access.canDevelop); everybody else
+     has its Permissions page alone, under that name. */
+  var GROUPS = [
+    { id: 'live', views: ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck'],
+      first: 'overview' },
+    { id: 'actions', views: ['actions', 'tools'] },
+    { id: 'rules', views: ['timers', 'money', 'limits', 'targeting'] },
+    { id: 'features', views: ['features'] },
+    { id: 'logs', views: ['logs', 'alerts'] },
+    { id: 'developer', views: ['devsettings', 'console', 'diagnostics', 'permissions'], developer: true }
+  ];
+  /** The views only the Developer section's staff see. */
+  var DEV_VIEWS = { devsettings: true, console: true, diagnostics: true };
+  var SECTIONS = [];
+  GROUPS.forEach(function (g) { SECTIONS = SECTIONS.concat(g.views); });
+  /** Old names, so a link or a remembered view from before lands somewhere. */
+  var ALIASES = { settings: 'features' };
+
+  /** The settings view each category is shown in. */
+  var CATEGORY_VIEW = {
+    'rules-timers': 'timers', 'rules-rewards': 'money', 'rules-limits': 'limits',
+    'rules-targeting': 'targeting', features: 'features', developer: 'devsettings'
+  };
+  var SETTING_VIEWS = { timers: true, money: true, limits: true, targeting: true, features: true,
+                        devsettings: true };
 
   /** Ops that only read. A refusal of one as not_allowed means the staff
       member may no longer read at all (an ACE taken away while the panel was
@@ -300,7 +326,8 @@
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
     players: { data: null, whois: {}, subject: null, playtime: null, freeze: null, frozen: null },
-    settings: { data: null, tab: 'features', answers: {}, photos: null },
+    settings: { data: null, answers: {}, photos: null, drafts: {} },
+    remembered: {},         // [group] = the sub-tab last open in it
     tools: { refresh: null, diag: null, flush: null }
   };
 
@@ -628,12 +655,28 @@
         : h('span.badge', { title: 'Anonymous parties show as Anonymous, and citizen ids as roles' },
           icon('mask'), 'Identities hidden')));
     drawBanner();
+    var current = groupOf(S.section);
+    GROUPS.forEach(function (g) {
+      var top = byId('grp-' + g.id);
+      if (top) {
+        top.classList.toggle('is-on', g === current);
+        top.setAttribute('aria-current', g === current ? 'page' : 'false');
+        if (g.developer) {
+          var lbl = top.querySelector('.lbl');
+          if (lbl) lbl.textContent = canDevelop() ? 'Developer' : 'Permissions';
+        }
+      }
+    });
     SECTIONS.forEach(function (name) {
       var node = byId('nav-' + name);
       if (!node) return;
+      node.hidden = !(current && current.views.indexOf(name) !== -1 && viewAllowed(name));
       node.classList.toggle('is-on', name === S.section);
       node.setAttribute('aria-current', name === S.section ? 'page' : 'false');
     });
+    // One sub-tab is no strip at all.
+    var subnav = byId('subnav');
+    if (subnav) subnav.hidden = !current || current.views.filter(viewAllowed).length < 2;
     drawCounts();
   }
 
@@ -676,6 +719,10 @@
     setCount('count-stuck', o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0, 'escrow line(s) left for you to settle');
     setCount('count-settings', Number(o.overrides) || 0, 'setting(s) changed from the panel');
     setCount('count-alerts', o.alerts ? Number(o.alerts.open) || 0 : 0, 'open alerts, not acknowledged yet');
+    // On the sections, what waits in their sub-tabs.
+    setCount('count-live', (o.reviews ? Number(o.reviews.open) || 0 : 0)
+      + (o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0), 'waiting for staff in the review queue and stuck escrow');
+    setCount('count-logs', o.alerts ? Number(o.alerts.open) || 0 : 0, 'open alerts, not acknowledged yet');
   }
 
   function setRecovery(state) {
@@ -690,9 +737,60 @@
 
   var SHELL = {}, LOAD = {};
 
+  function canDevelop() { return S.access.canDevelop === true; }
+
+  /** The section a view is a sub-tab of. */
+  function groupOf(view) {
+    for (var i = 0; i < GROUPS.length; i++) if (GROUPS[i].views.indexOf(view) !== -1) return GROUPS[i];
+    return null;
+  }
+
+  /** Whether this staff member is shown a view at all. */
+  function viewAllowed(view) { return !DEV_VIEWS[view] || canDevelop(); }
+
+  /* Where the staff member was, kept in this browser only: the last view,
+     and the sub-tab last open in each section. Storage that throws (private
+     mode, a CEF profile without it) is no storage, never a fault. */
+  var STORE_KEY = 'crimson-hitman.admin.nav';
+
+  function remember() {
+    try {
+      window.localStorage.setItem(STORE_KEY, JSON.stringify({ view: S.section, sub: S.remembered }));
+    } catch (err) { /* not kept */ }
+  }
+
+  function recall() {
+    try {
+      var kept = JSON.parse(window.localStorage.getItem(STORE_KEY) || 'null');
+      if (!kept || typeof kept !== 'object') return;
+      if (kept.sub && typeof kept.sub === 'object') {
+        Object.keys(kept.sub).forEach(function (g) {
+          if (typeof kept.sub[g] === 'string' && SECTIONS.indexOf(kept.sub[g]) !== -1) S.remembered[g] = kept.sub[g];
+        });
+      }
+      if (typeof kept.view === 'string' && SECTIONS.indexOf(kept.view) !== -1) S.section = kept.view;
+    } catch (err) { /* nothing kept */ }
+  }
+
+  /** A section's own sub-tab: the one last open in it, else its first. */
+  function openGroup(id) {
+    var g = GROUPS.filter(function (x) { return x.id === id; })[0];
+    if (!g) return;
+    var views = g.views.filter(viewAllowed);
+    var want = S.remembered[g.id];
+    show(views.indexOf(want) !== -1 ? want : (views.indexOf(g.first) !== -1 ? g.first : views[0]));
+  }
+
   function show(section) {
+    if (ALIASES[section]) section = ALIASES[section];
     if (SECTIONS.indexOf(section) === -1) section = 'overview';
+    // Developer views for staff the server says may not open them: the
+    // Permissions page, which everybody may read.
+    if (!viewAllowed(section)) section = 'permissions';
     S.section = section;
+    var g = groupOf(section);
+    if (g) S.remembered[g.id] = section;
+    remember();
     closeDrawer();
     disarm();
     S.menu = null;
@@ -2247,21 +2345,48 @@
     return ask('frozen', {}, 'frozen').then(function (reply) {
       if (!reply || !reply.ok) return;
       S.players.frozen = reply.data || {};
-      if (S.section === 'players') setHtml(byId('pl-frozen'), frozenListCard());
+      if (S.section === 'players' || S.section === 'frozen') setHtml(byId('pl-frozen'), frozenListCard());
     });
   }
   LOAD.players = function () { loadFrozen(); };
 
-  /* ---- features, limits & settings ---- */
+  /* ---- settings: Rules, Features and Developer ----
 
-  function settingList(tab) {
+     One list from the server (Settings.view), every row with its category.
+     Each settings view shows one category, in groups, with a search box;
+     each row shows its value now, what config.lua says, and what
+     defaults.lua ships, with Reset to default where that differs. One row
+     renderer per kind: switch, choice, number, text, list, range, and the
+     rate limits' per and burst as one map row. */
+
+  /** Every row the server sent, whichever list it came in. */
+  function allSettings() {
     var d = S.settings.data || {};
-    return asList(d[tab]);
+    return asList(d.features).concat(asList(d.limits), asList(d.readonly));
+  }
+
+  /** A row's category: as the server says, or, from a server before
+      categories, from the list it came in. */
+  function categoryOf(entry, list) {
+    if (entry.category) return String(entry.category);
+    if (list === 'readonly' || entry.readonly) return 'developer';
+    if (list === 'features' && entry.kind === 'switch') return 'features';
+    return 'rules-limits';
+  }
+
+  function settingList(view) {
+    var d = S.settings.data || {};
+    var out = [];
+    ['features', 'limits', 'readonly'].forEach(function (list) {
+      asList(d[list]).forEach(function (entry) {
+        if (CATEGORY_VIEW[categoryOf(entry, list)] === view) out.push(entry);
+      });
+    });
+    return out;
   }
 
   function settingEntry(key) {
-    var all = settingList('features').concat(settingList('limits'), settingList('readonly'));
-    return all.filter(function (e) { return e.key === key; })[0];
+    return allSettings().filter(function (e) { return e.key === key; })[0];
   }
 
   function describe(entry, value) {
@@ -2270,9 +2395,28 @@
       var list = asList(value);
       return list.length ? list.join(', ') : '(none)';
     }
+    if (entry.kind === 'range') {
+      return value && typeof value === 'object' ? num(value.min) + ' to ' + num(value.max) : '(not set)';
+    }
     if (value === null || value === undefined) return '(not set)';
     if (typeof value === 'number') return num(value);
     return String(value);
+  }
+
+  /** Two values the same, as the panel shows them (lists, pairs). */
+  function sameValue(a, b) {
+    return JSON.stringify(normalised(a)) === JSON.stringify(normalised(b));
+  }
+  function normalised(v) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      var keys = Object.keys(v);
+      // A list arrives as an object keyed 1..n across the wire.
+      if (keys.length && keys.every(function (k) { return /^\d+$/.test(k); })) return asList(v);
+      var out = {};
+      keys.sort().forEach(function (k) { out[k] = normalised(v[k]); });
+      return out;
+    }
+    return v;
   }
 
   function loadSettings() {
@@ -2280,7 +2424,7 @@
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); return; }
       S.settings.data = reply.data || {};
-      if (S.section === 'settings') drawSettings();
+      if (SETTING_VIEWS[S.section]) drawSettings();
     });
   }
 
@@ -2288,11 +2432,30 @@
     setHtml(byId('st-head'), settingsHead());
     setHtml(byId('st-list'), settingsList());
     filterSettings();
+    // Where a help link pointed: that row, marked and brought into view.
+    var focus = S.settings.focus && byId('st-row-' + S.settings.focus);
+    if (focus) {
+      focus.classList.toggle('is-focus', true);
+      if (typeof focus.scrollIntoView === 'function') focus.scrollIntoView({ block: 'center' });
+      S.settings.focus = null;
+    }
+  }
+
+  /** What a row's box holds now: what was typed, else the value. */
+  function typedOr(bind, value) {
+    var typed = S.forms[bind];
+    return typed === undefined ? value : typed;
+  }
+
+  /** A list being edited: the names added and removed since it was read. */
+  function listDraft(entry) {
+    var draft = S.settings.drafts[entry.key];
+    return draft ? draft.slice() : asList(entry.value).map(String);
   }
 
   function settingControl(entry) {
     var key = entry.key;
-    if (entry.readonly) return h('span.st-value', describe(entry, entry.value));
+    if (entry.readonly) return h('span.st-value', entry.secret ? String(entry.value) : describe(entry, entry.value));
     var open = writesOpen();
     var busy = !!S.busy['set:' + key];
     if (entry.kind === 'switch') {
@@ -2307,13 +2470,42 @@
         return { value: c, label: String(c), disabled: !open, title: whyNoWrite() };
       }), entry.value, { 'data-key': key });
     }
+    if (entry.kind === 'list') {
+      var names = listDraft(entry);
+      var changed = !sameValue(names, asList(entry.value).map(String));
+      return h('div.st-list',
+        h('ul.st-chips', names.length ? names.map(function (name) {
+          return h('li.st-chip', h('span', name),
+            h('button.st-chip-x', { type: 'button', 'data-act': 'st-list-del', 'data-key': key, 'data-value': name,
+              disabled: !open, title: 'Remove ' + name, 'aria-label': 'Remove ' + name }, icon('xmark'),
+              h('span.lbl', 'Remove')));
+        }) : h('li.st-none', '(none)')),
+        h('div.st-edit',
+          field('stl.' + key, { class: 'is-grow', placeholder: 'Add a name', 'data-enter': 'st-list-add',
+            'data-key': key, disabled: !open, 'aria-label': 'Add to ' + entry.label }),
+          btn('.is-small', 'st-list-add', { 'data-key': key, disabled: !open || null }, 'Add', 'plus'),
+          writeBtn('.is-small' + (changed ? '.is-primary' : ''), 'st-list-save',
+            { 'data-key': key, id: 'st-save-' + key }, 'Save list', 'Click again to save', 'check')));
+    }
+    if (entry.kind === 'range') {
+      var pair = entry.value && typeof entry.value === 'object' ? entry.value : {};
+      return h('div.st-edit',
+        field('st.' + key + '.min', { value: String(typedOr('st.' + key + '.min', pair.min)), class: 'is-short',
+          inputmode: 'decimal', disabled: !open, 'aria-label': entry.label + ': from' }),
+        h('span.range-sep', 'to'),
+        field('st.' + key + '.max', { value: String(typedOr('st.' + key + '.max', pair.max)), class: 'is-short',
+          inputmode: 'decimal', disabled: !open, 'aria-label': entry.label + ': to' }),
+        writeBtn('.is-small', 'st-range-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
+          'Click again to save', 'check'),
+        h('span.st-range', num(entry.min) + ' to ' + num(entry.max) + (entry.integer ? ', whole' : '')));
+    }
     var bind = 'st.' + key;
-    var shownValue = entry.kind === 'list' ? asList(entry.value).join(', ') : String(entry.value == null ? '' : entry.value);
+    var shownValue = String(entry.value == null ? '' : entry.value);
     var range = entry.kind === 'number'
       ? (entry.min != null ? entry.min : '…') + ' to ' + (entry.max != null ? entry.max : '…') + (entry.integer ? ', whole' : '')
-      : 'job names, separated by commas';
+      : 'letters, digits, - and _';
     return h('div.st-edit',
-      field(bind, { value: shownValue, class: entry.kind === 'list' ? 'is-grow' : 'is-short',
+      field(bind, { value: shownValue, class: entry.kind === 'text' ? 'is-grow' : 'is-short',
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
         disabled: !open, 'aria-label': entry.label }),
       writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
@@ -2347,14 +2539,17 @@
     var key = entry.key;
     var answer = S.settings.answers[key];
     var overridden = entry.source === 'panel';
+    var hasShipped = entry.hasShipped === true || (entry.hasShipped === undefined && entry.shipped !== undefined);
+    var offDefault = !entry.readonly && hasShipped && !sameValue(entry.value, entry.shipped);
     return frag(
       h('div.st-main',
         h('p.st-title', h('b', String(entry.label || key)),
           overridden ? h('span.chip.is-panel', 'changed from the panel') : null,
-          entry.live === false ? h('span.chip.is-warn', 'applies after restart') : null,
+          entry.live === false ? h('span.chip.is-warn.is-restart', 'applies after restart') : null,
           entry.ignored ? h('span.chip.is-error', 'not applied') : null,
-          entry.inactive ? h('span.chip.is-warn', 'does not apply now') : null),
-        h('code.st-key', 'Config.' + key),
+          entry.inactive ? h('span.chip.is-warn', 'does not apply now') : null,
+          entry.denied ? h('span.chip', 'edit in config.lua') : null),
+        h('code.st-key', entry.secret ? 'server.cfg' : 'Config.' + key),
         entry.about ? h('p.st-about', String(entry.about)) : null,
         // A key whose switch is off (the catalogue's `needs`): said beside
         // it, so a staff member is not left changing something that does
@@ -2366,9 +2561,11 @@
         entry.stricter && !entry.readonly
           ? h('p.st-about.is-warn', 'Making it stricter refuses players at once, so it takes two clicks.') : null,
         entry.inflight ? h('p.st-inflight', h('b', 'Under way: '), String(entry.inflight)) : null,
-        entry.readonly ? null : h('p.st-source', 'config.lua: ' + describe(entry, entry.default),
-          overridden ? ' · in force from the panel' + (entry.by ? ', set by ' + entry.by : '')
-            + (entry.at ? ' ' + ago(entry.at) : '') : ' · in force from config.lua'),
+        entry.readonly ? null : h('p.st-source', 'Now: ' + describe(entry, entry.value)
+          + ' · config.lua: ' + describe(entry, entry.default)
+          + (hasShipped ? ' · default: ' + describe(entry, entry.shipped) : '')
+          + (overridden ? ' · in force from the panel' + (entry.by ? ', set by ' + entry.by : '')
+            + (entry.at ? ' ' + ago(entry.at) : '') : ' · in force from config.lua')),
         entry.ignored ? h('p.st-about.is-error', 'The store holds a value that was not applied at start: '
           + String(entry.ignored) + '. config.lua\'s is in force; reset it to clear this.') : null,
         entry.unknown ? h('p.st-about.is-error', 'A change to it raised in the store, and so did reading it '
@@ -2382,7 +2579,9 @@
       h('div.st-control', settingControl(entry),
         entry.ignored || entry.unknown || (overridden && !entry.readonly)
           ? writeBtn('.is-small.is-ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
-            'Click again to reset', 'arrow-rotate-left') : null));
+            'Click again to reset', 'arrow-rotate-left') : null,
+        offDefault ? writeBtn('.is-small.is-ghost', 'st-default', { 'data-key': key }, 'Reset to default',
+          'Click again: back to ' + describe(entry, entry.shipped), 'rotate-left') : null));
   }
 
   /** Under Kill photos, while they are off and some are kept from before
@@ -2419,7 +2618,9 @@
   function settingRow(entry) {
     return h('div.st-row' + (entry.source === 'panel' ? '.is-panel' : '') + (entry.ignored ? '.is-ignored' : ''),
       { id: 'st-row-' + entry.key, 'data-key': entry.key,
-        'data-find': (String(entry.key) + ' ' + String(entry.label || '') + ' ' + String(entry.group || '')).toLowerCase() },
+        'data-find': [entry.key, entry.label, entry.about, entry.group, entry.money].map(function (v) {
+          return v == null ? '' : String(v);
+        }).join(' ').toLowerCase() },
       settingInner(entry));
   }
 
@@ -2427,36 +2628,69 @@
     var entry = settingEntry(key);
     var row = byId('st-row-' + key);
     if (entry && row) setHtml(row, settingInner(entry));
+    var pair = /^Cooldowns\.([\w]+)\.(per|burst)$/.exec(key);
+    if (pair) {
+      var map = byId('st-map-' + pair[1]);
+      if (map) setHtml(map, mapInner(pair[1]));
+    }
   }
 
-  var SETTING_TABS = [
-    { value: 'features', label: 'Features' },
-    { value: 'limits', label: 'Limits & settings' },
-    { value: 'readonly', label: 'Read only' }
-  ];
+  /** What each settings view says at its head. */
+  var VIEW_INTRO = {
+    timers: 'How long things last: deadlines, cooldowns, waits and the restart pause. The deadline runs only '
+      + 'while the placer, the target and one operative are all in the city.',
+    money: 'Every reward and money setting in one place: what a reward may hold, payouts, buyouts, the '
+      + 'informant prices, the anonymity fees and escrow. Lowering a cap never cancels anything: it only '
+      + 'refuses new ones over it.',
+    limits: 'How many contracts a player may place, take or carry, how one is completed and the other '
+      + 'limits. Each value is checked the way the server checks config.lua at start.',
+    targeting: 'Who may open the app, who can be targeted, and the whitelisted-job rules.',
+    features: 'The on and off switches. Every switch takes effect at once and is kept across restarts. What is '
+      + 'already under way finishes under the rules it started with; only new actions are refused, and players '
+      + 'are told the feature is turned off by the server.',
+    devsettings: 'Debug, storage, rate limits, timings and the values only config.lua changes. Rate limits are '
+      + 'not caps: a stricter one refuses players at once, so it takes two clicks and says what it refuses.'
+  };
 
-  var TAB_INTRO = {
-    features: 'Every switch here takes effect at once and is kept across restarts. What is already under way '
-      + 'finishes under the rules it started with; only new actions are refused, and players are told the '
-      + 'feature is turned off by the server.',
-    limits: 'Each value is checked the way the server checks config.lua at start. Lowering a cap below what is '
-      + 'in use never cancels anything: it only refuses new ones over it. Rate limits are not caps: a '
-      + 'stricter one refuses players at once, so it takes two clicks and says what it refuses, and the '
-      + 'ones the app cannot work without have a floor.',
-    readonly: 'Shown so you can see them, and changed only in config.lua: from here, a slip could lock staff '
-      + 'out, or would need a migration.'
+  /** Rewards & money, in these groups (the catalogue's `money`). */
+  var MONEY_ORDER = ['Rewards', 'Payouts', 'Buyouts', 'Informant prices', 'Anonymity fees', 'Escrow'];
+  /** Features, these groups first, each with what it controls. */
+  var FEATURE_ORDER = ['Anonymity', 'Anonymity (whitelisted-job targets)', 'Informant', 'Informant tip',
+    'Informants (whitelisted-job targets)', 'Law enforcement advisory'];
+  var GROUP_INTRO = {
+    'Anonymity': 'Whether a contract may be placed or accepted anonymously, and whether a target sees an '
+      + 'operative\'s name.',
+    'Anonymity (whitelisted-job targets)': 'The same, in place of the above, where the target is on a whitelisted job.',
+    'Informant': 'The paid look-ups: the target\'s (who is after me) and the placer\'s (who took it), and their '
+      + 'master switch.',
+    'Informant tip': 'The hitman\'s paid tip on the target\'s rough area, and whether the target is told.',
+    'Informants (whitelisted-job targets)': 'Whether each informant feature is offered on a whitelisted-job target.',
+    'Law enforcement advisory': 'What officers are told when one of them, or another whitelisted-job member, is '
+      + 'targeted, and when.',
+    'Access': 'Who may open the app: barred jobs off duty, and the whitelisted-job view.',
+    'The app': 'Where the app appears on the phone.',
+    'Rewards': 'What a reward may be paid in.',
+    'Completion': 'How a kill is checked and kept.',
+    'Handovers': 'What a live handover asks of the target.',
+    'Stakes': 'The stake a hitman is shown before accepting.',
+    'Buyouts': 'Whether a target may buy a contract out.',
+    'Targeting': 'How a placer finds a target, and headshots on the board.',
+    'Messages and calls': 'The anonymous messages and calls between the parties.',
+    'Proposals': 'Changes placer and hitman may agree to a contract.',
+    'Notifications': 'Phone notices players get.',
+    'The clock': 'When a contract\'s deadline stops.',
+    'Anti-collusion': 'One account as two parties to a contract.',
+    'Progression': 'Criminal trust for completed contracts.',
+    'Audit and debug': 'What the log keeps, and alerts to Discord.'
   };
 
   function settingsHead() {
     var d = S.settings.data;
     var overrides = d ? Number(d.overrides) || 0 : 0;
     return frag(
-      segmented('st-tab', SETTING_TABS.map(function (t) {
-        return { value: t.value, label: t.label + (d ? ' (' + settingList(t.value).length + ')' : '') };
-      }), S.settings.tab),
       h('label.search', icon('magnifying-glass'),
-        field('st.q', { id: 'st-q', placeholder: 'Find a setting', 'data-live': 'st-filter',
-          'aria-label': 'Find a setting' })),
+        field('st.q', { id: 'st-q', placeholder: 'Search by name, key, description or group', 'data-live': 'st-filter',
+          'aria-label': 'Search the settings' })),
       h('span.sub', num(overrides) + ' changed from the panel'
         + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + ' kept and not applied' : '')),
       // Whenever the store holds a row, applied or not: one not applied (a
@@ -2465,29 +2699,94 @@
         'Reset all to config.lua', 'Click again to reset all', 'arrow-rotate-left') : null);
   }
 
+  /** The rate limits' two rows per bucket, as one row with both. */
+  function mapInner(bucket) {
+    var per = settingEntry('Cooldowns.' + bucket + '.per');
+    var burst = settingEntry('Cooldowns.' + bucket + '.burst');
+    if (!per || !burst) return frag();
+    var open = writesOpen();
+    var answer = S.settings.answers['Cooldowns.' + bucket];
+    return frag(
+      h('div.st-main',
+        h('p.st-title', h('b', bucket),
+          per.source === 'panel' || burst.source === 'panel' ? h('span.chip.is-panel', 'changed from the panel') : null),
+        h('code.st-key', 'Config.Cooldowns.' + bucket + ' = { per, burst }'),
+        per.about ? h('p.st-about', String(per.about).replace(/ A full allowance refills.*$/, '')) : null,
+        h('p.st-about.is-warn', 'Making it stricter refuses players at once, so saving takes two clicks.'),
+        h('p.st-source', 'Now: refills over ' + num(per.value) + ' s, ' + num(burst.value) + ' held · config.lua: '
+          + num(per.default) + ' s, ' + num(burst.default)),
+        answerBox(answer)),
+      h('div.st-control', h('div.st-edit',
+        h('label.st-pair', h('span', 'per (s)'),
+          field('st.Cooldowns.' + bucket + '.per', { value: String(typedOr('st.Cooldowns.' + bucket + '.per', per.value)),
+            class: 'is-short', inputmode: 'decimal', disabled: !open, 'aria-label': bucket + ': refill window' })),
+        h('label.st-pair', h('span', 'burst'),
+          field('st.Cooldowns.' + bucket + '.burst', { value: String(typedOr('st.Cooldowns.' + bucket + '.burst', burst.value)),
+            class: 'is-short', inputmode: 'numeric', disabled: !open, 'aria-label': bucket + ': requests held' })),
+        writeBtn('.is-small', 'st-map-save', { 'data-bucket': bucket, id: 'st-save-Cooldowns.' + bucket }, 'Save',
+          'Click again to save', 'check'))));
+  }
+
+  /** The buckets whose two rows are both editable here. */
+  function mapBuckets(list) {
+    var seen = {}, out = [];
+    list.forEach(function (e) {
+      var m = /^Cooldowns\.([\w]+)\.(per|burst)$/.exec(e.key);
+      if (m && !e.readonly && !seen[m[1]]) { seen[m[1]] = true; out.push(m[1]); }
+    });
+    return out.filter(function (b) {
+      var per = settingEntry('Cooldowns.' + b + '.per'), burst = settingEntry('Cooldowns.' + b + '.burst');
+      return per && burst && !per.readonly && !burst.readonly;
+    });
+  }
+
   function settingsList() {
     var d = S.settings.data;
     if (!d) return loading('Reading the settings…');
-    var list = settingList(S.settings.tab);
-    if (!list.length) return empty('Nothing here.');
+    var view = S.section;
+    var list = settingList(view);
+    var buckets = view === 'devsettings' ? mapBuckets(list) : [];
+    var inMap = {};
+    buckets.forEach(function (b) { inMap['Cooldowns.' + b + '.per'] = inMap['Cooldowns.' + b + '.burst'] = true; });
     var groups = [], byGroup = {};
     list.forEach(function (entry) {
-      var g = String(entry.group || 'Other');
+      if (inMap[entry.key]) return;
+      var g = String((view === 'money' && entry.money) || entry.group || 'Other');
       if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
       byGroup[g].push(entry);
     });
+    var order = view === 'money' ? MONEY_ORDER : view === 'features' ? FEATURE_ORDER : [];
+    groups.sort(function (a, b) {
+      var x = order.indexOf(a), y = order.indexOf(b);
+      if (x === -1 && y === -1) return 0;
+      if (x === -1) return 1;
+      if (y === -1) return -1;
+      return x - y;
+    });
     // In memory mode nothing is kept across a restart: the settings no more
     // than the contracts.
-    var intro = S.settings.tab === 'features' && S.overview && S.overview.storage === 'memory'
+    var memory = S.overview && S.overview.storage === 'memory';
+    var intro = memory && view === 'features'
       ? 'Every switch here takes effect at once, and lasts until the resource stops: this server runs in '
         + 'memory mode, which keeps nothing across a restart. What is already under way finishes under the '
         + 'rules it started with; only new actions are refused, and players are told the feature is turned '
         + 'off by the server.'
-      : TAB_INTRO[S.settings.tab];
-    return frag(h('p.hint', intro), groups.map(function (g) {
+      : VIEW_INTRO[view] + (memory ? ' This server runs in memory mode, which keeps nothing across a restart: '
+        + 'a change lasts until the resource stops.' : '');
+    var note = view === 'devsettings' && S.access.developerHint ? h('p.hint.is-note', String(S.access.developerHint)) : null;
+    if (!groups.length && !buckets.length) return frag(h('p.hint', intro), note, empty('Nothing here.'));
+    return frag(h('p.hint', intro), note, groups.map(function (g) {
       return h('section.st-group', { 'data-group': g.toLowerCase() }, h('h3.st-group-title', g),
+        view === 'features' && GROUP_INTRO[g] ? h('p.st-group-about', GROUP_INTRO[g]) : null,
         byGroup[g].map(settingRow));
-    }), h('p.empty', { id: 'st-none', hidden: true }, 'No setting matches.'));
+    }), buckets.length ? h('section.st-group', { 'data-group': 'rate limits' }, h('h3.st-group-title', 'Rate limits'),
+      h('p.st-group-about', 'Per player: a full allowance of burst requests refills over per seconds.'),
+      buckets.map(function (b) {
+        var per = settingEntry('Cooldowns.' + b + '.per');
+        return h('div.st-row.st-map', { id: 'st-map-' + b, 'data-key': 'Cooldowns.' + b,
+          'data-find': ('cooldowns.' + b + ' ' + b + ' rate limits ' + String(per.about || '')).toLowerCase() },
+          mapInner(b));
+      })) : null, h('p.empty', { id: 'st-none', hidden: true }, 'No setting matches.'));
   }
 
   /** Hide what the search box does not match: rows, then groups left empty. */
@@ -2496,20 +2795,13 @@
     var list = byId('st-list');
     if (!list) return;
     var shown = 0;
-    settingList(S.settings.tab).forEach(function (entry) {
-      var row = byId('st-row-' + entry.key);
-      if (!row) return;
-      var hit = !q || row.getAttribute('data-find').indexOf(q) !== -1;
+    var rows = list.querySelectorAll('.st-row');
+    rows.forEach(function (row) {
+      var hit = !q || String(row.getAttribute('data-find') || '').indexOf(q) !== -1;
       row.hidden = !hit;
       if (hit) shown++;
-      var group = row.parentNode;
-      if (group) group.hidden = false;
     });
-    // A group with nothing showing goes too.
-    settingList(S.settings.tab).forEach(function (entry) {
-      var row = byId('st-row-' + entry.key);
-      var group = row && row.parentNode;
-      if (!group) return;
+    list.querySelectorAll('.st-group').forEach(function (group) {
       var any = false;
       for (var i = 0; i < group.children.length; i++) {
         var child = group.children[i];
@@ -2533,6 +2825,13 @@
       }
       return { value: n };
     }
+    if (entry.kind === 'text') {
+      var word = trim(text);
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(word)) {
+        return { error: 'Not changed: ' + entry.key + ' is letters, digits, - and _ only.' };
+      }
+      return { value: word };
+    }
     if (entry.kind === 'list') {
       var names = trim(text).split(/[\s,]+/).filter(function (s) { return s.length > 0; });
       for (var i = 0; i < names.length; i++) {
@@ -2553,6 +2852,9 @@
       toast(words(reply), reply.ok ? 'ok' : 'error');
       if (reply.ok) {
         delete S.forms['st.' + key];
+        delete S.forms['st.' + key + '.min'];
+        delete S.forms['st.' + key + '.max'];
+        delete S.settings.drafts[key];
         // Read again, so who changed it and when are the server's.
         loadSettings();
       } else {
@@ -2561,12 +2863,15 @@
     });
   }
 
-  SHELL.settings = function () {
+  function settingsShell() {
     return h('section.view',
       h('div.toolbar', { id: 'st-head' }, settingsHead()),
       h('div.stack', { id: 'st-list' }, settingsList()));
-  };
-  LOAD.settings = function () { loadSettings(); };
+  }
+  Object.keys(SETTING_VIEWS).forEach(function (view) {
+    SHELL[view] = settingsShell;
+    LOAD[view] = function () { loadSettings(); };
+  });
 
   /* ---- tools ---- */
 
@@ -2605,7 +2910,212 @@
   SHELL.tools = function () { return h('section.view', h('div.stack', { id: 'tl' }, toolsBody())); };
   LOAD.tools = function () {};
 
-  function drawTools() { if (S.section === 'tools') setHtml(byId('tl'), toolsBody()); }
+  function drawTools() {
+    if (S.section === 'tools') setHtml(byId('tl'), toolsBody());
+    if (S.section === 'diagnostics') setHtml(byId('dg'), diagnosticsBody());
+  }
+
+  /* ---- frozen players: the list from Players, as its own sub-tab ---- */
+
+  SHELL.frozen = function () {
+    return h('section.view',
+      h('p.hint', 'Every player staff have frozen. Freeze somebody from Players, after looking them up.'),
+      h('div.stack', { id: 'pl-frozen' }, frozenListCard() || loading('Reading who is frozen…')));
+  };
+  LOAD.frozen = function () { loadFrozen(); };
+
+  /* ---- staff actions: every write the panel has, in one place ----
+
+     Each card opens the flow that already does it, in the view it lives
+     in; nothing here writes on its own. */
+
+  var STAFF_ACTIONS = [
+    { title: 'Freeze or unfreeze a player', icon: 'snowflake', view: 'players', go: 'Open Players',
+      text: 'Look the player up, then Freeze puts every live contract they are party to on hold: its clocks stop '
+        + 'and nothing on it moves. Unfreeze gives the time back. Every frozen player is listed under Frozen '
+        + 'players, each with its own Unfreeze.', also: { view: 'frozen', go: 'Frozen players' } },
+    { title: 'Void a contract', icon: 'ban', view: 'contracts', go: 'Open Contracts',
+      text: 'Open the contract from Contracts, then Void contract closes it and refunds what it holds, with a '
+        + 'reason kept in the log.' },
+    { title: 'Refund or pay', icon: 'scale-balanced', view: 'reviews', go: 'Open Needs review',
+      text: 'Needs review holds the contracts a player asked staff to look at: Refund, Pay or Dismiss each. '
+        + 'Stuck escrow holds the money left for staff: Pay, Pay amount, Return or Delivered.',
+      also: { view: 'stuck', go: 'Stuck escrow' } },
+    { title: 'Deadlines', icon: 'clock', view: 'tools', go: 'Open Tools',
+      text: 'A contract\'s deadline is extended by its client, from the app; the panel has no button that sets one. '
+        + 'Freezing a player stops its clock, and voiding ends it. On a test server, Bring timers forward under '
+        + 'Tools moves every wait and cooldown forward, and only ever moves a deadline later.' },
+    { title: 'Tools', icon: 'screwdriver-wrench', view: 'tools', go: 'Open Tools',
+      text: 'Bring timers forward (test servers only), Flush the audit log, and Run the diagnosis for why the app '
+        + 'is not showing something.' },
+    { title: 'Settings', icon: 'sliders', view: 'timers', go: 'Open Rules',
+      text: 'Every setting is changed in Rules or Features, each Save, reset or list edit taking the same '
+        + 'confirms as before.', also: { view: 'features', go: 'Features' } }
+  ];
+
+  SHELL.actions = function () {
+    return h('section.view',
+      h('p.hint', canWrite() ? 'Everything here changes something, and takes two clicks where it moves money or '
+        + 'cannot be undone. Each opens the place it is done.' : whyNoWrite()),
+      h('div.cards-grid', STAFF_ACTIONS.map(function (a) {
+        return card(frag(icon(a.icon), ' ', a.title), frag(
+          h('p.about', a.text),
+          h('div.btn-row', btn('.is-small', 'section', { 'data-section': a.view }, a.go, 'arrow-right'),
+            a.also ? btn('.is-small.is-ghost', 'section', { 'data-section': a.also.view }, a.also.go, 'arrow-right')
+              : null)));
+      })));
+  };
+  LOAD.actions = function () {};
+
+  /* ---- diagnostics: the slow jobs, and the diagnosis ---- */
+
+  function diagnosticsBody() {
+    var o = S.overview || {};
+    var slowest = asList(o.slowest);
+    var t = S.tools;
+    return frag(
+      S.access.developerHint ? h('p.hint.is-note', String(S.access.developerHint)) : null,
+      card('Slow-job timings', slowest.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Job'), h('th.num', 'Slowest'), h('th.num', 'Average'), h('th.num', 'Last'),
+          h('th.num', 'Runs'))),
+        h('tbody', slowest.map(function (job) {
+          return h('tr', h('td', String(job.name)), h('td.num', ms(job.max)), h('td.num', ms(job.avg)),
+            h('td.num', ms(job.last)), h('td.num', num(job.runs)));
+        })))) : empty('No timings yet: the overview reads them.'), '',
+        o.slowMs != null ? h('span.sub', 'warns above ' + num(o.slowMs) + ' ms') : null),
+      card('Diagnosis', frag(
+        h('p.about', 'Why the app is not showing something, the server-wide checks, the settings that need '
+          + 'attention, and what the console said. Name a player id to run the app\'s own reads as them.'),
+        h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
+          'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
+          btn('.is-primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
+        t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
+        t.diag ? linesBox(t.diag.lines, t.diag.later) : null)));
+  }
+  SHELL.diagnostics = function () { return h('section.view', h('div.stack', { id: 'dg' }, diagnosticsBody())); };
+  LOAD.diagnostics = function () { loadOverview(false).then(drawTools); };
+
+  /* ---- permissions: every ACE this resource checks, read-only ---- */
+
+  function permissionsBody() {
+    var rows = asList(S.access.permissions);
+    if (!rows.length) return empty('The server did not say which ACEs it checks.');
+    return frag(
+      h('p.hint', 'Every ACE this resource checks, what it opens, and whether you hold it. Nothing here changes '
+        + 'an ACE: grant one in the server console or server.cfg.'),
+      canDevelop() || !S.access.developerAce ? null : h('p.hint.is-note', 'The Developer section needs '
+        + String(S.access.developerAce) + ', or the staff ACE itself.'),
+      h('div.stack', rows.map(function (p) {
+        var held = p.held === true;
+        return h('section.card.perm-row', { 'data-ace': String(p.ace) },
+          h('header.card-head', h('h3', String(p.name || p.ace)),
+            h('span.chip' + (held ? '.is-ok' : ''), { class: held ? 'perm-held' : 'perm-missing' },
+              held ? 'You hold it' : 'You do not hold it')),
+          h('code.st-key', String(p.ace)),
+          h('p.about', String(p.unlocks || '')),
+          held ? null : h('p.perm-grant', h('b', 'To grant it: '), String(p.grant || '')));
+      })));
+  }
+  SHELL.permissions = function () { return h('section.view', h('div.stack', { id: 'pm' }, permissionsBody())); };
+  LOAD.permissions = function () {};
+
+  /* ---- how it works ----
+
+     Plain words on what the resource does, written from the code and the
+     README; each card links to the settings that control it. Edit the text
+     here: it is the one place it is kept. */
+
+  var HELP = [
+    { title: 'A contract, start to finish', icon: 'file-contract',
+      text: 'A player places a contract on a target from the app, naming a reward; the reward is taken from them '
+        + 'at once and held in escrow, so nothing is promised that is not there. A hitman accepts it from the '
+        + 'board. As shipped a contract is completed only by a live handover: the hitman brings the target, '
+        + 'alive, to the person who placed it, and the three stay close together for the countdown. Under '
+        + '\'either\' a verified kill completes it too. The escrow then pays the hitman, as many times as the '
+        + 'contract has payout slots.',
+      links: [{ key: 'Completion.Fulfilment', view: 'limits', label: 'How contracts are completed' },
+        { key: 'Kidnap.CountdownSeconds', view: 'timers', label: 'Handover countdown' },
+        { key: 'Limits.MaxPayoutSlots', view: 'money', label: 'Payout slots' },
+        { key: 'Limits.MinContractReward', view: 'money', label: 'Least reward' }] },
+    { title: 'The clock and the time bands', icon: 'clock',
+      text: 'A contract runs for its deadline, three hours as shipped, but the clock counts down only while the '
+        + 'placer, the target and at least one operative holding it are all in the city. Players never see the '
+        + 'exact time: each card shows a rough band, More than 2 hours, 1 to 2 hours, Under 1 hour or Under '
+        + '15 minutes left. Every contract also pauses for the half hour before a txAdmin restart, and while '
+        + 'the target is in prison. A hard ceiling ends any contract after two days, pauses included.',
+      links: [{ key: 'Limits.DefaultDeadlineSeconds', view: 'timers', label: 'Deadline' },
+        { key: 'Limits.ContractLifetimeSeconds', view: 'timers', label: 'Hard ceiling' },
+        { key: 'Restart.PauseBeforeSeconds', view: 'timers', label: 'Restart pause' },
+        { key: 'Limits.PauseWhileTargetJailed', view: 'features', label: 'Pause while jailed' }] },
+    { title: 'Anonymity', icon: 'mask',
+      text: 'A contract can be placed or accepted anonymously only if the server allows it, and as shipped it '
+        + 'does not. When it is allowed, the placer or operative shows as Anonymous everywhere a player looks, '
+        + 'and only staff with the identity ACE see who it is. A fee can be charged for it. Contracts on a '
+        + 'whitelisted-job target (police, EMS and the like) follow their own three switches instead.',
+      links: [{ key: 'Anonymity.AllowAnonymousPlacer', view: 'features', label: 'Anonymous placing' },
+        { key: 'Anonymity.AllowAnonymousHitman', view: 'features', label: 'Anonymous accepting' },
+        { key: 'Anonymity.WhitelistedTargets.AllowAnonymousPlacer', view: 'features',
+          label: 'On whitelisted-job targets' },
+        { key: 'Anonymity.CreatorFee', view: 'money', label: 'Anonymity fees' }] },
+    { title: 'The informants', icon: 'user-secret',
+      text: 'Three paid look-ups, each off as shipped. The target\'s informant lets a target pay to find out who '
+        + 'is after them, with a chance of an answer. The placer\'s informant lets the placer find out which '
+        + 'operative took the contract. The informant tip lets a hitman buy the target\'s rough area on the map. '
+        + 'One master switch turns all three off at once, and each has its own switch for whitelisted-job targets.',
+      links: [{ key: 'InformantsEnabled', view: 'features', label: 'Master switch' },
+        { key: 'Informant.Enabled', view: 'features', label: 'Target\'s informant' },
+        { key: 'PlacerInformant.Enabled', view: 'features', label: 'Placer\'s informant' },
+        { key: 'LocationTip.Enabled', view: 'features', label: 'Informant tip' },
+        { key: 'Informant.Cost', view: 'money', label: 'Prices' }] },
+    { title: 'Buyouts', icon: 'hand-holding-dollar',
+      text: 'A target can pay to buy out a contract on them, from the app or with the buyout command. The price '
+        + 'is the reward times a multiplier, between a least and a most, and never above a cap. A contract a '
+        + 'hitman holds gives them a head start before the buyout closes it. A dead or downed target cannot '
+        + 'buy out.',
+      links: [{ key: 'Bailout.Enabled', view: 'features', label: 'Buyouts on or off' },
+        { key: 'Bailout.MinMultiplier', view: 'money', label: 'Buyout price' },
+        { key: 'Bailout.ProcessingDelaySeconds', view: 'money', label: 'Hitman\'s head start' }] },
+    { title: 'The staff freeze', icon: 'snowflake',
+      text: 'Staff with the staff ACE can freeze a player for a staff situation or a dispute, from Players. '
+        + 'Every live contract they are party to goes on hold: its clocks stop, and nothing on it is accepted, '
+        + 'paid, refunded or ended. Players are told only that it is on hold by staff. Unfreeze gives the time '
+        + 'on hold back, to the second.',
+      links: [] },
+    { title: 'Police advisories', icon: 'shield-halved',
+      text: 'When a contract is placed on an officer or another whitelisted-job member, officers are told by an '
+        + 'advisory, and an sc-dispatch entry if that is on. Bulletins can go out when a contract is placed, '
+        + 'accepted, given an informant tip or called off. The placer and the hitman are warned first, and the '
+        + 'card is marked on the board. Which jobs raise one, and which are told, are lists under Targeting.',
+      links: [{ key: 'Advisory.Enabled', view: 'features', label: 'Advisories on or off' },
+        { key: 'Advisory.OnCreate', view: 'features', label: 'When they go out' },
+        { key: 'Advisory.RecipientJobNames', view: 'targeting', label: 'Who is told' }] },
+    { title: 'Money safety', icon: 'vault',
+      text: 'Every reward is held in escrow from the moment a contract is placed until it ends, so it can always '
+        + 'be paid or returned. A contract that ends without a payout refunds its placer. A payout to a player '
+        + 'who is offline, or whose inventory is full, is owed to them and paid when they next log in. Anything '
+        + 'the server could not settle on its own is left for staff under Stuck escrow, and a disputed contract '
+        + 'goes to Needs review.',
+      links: [{ key: 'PendingEscrow.MaxRetriesPerLogin', view: 'money', label: 'Owed payouts' },
+        { key: 'MaxContractValue', view: 'money', label: 'Most a contract holds' },
+        { key: 'EscrowBlacklist', view: 'money', label: 'Items never in a reward' }] }
+  ];
+  /** For the tests. */
+  window.CH_ADMIN_HELP = HELP;
+
+  SHELL.help = function () {
+    return h('section.view', h('p.hint', 'How the contract app works, in plain words. Each link opens the setting '
+      + 'that controls it.'),
+      h('div.cards-grid', HELP.map(function (c, i) {
+        return card(frag(icon(c.icon), ' ', c.title), frag(
+          h('p.about', c.text),
+          c.links.length ? h('div.help-links', c.links.map(function (l) {
+            return h('button.link', { type: 'button', 'data-act': 'help-jump', 'data-key': l.key,
+              'data-view': l.view }, l.label);
+          })) : null), '.help-card', null);
+      })));
+  };
+  LOAD.help = function () {};
+
 
   /* ---------- what a click, a key or typing does ----------------------- */
 
@@ -2614,6 +3124,14 @@
 
   ACTIONS.close = function () { close(); };
   ACTIONS.section = function (node) { show(node.getAttribute('data-section')); };
+  ACTIONS.group = function (node) { openGroup(node.getAttribute('data-group')); };
+  /** A help link: the setting's view, the search cleared, and its row marked. */
+  ACTIONS['help-jump'] = function (node) {
+    var key = node.getAttribute('data-key');
+    S.forms['st.q'] = '';
+    S.settings.focus = key;
+    show(node.getAttribute('data-view'));
+  };
   ACTIONS['toast-close'] = function (node) { node.remove(); };
 
   ACTIONS['dd-open'] = function (node) {
@@ -2647,7 +3165,7 @@
   };
   /** Run it: the diagnosis, run, not only the section it is run from. */
   ACTIONS['ov-diag'] = function () {
-    show('tools');
+    show(canDevelop() ? 'diagnostics' : 'tools');
     ACTIONS['tl-diag']();
   };
 
@@ -3004,10 +3522,112 @@
     });
   };
 
-  ACTIONS['st-tab'] = function (node) {
-    S.settings.tab = node.getAttribute('data-value') || 'features';
+  /** A list's name typed into its box, added to what is being edited. */
+  ACTIONS['st-list-add'] = function (node) {
+    var key = node.getAttribute('data-key');
+    var entry = settingEntry(key);
+    if (!entry || entry.readonly) return;
+    var typed = trim(S.forms['stl.' + key]);
+    if (!typed) return;
+    var names = listDraft(entry);
+    typed.split(/[\s,]+/).forEach(function (name) {
+      if (name && names.indexOf(name) === -1) names.push(name);
+    });
+    S.settings.drafts[key] = names;
+    S.forms['stl.' + key] = '';
     disarm();
-    drawSettings();
+    drawSettingRow(key);
+  };
+  ACTIONS['st-list-del'] = function (node) {
+    var key = node.getAttribute('data-key');
+    var entry = settingEntry(key);
+    if (!entry || entry.readonly) return;
+    var gone = node.getAttribute('data-value');
+    S.settings.drafts[key] = listDraft(entry).filter(function (name) { return name !== gone; });
+    disarm();
+    drawSettingRow(key);
+  };
+  /** The list as edited, saved on the second click; the server checks every name. */
+  ACTIONS['st-list-save'] = function (node) {
+    var key = node.getAttribute('data-key');
+    var entry = settingEntry(key);
+    if (!entry || entry.readonly || !confirmed(node)) return;
+    setSetting(key, listDraft(entry), node);
+  };
+  ACTIONS['st-range-save'] = function (node) {
+    var key = node.getAttribute('data-key');
+    var entry = settingEntry(key);
+    if (!entry || entry.readonly) return;
+    var pair = entry.value && typeof entry.value === 'object' ? entry.value : {};
+    var lo = Number(trim(typedOr('st.' + key + '.min', pair.min)));
+    var hi = Number(trim(typedOr('st.' + key + '.max', pair.max)));
+    var bad = !isFinite(lo) || !isFinite(hi) ? 'has to be two numbers'
+      : (entry.integer && (Math.floor(lo) !== lo || Math.floor(hi) !== hi)) ? 'has to be whole numbers'
+      : lo > hi ? 'has its from above its to'
+      : ((entry.min != null && lo < entry.min) || (entry.max != null && hi > entry.max))
+        ? 'has to be within ' + entry.min + ' to ' + entry.max : null;
+    if (bad) {
+      disarm();
+      S.settings.answers[key] = { ok: false, text: 'Not changed: ' + key + ' ' + bad + '.' };
+      drawSettingRow(key);
+      return;
+    }
+    if (!confirmed(node)) return;
+    setSetting(key, { min: lo, max: hi }, node);
+  };
+  /** A bucket's per and burst, each sent as the setting it is, one after the
+      other: the second only once the first is in force. */
+  ACTIONS['st-map-save'] = function (node) {
+    var bucket = node.getAttribute('data-bucket');
+    var keys = ['Cooldowns.' + bucket + '.per', 'Cooldowns.' + bucket + '.burst'];
+    var changes = [];
+    for (var i = 0; i < keys.length; i++) {
+      var entry = settingEntry(keys[i]);
+      if (!entry || entry.readonly) return;
+      var parsed = parseSetting(entry, String(typedOr('st.' + keys[i], entry.value)));
+      if (parsed.error) {
+        disarm();
+        S.settings.answers['Cooldowns.' + bucket] = { ok: false, text: parsed.error };
+        drawSettingRow(keys[i]);
+        return;
+      }
+      if (parsed.value !== entry.value) changes.push({ key: keys[i], value: parsed.value });
+    }
+    if (!changes.length) {
+      S.settings.answers['Cooldowns.' + bucket] = { ok: true, text: bucket + ' is as typed already; nothing changed.' };
+      drawSettingRow(keys[0]);
+      return;
+    }
+    if (!confirmed(node)) return;
+    var said = [];
+    (function next(i) {
+      if (i >= changes.length) {
+        S.settings.answers['Cooldowns.' + bucket] = { ok: true, text: said.join(' ') };
+        loadSettings();
+        return;
+      }
+      write('setSetting', { key: changes[i].key, value: changes[i].value }, 'set:' + changes[i].key, node)
+        .then(function (reply) {
+          if (!reply) return;
+          said.push(words(reply));
+          toast(words(reply), reply.ok ? 'ok' : 'error');
+          if (!reply.ok) {
+            S.settings.answers['Cooldowns.' + bucket] = { ok: false, text: said.join(' ') };
+            loadSettings();
+            return;
+          }
+          delete S.forms['st.' + changes[i].key];
+          next(i + 1);
+        });
+    })(0);
+  };
+  /** Back to what defaults.lua ships, through the same change as any other. */
+  ACTIONS['st-default'] = function (node) {
+    var key = node.getAttribute('data-key');
+    var entry = settingEntry(key);
+    if (!entry || entry.readonly || !confirmed(node)) return;
+    var value = entry.kind === 'list' ? asList(entry.shipped) : entry.shipped;
+    setSetting(key, value, node);
   };
   LIVE['st-filter'] = function () { filterSettings(); };
   ACTIONS['st-switch'] = function (node) {
@@ -3234,6 +3854,7 @@
     S.settings.data = null;
     S.settings.answers = {};
     S.settings.photos = null;
+    S.settings.drafts = {};
     S.tools = { refresh: null, diag: null, flush: null };
     S.busy = {};
     S.seq = {};
@@ -3269,7 +3890,10 @@
     nui('adminClose', {});
   }
 
+  var recalled = false;
+
   function open(access) {
+    if (!recalled) { recalled = true; recall(); }
     var reopened = S.open;
     S.access = access && typeof access === 'object' ? access : {};
     S.recovery = S.access.recovery || 'ready';

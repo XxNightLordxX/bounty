@@ -825,7 +825,8 @@ function Bridges.install(modules)
                 end
             end
             if key == 'HideAppFromBlockedJobs' or key == 'BlockOffDuty'
-                or key == 'WhitelistedView.Enabled' then
+                or key == 'WhitelistedView.Enabled' or key == 'BlockedJobTypes'
+                or key == 'BlockedJobNames' then
                 -- Whoever's answer or screen moved is told, and a held job
                 -- is explained once (lastHeld): nothing is wiped first, so
                 -- a switch that moves nobody tells nobody anything again.

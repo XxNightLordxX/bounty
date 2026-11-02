@@ -128,6 +128,10 @@ local DEFAULTS = {
         },
         PanelPageSize = 25,
         PanelRefreshSeconds = 10,
+        -- Who sees the panel's Developer section, added to a section every
+        -- config has. Staff holding Ace see it whether or not anybody holds
+        -- this, so a config without it locks nobody out.
+        DeveloperAce = 'crimson.developer',
     },
     Immunity = {
         MinTargetPlaytimeHours = 5,

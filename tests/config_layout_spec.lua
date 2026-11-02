@@ -63,7 +63,14 @@ local ADDED = {
         Informant = false, PlacerInformant = false, LocationTip = false,
     },
     ['InformantsEnabled'] = true,
+    -- The ACE of the admin panel's Developer section.
+    ['Admin.DeveloperAce'] = 'crimson.developer',
 }
+
+--- The commit before config.lua was reordered to mirror the admin panel's
+--- sections (Rules, Features, Staff, Advanced): the reorder moved settings,
+--- and changed no value but adding the developer ACE.
+local REORDERED_FROM = 'a55adbf'
 
 --- A config file's text run on its own, into a table of its own.
 local function run(text, global, name)
@@ -154,6 +161,37 @@ describe('the configuration as one short file', function()
         for path in pairs(ADDED) do truthy(seen[path], 'Config.' .. path .. ' added') end
     end)
 
+    it('keeps every value it had before it was reordered to mirror the panel', function()
+        local pipe = io.popen(('git show %s:crimson-hitman/config/config.lua 2>/dev/null'):format(REORDERED_FROM))
+        local text = pipe and pipe:read('a') or ''
+        if pipe then pipe:close() end
+        truthy(#text > 10000, 'git show ' .. REORDERED_FROM .. ' needs the repository history')
+        local was = run(text, 'Config', 'config.lua@' .. REORDERED_FROM)
+        local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
+        local off = {}
+        for path, pair in pairs(differences(was, now)) do
+            if not (path == 'Admin.DeveloperAce' and pair[1] == nil and pair[2] == 'crimson.developer') then
+                off[#off + 1] = ('%s: %s -> %s'):format(path, tostring(pair[1]), tostring(pair[2]))
+            end
+        end
+        table.sort(off)
+        eq(#off, 0, 'the reorder changed: ' .. table.concat(off, ', '))
+    end)
+
+    it('keeps defaults.lua in step: the same settings in the same order', function()
+        local function order(text, prefix)
+            local out = {}
+            for line in text:gmatch('[^\n]+') do
+                local key = line:match('^' .. prefix .. '%.([%w_.]+)%s*=') or line:match('^    ([%a_][%w_]*)%s*=')
+                    or line:match('^        ([%a_][%w_]*)%s*=')
+                if key then out[#out + 1] = key end
+            end
+            return table.concat(out, ',')
+        end
+        eq(order(file('crimson-hitman/config/defaults.lua'), 'ConfigDefaults'),
+            order(file('crimson-hitman/config/config.lua'), 'Config'))
+    end)
+
     it('is what config/defaults.lua ships, key for key and value for value', function()
         local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
         local shipped = run(file('crimson-hitman/config/defaults.lua'), 'ConfigDefaults', 'defaults.lua')
@@ -168,8 +206,10 @@ describe('the configuration as one short file', function()
         local lines = select(2, text:gsub('\n', '')) + 1
         truthy(lines < 500, 'config.lua is ' .. lines .. ' lines')
         local at = 0
-        for _, title in ipairs({ 'DEBUG AND STORAGE', 'ACCESS', 'COMPLETION AND HANDOVERS', 'REWARDS AND LIMITS',
-            'BUYOUTS', 'TARGETING', 'NOTIFICATIONS', 'ADMIN PANEL', 'ADVANCED' }) do
+        for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
+            'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',
+            'FEATURES: ADVISORY', 'FEATURES: EVERYTHING ELSE', 'STAFF AND PERMISSIONS',
+            'ADVANCED AND DEVELOPER' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')
             at = found
@@ -177,7 +217,7 @@ describe('the configuration as one short file', function()
         truthy(text:find('README', 1, true), 'the header points to the README')
         falsy(text:find('discord%.com/api/webhooks'), 'no webhook')
         falsy(text:find('https?://'), 'no address at all')
-        truthy(text:find('\n    MaxPayoutSlots%s*=%s*1,%s*%-%- each contract pays out once\n'),
+        truthy(text:find('\nConfig%.Limits%.MaxPayoutSlots%s*=%s*1%s*%-%- each contract pays out once\n'),
             'one plain line saying each contract pays out once')
     end)
 

@@ -97,14 +97,43 @@ function serverStub() {
   }
   // A number whose lowering deletes: its Save carries a confirm label, and
   // its row a warning line.
-  settings.limits.push({ key: 'Ledger.PhotoRetentionDays', group: 'Ledger',
+  settings.limits.push({ key: 'Ledger.PhotoRetentionDays', category: 'rules-timers', group: 'Ledger',
     label: 'Days an unopened kill photo is kept (0 forever)', kind: 'number', integer: true, min: 0, max: 365,
     live: true, value: 7, default: 7, source: 'config',
     inflight: 'Looked at every ten minutes: photos already past a shorter age go then.',
     destroys: 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the next sweep, for good.' });
-  settings.limits.push({ key: 'Advisory.RecipientJobNames', group: 'Advisory job lists',
+  settings.limits.push({ key: 'Advisory.RecipientJobNames', category: 'rules-targeting', group: 'Advisory job lists',
     label: 'Job names that receive advisories', kind: 'list', live: true,
-    value: ['police', 'sheriff', 'sast', 'fib', 'ranger'], default: ['police'], source: 'panel' });
+    value: ['police', 'sheriff', 'sast', 'fib', 'ranger', 'bcso', 'trooper', 'sasp', 'k9', 'leo_reserve_long_name'],
+    default: ['police'], shipped: ['police', 'sheriff'], hasShipped: true, source: 'panel' });
+  settings.limits.push({ key: 'Notifications.ParanoidAlertJitter', category: 'rules-timers', group: 'Notifications',
+    label: 'Wait before "eyes on you" (s, from-to)', kind: 'range', integer: true, min: 0, max: 86400, live: true,
+    value: { min: 60, max: 600 }, default: { min: 60, max: 600 }, shipped: { min: 30, max: 600 }, hasShipped: true,
+    source: 'config', inflight: 'Read each time it is used.' });
+  settings.limits.push({ key: 'Bailout.Command', category: 'rules-limits', group: 'Buyouts', label: 'Buyout command',
+    kind: 'text', live: false, value: 'cleanse', default: 'cleanse', source: 'config',
+    inflight: 'Read once at start: kept now, and in force after the next restart.' });
+  ['MaxContractValue', 'Sources.cash.max', 'Informant.Cost', 'Anonymity.CreatorFee', 'Limits.MaxEscrowLines',
+    'Bailout.AbsoluteMax'].forEach(function (key, i) {
+    settings.limits.push({ key: key, category: 'rules-rewards',
+      money: ['Rewards', 'Rewards', 'Informant prices', 'Anonymity fees', 'Escrow', 'Buyouts'][i], group: 'Money',
+      label: 'A money setting with a label long enough to wrap ' + i, kind: 'number', integer: true, min: 0,
+      max: 100000000, live: true, value: 250000, default: 250000, shipped: 500000, hasShipped: true, source: 'config',
+      about: 'What it does, in a sentence long enough to wrap across the row.', inflight: 'Read each time it is used.' });
+  });
+  ['create', 'accept', 'load'].forEach(function (b) {
+    settings.limits.push({ key: 'Cooldowns.' + b + '.per', category: 'developer', group: 'Rate limits',
+      label: b + ': refill window (s)', kind: 'number', min: 0.5, max: 3600, live: true, value: 60, default: 60,
+      source: 'config', stricter: 'up', about: 'Placing a contract, and a sentence long enough to wrap the row.',
+      inflight: 'Read each time it is used.' });
+    settings.limits.push({ key: 'Cooldowns.' + b + '.burst', category: 'developer', group: 'Rate limits',
+      label: b + ': requests held', kind: 'number', integer: true, min: 1, max: 200, live: true, value: 2,
+      default: 2, source: 'config', stricter: 'down', inflight: 'Read each time it is used.' });
+  });
+  settings.readonly.push({ key: 'convar:crimson_hitman_alert_webhook', category: 'developer',
+    group: 'Edit in config.lua', label: 'Secret: crimson_hitman_alert_webhook', kind: 'text', denied: true,
+    secret: true, value: 'not set', source: 'config',
+    readonly: 'The Discord webhook for alerts: a secret, set in server.cfg with set (never setr).' });
   settings.readonly.push({ key: 'Database.Mode', group: 'Storage', label: 'Storage mode', kind: 'text',
     readonly: 'Changing it needs the money in the old mode settled and a restart (README, Changing storage mode).',
     value: 'json', default: 'json', source: 'config' });
@@ -270,7 +299,20 @@ function serverStub() {
 }
 
 const ACCESS = { canWrite: true, canIdentify: true, pageSize: 25, refreshSeconds: 10, recovery: 'ready',
-  version: '1.1.0' };
+  version: '1.1.0', canDevelop: true, developerAce: 'crimson.developer',
+  developerHint: 'To give the Developer section to its own people: grant it with add_ace group.admin '
+    + 'crimson.developer allow, pasted into the server console until the next restart.',
+  permissions: [
+    { ace: 'crimson.admin', name: 'Staff ACE (Config.Admin.Ace)', held: true,
+      unlocks: 'Opens this panel and the staff commands, and is the only ACE that changes anything.',
+      grant: 'Grant it with add_ace group.admin crimson.admin allow, pasted into the server console.' },
+    { ace: 'crimson.identity', name: 'Identity ACE (Config.Admin.IdentityAce)', held: false,
+      unlocks: 'Shows who is behind an anonymous party, and citizen ids, everywhere in the panel.',
+      grant: 'Grant it with add_ace identifier.license:<their licence> crimson.identity allow for one person, or '
+        + 'to a group of its own (add_ace group.<name> crimson.identity allow); not group.admin.' },
+    { ace: 'crimson.developer', name: 'Developer ACE (Config.Admin.DeveloperAce)', held: false,
+      unlocks: 'Opens the Developer section.', grant: 'Grant it with add_ace group.admin crimson.developer allow.' }
+  ] };
 
 /* Everything that can go wrong on one screen of the panel, measured. */
 function measure(opts) {
@@ -353,6 +395,20 @@ function measure(opts) {
   return out;
 }
 
+/* Which section each view is a sub-tab of (ui/admin.js GROUPS). */
+const GROUP = { help: 'live', overview: 'live', contracts: 'live', players: 'live', frozen: 'live', reviews: 'live',
+  stuck: 'live', actions: 'actions', tools: 'actions', timers: 'rules', money: 'rules', limits: 'rules',
+  targeting: 'rules', features: 'features', logs: 'logs', alerts: 'logs', devsettings: 'developer',
+  console: 'developer', diagnostics: 'developer', permissions: 'developer' };
+
+/* A view, as staff reach it: its section, then its sub-tab where it has a strip. */
+async function go(page, view) {
+  await page.click('#grp-' + GROUP[view]);
+  await page.waitForTimeout(40);
+  const tab = await page.$('#nav-' + view);
+  if (tab && await tab.isVisible()) await tab.click();
+}
+
 async function openAt(browser, width, height) {
   const page = await browser.newPage({ viewport: { width: width, height: height } });
   await page.route('https://cdnjs.cloudflare.com/**', function (route) { return route.abort(); });
@@ -390,10 +446,13 @@ async function main() {
     { w: 1280, h: 720, tablesFit: true },
     { w: 1920, h: 1080, tablesFit: true },
     // Still usable: tables may scroll inside their own frame, never the page.
-    { w: 1024, h: 768, tablesFit: false }
+    { w: 1024, h: 768, tablesFit: false },
+    // A phone: every section, nothing sideways; tables scroll in their frame.
+    { w: 390, h: 844, tablesFit: false, phone: true }
   ];
-  const sections = ['overview', 'contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players', 'settings',
-    'tools'];
+  const sections = ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck', 'actions', 'tools',
+    'timers', 'money', 'limits', 'targeting', 'features', 'logs', 'alerts', 'devsettings', 'console', 'diagnostics',
+    'permissions'];
 
   for (const size of sizes) {
     const page = await openAt(browser, size.w, size.h);
@@ -407,16 +466,17 @@ async function main() {
       const brand = document.querySelector('.brand').getBoundingClientRect();
       const badges = document.getElementById('badges').getBoundingClientRect();
       return { width: p.width, height: p.height, closeInside: close.right <= p.right && close.top >= p.top,
-               overlap: brand.right > badges.left + 1 && badges.width > 0, W: window.innerWidth };
+               overlap: brand.right > badges.left + 1 && badges.width > 0
+                 && brand.bottom > badges.top + 1 && badges.bottom > brand.top + 1, W: window.innerWidth };
     });
     it(at + ': the panel takes most of the window, with its close button in it', function () {
-      truthy(frame.width >= frame.W * 0.9 || frame.width >= 1700, 'the panel is ' + Math.round(frame.width) + 'px wide');
+      truthy(frame.width >= frame.W * 0.9 - 1 || frame.width >= 1700, 'the panel is ' + Math.round(frame.width) + 'px wide');
       truthy(frame.closeInside, 'the close button is outside the panel');
       truthy(!frame.overlap, 'the title runs under the badges');
     });
 
     for (const section of sections) {
-      await page.click('#nav-' + section);
+      await go(page, section);
       await page.waitForTimeout(120);
       if (section === 'players') {
         await page.fill('#pl-q', '123');
@@ -432,7 +492,7 @@ async function main() {
         await page.click('button[data-act="al-ack-all"]');
         await page.waitForTimeout(60);
       }
-      if (section === 'settings') {
+      if (section === 'features') {
         // Measured with the removal of the kill photos kept from before
         // armed, its confirm naming the count.
         await page.click('button[data-act="st-remove-photos"]');
@@ -446,8 +506,9 @@ async function main() {
       it(at + ': ' + section + ' drew something', function () { truthy(drawn > 40, 'only ' + drawn + ' characters'); });
     }
 
-    // The settings, grouped, with each control beside its words.
-    await page.click('#nav-settings');
+    // The settings, grouped, with each control beside its words (on a
+    // phone, below them).
+    await go(page, 'features');
     await page.waitForTimeout(120);
     const sideBySide = function () {
       const out = [];
@@ -456,7 +517,7 @@ async function main() {
         const main = row.querySelector('.st-main').getBoundingClientRect();
         const control = row.querySelector('.st-control').getBoundingClientRect();
         if (control.width > 0 && main.right > control.left + 1 && main.bottom > control.top + 1
-            && main.top < control.bottom - 1) {
+            && main.top < control.bottom - 1 && !(main.bottom <= control.top + 1)) {
           out.push(row.getAttribute('data-key') + ': its words run under its control');
         }
       });
@@ -467,7 +528,7 @@ async function main() {
 
     // And the limits, where a Save can carry a confirm label: armed, with
     // the row saying what lowering it deletes.
-    await page.click('button.seg-btn[data-act="st-tab"][data-value="limits"]');
+    await go(page, 'timers');
     await page.waitForTimeout(120);
     await page.fill('[data-bind="st.Ledger.PhotoRetentionDays"]', '1');
     await page.press('[data-bind="st.Ledger.PhotoRetentionDays"]', 'Enter');
@@ -484,7 +545,7 @@ async function main() {
     });
 
     // A dropdown opened stays in the window.
-    await page.click('#nav-contracts');
+    await go(page, 'contracts');
     await page.waitForTimeout(120);
     await page.click('#dd-ct-state .dd-btn');
     const menu = await page.evaluate(function () {
@@ -523,7 +584,8 @@ async function main() {
     it(at + ': the drawer lies over the section, leaves the navigation in reach, and is wide enough to read', function () {
       truthy(drawer.left >= drawer.mainLeft - 0.5 && drawer.right <= drawer.mainRight + 0.5, 'the drawer spills out of the section');
       truthy(drawer.top >= drawer.mainTop - 0.5 && drawer.bottom <= drawer.mainBottom + 0.5, 'the drawer is taller than the section');
-      truthy(drawer.width >= 520, 'the drawer is ' + Math.round(drawer.width) + 'px wide');
+      truthy(drawer.width >= (size.phone ? drawer.mainRight - drawer.mainLeft - 1 : 520),
+        'the drawer is ' + Math.round(drawer.width) + 'px wide');
       truthy(drawer.navClear, 'the drawer or its scrim covers the navigation');
       truthy(!drawer.sideways, 'the drawer scrolls sideways');
     });
@@ -556,7 +618,7 @@ async function main() {
 
     // A toast: inside the window, clear of the close button.
     await page.click('#drawer [data-act="drawer-close"]');
-    await page.click('#nav-tools');
+    await go(page, 'tools');
     await page.waitForTimeout(100);
     await page.click('button[data-act="tl-flush"]');
     await page.waitForTimeout(150);

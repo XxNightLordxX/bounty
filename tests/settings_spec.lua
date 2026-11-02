@@ -188,13 +188,14 @@ describe('what the admin panel can change', function()
         eq(Config.Completion.RejectLastStand, true, 'and it stays as config.lua says')
     end)
 
-    it('marks the one number whose lowering deletes something, with what the second click does', function()
+    it('marks the numbers whose lowering deletes something, with what the second click does', function()
         local s = stack()
         local marked = {}
         for _, entry in ipairs(s.settings.CATALOGUE) do
             if entry.destroys then marked[#marked + 1] = entry.key end
         end
-        eq(table.concat(marked, ','), 'Ledger.PhotoRetentionDays')
+        table.sort(marked)
+        eq(table.concat(marked, ','), 'Audit.ContractRetentionDays,Audit.RetentionDays,Ledger.PhotoRetentionDays')
         local row
         for _, r in ipairs(s.settings.view().limits) do
             if r.key == 'Ledger.PhotoRetentionDays' then row = r end

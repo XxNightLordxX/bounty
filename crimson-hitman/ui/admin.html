@@ -39,40 +39,95 @@
     </button>
   </header>
   <div id="banner" class="banner" role="status" hidden></div>
+  <!-- Six sections, by who uses them; each holds the views it groups as
+       sub-tabs (admin.js GROUPS). Developer is drawn only for staff who may
+       open it, and is Permissions alone for everybody else. -->
   <nav id="nav" class="nav" aria-label="Sections">
-    <button id="nav-overview" class="nav-btn is-on" type="button" data-act="section" data-section="overview">
+    <button id="grp-live" class="nav-btn" type="button" data-act="group" data-group="live">
+      <i class="fa-solid fa-gauge-high" aria-hidden="true"></i><span class="lbl">Live</span>
+      <span id="count-live" class="nav-count is-warn" hidden></span>
+    </button>
+    <button id="grp-actions" class="nav-btn" type="button" data-act="group" data-group="actions">
+      <i class="fa-solid fa-hand" aria-hidden="true"></i><span class="lbl">Staff actions</span>
+    </button>
+    <button id="grp-rules" class="nav-btn" type="button" data-act="group" data-group="rules">
+      <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl">Rules</span>
+      <span id="count-settings" class="nav-count" hidden></span>
+    </button>
+    <button id="grp-features" class="nav-btn" type="button" data-act="group" data-group="features">
+      <i class="fa-solid fa-toggle-on" aria-hidden="true"></i><span class="lbl">Features</span>
+    </button>
+    <button id="grp-logs" class="nav-btn" type="button" data-act="group" data-group="logs">
+      <i class="fa-solid fa-list-ul" aria-hidden="true"></i><span class="lbl">Logs &amp; alerts</span>
+      <span id="count-logs" class="nav-count is-warn" hidden></span>
+    </button>
+    <button id="grp-developer" class="nav-btn" type="button" data-act="group" data-group="developer">
+      <i class="fa-solid fa-code" aria-hidden="true"></i><span class="lbl">Developer</span>
+    </button>
+  </nav>
+  <nav id="subnav" class="subnav" aria-label="In this section">
+    <button id="nav-help" class="sub-btn" type="button" data-act="section" data-section="help" hidden>
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i><span class="lbl">How it works</span>
+    </button>
+    <button id="nav-overview" class="sub-btn" type="button" data-act="section" data-section="overview" hidden>
       <i class="fa-solid fa-gauge-high" aria-hidden="true"></i><span class="lbl">Overview</span>
     </button>
-    <button id="nav-contracts" class="nav-btn" type="button" data-act="section" data-section="contracts">
+    <button id="nav-contracts" class="sub-btn" type="button" data-act="section" data-section="contracts" hidden>
       <i class="fa-solid fa-file-contract" aria-hidden="true"></i><span class="lbl">Contracts</span>
     </button>
-    <button id="nav-stuck" class="nav-btn" type="button" data-act="section" data-section="stuck">
-      <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="lbl">Stuck escrow</span>
-      <span id="count-stuck" class="nav-count is-warn" hidden></span>
+    <button id="nav-players" class="sub-btn" type="button" data-act="section" data-section="players" hidden>
+      <i class="fa-solid fa-user" aria-hidden="true"></i><span class="lbl">Players</span>
     </button>
-    <button id="nav-reviews" class="nav-btn" type="button" data-act="section" data-section="reviews">
+    <button id="nav-frozen" class="sub-btn" type="button" data-act="section" data-section="frozen" hidden>
+      <i class="fa-solid fa-snowflake" aria-hidden="true"></i><span class="lbl">Frozen players</span>
+    </button>
+    <button id="nav-reviews" class="sub-btn" type="button" data-act="section" data-section="reviews" hidden>
       <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl">Needs review</span>
       <span id="count-reviews" class="nav-count is-warn" hidden></span>
     </button>
-    <button id="nav-alerts" class="nav-btn" type="button" data-act="section" data-section="alerts">
-      <i class="fa-solid fa-bell" aria-hidden="true"></i><span class="lbl">Alerts</span>
-      <span id="count-alerts" class="nav-count is-warn" hidden></span>
+    <button id="nav-stuck" class="sub-btn" type="button" data-act="section" data-section="stuck" hidden>
+      <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="lbl">Stuck escrow</span>
+      <span id="count-stuck" class="nav-count is-warn" hidden></span>
     </button>
-    <button id="nav-console" class="nav-btn" type="button" data-act="section" data-section="console">
-      <i class="fa-solid fa-terminal" aria-hidden="true"></i><span class="lbl">Console</span>
+    <button id="nav-actions" class="sub-btn" type="button" data-act="section" data-section="actions" hidden>
+      <i class="fa-solid fa-hand" aria-hidden="true"></i><span class="lbl">All staff actions</span>
     </button>
-    <button id="nav-logs" class="nav-btn" type="button" data-act="section" data-section="logs">
+    <button id="nav-tools" class="sub-btn" type="button" data-act="section" data-section="tools" hidden>
+      <i class="fa-solid fa-screwdriver-wrench" aria-hidden="true"></i><span class="lbl">Tools</span>
+    </button>
+    <button id="nav-timers" class="sub-btn" type="button" data-act="section" data-section="timers" hidden>
+      <i class="fa-solid fa-clock" aria-hidden="true"></i><span class="lbl">Timers</span>
+    </button>
+    <button id="nav-money" class="sub-btn" type="button" data-act="section" data-section="money" hidden>
+      <i class="fa-solid fa-sack-dollar" aria-hidden="true"></i><span class="lbl">Rewards &amp; money</span>
+    </button>
+    <button id="nav-limits" class="sub-btn" type="button" data-act="section" data-section="limits" hidden>
+      <i class="fa-solid fa-sliders" aria-hidden="true"></i><span class="lbl">Limits</span>
+    </button>
+    <button id="nav-targeting" class="sub-btn" type="button" data-act="section" data-section="targeting" hidden>
+      <i class="fa-solid fa-crosshairs" aria-hidden="true"></i><span class="lbl">Targeting</span>
+    </button>
+    <button id="nav-features" class="sub-btn" type="button" data-act="section" data-section="features" hidden>
+      <i class="fa-solid fa-toggle-on" aria-hidden="true"></i><span class="lbl">Switches</span>
+    </button>
+    <button id="nav-logs" class="sub-btn" type="button" data-act="section" data-section="logs" hidden>
       <i class="fa-solid fa-list-ul" aria-hidden="true"></i><span class="lbl">Logs</span>
     </button>
-    <button id="nav-players" class="nav-btn" type="button" data-act="section" data-section="players">
-      <i class="fa-solid fa-user" aria-hidden="true"></i><span class="lbl">Players</span>
+    <button id="nav-alerts" class="sub-btn" type="button" data-act="section" data-section="alerts" hidden>
+      <i class="fa-solid fa-bell" aria-hidden="true"></i><span class="lbl">Alerts &amp; Discord</span>
+      <span id="count-alerts" class="nav-count is-warn" hidden></span>
     </button>
-    <button id="nav-settings" class="nav-btn" type="button" data-act="section" data-section="settings">
-      <i class="fa-solid fa-sliders" aria-hidden="true"></i><span class="lbl">Features &amp; limits</span>
-      <span id="count-settings" class="nav-count" hidden></span>
+    <button id="nav-devsettings" class="sub-btn" type="button" data-act="section" data-section="devsettings" hidden>
+      <i class="fa-solid fa-gear" aria-hidden="true"></i><span class="lbl">Settings</span>
     </button>
-    <button id="nav-tools" class="nav-btn" type="button" data-act="section" data-section="tools">
-      <i class="fa-solid fa-screwdriver-wrench" aria-hidden="true"></i><span class="lbl">Tools</span>
+    <button id="nav-console" class="sub-btn" type="button" data-act="section" data-section="console" hidden>
+      <i class="fa-solid fa-terminal" aria-hidden="true"></i><span class="lbl">Console</span>
+    </button>
+    <button id="nav-diagnostics" class="sub-btn" type="button" data-act="section" data-section="diagnostics" hidden>
+      <i class="fa-solid fa-stethoscope" aria-hidden="true"></i><span class="lbl">Diagnostics</span>
+    </button>
+    <button id="nav-permissions" class="sub-btn" type="button" data-act="section" data-section="permissions" hidden>
+      <i class="fa-solid fa-key" aria-hidden="true"></i><span class="lbl">Permissions</span>
     </button>
   </nav>
   <main id="main" class="main"></main>

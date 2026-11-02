@@ -29,13 +29,15 @@ local Panel = {}
 
 local deps
 
-local READ, WRITE, IDENTITY = 'read', 'write', 'identity'
+local READ, WRITE, IDENTITY, DEVELOPER = 'read', 'write', 'identity', 'developer'
 
 --- Every request the page may make, and what it needs.
 local OPS = {
     access = READ, overview = READ, contracts = READ, contract = READ, reviews = READ,
     logs = READ, player = READ, settings = READ, diag = READ, stuck = READ, alerts = READ,
-    console = READ,
+    -- The server's own console lines: the Developer section's, so
+    -- Config.Admin.DeveloperAce (or Ace itself, see developer below).
+    console = DEVELOPER,
     void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
     resetSettings = WRITE, refresh = WRITE, flush = WRITE, ackAlerts = WRITE, testAlert = WRITE,
     removePhotos = WRITE, setPlaytime = WRITE,
@@ -72,7 +74,7 @@ Panel.COMMANDS = {
     whois     = { ops = { 'whois' }, level = IDENTITY, audit = 'admin_identify',
                   button = 'the contract\'s view, or Players: Whois' },
 }
-Panel.LEVELS = { READ = READ, WRITE = WRITE, IDENTITY = IDENTITY }
+Panel.LEVELS = { READ = READ, WRITE = WRITE, IDENTITY = IDENTITY, DEVELOPER = DEVELOPER }
 Panel.OPS = OPS
 
 --- Writes that wait for boot recovery, as the commands do. Flushing the
@@ -154,6 +156,25 @@ local function allowed(src, level)
     return true
 end
 
+--- The ACE that opens the Developer section, as config.lua names it.
+local function developerAce()
+    local ace = Config.Admin.DeveloperAce
+    return type(ace) == 'string' and ace ~= '' and ace or 'crimson.developer'
+end
+
+--- Whether this staff member may use the Developer section: the console,
+--- and the settings in the developer category. Config.Admin.DeveloperAce,
+--- or Config.Admin.Ace itself: the owner, who holds Ace under its strict
+--- rule, keeps everything they had before the section existed, whether or
+--- not anybody was granted the new ACE. Neither opens it to somebody who
+--- may not read the panel at all.
+local function developer(src)
+    if not allowed(src, READ) then return false end
+    local Admin = deps.admin
+    return Admin.allowed(src, developerAce(), true) or Admin.allowed(src, Config.Admin.Ace, true)
+end
+Panel.developer = function(src) return developer(src) end
+
 --- Whether this staff member may see who is behind an anonymous party.
 local function identifies(src)
     return deps.admin.allowed(src, Config.Admin.IdentityAce, true)
@@ -176,11 +197,56 @@ end
 
 --- What the page needs to draw itself for this staff member. No command
 --- names: the page is buttons only, and says nothing about commands.
+--- Every ACE this resource checks, for the panel's Permissions page: what
+--- it opens, whether this staff member holds it, and the line that grants
+--- it (Admin.howToAuthorise's). Read-only: nothing here changes an ACE.
+local function permissionsFor(src)
+    local Admin = deps.admin
+    local function holds(ace) return IsPlayerAceAllowed(src, ace) and true or false end
+    local function grant(ace)
+        return (Admin.howToAuthorise(ace, true):gsub('^Not authorised: this needs the [^.]+ ACE%. ', ''))
+    end
+    local out = {
+        { ace = Config.Admin.Ace, name = 'Staff ACE (Config.Admin.Ace)', held = holds(Config.Admin.Ace),
+          unlocks = 'Opens this panel and the staff commands, and is the only ACE that changes anything: '
+              .. 'voids, settles, reviews, freezes and every setting. Holders see the Developer section too.',
+          grant = grant(Config.Admin.Ace) },
+        { ace = Config.Admin.IdentityAce, name = 'Identity ACE (Config.Admin.IdentityAce)',
+          held = holds(Config.Admin.IdentityAce),
+          unlocks = 'Shows who is behind an anonymous party, and citizen ids, everywhere in the panel; '
+              .. 'every look is on the record. Changes nothing.',
+          grant = grant(Config.Admin.IdentityAce) },
+        { ace = developerAce(), name = 'Developer ACE (Config.Admin.DeveloperAce)', held = holds(developerAce()),
+          unlocks = 'Opens the Developer section: the console, diagnostics, storage, debug and rate limits. '
+              .. 'Holders of the staff ACE see it as well.',
+          grant = grant(developerAce()) },
+    }
+    for _, extra in ipairs(type(Config.Admin.ExtraAces) == 'table' and Config.Admin.ExtraAces or {}) do
+        if type(extra) == 'string' then
+            out[#out + 1] = { ace = extra, name = 'Extra ACE (Config.Admin.ExtraAces)', held = holds(extra),
+                unlocks = 'Opens this panel and the staff commands read-only: nothing it opens changes '
+                    .. 'anything.', grant = grant(extra) }
+        end
+    end
+    return out
+end
+
 local function accessFor(src)
     local okVersion, version = pcall(GetResourceMetadata, GetCurrentResourceName(), 'version', 0)
+    local isDeveloper = developer(src)
     return {
         canWrite = allowed(src, WRITE),
         canIdentify = identifies(src),
+        -- The Developer section, and whether it is open through the ACE of
+        -- its own or only through the staff ACE (the page says how to grant
+        -- the own one then).
+        canDevelop = isDeveloper,
+        developerAce = developerAce(),
+        developerByAce = isDeveloper and deps.admin.allowed(src, developerAce(), true) or false,
+        developerHint = isDeveloper and not deps.admin.allowed(src, developerAce(), true)
+            and deps.admin.howToAuthorise(developerAce(), true):gsub('^Not authorised: ', 'To give the '
+                .. 'Developer section to its own people: ') or nil,
+        permissions = permissionsFor(src),
         pageSize = math.max(5, math.min(100, math.floor(tonumber(Config.Admin.PanelPageSize) or 25))),
         refreshSeconds = math.max(2, math.floor(tonumber(Config.Admin.PanelRefreshSeconds) or 10)),
         recovery = recoveryState(),
@@ -1456,8 +1522,27 @@ H.whois = function(src, data)
     return true, nil, nil, who
 end
 
-H.settings = function()
+--- Whether a settings row or key is in the Developer section.
+local function developerKey(key)
+    if type(key) ~= 'string' then return false end
+    if deps.settings.DENY and deps.settings.DENY[key] then return true end
+    local entry = deps.settings.entry(key)
+    return entry ~= nil and entry.category == 'developer'
+end
+
+H.settings = function(src)
     local view = deps.settings.view()
+    -- The Developer section's settings only for staff who may open it.
+    if not developer(src) then
+        for _, list in ipairs({ 'features', 'limits', 'readonly' }) do
+            local kept = {}
+            for _, row in ipairs(view[list] or {}) do
+                if row.category ~= 'developer' then kept[#kept + 1] = row end
+            end
+            view[list] = kept
+        end
+        view.developerHidden = true
+    end
     -- The kill photos kept from before they were turned off, for the button
     -- under Completion that removes them: only while they are off and some
     -- are kept. A store that cannot say leaves the button out.
@@ -1803,11 +1888,24 @@ function Panel.handle(src, payload)
     -- nobody knows is checked as a read, so it answers the same as any
     -- other to somebody who may not read.
     local level = (op and OPS[op]) or READ
-    if not allowed(src, level == IDENTITY and READ or level) then
+    if not allowed(src, (level == IDENTITY or level == DEVELOPER) and READ or level) then
         noteDenied(src, op, 'denied')
         return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace, true)
             .. (level == WRITE
                 and ' Changing anything needs that ACE itself; the extra ACEs only read.' or ''))
+    end
+    if level == DEVELOPER and not developer(src) then
+        noteDenied(src, op, 'developer_denied')
+        return answer(false, 'developer_required', deps.admin.howToAuthorise(developerAce(), true))
+    end
+    -- A setting in the Developer section, changed or reset, by name: the
+    -- same ACE as reading it. Only staff with Ace write at all, and they see
+    -- the section, so this refuses nothing today; it is the gate should the
+    -- fallback ever narrow.
+    if (op == 'setSetting' or op == 'resetSetting') and type(payload.data) == 'table'
+        and developerKey(payload.data.key) and not developer(src) then
+        noteDenied(src, op, 'developer_denied')
+        return answer(false, 'developer_required', deps.admin.howToAuthorise(developerAce(), true))
     end
     if level == IDENTITY and not identifies(src) then
         noteDenied(src, op, 'identity_denied')

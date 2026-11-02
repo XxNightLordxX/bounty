@@ -26,7 +26,7 @@ A staff account that can adjust money and spawn items makes this much faster.
       `ch-diag` lists the setting under *settings that need attention*. Put it
       back
 - [ ] Turn **Debug output in the server console** off in the admin panel
-      (**Features & limits → Audit and debug**) and restart: nothing at the
+      (**Developer → Settings → Audit and debug**) and restart: nothing at the
       restart. Turn it on again: the integration list, `started in json mode`
       and any warning in full
 - [ ] No errors in `txAdmin` console on start or on a `restart crimson-hitman`
@@ -381,7 +381,7 @@ in your database before the first start of this version.
 - [ ] As shipped, the Place form has no **Payouts** count, no note about
       more hitmen than payouts, and its one reward is headed **Reward**, not
       "Payout 1"; the placed contract's card says nothing of payouts
-- [ ] In the admin panel (**Features, limits & settings → Limits**), the
+- [ ] In the admin panel (**Rules → Rewards & money → Payouts**), the
       setting takes 1, 2 or 3 and refuses 0 and 4. Set it to 3: the next
       Place form offers a count of up to 3 (reopen the Place tab), and the
       checks below run
@@ -564,8 +564,8 @@ served, and no image host is asked anything.
 - [ ] Kill the target and have staff void the contract from `/hitmanadmin`
       before tapping **Verify kill**: *That contract is closed.*, never
       *Not right now.*
-- [ ] Admin panel, Features: **A downed target is not a kill** is shown
-      read-only, under the read-only settings, saying why
+- [ ] Admin panel, Developer, Settings: **A downed target is not a kill** is
+      shown read-only, saying why
 - [ ] With **Kill photos** turned on from the panel on a server started with
       them off, verify a kill with a photo on `'server'` storage:
       `data/photos/.mode` appears beside the photo, naming the storage mode
@@ -1020,6 +1020,44 @@ out, (c) while accepting with a stake, (d) during a handover countdown.
 Grant yourself `crimson.admin` (and, on a second account, only `command`, the
 usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 
+- [ ] The side shows six sections: **Live**, **Staff actions**, **Rules**,
+      **Features**, **Logs & alerts**, **Developer**. Each opens on its first
+      tab, and on the tab you last had open in it after; close and reopen the
+      panel and it opens where you left it
+- [ ] Every old view is still there: Overview, Contracts, Players, Frozen
+      players, Needs review and Stuck escrow under Live; Tools under Staff
+      actions; Logs and Alerts under Logs & alerts; Console under Developer
+- [ ] On the `command`-only account the last section reads **Permissions**
+      and holds only that page: no Console, Diagnostics or developer settings,
+      and the Rules and Features pages list no debug, storage or rate-limit
+      row. On the `crimson.admin` account **Developer** is there, with one line
+      under its Settings saying how to grant `crimson.developer`. Grant
+      `crimson.developer` to the `command` account (`add_ace
+      identifier.license:<licence> crimson.developer allow`) and reopen: it has
+      Developer too, read-only
+- [ ] **Permissions** lists `crimson.admin`, `crimson.identity`,
+      `crimson.developer` and `command`, says *You hold it* or *You do not hold
+      it* correctly on each account, and gives the grant line for each one not
+      held. It has no button or box
+- [ ] **How it works**: each card's links open the setting they name, marked,
+      in Rules or Features
+- [ ] In Rules, Features and Developer, type part of a setting's name, key,
+      description or group into the search box: only matching rows stay
+- [ ] Change a setting away from its shipped value: **Reset to default**
+      appears, its first click says what it goes back to, and the second puts
+      it back (the row's *default* matches `config/defaults.lua`)
+- [ ] Rules → Targeting → **Job names barred from the app**: add a name,
+      remove one, and **Save list** (two clicks): a player on the added job is
+      barred at once. Add `bad name!`: the save is refused with why
+- [ ] Rules → Limits → **Buyout command** says *applies after restart*;
+      change it, restart, and the new command buys out
+- [ ] Developer → Settings: every rate limit is one row with `per` and
+      `burst`; the Discord webhooks show *set* or *not set*, never the
+      address; **Staff ACE** and **Storage mode** say *edit in config.lua*
+- [ ] Shrink the game window to about phone width (or open the page in a
+      browser at 390 px): the sections wrap along the top, nothing scrolls
+      sideways
+
 - [ ] `/hitmanadmin` opens the panel full screen with a cursor; the phone app
       still opens from the phone as before. Escape closes it, so does its close
       button, and the game takes input again at once. `restart crimson-hitman`
@@ -1124,7 +1162,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       leave it three seconds and it goes back without doing anything
 - [ ] Type a citizen id into the log's citizen id box on the account without
       `crimson.identity`: the box is greyed out and nothing is filtered by it
-- [ ] Turn a feature switch off and on again from **Features & limits**: each
+- [ ] Turn a feature switch off and on again from **Features**: each
       click answers in a toast and on the row, and the row says *changed from
       the panel* with `config.lua`'s value beside it until you reset it
 - [ ] On the `command`-only account the panel opens and every section reads;
@@ -1234,7 +1272,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `/ch-settle <line> pay <amount>` above what the line owes answers how
       much it still owes, and a second settle of a settled line *Already
       settled, by another settle or its own ending*
-- [ ] In **Features & limits**, **Limits & settings**, type 1 into *Days an
+- [ ] In **Rules → Timers**, type 1 into *Days an
       unopened kill photo is kept* and press Enter: nothing is saved, the row says
       what lowering it deletes, and Save turns brass; only a second click on Save
       lowers it. Raising it back saves at one click. `Config.Cooldowns.admin` and

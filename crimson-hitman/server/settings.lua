@@ -61,6 +61,67 @@ local AT_USE = 'Read each time it is used, so it applies to the next check, incl
     .. 'contracts already placed.'
 local CAP = 'Lowering it below what is in use now never cancels anything: it only refuses '
     .. 'new ones over it.'
+local RESTART = 'Read once at start: kept now, and in force after the next restart.'
+
+--- Never changed from the panel, whatever a page sends: shown read-only with
+--- why, and refused by Settings.check before anything else. Secrets (secret
+--- = true) are shown only as set or not set, never their value; a key here
+--- that config.lua does not hold (a convar, a key nil by default) is listed
+--- all the same. [key] = { why, secret, convar }
+local EDIT_IN_CONFIG = ' Edit it in config.lua.'
+local DENY = {
+    ['Database.Mode'] = { why = 'Changing it needs the money in the old mode settled and a restart '
+        .. '(README, Changing storage mode).' .. EDIT_IN_CONFIG },
+    ['Database.Json.Directory'] = { why = 'Where the json store lives on disk: moved from here, the '
+        .. 'next start would open an empty store.' .. EDIT_IN_CONFIG },
+    ['Admin.Ace'] = { why = 'Who may use this panel. An ACE renamed from here could grant or lock '
+        .. 'out staff.' .. EDIT_IN_CONFIG },
+    ['Admin.IdentityAce'] = { why = 'Who may unmask anonymous parties. An ACE renamed from here could '
+        .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
+    ['Admin.DeveloperAce'] = { why = 'Who sees the Developer section. An ACE renamed from here could '
+        .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
+    ['Admin.ExtraAces'] = { why = 'ACEs that may read the staff tools. Changed from here, staff could '
+        .. 'grant themselves access.' .. EDIT_IN_CONFIG },
+    ['Reason.PatternDenylist'] = { why = 'Lua patterns: a malformed one raises in every reason check.'
+        .. EDIT_IN_CONFIG },
+    ['Completion.DeathStateProviders'] = { why = 'Exports of other resources, called by name.'
+        .. EDIT_IN_CONFIG },
+    ['Completion.PhotoPublicUrl'] = { why = 'The address photos are served from.' .. EDIT_IN_CONFIG },
+    ['Completion.KeptPhotoDays'] = { why = 'nil keeps a saved photo until deleted.' .. EDIT_IN_CONFIG },
+    ['Kidnap.RestraintProvider'] = { why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    ['Immunity.PlaytimeProvider'] = { why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    ['Relay.CallExport'] = { why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    ['convar:crimson_hitman_webhook'] = { secret = true, convar = 'crimson_hitman_webhook',
+        why = 'The Discord webhook for the log: a secret, set in server.cfg with set (never setr).' },
+    ['convar:crimson_hitman_alert_webhook'] = { secret = true, convar = 'crimson_hitman_alert_webhook',
+        why = 'The Discord webhook for alerts: a secret, set in server.cfg with set (never setr).' },
+}
+Settings.DENY = DENY
+
+--- The categories a key is shown under in the panel: who uses it.
+Settings.CATEGORIES = { 'rules-timers', 'rules-rewards', 'rules-limits', 'rules-targeting', 'features',
+    'developer' }
+
+--- Rewards & money, shown in these groups rather than the key's own.
+local MONEY = {
+    ['MaxContractValue'] = 'Rewards', ['Limits.MinContractReward'] = 'Rewards',
+    ['Sources.cash.max'] = 'Rewards', ['Sources.bank.max'] = 'Rewards', ['Sources.dirty.max'] = 'Rewards',
+    ['Sources.dirty.item'] = 'Rewards', ['Sources.item.maxStacks'] = 'Rewards',
+    ['Sources.item.maxPerStack'] = 'Rewards', ['Sources.weapon.max'] = 'Rewards',
+    ['Bonus.maxPercent'] = 'Rewards',
+    ['Limits.MaxPayoutSlots'] = 'Payouts', ['Limits.SlotCooldownSeconds'] = 'Payouts',
+    ['PendingEscrow.MaxRetriesPerLogin'] = 'Payouts', ['PendingEscrow.LoginRetryDelayMs'] = 'Payouts',
+    ['Bailout.MinMultiplier'] = 'Buyouts', ['Bailout.MaxMultiplier'] = 'Buyouts',
+    ['Bailout.AbsoluteMax'] = 'Buyouts', ['Bailout.ProcessingDelaySeconds'] = 'Buyouts',
+    ['Informant.Cost'] = 'Informant prices', ['Informant.Account'] = 'Informant prices',
+    ['PlacerInformant.Cost'] = 'Informant prices', ['PlacerInformant.Account'] = 'Informant prices',
+    ['LocationTip.Cost'] = 'Informant prices', ['LocationTip.Account'] = 'Informant prices',
+    ['Anonymity.CreatorFee'] = 'Anonymity fees', ['Anonymity.HitmanFee'] = 'Anonymity fees',
+    ['Anonymity.FeeAccount'] = 'Anonymity fees',
+    ['EscrowBlacklist'] = 'Escrow', ['Limits.MaxEscrowLines'] = 'Escrow', ['Penalty.MaxAmount'] = 'Escrow',
+    ['Penalty.MaxFractionOfEscrow'] = 'Escrow',
+}
+Settings.MONEY = MONEY
 
 --- Beside both restraints. With a restraint required and neither counting
 --- (and no restraint resource), every handover was refused as 'not
@@ -113,16 +174,16 @@ local NEEDS_OFF = {
 --- deleted every unopened kill photo older than a day.
 local CATALOGUE = {
     -- Features ------------------------------------------------------------
-    { key = 'BlockOffDuty', section = 'features', group = 'Access', kind = 'switch',
+    { key = 'BlockOffDuty', section = 'features', category = 'features', group = 'Access', kind = 'switch',
       label = 'Bar off-duty officers',
       about = 'Barred jobs stay barred from the app while off duty.',
       inflight = AT_USE .. ' Who may see the app is checked again at once.' },
-    { key = 'HideAppFromBlockedJobs', section = 'features', group = 'Access', kind = 'switch',
+    { key = 'HideAppFromBlockedJobs', section = 'features', category = 'features', group = 'Access', kind = 'switch',
       unless = 'WhitelistedView.Enabled',
       label = 'Hide the app from barred jobs',
       about = 'Keeps the app off a barred player\'s phone instead of showing one that answers nothing.',
       inflight = 'Every phone is told at once; barred jobs are refused either way.' },
-    { key = 'WhitelistedView.Enabled', section = 'features', group = 'Access', kind = 'switch',
+    { key = 'WhitelistedView.Enabled', section = 'features', category = 'features', group = 'Access', kind = 'switch',
       label = 'Whitelisted-job view',
       about = 'Barred jobs (police, EMS, DOJ, lawyers and the rest) open the app to one read-only '
           .. 'screen: the contracts on them and on other whitelisted-job members, with no more '
@@ -130,7 +191,7 @@ local CATALOGUE = {
           .. 'Off: the app is closed to them, as Hide the app from barred jobs says.',
       inflight = 'Every phone is told at once, and an open app changes screen at once. A buyout '
           .. 'already paid still closes after its delay either way.' },
-    { key = 'WhitelistedView.Alerts', section = 'features', group = 'Access', kind = 'switch',
+    { key = 'WhitelistedView.Alerts', section = 'features', category = 'features', group = 'Access', kind = 'switch',
       needs = 'WhitelistedView.Enabled',
       label = 'Notify me on the whitelisted-job view',
       about = 'A player on the whitelisted-job view may turn on Notify me (off until they do, for '
@@ -141,29 +202,30 @@ local CATALOGUE = {
       inflight = 'Read at every use, with no restart. Off hides the toggle and sends nothing, '
           .. 'notices still waiting included; each player\'s choice is kept, and applies again '
           .. 'when this is turned back on.' },
-    { key = 'App.DefaultInstalled', section = 'features', group = 'The app', kind = 'switch',
+    { key = 'App.DefaultInstalled', section = 'features', category = 'features', group = 'The app', kind = 'switch',
       label = 'Put the app on every home screen', client = true, live = false,
       about = 'Installs the app on eligible phones instead of leaving it in the App Store.',
       inflight = 'Applies after restart: read when the app is added to a phone, at the next '
           .. 'start of this resource or lb-phone, or when a player next joins.' },
 
-    { key = 'Sources.cash.enabled', section = 'features', group = 'Rewards', kind = 'switch',
+    { key = 'Sources.cash.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
       label = 'Cash rewards', about = 'Cash may be put up as a reward.', inflight = NEW_ONLY
           .. ' Cash already held in escrow is paid out or returned as before.' },
-    { key = 'Sources.bank.enabled', section = 'features', group = 'Rewards', kind = 'switch',
+    { key = 'Sources.bank.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
       label = 'Bank rewards', about = 'Bank money may be put up as a reward.', inflight = NEW_ONLY
           .. ' Money already held in escrow is paid out or returned as before.' },
-    { key = 'Sources.dirty.enabled', section = 'features', group = 'Rewards', kind = 'switch',
+    { key = 'Sources.dirty.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
       label = 'Dirty money rewards', about = 'Dirty money may be put up as a reward.',
       inflight = NEW_ONLY .. ' Money already held in escrow is paid out or returned as before.' },
-    { key = 'Sources.item.enabled', section = 'features', group = 'Rewards', kind = 'switch',
+    { key = 'Sources.item.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
       label = 'Item rewards', about = 'Items may be put up as a reward.', inflight = NEW_ONLY
           .. ' Items already held in escrow are paid out or returned as before.' },
-    { key = 'Sources.weapon.enabled', section = 'features', group = 'Rewards', kind = 'switch',
+    { key = 'Sources.weapon.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
       label = 'Weapon rewards', about = 'Weapons may be put up as a reward.', inflight = NEW_ONLY
           .. ' Weapons already held in escrow are paid out or returned as before.' },
 
     { key = 'Completion.Fulfilment', section = 'features', group = 'Completion', kind = 'choice',
+      category = 'rules-limits',
       choices = { 'alive', 'either' }, label = 'How contracts are completed',
       -- Who the target is handed to, said here as everywhere a player reads
       -- it; and no photograph, which under KillPhotos off is never taken.
@@ -171,7 +233,7 @@ local CATALOGUE = {
           .. 'person who placed the contract, who has to be there for the handover; a kill '
           .. 'never completes one. \'either\': a verified kill, or that handover.',
       inflight = 'Each contract keeps the rule it was placed under; this changes new contracts only.' },
-    { key = 'Completion.KillPhotos', section = 'features', group = 'Completion', kind = 'switch',
+    { key = 'Completion.KillPhotos', section = 'features', category = 'features', group = 'Completion', kind = 'switch',
       label = 'Kill photos',
       about = 'Off: no kill photo is ever taken, uploaded, kept or served, and no image host is '
           .. 'asked anything. Under \'either\', Verify kill completes at the scene on the '
@@ -181,31 +243,33 @@ local CATALOGUE = {
           .. 'saved to a phone\'s Photos stop loading. While it is off, the photos kept from '
           .. 'before can be removed all at once here.' },
     { key = 'Completion.PhotoStorage', section = 'features', group = 'Completion', kind = 'choice',
+      category = 'developer',
       needs = 'Completion.KillPhotos',
       choices = { 'server', 'host' }, label = 'Where kill photos are kept',
       about = '\'server\': in this resource\'s data folder. \'host\': lb-phone\'s image host.',
       inflight = 'Photos already kept stay where they are and open as before; a photo token '
           .. 'asked for before the change is used the way it was issued.' },
-    { key = 'Completion.RequireObservedDamage', section = 'features', group = 'Completion',
+    { key = 'Completion.RequireObservedDamage', section = 'features', category = 'features', group = 'Completion',
       kind = 'switch', label = 'Kills need damage the server saw',
       about = 'The killer a victim names must also be in the server\'s own damage log.',
       inflight = AT_USE },
-    { key = 'Ledger.StorePhotos', section = 'features', group = 'Completion', kind = 'switch',
+    { key = 'Ledger.StorePhotos', section = 'features', category = 'features', group = 'Completion', kind = 'switch',
       needs = 'Completion.KillPhotos',
       label = 'Keep kill photos for the client',
       about = 'The client who placed the contract can open its kill photo once.',
       inflight = 'Photos already kept stay openable; kills verified while it is off keep none.' },
 
     { key = 'Kidnap.RequireConscious', section = 'features', group = 'Handovers', kind = 'switch',
+      category = 'features',
       label = 'Target must be conscious', about = 'Not dead, not downed, above the health floor.',
       inflight = AT_USE .. ' A contract placed under \'alive\' always checks it.' },
-    { key = 'Kidnap.RejectDead', section = 'features', group = 'Handovers', kind = 'switch',
+    { key = 'Kidnap.RejectDead', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
       label = 'Refuse a dead target', about = 'A body is never handed over.',
       inflight = AT_USE .. ' A contract placed under \'alive\' always checks it.' },
-    { key = 'Kidnap.RejectLastStand', section = 'features', group = 'Handovers', kind = 'switch',
+    { key = 'Kidnap.RejectLastStand', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
       label = 'Refuse a downed target', about = 'A target in last stand cannot be handed over.',
       inflight = AT_USE },
-    { key = 'Kidnap.RequireCoercion', section = 'features', group = 'Handovers', kind = 'switch',
+    { key = 'Kidnap.RequireCoercion', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
       label = 'Target must be restrained',
       about = 'Off (as shipped): the target only has to be alive, conscious, not downed and with '
           .. 'the hitman, within the handover radius of the person who placed the contract, for '
@@ -213,13 +277,14 @@ local CATALOGUE = {
           .. 'vehicle, the whole time.',
       inflight = AT_USE .. ' A countdown already running is checked by it on its next sample.' },
     { key = 'Kidnap.Coercion.handcuffed', section = 'features', group = 'Handovers', kind = 'switch',
+      category = 'features',
       label = 'Handcuffs count as restraint', about = 'QBox \'ishandcuffed\' metadata. ' .. ONE_RESTRAINT,
       needs = 'Kidnap.RequireCoercion', inflight = AT_USE },
-    { key = 'Kidnap.Coercion.passengerOfHitman', section = 'features', group = 'Handovers',
+    { key = 'Kidnap.Coercion.passengerOfHitman', section = 'features', category = 'features', group = 'Handovers',
       kind = 'switch', label = 'The hitman\'s vehicle counts as restraint',
       about = 'The target riding in the hitman\'s vehicle. ' .. ONE_RESTRAINT,
       needs = 'Kidnap.RequireCoercion', inflight = AT_USE },
-    { key = 'Kidnap.MeetingPoint', section = 'features', group = 'Handovers', kind = 'switch',
+    { key = 'Kidnap.MeetingPoint', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
       label = 'Meeting point for the handover',
       about = 'On an alive-only contract a hitman holds, the person who placed it can set a '
           .. 'meeting point where they stand, and clear it. Only the hitmen on that contract '
@@ -228,12 +293,12 @@ local CATALOGUE = {
       inflight = 'Read at every use, with no restart. Off hides the controls and refuses changes; '
           .. 'points already set are kept, and shown again when it is turned back on.' },
 
-    { key = 'Penalty.RequireDisclosureOnAccept', section = 'features', group = 'Stakes',
+    { key = 'Penalty.RequireDisclosureOnAccept', section = 'features', category = 'features', group = 'Stakes',
       kind = 'switch', label = 'Accept must echo the stake shown',
       about = 'A page showing a stale stake is refused rather than charged a new one.',
       inflight = AT_USE },
 
-    { key = 'Bailout.Enabled', section = 'features', group = 'Buyouts', kind = 'switch',
+    { key = 'Bailout.Enabled', section = 'features', category = 'features', group = 'Buyouts', kind = 'switch',
       label = 'Buyouts',
       about = 'A target may pay to close a contract on them, in the app or with the buyout '
           .. 'command for players the app is closed to.',
@@ -241,83 +306,87 @@ local CATALOGUE = {
           .. 'refused while it is off, and contracts placed meanwhile carry no buyout price. '
           .. 'A price already set is kept: only taking part of the reward back lowers it, '
           .. 'with the reward.' },
-    { key = 'Bailout.BlockWhileIncapacitated', section = 'features', group = 'Buyouts',
+    { key = 'Bailout.BlockWhileIncapacitated', section = 'features', category = 'features', group = 'Buyouts',
       kind = 'switch', label = 'No buyout from the floor',
       about = 'A dead or downed target cannot buy out.', inflight = AT_USE },
 
     { key = 'Targeting.AllowBrowseAll', section = 'features', group = 'Targeting', kind = 'switch',
+      category = 'features',
       label = 'Browse everyone online', about = 'Pick a target from a list of everyone online.',
       inflight = 'Placed contracts are untouched; the list is empty while it is off.' },
-    { key = 'Targeting.AllowNearby', section = 'features', group = 'Targeting', kind = 'switch',
+    { key = 'Targeting.AllowNearby', section = 'features', category = 'features', group = 'Targeting', kind = 'switch',
       label = 'List the people nearby', client = true,
       about = 'Names unmasked players within the nearby radius. Read its config comment first.',
       inflight = 'The list is empty while it is off, and players\' games stop reporting masks.' },
-    { key = 'Targeting.AllowProtectedJobTargets', section = 'features', group = 'Targeting',
+    { key = 'Targeting.AllowProtectedJobTargets', section = 'features', category = 'features', group = 'Targeting',
       kind = 'switch', label = 'Law enforcement may be targeted',
       about = 'Off refuses new contracts on protected jobs.',
       inflight = 'Contracts already on protected targets run on; only new ones are refused.' },
-    { key = 'Mugshot.Enabled', section = 'features', group = 'Targeting', kind = 'switch',
+    { key = 'Mugshot.Enabled', section = 'features', category = 'features', group = 'Targeting', kind = 'switch',
       label = 'Target headshots', client = true,
       about = 'Faces on the board, rendered by each target\'s own game. Off: none is asked for, '
           .. 'one sent anyway is refused unread, and cards show the placeholder.',
       inflight = 'Read at the next card drawn, with no restart: turned off, the headshots kept '
           .. 'are forgotten at once.' },
     { key = 'Mugshot.RemoveBackground', section = 'features', group = 'Targeting', kind = 'switch',
+      category = 'features',
       needs = 'Mugshot.Enabled',
       label = 'Cut the background out of headshots', client = true,
       about = 'Loads a segmentation model into the target\'s game for each render.',
       inflight = 'Headshots already cached keep the background they were made with.' },
 
-    { key = 'Advisory.Enabled', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.Enabled', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'Advisories', about = 'Law enforcement is told about contracts on officers.',
       inflight = 'Bulletins already sent stand; none is sent while it is off.' },
-    { key = 'Advisory.UseDispatch', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.UseDispatch', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'Through sc-dispatch', about = 'Raise a dispatch entry as well.',
       inflight = AT_USE },
     { key = 'Advisory.AlwaysAlertTarget', section = 'features', group = 'Law enforcement advisory',
+      category = 'features',
       kind = 'switch', label = 'Always tell the officer', about = 'The targeted officer is told.',
       inflight = AT_USE },
-    { key = 'Advisory.OnCreate', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.OnCreate', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'When posted', about = 'A bulletin when the contract is posted.',
       inflight = AT_USE },
-    { key = 'Advisory.OnAccept', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.OnAccept', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'When accepted', about = 'A bulletin when an operative accepts.',
       inflight = AT_USE },
-    { key = 'Advisory.OnLocationTip', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.OnLocationTip', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'When a tip is bought',
       about = 'A bulletin when a hitman buys an informant tip on the officer.', inflight = AT_USE },
-    { key = 'Advisory.OnCancel', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.OnCancel', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'When called off',
       about = 'A bulletin when a contract on an officer is cancelled or voided with a refund.',
       inflight = AT_USE },
-    { key = 'Advisory.WarnCreator', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.WarnCreator', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'Warn the client', about = 'Before escrow is taken.', inflight = AT_USE },
-    { key = 'Advisory.WarnHitman', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.WarnHitman', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'Warn the hitman', about = 'Before they accept.', inflight = AT_USE },
-    { key = 'Advisory.FlagListing', section = 'features', group = 'Law enforcement advisory',
+    { key = 'Advisory.FlagListing', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'Flag the listing', about = 'The board marks an officer target.',
       inflight = AT_USE },
 
-    { key = 'Relay.Enabled', section = 'features', group = 'Messages and calls', kind = 'switch',
+    { key = 'Relay.Enabled', section = 'features', category = 'features', group = 'Messages and calls', kind = 'switch',
       label = 'Messages', about = 'The masked relay between the parties of a contract.',
       inflight = 'Threads are kept and come back when it is on again; nothing can be read or '
           .. 'sent while it is off.' },
-    { key = 'Relay.AllowMaskedCalls', section = 'features', group = 'Messages and calls',
+    { key = 'Relay.AllowMaskedCalls', section = 'features', category = 'features', group = 'Messages and calls',
       kind = 'switch', label = 'Calls', about = 'Calls between the parties through lb-phone.',
       inflight = 'A call already ringing is left alone, and its caller can still hang it up '
           .. 'from the app; new ones are refused.' },
     { key = 'Relay.RequireMaskingForAnonymous', section = 'features', group = 'Messages and calls',
+      category = 'features',
       kind = 'switch', label = 'Never unmask a caller',
       about = 'No call to or from an anonymous party on a phone that cannot hide the number.',
       inflight = AT_USE },
 
-    { key = 'Anonymity.AllowAnonymousPlacer', section = 'features', group = 'Anonymity',
+    { key = 'Anonymity.AllowAnonymousPlacer', section = 'features', category = 'features', group = 'Anonymity',
       kind = 'switch', label = 'Placing anonymously',
       about = 'A contract may be placed anonymously. Off, the Place form has no such option and '
           .. 'the server refuses one, charging nothing.',
       inflight = 'Read at every placing, with no restart. Contracts already placed anonymously '
           .. 'stay anonymous: it is not retroactive.' },
-    { key = 'Anonymity.AllowAnonymousHitman', section = 'features', group = 'Anonymity',
+    { key = 'Anonymity.AllowAnonymousHitman', section = 'features', category = 'features', group = 'Anonymity',
       kind = 'switch', label = 'Accepting anonymously',
       about = 'A contract may be accepted anonymously. Off, Accept has no such option and the '
           .. 'server refuses one, charging nothing: every new operative is named to the person '
@@ -325,7 +394,7 @@ local CATALOGUE = {
       inflight = 'Read at every acceptance, with no restart. Operatives already anonymous stay '
           .. 'anonymous, and one coming back to a contract they held anonymously comes back '
           .. 'under the same alias.' },
-    { key = 'Anonymity.ShowOperativeNames', section = 'features', group = 'Anonymity',
+    { key = 'Anonymity.ShowOperativeNames', section = 'features', category = 'features', group = 'Anonymity',
       kind = 'switch', label = 'Operative names shown to the target',
       about = 'An operative who accepted under their name is shown by it to the contract\'s '
           .. 'target too (On me, and the informant\'s list), not only to the person who placed '
@@ -336,14 +405,14 @@ local CATALOGUE = {
 
     -- The same three, in place of those above, on a contract whose target is
     -- on a whitelisted job (as the contract records it, like the advisory).
-    { key = 'Anonymity.WhitelistedTargets.AllowAnonymousPlacer', section = 'features',
+    { key = 'Anonymity.WhitelistedTargets.AllowAnonymousPlacer', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
       label = 'Placing anonymously',
       about = 'A contract on a member of a whitelisted job may be placed anonymously. Applies '
           .. 'there in place of the general switch; off, the server refuses one, charging '
           .. 'nothing.',
       inflight = 'Read at every placing, with no restart. Not retroactive.' },
-    { key = 'Anonymity.WhitelistedTargets.AllowAnonymousHitman', section = 'features',
+    { key = 'Anonymity.WhitelistedTargets.AllowAnonymousHitman', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
       label = 'Accepting anonymously',
       about = 'A contract on a member of a whitelisted job may be accepted anonymously. Applies '
@@ -351,7 +420,7 @@ local CATALOGUE = {
           .. 'nothing.',
       inflight = 'Read at every acceptance, with no restart. Operatives already anonymous stay '
           .. 'anonymous.' },
-    { key = 'Anonymity.WhitelistedTargets.ShowOperativeNames', section = 'features',
+    { key = 'Anonymity.WhitelistedTargets.ShowOperativeNames', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
       label = 'Operative names shown to the target',
       about = 'A member of a whitelisted job sees an operative who accepted under their name by '
@@ -359,25 +428,26 @@ local CATALOGUE = {
       inflight = 'Read at every view, with no restart. Operatives who accepted anonymously keep '
           .. 'their alias either way.' },
 
-    { key = 'Amendments.Enabled', section = 'features', group = 'Proposals', kind = 'switch',
+    { key = 'Amendments.Enabled', section = 'features', category = 'features', group = 'Proposals', kind = 'switch',
       label = 'Proposals', about = 'Changes to a contract that need the other side\'s agreement.',
       inflight = 'Proposals already open can still be answered and run out as before; new ones '
           .. 'are refused while it is off.' },
 
-    { key = 'InformantsEnabled', section = 'features', group = 'Informant', kind = 'switch',
+    { key = 'InformantsEnabled', section = 'features', category = 'features', group = 'Informant', kind = 'switch',
       label = 'Every informant feature',
       about = 'The master switch over the target\'s informant, the placer\'s informant and the '
           .. 'informant tip. Off turns all three off at once, whatever their own switches say.',
       inflight = 'Names already found stay shown, and a tip already bought stays on its buyer\'s '
           .. 'map until it runs out; new look-ups and tips are refused, and their buttons are '
           .. 'gone, while it is off.' },
-    { key = 'Informant.Enabled', section = 'features', group = 'Informant', kind = 'switch',
+    { key = 'Informant.Enabled', section = 'features', category = 'features', group = 'Informant', kind = 'switch',
       needs = 'InformantsEnabled',
       label = 'Target\'s informant',
       about = 'A target may pay for a chance to find out who is after them. For civilian '
           .. 'targets; a target on a whitelisted job has its own switch.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
     { key = 'PlacerInformant.Enabled', section = 'features', group = 'Informant', kind = 'switch',
+      category = 'features',
       needs = 'InformantsEnabled',
       label = 'Placer\'s informant',
       about = 'The person who placed a contract may pay for a chance to find out who took it. '
@@ -385,13 +455,14 @@ local CATALOGUE = {
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
 
     { key = 'LocationTip.Enabled', section = 'features', group = 'Informant tip', kind = 'switch',
+      category = 'features',
       needs = 'InformantsEnabled',
       label = 'Informant tip',
       about = 'A hitman on a contract may pay for the rough area the target was in. On '
           .. 'contracts on civilians; one on a whitelisted job has its own switch.',
       inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
           .. 'are refused while it is off.' },
-    { key = 'LocationTip.NotifyTarget', section = 'features', group = 'Informant tip',
+    { key = 'LocationTip.NotifyTarget', section = 'features', category = 'features', group = 'Informant tip',
       kind = 'switch', label = 'Tell the target',
       about = 'The target is told someone knows their rough area, never who or where.',
       inflight = 'Read when a tip is bought; a target already told stays told.' },
@@ -399,19 +470,19 @@ local CATALOGUE = {
     -- The three above, in place of their own switches, on a contract whose
     -- target is on a whitelisted job (the flag it recorded, as the advisory
     -- reads it). The master switch still turns them off.
-    { key = 'InformantsWhitelistedTargets.Informant', section = 'features',
+    { key = 'InformantsWhitelistedTargets.Informant', section = 'features', category = 'features',
       group = 'Informants (whitelisted-job targets)', kind = 'switch',
       needs = 'InformantsEnabled', label = 'Target\'s informant',
       about = 'A target on a whitelisted job may pay for a chance to find out who is after '
           .. 'them. Off, it is refused as before (informant_protected), charging nothing.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
-    { key = 'InformantsWhitelistedTargets.PlacerInformant', section = 'features',
+    { key = 'InformantsWhitelistedTargets.PlacerInformant', section = 'features', category = 'features',
       group = 'Informants (whitelisted-job targets)', kind = 'switch',
       needs = 'InformantsEnabled', label = 'Placer\'s informant',
       about = 'The person who placed a contract on a member of a whitelisted job may pay for a '
           .. 'chance to find out who took it.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
-    { key = 'InformantsWhitelistedTargets.LocationTip', section = 'features',
+    { key = 'InformantsWhitelistedTargets.LocationTip', section = 'features', category = 'features',
       group = 'Informants (whitelisted-job targets)', kind = 'switch',
       needs = 'InformantsEnabled', label = 'Informant tip',
       about = 'A hitman on a contract on a member of a whitelisted job may pay for the rough '
@@ -419,33 +490,35 @@ local CATALOGUE = {
       inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
           .. 'are refused while it is off.' },
 
-    { key = 'Notifications.ParanoidAlert', section = 'features', group = 'Notifications',
+    { key = 'Notifications.ParanoidAlert', section = 'features', category = 'features', group = 'Notifications',
       kind = 'switch', label = 'Tell the target', about = 'The target\'s phone says a price is on them.',
       inflight = 'Alerts already sent stand; alerts still waiting are checked when they fall due.' },
-    { key = 'Notifications.PushEnabled', section = 'features', group = 'Notifications',
+    { key = 'Notifications.PushEnabled', section = 'features', category = 'features', group = 'Notifications',
       kind = 'switch', label = 'Refresh open apps', about = 'Nudge an open app when its contract changes.',
       inflight = AT_USE },
 
-    { key = 'Limits.PauseWhileTargetJailed', section = 'features', group = 'The clock',
+    { key = 'Limits.PauseWhileTargetJailed', section = 'features', category = 'features', group = 'The clock',
       kind = 'switch', label = 'Pause while the target is jailed',
       about = 'A target serving time stops the deadline, as one offline does.',
       inflight = 'Checked by the next expiry pass: a pause it began ends, with the time banked.' },
 
-    { key = 'AntiCollusion.BlockSameAccount', section = 'features', group = 'Anti-collusion',
+    { key = 'AntiCollusion.BlockSameAccount', section = 'features', category = 'features', group = 'Anti-collusion',
       kind = 'switch', label = 'Refuse your own account',
       about = 'No contract between characters of one account.',
       inflight = 'Contracts already placed run on; new ones and acceptances are checked.' },
 
-    { key = 'Progression.Enabled', section = 'features', group = 'Progression', kind = 'switch',
+    { key = 'Progression.Enabled', section = 'features', category = 'features', group = 'Progression', kind = 'switch',
       label = 'Criminal progression', about = 'Completed contracts earn sc-blackmarket trust.',
       inflight = 'Trust already given stands; completions while it is off earn none.' },
 
     { key = 'Audit.LogAllActions', section = 'features', group = 'Audit and debug', kind = 'switch',
+      category = 'features',
       label = 'Log player conduct', about = 'Every creation, acceptance and refusal, not only money.',
       inflight = 'Money, staff actions and refusals are always logged whatever this says.' },
     { key = 'Audit.LogReasonText', section = 'features', group = 'Audit and debug', kind = 'switch',
+      category = 'features',
       label = 'Log contract reasons', about = 'The reason text goes into the log.', inflight = AT_USE },
-    { key = 'Alerts.ToDiscord', section = 'features', group = 'Audit and debug', kind = 'switch',
+    { key = 'Alerts.ToDiscord', section = 'features', category = 'features', group = 'Audit and debug', kind = 'switch',
       label = 'Post alerts to Discord',
       about = 'Every alert in the Alerts section is posted to the webhook set in server.cfg '
           .. '(crimson_hitman_alert_webhook, or else crimson_hitman_webhook), scrubbed of every '
@@ -453,7 +526,7 @@ local CATALOGUE = {
           .. 'section still lists every one.',
       inflight = 'Read at the next post, with no restart: turned off, alerts waiting to be posted '
           .. 'are dropped, and nothing said while it is off is posted later.' },
-    { key = 'Debug', section = 'features', group = 'Audit and debug', kind = 'switch',
+    { key = 'Debug', section = 'features', category = 'developer', group = 'Audit and debug', kind = 'switch',
       label = 'Debug output in the server console',
       about = 'Off: the server console prints only what needs you (refusing to start, money '
           .. 'left for staff, a write that failed) and one line for every setting that needs '
@@ -464,212 +537,560 @@ local CATALOGUE = {
           .. 'the diagnosis lists them either way.' },
 
     -- Read only, with the reason -----------------------------------------
-    { key = 'Admin.Enabled', section = 'readonly', group = 'Staff', kind = 'switch',
+    { key = 'Admin.Enabled', section = 'readonly', category = 'developer', group = 'Staff', kind = 'switch',
       label = 'Staff tools',
       readonly = 'Turning the staff tools off from the staff tools would lock you out of turning '
           .. 'them back on. Set it in config.lua.' },
-    { key = 'Admin.Ace', section = 'readonly', group = 'Staff', kind = 'text',
+    { key = 'Admin.Ace', section = 'readonly', category = 'developer', group = 'Staff', kind = 'text',
       label = 'Staff ACE', readonly = 'Who may use this panel. Set it in config.lua, so a slip '
           .. 'here cannot lock staff out.' },
-    { key = 'Admin.IdentityAce', section = 'readonly', group = 'Staff', kind = 'text',
+    { key = 'Admin.IdentityAce', section = 'readonly', category = 'developer', group = 'Staff', kind = 'text',
       label = 'Identity ACE', readonly = 'Who may unmask anonymous parties. Set it in config.lua.' },
-    { key = 'Database.Mode', section = 'readonly', group = 'Storage', kind = 'text',
+    { key = 'Database.Mode', section = 'readonly', category = 'developer', group = 'Storage', kind = 'text',
       label = 'Storage mode', readonly = 'Changing it needs the money in the old mode settled and '
           .. 'a restart (README, Changing storage mode).' },
     { key = 'Database.AllowModeSwitch', section = 'readonly', group = 'Storage', kind = 'switch',
+      category = 'developer',
       label = 'Start over money in another mode',
       readonly = 'Read once at start, and only safe on a server that settled the old mode by hand.' },
-    { key = 'Database.Json.SyncOnFinancialWrite', section = 'readonly', group = 'Storage',
+    { key = 'Database.Json.SyncOnFinancialWrite', section = 'readonly', category = 'developer', group = 'Storage',
       kind = 'switch', label = 'Write money to disk as it moves',
       readonly = 'Off, a crash could lose money that had moved. Set it in config.lua.' },
-    { key = 'Database.QueryTimeoutSeconds', section = 'readonly', group = 'Storage',
+    { key = 'Database.QueryTimeoutSeconds', section = 'readonly', category = 'developer', group = 'Storage',
       kind = 'number', label = 'Database answer limit (s)',
       readonly = 'mysql only. Set it in config.lua; it takes effect at the next start.' },
     -- Shown, not switched: turned off it changed nothing. A target only in
     -- last stand never reads as dead to the server, the sampler or the
     -- photo checks, whatever it says; it only removes one a death provider
     -- reports as dead and in last stand at once.
-    { key = 'Completion.RejectLastStand', section = 'readonly', group = 'Completion',
+    { key = 'Completion.RejectLastStand', section = 'readonly', category = 'developer', group = 'Completion',
       kind = 'switch', label = 'A downed target is not a kill',
       readonly = 'Only matters for a death provider that reports dead and last stand at once; '
           .. 'a downed target is never a kill here.' },
 
     -- Limits and settings -------------------------------------------------
     { key = 'Limits.MaxActiveContractsPerCreator', section = 'limits', group = 'Contract limits',
+      category = 'rules-limits',
       kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts a client may have out',
       inflight = CAP },
-    { key = 'Limits.MaxAcceptedPerHitman', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.MaxAcceptedPerHitman', section = 'limits', category = 'rules-limits', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts a hitman may hold',
       inflight = CAP },
     { key = 'Limits.MaxActiveContractsPerTarget', section = 'limits', group = 'Contract limits',
+      category = 'rules-limits',
       kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts on one target',
       inflight = CAP },
     -- Never above the most a contract may be worth (Config.MaxContractValue,
     -- config.lua's only): offered up to 100,000,000, anything over that was
     -- refused, in words that said the start would use the ceiling instead.
-    { key = 'Limits.MinContractReward', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.MinContractReward', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 0, max = 100000000, ceiling = 'MaxContractValue',
       label = 'Least a reward may be worth ($, 0 off)', inflight = CAP },
-    { key = 'Limits.MaxHitmenPerContract', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.MaxHitmenPerContract', section = 'limits', category = 'rules-limits', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 50, label = 'Operatives on one contract',
       inflight = CAP },
-    { key = 'Limits.MaxPayoutSlots', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.MaxPayoutSlots', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 3,
       label = 'Times one contract can be collected (1 to 3)',
       inflight = 'New contracts only: each contract keeps the number it was placed with. At 1 the '
           .. 'Place form shows no extra collections.' },
-    { key = 'Limits.MaxEscrowLines', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.MaxEscrowLines', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 500, label = 'Escrow lines in one contract',
       inflight = CAP },
-    { key = 'Limits.MaxDeadlineSkipSeconds', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.MaxDeadlineSkipSeconds', section = 'limits', category = 'developer', group = 'Contract limits',
       kind = 'number', integer = true, min = 10, max = 3600,
       label = 'Longest the expiry pass sleeps (s)', inflight = AT_USE },
-    { key = 'Limits.SlotCooldownSeconds', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.SlotCooldownSeconds', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 0, max = 86400,
       label = 'Wait between one hitman\'s payouts (s)', inflight = AT_USE },
     { key = 'Limits.TargetCooldownAfterResolveSeconds', section = 'limits', group = 'Contract limits',
+      category = 'rules-timers',
       kind = 'number', integer = true, min = 0, max = 604800,
       label = 'Wait before a target is listed again (s)', inflight = AT_USE },
-    { key = 'Limits.SameCreatorSameTargetCooldownSeconds', section = 'limits',
+    { key = 'Limits.SameCreatorSameTargetCooldownSeconds', section = 'limits', category = 'rules-timers',
       group = 'Contract limits', kind = 'number', integer = true, min = 0, max = 604800,
       label = 'Wait before one client lists one target again (s)', inflight = AT_USE },
-    { key = 'Limits.ContractLifetimeSeconds', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.ContractLifetimeSeconds', section = 'limits', category = 'rules-timers', group = 'Contract limits',
       kind = 'number', integer = true, min = 600, max = 2592000,
       label = 'Longest a contract may run (s)',
       inflight = 'New contracts only: each contract keeps the lifetime it was placed with.' },
-    { key = 'Limits.DefaultDeadlineSeconds', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.DefaultDeadlineSeconds', section = 'limits', category = 'rules-timers', group = 'Contract limits',
       kind = 'number', integer = true, min = 300, max = 2592000,
       label = 'Deadline a new contract gets (s)',
       inflight = 'New contracts only: each contract keeps the deadline it was given.' },
     { key = 'Limits.ExclusiveIdleReleaseSeconds', section = 'limits', group = 'Contract limits',
+      category = 'rules-timers',
       kind = 'number', integer = true, min = 0, max = 604800,
       label = 'Release an idle exclusive hold after (s, 0 off)', inflight = AT_USE },
     { key = 'Limits.ExclusiveAttemptWindowSeconds', section = 'limits', group = 'Contract limits',
+      category = 'rules-timers',
       kind = 'number', integer = true, min = 0, max = 604800,
       label = 'Release a hold with no attempt after (s, 0 off)', inflight = AT_USE },
-    { key = 'Limits.JailZone.radius', section = 'limits', group = 'Contract limits',
+    { key = 'Limits.JailZone.radius', section = 'limits', category = 'rules-limits', group = 'Contract limits',
       kind = 'number', min = 10, max = 5000, label = 'Prison grounds radius (m)', inflight = AT_USE },
 
-    { key = 'Penalty.MaxAmount', section = 'limits', group = 'Stakes', kind = 'number',
+    { key = 'Penalty.MaxAmount', section = 'limits', category = 'rules-rewards', group = 'Stakes', kind = 'number',
       integer = true, min = 0, max = 100000000, label = 'Largest stake ($)',
       inflight = 'New contracts only: a stake is fixed when the contract is placed.' },
     { key = 'Penalty.MaxFractionOfEscrow', section = 'limits', group = 'Stakes', kind = 'number',
+      category = 'rules-rewards',
       min = 0, max = 10, label = 'Largest stake, as a share of the reward',
       inflight = 'New contracts only: a stake is fixed when the contract is placed.' },
     { key = 'Penalty.MinWindowMinutes', section = 'limits', group = 'Stakes', kind = 'number',
+      category = 'rules-timers',
       integer = true, min = 0, max = 1440, label = 'Least time left to stake on (min)',
       inflight = AT_USE },
 
-    { key = 'Anonymity.CreatorFee', section = 'limits', group = 'Anonymity', kind = 'number',
+    { key = 'Anonymity.CreatorFee', section = 'limits', category = 'rules-rewards', group = 'Anonymity',
+      kind = 'number',
       integer = true, min = 0, max = 10000000, label = 'Fee to place anonymously ($)',
       inflight = 'Charged when a contract is placed; a fee refunded is always the one charged.' },
-    { key = 'Anonymity.HitmanFee', section = 'limits', group = 'Anonymity', kind = 'number',
+    { key = 'Anonymity.HitmanFee', section = 'limits', category = 'rules-rewards', group = 'Anonymity', kind = 'number',
       integer = true, min = 0, max = 10000000, label = 'Fee to accept anonymously ($)',
       inflight = 'Charged when a contract is accepted.' },
-    { key = 'Anonymity.FeeAccount', section = 'limits', group = 'Anonymity', kind = 'choice',
+    { key = 'Anonymity.FeeAccount', section = 'limits', category = 'rules-rewards', group = 'Anonymity',
+      kind = 'choice',
       choices = { 'bank', 'cash' }, label = 'Account the fees are charged to',
       inflight = 'A fee refunded goes back to the account it was taken from.' },
 
-    { key = 'Informant.Cost', section = 'limits', group = 'Informant', kind = 'number',
+    { key = 'Informant.Cost', section = 'limits', category = 'rules-rewards', group = 'Informant', kind = 'number',
       integer = true, min = 0, max = 10000000, label = 'Target\'s look-up price ($)',
       inflight = AT_USE },
-    { key = 'Informant.RevealChancePercent', section = 'limits', group = 'Informant',
+    { key = 'Informant.RevealChancePercent', section = 'limits', category = 'rules-limits', group = 'Informant',
       kind = 'number', integer = true, min = 0, max = 100,
       label = 'Target\'s chance a look-up finds out (%)', inflight = AT_USE },
-    { key = 'PlacerInformant.Cost', section = 'limits', group = 'Informant', kind = 'number',
+    { key = 'PlacerInformant.Cost', section = 'limits', category = 'rules-rewards', group = 'Informant',
+      kind = 'number',
       integer = true, min = 0, max = 10000000, label = 'Placer\'s look-up price ($)',
       inflight = AT_USE },
-    { key = 'PlacerInformant.RevealChancePercent', section = 'limits', group = 'Informant',
+    { key = 'PlacerInformant.RevealChancePercent', section = 'limits', category = 'rules-limits', group = 'Informant',
       kind = 'number', integer = true, min = 0, max = 100,
       label = 'Placer\'s chance a look-up finds out (%)', inflight = AT_USE },
-    { key = 'PlacerInformant.AlertChancePercent', section = 'limits', group = 'Informant',
+    { key = 'PlacerInformant.AlertChancePercent', section = 'limits', category = 'rules-limits', group = 'Informant',
       kind = 'number', integer = true, min = 0, max = 100,
       label = 'Chance the operative found out is told (%)', inflight = AT_USE },
     { key = 'PlacerInformant.MaxPurchasesPerContract', section = 'limits', group = 'Informant',
+      category = 'rules-limits',
       kind = 'number', integer = true, min = 0, max = 20,
       label = 'Placer\'s look-ups per contract',
       inflight = 'Look-ups already made count against the new figure.' },
-    { key = 'PlacerInformant.CooldownMinutes', section = 'limits', group = 'Informant',
+    { key = 'PlacerInformant.CooldownMinutes', section = 'limits', category = 'rules-timers', group = 'Informant',
       kind = 'number', integer = true, min = 0, max = 1440,
       label = 'Placer\'s wait between look-ups (min)', inflight = AT_USE },
 
-    { key = 'LocationTip.Cost', section = 'limits', group = 'Informant tip', kind = 'number',
+    { key = 'LocationTip.Cost', section = 'limits', category = 'rules-rewards', group = 'Informant tip',
+      kind = 'number',
       integer = true, min = 0, max = 10000000, label = 'Price of a tip ($)', inflight = AT_USE },
-    { key = 'LocationTip.RadiusMeters', section = 'limits', group = 'Informant tip',
+    { key = 'LocationTip.RadiusMeters', section = 'limits', category = 'rules-limits', group = 'Informant tip',
       kind = 'number', integer = true, min = 100, max = 2000,
       label = 'Radius of the area (m; shown twice this across)',
       inflight = 'Tips already bought keep the area they were shown.' },
-    { key = 'LocationTip.ShowMinutes', section = 'limits', group = 'Informant tip',
+    { key = 'LocationTip.ShowMinutes', section = 'limits', category = 'rules-timers', group = 'Informant tip',
       kind = 'number', integer = true, min = 1, max = 120, label = 'Minutes a tip is shown',
       inflight = 'Tips already bought keep the time they were sold with.' },
-    { key = 'LocationTip.CooldownMinutes', section = 'limits', group = 'Informant tip',
+    { key = 'LocationTip.CooldownMinutes', section = 'limits', category = 'rules-timers', group = 'Informant tip',
       kind = 'number', integer = true, min = 0, max = 1440,
       label = 'Minutes between two tips on a contract', inflight = AT_USE },
     { key = 'LocationTip.MaxPurchasesPerContract', section = 'limits', group = 'Informant tip',
+      category = 'rules-limits',
       kind = 'number', integer = true, min = 1, max = 50,
       label = 'Tips per hitman per contract', inflight = AT_USE },
 
-    { key = 'Restart.PauseBeforeSeconds', section = 'limits', group = 'Server restart',
+    { key = 'Restart.PauseBeforeSeconds', section = 'limits', category = 'rules-timers', group = 'Server restart',
       kind = 'number', integer = true, min = 0, max = 3600,
       label = 'Pause contracts this long before a txAdmin restart (s, 0 = off)',
       inflight = 'A pause already on stays until the restart, a skip or its longest.' },
-    { key = 'Restart.MaxHoldMinutes', section = 'limits', group = 'Server restart',
+    { key = 'Restart.MaxHoldMinutes', section = 'limits', category = 'rules-timers', group = 'Server restart',
       kind = 'number', integer = true, min = 1, max = 240,
       label = 'Longest the pause lasts with no restart (min)',
       inflight = 'A pause already on ends at the new length.' },
 
     { key = 'Kidnap.CountdownSeconds', section = 'limits', group = 'Handovers', kind = 'number',
+      category = 'rules-timers',
       integer = true, min = 5, max = 600, label = 'Handover countdown (s)', inflight = AT_USE
           .. ' A countdown already running finishes at the new length.' },
-    { key = 'Kidnap.Radius', section = 'limits', group = 'Handovers', kind = 'number',
+    { key = 'Kidnap.Radius', section = 'limits', category = 'rules-limits', group = 'Handovers', kind = 'number',
       min = 2, max = 100, label = 'Handover radius (m)',
       inflight = 'A countdown already running keeps the radius it was armed with.' },
-    { key = 'Kidnap.MinTargetHealthPercent', section = 'limits', group = 'Handovers',
+    { key = 'Kidnap.MinTargetHealthPercent', section = 'limits', category = 'rules-limits', group = 'Handovers',
       kind = 'number', integer = true, min = 0, max = 100,
       label = 'Least health to hand a target over (%)', inflight = AT_USE },
 
     { key = 'Bailout.MinMultiplier', section = 'limits', group = 'Buyout pricing', kind = 'number',
+      category = 'rules-rewards',
       min = 0, max = 20, label = 'Least buyout, times the reward',
       inflight = 'New contracts only: a buyout price is fixed when the contract is placed.' },
     { key = 'Bailout.MaxMultiplier', section = 'limits', group = 'Buyout pricing', kind = 'number',
+      category = 'rules-rewards',
       min = 0, max = 20, label = 'Most buyout, times the reward',
       inflight = 'New contracts only: a buyout price is fixed when the contract is placed, '
           .. 'and only comes down, to this many times what is left, when part of the reward '
           .. 'is taken back.' },
     { key = 'Bailout.AbsoluteMax', section = 'limits', group = 'Buyout pricing', kind = 'number',
+      category = 'rules-rewards',
       integer = true, min = 0, max = 100000000, label = 'Most buyout ($)',
       inflight = 'New contracts only: a buyout price is fixed when the contract is placed, '
           .. 'and lowering this never re-prices one.' },
 
     { key = 'Targeting.NearbyRadius', section = 'limits', group = 'Targeting', kind = 'number',
+      category = 'rules-targeting',
       min = 5, max = 200, label = 'Nearby list radius (m)', inflight = AT_USE },
     { key = 'Targeting.MaxNearby', section = 'limits', group = 'Targeting', kind = 'number',
+      category = 'rules-targeting',
       integer = true, min = 1, max = 50, label = 'Names on the nearby list', inflight = AT_USE },
-    { key = 'Targeting.NearbyClosedAfterSeconds', section = 'limits', group = 'Targeting',
+    { key = 'Targeting.NearbyClosedAfterSeconds', section = 'limits', category = 'rules-targeting', group = 'Targeting',
       kind = 'number', integer = true, min = 0, max = 86400,
       label = 'Nearby list closed after a contract (s)', inflight = AT_USE },
     { key = 'Targeting.BrowsePageSize', section = 'limits', group = 'Targeting', kind = 'number',
+      category = 'rules-targeting',
       integer = true, min = 5, max = 100, label = 'Names per page when browsing', inflight = AT_USE },
     { key = 'Targeting.MinQueryLength', section = 'limits', group = 'Targeting', kind = 'number',
+      category = 'rules-targeting',
       integer = true, min = 1, max = 10, label = 'Shortest name search', inflight = AT_USE },
     { key = 'Targeting.MaxResults', section = 'limits', group = 'Targeting', kind = 'number',
+      category = 'rules-targeting',
       integer = true, min = 1, max = 50, label = 'Results of a name search', inflight = AT_USE },
 
     { key = 'Ledger.PhotoRetentionDays', section = 'limits', group = 'Ledger', kind = 'number',
+      category = 'rules-timers',
       integer = true, min = 0, max = 365, label = 'Days an unopened kill photo is kept (0 forever)',
       inflight = 'Looked at every ten minutes: photos already past a shorter age go then.',
       destroys = 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the '
           .. 'next sweep, for good.' },
 
-    { key = 'Advisory.TriggerJobTypes', section = 'limits', group = 'Advisory job lists',
+    { key = 'Advisory.TriggerJobTypes', section = 'limits', category = 'rules-targeting', group = 'Advisory job lists',
       kind = 'list', label = 'Job types that raise an advisory', inflight = AT_USE },
-    { key = 'Advisory.TriggerJobNames', section = 'limits', group = 'Advisory job lists',
+    { key = 'Advisory.TriggerJobNames', section = 'limits', category = 'rules-targeting', group = 'Advisory job lists',
       kind = 'list', label = 'Job names that raise an advisory', inflight = AT_USE },
     { key = 'Advisory.RecipientJobTypes', section = 'limits', group = 'Advisory job lists',
+      category = 'rules-targeting',
       kind = 'list', label = 'Job types that receive advisories', inflight = AT_USE },
     { key = 'Advisory.RecipientJobNames', section = 'limits', group = 'Advisory job lists',
+      category = 'rules-targeting',
       kind = 'list', label = 'Job names that receive advisories', inflight = AT_USE },
+    -- Every other setting in config.lua ------------------------------------
+    -- Added so (close to) every setting is changed from the panel. Each is
+    -- checked by the start-up checks like the rest (fits); a key that is
+    -- read once at start says so (live = false) and is kept for the next one.
+    { key = 'MaxContractValue', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 1, max = 100000000,
+      label = 'Most a contract may hold ($)', about = 'The money a reward, its bonus and additions may '
+          .. 'add up to.', inflight = CAP },
+    { key = 'Sources.cash.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 0, max = 100000000, label = 'Most cash in a reward ($)',
+      about = 'The cash one reward may hold.', inflight = CAP },
+    { key = 'Sources.bank.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 0, max = 100000000, label = 'Most bank money in a reward ($)',
+      about = 'The bank money one reward may hold.', inflight = CAP },
+    { key = 'Sources.dirty.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 0, max = 100000000, label = 'Most dirty money in a reward ($)',
+      about = 'The dirty money one reward may hold.', inflight = CAP },
+    { key = 'Sources.dirty.item', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Dirty money item',
+      about = 'The ox_inventory item dirty money is paid in.',
+      inflight = 'Read at each payment: lines already in escrow keep the item they were taken as.' },
+    { key = 'Sources.item.maxStacks', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 0, max = 100, label = 'Item stacks in a reward',
+      about = 'How many stacks of items one reward may hold.', inflight = CAP },
+    { key = 'Sources.item.maxPerStack', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 1, max = 100000, label = 'Items in one stack',
+      about = 'The count one stack of a reward may hold.', inflight = CAP },
+    { key = 'Sources.weapon.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 0, max = 50, label = 'Weapons in a reward',
+      about = 'How many weapons one reward may hold.', inflight = CAP },
+    { key = 'Bonus.maxPercent', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'number', integer = true, min = 0, max = 1000, label = 'Most a kidnapping bonus adds (%)',
+      about = 'Under \'either\', the most a live-handover bonus may add to the reward.',
+      inflight = 'Contracts keep the bonus they were placed with; new ones are held to it.' },
+    { key = 'EscrowBlacklist', section = 'limits', category = 'rules-rewards', group = 'Rewards',
+      kind = 'list', names = 'item', label = 'Items never put in a reward',
+      about = 'ox_inventory item names a reward may not hold.',
+      inflight = 'Items already in escrow are paid out or returned as before; new ones are refused.' },
+    { key = 'PendingEscrow.MaxRetriesPerLogin', section = 'limits', category = 'rules-rewards',
+      group = 'Payouts', kind = 'number', integer = true, min = 1, max = 100,
+      label = 'Owed payouts tried at each login',
+      about = 'How many payouts owed to a player one pass tries when they log in.', inflight = AT_USE },
+    { key = 'PendingEscrow.LoginRetryDelayMs', section = 'limits', category = 'rules-rewards',
+      group = 'Payouts', kind = 'number', integer = true, min = 0, max = 600000,
+      label = 'Wait after login before paying (ms)',
+      about = 'How long after a login what is owed is paid, so the inventory is loaded first.',
+      inflight = AT_USE },
+    { key = 'Bailout.ProcessingDelaySeconds', section = 'limits', category = 'rules-rewards',
+      group = 'Buyouts', kind = 'number', integer = true, min = 0, max = 86400,
+      label = 'Hitman\'s head start on a buyout (s)',
+      about = 'A held contract\'s hitman gets this long to finish before a buyout closes it.',
+      inflight = 'A buyout already queued keeps the time it was queued at.' },
+    { key = 'Informant.Account', section = 'limits', category = 'rules-rewards', group = 'Informant prices',
+      kind = 'choice', choices = { 'bank', 'cash' }, label = 'Account the target\'s look-up is paid from',
+      about = 'Where the target\'s informant price is taken from.', inflight = AT_USE },
+    { key = 'PlacerInformant.Account', section = 'limits', category = 'rules-rewards',
+      group = 'Informant prices', kind = 'choice', choices = { 'bank', 'cash' },
+      label = 'Account the placer\'s look-up is paid from',
+      about = 'Where the placer\'s informant price is taken from.', inflight = AT_USE },
+    { key = 'LocationTip.Account', section = 'limits', category = 'rules-rewards',
+      group = 'Informant prices', kind = 'choice', choices = { 'bank', 'cash' },
+      label = 'Account a tip is paid from', about = 'Where the price of an informant tip is taken from.',
+      inflight = AT_USE },
+
+    { key = 'Completion.ProofWindowSeconds', section = 'limits', category = 'rules-timers',
+      group = 'Completion', kind = 'number', integer = true, min = 0, max = 3600,
+      label = 'Kill verifies this long after death (s)',
+      about = 'A kill still verifies this long after the target died, even once they are back up.',
+      inflight = AT_USE },
+    { key = 'Completion.PhotoTokenLifetimeSeconds', section = 'limits', category = 'rules-timers',
+      group = 'Completion', kind = 'number', integer = true, min = 10, max = 3600, client = true,
+      label = 'Time to verify a kill (s)', about = 'How long a kill waits to be verified.',
+      inflight = 'Applies to the next kill; one already waiting keeps its time.' },
+    { key = 'Completion.PhotoOpenSeconds', section = 'limits', category = 'rules-timers',
+      group = 'Completion', kind = 'number', integer = true, min = 10, max = 86400,
+      label = 'Time the client may view a photo (s)', about = 'After this the opened photo is deleted.',
+      inflight = AT_USE },
+    { key = 'Kidnap.RearmCooldownSeconds', section = 'limits', category = 'rules-timers',
+      group = 'Handovers', kind = 'number', integer = true, min = 0, max = 3600,
+      label = 'Wait after a failed handover (s)', about = 'Before a handover can be armed again.',
+      inflight = AT_USE },
+    { key = 'Amendments.ProposalExpirySeconds', section = 'limits', category = 'rules-timers',
+      group = 'Proposals', kind = 'number', integer = true, min = 30, max = 86400,
+      label = 'A proposal lapses after (s)', about = 'Open proposals between placer and hitman lapse.',
+      inflight = 'Proposals already open keep the time they were given.' },
+    { key = 'Amendments.CancelCooldownSeconds', section = 'limits', category = 'rules-timers',
+      group = 'Proposals', kind = 'number', integer = true, min = 0, max = 86400,
+      label = 'Wait after calling a contract off (s)',
+      about = 'Before the same placer may place another on that target.', inflight = AT_USE },
+    { key = 'Informant.RerollLockMinutes', section = 'limits', category = 'rules-timers',
+      group = 'Informant', kind = 'number', integer = true, min = 0, max = 1440,
+      label = 'Same pick repeats its answer for (min)',
+      about = 'The same look-up again this soon repeats the answer, free.', inflight = AT_USE },
+    { key = 'Immunity.PostRespawnSeconds', section = 'limits', category = 'rules-timers',
+      group = 'Immunity', kind = 'number', integer = true, min = 0, max = 86400,
+      label = 'Protected after a respawn (s)', about = 'Nobody may be targeted this long after a respawn.',
+      inflight = AT_USE },
+    { key = 'Immunity.AfterBailoutSeconds', section = 'limits', category = 'rules-timers',
+      group = 'Immunity', kind = 'number', integer = true, min = 0, max = 604800,
+      label = 'Protected after a buyout (s)', about = 'Nobody may target them again this long after a buyout.',
+      inflight = AT_USE },
+    { key = 'Notifications.ParanoidAlertJitter', section = 'limits', category = 'rules-timers',
+      group = 'Notifications', kind = 'range', integer = true, min = 0, max = 86400,
+      label = 'Wait before "eyes on you" (s, from-to)',
+      about = 'The target\'s alert waits a random time between these two.', inflight = AT_USE },
+    { key = 'Notifications.ParanoidCooldownMinutes', section = 'limits', category = 'rules-timers',
+      group = 'Notifications', kind = 'number', integer = true, min = 0, max = 1440,
+      label = 'One "eyes on you" per target per (min)', about = 'At most one such alert in this long.',
+      inflight = AT_USE },
+    { key = 'Mugshot.MinRefreshMinutes', section = 'limits', category = 'rules-timers',
+      group = 'Targeting', kind = 'number', integer = true, min = 0, max = 1440,
+      label = 'Least time between two headshots (min)', about = 'Of one target.', inflight = AT_USE },
+
+    { key = 'Completion.PhotoRadius', section = 'limits', category = 'rules-limits', group = 'Completion',
+      kind = 'number', min = 1, max = 100, label = 'Distance to the body to verify (m)',
+      about = 'How close the hitman must be to verify a kill.', inflight = AT_USE },
+    { key = 'Completion.MaxWeaponRange', section = 'limits', category = 'rules-limits',
+      group = 'Completion', kind = 'number', min = 10, max = 2000, label = 'Range a hit is believed from (m)',
+      about = 'A hit reported from further than this is not counted.', inflight = AT_USE },
+    { key = 'Completion.MedicJobs', section = 'limits', category = 'rules-limits', group = 'Completion',
+      kind = 'list', label = 'Medic jobs', about = 'Jobs whose revive counts, as sc-ambulance\'s RequireEMS.',
+      inflight = AT_USE },
+    { key = 'Completion.DefibItem', section = 'limits', category = 'rules-limits', group = 'Completion',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Defibrillator item',
+      about = 'As sc-ambulance\'s Defib.Item.', inflight = AT_USE },
+    { key = 'Completion.DefibRange', section = 'limits', category = 'rules-limits', group = 'Completion',
+      kind = 'number', min = 0.5, max = 20, label = 'Defibrillator range (m)',
+      about = 'As sc-ambulance\'s Defib.Distance.', inflight = AT_USE },
+    { key = 'Kidnap.MaxConcurrentCountdowns', section = 'limits', category = 'rules-limits',
+      group = 'Handovers', kind = 'number', integer = true, min = 1, max = 500,
+      label = 'Handovers counting at once', about = 'Server-wide.', inflight = CAP },
+    { key = 'Amendments.MaxOpenPerContract', section = 'limits', category = 'rules-limits',
+      group = 'Proposals', kind = 'number', integer = true, min = 1, max = 10,
+      label = 'Proposals open at once', about = 'On one contract.', inflight = CAP },
+    { key = 'Informant.RevealMode', section = 'limits', category = 'rules-limits', group = 'Informant',
+      kind = 'choice', choices = { 'name', 'description' }, label = 'What the target\'s look-up reveals',
+      about = '\'name\': the hitman\'s name. \'description\': what they look like.', inflight = AT_USE },
+    { key = 'Informant.ProximityRadius', section = 'limits', category = 'rules-limits', group = 'Informant',
+      kind = 'number', min = 5, max = 2000, label = 'Distance that counts as near (m)',
+      about = 'For an idle exclusive hold\'s clock.', inflight = AT_USE },
+    { key = 'Informant.MaxPurchasesPerContract', section = 'limits', category = 'rules-limits',
+      group = 'Informant', kind = 'number', integer = true, min = 0, max = 50,
+      label = 'Target\'s look-ups per contract', about = 'Both kinds together.', inflight = AT_USE },
+    { key = 'PlacerInformant.RevealMode', section = 'limits', category = 'rules-limits',
+      group = 'Informant', kind = 'choice', choices = { 'name', 'description' },
+      label = 'What the placer\'s look-up reveals',
+      about = '\'name\': the operative\'s name. \'description\': what they look like.', inflight = AT_USE },
+    { key = 'Reason.Mode', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
+      kind = 'choice', choices = { 'preset', 'freetext', 'off' }, label = 'How a reason is given',
+      about = '\'preset\': picked from the list. \'freetext\': typed. \'off\': none.',
+      inflight = 'Contracts keep the reason they were placed with.' },
+    { key = 'Reason.MaxLength', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
+      kind = 'number', integer = true, min = 10, max = 255, label = 'Longest reason (characters)',
+      about = '255 at most on mysql.', inflight = AT_USE },
+    { key = 'Reason.MaxDigits', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
+      kind = 'number', integer = true, min = 0, max = 50, label = 'Digits a reason may hold',
+      about = 'Kept low so no phone number is posted.', inflight = AT_USE },
+    { key = 'Reason.Presets', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
+      kind = 'list', array = true, names = 'phrase', label = 'Reasons to pick from',
+      about = 'The choices in \'preset\' mode, in order.', inflight = AT_USE },
+    { key = 'Notifications.MaxPerRecipientPerMinute', section = 'limits', category = 'rules-limits',
+      group = 'Notifications', kind = 'number', integer = true, min = 1, max = 100,
+      label = 'Notices a player may get a minute', about = 'Above it, notices are dropped.',
+      inflight = AT_USE },
+    { key = 'Notifications.MaxPerRecipientPerHour', section = 'limits', category = 'rules-limits',
+      group = 'Notifications', kind = 'number', integer = true, min = 1, max = 1000,
+      label = 'Notices a player may get an hour', about = 'Above it, notices are dropped.',
+      inflight = AT_USE },
+    { key = 'Advisory.DispatchPriority', section = 'limits', category = 'rules-limits',
+      group = 'Law enforcement advisory', kind = 'number', integer = true, min = 1, max = 3,
+      label = 'Dispatch priority', about = 'The sc-dispatch priority of an advisory.', inflight = AT_USE },
+    { key = 'Relay.MaxLength', section = 'limits', category = 'rules-limits', group = 'Messages and calls',
+      kind = 'number', integer = true, min = 10, max = 255, label = 'Longest message (characters)',
+      about = '255 at most on mysql.', inflight = AT_USE },
+    { key = 'Relay.MaxMessagesPerThread', section = 'limits', category = 'rules-limits',
+      group = 'Messages and calls', kind = 'number', integer = true, min = 10, max = 1000,
+      label = 'Messages a thread keeps', about = 'The newest are kept.', inflight = AT_USE },
+    { key = 'Ledger.Depth', section = 'limits', category = 'rules-limits', group = 'Ledger',
+      kind = 'number', integer = true, min = 1, max = 100, ceiling = 'Ledger.MaxDepthHardCap',
+      label = 'Ledger rows per player', about = 'At most the hard cap below.', inflight = AT_USE },
+    { key = 'Ledger.MaxDepthHardCap', section = 'limits', category = 'rules-limits', group = 'Ledger',
+      kind = 'number', integer = true, min = 1, max = 100, label = 'Ledger rows hard cap',
+      about = 'The ceiling on Ledger rows per player.', inflight = AT_USE },
+    { key = 'Progression.TrustPerElimination', section = 'limits', category = 'rules-limits',
+      group = 'Progression', kind = 'number', integer = true, min = 0, max = 10000,
+      label = 'Trust per kill', about = 'sc-blackmarket trust a completed kill earns.', inflight = AT_USE },
+    { key = 'Progression.TrustPerKidnapping', section = 'limits', category = 'rules-limits',
+      group = 'Progression', kind = 'number', integer = true, min = 0, max = 10000,
+      label = 'Trust per live handover', about = 'sc-blackmarket trust a handover earns.', inflight = AT_USE },
+    { key = 'Progression.Resource', section = 'limits', category = 'rules-limits', group = 'Progression',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Progression resource',
+      about = 'The resource that keeps criminal trust.', inflight = AT_USE },
+    { key = 'Listing.PageSize', section = 'limits', category = 'rules-limits', group = 'The app',
+      kind = 'number', integer = true, min = 5, max = 100, label = 'Contracts per board page',
+      about = 'On the app\'s board.', inflight = AT_USE },
+    { key = 'Limits.JailZone.x', section = 'limits', category = 'rules-limits', group = 'Contract limits',
+      kind = 'number', min = -10000, max = 10000, label = 'Prison grounds centre, x',
+      about = 'Where the prison grounds are.', inflight = AT_USE },
+    { key = 'Limits.JailZone.y', section = 'limits', category = 'rules-limits', group = 'Contract limits',
+      kind = 'number', min = -10000, max = 10000, label = 'Prison grounds centre, y',
+      about = 'Where the prison grounds are.', inflight = AT_USE },
+    { key = 'Bailout.Command', section = 'limits', category = 'rules-limits', group = 'Buyouts',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, live = false,
+      label = 'Buyout command', about = 'For players who cannot open the app.', inflight = RESTART },
+
+    { key = 'BlockedJobTypes', section = 'limits', category = 'rules-targeting', group = 'Barred jobs',
+      kind = 'list', label = 'Job types barred from the app',
+      about = 'Players on these job types cannot use the app.',
+      inflight = AT_USE .. ' Who may see the app is checked again at once.' },
+    { key = 'BlockedJobNames', section = 'limits', category = 'rules-targeting', group = 'Barred jobs',
+      kind = 'list', label = 'Job names barred from the app',
+      about = 'Players on these jobs cannot use the app, besides the types.',
+      inflight = AT_USE .. ' Who may see the app is checked again at once.' },
+    { key = 'Immunity.MinTargetPlaytimeHours', section = 'limits', category = 'rules-targeting',
+      group = 'Immunity', kind = 'number', min = 0, max = 10000,
+      label = 'Hours played before being a target (0 off)', about = 'New players are protected.',
+      inflight = AT_USE },
+    { key = 'Immunity.MinTargetSessionMinutes', section = 'limits', category = 'rules-targeting',
+      group = 'Immunity', kind = 'number', integer = true, min = 0, max = 1440,
+      label = 'Minutes in the city this session', about = 'Before anyone may target them.',
+      inflight = AT_USE },
+    { key = 'Immunity.GrandfatherDays', section = 'limits', category = 'rules-targeting',
+      group = 'Immunity', kind = 'number', integer = true, min = 0, max = 365,
+      label = 'Days of grandfathering', about = 'Only without qbx_core\'s players table.',
+      inflight = AT_USE },
+
+    { key = 'Database.Json.WarnContractCount', section = 'limits', category = 'developer', group = 'Storage',
+      kind = 'number', integer = true, min = 100, max = 1000000, label = 'json: warn above this many contracts',
+      about = 'A console warning past it.', inflight = AT_USE },
+    { key = 'Database.Json.MaxDirtyShardsPerFlush', section = 'limits', category = 'developer',
+      group = 'Storage', kind = 'number', integer = true, min = 1, max = 1000,
+      label = 'json: contract files one flush writes', about = 'The rest wait for the next flush.',
+      inflight = AT_USE },
+    { key = 'Audit.FlushIntervalMs', section = 'limits', category = 'developer', group = 'Audit and debug',
+      kind = 'number', integer = true, min = 1000, max = 600000, label = 'Audit flush interval (ms)',
+      about = 'How often queued log rows are written; it paces every maintenance job.',
+      inflight = 'Read at the next flush.' },
+    { key = 'Audit.MaxQueueSize', section = 'limits', category = 'developer', group = 'Audit and debug',
+      kind = 'number', integer = true, min = 100, max = 100000, label = 'Log rows queued at most',
+      about = 'Past it, the oldest are written at once.', inflight = AT_USE },
+    { key = 'Audit.RetentionDays', section = 'limits', category = 'developer', group = 'Audit and debug',
+      kind = 'number', integer = true, min = 0, max = 3650, label = 'Days the log is kept (0 forever)',
+      about = 'Older rows are deleted by the next sweep.',
+      destroys = 'Lowering it to %s deletes every log row older than that at the next sweep, for good.',
+      inflight = 'Read at the next sweep.' },
+    { key = 'Audit.ContractRetentionDays', section = 'limits', category = 'developer',
+      group = 'Audit and debug', kind = 'number', integer = true, min = 0, max = 3650,
+      label = 'Days a finished contract is kept (0 forever)',
+      about = 'Finished contracts older than this are deleted by the next sweep.',
+      destroys = 'Lowering it to %s deletes every finished contract older than that, for good.',
+      inflight = 'Read at the next sweep.' },
+    { key = 'Audit.ContractsPrunedPerTick', section = 'limits', category = 'developer',
+      group = 'Audit and debug', kind = 'number', integer = true, min = 1, max = 10000,
+      label = 'Finished contracts removed per sweep', about = 'Paces the sweep.', inflight = AT_USE },
+    { key = 'Diagnostics.SlowJobMs', section = 'limits', category = 'developer', group = 'Diagnostics',
+      kind = 'number', integer = true, min = 0, max = 60000, label = 'Slow job threshold (ms, 0 never)',
+      about = 'A maintenance job slower than this prints a Debug line.', inflight = AT_USE },
+    { key = 'Kidnap.MaxTotalGraceMs', section = 'limits', category = 'developer', group = 'Handovers',
+      kind = 'number', integer = true, min = 0, max = 60000, label = 'Handover break allowed (ms)',
+      about = 'In all, before a handover fails.', inflight = AT_USE },
+    { key = 'Kidnap.TickMs', section = 'limits', category = 'developer', group = 'Handovers',
+      kind = 'number', integer = true, min = 250, max = 5000, label = 'Handover check interval (ms)',
+      about = 'How often a running handover is checked.', inflight = 'Read at the next check.' },
+    { key = 'Completion.DeathReportWindowMs', section = 'limits', category = 'developer',
+      group = 'Completion', kind = 'number', integer = true, min = 1000, max = 600000,
+      label = 'A hit counts this long before a death (ms)', about = 'For the damage log.',
+      inflight = AT_USE },
+    { key = 'Completion.ConditionSampleMs', section = 'limits', category = 'developer',
+      group = 'Completion', kind = 'number', integer = true, min = 250, max = 10000,
+      label = 'Targets\' health sampled every (ms)', about = 'Server-wide.', inflight = 'Read at the next sample.' },
+    { key = 'Completion.PhotoMaxSide', section = 'limits', category = 'developer', group = 'Completion',
+      kind = 'number', integer = true, min = 320, max = 4096, label = 'Photo longest side (px)',
+      about = '\'server\' storage.', inflight = AT_USE },
+    { key = 'Completion.PhotoMaxBytes', section = 'limits', category = 'developer', group = 'Completion',
+      kind = 'number', integer = true, min = 10000, max = 10000000, label = 'Largest photo (bytes)',
+      about = '\'server\' storage.', inflight = AT_USE },
+    { key = 'Completion.PhotoHostRefreshSeconds', section = 'limits', category = 'developer',
+      group = 'Completion', kind = 'number', integer = true, min = 30, max = 86400,
+      label = 'Re-read lb-phone\'s image hosts every (s)', about = '\'host\' storage.',
+      inflight = 'Read at the next re-read.' },
+    { key = 'Completion.ExtraPhotoHosts', section = 'limits', category = 'developer', group = 'Completion',
+      kind = 'list', array = true, names = 'host', label = 'Image hosts allowed besides lb-phone\'s',
+      about = '\'host\' storage: host names, such as fivemanage.com.', inflight = AT_USE },
+    { key = 'Mugshot.RenderTimeoutMs', section = 'limits', category = 'developer', group = 'Targeting',
+      kind = 'number', integer = true, min = 1000, max = 60000, label = 'Time a headshot may take (ms)',
+      about = 'On the target\'s game.', inflight = AT_USE },
+    { key = 'Mugshot.MaxImageBytes', section = 'limits', category = 'developer', group = 'Targeting',
+      kind = 'number', integer = true, min = 4096, max = 1048576, label = 'Largest headshot (bytes)',
+      about = 'A larger one is refused.', inflight = AT_USE },
+    { key = 'Mugshot.AllowedMime', section = 'limits', category = 'developer', group = 'Targeting',
+      kind = 'list', names = 'mime', label = 'Headshot image types accepted',
+      about = 'Such as image/png.', inflight = AT_USE },
+    { key = 'Bailout.MaxSettleAttempts', section = 'limits', category = 'developer', group = 'Buyouts',
+      kind = 'number', integer = true, min = 1, max = 100, label = 'Ticks a buyout waits on a stuck claim',
+      about = 'Then it is left for staff.', inflight = AT_USE },
+    { key = 'Notifications.PushMinIntervalSeconds', section = 'limits', category = 'developer',
+      group = 'Notifications', kind = 'number', integer = true, min = 1, max = 60,
+      label = 'Least time between two app refreshes (s)', about = 'Per open app.', inflight = AT_USE },
+    { key = 'Admin.PanelPageSize', section = 'limits', category = 'developer', group = 'Staff',
+      kind = 'number', integer = true, min = 5, max = 100, label = 'Rows per page in this panel',
+      about = 'Its lists.', inflight = 'Read at the next page asked for.' },
+    { key = 'Admin.PanelRefreshSeconds', section = 'limits', category = 'developer', group = 'Staff',
+      kind = 'number', integer = true, min = 2, max = 300, label = 'Overview refresh (s)',
+      about = 'How often this panel\'s overview refreshes.', inflight = 'Read when the panel is opened.' },
+    { key = 'Admin.TimelineRows', section = 'limits', category = 'developer', group = 'Staff',
+      kind = 'number', integer = true, min = 10, max = 2000, label = 'Log rows read for one timeline',
+      about = 'A contract\'s history.', inflight = AT_USE },
+    { key = 'RateLimit.Key', section = 'limits', category = 'developer', group = 'Rate limits',
+      kind = 'choice', choices = { 'license', 'citizenid' }, label = 'Rate limits counted per',
+      about = '\'license\': per account. \'citizenid\': per character.',
+      inflight = 'Read at each request: allowances start fresh under the new key.' },
 }
+
+--- Each staff command's name, read once at start (RegisterCommand): kept,
+--- and in force after a restart.
+for _, name in ipairs({ 'timeline', 'void', 'stuck', 'settle', 'whois', 'contracts', 'diagnose',
+    'refresh', 'review', 'panel' }) do
+    CATALOGUE[#CATALOGUE + 1] = {
+        key = 'Admin.Commands.' .. name, section = 'limits', category = 'developer', group = 'Staff commands',
+        kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, live = false,
+        label = 'Command name: ' .. name, about = 'Without the slash.', inflight = RESTART,
+    }
+end
 
 --- The rate-limit buckets, each as two keys: how many seconds a full
 --- bucket refills over, and how many it holds.
@@ -752,7 +1173,7 @@ for _, bucket in ipairs(BUCKETS) do
     local panel = PANEL_BUCKETS[bucket]
     local gates = BUCKET_ABOUT[bucket]
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Cooldowns.' .. bucket .. '.per', section = panel and 'readonly' or 'limits',
+        key = 'Cooldowns.' .. bucket .. '.per', section = panel and 'readonly' or 'limits', category = 'developer',
         group = panel and 'Staff' or 'Rate limits',
         kind = 'number', min = 0.5, max = 3600, label = bucket .. ': refill window (s)',
         about = gates and (gates .. ' A full allowance refills over this many seconds: '
@@ -762,7 +1183,7 @@ for _, bucket in ipairs(BUCKETS) do
         inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Cooldowns.' .. bucket .. '.burst', section = panel and 'readonly' or 'limits',
+        key = 'Cooldowns.' .. bucket .. '.burst', section = panel and 'readonly' or 'limits', category = 'developer',
         group = panel and 'Staff' or 'Rate limits',
         kind = 'number', integer = true, min = 1, max = 200, label = bucket .. ': requests held',
         about = gates and (gates .. ' How many it allows at once. It also sets the refill rate '
@@ -775,6 +1196,9 @@ end
 
 local byKey = {}
 for i = 1, #CATALOGUE do byKey[CATALOGUE[i].key] = CATALOGUE[i] end
+for key, group in pairs(MONEY) do
+    if byKey[key] then byKey[key].money = group end
+end
 
 Settings.CATALOGUE = CATALOGUE
 
@@ -844,14 +1268,24 @@ end
 
 --- A key's value in the shape the panel shows it.
 local function shown(entry, stored)
+    if entry.kind == 'list' and entry.array then return copyOf(type(stored) == 'table' and stored or {}) end
     if entry.kind == 'list' then return asList(stored) end
     return copyOf(stored)
 end
 
 --- And in the shape the config holds it.
 local function stored(entry, value)
-    if entry.kind == 'list' then return asSet(value) end
+    if entry.kind == 'list' and not entry.array then return asSet(value) end
     return copyOf(value)
+end
+
+--- What defaults.lua ships for a key, in the shape the panel shows it, or
+--- nil where it ships none (a key only config.lua has).
+local function shippedOf(entry)
+    if type(ConfigDefaults) ~= 'table' then return nil end
+    local value = read(ConfigDefaults, entry.key)
+    if value == nil then return nil end
+    return shown(entry, value)
 end
 
 --- What the panel would show for a key now.
@@ -864,6 +1298,19 @@ end
 --------------------------------------------------------------------------
 
 local LIST_MAX, NAME_MAX = 50, 32
+
+--- What one name in a list may be, by the entry's `names` (job names when
+--- not given): the pattern, how long, and what the refusal says.
+local NAMES = {
+    job = { pattern = '^[%w_%-]+$', max = NAME_MAX, lower = true,
+            says = 'names letters, digits, - and _ only, up to 32 long' },
+    item = { pattern = '^[%w_%-]+$', max = 64, says = 'item names letters, digits, - and _ only, up to 64 long' },
+    mime = { pattern = '^[%w%-%.]+/[%w%-%.%+]+$', max = 64, lower = true,
+             says = 'image types such as image/png, up to 64 long' },
+    host = { pattern = '^[%w%-]+%.[%w%-%.]+$', max = 128, lower = true,
+             says = 'host names such as fivemanage.com, up to 128 long' },
+    phrase = { pattern = '^[^%c<>]+$', max = 60, says = 'short phrases, up to 60 characters, no < or >' },
+}
 
 --- The most a number key takes now: its own max, or less where another
 --- setting caps it (`ceiling`, a key read from the config in force).
@@ -961,23 +1408,51 @@ local function normalise(entry, raw)
         return n
     end
     if entry.kind == 'list' then
-        if type(raw) ~= 'table' then return nil, 'has to be a list of job names' end
+        local rule = NAMES[entry.names or 'job']
+        if type(raw) ~= 'table' then return nil, 'has to be a list: ' .. rule.says end
         if #raw > LIST_MAX then return nil, ('takes at most %d names'):format(LIST_MAX) end
+        for k in pairs(raw) do
+            if math.type(k) ~= 'integer' or k < 1 or k > #raw then return nil, 'has to be a list' end
+        end
         local seen, out = {}, {}
         for i = 1, #raw do
             local name = raw[i]
-            if type(name) ~= 'string' or #name == 0 or #name > NAME_MAX
-                or not name:match('^[%w_%-]+$') then
-                return nil, ('names letters, digits, - and _ only, up to %d long'):format(NAME_MAX)
+            if type(name) == 'string' then name = name:gsub('^%s+', ''):gsub('%s+$', '') end
+            if type(name) ~= 'string' or #name == 0 or #name > rule.max or not name:match(rule.pattern) then
+                return nil, rule.says
             end
-            name = name:lower()
+            if rule.lower then name = name:lower() end
             if not seen[name] then
                 seen[name] = true
                 out[#out + 1] = name
             end
         end
-        table.sort(out)
+        if not entry.array then table.sort(out) end
         return out
+    end
+    if entry.kind == 'text' then
+        if type(raw) ~= 'string' or #raw == 0 or #raw > (entry.maxLength or 64)
+            or not raw:match(entry.pattern or '^[%w_%-]+$') then
+            return nil, ('has to be letters, digits, - and _ only, up to %d long'):format(entry.maxLength or 64)
+        end
+        return raw
+    end
+    if entry.kind == 'range' then
+        if type(raw) ~= 'table' then return nil, 'has to be a pair: from and to' end
+        for k in pairs(raw) do
+            if k ~= 'min' and k ~= 'max' then return nil, 'has to be a pair: from and to' end
+        end
+        local lo, hi = tonumber(raw.min), tonumber(raw.max)
+        if not lo or not hi or lo ~= lo or hi ~= hi then return nil, 'has to be two numbers' end
+        if entry.integer and (math.floor(lo) ~= lo or math.floor(hi) ~= hi) then
+            return nil, 'has to be whole numbers'
+        end
+        if lo < (entry.min or -math.huge) or hi > (entry.max or math.huge) then
+            return nil, ('has to be within %s to %s'):format(tostring(entry.min), tostring(entry.max))
+        end
+        if lo > hi then return nil, 'has its from above its to' end
+        if entry.integer then lo, hi = math.tointeger(lo) or lo, math.tointeger(hi) or hi end
+        return { min = lo, max = hi }
     end
     return nil, 'cannot be changed here'
 end
@@ -1043,6 +1518,7 @@ end
 ---@return string[]|nil warnings with a value: the start's warnings that name
 --- the key, which refuse nothing and were said nowhere (W145)
 function Settings.check(key, raw)
+    if type(key) == 'string' and DENY[key] then return nil, 'read_only', DENY[key].why end
     local entry = type(key) == 'string' and byKey[key] or nil
     if not entry then return nil, 'not_allowed', 'not a setting the panel may change' end
     if entry.readonly then return nil, 'read_only', entry.readonly end
@@ -1499,6 +1975,8 @@ function Settings.view()
         local skipped = ignored[entry.key]
         local row = {
             key = entry.key, group = entry.group, label = entry.label, about = entry.about,
+            category = entry.category, money = entry.money,
+            shipped = shippedOf(entry), hasShipped = shippedOf(entry) ~= nil,
             kind = entry.kind, choices = entry.choices, min = entry.min, max = Settings.maxOf(entry),
             integer = entry.integer or nil, live = entry.live ~= false,
             inflight = entry.inflight, readonly = entry.readonly, destroys = entry.destroys,
@@ -1517,6 +1995,28 @@ function Settings.view()
         local list = out[entry.section]
         list[#list + 1] = row
     end
+    -- The keys never changed from here, not on the list above: shown with
+    -- why, and a secret only as set or not.
+    local denied = {}
+    for key in pairs(DENY) do if not byKey[key] then denied[#denied + 1] = key end end
+    table.sort(denied)
+    for _, key in ipairs(denied) do
+        local rule = DENY[key]
+        local value
+        if rule.secret then
+            local ok, got = pcall(GetConvar, rule.convar, '')
+            value = (ok and type(got) == 'string' and got ~= '') and 'set' or 'not set'
+        else
+            value = copyOf(read(Config, key))
+            if value == nil then value = '(not set)' end
+            if type(value) == 'table' then value = json and json.encode(value) or '(a table)' end
+        end
+        out.readonly[#out.readonly + 1] = {
+            key = key, group = 'Edit in config.lua', label = rule.secret and ('Secret: ' .. rule.convar) or key,
+            kind = 'text', category = 'developer', readonly = rule.why, denied = true,
+            secret = rule.secret or nil, value = value, source = 'config',
+        }
+    end
     local strays = {}
     for key in pairs(ignored) do if not byKey[key] then strays[#strays + 1] = key end end
     for key in pairs(unknown) do
@@ -1527,6 +2027,7 @@ function Settings.view()
         local skipped = ignored[key] or {}
         out.readonly[#out.readonly + 1] = {
             key = key, group = 'Kept in the store, not on this list', label = key, kind = 'text',
+            category = 'developer',
             readonly = 'Not a setting this version lists, so nothing reads it. Reset takes its row '
                 .. 'out of the store; nothing in force changes.',
             value = copyOf(skipped.value), source = 'config', by = skipped.by, at = skipped.at,
