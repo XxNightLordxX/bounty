@@ -711,7 +711,7 @@ local RAW_STORE_SPECS = { differential_spec = true }
 --- became a run that had not finished in ten minutes. It probes nothing the
 --- other eleven hundred tests do not already probe: every rule it would
 --- exercise is exercised by the operations it is counting.
-local MEASUREMENT_SPECS = { complexity_spec = true, handlers_spec = true, perf_round3_spec = true }
+local MEASUREMENT_SPECS = { complexity_spec = true, handlers_spec = true, perf_round3_spec = true, loops_spec = true }
 
 --- CH_SUITES=a_spec,b_spec runs only those, for a quick loop while working
 --- on one area. Unset — as all.sh leaves it — everything runs.
