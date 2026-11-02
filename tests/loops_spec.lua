@@ -16,7 +16,8 @@
 ---   * the NPC positions are looked at by the tick, not a thread of their
 ---     own; a duty change tells a player whether they have the app at once;
 ---   * /ch-diag lists every job with how often it runs;
----   * the client's NPC loop sleeps two seconds while nothing is near;
+---   * the client's NPC loop sleeps two seconds while nothing is near, and
+---     does not run at all while both NPCs are off;
 ---   * a whole maintenance pass, every job due, with 200 live contracts and
 ---     64 players in the city, stays inside its budget (BUDGET_MS).
 
@@ -416,10 +417,14 @@ end)
 --------------------------------------------------------------------------
 
 describe('the client\'s NPC loop', function()
-    it('sleeps two seconds while nothing is near or placed, and one second near an NPC', function()
-        local handlers, thread = {}, nil
-        local me = { x = 5000.0, y = 0.0, z = 0.0 }
+    --- The file loaded in an environment of its own, with every thread it
+    --- starts kept so a test can step it: { handlers, threads, step, me,
+    --- loop, peds, state }.
+    local function npcClient()
+        local t = { handlers = {}, threads = {}, me = { x = 5000.0, y = 0.0, z = 0.0 },
+                    peds = {}, made = 0, vectors = 0, state = { isLoggedIn = true } }
         local function vec(x, y, z)
+            t.vectors = t.vectors + 1
             return setmetatable({ x = x, y = y, z = z }, {
                 __sub = function(a, b) return vec(a.x - b.x, a.y - b.y, a.z - b.z) end,
                 __len = function(a) return math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) end,
@@ -430,8 +435,9 @@ describe('the client\'s NPC loop', function()
             IsModelInCdimage = function() return 1 end, IsModelValid = function() return 1 end,
             RequestModel = function() end, HasModelLoaded = function() return true end,
             SetModelAsNoLongerNeeded = function() end,
-            CreatePed = function() return 101 end, DoesEntityExist = function() return 1 end,
-            DeleteEntity = function() end,
+            CreatePed = function() t.made = t.made + 1; t.peds[100 + t.made] = true; return 100 + t.made end,
+            DoesEntityExist = function(ped) return t.peds[ped] and 1 or false end,
+            DeleteEntity = function(ped) t.peds[ped] = nil end,
             SetEntityInvincible = function() end, FreezeEntityPosition = function() end,
             SetBlockingOfNonTemporaryEvents = function() end, SetPedCanRagdoll = function() end,
             TaskStartScenarioInPlace = function() end,
@@ -440,32 +446,102 @@ describe('the client\'s NPC loop', function()
             BeginTextCommandSetBlipName = function() end,
             AddTextComponentSubstringPlayerName = function() end,
             EndTextCommandSetBlipName = function() end, RemoveBlip = function() end,
-            GetEntityCoords = function() return vec(me.x, me.y, me.z) end,
+            GetEntityCoords = function() return vec(t.me.x, t.me.y, t.me.z) end,
             PlayerPedId = function() return 1 end,
+            LocalPlayer = { state = t.state },
             vector3 = vec,
             Wait = function(ms) coroutine.yield(ms) end,
             SetTimeout = function() end,
             TriggerServerEvent = function() end,
-            RegisterNetEvent = function(name, fn) handlers[name] = fn end,
-            AddEventHandler = function(name, fn) handlers[name] = fn end,
+            RegisterNetEvent = function(name, fn) t.handlers[name] = fn end,
+            AddEventHandler = function(name, fn) t.handlers[name] = fn end,
             GetCurrentResourceName = function() return 'crimson-hitman' end,
-            CreateThread = function(fn) thread = coroutine.create(fn) end,
+            CreateThread = function(fn) t.threads[#t.threads + 1] = coroutine.create(fn) end,
         }, { __index = _G })
-        assert(loadfile('crimson-hitman/client/rp_npc.lua', 't', env))()
-        local function step()
-            local ok, ms = coroutine.resume(thread)
+        t.loop = assert(loadfile('crimson-hitman/client/rp_npc.lua', 't', env))()
+        --- Run thread `i` to its next wait: the wait, or 'ended'.
+        function t.step(i)
+            local co = t.threads[i]
+            local ok, ms = coroutine.resume(co)
             truthy(ok, 'the loop raised: ' .. tostring(ms))
+            if coroutine.status(co) == 'dead' then return 'ended' end
             return ms
         end
-        step()                                   -- the first wait
-        eq(step(), 2000, 'nothing placed: every two seconds')
-        handlers['crimson-hitman:result']({ event = 'rpPlaces', ok = true, data = {
-            broker = { x = 0.0, y = 0.0, z = 0.0, model = 'g_m_m_armboss_01', scenario = '' } } })
-        eq(step(), 2000, 'placed, but five kilometres off: every two seconds')
-        me.x = 150.0
-        eq(step(), 1000, 'inside 160 m: every second, so it is drawn before the player arrives')
-        me.x = 10.0
-        eq(step(), 1000, 'drawn: every second, so it is removed when they leave')
+        function t.place(data)
+            t.handlers['crimson-hitman:result']({ event = 'rpPlaces', ok = true, data = data })
+        end
+        return t
+    end
+
+    local BROKER = { broker = { x = 0.0, y = 0.0, z = 0.0, model = 'g_m_m_armboss_01', scenario = '' } }
+
+    it('runs no loop at all while both NPCs are off', function()
+        local t = npcClient()
+        eq(#t.threads, 1, 'one thread at load: the question at start')
+        eq(t.step(1), 5000, 'it waits for the server to be up')
+        eq(t.step(1), 'ended', 'asks once, and ends')
+        t.place({})
+        eq(#t.threads, 1, 'nothing placed: no distance loop is started')
+        falsy(t.loop.running(), 'and none is running')
+    end)
+
+    it('sleeps two seconds while nothing is near, and one second near an NPC', function()
+        local t = npcClient()
+        t.step(1); t.step(1)
+        t.place(BROKER)
+        eq(#t.threads, 2, 'an NPC placed starts the loop')
+        truthy(t.loop.running(), 'running')
+        eq(t.step(2), 2000, 'placed, but five kilometres off: every two seconds')
+        t.me.x = 150.0
+        eq(t.step(2), 1000, 'inside 160 m: every second, so it is drawn before the player arrives')
+        t.me.x = 10.0
+        eq(t.step(2), 1000, 'drawn: every second, so it is removed when they leave')
+        eq(t.made, 1, 'the ped was made')
+        t.place(BROKER)
+        eq(#t.threads, 2, 'a second answer starts no second loop')
+    end)
+
+    it('ends the loop when the NPCs are switched off, and starts it again when one comes back', function()
+        local t = npcClient()
+        t.step(1); t.step(1)
+        t.place(BROKER)
+        t.me.x = 10.0
+        eq(t.step(2), 1000, 'drawn')
+        t.place({})
+        eq(next(t.peds), nil, 'switched off: the ped is gone at once')
+        eq(t.step(2), 'ended', 'and the loop ends on its next pass')
+        falsy(t.loop.running(), 'nothing running')
+        t.place(BROKER)
+        eq(#t.threads, 3, 'placed again: a loop again')
+        eq(t.step(3), 1000, 'and it draws the NPC beside the player')
+    end)
+
+    it('makes one vector a pass for the player, none for the places', function()
+        local t = npcClient()
+        t.step(1); t.step(1)
+        t.place({ broker = BROKER.broker, informant = { x = 3000.0, y = 0.0, z = 0.0, model = 'a', scenario = '' } })
+        t.step(2)
+        local before = t.vectors
+        t.step(2)
+        -- The player's coords, and one difference per place.
+        eq(t.vectors - before, 3, 'no vector made for a place on a pass')
+    end)
+
+    it('takes the ped away at logout and draws nothing between characters', function()
+        local t = npcClient()
+        t.step(1); t.step(1)
+        t.place(BROKER)
+        t.me.x = 10.0
+        t.step(2)
+        eq(t.made, 1, 'drawn')
+        t.state.isLoggedIn = false
+        t.handlers['qbx_core:client:playerLoggedOut']()
+        eq(next(t.peds), nil, 'gone at logout')
+        t.step(2)
+        eq(t.made, 1, 'not drawn again on the character screen')
+        t.state.isLoggedIn = true
+        t.step(2)
+        eq(t.made, 2, 'drawn again for the next character')
     end)
 end)
 

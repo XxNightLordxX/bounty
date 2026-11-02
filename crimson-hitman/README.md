@@ -3070,13 +3070,44 @@ what shares a tick shares a hitch.
 
 | Loop | Interval | Why that often |
 |---|---|---|
-| Death watcher | 1 s, while a character is loaded | The server waits a few seconds for the victim's own report before attributing a death without it. A few natives a pass; an event only when the answer changes |
+| Death watcher | 1 s, while a character is loaded | The server waits a few seconds for the victim's own report before attributing a death without it. A few natives a pass, the state bags read once, nothing made (was two reads through a new closure each, 80 bytes of garbage a pass); an event only when the answer changes. It runs for every player, not only those on a contract: a game told when a contract named it would tell a target there is one |
 | Mask watcher | 1 s, only while `Config.Targeting.AllowNearby` is on | One native a pass; an event only when the mask changes |
-| Roleplay NPCs | **1 s within 160 m of an NPC or while one is drawn, 2 s further off** (was 1 s), 2 s with both off | An NPC appears within 80 m; 160 m is the ground a car covers in two seconds and more |
+| Roleplay NPCs | 1 s within 160 m of an NPC or while one is drawn, 2 s further off; **no thread at all with both off** (was a 2 s look at an empty table, all game) | An NPC appears within 80 m; 160 m is the ground a car covers in two seconds and more. The loop starts when the server says an NPC stands somewhere (at start, or when one moves or is switched on) and ends on the pass after both are switched off. Peds go at logout and are not drawn on the character screen |
 | App heartbeat | 15 s | Puts the app back on a phone that lost it; nothing is sent |
 | Asking for access | 2, 2, 2, 5, 5, 10 s, then 30 s, until answered | A start that missed the join push |
 | Admin panel Escape guard | every frame, only while the panel is open | It reads the key |
-| Phone page | handover poll while one runs; deadline chips every 30 s while shown | |
+| Phone page (`ui/app.js`) | handover poll, 1 s on screen and 5 s put away, only while one runs; **nothing else** (was a 30 s repaint of the deadline chips, phone put away included) | lb-phone keeps the app's frame alive all game. Put away (lb-phone's `onClose`, passed on by the client, or the document hidden), a push only notes what it asked for, and the page reads it once when shown again; an answer the same as the one on screen is not drawn again. The chips are the server's band, which only a new read moves |
+| Admin panel (`ui/admin.js`) | overview every `Config.Admin.PanelRefreshSeconds` (10 s), only while open | Stopped on close. An overview answer the same as the last one only moves its *Updated* time |
+
+#### What resmon should show
+
+A player's `resmon` (F8, `resmon 1`) line for `crimson-hitman` should read
+**0.00 to 0.01 ms** with the phone put away and nothing near: one thread a
+second (the death watcher, a few natives), one every 15 s (the app
+heartbeat), and the mask watcher a second only with
+`Config.Targeting.AllowNearby` on. Nothing draws per frame, and the phone
+page runs no timer while it is put away.
+
+It goes up, and comes back down, with:
+
+- **the app open**: its requests and redraws, a few hundredths of a ms
+  while you tap, more for a moment as a board opens; once a second a
+  handover's poll while one runs;
+- **a roleplay NPC near** (`Config.Roleplay.Rumours`,
+  `Config.Roleplay.InformantNpc`): the ped is made within 80 m, a spike as
+  its model loads, then a distance check a second; nothing with both off;
+- **the admin panel open** (staff only): every frame for its Escape guard,
+  and the overview every ten seconds; nothing once it is closed.
+
+To check: stand somewhere quiet with the phone put away, run `resmon 1` in
+F8 and read the line for `crimson-hitman` (the CPU msec column); open the app
+and watch it rise and fall back once you put it away. The server's own
+share is in `/ch-diag` (F8 or the server console): every maintenance job with
+how often it runs and its worst, average and last times (see above).
+`ch-diag <player>` also asks that player's app what it has seen, which
+helps when one player's figure is high and nobody else's is. A figure that
+stays high with the phone put away and no NPC near is worth reporting with
+both.
 
 ---
 

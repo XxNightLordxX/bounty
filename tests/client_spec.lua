@@ -920,6 +920,34 @@ describe('the viewfinder, on a server that keeps its photos itself', function()
         eq(#called('DisableWalkableCam'), 1)
     end)
 
+    -- lb-phone keeps the app's frame alive with the phone put away, so the
+    -- page is told when it is put away and shown again, and pauses its
+    -- timers and its reads meanwhile (ui/app.js, 'shown').
+    it('tells the page when the phone puts it away and shows it again', function()
+        Env.reset()
+        Client.boot()
+        Natives.resourceStates = { ['lb-phone'] = 'started' }
+        Client.fire('crimson-hitman:access', true)
+        Client.runThreads()
+        local spec
+        for _, call in ipairs(called('AddCustomApp')) do spec = call.spec end
+        truthy(spec and spec.onOpen and spec.onClose, 'both callbacks given')
+        local real = _G.exports
+        _G.exports = setmetatable({}, { __index = function(_, r)
+            if r == 'lb-phone' then return Client.exports end
+            return real[r]
+        end })
+        local before = #called('SendCustomAppMessage')
+        spec.onClose()
+        spec.onOpen()
+        _G.exports = real
+        local sent = called('SendCustomAppMessage')
+        eq(#sent - before, 2, 'one message each, and nothing asked of the server')
+        eq(sent[before + 1].message.type, 'shown')
+        eq(sent[before + 1].message.shown, false, 'put away')
+        eq(sent[before + 2].message.shown, true, 'shown again')
+    end)
+
     -- `restart crimson-hitman` with the viewfinder open: the onClose above
     -- is a function in the resource that just stopped, so only this
     -- resource's own stop handler can turn the camera off.
@@ -1924,6 +1952,25 @@ describe('reporting your own death', function()
         end
         return count, values
     end
+
+    -- It runs once a second for the whole session on every client, so its
+    -- pass is kept small: the state bags read once (they were read twice,
+    -- through a closure made on each read), and nothing sent while nothing
+    -- changes.
+    it('reads the state bags once a pass, and says nothing while alive', function()
+        watching()
+        local reads, real = 0, _G.LocalPlayer
+        _G.LocalPlayer = setmetatable({}, { __index = function(_, key)
+            if key == 'state' then reads = reads + 1 end
+            return real[key]
+        end })
+        local ok, err = pcall(Client.ticks, 10)
+        _G.LocalPlayer = real
+        truthy(ok, tostring(err))
+        eq(reads, 10, 'one read a pass for ten passes')
+        eq(reported('iDied'), 0, 'no death said')
+        eq(reported('iRevived'), 0, 'no revive said')
+    end)
 
     it('says nothing while the player is alive', function()
         watching()

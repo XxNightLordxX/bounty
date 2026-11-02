@@ -2055,8 +2055,13 @@ async function main() {
         return new Promise(function (resolve) { waiting[name] = function () { resolve(answer); }; });
       };
     }
-    const app = boot({ list: later('list', BOARD), mine: later('mine', MINE),
-      ledger: later('ledger', LEDGER) });
+    // The board moved on between the opening read and the tab's: a reply
+    // the same as the one held is not drawn at all (sameAnswerNotDrawn).
+    const moved = JSON.parse(JSON.stringify(BOARD));
+    moved.data.contracts[0].reason = moved.data.contracts[0].reason + ' (again)';
+    let boards = 0;
+    const app = boot({ list: function () { boards++; return later('list', boards > 1 ? moved : BOARD)(); },
+      mine: later('mine', MINE), ledger: later('ledger', LEDGER) });
     await settle(); await settle();
     // The opening reads, answered.
     ['list', 'mine', 'ledger'].forEach(function (n) { waiting[n](); });
@@ -2075,6 +2080,51 @@ async function main() {
       drewCleanly(app, 'replies landing apart');
       eq((view._clears || 0) - drawsBefore, 1, 'full rebuilds of the board');
       truthy(app.view.textContent.indexOf('Dana Reyes') !== -1, 'and it shows the board');
+    });
+  })();
+
+  /* A read nobody tapped for (a push, a tab just opened and drawn) whose
+     answer is the one already on screen, word for word, rebuilt the screen
+     the same all the same. */
+  await (async function sameAnswerNotDrawn() {
+    const answers = { list: BOARD, mine: MINE, ledger: LEDGER };
+    const app = boot(answers);
+    await settle(); await settle();
+    const view = app.document.getElementById('view');
+    let before = view._clears || 0;
+    const sentBefore = app.sent.length;
+    app.sandbox.window._message({ data: { type: 'push', reason: 'update' } });
+    await settle();
+    app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; }).forEach(function (t) {
+      app.timers.splice(app.timers.indexOf(t), 1); t.fn();
+    });
+    await settle(); await settle(); await settle();
+    it('reads again on a push, and draws nothing when the answer is the same', function () {
+      drewCleanly(app, 'a push with nothing new');
+      truthy(app.sent.length > sentBefore, 'the push was read');
+      eq((view._clears || 0) - before, 0, 'full rebuilds of the board');
+    });
+    before = view._clears || 0;
+    tab(app, 'mine');
+    await settle(); await settle(); await settle();
+    it('draws a tab once as it opens, not again for an answer it already held', function () {
+      drewCleanly(app, 'Mine opened');
+      eq((view._clears || 0) - before, 1, 'rebuilds of Mine');
+    });
+    const moved = JSON.parse(JSON.stringify(MINE));
+    moved.data.onMe = [{ id: 'ct00000009', reason: 'Debt', mode: 'exclusive', state: 'active',
+      reward: { baseline: 1000 }, slots: 1, currentSlot: 1, role: 'target' }];
+    answers.mine = moved;
+    const tapBefore = view._clears || 0;
+    app.sandbox.window._message({ data: { type: 'push', reason: 'update' } });
+    await settle();
+    app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; }).forEach(function (t) {
+      app.timers.splice(app.timers.indexOf(t), 1); t.fn();
+    });
+    await settle(); await settle(); await settle();
+    it('draws once when the answer has changed', function () {
+      drewCleanly(app, 'a push with something new');
+      eq((view._clears || 0) - tapBefore, 1, 'rebuilds of Mine');
     });
   })();
 
@@ -9629,15 +9679,15 @@ async function main() {
       truthy(shown.indexOf('This contract is on hold by staff.') !== -1, shown);
       falsy(/frozen|placer|client is/i.test(shown.replace('Clock stopped', '')), 'says which party: ' + shown);
     });
-    const ticker = app.timers.filter(function (t) { return t.repeating && t.ms === 30000; })[0];
     it('does not count an on-hold clock down', function () {
-      truthy(ticker, 'a clock ticker');
-      // Ten minutes on, on the page's own clock.
+      falsy(app.timers.some(function (t) { return t.repeating && !t.cleared; }),
+        'a timer runs with the clocks on screen');
+      // Ten minutes on, on the page's own clock, and drawn again.
       const PageDate = require('vm').runInContext('Date', app.sandbox);
       const realNow = PageDate.now;
       PageDate.now = function () { return realNow.call(PageDate) + 600000; };
       try {
-        ticker.fn();
+        tab(app, 'mine');
         truthy(app.view.textContent.indexOf('On hold · Under 15 minutes left') !== -1, app.view.textContent);
       } finally {
         PageDate.now = realNow;
@@ -9728,18 +9778,14 @@ async function main() {
       truthy(shown.indexOf('Goods') !== -1, shown);
     });
 
-    const ticker = app.timers.filter(function (t) { return t.repeating && t.ms === 30000; })[0];
-    it('keeps the clocks moving while cards are on screen', function () {
-      truthy(ticker && !ticker.cleared, 'nothing moves the clocks on');
-      ticker.fn();
+    /* The band is the server's and moves only with the next read, which
+       redraws the card: a ticker repainting it every half minute wrote the
+       same words, all game, the phone put away included. */
+    it('runs no timer to repaint the clocks: they are the server\'s band', function () {
+      falsy(app.timers.some(function (t) { return t.repeating && !t.cleared; }),
+        'a timer runs with the clocks on screen');
       truthy(app.view.textContent.indexOf('Under 15 minutes left') !== -1,
         app.view.textContent);
-    });
-
-    tab(app, 'ledger');
-    await settle(); await settle();
-    it('stops the clock ticker when no card is showing', function () {
-      truthy(ticker.cleared, 'the ticker ran on behind the ledger');
     });
   })();
 
@@ -12755,6 +12801,138 @@ async function main() {
     it('burner phone: so does Mine', function () {
       truthy(burner.view.textContent.indexOf('You need a burner phone.') !== -1, burner.view.textContent);
       drewCleanly(burner);
+    });
+  })();
+
+  /* ---------- the page put away ----------
+
+     lb-phone keeps the app's frame alive with the phone put away, so a
+     timer here runs all game for every player who opened it once, and a
+     push read the server for a screen nobody was looking at. Put away
+     ('shown' false, lb-phone's onClose through the client), the page reads
+     nothing and runs no timer of its own but a slowed handover poll; shown
+     again, it reads what was pushed meanwhile, once. */
+  await (async function putAway() {
+    function live(app) {
+      return app.timers.filter(function (t) { return !t.cleared && (t.repeating || t.ms); });
+    }
+    function fireDebounce(app) {
+      app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; }).forEach(function (t) {
+        app.timers.splice(app.timers.indexOf(t), 1); t.fn();
+      });
+    }
+    const answers = { list: BOARD, mine: MINE, ledger: LEDGER };
+    const app = boot(answers);
+    await settle(); await settle();
+    const view = app.document.getElementById('view');
+
+    app.sandbox.window._message({ data: { type: 'shown', shown: false } });
+    it('put away with nothing running: no timer at all', function () {
+      eq(live(app).length, 0, 'timers: ' + JSON.stringify(live(app).map(function (t) { return t.ms; })));
+    });
+
+    const sentBefore = app.sent.length;
+    const drawsBefore = view._clears || 0;
+    for (let i = 0; i < 5; i++) {
+      app.sandbox.window._message({ data: { type: 'push', reason: 'update', ids: ['ct00000001'] } });
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+    }
+    app.sandbox.window._message({ data: { type: 'push', reason: 'settings' } });
+    await settle(); await settle();
+    it('put away: ten pushes read nothing, arm no timer and draw nothing', function () {
+      eq(app.sent.length - sentBefore, 0, 'requests: ' + JSON.stringify(app.sent.slice(sentBefore)));
+      eq(live(app).length, 0, 'a timer was armed for a page nobody sees');
+      eq((view._clears || 0) - drawsBefore, 0, 'rebuilds while put away');
+    });
+
+    app.sandbox.window._message({ data: { type: 'shown', shown: true } });
+    await settle(); await settle(); await settle();
+    it('shown again: what was pushed is read once, the board with it for the settings push', function () {
+      const names = app.sent.slice(sentBefore).map(function (r) { return r.name; });
+      eq(JSON.stringify(names), JSON.stringify(['list']), 'the board tab reads the board');
+      drewCleanly(app, 'shown again');
+    });
+    it('shown again with nothing new pushed reads nothing', function () {
+      const n = app.sent.length;
+      app.sandbox.window._message({ data: { type: 'shown', shown: false } });
+      app.sandbox.window._message({ data: { type: 'shown', shown: true } });
+      eq(app.sent.length - n, 0);
+    });
+
+    // The document's own visibility, where the frame has one.
+    const n2 = app.sent.length;
+    app.document.hidden = true;
+    (app.document._listeners.visibilitychange || []).forEach(function (fn) { fn(); });
+    app.sandbox.window._message({ data: { type: 'push', reason: 'update' } });
+    fireDebounce(app);
+    await settle(); await settle();
+    it('a hidden document counts as put away', function () {
+      eq(app.sent.length - n2, 0, 'read while hidden');
+    });
+    app.document.hidden = false;
+    (app.document._listeners.visibilitychange || []).forEach(function (fn) { fn(); });
+    await settle(); await settle();
+    it('and visible again reads what it owes', function () {
+      eq(app.sent.slice(n2).map(function (r) { return r.name; }).join(','), 'list');
+    });
+
+    // A lost 'shown': the player tapping the page is the player looking at it.
+    app.sandbox.window._message({ data: { type: 'shown', shown: false } });
+    app.sandbox.window._message({ data: { type: 'push', reason: 'update' } });
+    const n3 = app.sent.length;
+    (app.document._listeners.click || []).forEach(function (fn) { fn({}); });
+    await settle(); await settle();
+    it('a tap in a page said to be put away wakes it, and it reads what it owes', function () {
+      eq(app.sent.slice(n3).map(function (r) { return r.name; }).join(','), 'list');
+    });
+    app.sandbox.window._message({ data: { type: 'shown', shown: false } });
+    app.sandbox.window._message({ data: { type: 'push', reason: 'update' } });
+    const n4 = app.sent.length;
+    (app.document._listeners.mousemove || []).forEach(function (fn) { fn({}); });
+    await settle(); await settle();
+    it('and so does the pointer moving over it', function () {
+      eq(app.sent.slice(n4).map(function (r) { return r.name; }).join(','), 'list');
+    });
+
+    // A handover under way: the poll slows, never stops, and comes back.
+    const job = { ok: true, data: { created: [], accepted: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
+      state: 'accepted', reward: { baseline: 5000 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 1, hitmenMax: 1,
+      targetName: 'Dana Reyes', role: 'hitman',
+      timeLeft: band(7200)
+    }], onMe: [] } };
+    let polls = 0;
+    const handover = boot({ mine: job, armKidnap: { ok: true, data: { armed: true } },
+      kidnapProgress: function () { polls++; return { ok: true, data: { elapsed: 4, required: 30 } }; } });
+    await settle(); await settle();
+    tab(handover, 'mine');
+    await settle();
+    click(handover, 'Deliver alive');
+    await settle(); await settle();
+    function pollTimers() {
+      return handover.timers.filter(function (t) { return t.repeating && !t.cleared; });
+    }
+    it('a handover polls once a second on screen', function () {
+      eq(JSON.stringify(pollTimers().map(function (t) { return t.ms; })), '[1000]');
+    });
+    handover.sandbox.window._message({ data: { type: 'shown', shown: false } });
+    it('put away, once every five seconds, and only that', function () {
+      eq(JSON.stringify(pollTimers().map(function (t) { return t.ms; })), '[5000]');
+    });
+    const p0 = polls;
+    pollTimers()[0].fn();
+    await settle(); await settle();
+    it('put away, it still hears how the handover goes', function () {
+      eq(polls - p0, 1);
+    });
+    handover.sandbox.window._message({ data: { type: 'shown', shown: true } });
+    await settle(); await settle();
+    it('shown again: asked at once, and once a second again', function () {
+      eq(polls - p0, 2, 'asked as it was shown');
+      eq(JSON.stringify(pollTimers().map(function (t) { return t.ms; })), '[1000]');
+      drewCleanly(handover, 'the handover put away and shown');
     });
   })();
 

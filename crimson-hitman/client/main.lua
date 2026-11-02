@@ -175,12 +175,18 @@ local function registerApp()
             fixBlur     = true,
             -- The page loads its own data when it opens; firing the same
             -- requests here would duplicate them and drain the rate limit
-            -- before the player has typed anything.
-            onOpen      = function() end,
+            -- before the player has typed anything. It is told it is on
+            -- screen again (App.tellShown), which is when it reads what a
+            -- push asked for while it was put away.
+            onOpen      = function() App.tellShown(true) end,
             -- The kill photo viewfinder runs lb-phone's game camera behind
             -- the app. A phone put away with the viewfinder still up would
-            -- otherwise leave it running.
-            onClose     = function() App.walkableCam(false) end,
+            -- otherwise leave it running. And the page is told it is put
+            -- away: lb-phone keeps its frame alive, and its timers with it.
+            onClose     = function()
+                App.walkableCam(false)
+                App.tellShown(false)
+            end,
         })
     end)
 
@@ -492,6 +498,21 @@ RegisterNetEvent('crimson-hitman:result', function(result)
     -- a picture claim a payout, and it stays in this file
     -- (sendVerificationPhoto).
 end)
+
+--- Tell the page whether the player has it on screen (lb-phone's onOpen
+--- and onClose). lb-phone keeps a custom app's frame alive with the phone
+--- put away, so without this the page's timers ran, and every push read
+--- the server again, for a screen nobody was looking at. The page slows or
+--- pauses them while put away and catches up the moment it is shown
+--- (ui/app.js, the 'shown' message).
+---@param shown boolean
+function App.tellShown(shown)
+    phone('SendCustomAppMessage', function()
+        exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
+            type = 'shown', shown = shown == true,
+        })
+    end)
+end
 
 --- An unsolicited nudge for an open app: something the player is looking at
 --- changed. Forwarded as a message rather than a notification, because the
@@ -883,11 +904,19 @@ end)
 --- QBCore:Player:SetPlayerData event qbx_core sends with every change, and
 --- empties on unload. GetPlayerData carried the whole record across the
 --- export boundary once a second, on every client, for the whole session.
-local function medical()
-    local ok, state = pcall(function() return LocalPlayer.state end)
+--- This player's state bags, or nil where they cannot be read. A named
+--- function, not a closure made on every call: the watchers below read it
+--- once a second for the whole session.
+local function readLocalState() return LocalPlayer.state end
+local function localState()
+    local ok, state = pcall(readLocalState)
+    return ok and state or nil
+end
+
+--- `state` is localState(), read once by the caller for its whole pass.
+local function medical(state)
     local data = type(QBX) == 'table' and QBX.PlayerData or nil
     local meta = type(data) == 'table' and type(data.metadata) == 'table' and data.metadata or nil
-    state = ok and state or nil
     -- qbx_medical's isDead bag is true in last stand as well, so it means
     -- down, not dead; its deathState is 2 in last stand and 3 when dead.
     -- Read as dead, it spent the one death report on the downing.
@@ -1020,9 +1049,9 @@ end
 --- Whether a character is loaded. qbx_core sets the bag on load and clears
 --- it on unload; between the two (17mov's character selection) its own
 --- player data still holds the last character, dead or alive.
-local function loggedIn()
-    local ok, state = pcall(function() return LocalPlayer.state end)
-    return ok and state and state.isLoggedIn and true or false
+local function loggedIn(state)
+    if state == nil then state = localState() end
+    return state and state.isLoggedIn and true or false
 end
 
 CreateThread(function()
@@ -1032,12 +1061,13 @@ CreateThread(function()
         -- character's isdead was reported as a death nobody had, and the
         -- next character standing up as a revive without one, which the
         -- server posts to the staff webhook as a probe.
-        if not loggedIn() then
+        local state = localState()
+        if not loggedIn(state) then
             forgetDeath()
             goto continue
         end
         local ped = PlayerPedId()
-        local medDead, lastStand, readable = medical()
+        local medDead, lastStand, readable = medical(state)
         local engineDead = IsEntityDead(ped)
         -- Its word counts only when it can be read. A medical resource that
         -- is running but whose state never reaches this client would

@@ -739,6 +739,8 @@ do
             .. 'app, so a test can watch the reconciler put it back',
         ['AdminPanel.isOpen']          = 'whether the admin page holds the focus, which '
             .. 'the client spec checks after each way of closing it',
+        ['NpcLoop.running']            = 'whether the roleplay NPC distance loop is running, '
+            .. 'which loops_spec checks stops with both NPCs off',
         ['Util.resetMonotonic']        = 'the wrap-absorbing clock, which is not '
             .. 'reloaded between stacks and would otherwise carry one test\'s '
             .. 'elapsed time into the next',

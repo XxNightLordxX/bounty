@@ -6,9 +6,12 @@
 --- Each NPC is a local ped (never networked), made only while this player
 --- is within DRAW_METRES of it and removed past REMOVE_METRES, so a player
 --- across the map costs nothing. One distance check a second while an NPC
---- is near, one every two seconds while every NPC is far, and nothing but
---- a look at an empty table every two seconds while both are off. The NPC is scenery: whether a
---- player stands beside it is checked by the server from their ped.
+--- is near, one every two seconds while every NPC is far, and no thread at
+--- all while both are off: the loop ends when the server says there is
+--- nothing to draw, and starts again only when it says there is (its answer
+--- to the question at start, or after crimson-hitman:rpPlacesChanged). The
+--- NPC is scenery: whether a player stands beside it is checked by the
+--- server from their ped.
 
 local DRAW_METRES, REMOVE_METRES = 80.0, 100.0
 local MODEL_WAIT_MS = 5000
@@ -18,12 +21,19 @@ local MODEL_WAIT_MS = 5000
 --- it; every two seconds while every NPC is further off, where nothing can
 --- change in that time but the distance (a car at 150 km/h covers about
 --- 80 m in two seconds, the margin between NEAR_METRES and DRAW_METRES);
---- and every two seconds, with nothing to measure, while both are off.
+--- With both off there is no loop to wait in (NpcLoop.start).
 local NEAR_METRES = 160.0
-local NEAR_WAIT_MS, FAR_WAIT_MS, IDLE_WAIT_MS = 1000, 2000, 2000
+local NEAR_WAIT_MS, FAR_WAIT_MS = 1000, 2000
 
---- What the server last said: [npc] = { x, y, z, h, model, scenario, blip }.
+--- What the server last said: [npc] = { x, y, z, h, model, scenario, blip,
+--- at }, `at` the place as a vector, made once here rather than on every
+--- pass of the loop.
 local places = {}
+
+--- Whether the distance loop is running. It runs only while there is a
+--- place to measure, and ends on the pass that finds none.
+local watching = false
+local NpcLoop = {}
 --- What is drawn now: [npc] = { ped, blip, key }.
 local drawn = {}
 
@@ -51,6 +61,21 @@ local function removeAll()
         removeBlip(npc)
     end
     drawn = {}
+end
+
+--- The peds only, for a logout: the blips are the map's, and the places
+--- stay, so the next character draws them again as it comes near.
+local function removePeds()
+    for npc in pairs(drawn) do removePed(npc) end
+end
+
+--- Whether a character is loaded. qbx_core sets the bag on load and clears
+--- it on unload; between the two (the character screen) nothing is drawn.
+--- A game with no bag to read draws as before.
+local function loggedIn()
+    local state = LocalPlayer and LocalPlayer.state
+    if not state then return true end
+    return state.isLoggedIn and true or false
 end
 
 --- Load a model with a cap on the wait, and give up on one the game has not.
@@ -108,8 +133,10 @@ local function apply(data)
     for _, npc in ipairs({ 'broker', 'informant' }) do
         local p = type(data) == 'table' and data[npc]
         if type(p) == 'table' and tonumber(p.x) and tonumber(p.y) and tonumber(p.z) then
-            places[npc] = { x = p.x + 0.0, y = p.y + 0.0, z = p.z + 0.0, h = (tonumber(p.h) or 0) + 0.0,
-                model = tostring(p.model or ''), scenario = tostring(p.scenario or ''), blip = p.blip == true }
+            local x, y, z = p.x + 0.0, p.y + 0.0, p.z + 0.0
+            places[npc] = { x = x, y = y, z = z, h = (tonumber(p.h) or 0) + 0.0,
+                model = tostring(p.model or ''), scenario = tostring(p.scenario or ''), blip = p.blip == true,
+                at = vector3(x, y, z) }
         end
     end
     for npc in pairs(drawn) do
@@ -125,6 +152,7 @@ local function apply(data)
             blipFor(npc, p)
         end
     end
+    if next(places) ~= nil then NpcLoop.start() end
 end
 
 --- Ask the server where they stand, through the app's gate. Replies are
@@ -148,35 +176,63 @@ RegisterNetEvent('crimson-hitman:rpPlacesChanged', function()
     ask()
 end)
 
+--- One pass: draw what came near, remove what went far. Returns whether
+--- anything is near enough to look again in a second. The ped and its
+--- coordinates are read once a pass, and nothing is made in it but the
+--- difference vectors: each place carries its own (apply).
+local function pass()
+    local me = GetEntityCoords(PlayerPedId())
+    local inCity = loggedIn()
+    local near = false
+    for npc, p in pairs(places) do
+        local d = drawn[npc]
+        local metres = #(me - p.at)
+        if d and not d.ped and inCity and metres < DRAW_METRES then
+            spawn(npc, p)
+        elseif d and d.ped and (metres > REMOVE_METRES or not inCity) then
+            removePed(npc)
+        end
+        if metres < NEAR_METRES or (d and d.ped) then near = true end
+    end
+    return near
+end
+
+--- Start the distance loop, unless it is running. It ends on the pass that
+--- finds nothing placed (both NPCs off, or every one taken away), and the
+--- next answer that places one starts it again (apply).
+function NpcLoop.start()
+    if watching then return end
+    watching = true
+    CreateThread(function()
+        while next(places) ~= nil do
+            -- One pass in a pcall: a native or a model that raises costs this
+            -- pass, never the loop (and with it every NPC for the session).
+            local ok, near = pcall(pass)
+            if not ok and CrimsonLog then CrimsonLog.debug(('roleplay NPCs: %s'):format(tostring(near))) end
+            Wait((near or not ok) and NEAR_WAIT_MS or FAR_WAIT_MS)
+        end
+        watching = false
+    end)
+end
+
+--- Whether the loop is running, for the tests.
+function NpcLoop.running()
+    return watching
+end
+
+-- The one question at start. Nothing loops until the answer places an NPC.
 CreateThread(function()
     Wait(5000)
     ask()
-    while true do
-        if next(places) == nil then
-            Wait(IDLE_WAIT_MS)
-        else
-            -- One pass in a pcall: a native or a model that raises costs this
-            -- pass, never the loop (and with it every NPC for the session).
-            local near = false
-            local ok, err = pcall(function()
-                local me = GetEntityCoords(PlayerPedId())
-                for npc, p in pairs(places) do
-                    local d = drawn[npc]
-                    local metres = #(me - vector3(p.x, p.y, p.z))
-                    if d and not d.ped and metres < DRAW_METRES then
-                        spawn(npc, p)
-                    elseif d and d.ped and metres > REMOVE_METRES then
-                        removePed(npc)
-                    end
-                    if metres < NEAR_METRES or (d and d.ped) then near = true end
-                end
-            end)
-            if not ok and CrimsonLog then CrimsonLog.debug(('roleplay NPCs: %s'):format(tostring(err))) end
-            Wait((near or not ok) and NEAR_WAIT_MS or FAR_WAIT_MS)
-        end
-    end
 end)
+
+-- Another character, or none: the peds go, and come back as the next one
+-- comes near.
+AddEventHandler('QBCore:Client:OnPlayerUnload', removePeds)
+AddEventHandler('qbx_core:client:playerLoggedOut', removePeds)
 
 AddEventHandler('onResourceStop', function(resource)
     if resource == GetCurrentResourceName() then removeAll() end
 end)
+
+return NpcLoop

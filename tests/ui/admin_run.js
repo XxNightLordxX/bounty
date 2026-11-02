@@ -613,6 +613,28 @@ async function main() {
       eq(app.requests('overview').length, before + 1);
       eq(app.live(10000), 1, 'still one timer');
     });
+    // The same answer again: only its Updated time is written, not the
+    // whole overview rebuilt every ten seconds the panel stands open.
+    const ovClears = app.byId('ov')._clears || 0;
+    app.fire(10000);
+    await settled();
+    it('draws the overview again only when its answer changed', function () {
+      eq((app.byId('ov')._clears || 0) - ovClears, 0, 'rebuilds for the same answer');
+      has(app.byId('ov-at').textContent, 'Updated');
+      has(app.byId('ov-at').textContent, 'refreshes every 10 s');
+    });
+    const sameServer = app.server.overview;
+    app.server.overview = function (body) {
+      const answer = JSON.parse(JSON.stringify(typeof sameServer === 'function' ? sameServer(body) : sameServer));
+      if (answer && answer.data) { answer.data.overrides = (Number(answer.data.overrides) || 0) + 7; }
+      return answer;
+    };
+    app.fire(10000);
+    await settled();
+    it('and does when it changed', function () {
+      eq((app.byId('ov')._clears || 0) - ovClears, 1, 'rebuilds for a new answer');
+    });
+    app.server.overview = sameServer;
     app.open(FULL);
     await settled();
     it('a second open (the server said open again) starts no second timer', function () {

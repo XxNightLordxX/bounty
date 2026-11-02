@@ -837,18 +837,38 @@
   function loadOverview(manual) {
     return ask('overview', {}, 'overview').then(function (reply) {
       if (!reply) return;
+      // The timed refresh (and opening the section, drawn just before from
+      // what is held) with the answer it already shows, word for word: only
+      // its Updated time moves. The whole overview was rebuilt every ten
+      // seconds the panel stood open, the same each time.
+      var text = null;
+      if (reply.ok) {
+        try { text = JSON.stringify(reply.data || {}); } catch (err) { text = null; }
+      }
+      var same = !manual && reply.ok && text !== null && S.overview && text === S.overviewText
+        && !S.overviewError;
       if (!reply.ok) {
         S.overviewError = words(reply);
         if (manual || !S.overview) toast(S.overviewError, 'error');
       } else {
         S.overview = reply.data || {};
+        S.overviewText = text;
         S.overviewAt = nowSeconds();
         S.overviewError = null;
         if (S.overview.recovery) setRecovery(S.overview.recovery);
       }
       drawCounts();
-      if (S.section === 'overview') setHtml(byId('ov'), overviewBody());
+      if (S.section !== 'overview') return;
+      var at = same && byId('ov-at');
+      if (at) { at.textContent = overviewStamp(); return; }
+      setHtml(byId('ov'), overviewBody());
     });
+  }
+
+  /** The overview's foot: when it was read and how often it is. */
+  function overviewStamp() {
+    return ' Updated ' + (S.overviewAt ? when(S.overviewAt).slice(11) : '\u2014') + ' \u00b7 refreshes every '
+      + Math.round(refreshMs() / 1000) + ' s';
   }
 
   /** The overview again every Config.Admin.PanelRefreshSeconds while the
@@ -1023,8 +1043,7 @@
           : empty('Nothing that wants doing.'), '',
           btn('.is-small', 'ov-diag', {}, 'Run it', 'stethoscope'))),
       h('p.foot', icon('rotate'),
-        ' Updated ' + (S.overviewAt ? when(S.overviewAt).slice(11) : '—') + ' · refreshes every '
-        + Math.round(refreshMs() / 1000) + ' s',
+        h('span', { id: 'ov-at' }, overviewStamp()),
         S.overviewError ? h('span.is-error', ' · last refresh: ' + S.overviewError) : null,
         ' ', btn('.is-small.is-ghost', 'ov-refresh', {}, 'Refresh now')));
   }

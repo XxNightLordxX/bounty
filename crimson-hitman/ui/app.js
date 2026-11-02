@@ -4011,9 +4011,28 @@
      the next Mine read. */
   var countdownOver = {};
 
+  /* The running poll's own tick, so the page being put away or shown again
+     can re-arm it at the other pace (armCountdown), and a reply can tell
+     whether the poll that asked is still the one running. */
+  var countdownTick = null;
+
+  /* Once a second on screen. Put away, once every five: the handover runs
+     on the server whatever this page does, the phone tells the hitman how
+     it ended, and the server keeps that answer for two minutes, so a page
+     shown again still hears how it went and says the same. */
+  var COUNTDOWN_MS = 1000;
+  var COUNTDOWN_HIDDEN_MS = 5000;
+
   function stopCountdown() {
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    countdownTick = null;
     countdownFor = null;
+  }
+
+  function armCountdown() {
+    if (!countdownTick) { return; }
+    if (countdownTimer) { clearInterval(countdownTimer); }
+    countdownTimer = setInterval(countdownTick, pageShown() ? COUNTDOWN_MS : COUNTDOWN_HIDDEN_MS);
   }
 
   function endCountdown(id) {
@@ -4036,11 +4055,10 @@
       return Date.now() + ms;
     }
     var deadline = allowance();
-    var timer;
     // Until when polls are held back after a rate limit (below).
     var holdUntil = 0;
 
-    timer = countdownTimer = setInterval(function () {
+    var tick = function () {
       if (Date.now() > deadline) {
         endCountdown(id);
         say('Lost track of the handover. Your contracts show how it ended.');
@@ -4055,7 +4073,7 @@
            answered "no handover" to a hitman who had just left and told
            them to get the target back and try again, and a stale reply
            could stop the poller that replaced it. */
-        if (countdownTimer !== timer) { return; }
+        if (countdownTick !== tick) { return; }
         if (r.ok && r.data && r.data.done) {
           // Over, and the server says how. Every ending used to reach this
           // poller the same way — the countdown gone — so a hitman who had
@@ -4121,7 +4139,9 @@
         // word of how it ended. The poll that finds it over carries that
         // (`done` above), and the deadline bounds the rest.
       });
-    }, 1000);
+    };
+    countdownTick = tick;
+    armCountdown();
   }
 
   /* What is said of a payment whose give raised and whose arrival could not
@@ -4808,13 +4828,12 @@
     return { text: band.text, warn: close };
   }
 
-  /* The clock chips on screen, rewritten in place every half minute while
-     there are any. Redrawing the view to move them would reset the scroll
-     and rebuild whatever the player had open; draw() empties the list and
-     starts or stops the ticker, so it runs only while a card is showing. */
-  var clockChips = [];
-  var clockTimer = null;
-
+  /* A clock chip, painted once as the card is drawn. What it says is the
+     server's band (timeLeft), on hold or not, and the stake window from the
+     same reply: nothing in it moves until the next read, which redraws the
+     card. It used to be repainted every half minute by a ticker that ran
+     while any card was on screen, the phone put away included, and wrote
+     the same words each time. */
   function paintClock(node, contract) {
     var words = clockWords(contract);
     if (!words) { return; }
@@ -4826,19 +4845,7 @@
     if (!clockWords(contract)) { return null; }
     var node = chip('', null, 'i-clock');
     paintClock(node, contract);
-    clockChips.push({ node: node, contract: contract });
     return node;
-  }
-
-  function syncClockTicker() {
-    if (clockChips.length && !clockTimer) {
-      clockTimer = setInterval(function () {
-        clockChips.forEach(function (c) { paintClock(c.node, c.contract); });
-      }, 30000);
-    } else if (!clockChips.length && clockTimer) {
-      clearInterval(clockTimer);
-      clockTimer = null;
-    }
   }
 
   /* "runs out in 2h", or what to say instead when there is no clock. The
@@ -8853,7 +8860,6 @@
 
     var view = document.getElementById('view');
     view.innerHTML = '';
-    clockChips = [];
     countdownBars = {};
 
     // A dialog is drawn alone, as a sheet at the foot of the view; the view
@@ -8861,7 +8867,6 @@
     view.classList.toggle('has-dialog', !!state.dialog);
 
     if (state.dialog) {
-      syncClockTicker();
       if (state.dialog.kind === 'choice') {
         renderChoice(view);
       } else if (state.dialog.kind === 'fields') {
@@ -8889,7 +8894,6 @@
       onme: viewOnMe, ledger: viewLedger, thread: viewThread,
       jobview: viewJobView
     })[state.tab](view);
-    syncClockTicker();
 
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
       // A thread is opened from Mine and goes back to it, so Mine stays lit
@@ -8995,6 +8999,25 @@
     return function () { return loadSeq[section] === mine; };
   }
 
+  /* Each section's last answer as text, with the object it was kept as, so
+     a quiet read can tell an answer it already holds (refresh). Taken as
+     the reply lands, before stampClocks marks it. Only while that object is
+     still the one held: anything that puts another in its place makes the
+     next answer new. */
+  var answers = {};
+
+  function sameAnswer(section, data, held) {
+    var text = null;
+    try { text = JSON.stringify(data); } catch (err) { text = null; }
+    var last = answers[section];
+    return { text: text,
+             same: !!(text !== null && held && last && last.held === held && last.text === text) };
+  }
+
+  function keepAnswer(section, text, held) {
+    answers[section] = text === null ? null : { text: text, held: held };
+  }
+
   /* Returns a promise that settles once all three reads have landed, so an
      action can hold its button until the screen shows what it did.
 
@@ -9003,10 +9026,16 @@
      it read all three whatever the tab, three requests from the bucket the
      board, Mine and the ledger share where one was drawn — and the board
      is the costliest thing the server builds. A section skipped is read
-     when its tab is opened. */
-  function refresh(only) {
+     when its tab is opened.
+
+     `opts.quiet`: a read nobody tapped for (a push, a tab just opened and
+     drawn). A section whose answer is the one already held, word for word,
+     is then neither taken nor drawn again: a push about something on
+     another screen rebuilt this one, the same, every time (sameAnswer). */
+  function refresh(only, opts) {
     // The whitelisted-job view reads its one thing, whatever was asked for.
-    if (state.mode === 'whitelisted') { return readJobView(); }
+    if (state.mode === 'whitelisted') { return readJobView(opts); }
+    var quiet = !!(opts && opts.quiet);
 
     function asked(section) { return !only || only[section] === true; }
 
@@ -9014,6 +9043,7 @@
       var boardIsCurrent = newestLoad('board');
       return post('list', { page: state.boardPage || 1 }).then(function (r) {
         if (!boardIsCurrent()) { return; }
+        var hadFailed = !!state.loadFailed.board;
         if (!loadResult('board', r)) { return; }
         // The board shrank under the page being looked at: back to its last.
         var pages = Number(r.data && r.data.pages) || 1;
@@ -9025,8 +9055,14 @@
         // board, and nothing else of it. An open dialog that quotes one (a
         // fee, a price) is drawn again from them, so what it shows is what
         // its tap is charged.
+        var seen = sameAnswer('board', r.data, state.board);
+        if (quiet && seen.same && !hadFailed) {
+          if (state.boardTab === 'protection' && state.tab === 'board') { readProtection(); }
+          return;
+        }
         var settingsWere = JSON.stringify(settings());
         state.board = r.data;
+        keepAnswer('board', seen.text, r.data);
         stampClocks(r.data.contracts);
         // The Protection tab, when that is the one open, read with it.
         if (state.boardTab === 'protection' && state.tab === 'board') { readProtection(); }
@@ -9043,14 +9079,21 @@
       return post('mine', {}).then(function (r) {
         if (!mineIsCurrent()) { return; }
         var opening = !state.loaded.mine;
+        var hadFailed = !!state.loadFailed.mine;
         if (!loadResult('mine', r)) { return; }
-        state.mine = r.data;
+        var seen = sameAnswer('mine', r.data, state.mine);
+        var keep = quiet && seen.same && !hadFailed;
         // Read after the handover ended, so its snapshot is current again.
         Object.keys(countdownOver).forEach(function (id) {
           if (countdownOver[id] < mineAsked) { delete countdownOver[id]; }
         });
-        [r.data.created, r.data.accepted, r.data.onMe].forEach(stampClocks);
-        redrawFor(['mine', 'onme']);
+        if (!keep) {
+          state.mine = r.data;
+          keepAnswer('mine', seen.text, r.data);
+          [r.data.created, r.data.accepted, r.data.onMe].forEach(stampClocks);
+          redrawFor(['mine', 'onme']);
+        }
+        var data = state.mine;
         // Only for contracts this player is actually party to, and only for
         // ones not already loaded: most contracts have no open proposal and
         // asking about every one of them every refresh would be three
@@ -9063,7 +9106,7 @@
         // share, so a few acceptances in a row ran the page into its own rate
         // limit. Opening Mine refreshes, and reads them then.
         if (!opening && state.tab !== 'mine' && state.tab !== 'thread') { return; }
-        asList(r.data.created).concat(asList(r.data.accepted)).forEach(function (c) {
+        asList(data.created).concat(asList(data.accepted)).forEach(function (c) {
           if (state.proposals[c.id] === undefined && !proposalsAsking[c.id]) { loadProposals(c); }
         });
       });
@@ -9073,8 +9116,12 @@
       var ledgerIsCurrent = newestLoad('ledger');
       return post('ledger', {}).then(function (r) {
         if (!ledgerIsCurrent()) { return; }
+        var hadFailed = !!state.loadFailed.ledger;
         if (!loadResult('ledger', r)) { return; }
+        var seen = sameAnswer('ledger', r.data, state.ledger);
+        if (quiet && seen.same && !hadFailed) { return; }
         state.ledger = r.data;
+        keepAnswer('ledger', seen.text, r.data);
         // Mine reads it too: how to finish a contract (howToFinish).
         redrawFor(['ledger', 'mine']);
       });
@@ -9105,6 +9152,7 @@
     stopCountdown();
     Object.keys(loadSeq).forEach(function (section) { loadSeq[section] += 1; });
     state.board = null; state.mine = null; state.ledger = null; state.jobView = null;
+    answers = {};
     state.wallet = null; state.walletFailed = null;
     state.dialog = null; state.thread = null; state.call = null; state.reward = null;
     state.draft = {}; state.picked = {}; state.proposals = {}; state.drafts = {};
@@ -9170,8 +9218,12 @@
         return say('Asked too fast. Try again ' + retryIn(r.data && r.data.retryAfter) + '.',
           'caution');
       }
+      var hadFailed = !!state.loadFailed.jobview;
       if (!loadResult('jobview', r)) { return; }
+      var seen = sameAnswer('jobview', r.data, state.jobView);
+      if (opts && opts.quiet && seen.same && !hadFailed) { return; }
       takeJobView(r.data);
+      keepAnswer('jobview', seen.text, r.data);
       redrawFor(['jobview']);
     });
   }
@@ -9259,8 +9311,10 @@
       render();
       // Opening a tab is when a player expects to see current state. The
       // ledger too: a push no longer reads it unless it is open.
-      if (state.tab === 'board' || state.tab === 'mine' || state.tab === 'onme') refresh();
-      else if (state.tab === 'ledger') refresh({ ledger: true });
+      // Drawn just now from what it holds: an answer the same is not drawn
+      // again.
+      if (state.tab === 'board' || state.tab === 'mine' || state.tab === 'onme') refresh(null, { quiet: true });
+      else if (state.tab === 'ledger') refresh({ ledger: true }, { quiet: true });
     };
   });
 
@@ -9275,11 +9329,102 @@
   // And a late answer's (the same).
   var latePushed = false;
 
+  /* ---------- whether the player has the app on screen ----------
+
+     lb-phone keeps this frame alive with the phone put away, so whatever
+     the page runs, it runs all game for every player who has opened it
+     once. While it is put away it reads nothing: a push only notes what it
+     asked for (pushOwed), and the page reads it the moment it is shown
+     again, once however many came. The handover poll slows to one in five
+     seconds (armCountdown). Nothing else here runs on a timer while the
+     page is idle.
+
+     Put away and shown are lb-phone's onClose and onOpen, which the client
+     passes on ('shown'), and the document's own visibility where the frame
+     has one. A tap or a key in the page is the player looking at it,
+     whatever was last said, so a lost 'shown' never leaves it asleep. */
+  var shownByPhone = true;
+  // What a push asked for while the page was put away: null for nothing,
+  // else { refresh, all, thread }.
+  var pushOwed = null;
+
+  function pageShown() {
+    return shownByPhone && !(document && document.hidden === true);
+  }
+
+  function owe(what) {
+    pushOwed = pushOwed || { refresh: false, all: false, thread: false };
+    Object.keys(what).forEach(function (key) { if (what[key]) { pushOwed[key] = true; } });
+  }
+
+  /* What the debounced push reads: the open tab's sections (shownNow), the
+     board as well after a settings push, everything after a late answer
+     or (`all`) a change of app. */
+  function readPushed(all) {
+    var wanted = all ? { board: true, mine: true, ledger: true } : shownNow();
+    if (settingsPushed) {
+      settingsPushed = false;
+      wanted.board = true;
+      if (state.tab === 'place') {
+        state.wallet = null;
+        state.walletFailed = null;
+        redraw();
+      }
+    }
+    if (latePushed) {
+      latePushed = false;
+      wanted = { board: true, mine: true, ledger: true };
+      if (state.tab === 'place') {
+        state.wallet = null;
+        state.walletFailed = null;
+        redraw();
+      }
+    }
+    refresh(wanted, { quiet: true });
+  }
+
+  /* Shown again: the poll back to its pace, and what was pushed meanwhile
+     read now, once. */
+  function shownAgain() {
+    if (countdownTick) { armCountdown(); countdownTick(); }
+    var owed = pushOwed;
+    pushOwed = null;
+    if (!owed) { return; }
+    if (owed.thread && state.tab === 'thread' && state.thread) {
+      openThread(state.thread.contract, state.thread.thread, { reread: true });
+    }
+    if (owed.refresh || owed.all) { readPushed(owed.all); }
+  }
+
+  // What the page last took itself to be: the document's visibility has
+  // already changed by the time its event says so.
+  var wasShown = true;
+
+  function setShown(byPhone) {
+    if (typeof byPhone === 'boolean') { shownByPhone = byPhone; }
+    var now = pageShown();
+    if (now === wasShown) { return; }
+    wasShown = now;
+    if (now) { shownAgain(); } else if (countdownTick) { armCountdown(); }
+  }
+
+  if (document && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', function () { setShown(); });
+  }
+
   // A refusal stays up until the player does something else. Captured, so
   // it is cleared before the tap's own handler runs and can raise the next.
   document.addEventListener('click', function () {
+    if (!shownByPhone) { setShown(true); }
     if (state.notice && state.notice.kind === 'red') { dismissNotice(); }
   }, true);
+  // The pointer over the page, a key or the wheel: the player is looking at
+  // it. One comparison each while it is shown.
+  ['keydown', 'mousemove', 'wheel'].forEach(function (type) {
+    document.addEventListener(type, function () {
+      if (!shownByPhone) { setShown(true); }
+    }, true);
+  });
 
   window.addEventListener('message', function (event) {
     var data = event.data || {};
@@ -9296,7 +9441,8 @@
         // (a thread, the Place form): it starts again from the board.
         if (state.mode !== 'whitelisted') { state.tab = 'board'; }
         render();
-        refresh();
+        // Put away: read when shown again, everything, as here.
+        if (pageShown()) { refresh(); } else { owe({ all: true }); }
         return;
       }
 
@@ -9304,6 +9450,7 @@
          refresh for each one is three requests and more, and a quick
          exchange ran the page into its own rate limit. */
       if (data.reason === 'message') {
+        if (!pageShown()) { owe({ thread: true }); return; }
         if (state.tab === 'thread' && state.thread) {
           openThread(state.thread.contract, state.thread.thread, { reread: true });
         }
@@ -9348,7 +9495,9 @@
          writing, and neither would see the other until one of them left the
          screen and came back. A push is the server saying something
          changed, and a message is one of the things it pushes for. */
-      if (state.tab === 'thread' && state.thread) {
+      if (!pageShown()) {
+        owe({ thread: true });
+      } else if (state.tab === 'thread' && state.thread) {
         openThread(state.thread.contract, state.thread.thread, { reread: true });
       }
 
@@ -9375,30 +9524,22 @@
       // every hitman, and several of those can land in the same tick. One
       // refresh is three requests, so a push per party would be a burst per
       // event.
-      if (pushTimer) { clearTimeout(pushTimer); }
+      //
+      // Put away, nothing is read: what it asked for is read once the
+      // page is shown again (shownAgain), however many pushes came.
+      if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+      if (!pageShown()) { owe({ refresh: true }); return; }
       pushTimer = setTimeout(function () {
         pushTimer = null;
-        var wanted = shownNow();
-        if (settingsPushed) {
-          settingsPushed = false;
-          wanted.board = true;
-          if (state.tab === 'place') {
-            state.wallet = null;
-            state.walletFailed = null;
-            redraw();
-          }
-        }
-        if (latePushed) {
-          latePushed = false;
-          wanted = { board: true, mine: true, ledger: true };
-          if (state.tab === 'place') {
-            state.wallet = null;
-            state.walletFailed = null;
-            redraw();
-          }
-        }
-        refresh(wanted);
+        if (!pageShown()) { owe({ refresh: true }); return; }
+        readPushed(false);
       }, 250);
+      return;
+    }
+
+    // lb-phone's onOpen and onClose, passed on by the client.
+    if (data.type === 'shown') {
+      setShown(data.shown !== false);
       return;
     }
 
