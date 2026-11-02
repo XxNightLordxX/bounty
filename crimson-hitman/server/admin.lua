@@ -56,14 +56,14 @@ function Admin.init(deps)
     Playtime = deps.playtime
 end
 
---- How many of the slowest maintenance jobs the diagnosis lists.
-local SLOWEST_SHOWN = 5
-
---- The slowest maintenance jobs, with their numbers. A resource that is
---- heavy on resmon says only that it is; this says which of its jobs.
+--- The maintenance jobs, slowest first, with their numbers and how often
+--- each runs. A resource that is heavy on resmon says only that it is; this
+--- says which of its jobs. Every job, not the five slowest: a job that runs
+--- once a minute is easily missed from a top five that is all ten-second
+--- ones, and staff asked what each one costs.
 local function reportTiming(say)
     if not (Timing and Timing.slowest) then return end
-    local slowest = Timing.slowest(SLOWEST_SHOWN)
+    local slowest = Timing.slowest()
     local over = tonumber(Config.Diagnostics and Config.Diagnostics.SlowJobMs) or 0
     if #slowest == 0 then
         say('maintenance jobs: not timed yet (the first tick runs a few seconds after start)')
@@ -73,8 +73,9 @@ local function reportTiming(say)
         :format(Timing.WINDOW, over > 0 and (tostring(over) .. ' ms') or 'off'))
     for i = 1, #slowest do
         local job = slowest[i]
-        say(('  %-28s max %7.2f  avg %7.2f  last %7.2f  runs %d%s'):format(
+        say(('  %-28s max %7.2f  avg %7.2f  last %7.2f  runs %d%s%s'):format(
             job.name, job.max, job.avg, job.last, job.runs,
+            job.every and ('  every %gs'):format(job.every) or '',
             (over > 0 and job.max > over) and '  SLOW' or ''))
     end
 end

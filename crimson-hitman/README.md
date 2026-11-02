@@ -1959,8 +1959,9 @@ death sampler's pass every second. One that takes longer than
 `Config.Diagnostics.SlowJobMs` (25 ms as shipped, so a line means a job that is
 really slow) prints one console line naming it with `Config.Debug` on, at most
 once every five minutes per job; `0` turns that off.
-`/ch-diag` lists the five slowest with their numbers either way, and the admin
-panel every job's. The times are
+`/ch-diag` lists every job, slowest first, with its numbers and how often it
+runs, either way; the admin panel's overview shows the five slowest. See
+*Performance: the loops* for what each job is for and what it costs. The times are
 processor time (`os.clock`), so read them as "about this slow". In `mysql`
 mode the time a job spends waiting on the database is left out: while it
 waits, the server runs everything else, and that is not this job's work.
@@ -2823,6 +2824,7 @@ API, and they may change between versions. What it listens to:
 | `QBCore:Server:OnPlayerUnload`, `qbx_core:server:playerLoggedOut` | `qbx_core`, local | Logout or character switch: cleans up on the first, and again on the second, after `qbx_core` has let the player go |
 | `playerDropped` | FXServer | Disconnect: the same cleanup |
 | `QBCore:Server:OnJobUpdate` (and `qbx_core:server:onSetJob`) | `qbx_core`, local | Re-checks whether the app is closed to the player's jobs, or shows them the whitelisted-job view, and moves an open page between the two at once |
+| `QBCore:Server:SetDuty` | `qbx_core`, local (`SetJobDuty`) | The same re-check on a duty change, which `Config.BlockOffDuty` reads; the maintenance tick repeats it for everybody every 30 seconds |
 | `qbx_core:server:onSetMetaData` | `qbx_core`, local | An `injail` sentence starting or ending pauses or resumes contract clocks |
 | `weaponDamageEvent` | FXServer | The damage log kills are attributed from |
 | `sc-ambulance:server:UseDefib` | sc-ambulance's client, net | A defibrillator used on a target, flood-guarded |
@@ -3009,6 +3011,72 @@ the playtime is counted here, see *New players and playtime*).
 | `failed to start: mysql mode cannot start: the database is missing what it needs` | Your database user may not create or alter tables, and something is missing. The lines under it name each table, column, index or engine change, with the database's own reason (error 1142 is a missing privilege). Import `install/sql/crimson_hitman.sql` as a user that may create tables, run the `ALTER TABLE` statements it prints as one that may alter them, or grant this user `CREATE`, `ALTER` and `INDEX` on the database; then `ensure crimson-hitman` |
 | `/ch-settle` answers *ending unfinished; it settles itself within a minute*, and `/ch-stuck` lists the line the same way | An expiry, void, cancel or buyout raised an error (the console has it) after closing the contract and before handing that line over. Nothing for you to do: the maintenance tick finishes the ending as a restart would (a hitman's stake by why the contract ended, the rest back to the client) and says `contract … had closed with escrow its ending never handed over` (in the console with `Config.Debug` on, and in `/ch-diag` either way). If the console instead says `finishing the ending of contract … raised` on every pass, fix that cause; a restart finishes it too |
 | `/ch-stuck` lists a line that "raised an error when they were given, or were stopped while being given" | `ox_inventory`'s `AddItem` or `qbx_core`'s `AddMoney` raised giving it (a hook or another resource failing): three times with nothing arriving, or once with only part of it arriving or no telling what did. Or the server stopped while it was being given, in which case it is owed to whom that give was going (the client, for a `return` you ran). It is still owed to that player and nothing gives it again on its own. Check their inventory or balance against what the line says arrived: if it is all there, `/ch-settle <line> delivered`; if not, `/ch-settle <line> pay` gives only what has not arrived. On a line marked *arrival unknown*, what the line says arrived may be short, so give what you found missing with `/ch-settle <line> pay <amount>` instead. A line marked *in no retry queue* was never given (its queue entry failed to be written, or a retry cleared it under a settle), and nor was a *stalled claim* (the claim paying it raised after owing it), so `pay` it (`return` and `delivered` are refused on it); one *left mid-release by a call that raised* was stopped by an error on the running server, and settles like any other. The console and the `escrow_deliver_raised` rows show the error |
+
+### Performance: the loops
+
+Every loop the resource runs, how often, why that often, and what one pass
+costs. The costs were measured with the test harness (`tests/loops_spec.lua`)
+on a server with **200 live contracts, each held, and 64 players in the city**:
+the average pass, then the worst of thirty, in milliseconds of the server
+thread's own time (`mysql` / `json`). A database's own work is not in them
+(see above); the harness runs `mysql`'s statements in Lua, so where a job
+asks the database the number of statements is given too. Read them as "about
+this slow": a real server's exports cost more than the harness's (the access
+check measured 7 ms a pass on a full Windows server). `/ch-diag` lists the
+same jobs, with this server's own numbers and each one's interval.
+
+A whole maintenance pass with every job due at once, plus one sampler pass,
+takes about 5 ms on `json` and 18 ms on `mysql` in the harness (the `mysql`
+figure includes the harness's Lua database); the test holds it under 60 ms.
+Before these changes it was about 9 and 100 ms.
+
+**Server: the maintenance tick** (every `Config.Audit.FlushIntervalMs`, 10 s as
+shipped). A job not listed here runs every tick and costs under 0.06 ms a pass
+with nothing to do (the retries, the sweeps of rate limits and handles, the
+photo jobs, the review queue, the bodyguard and intent sweeps, the buyout
+queue, the prune).
+
+| Job | Interval | Why that often | Cost a pass (`mysql` / `json`) |
+|---|---|---|---|
+| `contracts.releaseIdleHolds` | 10 s | The idle and attempt clocks advance by the time since the last pass; a hold is released within one tick of its window. No clock runs, and nothing is released, while staff hold the contract, the restart hold is on or the app is paused. Reads every running contract and its roster in two statements, and asks `qbx_core` once a pass for each person (was 2 statements and 2 look-ups per held contract: 400 statements every 10 s here) | 1.7 (4.3) / 1.7 (6.3); 2 statements |
+| `expireContracts` | 10 s, skipped until the next deadline, a presence change or a contract change | Its own next-wake logic decides: a pass with nothing that could have changed reads nothing | 0.11 (3.2) / 0.07 (2.0) |
+| `audit.flush` | 10 s | Audit rows written in batches; its time is what `/ch-diag`'s *maintenance tick* line reads | 0.28 (8.3) / 0.88 (26, the pass after 200 contracts were placed) |
+| `storage.flush` | 10 s | `json`: the changed files only, so a crash loses at most ten seconds. `mysql`: nothing | 0.00 / 0.33 (5.2) |
+| `storage.heartbeat` | `json` 60 s, `mysql` 10 s | When the server was last alive, which a restart's downtime is dated from (never charged to a deadline) | 0.00 / 0.01; one file write (34 ms seen on Windows), on a tick of its own |
+| `playtime.pass` | 60 s, first tick of each minute | Everybody's time in the city, in one batch | 0.21 (2.3) / 0.16 (1.2) |
+| `bridges.refreshAccess` | **30 s** (was 10 s) | Who may have the app. A login, a job change, a duty change and a setting that moves it tell the player at once; this is the backstop | 0.32 (0.38) / 0.29 (0.47); 7 ms seen live |
+| `notify.deliverKept` | 10 s (was 60 s), nothing read while nothing is kept | Notices kept past a player's per-minute budget go on the first tick after that minute opens, rather than up to a minute later | 0.00 with nothing kept |
+| `rp_places.announce` | **60 s on the tick** (was a thread of its own) | NPC positions rotate by the hour; a change from the admin panel is announced at once | 0.01 |
+| `freeze.syncAppPause` | **60 s** (was 10 s) | The pause follows its switch at once when changed (set, reset, undo); this is for any other way | 0.00 |
+| `thresholds.sweep` | **60 s** (was 10 s) | Alert windows of an hour or more | 0.00 |
+| `freeze.restartTick`, `sanctions.tick`, `summary.tick` | 10 s | A restart hold ends on the tick it reaches `Config.Restart.MaxHoldMinutes`; a suspension's end tells the player; the daily summary goes on the tick its hour comes. One comparison each with nothing to do | 0.00 |
+| `contracts.finishEndings`, `ledger.forgetOldPhotos`, `photo.loadAllowedHosts`, `escrow.retryWaiting` | 30 s, 600 s, `Config.Completion.PhotoHostRefreshSeconds`, 30 s per player | Gated inside: endings that raised settle within a minute; photo retention counts days; owed money is retried every 30 s while the player is online, and at their login | under 0.15 |
+
+The scheduled jobs never share a tick with the playtime pass or the `json`
+heartbeat, and the access check and the NPC positions never share one with
+each other: one tick's jobs run in the same server frame, so
+what shares a tick shares a hitch.
+
+**Server: its own clocks**
+
+| Loop | Interval | Why that often | Cost a pass (`mysql` / `json`) |
+|---|---|---|---|
+| Condition sampler (`death.sampler`) | `Config.Completion.ConditionSampleMs`, 1 s | Damage is credited from the last sample, so attribution is only as precise as this. With nothing running it reads no rosters; each target's medical state and position is read once a pass, however many contracts name them (was once per contract) | 0.94 (1.7) / 1.13 (5.5); 2 statements, 1 with nothing running |
+| Handover countdown | `Config.Kidnap.TickMs`, 1 s | Only while a handover is under way; the thread ends with the last one | (per handover) |
+| Hit checks | 50 ms | Only while a hit waits for its damage to show, for that victim | (per hit) |
+| Discord poster, alert flush | timers | Only while something waits to be posted | |
+
+**Client**
+
+| Loop | Interval | Why that often |
+|---|---|---|
+| Death watcher | 1 s, while a character is loaded | The server waits a few seconds for the victim's own report before attributing a death without it. A few natives a pass; an event only when the answer changes |
+| Mask watcher | 1 s, only while `Config.Targeting.AllowNearby` is on | One native a pass; an event only when the mask changes |
+| Roleplay NPCs | **1 s within 160 m of an NPC or while one is drawn, 2 s further off** (was 1 s), 2 s with both off | An NPC appears within 80 m; 160 m is the ground a car covers in two seconds and more |
+| App heartbeat | 15 s | Puts the app back on a phone that lost it; nothing is sent |
+| Asking for access | 2, 2, 2, 5, 5, 10 s, then 30 s, until answered | A start that missed the join push |
+| Admin panel Escape guard | every frame, only while the panel is open | It reads the key |
+| Phone page | handover poll while one runs; deadline chips every 30 s while shown | |
 
 ---
 

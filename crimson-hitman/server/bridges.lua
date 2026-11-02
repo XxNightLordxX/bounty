@@ -553,12 +553,14 @@ function Bridges.install(modules)
     --- verify, and only restoring it on that same event, is how a fix
     --- becomes the bug.
     ---
-    --- So the answer is recomputed on the ordinary maintenance tick, which
+    --- So the answer is recomputed on the maintenance tick too, which
     --- depends on no framework event at all. It costs one job read per
     --- player and sends nothing unless the answer has moved. Only the job:
     --- each player's account identifiers and cleaned-up name were worked
     --- out too, for everyone online every tick, and nothing here reads
-    --- either (Identity.resolveJobs).
+    --- either (Identity.resolveJobs). Every 30 seconds rather than every
+    --- tick (main.lua, SCHEDULE): the events above tell a player at once,
+    --- and this is the backstop, so a missed event costs half a minute.
     function Bridges.refreshAccess()
         local seen = {}
         local players = GetPlayers() or {}
@@ -632,13 +634,19 @@ function Bridges.install(modules)
     -- is set, an sc-multijob switch included, since that goes through
     -- qbx_core; the other name is one it has never fired, kept for a build
     -- that does.
-    -- The maintenance tick (refreshAccess) catches whatever both miss.
+    -- The maintenance tick (refreshAccess, every 30 seconds) catches
+    -- whatever they all miss.
     local function jobChanged(src)
         local id = tonumber(src)
         if id then tellAccess(id) end
     end
     AddEventHandler('QBCore:Server:OnJobUpdate', jobChanged)
     AddEventHandler('qbx_core:server:onSetJob', jobChanged)
+    -- And a duty change, which Config.BlockOffDuty reads: qbx_core's
+    -- SetJobDuty fires QBCore:Server:SetDuty (source, onDuty), a local event,
+    -- and not OnJobUpdate. Without it the change waited for the tick's
+    -- access check, which now runs every 30 seconds rather than every ten.
+    AddEventHandler('QBCore:Server:SetDuty', jobChanged)
 
     -- A player's own client is the only one that can reliably render their
     -- headshot, so the image arrives from them and is bounded on arrival.

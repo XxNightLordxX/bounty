@@ -216,16 +216,9 @@ function Places.init(d)
     end
 end
 
---- A place moves on the clock: looked at once a minute, from the start's
---- end (main.lua). Idle with both NPCs off, it compares two short strings.
-function Places.startWatch()
-    CreateThread(function()
-        while true do
-            Wait(60000)
-            Places.announce()
-        end
-    end)
-end
+-- A place moves on the clock: looked at once a minute by the maintenance
+-- tick (main.lua, rp_places.announce, Places.announce above), not by a
+-- thread of its own. Idle with both NPCs off, it compares two short strings.
 
 --------------------------------------------------------------------------
 -- The start-up check of a feature's block

@@ -6,11 +6,21 @@
 --- Each NPC is a local ped (never networked), made only while this player
 --- is within DRAW_METRES of it and removed past REMOVE_METRES, so a player
 --- across the map costs nothing. One distance check a second while an NPC
---- is on, none at all while both are off. The NPC is scenery: whether a
+--- is near, one every two seconds while every NPC is far, and nothing but
+--- a look at an empty table every two seconds while both are off. The NPC is scenery: whether a
 --- player stands beside it is checked by the server from their ped.
 
 local DRAW_METRES, REMOVE_METRES = 80.0, 100.0
 local MODEL_WAIT_MS = 5000
+
+--- How often the distance is looked at: once a second while an NPC is
+--- within NEAR_METRES (or drawn), so it appears before the player reaches
+--- it; every two seconds while every NPC is further off, where nothing can
+--- change in that time but the distance (a car at 150 km/h covers about
+--- 80 m in two seconds, the margin between NEAR_METRES and DRAW_METRES);
+--- and every two seconds, with nothing to measure, while both are off.
+local NEAR_METRES = 160.0
+local NEAR_WAIT_MS, FAR_WAIT_MS, IDLE_WAIT_MS = 1000, 2000, 2000
 
 --- What the server last said: [npc] = { x, y, z, h, model, scenario, blip }.
 local places = {}
@@ -143,10 +153,11 @@ CreateThread(function()
     ask()
     while true do
         if next(places) == nil then
-            Wait(2000)
+            Wait(IDLE_WAIT_MS)
         else
             -- One pass in a pcall: a native or a model that raises costs this
             -- pass, never the loop (and with it every NPC for the session).
+            local near = false
             local ok, err = pcall(function()
                 local me = GetEntityCoords(PlayerPedId())
                 for npc, p in pairs(places) do
@@ -157,10 +168,11 @@ CreateThread(function()
                     elseif d and d.ped and metres > REMOVE_METRES then
                         removePed(npc)
                     end
+                    if metres < NEAR_METRES or (d and d.ped) then near = true end
                 end
             end)
             if not ok and CrimsonLog then CrimsonLog.debug(('roleplay NPCs: %s'):format(tostring(err))) end
-            Wait(1000)
+            Wait((near or not ok) and NEAR_WAIT_MS or FAR_WAIT_MS)
         end
     end
 end)

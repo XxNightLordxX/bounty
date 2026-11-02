@@ -589,14 +589,22 @@ describe('complexity: what the sampler asks for', function()
 
     --- The death state was read twice per target per pass: once for the
     --- revive watch, once more for isTrulyDead, with nothing in between.
+    --- And then once per contract, where several name the same target: the
+    --- same reading again in the same moment (tests/loops_spec.lua).
     it('reads each target\'s death state once a pass', function()
         atScale(20, function(stack, board)
+            local live = stack.storage.liveContracts()
+            local targets = {}
+            for _, c in ipairs(live) do targets[c.target_cid] = true end
+            local distinct = 0
+            for _ in pairs(targets) do distinct = distinct + 1 end
+            truthy(board.made >= distinct, 'the board')
             local exportCounts, restore = countingExports()
-            local ok, err = pcall(stack.death.watchTargets, stack.storage.liveContracts())
+            local ok, err = pcall(stack.death.watchTargets, live)
             restore()
             truthy(ok, tostring(err))
-            eq(exportCounts['sc-ambulance.IsDead'], board.made, 'one dead read per contract')
-            eq(exportCounts['sc-ambulance.IsLaststand'], board.made, 'and one last-stand read')
+            eq(exportCounts['sc-ambulance.IsDead'], distinct, 'one dead read per target')
+            eq(exportCounts['sc-ambulance.IsLaststand'], distinct, 'and one last-stand read')
         end)
     end)
 end)

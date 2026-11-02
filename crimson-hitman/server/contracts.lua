@@ -2678,15 +2678,56 @@ function Contracts.releaseIdleHolds()
     -- key to the table being walked, which pairs() leaves undefined.
     local ids = {}
     for contractId in pairs(heldIndex) do ids[#ids + 1] = contractId end
+    if #ids == 0 then
+        -- Nothing held: nothing to read, and no clock to keep (what the
+        -- walk below would have forgotten at its end).
+        if idling then
+            idleFor, unattemptedFor = {}, {}
+            for k in pairs(armedAt) do armedAt[k] = nil end
+        end
+        return released
+    end
+
+    -- Every running contract and its roster in two reads, as the condition
+    -- sampler reads them, rather than two reads per held contract: on mysql
+    -- that was two awaited queries for each one, every ten seconds, for the
+    -- life of the server. A held contract the batch does not hold (mid-claim,
+    -- or ended) is read on its own, as before. Nothing is acted on from the
+    -- batch: a release reads the contract and the hitman again under the
+    -- contract's key (releaseIdleHoldUnlocked), and so does a repair.
+    local running, rosters = {}, nil
+    if Storage.liveContracts then
+        local rows = Storage.liveContracts() or {}
+        for i = 1, #rows do running[rows[i].id] = rows[i] end
+        if Storage.liveHitmen then rosters = Storage.liveHitmen() end
+    end
+
+    -- Who is in the city, asked of qbx_core once a pass for each person
+    -- however many held contracts name them, as the expiry pass asks.
+    local seen = {}
+    local function present(cid)
+        if cid == nil then return nil end
+        local actor = seen[cid]
+        if actor == nil then
+            actor = Identity.byCitizenId(cid) or false
+            seen[cid] = actor
+        end
+        return actor or nil
+    end
 
     for _, contractId in ipairs(ids) do
-        local c = Storage.readContract(contractId)
+        local c = running[contractId] or Storage.readContract(contractId)
         if not c or c.state ~= CH.STATE.ACCEPTED then
             -- Resolved, or back on the board: nobody holds it now. A contract
             -- mid-settlement stays, since a failed payout lands it back here.
             if not c or c.state ~= CH.STATE.COMPLETING then heldIndex[contractId] = nil end
         else
-            local hitmen = Storage.readHitmen(c.id) or {}
+            local hitmen
+            if rosters and running[c.id] then
+                hitmen = rosters[c.id] or {}
+            else
+                hitmen = Storage.readHitmen(c.id) or {}
+            end
             local holders = 0
             for i = 1, #hitmen do
                 if holds(hitmen[i]) then holders = holders + 1 end
@@ -2720,10 +2761,10 @@ function Contracts.releaseIdleHolds()
                 or Contracts.appPaused())
             local bothHere = false
             if #hitmen > 0 and not held then
-                local targetActor = Identity.byCitizenId(c.target_cid)
+                local targetActor = present(c.target_cid)
                 local targetHere = targetActor ~= nil
                     and not (Config.Limits.PauseWhileTargetJailed and Identity.isJailed(targetActor))
-                bothHere = (c.anon_creator == true or Identity.byCitizenId(c.creator_cid) ~= nil)
+                bothHere = (c.anon_creator == true or present(c.creator_cid) ~= nil)
                     and targetHere
             end
 

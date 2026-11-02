@@ -1098,6 +1098,8 @@ end
 --- receipt kept for a login that has not come yet) goes as it is.
 ---@return integer sent
 function Notify.deliverKept()
+    -- Nothing kept, nothing to do: the tick asks every ten seconds.
+    if next(waiting) == nil then return 0 end
     local cids = {}
     for cid in pairs(waiting) do cids[#cids + 1] = cid end
     table.sort(cids)

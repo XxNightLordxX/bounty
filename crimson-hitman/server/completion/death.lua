@@ -688,9 +688,15 @@ function Death.startSampler()
     -- queries a second on mysql, for as long as the server ran.
     local function pass()
         local live = Storage.liveContracts()
+        -- Nothing running: no roster to read (a second query a second on
+        -- mysql for nothing), and the pass only forgets who was watched.
+        if #live == 0 then return Death.watchTargets(live, {}) end
         Death.watchTargets(live, Storage.liveHitmen and Storage.liveHitmen() or nil)
     end
 
+    if Timing and Timing.interval then
+        Timing.interval('death.sampler', (Config.Completion.ConditionSampleMs or 1000) / 1000)
+    end
     CreateThread(function()
         while true do
             Wait(Config.Completion.ConditionSampleMs or 1000)
@@ -831,6 +837,39 @@ function Death.watchTargets(contracts, rosters)
     -- be named by several, and the first of them to mark the death seen
     -- would leave nothing fresh for the second.
     local killable = {}
+    -- Asked once a pass for each person, however many contracts name them:
+    -- who is on which server id, and where their ped stands. A target named
+    -- by ten contracts was looked up ten times, and its hitmen with it; one
+    -- pass is one moment, and the second answer only repeated the first.
+    local sources, spots = {}, {}
+    local function here(cid)
+        local found = sources[cid]
+        if found == nil then
+            found = inCity(cid) or false
+            sources[cid] = found
+        end
+        return found or nil
+    end
+    local function spot(src)
+        local at = spots[src]
+        if not at then
+            at = GetEntityCoords(GetPlayerPed(src))
+            spots[src] = at
+        end
+        return at
+    end
+    -- And the medical state, two exports a person: the same reading again
+    -- for every further contract on that target.
+    local states = {}
+    local function stateOf(src)
+        local st = states[src]
+        if not st then
+            local dead, lastStand, resolved = Identity.deathState(src)
+            st = { dead, lastStand, resolved }
+            states[src] = st
+        end
+        return st[1], st[2], st[3]
+    end
     for i = 1, #contracts do
         local c = contracts[i]
         if (c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED)
@@ -842,12 +881,14 @@ function Death.watchTargets(contracts, rosters)
     for i = 1, #contracts do
         local c = contracts[i]
         if c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED then
-            local targetSource = inCity(c.target_cid)
+            local targetSource = here(c.target_cid)
             -- What awaitReport needs, and all attributeDeath reads: who and
             -- where. awaitReport resolves the source again before it acts.
             local target = targetSource and { cid = c.target_cid, source = targetSource } or nil
             if target then
-                Death.watch(target.cid, target.source, true)
+                -- The baseline once a pass: a second refresh in the same
+                -- moment read the same health and armour again.
+                if targets[target.source] ~= target.cid then Death.watch(target.cid, target.source, true) end
                 targets[target.source] = target.cid
                 watched = watched + 1
 
@@ -864,7 +905,7 @@ function Death.watchTargets(contracts, rosters)
                 -- the ground five minutes' immunity.
                 -- And up for a while, not for one reading, or put down
                 -- again by a hit: see REVIVE_CONFIRM_MS.
-                local dead, lastStand, resolved = Identity.deathState(target.source)
+                local dead, lastStand, resolved = stateOf(target.source)
                 if resolved and not dead then aliveAt[target.cid] = Util.monotonicMs() end
                 if resolved and not dead and not lastStand and Death.wasSeenDead(target.cid) then
                     local at = Util.monotonicMs()
@@ -907,15 +948,14 @@ function Death.watchTargets(contracts, rosters)
                     if fresh and killable[target.cid] then awaitReport(target) end
                 end
 
-                local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
+                local targetCoords = spot(target.source)
                 local hitmen = rosters and (rosters[c.id] or {}) or Storage.readHitmen(c.id)
                 for j = 1, #hitmen do
                     local hitman = hitmen[j]
                     if hitman.state == 'active' then
-                        local hitmanSource = inCity(hitman.hitman_cid)
+                        local hitmanSource = here(hitman.hitman_cid)
                         if hitmanSource then
-                            local distance2 = Util.dist2(
-                                GetEntityCoords(GetPlayerPed(hitmanSource)), targetCoords)
+                            local distance2 = Util.dist2(spot(hitmanSource), targetCoords)
                             if distance2 <= radius2 then
                                 seenNear[c.id] = seenNear[c.id] or {}
                                 seenNear[c.id][hitman.hitman_cid] = now

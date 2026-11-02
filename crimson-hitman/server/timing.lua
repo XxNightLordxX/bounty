@@ -118,6 +118,20 @@ function Timing.run(name, fn, ...)
     return ok, err
 end
 
+--- How often each job is meant to run, in seconds, as its owner set it:
+--- what /ch-diag prints beside the job's times. [name] = seconds
+local intervals = {}
+
+--- Say how often a job runs (main.lua's tick and its schedule, the
+--- sampler). Shown by /ch-diag beside its times; changes nothing about when
+--- it runs.
+---@param name string
+---@param seconds number
+function Timing.interval(name, seconds)
+    seconds = tonumber(seconds)
+    if type(name) == 'string' and seconds and seconds > 0 then intervals[name] = seconds end
+end
+
 --- When a job last finished a run (os.time()), or nil before its first:
 --- /ch-diag's loops line, which tells a loop that stopped from one that runs.
 ---@param name string
@@ -129,7 +143,7 @@ end
 
 --- The jobs by their slowest run in the window, slowest first.
 ---@param count integer|nil at most this many
----@return table[] { name, max, avg, last, runs }
+---@return table[] { name, max, avg, last, runs, every }
 function Timing.slowest(count)
     local out = {}
     for name, job in pairs(jobs) do
@@ -140,7 +154,7 @@ function Timing.slowest(count)
         end
         out[#out + 1] = {
             name = name, max = max, avg = kept > 0 and job.sum / kept or 0,
-            last = job.last, runs = job.n,
+            last = job.last, runs = job.n, every = intervals[name],
         }
     end
     table.sort(out, function(a, b)

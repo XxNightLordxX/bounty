@@ -2130,8 +2130,8 @@ function StartCrimsonHitman()
         -- the restart (Death.noteStarted).
         death.noteStarted()
         death.startSampler()
-        -- Where the roleplay NPCs stand moves on the clock (server/rp_places.lua).
-        rpPlaces.startWatch()
+        -- Where the roleplay NPCs stand moves on the clock: looked at by the
+        -- maintenance tick once a minute (rp_places.announce).
     end)
     if not wired then return recoveryFailed(wireErr) end
 
@@ -2557,7 +2557,34 @@ local MONEY_JOBS = {
     ['review.decide'] = true,
 }
 
+--- Jobs called on every tick that do their work less often by a gate of
+--- their own, and how often that is, in seconds: what /ch-diag prints for
+--- them (jobInterval). A function where it is a setting.
+local SELF_GATED = {
+    ['playtime.pass'] = 60,                 -- Playtime.PASS_SECONDS
+    ['contracts.finishEndings'] = 30,       -- FINISH_ENDINGS_EVERY_SECONDS, sooner with more
+    ['ledger.forgetOldPhotos'] = 600,       -- FORGET_EVERY_SECONDS, sooner with a backlog
+    ['escrow.retryWaiting'] = 30,           -- each player at most every 30 s (Escrow)
+    ['photo.loadAllowedHosts'] = function()
+        return tonumber(Config.Completion.PhotoHostRefreshSeconds) or 300
+    end,
+    -- json writes its file once a minute; mysql its row every tick.
+    ['storage.heartbeat'] = function()
+        return Config.Database.Mode == 'json' and 60 or nil
+    end,
+}
+
+--- Said to the timing once per job, the first time it runs.
+local intervalSaid = {}
+
+--- How often a job runs, in seconds (below, beside SCHEDULE).
+local jobInterval
+
 local function job(name, fn, ...)
+    if not intervalSaid[name] and modules.timing.interval then
+        intervalSaid[name] = true
+        modules.timing.interval(name, jobInterval(name))
+    end
     local ok, err = modules.timing.run(name, fn, ...)
     if not ok then
         local text = ('maintenance job %q failed: %s'):format(name, tostring(err))
@@ -2590,18 +2617,12 @@ function RetryWaiting()
     return delivered
 end
 
---- How often notices kept past a player's budget are tried again: once the
---- minute that was full has opened (Notify.deliverKept).
-local DELIVER_KEPT_EVERY_SECONDS = 60
-local nextKept = 0
-
 --- Contract notices that found their player past the per-minute budget,
---- sent once there is room, at most every DELIVER_KEPT_EVERY_SECONDS
---- (§14.40: coalesced, never dropped).
+--- sent once there is room (§14.40: coalesced, never dropped): on the first
+--- tick after the minute that was full has opened. Every tick, and nothing
+--- read while nothing is kept (Notify.deliverKept); it was a pass once a
+--- minute whatever was kept, which held a notice up to a minute longer.
 function DeliverKept()
-    local now = os.time()
-    if now < nextKept then return 0 end
-    nextKept = now + DELIVER_KEPT_EVERY_SECONDS
     return modules.notify.deliverKept()
 end
 
@@ -2649,7 +2670,85 @@ function FinishEndings()
     return finished
 end
 
+--- Jobs that need not run on every tick, and how often they do: each one
+--- guards something counted in minutes, or has an event that acts at once
+--- and the tick only as the backstop. [job] = { every = seconds, phase =
+--- seconds }.
+---
+--- The first pass after a start runs them all, as before. After that each
+--- comes round every `every` seconds, moved on once by `phase`. On the
+--- ten-second tick a minute is six ticks: the json heartbeat has the sixth
+--- (a minute from the start), the playtime pass the first; the phases put
+--- the NPC positions on the fourth and the access check every third tick
+--- from the second, so none of the jobs that write or send shares a tick
+--- with another. The app pause and the thresholds, a comparison or two
+--- each, ride along on the access check's. One tick's jobs all run in the
+--- same server frame, so what shares a tick shares a hitch.
+local SCHEDULE = {
+    -- Who may have the app. Told at once on a login, a job change
+    -- (QBCore:Server:OnJobUpdate), a duty change (QBCore:Server:SetDuty) and
+    -- a setting that moves it (Bridges, Settings.onChanged); this catches
+    -- whatever all of them miss. A job read for everybody online: 7 ms a
+    -- pass on a full Windows server.
+    ['bridges.refreshAccess'] = { every = 30, phase = 10 },
+    -- Where the broker and informant stand: rotated by the hour, and a
+    -- change from the admin panel is announced at once (Places.WATCHED).
+    ['rp_places.announce'] = { every = 60, phase = 30 },
+    -- The app pause follows its switch the moment it changes (Settings.watch
+    -- in the start: a set, a reset, a reset of all and an undo); this is
+    -- only for a change made some other way.
+    ['freeze.syncAppPause'] = { every = 60, phase = 40 },
+    -- The alert thresholds' books aged out: windows of an hour and more.
+    ['thresholds.sweep'] = { every = 60, phase = 10 },
+    -- Not here, and on every tick: the restart hold's end
+    -- (freeze.restartTick), released on the tick it reaches
+    -- Config.Restart.MaxHoldMinutes; a suspension's end (sanctions.tick),
+    -- which tells the player; the daily summary (summary.tick), posted on
+    -- the tick its hour comes; and the notices kept past a budget
+    -- (notify.deliverKept), sent on the tick their minute opens. Each is a
+    -- comparison or an empty table while there is nothing to do.
+}
+
+--- [job] = os.time() it is next due. Absent: due now (the first pass).
+local scheduledAt = {}
+
+--- Whether a scheduled job is due on this tick, and if so, when it is due
+--- next. Half a tick short of `every`, so a job comes round on the same
+--- tick of every cycle however the tick drifts: a tick is at least its
+--- interval after the last, never less.
+---@param name string
+---@param now integer os.time()
+---@return boolean
+local function due(name, now)
+    local plan = SCHEDULE[name]
+    if not plan then return true end
+    local at = scheduledAt[name]
+    if at and now < at then return false end
+    local halfTick = math.floor((tonumber(Config.Audit.FlushIntervalMs) or 10000) / 2000)
+    scheduledAt[name] = now + plan.every - halfTick + (at == nil and plan.phase or 0)
+    return true
+end
+
+--- Run a scheduled job when it is due (see SCHEDULE).
+local function every(name, fn, now, ...)
+    if not due(name, now) then return true end
+    return job(name, fn, ...)
+end
+
+--- How often each job runs, for /ch-diag: the tick's interval for every job
+--- not in SCHEDULE.
+---@param name string
+---@return integer|nil seconds
+jobInterval = function(name)
+    local plan = SCHEDULE[name]
+    if plan then return plan.every end
+    local gated = SELF_GATED[name]
+    if type(gated) == 'function' then gated = gated() end
+    return gated or math.floor((tonumber(Config.Audit.FlushIntervalMs) or 10000) / 1000)
+end
+
 function Tick()
+    local now = os.time()
     job('audit.flush', modules.audit.flush)
     job('amendments.expire', modules.amendments.expire)
     job('bailout.processQueue', modules.bailout.processQueue)
@@ -2658,11 +2757,11 @@ function Tick()
     -- Suspensions and protections whose time has passed, written down as ended.
     if modules.sanctions then job('sanctions.tick', modules.sanctions.tick) end
     -- The app pause in line with its switch, however it was changed.
-    if modules.freeze and modules.freeze.syncAppPause then job('freeze.syncAppPause', modules.freeze.syncAppPause) end
+    if modules.freeze and modules.freeze.syncAppPause then every('freeze.syncAppPause', modules.freeze.syncAppPause, now) end
     -- The staff tools' own clocks: the once-a-day summary, and the alert
     -- thresholds' counts aged out.
     if modules.summary then job('summary.tick', modules.summary.tick) end
-    if modules.thresholds then job('thresholds.sweep', modules.thresholds.sweep) end
+    if modules.thresholds then every('thresholds.sweep', modules.thresholds.sweep, now) end
     -- Targets recovering from a kill on a contract, looked at
     -- (Config.Roleplay.EmsRelisting): nothing while it is off.
     if modules.rpConsequences then job('rp.tick', modules.rpConsequences.tick) end
@@ -2681,7 +2780,6 @@ function Tick()
         job('photo.sweep', modules.photo.sweep)
     end
 
-    local now = os.time()
     -- Only where photos come from a host. On 'server' storage the
     -- allowlist is never consulted, and with kill photos off nothing is:
     -- then the warning that no host is allowed is not one any more.
@@ -2712,7 +2810,10 @@ function Tick()
     -- framework versions: a wrong name fails silently in the direction that
     -- costs a player the app with no way to ask for it back.
     local bridges = CrimsonBoot.require('server.bridges')
-    if bridges.refreshAccess then job('bridges.refreshAccess', bridges.refreshAccess) end
+    if bridges.refreshAccess then every('bridges.refreshAccess', bridges.refreshAccess, now) end
+    -- Where the roleplay NPCs stand moves on the clock (server/rp_places.lua):
+    -- here rather than on a thread of its own.
+    if modules.rpPlaces then every('rp_places.announce', modules.rpPlaces.announce, now) end
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
     -- An exclusive contract held by somebody who is not working it goes
