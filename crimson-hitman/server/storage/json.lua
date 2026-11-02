@@ -225,6 +225,12 @@ end
 --- (a kill payout writes its shard several times).
 local escrowBy, hitmenBy = {}, {}
 
+--- The contracts with a buyout waiting out its delay, by id: what
+--- queuedBailouts walks, rather than every contract kept, every tick. nil
+--- until it is built, by one walk, and again after anything loads the
+--- store whole; kept by setBailoutQueue and writeContract after that.
+local queuedIndex = nil
+
 --- Messages by contract: [contract_id] = { row, ... }, in the order
 --- db.messages holds them, kept as each is written, trimmed or pruned.
 ---
@@ -311,6 +317,7 @@ local function absorb(shard)
     if type(shard) ~= 'table' then return false end
     if type(shard.contract) == 'table' then
         db.contracts[shard.contract.id] = shard.contract
+        queuedIndex = nil
     end
     for id, line in pairs(shard.escrow or {}) do db.escrow[id] = line end
     for id, hitman in pairs(shard.hitmen or {}) do db.hitmen[id] = hitman end
@@ -1198,6 +1205,7 @@ function JsonStore.open()
         end
 
         db = json.decode(json.encode(EMPTY))
+        queuedIndex = nil
         escrowBy, hitmenBy, messagesBy = {}, {}, {}
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
         generation, indexedIds, urgentShards = 0, {}, {}
@@ -1216,6 +1224,7 @@ function JsonStore.open()
     end
 
     db = json.decode(json.encode(EMPTY))
+    queuedIndex = nil
     dirtyShards, shardIds, quarantined = {}, {}, {}
     recordsDirty, recordsOnDisk, alertsDirty = false, false, false
     -- The index on disk: which it is, and which contracts it names.
@@ -1780,9 +1789,12 @@ function JsonStore.prune()
     local days = Config.Audit.ContractRetentionDays or 0
     if days <= 0 then return true end
 
-    local ids = prunableContracts(os.time() - (days * 86400),
-        Config.Audit.ContractsPrunedPerTick or 200)
-    if #ids == 0 then return true end
+    local limit = Config.Audit.ContractsPrunedPerTick or 200
+    local ids = prunableContracts(os.time() - (days * 86400), limit)
+    if #ids == 0 then return true, false end
+    -- A full batch may have left more behind: the tick comes back for them
+    -- next time rather than after its interval (PruneStore).
+    local more = #ids >= limit
 
     -- What belongs to them that is not indexed by contract goes in one walk
     -- of each table below, not one walk per contract: with every message
@@ -1879,7 +1891,7 @@ function JsonStore.prune()
         end
     end
     dirty = true
-    return true
+    return true, more
 end
 
 --- The audit log is written here and at close, and nowhere else: the queue
@@ -1977,6 +1989,17 @@ end
 function JsonStore.readPlaytime(cid)
     local row = playtimeData().rows[cid]
     return type(row) == 'table' and Util.copy(row) or nil
+end
+
+--- Several characters' rows, by cid: readPlaytime for each. A cid with
+--- no row is absent.
+function JsonStore.readPlaytimeMany(cids)
+    local out = {}
+    for i = 1, #(cids or {}) do
+        local row = JsonStore.readPlaytime(cids[i])
+        if row then out[cids[i]] = row end
+    end
+    return out
 end
 
 function JsonStore.writePlaytime(rows)
@@ -2513,12 +2536,36 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
+--- Not finished: what `live` keeps (a player's Mine shows nothing else).
+local FINISHED = { completed = true, bailed_out = true, expired = true, cancelled = true,
+    voided = true }
+
+--- Whether a contract is one a read asked with `live` keeps: every one
+--- (nil); only those not finished (true); or those and the finished ones
+--- resolved at or after a time (a number: the placing checks' cooldowns,
+--- which nothing resolved before the longest of them can move).
+local function wanted(c, live)
+    if live == nil or live == false then return true end
+    if not FINISHED[c.state] then return true end
+    return type(live) == 'number' and c.resolved_at ~= nil and c.resolved_at >= live
+end
+
+--- Every contract not finished, by id. See the mysql backend.
+function JsonStore.unfinishedContracts()
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if not FINISHED[c.state] then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Contracts this player is involved in, as creator, target or hitman.
-function JsonStore.contractsInvolving(cid)
+function JsonStore.contractsInvolving(cid, live)
     local seen, out = {}, {}
 
     for _, c in pairs(db.contracts) do
-        if c.creator_cid == cid or c.target_cid == cid then
+        if (c.creator_cid == cid or c.target_cid == cid) and wanted(c, live) then
             seen[c.id] = true
             out[#out + 1] = c
         end
@@ -2527,7 +2574,7 @@ function JsonStore.contractsInvolving(cid)
     for _, h in pairs(db.hitmen) do
         if h.hitman_cid == cid and not seen[h.contract_id] then
             local c = db.contracts[h.contract_id]
-            if c then
+            if c and wanted(c, live) then
                 seen[c.id] = true
                 out[#out + 1] = c
             end
@@ -2538,29 +2585,38 @@ function JsonStore.contractsInvolving(cid)
     return out
 end
 
-function JsonStore.contractsNaming(cid)
+function JsonStore.contractsNaming(cid, live)
     local out = {}
     for _, c in pairs(db.contracts) do
-        if c.target_cid == cid then out[#out + 1] = c end
+        if c.target_cid == cid and wanted(c, live) then out[#out + 1] = c end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
 end
 
---- Contracts with a buyout waiting out its delay.
+--- Contracts with a buyout waiting out its delay. From queuedIndex: the
+--- buyout queue is read every tick, and walking every contract kept for
+--- the one or none queued was the most of an idle tick on json.
 function JsonStore.queuedBailouts()
+    if queuedIndex == nil then
+        queuedIndex = {}
+        for id, c in pairs(db.contracts) do
+            if c.bailout_queued_at then queuedIndex[id] = true end
+        end
+    end
     local out = {}
-    for _, c in pairs(db.contracts) do
-        if c.bailout_queued_at then out[#out + 1] = c end
+    for id in pairs(queuedIndex) do
+        local c = db.contracts[id]
+        if c and c.bailout_queued_at then out[#out + 1] = c else queuedIndex[id] = nil end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
 end
 
-function JsonStore.contractsBy(cid)
+function JsonStore.contractsBy(cid, live)
     local out = {}
     for _, c in pairs(db.contracts) do
-        if c.creator_cid == cid then out[#out + 1] = c end
+        if c.creator_cid == cid and wanted(c, live) then out[#out + 1] = c end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -2568,11 +2624,11 @@ end
 
 --- Contracts created by any character on this account. The creator-side
 --- limits belong to the player, not to whichever character they are on.
-function JsonStore.contractsByAccount(account)
+function JsonStore.contractsByAccount(account, live)
     local out = {}
     if account == nil then return out end
     for _, c in pairs(db.contracts) do
-        if c.creator_account == account then out[#out + 1] = c end
+        if c.creator_account == account and wanted(c, live) then out[#out + 1] = c end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -2640,6 +2696,7 @@ function JsonStore.writeContract(c)
         end
     end
     db.contracts[c.id] = c
+    if queuedIndex and c.bailout_queued_at then queuedIndex[c.id] = true end
     touch(true, c.id)
     return true
 end
@@ -2744,6 +2801,7 @@ function JsonStore.setBailoutQueue(id, fields)
     for i = 1, #BAILOUT_QUEUE do
         c[BAILOUT_QUEUE[i]] = fields and fields[BAILOUT_QUEUE[i]] or nil
     end
+    if queuedIndex then queuedIndex[id] = c.bailout_queued_at ~= nil or nil end
     touch(true, id)
     return true
 end
@@ -3119,6 +3177,20 @@ function JsonStore.readHitmenMany(ids)
     for i = 1, #(ids or {}) do
         if out[ids[i]] == nil then out[ids[i]] = JsonStore.readHitmen(ids[i]) end
     end
+    return out
+end
+
+--- Every operative row one citizen id holds, on any contract, oldest
+--- first. See the mysql backend.
+function JsonStore.hitmenOf(cid)
+    local out = {}
+    for _, h in pairs(db.hitmen) do
+        if h.hitman_cid == cid then out[#out + 1] = h end
+    end
+    table.sort(out, function(a, b)
+        if a.accepted_at == b.accepted_at then return a.id < b.id end
+        return (a.accepted_at or 0) < (b.accepted_at or 0)
+    end)
     return out
 end
 

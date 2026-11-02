@@ -61,6 +61,7 @@ local pending = {}   -- [cid] = seconds counted before their row was read
 local dirty = {}     -- [cid] = true: counted, set or decided since its last write
 local online = {}    -- [cid] = { since = Util.monotonicMs() where the last count ended }
 local install = nil  -- { since = os.time(), playersId = integer|nil } once known
+local installRead = false -- the store was read and held no start
 local nextPass, passing, waitingSaid = 0, false, false
 
 --- Count one character's time up to `nowMs`, from where the last count
@@ -97,10 +98,13 @@ end
 ---@param cid string
 ---@param peek boolean|nil
 ---@return table|nil row
-local function rowOf(cid, peek)
+local function rowOf(cid, peek, read)
     local row = rows[cid]
     if row then return row end
-    local stored = Storage.readPlaytime(cid)
+    -- `read` is the batch's answer for this cid ({ stored }), where the pass
+    -- read every character's row in one statement (passNow).
+    local stored
+    if read then stored = read[1] else stored = Storage.readPlaytime(cid) end
     -- Read meanwhile by somebody else (mysql waits): theirs stands.
     if rows[cid] then return rows[cid] end
     if type(stored) == 'table' then
@@ -131,13 +135,16 @@ end
 --- not answer; decided at a later pass.
 ---@param cid string
 ---@param row table
-local function decide(cid, row)
+local function decide(cid, row, numbers)
     if row.grandfathered ~= nil or not install then return end
     if install.playersId == nil then
         local days = tonumber(Config.Immunity.GrandfatherDays) or 0
         row.grandfathered = row.first_seen < install.since + days * 86400
     else
-        local number = MySQLStore.playerNumber(cid)
+        -- `numbers`: the batch's answer for every character the pass
+        -- decides (passNow), one statement where each was one.
+        local number
+        if numbers then number = numbers[cid] else number = MySQLStore.playerNumber(cid) end
         if row.grandfathered ~= nil then return end
         -- No row in qbx_core's table is a character it has not saved yet:
         -- a new one, as is any numbered after the first start.
@@ -152,10 +159,16 @@ end
 ---@return boolean known
 local function knowInstall()
     if install then return true end
-    local kept = Storage.readPlaytimeInstall()
-    if type(kept) == 'table' and tonumber(kept.since) then
-        install = { since = tonumber(kept.since), playersId = tonumber(kept.players_id) }
-        return true
+    -- Read once: a store that held no start then holds none until this
+    -- process writes one (below). It was read again every pass while
+    -- oxmysql had not started.
+    if not installRead then
+        local kept = Storage.readPlaytimeInstall()
+        if type(kept) == 'table' and tonumber(kept.since) then
+            install = { since = tonumber(kept.since), playersId = tonumber(kept.players_id) }
+            return true
+        end
+        installRead = true
     end
     if not (GetResourceState('oxmysql') == 'started' and MySQL) then
         if not waitingSaid then
@@ -245,14 +258,45 @@ local function passNow()
     local cids = {}
     for cid in pairs(here) do cids[#cids + 1] = cid end
     table.sort(cids)
+    -- The rows not read yet, all in one read (Storage.readPlaytimeMany),
+    -- where the first pass after a start read each character's on its own.
+    local batch = nil
+    if Storage.readPlaytimeMany then
+        local unread = {}
+        for _, cid in ipairs(cids) do
+            if not rows[cid] then unread[#unread + 1] = cid end
+        end
+        if #unread > 0 then
+            local readMany, many = pcall(Storage.readPlaytimeMany, unread)
+            if readMany and type(many) == 'table' then batch = many end
+        end
+    end
+    local function rowFor(cid)
+        if batch and not rows[cid] then return rowOf(cid, nil, { batch[cid] }) end
+        return rowOf(cid)
+    end
+    local numbers = nil
+    local undecided = {}
     for _, cid in ipairs(cids) do
-        local read, row = pcall(rowOf, cid)
-        if not read then
+        local readOne, row = pcall(rowFor, cid)
+        if not readOne then
             failure = failure or row
             break
         end
-        if deciding then
-            local decided, why = pcall(decide, cid, row)
+        if row.grandfathered == nil then undecided[#undecided + 1] = cid end
+    end
+    -- And the numbers of those still to decide, in one read of qbx_core's
+    -- table (MySQLStore.playerNumbers): asked once each, it was another
+    -- statement for every character in the city.
+    if deciding and install and install.playersId ~= nil and #undecided > 0
+        and MySQLStore.playerNumbers then
+        local readNumbers, got = pcall(MySQLStore.playerNumbers, undecided)
+        if readNumbers and type(got) == 'table' then numbers = got end
+    end
+    for _, cid in ipairs(cids) do
+        local row = rows[cid]
+        if row and deciding then
+            local decided, why = pcall(decide, cid, row, numbers)
             if not decided then
                 -- Asked again at the next pass; the rule is skipped for them
                 -- meanwhile, as for anybody nothing can answer for.
@@ -399,6 +443,7 @@ function Playtime.init(d)
     MySQLStore = CrimsonBoot.require('server.storage.mysql')
     rows, pending, dirty, online = {}, {}, {}, {}
     install, nextPass, passing, waitingSaid = nil, 0, false, false
+    installRead = false
     if d.identity and d.identity.setTracker then d.identity.setTracker(Playtime) end
 end
 

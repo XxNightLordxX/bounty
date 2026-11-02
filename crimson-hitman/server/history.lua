@@ -88,11 +88,34 @@ function History.build(deps, cid, canIdentify)
     local known, hidden = {}, {}
     local anonymousCount = 0
 
-    for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
-        local hitmen = Storage.readHitmen(contract.id) or {}
+    -- Their own operative rows and every contract's escrow, each in one
+    -- read (two or three statements on mysql), where a roster and the escrow
+    -- were read for every contract in their history: hundreds of awaits for
+    -- a regular.
+    local involved = Storage.contractsInvolving(cid) or {}
+    local ownRows, linesOf = nil, nil
+    if Storage.hitmenOf then
+        ownRows = {}
+        for _, row in ipairs(Storage.hitmenOf(cid) or {}) do
+            -- The last one exactly theirs, as the walk of the roster kept.
+            if row.hitman_cid == cid then ownRows[row.contract_id] = row end
+        end
+    end
+    if Storage.readEscrowMany and #involved > 0 then
+        local ids = {}
+        for i = 1, #involved do ids[i] = involved[i].id end
+        linesOf = Storage.readEscrowMany(ids)
+    end
+
+    for _, contract in ipairs(involved) do
         local mine
-        for i = 1, #hitmen do
-            if hitmen[i].hitman_cid == cid then mine = hitmen[i] end
+        if ownRows then
+            mine = ownRows[contract.id]
+        else
+            local hitmen = Storage.readHitmen(contract.id) or {}
+            for i = 1, #hitmen do
+                if hitmen[i].hitman_cid == cid then mine = hitmen[i] end
+            end
         end
         local anonymous = (contract.creator_cid == cid and contract.anon_creator == true)
             or (mine ~= nil and mine.anon == true)
@@ -118,7 +141,8 @@ function History.build(deps, cid, canIdentify)
             end
 
             local collected = false
-            for _, line in ipairs(Storage.readEscrow(contract.id) or {}) do
+            local lines = linesOf and linesOf[contract.id] or Storage.readEscrow(contract.id) or {}
+            for _, line in ipairs(lines) do
                 for _, moved in ipairs(lineMoney(line, cid) or {}) do
                     add(moved[1] == 'in' and moneyIn or moneyOut, moved[2], moved[3])
                     if moved[2] == 'payouts' then collected = true end

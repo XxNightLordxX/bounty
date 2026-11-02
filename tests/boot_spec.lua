@@ -161,10 +161,13 @@ describe('contract expiry', function()
         -- gets. Without it a quiet server would stop looking entirely.
         eq(main.expire(), 0)
 
+        -- What the pass reads is the live snapshot it shares with the
+        -- sampler and the idle holds (Projection.liveSnapshot), read from
+        -- the store again only after a write: counted where the pass asks.
         local reads, whole = 0, 0
-        local realAll, realLive = modules.storage.allContracts, modules.storage.liveContracts
+        local realAll, realSnapshot = modules.storage.allContracts, modules.projection.liveSnapshot
         modules.storage.allContracts = function(...) whole = whole + 1 return realAll(...) end
-        modules.storage.liveContracts = function(...) reads = reads + 1 return realLive(...) end
+        modules.projection.liveSnapshot = function(...) reads = reads + 1 return realSnapshot(...) end
 
         Env.time = Env.time + Config.Limits.MaxDeadlineSkipSeconds + 2
         main.expire()
@@ -172,7 +175,7 @@ describe('contract expiry', function()
         eq(whole, 0, 'reading the live contracts, not every contract kept')
 
         modules.storage.allContracts = realAll
-        modules.storage.liveContracts = realLive
+        modules.projection.liveSnapshot = realSnapshot
     end)
 
     it('never skips past a contract created after the last pass', function()

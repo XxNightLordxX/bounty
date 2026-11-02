@@ -1334,6 +1334,19 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
+--- Whether the last read of the buyout queue found it empty, with nothing
+--- queued since: the queue is read every tick, and while it is (nearly
+--- always) empty that read was a statement every ten seconds for nothing.
+--- Anything that can queue one clears it, before its statement and again
+--- once it has landed, and moves queueWrites, so a read that overlapped a
+--- write never marks it empty.
+local queueEmpty, queueWrites = false, 0
+
+local function queueMayHold()
+    queueEmpty = false
+    queueWrites = queueWrites + 1
+end
+
 --- A contract's columns in the order writeContract and insertContract list
 --- them.
 local function contractParams(c)
@@ -1354,6 +1367,8 @@ end
 --- matters more here than in the other backends, because reads return fresh
 --- rows rather than shared tables.
 function MySQLStore.writeContract(c)
+    -- A new row can carry a queued buyout (a restore): the queue may hold one.
+    if c.bailout_queued_at ~= nil then queueMayHold() end
     db.query([[
         INSERT INTO crimson_contracts
             (id, creator_cid, creator_account, creator_name, target_cid, target_account,
@@ -1420,6 +1435,8 @@ end
 --- penalty, the buyout price and the resolution from the creation copy over
 --- a contract changed or withdrawn since.
 function MySQLStore.insertContract(c)
+    -- A new row can carry a queued buyout (a restore): the queue may hold one.
+    if c.bailout_queued_at ~= nil then queueMayHold() end
     db.query([[
         INSERT INTO crimson_contracts
             (id, creator_cid, creator_account, creator_name, target_cid, target_account,
@@ -1449,6 +1466,7 @@ end
 function MySQLStore.setBailoutQueue(id, fields)
     local affected
     if fields then
+        queueMayHold()
         affected = db.update([[
             UPDATE crimson_contracts
             SET bailout_queued_at = ?, bailout_paid_by = ?, bailout_paid_amount = ?,
@@ -1457,6 +1475,7 @@ function MySQLStore.setBailoutQueue(id, fields)
         ]], { fields.bailout_queued_at, fields.bailout_paid_by,
               fields.bailout_paid_amount, fields.bailout_paid_account,
               fields.bailout_attempts or 0, id })
+        queueMayHold()
     else
         affected = db.update([[
             UPDATE crimson_contracts
@@ -1479,6 +1498,7 @@ end
 --- row already holding this buyout counts, so "already ours" is true.
 ---@return boolean recorded
 function MySQLStore.recordBailout(id, fields)
+    queueMayHold()
     local affected = db.update([[
         UPDATE crimson_contracts
         SET bailout_queued_at = ?, bailout_paid_by = ?, bailout_paid_amount = ?,
@@ -1487,6 +1507,7 @@ function MySQLStore.recordBailout(id, fields)
           AND (bailout_queued_at IS NULL OR (bailout_queued_at = ? AND bailout_paid_by = ?))
     ]], { fields.bailout_queued_at, fields.bailout_paid_by, fields.bailout_paid_amount,
           fields.bailout_paid_account, id, fields.bailout_queued_at, fields.bailout_paid_by })
+    queueMayHold()
     return (tonumber(affected) or 0) > 0
 end
 
@@ -1611,11 +1632,35 @@ function MySQLStore.liveContracts()
     return rows
 end
 
+--- Every contract not finished (active, accepted, completing), served by
+--- idx_state: what boot recovery and the index of held contracts act on,
+--- where they read every contract kept (thirty days of finished ones) and
+--- passed over nearly all of it.
+function MySQLStore.unfinishedContracts()
+    local rows = db.query(
+        "SELECT * FROM crimson_contracts WHERE state IN ('active', 'accepted', 'completing') ORDER BY id") or {}
+    for i = 1, #rows do hydrateContract(rows[i]) end
+    return rows
+end
+
 --- Contracts this player is involved in, as creator, target or hitman.
 --- The indexes for all three columns already exist, so this is the query
 --- the schema was designed for — rather than a full scan filtered in Lua.
-function MySQLStore.contractsInvolving(cid)
-    local rows = db.query([[
+---
+--- `live`: only those not finished (active, accepted, completing), which is
+--- all a player's Mine shows. Their whole history was read three times per
+--- Mine opened, every finished contract of thirty days to be thrown away.
+function MySQLStore.contractsInvolving(cid, live)
+    local rows = db.query(live and [[
+        SELECT c.* FROM crimson_contracts c
+        WHERE (c.creator_cid = ? OR c.target_cid = ?)
+          AND c.state IN ('active', 'accepted', 'completing')
+        UNION
+        SELECT c.* FROM crimson_contracts c
+        JOIN crimson_hitmen h ON h.contract_id = c.id
+        WHERE h.hitman_cid = ? AND c.state IN ('active', 'accepted', 'completing')
+        ORDER BY id
+    ]] or [[
         SELECT c.* FROM crimson_contracts c
         WHERE c.creator_cid = ? OR c.target_cid = ?
         UNION
@@ -1628,11 +1673,39 @@ function MySQLStore.contractsInvolving(cid)
     return rows
 end
 
-function MySQLStore.contractsNaming(cid)
-    local rows = db.query(
-        'SELECT * FROM crimson_contracts WHERE target_cid = ? ORDER BY id', { cid }) or {}
+--- `live` as contractsInvolving's, or a number: those, and the finished ones resolved at or after
+--- it (the placing checks' cooldowns, which nothing older can move).
+local NAMING = {
+    all = 'SELECT * FROM crimson_contracts WHERE target_cid = ? ORDER BY id',
+    live = "SELECT * FROM crimson_contracts WHERE target_cid = ? AND state IN ('active', 'accepted', 'completing') ORDER BY id",
+    since = "SELECT * FROM crimson_contracts WHERE target_cid = ? AND (state IN ('active', 'accepted', 'completing') OR resolved_at >= ?) ORDER BY id",
+}
+local BY_CREATOR = {
+    all = 'SELECT * FROM crimson_contracts WHERE creator_cid = ? ORDER BY id',
+    live = "SELECT * FROM crimson_contracts WHERE creator_cid = ? AND state IN ('active', 'accepted', 'completing') ORDER BY id",
+    since = "SELECT * FROM crimson_contracts WHERE creator_cid = ? AND (state IN ('active', 'accepted', 'completing') OR resolved_at >= ?) ORDER BY id",
+}
+local BY_ACCOUNT = {
+    all = 'SELECT * FROM crimson_contracts WHERE creator_account = ? ORDER BY id',
+    live = "SELECT * FROM crimson_contracts WHERE creator_account = ? AND state IN ('active', 'accepted', 'completing') ORDER BY id",
+    since = "SELECT * FROM crimson_contracts WHERE creator_account = ? AND (state IN ('active', 'accepted', 'completing') OR resolved_at >= ?) ORDER BY id",
+}
+
+--- One of those reads, by what `live` asks for.
+local function contractsWhere(statements, key, live)
+    local rows
+    if type(live) == 'number' then
+        rows = db.query(statements.since, { key, live })
+    else
+        rows = db.query(live and statements.live or statements.all, { key })
+    end
+    rows = rows or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
+end
+
+function MySQLStore.contractsNaming(cid, live)
+    return contractsWhere(NAMING, cid, live)
 end
 
 --- Contracts with a buyout waiting out its delay.
@@ -1640,27 +1713,26 @@ end
 --- The tick used to read every contract the server has ever held and filter
 --- in Lua. There is rarely more than one of these and usually none.
 function MySQLStore.queuedBailouts()
+    if queueEmpty then return {} end
+    local before = queueWrites
     local rows = db.query(
         'SELECT * FROM crimson_contracts WHERE bailout_queued_at IS NOT NULL ORDER BY id') or {}
+    if #rows == 0 and queueWrites == before then queueEmpty = true end
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
 end
 
-function MySQLStore.contractsBy(cid)
-    local rows = db.query(
-        'SELECT * FROM crimson_contracts WHERE creator_cid = ? ORDER BY id', { cid }) or {}
-    for i = 1, #rows do hydrateContract(rows[i]) end
-    return rows
+--- `live` as contractsNaming's.
+function MySQLStore.contractsBy(cid, live)
+    return contractsWhere(BY_CREATOR, cid, live)
 end
 
 --- Contracts created by any character on this account. The creator-side
 --- limits belong to the player, not to whichever character they are on.
-function MySQLStore.contractsByAccount(account)
+--- `live` as contractsNaming's.
+function MySQLStore.contractsByAccount(account, live)
     if account == nil then return {} end
-    local rows = db.query(
-        'SELECT * FROM crimson_contracts WHERE creator_account = ? ORDER BY id', { account }) or {}
-    for i = 1, #rows do hydrateContract(rows[i]) end
-    return rows
+    return contractsWhere(BY_ACCOUNT, account, live)
 end
 
 --- Conditional state write, done in one statement so it is atomic at the
@@ -1969,6 +2041,29 @@ local function rowsForContracts(sql, ids, hydrate)
     return out
 end
 
+--- Every row a MANY_MARKS statement answers for `keys`, as one list, in as
+--- few statements as MANY_CHUNK allows (each key asked once).
+---@return table[]
+local function rowsByChunks(sql, keys)
+    local out, wanted, seen = {}, {}, {}
+    for i = 1, #(keys or {}) do
+        local key = keys[i]
+        if key ~= nil and not seen[key] then
+            seen[key] = true
+            wanted[#wanted + 1] = key
+        end
+    end
+    for first = 1, #wanted, MANY_CHUNK do
+        local params = {}
+        for i = 0, MANY_CHUNK - 1 do
+            params[i + 1] = wanted[math.min(first + i, #wanted)]
+        end
+        local rows = db.query(sql, params) or {}
+        for i = 1, #rows do out[#out + 1] = rows[i] end
+    end
+    return out
+end
+
 --- Several contracts' escrow, by contract id: readEscrow for each, in one
 --- statement per MANY_CHUNK contracts. The board prices every contract it
 --- lists, and one readEscrow each was an awaited SELECT per live contract
@@ -2176,6 +2271,20 @@ end
 ---@return table<string, table[]>
 function MySQLStore.readHitmenMany(ids)
     return rowsForContracts(HITMEN_MANY, ids, hydrateHitman)
+end
+
+--- Every operative row one citizen id holds, on any contract, oldest
+--- first: one statement on idx_hitman, where the staff views read one row
+--- per contract in the player's history (hundreds of awaits for a regular).
+--- The collation also finds another case of the id; callers keep the rows
+--- whose hitman_cid is the id exactly, as they did of readHitman's.
+---@param cid string
+---@return table[]
+function MySQLStore.hitmenOf(cid)
+    local rows = db.query(
+        'SELECT * FROM crimson_hitmen WHERE hitman_cid = ? ORDER BY accepted_at, id', { cid }) or {}
+    for i = 1, #rows do hydrateHitman(rows[i]) end
+    return rows
 end
 
 function MySQLStore.readHitman(contractId, cid)
@@ -2529,6 +2638,28 @@ MySQLStore.MAX_TEXT_BYTES = 65535
 --- rows an hour.
 local AUDIT_PRUNE_ROWS = 5000
 
+--- The page reads of queryAudit, one per set of filters the database can
+--- apply (contract, actor, kind, action: each present or not, `-` where
+--- not), written out whole.
+local AUDIT_PAGE = {
+    ['----'] = "SELECT * FROM crimson_audit WHERE id < ? ORDER BY id DESC LIMIT ?",
+    ['---x'] = "SELECT * FROM crimson_audit WHERE id < ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+    ['--k-'] = "SELECT * FROM crimson_audit WHERE id < ? AND kind = ? ORDER BY id DESC LIMIT ?",
+    ['--kx'] = "SELECT * FROM crimson_audit WHERE id < ? AND kind = ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+    ['-a--'] = "SELECT * FROM crimson_audit WHERE id < ? AND actor_cid = ? ORDER BY id DESC LIMIT ?",
+    ['-a-x'] = "SELECT * FROM crimson_audit WHERE id < ? AND actor_cid = ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+    ['-ak-'] = "SELECT * FROM crimson_audit WHERE id < ? AND actor_cid = ? AND kind = ? ORDER BY id DESC LIMIT ?",
+    ['-akx'] = "SELECT * FROM crimson_audit WHERE id < ? AND actor_cid = ? AND kind = ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+    ['c---'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? ORDER BY id DESC LIMIT ?",
+    ['c--x'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+    ['c-k-'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? AND kind = ? ORDER BY id DESC LIMIT ?",
+    ['c-kx'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? AND kind = ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+    ['ca--'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? AND actor_cid = ? ORDER BY id DESC LIMIT ?",
+    ['ca-x'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? AND actor_cid = ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+    ['cak-'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? AND actor_cid = ? AND kind = ? ORDER BY id DESC LIMIT ?",
+    ['cakx'] = "SELECT * FROM crimson_audit WHERE id < ? AND contract_id = ? AND actor_cid = ? AND kind = ? AND action LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?",
+}
+
 --- A page of the audit log for the admin panel, newest first. See the
 --- memory backend; the cursor here is the id to read below.
 ---
@@ -2556,22 +2687,28 @@ function MySQLStore.queryAudit(filter, cursor, limit)
         if not top then return {}, nil end
         below = top + 1
     end
+    -- Every filter the database can apply is in the statement, so the rows
+    -- that come back are (nearly) all ones the page keeps, and a page's
+    -- worth and one more is read rather than five hundred rows decoded for
+    -- twenty-five. Util.auditMatches still decides: the database's
+    -- collation matches the action and kind without regard to case, so it
+    -- may send a row or two more, never fewer. The settings history (an
+    -- action filter) scanned up to five thousand rows of everything else.
+    local values = { 0 }
+    if filter.contract then values[#values + 1] = filter.contract end
+    if filter.actor then values[#values + 1] = filter.actor end
+    if filter.kind then values[#values + 1] = filter.kind end
+    local action = type(filter.action) == 'string' and filter.action ~= '' and filter.action or nil
+    if action then values[#values + 1] = '%' .. action:gsub('[!%%_]', '!%0') .. '%' end
+    local statement = AUDIT_PAGE[(filter.contract and 'c' or '-') .. (filter.actor and 'a' or '-')
+        .. (filter.kind and 'k' or '-') .. (action and 'x' or '-')]
+    local size = math.min(AUDIT_BATCH, math.max(1, math.floor(tonumber(limit) or 1)) + 1)
     local out, scanned = {}, 0
     while scanned < AUDIT_SCAN_ROWS do
-        local batch
-        if filter.contract then
-            batch = db.query(
-                'SELECT * FROM crimson_audit WHERE contract_id = ? AND id < ? ORDER BY id DESC LIMIT ?',
-                { filter.contract, below, AUDIT_BATCH })
-        elseif filter.actor then
-            batch = db.query(
-                'SELECT * FROM crimson_audit WHERE actor_cid = ? AND id < ? ORDER BY id DESC LIMIT ?',
-                { filter.actor, below, AUDIT_BATCH })
-        else
-            batch = db.query('SELECT * FROM crimson_audit WHERE id < ? ORDER BY id DESC LIMIT ?',
-                { below, AUDIT_BATCH })
-        end
-        batch = batch or {}
+        values[1] = below
+        local params = table.move(values, 1, #values, 1, {})
+        params[#params + 1] = size
+        local batch = db.query(statement, params) or {}
         for i = 1, #batch do
             local row = hydrateAudit(batch[i])
             local id = tonumber(row.id) or 0
@@ -2584,7 +2721,10 @@ function MySQLStore.queryAudit(filter, cursor, limit)
             end
             below = id
         end
-        if #batch < AUDIT_BATCH then return out, nil end
+        if #batch < size then return out, nil end
+        -- Rows the database kept and the page did not: read on in bigger
+        -- batches, as before.
+        size = math.min(AUDIT_BATCH, size * 4)
     end
     return out, below
 end
@@ -2627,17 +2767,31 @@ function MySQLStore.forgetLedgerPhotos(cutoff)
     return tonumber(affected) or 0
 end
 
+--- The most finished contracts one prune removes here, whatever
+--- Config.Audit.ContractsPrunedPerTick allows: each is ten DELETEs, and two
+--- hundred of them were two thousand statements in one tick. A backlog
+--- comes back on the next tick (PruneStore) until it is gone.
+local CONTRACTS_PRUNED_AT_MOST = 25
+
+--- true, and whether a full batch of either kind went, so more may be left
+--- (the tick then comes back for it next time rather than in ten minutes).
 function MySQLStore.prune()
+    local more = false
     -- 0 keeps the log, as the retention settings beside it do.
     local auditDays = tonumber(Config.Audit.RetentionDays) or 0
     if auditDays > 0 then
-        db.query('DELETE FROM crimson_audit WHERE ts < ? ORDER BY ts LIMIT ?',
+        local gone = db.update('DELETE FROM crimson_audit WHERE ts < ? ORDER BY ts LIMIT ?',
             { os.time() - (auditDays * 86400), AUDIT_PRUNE_ROWS })
+        if (tonumber(gone) or 0) >= AUDIT_PRUNE_ROWS then more = true end
     end
 
     local days = Config.Audit.ContractRetentionDays or 0
-    if days > 0 then MySQLStore.pruneContracts(os.time() - (days * 86400)) end
-    return true
+    if days > 0 then
+        local limit = math.min(tonumber(Config.Audit.ContractsPrunedPerTick) or 200,
+            CONTRACTS_PRUNED_AT_MOST)
+        if MySQLStore.pruneContracts(os.time() - (days * 86400), limit) >= limit then more = true end
+    end
+    return true, more
 end
 
 --- Remove finished contracts, and the rows that hang off them, past the
@@ -2668,8 +2822,9 @@ end
 --- what they did and carries its own copy of the target name and reason, so
 --- it survives the contract it describes.
 ---@param cutoff integer
+---@param limit integer|nil at most this many (Config.Audit.ContractsPrunedPerTick)
 ---@return integer removed
-function MySQLStore.pruneContracts(cutoff)
+function MySQLStore.pruneContracts(cutoff, limit)
     local rows = db.query([[
         SELECT c.id FROM crimson_contracts c
         WHERE c.state IN ('completed', 'bailed_out', 'expired', 'cancelled', 'voided')
@@ -2688,7 +2843,7 @@ function MySQLStore.pruneContracts(cutoff)
               WHERE r.contract_id = c.id AND r.state IN ('open', 'resolving'))
         ORDER BY c.resolved_at
         LIMIT ?
-    ]], { cutoff, Config.Audit.ContractsPrunedPerTick or 200 }) or {}
+    ]], { cutoff, limit or Config.Audit.ContractsPrunedPerTick or 200 }) or {}
 
     local removed = 0
     for i = 1, #rows do
@@ -3321,6 +3476,26 @@ function MySQLStore.readPlaytime(cid)
     return row
 end
 
+--- Several characters' rows, by cid, in one statement per MANY_CHUNK: the
+--- tick's first playtime pass read every character in the city one
+--- statement each (sixty-four of them a pass on a full server, and again
+--- for each one's number in qbx_core's table). A cid with no row is absent.
+local PLAYTIME_MANY = table.concat({
+    'SELECT * FROM crimson_playtime WHERE cid IN (', MANY_MARKS, ')' })
+
+---@param cids string[]
+---@return table<string, table>
+function MySQLStore.readPlaytimeMany(cids)
+    local out = {}
+    for _, row in ipairs(rowsByChunks(PLAYTIME_MANY, cids)) do
+        row.played_seconds = tonumber(row.played_seconds) or 0
+        if row.grandfathered ~= nil then row.grandfathered = flag(row.grandfathered) end
+        row.first_seen, row.updated_at = tonumber(row.first_seen), tonumber(row.updated_at)
+        if row.cid ~= nil then out[row.cid] = row end
+    end
+    return out
+end
+
 local PLAYTIME_UPSERT = [[
     INSERT INTO crimson_playtime (cid, played_seconds, grandfathered, first_seen, updated_at)
     VALUES (?, ?, ?, ?, ?)
@@ -3435,6 +3610,21 @@ end
 function MySQLStore.playerNumber(cid)
     local row = (db.query('SELECT id FROM players WHERE citizenid = ?', { cid }) or {})[1]
     return row and math.tointeger(tonumber(row.id) or 0) or nil
+end
+
+--- Several characters' numbers there, by cid, in one statement per
+--- MANY_CHUNK: playerNumber for each. A cid with no row is absent.
+local PLAYER_NUMBERS = table.concat({
+    'SELECT id, citizenid FROM players WHERE citizenid IN (', MANY_MARKS, ')' })
+
+---@param cids string[]
+---@return table<string, integer>
+function MySQLStore.playerNumbers(cids)
+    local out = {}
+    for _, row in ipairs(rowsByChunks(PLAYER_NUMBERS, cids)) do
+        if row.citizenid ~= nil then out[row.citizenid] = math.tointeger(tonumber(row.id) or 0) end
+    end
+    return out
 end
 
 --------------------------------------------------------------------------

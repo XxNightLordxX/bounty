@@ -8,18 +8,25 @@
 ---     on ticks of their own, never on the playtime pass's or the json
 ---     heartbeat's;
 ---   * the idle-hold sweep reads the running contracts and their rosters
----     once a pass, not each held contract twice, and asks qbx_core once for
----     each person; with nothing held it reads nothing;
+---     once a pass, not each held contract twice (and not at all while
+---     nothing has been written: the read is shared, Projection.liveSnapshot),
+---     and asks qbx_core once for each person; with nothing held it reads
+---     nothing; it releases at most IDLE_RELEASES_PER_PASS holds a pass;
 ---   * the condition sampler reads no roster with nothing running, and asks
 ---     for each target's medical state once a pass however many contracts
 ---     name them;
 ---   * the NPC positions are looked at by the tick, not a thread of their
 ---     own; a duty change tells a player whether they have the app at once;
----   * /ch-diag lists every job with how often it runs;
+---   * /ch-diag lists every job with how often it runs, the prune every ten
+---     minutes;
+---   * on a busy mysql server with nothing to do, no job sends the database
+---     anything but the heartbeat, the endings check and the playtime batch;
 ---   * the client's NPC loop sleeps two seconds while nothing is near, and
 ---     does not run at all while both NPCs are off;
 ---   * a whole maintenance pass, every job due, with 200 live contracts and
----     64 players in the city, stays inside its budget (BUDGET_MS).
+---     64 players in the city, stays inside its budget (BUDGET_MS) at its
+---     worst, and the pass where every hold and every contract falls due at
+---     once ends only a share of them (MASS_BUDGET_MS).
 
 local Exec = require('tests.harness.mysql_exec')
 
@@ -262,13 +269,45 @@ local READS = { 'readContract', 'readHitmen', 'readHitman', 'liveContracts', 'li
 describe('the idle-hold sweep', function()
     it('reads the running contracts and their rosters once a pass, not each held contract twice', function()
         local main, s = boot('mysql')
-        city(s)
+        local made = city(s)
         main.tick()
+        -- A write, so the shared snapshot (Projection.liveSnapshot) is read
+        -- again by this pass.
+        s.storage.setAdvised(made[1], { advised_posted_at = Env.time })
         local counts = storeReads(s.storage, function() s.contracts.releaseIdleHolds() end, READS)
         eq(counts.liveContracts, 1, 'the running contracts, once')
         eq(counts.liveHitmen, 1, 'their rosters, once')
         eq(counts.readContract, nil, 'no contract read one at a time (it was 200)')
         eq(counts.readHitmen, nil, 'nor its roster (it was 200 more)')
+    end)
+
+    it('releases at most IDLE_RELEASES_PER_PASS holds a pass, the rest on the passes after', function()
+        local main, s = boot('mysql', function()
+            Config.Limits.ExclusiveIdleReleaseSeconds = 60
+            Config.Limits.ExclusiveAttemptWindowSeconds = 0
+        end)
+        local made = city(s)
+        main.tick()
+        local cap = s.contracts.IDLE_RELEASES_PER_PASS
+        eq(cap, 25, 'twenty-five a pass')
+        -- Every hold idle past its window on the same pass, as half an hour
+        -- after a restart: the 2,000-statement pass this caps.
+        s.contracts.releaseIdleHolds()
+        Env.time = Env.time + 61
+        local statements = #Exec.statements
+        local first = s.contracts.releaseIdleHolds()
+        eq(first, cap, 'one pass releases its share and no more')
+        truthy(#Exec.statements - statements < 600, ('the pass sent %d statements (it was 2,002)')
+            :format(#Exec.statements - statements))
+        local total, passes = first, 1
+        while total < #made and passes < 20 do
+            Env.time = Env.time + 10
+            local n = s.contracts.releaseIdleHolds()
+            truthy(n <= cap, 'never more than the share')
+            total, passes = total + n, passes + 1
+        end
+        eq(total, #made, 'and every one goes, a share a pass')
+        eq(passes, math.ceil(#made / cap), 'in as few passes as the share allows')
     end)
 
     it('asks qbx_core once a pass for each person, however many contracts name them', function()
@@ -409,6 +448,54 @@ describe('the rest of the loops', function()
         truthy(out:match('rp_places%.announce[^\n]*every 60s'), out)
         truthy(out:match('playtime%.pass[^\n]*every 60s'), out)
         truthy(out:match('expireContracts[^\n]*every 10s'), out)
+        truthy(out:match('storage%.prune[^\n]*every 600s'), out)
+    end)
+
+    --- What each job sends the database on a tick with nothing to do, on a
+    --- busy server (200 live contracts, kill photos on): the early exits,
+    --- pinned. [job] = statements at most; a job not listed sends none.
+    local IDLE_STATEMENTS = {
+        -- Every tick on mysql: when the server was last alive (Recover).
+        ['storage.heartbeat'] = 1,
+        -- Every 30 s: endings that stopped part-way.
+        ['contracts.finishEndings'] = 1,
+        -- Once a minute: everybody's time in the city, one transaction of a
+        -- row each for the 64 here.
+        ['playtime.pass'] = 64,
+    }
+
+    it('sends the database nothing from a job with nothing to do, on a busy mysql server', function()
+        local main, s = boot('mysql', function() Config.Completion.KillPhotos = true end)
+        city(s)
+        main.tick()
+        tick(main)
+        tick(main)
+        local Timing = require('server.timing')
+        local run = Timing.run
+        for pass = 1, 6 do
+            local by = {}
+            Timing.run = function(name, fn, ...)
+                local from = #Exec.statements
+                local out = table.pack(run(name, fn, ...))
+                by[name] = (by[name] or 0) + (#Exec.statements - from)
+                return table.unpack(out, 1, out.n)
+            end
+            local ok, err = pcall(tick, main)
+            Timing.run = run
+            truthy(ok, tostring(err))
+            for name, n in pairs(by) do
+                truthy(n <= (IDLE_STATEMENTS[name] or 0),
+                    ('%s sent %d statement(s) on idle tick %d'):format(name, n, pass))
+            end
+            -- The jobs this pins by name, each present on the tick.
+            for _, name in ipairs({ 'storage.prune', 'photos.expire', 'bailout.processQueue',
+                'amendments.expire', 'photo.sweep', 'contracts.retryStuckJoins',
+                'contracts.retryStuckClaims', 'contracts.retryStuckCreates', 'review.retryUnwritten',
+                'review.decide', 'app.sweepHandles', 'app.sweepFloodCounters', 'expireContracts',
+                'contracts.releaseIdleHolds' }) do
+                truthy(by[name] ~= nil, name .. ' ran')
+            end
+        end
     end)
 end)
 
@@ -551,17 +638,28 @@ end)
 
 --- What a whole maintenance pass may take, every job due at once, plus one
 --- condition sampler pass, with 200 live contracts and 64 players in the
---- city: the median of seven passes, in milliseconds of this process's
---- processor time. Measured at about 5 ms on json and 18 ms on mysql (whose
---- figure includes this harness running every statement in Lua, which a
---- real database does elsewhere) on the machine the change was made on;
---- the budget leaves three times that and more for a slower one.
-local BUDGET_MS = 60
+--- city: the WORST of seven passes, in milliseconds of this process's
+--- processor time, since one slow pass is a hitch whatever the others did.
+--- Measured at about 10 ms on json and 30 to 45 ms on mysql at the worst
+--- (whose figure includes this harness running every statement in Lua,
+--- which a real database does elsewhere: the playtime pass's batch of 64
+--- upserts is most of it) on the machine the change was made on; the
+--- budget leaves twice that and more for a slower or busier one.
+---
+--- And the worst pass of all: every hold idle past its window and every
+--- contract past its lifetime on the same tick, as after a long outage. The
+--- releases and the endings are capped a pass (Contracts.IDLE_RELEASES_PER_PASS,
+--- EXPIRIES_PER_PASS), so that pass ends a share of them, not two hundred in
+--- one frame (about a second on json, 5,600 statements on mysql, before).
+local BUDGET_MS = 100
+--- Measured at about 100 ms on json and 400 ms on mysql (the harness's
+--- Lua database again: a real one does that work off the server thread).
+local MASS_BUDGET_MS = { json = 300, mysql = 1000 }
 
 describe('a whole maintenance pass on a busy server', function()
     for _, mode in ipairs({ 'json', 'mysql' }) do
-        it(('stays inside %d ms on %s, every job due, 200 contracts and 64 players'):format(BUDGET_MS, mode),
-            function()
+        it(('stays inside %d ms on %s at its worst, every job due, 200 contracts and 64 players')
+            :format(BUDGET_MS, mode), function()
                 local main, s = boot(mode)
                 city(s)
                 main.tick()   -- what placing two hundred left to write, written
@@ -576,10 +674,45 @@ describe('a whole maintenance pass on a busy server', function()
                     death.watchTargets(s.storage.liveContracts(), s.storage.liveHitmen())
                     passes[i] = (os.clock() - started) * 1000
                 end
+                if os.getenv('CH_PERF') then
+                    local shown = {}
+                    for i = 1, #passes do shown[i] = ('%.1f'):format(passes[i]) end
+                    io.write(('\n  passes on %s: %s ms\n'):format(mode, table.concat(shown, ', ')))
+                end
                 table.sort(passes)
-                local median = passes[4]
-                truthy(median < BUDGET_MS, ('the median pass took %.1f ms on %s (budget %d ms)')
-                    :format(median, mode, BUDGET_MS))
+                local worst = passes[#passes]
+                truthy(worst < BUDGET_MS, ('the worst pass took %.1f ms on %s (budget %d ms)')
+                    :format(worst, mode, BUDGET_MS))
             end)
+
+        it(('ends at most its share on %s when everything falls due at once'):format(mode), function()
+            local main, s = boot(mode, function()
+                Config.Limits.ExclusiveIdleReleaseSeconds = 60
+                Config.Limits.ExclusiveAttemptWindowSeconds = 0
+            end)
+            city(s)
+            main.tick()
+            -- Past every lifetime: each contract ends on the passes below.
+            Env.time = Env.time + Config.Limits.ContractLifetimeSeconds + 60
+            Env.gameTimer = Env.gameTimer + 600000
+            main.markPresenceChanged()
+            local from = mode == 'mysql' and #Exec.statements or 0
+            local started = os.clock()
+            main.tick()
+            local ms = (os.clock() - started) * 1000
+            local live = #s.storage.liveContracts()
+            truthy(live >= 200 - 2 * 25, ('%d of 200 still running after the first pass'):format(live))
+            truthy(live < 200, 'and some ended')
+            truthy(ms < MASS_BUDGET_MS[mode], ('the pass took %.1f ms on %s (budget %d ms)')
+                :format(ms, mode, MASS_BUDGET_MS[mode]))
+            if mode == 'mysql' then
+                local n = #Exec.statements - from
+                truthy(n < 2000, ('%d statements in one pass (5,602 before the caps)'):format(n))
+            end
+            if os.getenv('CH_PERF') then
+                io.write(('\n  mass pass %s: %.1f ms, %s statements\n'):format(mode, ms,
+                    mode == 'mysql' and tostring(#Exec.statements - from) or '-'))
+            end
+        end)
     end
 end)

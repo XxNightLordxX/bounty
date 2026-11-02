@@ -13227,6 +13227,67 @@ async function main() {
     });
   })();
 
+  /* Round 3 performance: Mine carries every card's open proposals, so the
+     page asks for none of them; the board's settings come only when they
+     change, named by a hash the page sends back. */
+  await (async function proposalsWithMineAndSettingsByHash() {
+    const card = {
+      id: 'ct00000021', reason: 'Owes money', mode: 'competitive', state: 'accepted',
+      reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+      creatorName: 'Vic Marlowe', role: 'creator', penaltyAmount: 0,
+      hitmen: [{ alias: 'Operative #1', claims: 0, record: { standing: 'Unproven' } }]
+    };
+    const other = Object.assign({}, card, { id: 'ct00000022', targetName: 'Sam Lowe' });
+    let left = 240;
+    const asked = [];
+    const settingsAsked = [];
+    const SETTINGS = { relay: true, calls: false, deadlineMaxMinutes: 2880, buyouts: true,
+      amendments: true, warnCreator: true, warnHitman: true, flagListing: true, minQueryLength: 4 };
+    const app = boot({
+      list: function (body) {
+        settingsAsked.push(body.settingsHash);
+        const data = { page: 1, pages: 1, contracts: [], settingsHash: 'h1' };
+        if (body.settingsHash !== 'h1') { data.settings = SETTINGS; }
+        return { ok: true, data: data };
+      },
+      ledger: LEDGER,
+      mine: function () {
+        left -= 1;
+        return { ok: true, data: { created: [card, other], accepted: [], onMe: [],
+          proposals: { ct00000021: [{ id: 'am00000031', kind: 'withdraw', payload: {},
+            proposer: 'Operative #1', mine: false, answered: false, waiting: 1,
+            secondsLeft: left }] } } };
+      },
+      amendments: function (body) { asked.push(body.id); return { ok: true, data: [] }; }
+    });
+    await settle(); await settle(); await settle();
+    tab(app, 'mine'); await settle(); await settle(); await settle();
+    it('draws the proposals Mine brought, and asks for none card by card', function () {
+      eq(asked.length, 0, 'amendments asked for ' + JSON.stringify(asked));
+      truthy(app.view.textContent.indexOf('Agree') !== -1 || app.view.textContent.indexOf('Decline') !== -1,
+        app.view.textContent);
+    });
+    const html = app.view.innerHTML;
+    // A read where only the countdown moved draws nothing again.
+    app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+    app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; })
+      .forEach(function (t) { t.cleared = true; t.fn(); });
+    await settle(); await settle(); await settle();
+    it('reads Mine again without asking any card for its proposals', function () {
+      eq(asked.length, 0, 'amendments asked for ' + JSON.stringify(asked));
+      eq(app.view.innerHTML, html, 'drawn the same');
+    });
+    tab(app, 'board'); await settle(); await settle(); await settle();
+    it('sends back the hash of the settings it holds, and keeps them when they are left out', function () {
+      eq(settingsAsked[0], undefined, 'the first read asks for them whole');
+      truthy(settingsAsked.length >= 2, JSON.stringify(settingsAsked));
+      eq(settingsAsked[settingsAsked.length - 1], 'h1', 'then names the ones it holds');
+      truthy(app.view.textContent.length > 0, 'the board drawn');
+    });
+    drewCleanly(app, 'proposals with Mine, settings by hash');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

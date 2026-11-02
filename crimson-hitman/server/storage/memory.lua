@@ -371,14 +371,38 @@ function Memory.liveContracts()
     return out
 end
 
+--- Not finished: what `live` keeps (a player's Mine shows nothing else).
+local FINISHED = { completed = true, bailed_out = true, expired = true, cancelled = true,
+    voided = true }
+
+--- Whether a contract is one a read asked with `live` keeps: every one
+--- (nil); only those not finished (true); or those and the finished ones
+--- resolved at or after a time (a number: the placing checks' cooldowns,
+--- which nothing resolved before the longest of them can move).
+local function wanted(c, live)
+    if live == nil or live == false then return true end
+    if not FINISHED[c.state] then return true end
+    return type(live) == 'number' and c.resolved_at ~= nil and c.resolved_at >= live
+end
+
+--- Every contract not finished, by id. See the mysql backend.
+function Memory.unfinishedContracts()
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if not FINISHED[c.state] then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Contracts this player is involved in, as creator, target or hitman.
 --- Callers used to fetch every contract and filter in Lua, which on a real
 --- database is a full table scan per app request.
-function Memory.contractsInvolving(cid)
+function Memory.contractsInvolving(cid, live)
     local seen, out = {}, {}
 
     for _, c in pairs(db.contracts) do
-        if c.creator_cid == cid or c.target_cid == cid then
+        if (c.creator_cid == cid or c.target_cid == cid) and wanted(c, live) then
             seen[c.id] = true
             out[#out + 1] = c
         end
@@ -387,7 +411,7 @@ function Memory.contractsInvolving(cid)
     for _, h in pairs(db.hitmen) do
         if h.hitman_cid == cid and not seen[h.contract_id] then
             local c = db.contracts[h.contract_id]
-            if c then
+            if c and wanted(c, live) then
                 seen[c.id] = true
                 out[#out + 1] = c
             end
@@ -399,10 +423,10 @@ function Memory.contractsInvolving(cid)
 end
 
 --- Contracts naming this player as target, whatever their state.
-function Memory.contractsNaming(cid)
+function Memory.contractsNaming(cid, live)
     local out = {}
     for _, c in pairs(db.contracts) do
-        if c.target_cid == cid then out[#out + 1] = c end
+        if c.target_cid == cid and wanted(c, live) then out[#out + 1] = c end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -419,10 +443,10 @@ function Memory.queuedBailouts()
 end
 
 --- Contracts created by this player.
-function Memory.contractsBy(cid)
+function Memory.contractsBy(cid, live)
     local out = {}
     for _, c in pairs(db.contracts) do
-        if c.creator_cid == cid then out[#out + 1] = c end
+        if c.creator_cid == cid and wanted(c, live) then out[#out + 1] = c end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -430,11 +454,11 @@ end
 
 --- Contracts created by any character on this account. The creator-side
 --- limits belong to the player, not to whichever character they are on.
-function Memory.contractsByAccount(account)
+function Memory.contractsByAccount(account, live)
     local out = {}
     if account == nil then return out end
     for _, c in pairs(db.contracts) do
-        if c.creator_account == account then out[#out + 1] = c end
+        if c.creator_account == account and wanted(c, live) then out[#out + 1] = c end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -746,6 +770,20 @@ function Memory.readHitmenMany(ids)
     for i = 1, #(ids or {}) do
         if out[ids[i]] == nil then out[ids[i]] = Memory.readHitmen(ids[i]) end
     end
+    return out
+end
+
+--- Every operative row one citizen id holds, on any contract, oldest
+--- first. See the mysql backend.
+function Memory.hitmenOf(cid)
+    local out = {}
+    for _, h in pairs(db.hitmen) do
+        if h.hitman_cid == cid then out[#out + 1] = h end
+    end
+    table.sort(out, function(a, b)
+        if a.accepted_at == b.accepted_at then return a.id < b.id end
+        return (a.accepted_at or 0) < (b.accepted_at or 0)
+    end)
     return out
 end
 
@@ -1318,9 +1356,12 @@ function Memory.prune()
     local days = Config.Audit.ContractRetentionDays or 0
     if days <= 0 then return true end
 
-    local ids = prunableContracts(os.time() - (days * 86400),
-        Config.Audit.ContractsPrunedPerTick or 200)
-    if #ids == 0 then return true end
+    local limit = Config.Audit.ContractsPrunedPerTick or 200
+    local ids = prunableContracts(os.time() - (days * 86400), limit)
+    if #ids == 0 then return true, false end
+    -- A full batch may have left more behind: the tick comes back for them
+    -- next time rather than after its interval (PruneStore).
+    local more = #ids >= limit
 
     -- One walk of each table that is not indexed by contract, for all of
     -- them, rather than one per contract: see the json backend.
@@ -1365,7 +1406,7 @@ function Memory.prune()
     for id, row in pairs(db.contractStaff or {}) do
         if gone[row.contract_id] then db.contractStaff[id] = nil end
     end
-    return true
+    return true, more
 end
 
 --- What one buyer's informant purchases on one contract have bought.
@@ -1819,6 +1860,17 @@ end
 function Memory.readPlaytime(cid)
     local row = (db.playtime or {})[cid]
     return row and Util.copy(row) or nil
+end
+
+--- Several characters' rows, by cid: readPlaytime for each. A cid with
+--- no row is absent.
+function Memory.readPlaytimeMany(cids)
+    local out = {}
+    for i = 1, #(cids or {}) do
+        local row = Memory.readPlaytime(cids[i])
+        if row then out[cids[i]] = row end
+    end
+    return out
 end
 
 ---@param rows table[] each one whole

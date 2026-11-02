@@ -62,18 +62,19 @@ end
 --- records, settings). Every other one moves `generation`.
 local KEEPS = {}
 for name in ([[
-    _raw readContract allContracts countContractsByState liveContracts contractsInvolving
+    _raw readContract allContracts countContractsByState liveContracts unfinishedContracts
+    contractsInvolving
     contractsNaming queuedBailouts contractsBy contractsByAccount readEscrow readEscrowMany
     readEscrowLine unsettledEscrow unsettledEscrowContracts orphanEscrow parkedEscrow
     owedHeldEscrow releasingEscrow strandedEscrow readHitmen liveHitmen readHitmenMany
-    readHitman readHitmanById countHitmanContracts readAmendment openAmendmentContracts
+    readHitman readHitmanById hitmenOf countHitmanContracts readAmendment openAmendmentContracts
     readOpenAmendments applyingAmendments readMessages readLedger readPending readStats
     readAudit queryAudit auditForContract auditByAction readReveal readPlacerInformants
     readLocationTips liveLocationTips readMute readPhoto photosOf photosForContract
     photosOpenedBefore anyPhoto readPhotoByPublic photoTotals photosCreatedBefore photosNotOpen
     photoCounts readReview reviewItems readSettings readAlerts readViewAlerts readFreezes
     readContractStaff readContractStaffMarks readStaffRecords readPlaytime readPlaytimeInstall
-    readStaffMeta playersTopId playerNumber readRpRows lastHeartbeat health healthy timedOut
+    readStaffMeta playersTopId playerNumber playerNumbers readPlaytimeMany readRpRows lastHeartbeat health healthy timedOut
     notSent inspect quarantined readBackMismatches nextId
     writeAudit writeAuditBatch writeAuditNoWait writePlaytime writePlaytimeNoWait
     writePlaytimeInstall writeStaffMeta heartbeat flush save writeMessage setMute writeLedger
@@ -152,6 +153,93 @@ function Projection.watchStore(storage)
             end
         end
     end
+end
+
+--- How many times the store has been written through since the start: two
+--- equal answers mean nothing the board, a snapshot or a cache keyed on it
+--- reads has changed in between (the admin panel's contract list).
+---@return integer
+function Projection.generation()
+    return generation
+end
+
+--- How many retention prunes have run (Projection.notePruned). A prune
+--- removes only finished contracts, which nothing the board or the live
+--- snapshot reads, so it need not move `generation`; a cache of every
+--- contract kept (the admin panel's list) keys on this as well.
+local prunes = 0
+
+function Projection.notePruned()
+    prunes = prunes + 1
+end
+
+--- What a cache of every contract kept is current as of: the writes and
+--- the prunes, as one comparable string.
+---@return string
+function Projection.keptVersion()
+    return generation .. ':' .. prunes
+end
+
+--- A value written out the same way every time: keys sorted, each value
+--- marked with its type.
+local function canonical(value, out)
+    local kind = type(value)
+    if kind == 'table' then
+        local keys = {}
+        for k in pairs(value) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        out[#out + 1] = '{'
+        for _, k in ipairs(keys) do
+            out[#out + 1] = tostring(k)
+            out[#out + 1] = '='
+            canonical(value[k], out)
+            out[#out + 1] = ','
+        end
+        out[#out + 1] = '}'
+    else
+        out[#out + 1] = kind:sub(1, 1) .. tostring(value)
+    end
+end
+
+--- A short hash of a value (FNV-1a over canonical()), the same for the same
+--- value whatever order its tables were built in: what a page sends back to
+--- say it already holds a part of a reply that rarely changes, which is then
+--- left out (the board's settings, the admin panel's settings rows).
+---@param value any
+---@return string
+function Projection.digest(value)
+    local parts = {}
+    canonical(value, parts)
+    local text = table.concat(parts)
+    local hash = 2166136261
+    for i = 1, #text do
+        hash = ((hash ~ text:byte(i)) * 16777619) & 0xffffffff
+    end
+    return ('%08x%x'):format(hash, #text)
+end
+
+--- The running contracts and every roster on them, as Storage.liveContracts
+--- and Storage.liveHitmen answer, read once per change to the store and
+--- shared by the loops that each read both: the condition sampler every
+--- second, the idle-hold sweep and the expiry pass every tick. Each read its
+--- own, two statements a second on mysql with nothing changing. The board's
+--- list is used where it is current. Read only: a caller that wants to act
+--- reads the contract again, as each of them already does.
+--- [gen] = generation the pair was read at
+local live = nil -- { gen, contracts = contract[], hitmen = table|nil }
+
+---@return table[] contracts
+---@return table|nil hitmen [contractId] = rows, nil where the store has no such read
+function Projection.liveSnapshot()
+    if live ~= nil and live.gen == generation then return live.contracts, live.hitmen end
+    local gen = generation
+    local contracts = board ~= nil and board.gen == generation and board.read or nil
+    if contracts == nil then contracts = Storage.liveContracts() or {} end
+    local hitmen = nil
+    if #contracts > 0 and Storage.liveHitmen then hitmen = Storage.liveHitmen() end
+    -- Kept only if nothing was written while it was read (mysql waits).
+    if generation == gen then live = { gen = gen, contracts = contracts, hitmen = hitmen } end
+    return contracts, hitmen
 end
 
 --------------------------------------------------------------------------
@@ -1013,9 +1101,11 @@ end
 --- These three all ask storage for the contracts this player is involved in
 --- rather than for every contract on the server: on a real database the
 --- difference is an indexed lookup against a full table scan, once per app
---- request.
+--- request. And only those not finished (`live`), which are all any of the
+--- three shows: the whole history was read three times a Mine, 576 rows for
+--- a player with thirty days of contracts behind them, to keep ten.
 local function buildMine(viewerCid)
-    local involved = Storage.contractsBy(viewerCid)
+    local involved = Storage.contractsBy(viewerCid, true)
     local open = {}
     for i = 1, #involved do
         if not CH.TERMINAL[involved[i].state] then open[#open + 1] = involved[i] end
@@ -1119,7 +1209,7 @@ end
 
 --- Contracts the viewer holds as hitman.
 local function buildAccepted(viewerCid)
-    local involved = Storage.contractsInvolving(viewerCid)
+    local involved = Storage.contractsInvolving(viewerCid, true)
     local open = {}
     for i = 1, #involved do
         if not CH.TERMINAL[involved[i].state] then open[#open + 1] = involved[i] end
@@ -1138,7 +1228,7 @@ end
 
 --- Contracts naming the viewer as target — their Cleanse tab.
 local function buildOnMe(viewerCid)
-    local naming = Storage.contractsNaming(viewerCid)
+    local naming = Storage.contractsNaming(viewerCid, true)
     local shown = {}
     for i = 1, #naming do
         local c = naming[i]
@@ -1326,7 +1416,9 @@ end
 local function buildWhitelistedView(viewerCid, viewerJob, heldJob)
     local onYou, colleagues = {}, nil
 
-    local naming = Storage.contractsNaming(viewerCid)
+    -- Only those not finished, as Mine's On me reads them: the rest are
+    -- passed over below.
+    local naming = Storage.contractsNaming(viewerCid, true)
     for i = 1, #naming do
         local c = naming[i]
         if not CH.TERMINAL[c.state] and Notify.shownToTarget(c) then

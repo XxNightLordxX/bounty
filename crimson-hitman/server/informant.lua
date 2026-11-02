@@ -21,6 +21,13 @@ local Storage, Identity, Audit, Contracts, Notify, Bailout
 --- at, picks = { [hitmanCid | 'placer'] = { at, found, answer, label } } }
 local reveals = {}
 
+--- The buyers the store holds no record for yet, by the same key: read
+--- once, not on every card. A target's Mine asked the store twice for each
+--- contract on them (the card's answers and its picks), and all but a few
+--- have never bought anything. Gone the moment one is remembered, and with
+--- the contract (clearContract).
+local noRecord = {}
+
 --- The placer's purchases, in the order they were made.
 --- [contractId .. ':' .. placerCid] = { { hitman_cid, bought_at, revealed, alerted, seq } }
 local placerBought = {}
@@ -64,6 +71,7 @@ function Informant.init(deps)
     Notify, Bailout = deps.notify, deps.bailout
     reveals, placerBought, handles = {}, {}, {}
     unsavedReveals, unsavedPlacer = {}, {}
+    noRecord = {}
     locksAgedAt = nil
 end
 
@@ -233,10 +241,15 @@ end
 local function recordFor(contractId, cid)
     local key = contractId .. ':' .. cid
     if reveals[key] then return reveals[key] end
+    if noRecord[key] then return nil end
     if not (Storage and Storage.readReveal) then return nil end
 
     local stored = Storage.readReveal(contractId, cid)
-    if not stored then return nil end
+    if not stored then
+        -- Not if one was remembered while the store was asked (mysql waits).
+        if not reveals[key] then noRecord[key] = true end
+        return reveals[key]
+    end
 
     local picks = decodePicks(stored)
     if locksAgedAt then
@@ -251,6 +264,7 @@ end
 
 local function remember(contractId, cid, record)
     reveals[contractId .. ':' .. cid] = record
+    noRecord[contractId .. ':' .. cid] = nil
     if Storage and Storage.writeReveal then
         Storage.writeReveal(contractId, cid, {
             revealed_at = record.at, purchases = record.purchases,
@@ -804,6 +818,9 @@ function Informant.clearContract(contractId)
         if unsavedPlacer[i].contract_id ~= contractId then kept[#kept + 1] = unsavedPlacer[i] end
     end
     unsavedPlacer = kept
+    for key in pairs(noRecord) do
+        if key:sub(1, #prefix) == prefix then noRecord[key] = nil end
+    end
     for key in pairs(placerBought) do
         if key:sub(1, #prefix) == prefix then placerBought[key] = nil end
     end

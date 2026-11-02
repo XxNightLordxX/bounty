@@ -4433,6 +4433,71 @@ async function main() {
     clean(app, 'improvements impC');
   })();
 
+  /* Round 3 performance: the settings rows' fixed parts (label, help,
+     limits, defaults) come once, named by a hash; after that the server
+     sends each row's key and what changes, and the page puts them back
+     together. A hash it does not hold is asked for whole. */
+  await (async function settingsSchemaOnce() {
+    const FIXED = ['group', 'label', 'about', 'category', 'money', 'shipped', 'hasShipped', 'kind',
+      'choices', 'min', 'integer', 'live', 'inflight', 'readonly', 'destroys', 'stricter', 'strict',
+      'whole', 'default'];
+    let schema = 'S1';
+    function lean(full) {
+      const data = Object.assign({}, full.data, { schema: schema, lean: true });
+      ['features', 'limits'].forEach(function (list) {
+        data[list] = full.data[list].map(function (row) {
+          const out = {};
+          Object.keys(row).forEach(function (k) { if (FIXED.indexOf(k) === -1) out[k] = row[k]; });
+          return out;
+        });
+      });
+      return { ok: true, data: data };
+    }
+    const full = settingsView();
+    const server = standardServer({
+      settings: function (data) {
+        if (data.schema === schema) return lean(full);
+        return { ok: true, data: Object.assign({}, full.data, { schema: schema }) };
+      }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('features');
+    await settled();
+    const whole = app.main();
+    it('asks for the rows whole the first time', function () {
+      eq(app.requests('settings')[0].data, {});
+    });
+    app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
+    await settled();
+    it('then names the fixed parts it holds, and draws the lean rows the same', function () {
+      eq(app.last('settings').data, { schema: 'S1' });
+      has(app.text(app.byId('st-row-Bailout.Enabled')), 'config.lua: On');
+      has(app.text(app.byId('st-row-Bailout.Enabled')), 'default: On');
+      has(app.text(app.byId('st-row-Bailout.Enabled')), 'set by ADMIN001');
+      has(app.main(), 'Cash rewards');
+      has(whole, 'Cash rewards');
+    });
+    // The server's fixed parts changed (a restart): a lean reply naming a
+    // hash this page does not hold is not drawn; it asks again whole.
+    const before = app.requests('settings').length;
+    server.settings = function (data) {
+      if (data.schema === 'S1') return lean(full); // a server that answers lean all the same
+      return { ok: true, data: Object.assign({}, full.data, { schema: 'S2' }) };
+    };
+    schema = 'S2';
+    app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
+    await settled();
+    it('asks again whole when the lean reply names other fixed parts', function () {
+      const asked = app.requests('settings').slice(before);
+      truthy(asked.length >= 2, JSON.stringify(asked.map(function (r) { return r.data; })));
+      eq(asked[asked.length - 1].data, {});
+      has(app.text(app.byId('st-row-Bailout.Enabled')), 'config.lua: On');
+    });
+    clean(app, 'settings schema sent once');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

@@ -273,12 +273,40 @@ end
 ---@param cid string
 ---@return boolean
 local function partyOnRecord(cid)
+    -- Their operative rows in one read, where one per contract of theirs was
+    -- an await each on mysql.
+    if Storage.hitmenOf then
+        for _, row in ipairs(Storage.hitmenOf(cid) or {}) do
+            if row.hitman_cid == cid then return true end
+        end
+    end
     for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
         if contract.creator_cid == cid or contract.target_cid == cid then return true end
-        local hitman = Storage.readHitman(contract.id, cid)
-        if hitman and hitman.hitman_cid == cid then return true end
+        if not Storage.hitmenOf then
+            local hitman = Storage.readHitman(contract.id, cid)
+            if hitman and hitman.hitman_cid == cid then return true end
+        end
     end
     return false
+end
+
+--- A citizen id's operative row on each contract, by contract id, in one
+--- read (Storage.hitmenOf), as Storage.readHitman answers for each: the
+--- row the store finds for the id, the one naming it exactly first (mysql's
+--- collation also finds another case of it). nil where the store has no
+--- such read.
+---@param cid string
+---@return table|nil
+function Admin.operativeRows(cid)
+    if not Storage.hitmenOf then return nil end
+    local out = {}
+    for _, row in ipairs(Storage.hitmenOf(cid) or {}) do
+        local held = out[row.contract_id]
+        if held == nil or (held.hitman_cid ~= cid and row.hitman_cid == cid) then
+            out[row.contract_id] = row
+        end
+    end
+    return out
 end
 
 --- Whether one of `lines` was taken from this citizen id (taken_from, or a
@@ -679,6 +707,7 @@ function Admin.contractsOf(src, subject)
     local canIdentify = src == nil or src == 0
         or Admin.allowed(src, Config.Admin.IdentityAce, true)
     local out = {}
+    local rows = Admin.operativeRows(cid)
     for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
         local role, anonymous
         if contract.target_cid == cid then
@@ -686,7 +715,8 @@ function Admin.contractsOf(src, subject)
         elseif contract.creator_cid == cid then
             role, anonymous = 'client', contract.anon_creator == true
         else
-            local row = Storage.readHitman(contract.id, cid)
+            local row
+            if rows then row = rows[contract.id] else row = Storage.readHitman(contract.id, cid) end
             role, anonymous = 'hitman', row ~= nil and row.anon == true
         end
         if canIdentify or not anonymous then

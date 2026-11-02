@@ -110,10 +110,19 @@ local removeOnClose = {} -- [id] = true
 --- marks at most OPEN_MAX open ones to go when their views close.
 local REMOVE_PASSES, OPEN_MAX = 50, 1000
 
+--- The photos open on a phone, by id, with when each was opened: what the
+--- expiry looks at before it asks the store. Read whole from the store
+--- once (a view can outlive a restart), then kept as photos are opened
+--- here (openKnown once the store has been read). The expiry asked the
+--- store every tick while kill photos were in use, with no view open at
+--- all nearly every time.
+local openAt, openKnown = {}, false -- [id] = opened_at
+
 function Photos.init(deps)
     Storage, Audit = deps.storage, deps.audit
     anyHeld, anyAskedAt = nil, 0
     removeOnClose = {}
+    openAt, openKnown = {}, false
 end
 
 --- Whether the store holds any kill photo record at all, in any state.
@@ -829,7 +838,9 @@ function Photos.open(actor, rawHandle)
         return view
     end
 
-    if not Storage.openPhoto(record.id, os.time()) then return nil, CH.ERR.PHOTO_GONE end
+    local openedAt = os.time()
+    if not Storage.openPhoto(record.id, openedAt) then return nil, CH.ERR.PHOTO_GONE end
+    openAt[record.id] = openedAt
     -- Not while kill photos are off: nothing is served then (publish). Nor
     -- any other way to the phone's Photos: with no link the page fell back
     -- to lb-phone's own upload, which sends the photo to an image host. It
@@ -955,13 +966,43 @@ end
 ---@return integer deleted
 function Photos.expire()
     local seconds = tonumber(Config.Completion.PhotoOpenSeconds) or 600
-    local due = Storage.photosOpenedBefore(os.time() - seconds, PER_PASS) or {}
+    local now = os.time()
+    -- What is open, read whole once; a store holding more open views than
+    -- one read takes is asked every pass, as before.
+    if not openKnown then
+        local all = Storage.photosOpenedBefore(now + 1, OPEN_MAX) or {}
+        if #all < OPEN_MAX then
+            openKnown = true
+            for _, record in ipairs(all) do
+                if openAt[record.id] == nil then openAt[record.id] = tonumber(record.opened_at) or 0 end
+            end
+        end
+    end
+    -- Nothing open long enough to expire (opened before the cutoff, as the
+    -- store reads it): nothing asked.
+    local anyDue = not openKnown
+    for _, at in pairs(openAt) do
+        if at < now - seconds then
+            anyDue = true
+            break
+        end
+    end
     local deleted = 0
-    for i = 1, #due do
-        local contractId = due[i].contract_id
-        if close(due[i], CH.PHOTO.DELETED) then
-            deleted = deleted + 1
-            Audit.action('photo_expired', nil, contractId, {})
+    if anyDue then
+        local due = Storage.photosOpenedBefore(now - seconds, PER_PASS) or {}
+        for i = 1, #due do
+            local contractId = due[i].contract_id
+            if close(due[i], CH.PHOTO.DELETED) then
+                deleted = deleted + 1
+                Audit.action('photo_expired', nil, contractId, {})
+            end
+        end
+        -- Every one past the cutoff was in that read, so each is closed now,
+        -- by this pass or by whatever moved it first.
+        if #due < PER_PASS then
+            for id, at in pairs(openAt) do
+                if at < now - seconds then openAt[id] = nil end
+            end
         end
     end
     -- And each one staff removed while it was open, once its view has

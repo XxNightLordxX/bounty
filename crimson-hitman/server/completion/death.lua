@@ -15,6 +15,8 @@ local Death = {}
 local Storage, Identity, Audit, Timing
 -- Asked whether staff hold a contract (Contracts.heldByStaff).
 local Contracts
+-- The shared read of what is running (Projection.liveSnapshot), optional.
+local Projection
 
 --- Recent damage the server saw for itself: [victimCid] = { attackerCid, at, weapon, distance }
 local damage = {}
@@ -194,6 +196,10 @@ function Death.init(deps)
     Contracts = deps.contracts
     -- Optional: times each sampler pass for /ch-diag (server/timing.lua).
     Timing = deps.timing
+    -- Optional: the running contracts and their rosters, read once per
+    -- change to the store and shared with the maintenance tick
+    -- (Projection.liveSnapshot).
+    Projection = deps.projection
     damage, pending, hitBy = {}, {}, {}
     upSince, reviveClaims, lastHitAt = {}, {}, {}
     defibAt, lastUp, inflight, credited = {}, {}, {}, {}
@@ -700,7 +706,16 @@ function Death.startSampler()
     --
     -- And every roster in one read alongside: one each was 1 + N awaited
     -- queries a second on mysql, for as long as the server ran.
+    --
+    -- And neither while nothing has been written since the last pass
+    -- (Projection.liveSnapshot): the same two reads, shared with the idle
+    -- holds and the expiry pass, were two statements a second on mysql with
+    -- nothing changing.
     local function pass()
+        if Projection and Projection.liveSnapshot then
+            local live, hitmen = Projection.liveSnapshot()
+            return Death.watchTargets(live, #live == 0 and {} or hitmen)
+        end
         local live = Storage.liveContracts()
         -- Nothing running: no roster to read (a second query a second on
         -- mysql for nothing), and the pass only forgets who was watched.
@@ -1214,7 +1229,7 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
     local opened = 0
     -- The contracts naming this victim, by the store's own index: every
     -- death on the server came here, and it read the whole table.
-    local contracts = Storage.contractsNaming(victim.cid)
+    local contracts = Storage.contractsNaming(victim.cid, true)
 
     for i = 1, #contracts do
         local contract = contracts[i]

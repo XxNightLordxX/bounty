@@ -692,7 +692,7 @@ local suites = {
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
-    'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec',
+    'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec', 'perf_round3_spec',
     'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec',
 }
 
@@ -707,7 +707,7 @@ local RAW_STORE_SPECS = { differential_spec = true }
 --- became a run that had not finished in ten minutes. It probes nothing the
 --- other eleven hundred tests do not already probe: every rule it would
 --- exercise is exercised by the operations it is counting.
-local MEASUREMENT_SPECS = { complexity_spec = true, handlers_spec = true }
+local MEASUREMENT_SPECS = { complexity_spec = true, handlers_spec = true, perf_round3_spec = true }
 
 --- CH_SUITES=a_spec,b_spec runs only those, for a quick loop while working
 --- on one area. Unset — as all.sh leaves it — everything runs.

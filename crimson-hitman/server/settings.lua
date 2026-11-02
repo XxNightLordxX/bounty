@@ -2235,7 +2235,20 @@ local function oneAtATime(fn, ...)
     return ok, err, detail
 end
 
+--- Moved by every init: what each catalogue entry says of itself, and the
+--- defaults read here, are fixed until the next (Settings.schemaVersion).
+local schemaVersion = 0
+
+--- Which version of the entries' fixed parts (label, help, limits,
+--- defaults) the panel is shown: the same number, the same parts. The
+--- admin panel sends them once and then only the values (server/panel.lua).
+---@return integer
+function Settings.schemaVersion()
+    return schemaVersion
+end
+
 function Settings.init(deps)
+    schemaVersion = schemaVersion + 1
     Storage, Audit, Check = deps.storage, deps.audit, deps.check
     overrides, ignored, unknown, nextStart = {}, {}, {}, {}
     saving = false

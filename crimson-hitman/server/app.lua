@@ -617,6 +617,21 @@ App.MUGSHOT_BPS = 100000
 --- The client hears both on the same event.
 local LATENT_REPLIES = { mugshotImage = App.MUGSHOT_BPS }
 
+--- Replies sent as a latent event only when they are large: a conversation
+--- read whole (up to a hundred messages, some 26 KB) went on the reliable
+--- channel after every message sent in it, holding up everything else to
+--- that player. [name] = { over = bytes, bps = rate }. Measured by counting
+--- the payload (Panel.over), not by encoding it.
+App.LATENT_OVER = { readThread = { over = 8000, bps = 100000 } }
+
+--- Whether a reply is over `limit` bytes as JSON, counted (Panel.over).
+local function replyOver(payload, limit)
+    local ok, Panel = pcall(CrimsonBoot.require, 'server.panel')
+    if not ok or type(Panel) ~= 'table' or not Panel.over then return false end
+    local counted, over = pcall(Panel.over, payload, limit)
+    return counted and over == true
+end
+
 --- Send a result back to one client. Payloads are built by the projection
 --- module, so nothing leaks here that the viewer may not see. A refusal's
 --- data is built by its handler from the asker's own figures alone.
@@ -625,6 +640,8 @@ function App.reply(src, name, ok, err, data, rid)
         event = name, ok = ok and true or false, err = err, data = data, rid = rid,
     }
     local bps = ok and LATENT_REPLIES[name]
+    local sized = ok and not bps and App.LATENT_OVER[name]
+    if sized and replyOver(payload, sized.over) then bps = sized.bps end
     if bps then
         TriggerLatentClientEvent('crimson-hitman:result', src, bps, payload)
     else
@@ -719,6 +736,14 @@ function App.register()
             listing.suspended = deps.sanctions and deps.sanctions.refusal(suspension)
                 or { untilAt = suspension.until_at, reason = suspension.reason }
         end
+        -- The server's settings (1.4 KB, the same for everybody until one
+        -- changes) only when they are not the ones the page says it holds:
+        -- they came with every board read, a push's included.
+        if type(listing) == 'table' and type(listing.settings) == 'table' and deps.projection.digest then
+            local hash = deps.projection.digest(listing.settings)
+            listing.settingsHash = hash
+            if payload.settingsHash == hash then listing.settings = nil end
+        end
         return listing
     end)
 
@@ -733,9 +758,35 @@ function App.register()
         }
     end
 
+    --- The proposals open on each card they placed or hold, by contract id,
+    --- as the amendments read answers for each: the page asked that once per
+    --- card after every Mine read, a request each from the same bucket. Only
+    --- the contracts with one open are read (Storage.openAmendmentContracts,
+    --- one statement); the rest are an empty list. nil where it cannot be
+    --- said, and the page asks per card as before.
+    local function proposalsOf(actor, out)
+        if not (deps.amendments and deps.amendments.openFor and deps.storage.openAmendmentContracts) then
+            return nil
+        end
+        local okOpen, open = pcall(deps.storage.openAmendmentContracts)
+        if not okOpen or type(open) ~= 'table' then return nil end
+        local proposals = {}
+        for _, list in ipairs({ out.created or {}, out.accepted or {} }) do
+            for _, card in ipairs(list) do
+                local id = type(card) == 'table' and card.id or nil
+                if id ~= nil and proposals[id] == nil then
+                    local rows = open[id] and deps.amendments.openFor(actor, id) or nil
+                    proposals[id] = rows or {}
+                end
+            end
+        end
+        return proposals
+    end
+
     handler('mine', 'load', function(actor)
         local out = deps.projection.cached and deps.projection.cached(mineOf, actor.cid)
             or mineOf(actor.cid)
+        out.proposals = proposalsOf(actor, out)
         -- Payouts of theirs held for proof of intent, the contract done
         -- or not (server/rp_intent.lua, off as shipped: absent).
         out.intentHeld = deps.rpIntent and deps.rpIntent.enabled() and deps.rpIntent.heldFor(actor.cid) or nil
@@ -1689,6 +1740,13 @@ function App.register()
         if waiting then return end
         local function later()
             SetTimeout(1000, function()
+                -- Recovery raised (App.recoveryFailed): the app stays closed
+                -- until a restart, and this asked again every second for
+                -- good. Dropped, as every report is while the app is closed.
+                if App.recoveryFailed then
+                    heldDeaths[src] = nil
+                    return
+                end
                 if not App.ready then return later() end
                 local held = heldDeaths[src]
                 heldDeaths[src] = nil

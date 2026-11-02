@@ -814,19 +814,29 @@ function Kidnap.start()
     if running then return end
     running = true
     CreateThread(function()
+        local last = Util.monotonicMs()
         while true do
             Wait(Config.Kidnap.TickMs)
             if Kidnap.activeCount() == 0 then
                 running = false
                 return
             end
+            -- Advanced by the time since the last pass, not by TickMs: a
+            -- pass that waited on the database (each reads its contract)
+            -- made every countdown run slow by however long it waited. At
+            -- least TickMs, and at most three of them, so a hitch of the
+            -- whole server is not counted as time held.
+            local now = Util.monotonicMs()
+            local tick = Config.Kidnap.TickMs
+            local delta = math.max(tick, math.min(now - last, tick * 3))
+            last = now
             -- One throw — a storage read on a connection that dropped, an
             -- inventory export raising inside the payout — ended this
             -- thread with `running` still set. No handover on the server
             -- moved again until a restart, and every one armed after it said
             -- it was armed and sat at nought. The maintenance tick and the
             -- condition sampler are wrapped for the same reason.
-            local ok, err = pcall(Kidnap.tick, Config.Kidnap.TickMs)
+            local ok, err = pcall(Kidnap.tick, delta)
             lastPass = os.time()
             if not ok then
                 Log.debug(('handover tick failed: %s'):format(tostring(err)))

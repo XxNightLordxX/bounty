@@ -4922,9 +4922,10 @@ describe('a stop before recovery has finished', function()
         forgetServerModules()
         Env.events, Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}, {}
         local store = require('server.storage.mysql')
-        local real = store.allContracts
-        store.allContracts = function(...)
-            store.allContracts = real
+        -- Recovery's first read of the contracts (those not finished).
+        local real = store.unfinishedContracts
+        store.unfinishedContracts = function(...)
+            store.unfinishedContracts = real
             Exec.lateNext = 1
             return real(...)
         end

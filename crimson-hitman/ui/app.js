@@ -4769,6 +4769,37 @@
     delete proposalsAsking[id];
   }
 
+  /* What each proposal said when it was last taken, by contract, without
+     the clock it counts down by: a read that only moved the clock is not
+     drawn again. */
+  var proposalsSeen = {};
+
+  function proposalsText(list) {
+    try {
+      return JSON.stringify(list, function (key, value) {
+        return (key === 'secondsLeft' || key === 'clockReadAt') ? undefined : value;
+      });
+    } catch (err) { return null; }
+  }
+
+  /* The proposals on every card of Mine, as the Mine reply carries them
+     ({ [contractId]: proposals }): the same as one read of each, with none
+     asked for. Drawn again only where one changed. */
+  function takeProposals(data, proposals) {
+    var changed = false;
+    asList(data.created).concat(asList(data.accepted)).forEach(function (c) {
+      var list = asList(proposals[c.id]);
+      var text = proposalsText(list);
+      delete proposalsAsking[c.id];
+      if (state.proposals[c.id] !== undefined && text !== null && proposalsSeen[c.id] === text) { return; }
+      proposalsSeen[c.id] = text;
+      state.proposals[c.id] = list;
+      stampClocks(list);
+      changed = true;
+    });
+    if (changed) { redrawFor(['mine']); }
+  }
+
   function loadProposals(contract) {
     var asking = proposalsAsking[contract.id] = {};
     post('amendments', { id: contract.id }).then(function (r) {
@@ -9199,6 +9230,11 @@
      next answer new. */
   var answers = {};
 
+  /* The server's settings as the board last brought them whole, and the hash
+     it named them by: { hash, settings }. Sent back with each board read,
+     which then leaves them out while they are the same (1.4 KB a read). */
+  var boardSettings = null;
+
   function sameAnswer(section, data, held) {
     var text = null;
     try { text = JSON.stringify(data); } catch (err) { text = null; }
@@ -9234,9 +9270,29 @@
 
     function readBoard() {
       var boardIsCurrent = newestLoad('board');
-      return post('list', { page: state.boardPage || 1 }).then(function (r) {
+      // The server's settings come with the board only when they are not
+      // the ones held here (boardSettings), named by their hash.
+      return post('list', {
+        page: state.boardPage || 1,
+        settingsHash: boardSettings ? boardSettings.hash : undefined
+      }).then(function (r) {
         if (!boardIsCurrent()) { return; }
         var hadFailed = !!state.loadFailed.board;
+        if (r && r.ok && r.data && typeof r.data.settingsHash === 'string') {
+          if (r.data.settings === undefined || r.data.settings === null) {
+            // Left out as the ones held: the same object, so nothing reads
+            // as changed.
+            if (boardSettings && boardSettings.hash === r.data.settingsHash) {
+              r.data.settings = boardSettings.settings;
+            } else {
+              // Not the ones held after all: asked for whole.
+              boardSettings = null;
+              return readBoard();
+            }
+          } else {
+            boardSettings = { hash: r.data.settingsHash, settings: r.data.settings };
+          }
+        }
         if (!loadResult('board', r)) { return; }
         // The board shrank under the page being looked at: back to its last.
         var pages = Number(r.data && r.data.pages) || 1;
@@ -9271,6 +9327,12 @@
       var mineAsked = loadSeq.mine;
       return post('mine', {}).then(function (r) {
         if (!mineIsCurrent()) { return; }
+        // The open proposals on each card, where the server sends them with
+        // Mine (one read for all of them, where each card asked on its own):
+        // kept apart from the answer, whose sameness they would otherwise
+        // break every second they count down.
+        var proposals = (r && r.ok && r.data) ? r.data.proposals : undefined;
+        if (proposals !== undefined) { delete r.data.proposals; }
         var opening = !state.loaded.mine;
         var hadFailed = !!state.loadFailed.mine;
         if (!loadResult('mine', r)) { return; }
@@ -9287,6 +9349,10 @@
           redrawFor(['mine', 'onme']);
         }
         var data = state.mine;
+        if (proposals && typeof proposals === 'object') {
+          takeProposals(data, proposals);
+          return;
+        }
         // Only for contracts this player is actually party to, and only for
         // ones not already loaded: most contracts have no open proposal and
         // asking about every one of them every refresh would be three

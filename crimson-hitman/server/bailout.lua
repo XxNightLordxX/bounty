@@ -113,7 +113,7 @@ function Bailout.onTarget(actor)
     -- an indexed column. Projection.onMe has always asked it that way; this
     -- call site, which is what /cleanse runs for a player who cannot open
     -- the app at all, was missed.
-    local contracts = Storage.contractsNaming(actor.cid)
+    local contracts = Storage.contractsNaming(actor.cid, true)
     for i = 1, #contracts do
         local c = contracts[i]
         -- Not inside the alert's wait (Notify.shownToTarget), as On me does

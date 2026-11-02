@@ -576,10 +576,13 @@ describe('the expiry pass past a contract the store refuses', function()
         local main, s, _, c = heldContract()
         Env.removePlayer(2)
         main.markPresenceChanged()
-        local live = s.storage.liveContracts
+        -- The pass reads through the snapshot it shares with the sampler
+        -- (Projection.liveSnapshot), which asks the store after a write.
+        local live, snapshot = s.storage.liveContracts, s.projection.liveSnapshot
         s.storage.liveContracts = function() error('the store did not answer', 0) end
+        s.projection.liveSnapshot = function() error('the store did not answer', 0) end
         falsy(pcall(main.expire), 'the read raised')
-        s.storage.liveContracts = live
+        s.storage.liveContracts, s.projection.liveSnapshot = live, snapshot
         main.expire()
         truthy(s.storage.readContract(c.id).paused_since,
             'the next pass still acts on the target having gone')

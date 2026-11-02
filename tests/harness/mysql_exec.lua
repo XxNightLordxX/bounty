@@ -270,6 +270,30 @@ local function matches(row, conditions, params, from)
                 end
             end
             if not any then return false end
+        elseif condition.like then
+            -- `col LIKE ? ESCAPE '!'`: % any run, _ any one character, the
+            -- escape taking the next one as it is; without regard to case,
+            -- as utf8mb4_unicode_ci compares.
+            local pattern = tostring(params[from + condition.index - 1] or '')
+            local lua, i = {}, 1
+            while i <= #pattern do
+                local ch = pattern:sub(i, i)
+                if condition.escape and ch == condition.escape and i < #pattern then
+                    lua[#lua + 1] = pattern:sub(i + 1, i + 1):lower():gsub('%p', '%%%0')
+                    i = i + 1
+                elseif ch == '%' then
+                    lua[#lua + 1] = '.-'
+                elseif ch == '_' then
+                    lua[#lua + 1] = '.'
+                else
+                    lua[#lua + 1] = (ch:lower():gsub('%p', '%%%0'))
+                end
+                i = i + 1
+            end
+            local value = row[condition.column]
+            if value == nil or not tostring(value):lower():find('^' .. table.concat(lua) .. '$') then
+                return false
+            end
         elseif condition.notNull then
             if row[condition.column] == nil then return false end
         elseif condition.isNull then
@@ -412,6 +436,7 @@ local function parseConditions(clause, sql)
         local isNull = term:match('^([%w_.]+)%s+IS%s+NULL$')
         local notNull = term:match('^([%w_.]+)%s+IS%s+NOT%s+NULL$')
         local inColumn, inList = term:match('^([%w_.]+)%s+IN%s*%((.*)%)$')
+        local likeColumn, likeRest = term:match('^([%w_.]+)%s+LIKE%s+%?(.*)$')
         local notInColumn = term:match('^([%w_.]+)%s+NOT%s+IN%s*%(')
 
         local function bare(name) return name:match('([%w_]+)$') end
@@ -462,6 +487,14 @@ local function parseConditions(clause, sql)
                 exists = type(positiveExists) == 'string',
                 link = link, linkedTo = linkedTo, inner = inner }
 
+        elseif likeColumn then
+            local escape = likeRest:match("^%s*ESCAPE%s+'(.)'%s*$")
+            if likeRest:match('%S') and not escape then
+                error('mysql_exec: cannot read `' .. term .. '` in: ' .. tostring(sql))
+            end
+            index = index + 1
+            conditions[#conditions + 1] = { column = bare(likeColumn), like = true, index = index,
+                escape = escape }
         elseif notNull then
             conditions[#conditions + 1] = { column = bare(notNull), notNull = true }
         elseif isNull then
@@ -880,12 +913,27 @@ end
 -- The three statements that are not one table and a WHERE
 --------------------------------------------------------------------------
 
-local function contractsInvolving(params)
+local function contractsInvolving(sql, params)
     local cid = params[1]
     local seen, out = {}, {}
+    -- The live form names the states it keeps, the same list in both arms:
+    -- read from the statement, so a change to it is exercised here too.
+    local wanted
+    local list = sql:match("c%.state IN %(([^)]*)%)")
+    if list then
+        wanted = {}
+        for state in list:gmatch("'([^']*)'") do wanted[state] = true end
+        local arms = 0
+        for other in sql:gmatch("c%.state IN %(([^)]*)%)") do
+            arms = arms + 1
+            if other ~= list then error('mysql_exec: the two arms keep different states: ' .. sql) end
+        end
+        if arms ~= 2 then error('mysql_exec: a state list in one arm only: ' .. sql) end
+    end
+    local function kept(row) return wanted == nil or wanted[row.state] == true end
 
     for _, row in pairs(Exec.tables.crimson_contracts or {}) do
-        if row.creator_cid == cid or row.target_cid == cid then
+        if (row.creator_cid == cid or row.target_cid == cid) and kept(row) then
             seen[row.id] = true
             out[#out + 1] = copy(row)
         end
@@ -893,7 +941,7 @@ local function contractsInvolving(params)
     for _, hitman in pairs(Exec.tables.crimson_hitmen or {}) do
         if hitman.hitman_cid == cid and not seen[hitman.contract_id] then
             local contract = Exec.tables.crimson_contracts[hitman.contract_id]
-            if contract then
+            if contract and kept(contract) then
                 seen[contract.id] = true
                 out[#out + 1] = copy(contract)
             end
@@ -1083,7 +1131,7 @@ local function execute(sql, params, flat)
         return pruneMessages(params)
     end
     if flat:find('^SELECT c%.%* FROM crimson_contracts') then
-        return contractsInvolving(params)
+        return contractsInvolving(flat, params)
     end
     if flat:find('^SELECT c%.state AS state') then return hitmanContractStates(flat, params) end
     if flat:find('^SELECT h%.%* FROM crimson_hitmen h JOIN crimson_contracts c') then

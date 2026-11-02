@@ -14,6 +14,8 @@ local Contracts = {}
 local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger, Freeze
 --- Staff suspensions and protections (server/sanctions.lua).
 local Sanctions
+--- The shared read of what is running (Projection.liveSnapshot).
+local Projection
 
 --- What settles a take, or a contract row, the store would not confirm
 --- (server/review.lua's deciders); defined with the code they finish.
@@ -39,6 +41,10 @@ function Contracts.init(deps)
     -- The players staff have suspended from contracts, and the ones they
     -- protect from them (server/sanctions.lua).
     Sanctions   = deps.sanctions
+    -- The running contracts and their rosters, read once per change to the
+    -- store and shared with the sampler and the expiry pass
+    -- (Projection.liveSnapshot). Optional.
+    Projection  = deps.projection
     -- And the two kinds the server settles itself once the store answers,
     -- from the whole record the item carries (S12).
     if Review and Review.DECIDERS then
@@ -511,8 +517,16 @@ function Contracts.canCreate(actor, targetActor)
     if Contracts.protectedByStaff(targetActor.cid) then return false, CH.ERR.TARGET_PROTECTED end
 
     -- Only the contracts these two are involved in matter here, so this asks
-    -- for those rather than for the whole table.
-    local contracts = Storage.contractsBy(actor.cid)
+    -- for those rather than for the whole table. And of the finished ones,
+    -- only those inside the longest of the waits below: one resolved before
+    -- it can refuse nothing, and every placing read the whole thirty days of
+    -- both players' history to find that out.
+    local since = os.time() - math.max(0,
+        tonumber(Config.Limits.TargetCooldownAfterResolveSeconds) or 0,
+        tonumber(Config.Immunity.AfterBailoutSeconds) or 0,
+        tonumber(Config.Limits.SameCreatorSameTargetCooldownSeconds) or 0,
+        tonumber(Config.Amendments.CancelCooldownSeconds) or 0)
+    local contracts = Storage.contractsBy(actor.cid, since)
 
     -- And the ones this player placed on their other characters. Every
     -- creator-side limit below — how many they may have open, the wait
@@ -521,11 +535,11 @@ function Contracts.canCreate(actor, targetActor)
     -- licence reset all three: the two-hour wait on re-listing one victim
     -- became the thirty minutes everybody waits (§14.7).
     if actor.account and Storage.contractsByAccount then
-        local alsoMine = Storage.contractsByAccount(actor.account) or {}
+        local alsoMine = Storage.contractsByAccount(actor.account, since) or {}
         for i = 1, #alsoMine do contracts[#contracts + 1] = alsoMine[i] end
     end
 
-    local naming = Storage.contractsNaming(targetActor.cid)
+    local naming = Storage.contractsNaming(targetActor.cid, since)
     for i = 1, #naming do contracts[#contracts + 1] = naming[i] end
 
     --- Whether this contract was placed by this player, on any character.
@@ -2474,6 +2488,14 @@ local unattemptedFor = {}
 --- When a hitman last armed a handover on a contract. [contractId:hitmanCid].
 local armedAt = {}
 
+--- The most holds one pass of the sweep releases. Each release is a
+--- serialized read, write and push; the clocks are kept in memory only, so
+--- every hold on the server falls due on the same pass half an hour after a
+--- restart, and that pass released them all in one server frame (2,000
+--- statements on mysql, 219 ms on json with two hundred). The rest stay due,
+--- their clocks standing, and go on the passes after, ten seconds apart.
+Contracts.IDLE_RELEASES_PER_PASS = 25
+
 --- A handover was armed: an attempt, which keeps an exclusive hold.
 function Contracts.noteAttempt(contractId, hitmanCid)
     armedAt[contractId .. ':' .. hitmanCid] = os.time()
@@ -2485,7 +2507,9 @@ end
 function Contracts.reindexHolds()
     heldIndex = {}
     local n = 0
-    for _, c in ipairs(Storage.allContracts()) do
+    -- Only the contracts not finished, where every one kept was read.
+    local list = Storage.unfinishedContracts and Storage.unfinishedContracts() or Storage.allContracts()
+    for _, c in ipairs(list) do
         if c.state == CH.STATE.ACCEPTED or c.state == CH.STATE.COMPLETING then
             heldIndex[c.id] = true
             n = n + 1
@@ -2683,6 +2707,8 @@ function Contracts.releaseIdleHolds()
     for i = 1, #marked do Contracts.repairHeld(marked[i]) end
 
     local released = 0
+    -- Releases tried this pass (Contracts.IDLE_RELEASES_PER_PASS).
+    local tried = 0
     local live = {}
 
     -- The contracts somebody has taken, from the index rather than a walk of
@@ -2712,7 +2738,11 @@ function Contracts.releaseIdleHolds()
     -- batch: a release reads the contract and the hitman again under the
     -- contract's key (releaseIdleHoldUnlocked), and so does a repair.
     local running, rosters = {}, nil
-    if Storage.liveContracts then
+    if Projection and Projection.liveSnapshot then
+        local rows
+        rows, rosters = Projection.liveSnapshot()
+        for i = 1, #rows do running[rows[i].id] = rows[i] end
+    elseif Storage.liveContracts then
         local rows = Storage.liveContracts() or {}
         for i = 1, #rows do running[rows[i].id] = rows[i] end
         if Storage.liveHitmen then rosters = Storage.liveHitmen() end
@@ -2834,6 +2864,11 @@ function Contracts.releaseIdleHolds()
                 due = { due[1] }
             end
             for _, d in ipairs(due) do
+                -- Past this pass's share: left due, its clocks standing (the
+                -- walk goes on, so every hold's clock still runs), for the
+                -- next pass.
+                if tried >= Contracts.IDLE_RELEASES_PER_PASS then break end
+                tried = tried + 1
                 local ok, err = releaseIdleHold(c.id, d.row, d.held, d.why)
                 if ok then released = released + 1 end
                 -- Busy is not done: the clocks stand, and the next pass tries.

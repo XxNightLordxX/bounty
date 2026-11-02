@@ -2549,11 +2549,63 @@
     return v;
   }
 
-  function loadSettings() {
-    return ask('settings', {}, 'settings').then(function (reply) {
+  /* The fixed parts of every Features and Limits row (label, help, limits,
+     defaults), as the server last sent them whole, and the hash it named
+     them by: sent once, and after that only each row's key and what
+     changes, which are put back together here. The reply was 172 KB at
+     every open of the section and after every change. */
+  var SCHEMA_FIELDS = ['group', 'label', 'about', 'category', 'money', 'shipped', 'hasShipped',
+    'kind', 'choices', 'min', 'integer', 'live', 'inflight', 'readonly', 'destroys', 'stricter',
+    'strict', 'whole', 'default'];
+  var settingsSchema = null; // { hash, rows: { [key]: fixed parts } }
+
+  function keepSchema(data) {
+    if (!data || typeof data.schema !== 'string') { settingsSchema = null; return; }
+    var rows = {};
+    ['features', 'limits'].forEach(function (list) {
+      asList(data[list]).forEach(function (row) {
+        var fixed = {};
+        SCHEMA_FIELDS.forEach(function (f) { if (row[f] !== undefined) fixed[f] = row[f]; });
+        rows[row.key] = fixed;
+      });
+    });
+    settingsSchema = { hash: data.schema, rows: rows };
+  }
+
+  /* A lean reply with its fixed parts put back, or null when this page does
+     not hold the ones it names (then it is asked for whole). */
+  function withSchema(data) {
+    if (!settingsSchema || settingsSchema.hash !== data.schema) return null;
+    var out = {};
+    Object.keys(data).forEach(function (k) { out[k] = data[k]; });
+    delete out.lean;
+    var whole = true;
+    ['features', 'limits'].forEach(function (list) {
+      out[list] = asList(data[list]).map(function (row) {
+        var fixed = settingsSchema.rows[row.key];
+        if (!fixed) { whole = false; return row; }
+        var merged = {};
+        Object.keys(fixed).forEach(function (f) { merged[f] = fixed[f]; });
+        Object.keys(row).forEach(function (f) { merged[f] = row[f]; });
+        return merged;
+      });
+    });
+    return whole ? out : null;
+  }
+
+  function loadSettings(whole) {
+    var asked = (!whole && settingsSchema) ? { schema: settingsSchema.hash } : {};
+    return ask('settings', asked, 'settings').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); return; }
-      S.settings.data = reply.data || {};
+      var data = reply.data || {};
+      if (data.lean) {
+        data = withSchema(data);
+        if (!data) { settingsSchema = null; return loadSettings(true); }
+      } else {
+        keepSchema(data);
+      }
+      S.settings.data = data;
       if (SETTING_VIEWS[S.section]) drawSettings();
     });
   }

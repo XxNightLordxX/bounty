@@ -1980,11 +1980,11 @@ function StartCrimsonHitman()
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
                      audit = audit, notify = notify, progression = progression,
                      death = death, review = review, ledger = ledger, freeze = freeze,
-                     sanctions = sanctions })
+                     sanctions = sanctions, projection = projection })
     photos.init({ storage = Storage, audit = audit })
     ledger.init({ storage = Storage, photos = photos, notify = notify })
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
-                 timing = timing })
+                 timing = timing, projection = projection })
     photo.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
                  death = death, notify = notify, ledger = ledger })
     kidnap.init({ storage = Storage, identity = identity, contracts = contracts,
@@ -2320,7 +2320,6 @@ end
 --- `completing`, or an escrow line caught in `releasing`, is reconciled
 --- exactly once by re-reading whether the funds actually moved.
 function Recover()
-    local contracts = Storage.allContracts()
     local recovered, unstuck, finished, paused = 0, 0, 0, 0
 
     -- When this process was last known to be running. Every contract's clock
@@ -2349,6 +2348,48 @@ function Recover()
     -- that was some four awaited queries per contract kept (thirty days of
     -- them), with the app answering nobody until they were done.
     local unsettled = Storage.unsettledEscrowContracts and Storage.unsettledEscrowContracts() or nil
+
+    -- And only those read at all: every contract not finished, and the
+    -- finished ones still holding a line (each read on its own; there are
+    -- few). Every contract kept was read, thirty days of them as shipped,
+    -- to be passed over below.
+    local contracts
+    if unsettled and Storage.unfinishedContracts then
+        contracts = Storage.unfinishedContracts() or {}
+        local listed, extra = {}, {}
+        for i = 1, #contracts do listed[contracts[i].id] = true end
+        for id in pairs(unsettled) do
+            if not listed[id] then extra[#extra + 1] = id end
+        end
+        table.sort(extra)
+        for _, id in ipairs(extra) do
+            local c = Storage.readContract(id)
+            if c then contracts[#contracts + 1] = c end
+        end
+        table.sort(contracts, function(a, b) return a.id < b.id end)
+    else
+        contracts = Storage.allContracts()
+    end
+
+    -- Their escrow in one read (a statement per hundred contracts on mysql),
+    -- where it was read for each, and then read again after the steps below
+    -- for every contract whether they wrote anything or not. Nothing else
+    -- writes a contract's escrow before its turn here: the app, the login
+    -- payouts and the staff commands wait for recovery (App.ready), and each
+    -- step below acts on its own contract's lines.
+    local linesOf = nil
+    if Storage.readEscrowMany then
+        local ids = {}
+        for i = 1, #contracts do
+            local c = contracts[i]
+            if not (unsettled and CH.TERMINAL[c.state] and not unsettled[c.id]) then ids[#ids + 1] = c.id end
+        end
+        if #ids > 0 then linesOf = Storage.readEscrowMany(ids) end
+    end
+    -- How many writes the store has taken (Projection.generation): the
+    -- same number before and after a contract's steps means they wrote
+    -- nothing, so what was read for it is still what the store holds.
+    local generation = modules.projection and modules.projection.generation
 
     for i = 1, #contracts do
         local contract = contracts[i]
@@ -2384,7 +2425,8 @@ function Recover()
         -- to nobody, and naming nobody it was on its way to.
         local untouched = false
 
-        local lines = Storage.readEscrow(contract.id)
+        local lines = linesOf and linesOf[contract.id] or Storage.readEscrow(contract.id)
+        local before = generation and generation() or nil
         for j = 1, #lines do
             local line = lines[j]
             if (line.state == CH.ESCROW_STATE.HELD or line.state == CH.ESCROW_STATE.RELEASING)
@@ -2477,7 +2519,12 @@ function Recover()
         -- hitman's claim had locked (COMPLETING) was skipped, and the claim
         -- was then put back to ACCEPTED with the row still joining: its
         -- stake held, its hitman unable to take it, leave it or work it.
-        local current = Storage.readContract(contract.id) or contract
+        -- Read again only where a step above wrote something: otherwise the
+        -- row is the one read, with its pause as written above.
+        local current = contract
+        if before == nil or generation() ~= before then
+            current = Storage.readContract(contract.id) or contract
+        end
 
         -- An acceptance the crash left part-way (Contracts.recoverJoining).
         if (current.state == CH.STATE.ACTIVE or current.state == CH.STATE.ACCEPTED)
@@ -2500,7 +2547,10 @@ function Recover()
         -- back to held unqueued, and waited for the next restart — while
         -- the claim it belonged to was counted as paid.
         if modules.escrow.recoverOwed then
-            recovered = recovered + modules.escrow.recoverOwed(Storage.readEscrow(contract.id))
+            -- The lines as they stand: read again where anything above wrote.
+            local now_ = lines
+            if before == nil or generation() ~= before then now_ = Storage.readEscrow(contract.id) end
+            recovered = recovered + modules.escrow.recoverOwed(now_)
         end
 
         ::continue::
@@ -2619,6 +2669,7 @@ local SELF_GATED = {
     ['playtime.pass'] = 60,                 -- Playtime.PASS_SECONDS
     ['contracts.finishEndings'] = 30,       -- FINISH_ENDINGS_EVERY_SECONDS, sooner with more
     ['ledger.forgetOldPhotos'] = 600,       -- FORGET_EVERY_SECONDS, sooner with a backlog
+    ['storage.prune'] = 600,                -- PRUNE_EVERY_SECONDS, sooner with a backlog
     ['escrow.retryWaiting'] = 30,           -- each player at most every 30 s (Escrow)
     ['photo.loadAllowedHosts'] = function()
         return tonumber(Config.Completion.PhotoHostRefreshSeconds) or 300
@@ -2700,6 +2751,32 @@ function ForgetOldPhotos()
     local forgotten, photos = modules.ledger.forgetOldPhotos()
     if (tonumber(photos) or 0) > 0 then nextForget = 0 end
     return forgotten, photos
+end
+
+--- How often the retention prune runs while it has nothing to catch up on.
+--- Retention is counted in days, so ten minutes late is nothing; every
+--- tick, it walked every contract kept on json (3 ms a tick with thirty
+--- days of them) and sent its SELECT on mysql, and a backlog was two
+--- thousand statements a tick there.
+local PRUNE_EVERY_SECONDS = 600
+local nextPrune = 0
+
+--- The store's retention prune (Storage.prune), at most every
+--- PRUNE_EVERY_SECONDS. Back next tick while it is still removing a full
+--- batch: a backlog (retention just switched on or shortened, a long
+--- downtime) drains a batch a tick, as before.
+function PruneStore()
+    local now = os.time()
+    if now < nextPrune then return false end
+    -- Marked before the call, like the photo retention: a pass that throws
+    -- is not retried every ten seconds.
+    nextPrune = now + PRUNE_EVERY_SECONDS
+    local done, more = Storage.prune()
+    -- Finished contracts may be gone: the admin panel's list of every
+    -- contract kept is read again (Projection.keptVersion).
+    if modules.projection and modules.projection.notePruned then modules.projection.notePruned() end
+    if more then nextPrune = 0 end
+    return done
 end
 
 --- How often the maintenance tick looks for endings that stopped part-way
@@ -2859,7 +2936,7 @@ function Tick()
     end
     job('death.sweep', modules.death.sweep)
     job('ratelimit.sweep', modules.ratelimit.sweep)
-    if Storage.prune then job('storage.prune', Storage.prune) end
+    if Storage.prune then job('storage.prune', PruneStore) end
     if photosInUse then
         job('ledger.forgetOldPhotos', ForgetOldPhotos)
         -- A kill photo opened and never saved or deleted: the phone closed
@@ -2972,6 +3049,14 @@ end
 --- the store keeps refusing is not a console line every tick.
 local expiryFailureSaidAt = {}
 local EXPIRY_FAILURE_SAID_EVERY = 600
+
+--- The most contracts one expiry pass ends. Each ending is a serialized
+--- resolve: escrow handed back, the ledger, notices and a push. After a long
+--- outage every deadline that fell in it is due on the first pass, and two
+--- hundred of them ended in one server frame (about a second on json, 5,600
+--- statements on mysql). The rest are ended on the passes after, one tick
+--- apart, the pass coming back at once while any are left.
+local EXPIRIES_PER_PASS = 25
 
 --- A party to the contracts this pass looks at, asked of the framework once
 --- a pass, however many contracts name them: [cid] = actor, or false where
@@ -3145,6 +3230,7 @@ local function expireOne(contract, now, pass)
     -- write that did not land) is looked at again on the next tick, not
     -- after the longest skip.
     local function ended(ok)
+        pass.endings = pass.endings + 1
         if ok then
             pass.resolved = pass.resolved + 1
         else
@@ -3252,7 +3338,15 @@ function ExpireContracts()
     -- Live contracts only, which is all the pass acts on. A read that
     -- raised forgot whatever woke this pass (a logoff, a sentence) until
     -- the next deadline, so it is remembered for the next tick.
-    local read, contracts = pcall(Storage.liveContracts)
+    -- From the snapshot the sampler and the idle holds share
+    -- (Projection.liveSnapshot): read again only after a write.
+    local snapshot = modules.projection and modules.projection.liveSnapshot
+    local read, contracts, liveHitmen
+    if snapshot then
+        read, contracts, liveHitmen = pcall(snapshot)
+    else
+        read, contracts = pcall(Storage.liveContracts)
+    end
     if not read then
         presenceChanged = true
         error(contracts, 0)
@@ -3260,17 +3354,26 @@ function ExpireContracts()
 
     -- The soonest future moment worth waking for. Starts far out and is
     -- pulled in by every live contract's deadline.
-    local pass = { resolved = 0, soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600),
-                   actors = {} }
+    local pass = { resolved = 0, endings = 0,
+                   soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600), actors = {} }
     -- Every live contract's operatives in one read, for whether one of
     -- them is in the city (judge). A read that raised is not a reason to
     -- stop the pass: each contract reads its own instead.
-    if Storage.liveHitmen then
+    if snapshot then
+        if type(liveHitmen) == 'table' then pass.hitmen = liveHitmen end
+    elseif Storage.liveHitmen then
         local okHitmen, hitmen = pcall(Storage.liveHitmen)
         if okHitmen and type(hitmen) == 'table' then pass.hitmen = hitmen end
     end
 
     for i = 1, #contracts do
+        -- This pass's share ended: the rest wait for the next tick, which
+        -- comes back for them (nextDue below), their pause bookkeeping
+        -- with them.
+        if pass.endings >= EXPIRIES_PER_PASS then
+            pass.more = true
+            break
+        end
         local ok, err = pcall(expireOne, contracts[i], now, pass)
         if not ok then
             -- A store that is not answering at all would make every
@@ -3298,7 +3401,7 @@ function ExpireContracts()
     -- finds it genuinely overdue rather than exactly due. Unless a contract
     -- changed while this pass ran: a deadline moved after the pass had read
     -- it is not in pass.soonest, so the next tick looks again.
-    nextDue = contractsChanged == changedAtStart and pass.soonest + 1 or 0
+    nextDue = (contractsChanged == changedAtStart and not pass.more) and pass.soonest + 1 or 0
     return pass.resolved
 end
 
@@ -3397,7 +3500,9 @@ end)
 
 return {
     start = StartCrimsonHitman, recover = Recover, tick = Tick, expire = ExpireContracts,
-    forgetOldPhotos = ForgetOldPhotos, finishEndings = FinishEndings,
+    -- The most contracts one expiry pass ends; the rest wait a tick.
+    EXPIRIES_PER_PASS = EXPIRIES_PER_PASS,
+    forgetOldPhotos = ForgetOldPhotos, finishEndings = FinishEndings, prune = PruneStore,
     -- The expiry pass skips itself when nothing could have changed. These
     -- are how it is told that something did.
     markPresenceChanged = MarkPresenceChanged,

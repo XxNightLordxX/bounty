@@ -999,7 +999,7 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 | `Config.Audit.FlushIntervalMs` / `MaxQueueSize` | `10000` / `5000` | How often queued audit rows are written, and the most queued. |
 | `Config.Audit.RetentionDays` | `30` | Days the audit log is kept (json: a day's file goes once the whole day is older; mysql: at most 5,000 rows a tick). `0` keeps it forever. |
 | `Config.Audit.ContractRetentionDays` | `30` | Days a finished contract and its rows are kept. Only removed once finished, past this age, holding no unsettled escrow, owing nobody anything on login, and named by no open review item. Ledger history is not touched. `0` keeps them forever. |
-| `Config.Audit.ContractsPrunedPerTick` | `200` | Finished contracts removed per tick, so a first prune of a long-lived store does not stall the server. |
+| `Config.Audit.ContractsPrunedPerTick` | `200` | Finished contracts removed per prune, so a first prune of a long-lived store does not stall the server. The prune runs every ten minutes, and on every tick while it has a backlog; on `mysql` it removes 25 at most whatever this says (each is ten statements). |
 | `Config.RateLimit.Key` | `'license'` | What an action allowance is counted against: `'license'` per account, so switching character does not reset it; `'citizenid'` per character. |
 | `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, each informant (`informant`, `placerInformant`), informant tips (`locationTip`), messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`), reports to staff (`report`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
 | `Config.Diagnostics.SlowJobMs` | `25` | Every maintenance job (the ten-second tick's, and the death sampler's pass) times itself; one slower than this many milliseconds prints one Debug line naming it, at most every five minutes per job. `/ch-diag` and the admin panel list every job's worst, average and last times either way. Only time on the server thread counts, never database waits. `0` turns the line off. |
@@ -3337,24 +3337,41 @@ check measured 7 ms a pass on a full Windows server). `/ch-diag` lists the
 same jobs, with this server's own numbers and each one's interval.
 
 A whole maintenance pass with every job due at once, plus one sampler pass,
-takes about 5 ms on `json` and 18 ms on `mysql` in the harness (the `mysql`
-figure includes the harness's Lua database); the test holds it under 60 ms.
-Before these changes it was about 9 and 100 ms.
+takes about 5 to 20 ms on `json` and 20 to 45 ms on `mysql` in the harness (the
+`mysql` figure includes the harness's Lua database: the playtime pass's batch
+of 64 rows is most of it), and the test now holds its **worst** pass of seven
+under 100 ms, where it held the median under 60 ms. The median hid the pass
+that mattered: half an hour after a start every hold fell due together, and
+that one pass took 923 ms and 2,604 statements on `mysql` (196 ms on `json`);
+it now takes 199 ms (38 ms), a share of the releases a pass. And the worst of
+all, every hold and every contract due on the same tick after a long outage,
+took 2,496 ms and 7,670 statements on `mysql` (709 ms on `json`) in one frame;
+it now ends 25 contracts and releases 25 holds a pass, 411 ms and 1,048
+statements (142 ms), the rest on the ticks after (`tests/loops_spec.lua`
+pins both).
 
 **Server: the maintenance tick** (every `Config.Audit.FlushIntervalMs`, 10 s as
 shipped). A job not listed here runs every tick and costs under 0.06 ms a pass
-with nothing to do (the retries, the sweeps of rate limits and handles, the
-photo jobs, the review queue, the bodyguard and intent sweeps, the buyout
-queue, the prune).
+with nothing to do, and sends the database nothing (the retries of stuck
+joins, claims and creates, the sweeps of rate limits and handles, the photo
+sweep, the review queue, the bodyguard and intent sweeps, the restart hold,
+suspensions and the summary). On a busy `mysql` server with nothing to do, a
+tick sends two statements at most: the heartbeat, and every third tick the
+endings check; it sent seven or eight, and the condition sampler two more
+every second (`tests/loops_spec.lua` pins it job by job).
 
 | Job | Interval | Why that often | Cost a pass (`mysql` / `json`) |
 |---|---|---|---|
-| `contracts.releaseIdleHolds` | 10 s | The idle and attempt clocks advance by the time since the last pass; a hold is released within one tick of its window. No clock runs, and nothing is released, while staff hold the contract, the restart hold is on or the app is paused. Reads every running contract and its roster in two statements, and asks `qbx_core` once a pass for each person (was 2 statements and 2 look-ups per held contract: 400 statements every 10 s here) | 1.7 (4.3) / 1.7 (6.3); 2 statements |
-| `expireContracts` | 10 s, skipped until the next deadline, a presence change or a contract change | Its own next-wake logic decides: a pass with nothing that could have changed reads nothing | 0.11 (3.2) / 0.07 (2.0) |
+| `contracts.releaseIdleHolds` | 10 s | The idle and attempt clocks advance by the time since the last pass; a hold is released within one tick of its window. No clock runs, and nothing is released, while staff hold the contract, the restart hold is on or the app is paused. Reads the running contracts and their rosters from the snapshot it shares with the sampler and the expiry pass, read again only after a write (was 2 statements every pass), and asks `qbx_core` once a pass for each person. **At most 25 releases a pass** (`Contracts.IDLE_RELEASES_PER_PASS`): the clocks are kept in memory, so every hold falls due on the same pass half an hour after a start, and that pass released all two hundred in one frame (2,002 statements, 705 ms in the harness); the rest go on the passes after, their clocks standing | 1.9 / 1.0 with nothing due, 0 statements; 75 ms and 252 statements for a pass releasing 25 (`mysql`, harness) |
+| `expireContracts` | 10 s, skipped until the next deadline, a presence change or a contract change | Its own next-wake logic decides: a pass with nothing that could have changed reads nothing, and the list comes from the shared snapshot. **At most 25 endings a pass**, and the pass comes back on the next tick while any are left: after a long outage every deadline in it was due at once, two hundred endings in one frame (5,602 statements, 1.9 s in the harness; about a second on `json`) | 0.11 (3.2) / 0.07 (2.0); 317 ms and 726 statements for a pass ending 25 (`mysql`, harness), 120 ms on `json` |
 | `audit.flush` | 10 s | Audit rows written in batches; its time is what `/ch-diag`'s *maintenance tick* line reads | 0.28 (8.3) / 0.88 (26, the pass after 200 contracts were placed) |
 | `storage.flush` | 10 s | `json`: the changed files only, so a crash loses at most ten seconds. `mysql`: nothing | 0.00 / 0.33 (5.2) |
 | `storage.heartbeat` | `json` 60 s, `mysql` 10 s | When the server was last alive, which a restart's downtime is dated from (never charged to a deadline) | 0.00 / 0.01; one file write (34 ms seen on Windows), on a tick of its own |
-| `playtime.pass` | 60 s, first tick of each minute | Everybody's time in the city, in one batch | 0.21 (2.3) / 0.16 (1.2) |
+| `playtime.pass` | 60 s, first tick of each minute | Everybody's time in the city, in one batch. The first pass after a start reads every character's row in one statement and their numbers in `qbx_core`'s table in one more (was one of each per character: 129 statements with 64 here); when the tracker started is read once | 0.21 (2.3) / 0.16 (1.2); a transaction of a row per player |
+| `storage.prune` | **600 s**, and every tick while a pass removes a full batch | Retention is counted in days. Every tick it walked every contract kept on `json` (3 ms with thirty days of them) and sent two statements on `mysql`; a backlog was ten DELETEs a contract, two hundred contracts a tick (2,000 statements). On `mysql` a pass now removes at most 25 contracts, whatever `Config.Audit.ContractsPrunedPerTick` allows | 1.1 / 0.1 |
+| `bailout.processQueue` | 10 s | Buyouts waiting out their delay. `json` keeps an index of them rather than walking every contract kept each tick; `mysql` remembers the queue was empty and sends nothing until something queues one (was a statement every tick) | 0.01; 0 statements while none is queued |
+| `photos.expire`, `photos.forgetKept` | 10 s, only while kill photos are in use | A photo left open past `Config.Completion.PhotoOpenSeconds`, and one kept past `Config.Completion.KeptPhotoDays`. The expiry reads what is open once after a start and then keeps it as photos are opened, asking the store only when one is due (was a statement every tick) | 0.01; 0 statements with no view open |
+| `amendments.expire`, `rp.tick`, `death.sweep`, `contracts.retryStuckJoins` / `retryStuckClaims` / `retryStuckCreates`, `review.retryUnwritten` / `review.decide` | 10 s | Proposals past their time, from an index of the contracts with one open; targets recovering from a kill (nothing while `Config.Roleplay.EmsRelisting` is off); the sampler's own bookkeeping; work a throw left part-way, from in-memory lists of it; staff items the store would not take | under 0.02 each; 0 statements with nothing to do |
 | `bridges.refreshAccess` | **30 s** (was 10 s) | Who may have the app. A login, a job change, a duty change and a setting that moves it tell the player at once; this is the backstop | 0.32 (0.38) / 0.29 (0.47); 7 ms seen live |
 | `notify.deliverKept` | 10 s (was 60 s), nothing read while nothing is kept | Notices kept past a player's per-minute budget go on the first tick after that minute opens, rather than up to a minute later | 0.00 with nothing kept |
 | `rp_places.announce` | **60 s on the tick** (was a thread of its own) | NPC positions rotate by the hour; a change from the admin panel is announced at once | 0.01 |
@@ -3372,8 +3389,8 @@ what shares a tick shares a hitch.
 
 | Loop | Interval | Why that often | Cost a pass (`mysql` / `json`) |
 |---|---|---|---|
-| Condition sampler (`death.sampler`) | `Config.Completion.ConditionSampleMs`, 1 s | Damage is credited from the last sample, so attribution is only as precise as this. With nothing running it reads no rosters; each target's medical state and position is read once a pass, however many contracts name them (was once per contract) | 0.94 (1.7) / 1.13 (5.5); 2 statements, 1 with nothing running |
-| Handover countdown | `Config.Kidnap.TickMs`, 1 s | Only while a handover is under way; the thread ends with the last one | (per handover) |
+| Condition sampler (`death.sampler`) | `Config.Completion.ConditionSampleMs`, 1 s | Damage is credited from the last sample, so attribution is only as precise as this. The running contracts and their rosters come from one snapshot shared with the idle holds and the expiry pass (`Projection.liveSnapshot`), read again only after something is written (was 2 statements every second, 1 with nothing running); each target's medical state and position is read once a pass, however many contracts name them | 0.94 (1.7) / 1.13 (5.5); 0 statements while nothing is written |
+| Handover countdown | `Config.Kidnap.TickMs`, 1 s | Only while a handover is under way; the thread ends with the last one. Each countdown reads its contract once a pass (a statement a second per handover on `mysql`), and moves on by the time since the last pass (at least one tick, at most three), not by one tick whatever the pass waited on the database | (per handover) |
 | Hit checks | 50 ms | Only while a hit waits for its damage to show, for that victim | (per hit) |
 | Discord poster, alert flush | timers | Only while something waits to be posted | |
 
@@ -3442,6 +3459,24 @@ allocates.
 | Admin panel: Contracts | 0 (read every 5 s) | 82 → 17 |
 | Admin panel: Logs | unchanged | 76 → 38 |
 
+Round 3 (`tests/perf_round3_spec.lua`), measured the same way, and with
+2,000 finished contracts kept for the history-sized figures (`mysql`
+statements, harness):
+
+| Request | Before → now |
+|---|---|
+| Mine, with a history behind them | the whole history read three times (256 rows for a placer here) → the contracts not finished only (`live`: 56 rows) |
+| Mine, a target | 2 informant reads a card (20 here) → 1 the first time and none after: that they bought nothing is remembered |
+| Mine, every card's open proposals | one `amendments` request per card after every Mine read → carried in the Mine reply, from one read of which contracts have any |
+| Admin panel: a player, their history, a search by citizen id (an operative with 92 contracts) | 95, 187 and 93 statements → 4, 5 and 2: their operative rows and the escrow in one read each, not one per contract |
+| Admin panel: Settings history | 10 statements and 5,000 rows decoded a page → 1 statement and only matching rows: the action filter is in the statement (`LIKE`, escaped), and a page reads a page and one more |
+| Admin panel: Contracts, left open | the whole table every 5 s (2,200 rows, 1.9 MB here) → again only after a write or a retention prune (at most every 5 s while writes come, and every 5 minutes as a backstop) |
+| Admin panel: Settings | 172 KB at every open and after every change → the fixed parts once, then 36 KB: each row's key and what changes, under a hash the page sends back |
+| Board, every read | the 1.4 KB settings block every time → only when it changes, under a hash the page sends back |
+| A conversation read whole (up to ~26 KB) | on the reliable channel after every message → as a latent event over 8 KB |
+| Placing a contract | both players' whole history read for the cooldowns → the live contracts and the finished ones inside the longest wait |
+| Boot recovery, 200 live and 2,000 finished | every contract kept read, and escrow, the contract and escrow again read for each live one (2,889 statements for the start and its first ticks) → the contracts not finished and those still holding a line, their escrow in one read, each read again only where a step wrote: 2,889 → 2,180 statements, the start 5.4 → 3.7 s and 19.8 → 12.3 MB allocated in the harness. The steps' own reads under each contract's lock (`repairHeld`, `recoverJoining`) and the first tick's resumes are unchanged |
+
 A thousand requests in the mix a busy evening sends, with a write every
 tenth: `json` 1.3 s and 103 MB allocated before, 0.45 s and 40 MB now;
 `mysql` (harness) 24.6 s and 514 MB before, 3.2 s and 98 MB now.
@@ -3476,9 +3511,11 @@ How:
 No index was added: every query these requests send is served by one the
 schema already has (`idx_contract` on escrow and hitmen for the bulk reads,
 `idx_state`, `idx_target`, `idx_creator`, `idx_hitman`, `idx_thread`,
-`idx_cid`). The admin panel's contract list still reads the whole table, at
-most once every five seconds while it is open: its pages are cut from that
-one read, so they agree with each other, and a name search needs every row.
+`idx_cid`, `idx_audit_action`). The admin panel's contract list still reads the
+whole table: its pages are cut from that one read, so they agree with each
+other, and a name search needs every row. It is read again after a write to
+the store or a retention prune, at most every five seconds, rather than every five seconds
+whatever happened.
 
 ---
 

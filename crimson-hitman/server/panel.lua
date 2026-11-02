@@ -171,16 +171,43 @@ local function newestFirst(a, b)
     return tostring(a.id) > tostring(b.id)
 end
 
---- Every contract the store keeps, read at most once per OVERVIEW_SECONDS,
---- newest first: sorted once when read, not once per search or page asked
---- of it (a filter keeps the order).
+--- How long the contract list is kept while nothing is written to the
+--- store. Kept until the next write or prune (Projection.keptVersion) rather than
+--- for OVERVIEW_SECONDS: the whole table (5,400 rows, 4.6 MB on mysql with
+--- thirty days kept) was read again every five seconds the panel stayed on
+--- Contracts, the same every time. This is only the backstop for a store
+--- changed some way the server did not see (a database edited by hand).
+local CONTRACTS_KEPT_SECONDS = 300
+
+--- Every contract the store keeps, newest first: sorted once when read, not
+--- once per search or page asked of it (a filter keeps the order). Read
+--- again after anything is written through the store, at most once per
+--- OVERVIEW_SECONDS while writes keep coming, and at least every
+--- CONTRACTS_KEPT_SECONDS. Where the store's writes are not counted, every
+--- OVERVIEW_SECONDS as before.
 ---@return table[]
 local function everyContract()
     local now = os.time()
-    if not contractsCache or now - contractsCache.at >= OVERVIEW_SECONDS then
+    -- Writes and retention prunes (Projection.keptVersion): a prune removes
+    -- finished contracts, which this list shows.
+    local function version()
+        return deps.projection and deps.projection.keptVersion and deps.projection.keptVersion() or nil
+    end
+    local gen = version()
+    local cache = contractsCache
+    local fresh = cache ~= nil and now - cache.at < OVERVIEW_SECONDS
+    if cache and not fresh and gen ~= nil and cache.gen == gen
+        and now - cache.at < CONTRACTS_KEPT_SECONDS then
+        fresh = true
+    end
+    if not fresh then
         local rows = deps.storage.allContracts() or {}
         table.sort(rows, newestFirst)
-        contractsCache = { at = now, rows = rows }
+        -- Kept as of this generation only if nothing was written while it
+        -- was read (mysql waits): otherwise as of no generation, read again
+        -- after OVERVIEW_SECONDS as before.
+        local after = version()
+        contractsCache = { at = now, rows = rows, gen = (after == gen) and gen or nil }
     end
     return contractsCache.rows
 end
@@ -958,6 +985,9 @@ H.contracts = function(src, data)
         if not (online and online.cid == cid) then cid = cid:upper() end
     end
     if cid then
+        -- Their operative rows in one read (Admin.operativeRows), where one
+        -- per contract in their history was an await each on mysql.
+        local rows = deps.admin and deps.admin.operativeRows and deps.admin.operativeRows(cid) or nil
         for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
             local visible
             if contract.target_cid == cid then
@@ -965,7 +995,8 @@ H.contracts = function(src, data)
             elseif contract.creator_cid == cid then
                 visible = canIdentify or contract.anon_creator ~= true
             else
-                local hitman = Storage.readHitman(contract.id, cid)
+                local hitman
+                if rows then hitman = rows[contract.id] else hitman = Storage.readHitman(contract.id, cid) end
                 visible = canIdentify or not (hitman and hitman.anon == true)
             end
             if visible then viaCid[contract.id] = true end
@@ -1778,7 +1809,46 @@ local function developerWrite(src, op, data)
     return entry ~= nil and entry.category == 'developer' and developer(src)
 end
 
-H.settings = function(src)
+--- The parts of a Features or Limits row that come from the catalogue and
+--- the shipped and start-up defaults, fixed until the settings are set up
+--- again (Settings.schemaVersion). Sent once: the reply was 172 KB, nearly
+--- all of it these, rebuilt and sent whole at every open of the section and
+--- after every change. The value, where it comes from, who set it and
+--- whether it applies, and the most it may be, are sent every time.
+local SCHEMA_FIELDS = { 'group', 'label', 'about', 'category', 'money', 'shipped', 'hasShipped',
+    'kind', 'choices', 'min', 'integer', 'live', 'inflight', 'readonly', 'destroys', 'stricter',
+    'strict', 'whole', 'default' }
+
+--- [developer or not] = { owner, version, hash }
+local schemaHashes = {}
+
+--- The fixed parts of the rows this staff member is shown, as one short
+--- hash: worked out once per version of them, and again only when the
+--- settings are set up again.
+local function schemaHash(view, developerToo)
+    local settings = deps.settings
+    local version = settings.schemaVersion and settings.schemaVersion() or nil
+    local slot = developerToo and 'developer' or 'other'
+    local kept = schemaHashes[slot]
+    if kept and version ~= nil and kept.owner == settings and kept.version == version then
+        return kept.hash
+    end
+    local fixed = {}
+    for _, list in ipairs({ 'features', 'limits' }) do
+        local rows = {}
+        for i, row in ipairs(view[list] or {}) do
+            local parts = { key = row.key }
+            for _, field in ipairs(SCHEMA_FIELDS) do parts[field] = row[field] end
+            rows[i] = parts
+        end
+        fixed[list] = rows
+    end
+    local hash = deps.projection.digest(fixed)
+    schemaHashes[slot] = { owner = settings, version = version, hash = hash }
+    return hash
+end
+
+H.settings = function(src, data)
     local view = deps.settings.view()
     -- The Developer section's settings only for staff who may open it.
     if not developer(src) then
@@ -1790,6 +1860,18 @@ H.settings = function(src)
             view[list] = kept
         end
         view.developerHidden = true
+    end
+    -- The fixed parts once (SCHEMA_FIELDS): a page that already holds the
+    -- ones this hash names is sent each row's key and what changes.
+    local hash = schemaHash(view, view.developerHidden ~= true)
+    view.schema = hash
+    if type(data) == 'table' and data.schema == hash then
+        view.lean = true
+        for _, list in ipairs({ 'features', 'limits' }) do
+            for _, row in ipairs(view[list] or {}) do
+                for _, field in ipairs(SCHEMA_FIELDS) do row[field] = nil end
+            end
+        end
     end
     -- The kill photos kept from before they were turned off, for the button
     -- under Completion that removes them: only while they are off and some
