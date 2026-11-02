@@ -299,7 +299,8 @@
       open), and the panel closes on it, as the README says it does. */
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
-                   alerts: true, console: true, frozen: true, exportContract: true, playerView: true };
+                   alerts: true, console: true, frozen: true, exportContract: true, playerView: true,
+                   history: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -346,6 +347,10 @@
 
   function whyNoWrite() {
     if (!canWrite()) {
+      if (canModerate()) {
+        return 'Moderator: you may freeze, suspend, protect, void and move deadlines; this needs the staff '
+          + 'ACE itself (Config.Admin.Ace).';
+      }
       return 'Read only: changing anything needs the staff ACE itself (Config.Admin.Ace); '
         + 'the extra ACEs only read.';
     }
@@ -501,7 +506,7 @@
     a.type = 'button';
     a['data-act'] = act;
     var allowed = open !== undefined ? open : (always ? canWrite() : writesOpen());
-    if (!allowed) { a.disabled = true; a.title = whyNoWrite(); }
+    if (!allowed) { a.disabled = true; a.title = a.title || whyNoWrite(); }
     if (confirmLabel) a['data-confirm'] = 'yes';
     return h('button.btn' + (cls || ''), a, iconName ? icon(iconName) : null, h('span.lbl', label),
       confirmLabel ? h('span.cfm', confirmLabel) : null);
@@ -656,7 +661,9 @@
     setHtml(byId('badges'), frag(
       canWrite()
         ? h('span.badge.is-write', { title: 'You can change things here' }, icon('pen'), 'Can change')
-        : h('span.badge.is-read', { title: whyNoWrite() }, icon('eye'), 'Read only'),
+        : canModerate()
+          ? h('span.badge.is-moderator', { title: whyNoWrite() }, icon('gavel'), 'Moderator')
+          : h('span.badge.is-read', { title: whyNoWrite() }, icon('eye'), 'Read only'),
       canIdentify()
         ? h('span.badge.is-identity', { title: 'You see who is behind anonymous parties; every lookup is on the record' },
           icon('user-secret'), 'Sees identities')
@@ -1387,8 +1394,8 @@
       d.canVoid
         ? h('div.inline-form.is-wide',
           field('dr.reason', { class: 'is-grow', placeholder: 'Reason for the void (kept in the log)',
-            maxlength: '120', disabled: !writesOpen(), 'aria-label': 'Reason for the void' }),
-          writeBtn('.is-danger', 'void', {}, 'Void contract', 'Click again to void', 'ban'))
+            maxlength: '120', disabled: !modOpen(), 'aria-label': 'Reason for the void' }),
+          modBtn('.is-danger', 'void', {}, 'Void contract', 'Click again to void', 'ban'))
         : h('p.note', 'Closed: a closed contract is never voided.'),
       canIdentify() ? btn('.is-ghost', 'whois', { 'data-id': id }, 'Whois', 'user-secret') : null);
 
@@ -1529,13 +1536,13 @@
     if (!info.adjustable) {
       return frag(now, h('p.note', 'Only a live contract (active or accepted) has a deadline to move.'));
     }
-    var open = writesOpen();
+    var open = modOpen();
     var current = deadlineMinutes();
     return frag(now,
       h('div.inline-form.is-wide.dl-picks',
         segmented('dl-pick', DEADLINE_PICKS.map(function (m) {
           return { value: m, label: m < 60 ? m + ' min' : (m / 60) + ' h', disabled: !open,
-                   title: open ? null : whyNoWrite() };
+                   title: open ? null : whyNoMod() };
         }), current == null ? '' : current),
         field('dr.dl.min', { class: 'is-short', placeholder: 'Minutes', inputmode: 'numeric', maxlength: '5',
           'data-live': 'dl-preview', disabled: !open, 'aria-label': 'Minutes to move the deadline by' })),
@@ -1543,8 +1550,8 @@
       h('div.inline-form.is-wide',
         field('dr.dl.reason', { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
           maxlength: '120', disabled: !open, 'aria-label': 'Reason for moving the deadline' }),
-        writeBtn('', 'dl-extend', {}, 'Extend', 'Click again to extend', 'plus'),
-        writeBtn('', 'dl-shorten', {}, 'Shorten', 'Click again to shorten', 'minus')));
+        modBtn('', 'dl-extend', {}, 'Extend', 'Click again to extend', 'plus'),
+        modBtn('', 'dl-shorten', {}, 'Shorten', 'Click again to shorten', 'minus')));
   }
 
   function whoisBody(who) {
@@ -2262,6 +2269,7 @@
     S.players.whois = {};
     S.players.playtime = null;
     S.players.freeze = null;
+    resetPlayerStaff();
     return ask('player', { subject: subject.slice(0, 64) }, 'player').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); S.players.data = { error: words(reply) }; }
@@ -2270,6 +2278,7 @@
       // in the box afterwards.
       S.players.subject = reply.ok ? subject.slice(0, 64) : null;
       if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+      if (reply.ok) loadHistory();
     });
   }
 
@@ -2322,8 +2331,8 @@
         placeholder: frozen ? 'Reason for unfreezing (kept in the log)' : 'Reason for the freeze (kept in the log)',
         'aria-label': frozen ? 'Reason for unfreezing' : 'Reason for the freeze' }),
       frozen
-        ? writeBtn('', 'pl-unfreeze', {}, 'Unfreeze', 'Click again to unfreeze', 'play')
-        : writeBtn('.is-danger', 'pl-freeze', {}, 'Freeze', 'Click again to freeze', 'snowflake'));
+        ? modBtn('', 'pl-unfreeze', {}, 'Unfreeze', 'Click again to unfreeze', 'play')
+        : modBtn('.is-danger', 'pl-freeze', {}, 'Freeze', 'Click again to freeze', 'snowflake'));
     var about = frozen
       ? frag(h('p.sub', 'Frozen ' + ago(frozen.since) + (frozen.reason ? ': ' + String(frozen.reason) : '')
           + (frozen.by ? ' · by ' + String(frozen.by) : '')),
@@ -2349,7 +2358,7 @@
             h('span.chip.is-warn.is-frozen', 'Frozen')),
           h('td.nowrap', { title: when(row.since) }, ago(row.since)),
           h('td', String(row.reason || '—')),
-          h('td', writeBtn('.is-small', 'pl-unfreeze-row', { 'data-ref': String(row.ref) }, 'Unfreeze',
+          h('td', modBtn('.is-small', 'pl-unfreeze-row', { 'data-ref': String(row.ref) }, 'Unfreeze',
             'Click again to unfreeze', 'play')));
       })))) : empty('Nobody is frozen.'), '', h('span.sub', num(rows.length)));
   }
@@ -2370,6 +2379,8 @@
         p.online ? h('span.chip.is-live', 'in the city · player ' + String(p.server)) : h('span.chip', 'offline'),
         d.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
       freezeCard(d.frozen),
+      // Suspend, Protect, Pay and the history card (the block near the end).
+      playerStaffCards(d),
       // Sent only to staff with the identity ACE: the counters hold what was
       // placed and taken anonymously too, and nothing says which.
       stats ? h('div.tiles.is-compact',
@@ -3173,7 +3184,7 @@
         { key: 'Bailout.MinMultiplier', view: 'money', label: 'Buyout price' },
         { key: 'Bailout.ProcessingDelaySeconds', view: 'money', label: 'Hitman\'s head start' }] },
     { title: 'The staff freeze', icon: 'snowflake',
-      text: 'Staff with the staff ACE can freeze a player for a staff situation or a dispute, from Players. '
+      text: 'Staff with the staff or moderator ACE can freeze a player for a staff situation or a dispute, from Players. '
         + 'Every live contract they are party to goes on hold: its clocks stop, and nothing on it is accepted, '
         + 'paid, refunded or ended. Players are told only that it is on hold by staff. Unfreeze gives the time '
         + 'on hold back, to the second.',
@@ -3967,6 +3978,346 @@
     }
   });
 
+  /* ---------- a player's staff tools: suspend, protect, pay, history -------
+
+     Under a player's lookup in Players. Suspend and Protect are the
+     moderator's (the staff ACE, or Config.Admin.ModeratorAce), as Freeze and
+     Void are; Pay is the staff ACE's alone. Each takes a reason and the
+     two-click confirm. Lift, which only gives back what a suspension or a
+     protection took, is one click. The history card only reads. */
+
+  /** The moderator's ops: the staff ACE, or the moderator ACE. */
+  function canModerate() { return S.access.canModerate === true || canWrite(); }
+  function modOpen() { return canModerate() && S.recovery === 'ready'; }
+  function whyNoMod() {
+    if (!canModerate()) {
+      return 'Read only: this needs the staff ACE (Config.Admin.Ace) or the moderator ACE '
+        + '(Config.Admin.ModeratorAce); the extra ACEs only read.';
+    }
+    if (S.recovery === 'recovering') return 'Still recovering from the restart: try again in a moment.';
+    if (S.recovery === 'recovery_failed') {
+      return 'Recovery failed at the last start: restart the resource once the cause in the console is fixed.';
+    }
+    return '';
+  }
+  /** A button for one of the moderator's ops: open to them as to the staff ACE. */
+  function modBtn(cls, act, attrs, label, confirmLabel, iconName) {
+    var open = modOpen();
+    var a = attrs || {};
+    if (!open) a.title = whyNoMod();
+    return writeBtn(cls, act, a, label, confirmLabel, iconName, false, open);
+  }
+
+  var SUSPEND_DAYS = [1, 3, 7, 30];
+  var PROTECT_UNITS = [{ value: 'h', label: 'Hours' }, { value: 'd', label: 'Days' },
+                       { value: 'forever', label: 'Permanent' }];
+
+  function resetPlayerStaff() {
+    S.pstaff = { suspend: null, protect: null, pay: null, history: null, historyError: null,
+                 unit: 'h', account: 'cash' };
+    ['ps.days', 'ps.reason', 'pp.amount', 'pp.reason', 'pay.amount', 'pay.reason'].forEach(function (k) {
+      delete S.forms[k];
+    });
+  }
+  resetPlayerStaff();
+
+  function drawPlayer() {
+    if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+  }
+
+  /** Until when, in words: a date, or until lifted. */
+  function untilWords(row, forever) {
+    return row && row['until'] ? 'until ' + when(row['until']) + ' (' + ago(row['until']) + ')' : forever;
+  }
+
+  function suspendCard(d) {
+    var row = d.suspended;
+    var body;
+    if (row) {
+      body = frag(
+        h('p.sub', 'Suspended ' + ago(row.since) + ', ' + untilWords(row, 'until you lift it')
+          + (row.reason ? ': ' + String(row.reason) : '') + (row.by ? ' · by ' + String(row.by) : '')),
+        h('p.note', 'They may not place or accept a contract; they are told until when and why. '
+          + 'Their live contracts run on: freeze them for that.'),
+        h('div.btn-row', modBtn('', 'ps-lift', { id: 'ps-lift' }, 'Lift suspension', null, 'unlock')));
+    } else {
+      var days = trim(S.forms['ps.days']);
+      body = frag(
+        h('p.note', 'Bars them from placing or accepting contracts, for some days or until you lift it, '
+          + 'with a reason they are shown. Their live contracts are not touched: freeze them for that.'),
+        h('div.inline-form.is-wide.ps-picks',
+          segmented('ps-days', SUSPEND_DAYS.map(function (n) {
+            return { value: String(n), label: n === 1 ? '1 day' : n + ' days', disabled: !modOpen() };
+          }).concat([{ value: '0', label: 'Until lifted', disabled: !modOpen() }]), days),
+          field('ps.days', { id: 'ps-days', class: 'is-short', placeholder: 'Days', inputmode: 'numeric',
+            maxlength: '3', disabled: !modOpen(), 'aria-label': 'Days suspended (0 until lifted)' })),
+        h('div.inline-form.is-wide',
+          field('ps.reason', { id: 'ps-reason', class: 'is-grow', maxlength: '120', disabled: !modOpen(),
+            placeholder: 'Reason (required: they are shown it, and it goes in the log)',
+            'aria-label': 'Reason for the suspension' }),
+          modBtn('.is-danger', 'ps-suspend', {}, 'Suspend', 'Click again to suspend', 'ban')));
+    }
+    return card('Suspend from contracts', frag(body, answerBox(S.pstaff.suspend)), '',
+      row ? h('span.chip.is-warn.is-suspended', 'Suspended') : null);
+  }
+
+  function protectCard(d) {
+    var row = d.protected;
+    var body;
+    if (row) {
+      body = frag(
+        h('p.sub', 'Protected ' + ago(row.since) + ', ' + untilWords(row, 'for good')
+          + (row.reason ? ': ' + String(row.reason) : '') + (row.by ? ' · by ' + String(row.by) : '')),
+        h('p.note', 'No new contract may name them. Contracts already on them run on: freeze them to put '
+          + 'those on hold.'),
+        h('div.btn-row', modBtn('', 'pp-lift', { id: 'pp-lift' }, 'Lift protection', null, 'unlock')));
+    } else {
+      var forever = S.pstaff.unit === 'forever';
+      body = frag(
+        h('p.note', 'Makes them untargetable: a new player, a break from roleplay, a staff member off duty. '
+          + 'A new contract on them is refused with the answer the target rules give ("cannot be listed '
+          + 'right now"), and the target search lists them like anybody, so nothing says staff protect them. '
+          + 'Contracts already on them are not touched: freeze them for that.'),
+        h('div.inline-form.is-wide.pp-picks',
+          segmented('pp-unit', PROTECT_UNITS.map(function (u) {
+            return { value: u.value, label: u.label, disabled: !modOpen() };
+          }), S.pstaff.unit),
+          forever ? null : field('pp.amount', { id: 'pp-amount', class: 'is-short', inputmode: 'numeric',
+            maxlength: '4', placeholder: S.pstaff.unit === 'd' ? 'Days' : 'Hours', disabled: !modOpen(),
+            'aria-label': S.pstaff.unit === 'd' ? 'Days protected' : 'Hours protected' })),
+        h('div.inline-form.is-wide',
+          field('pp.reason', { id: 'pp-reason', class: 'is-grow', maxlength: '120', disabled: !modOpen(),
+            placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the protection' }),
+          modBtn('', 'pp-protect', {}, 'Protect', 'Click again to protect', 'shield')));
+    }
+    return card('Protect from contracts', frag(body, answerBox(S.pstaff.protect)), '',
+      row ? h('span.chip.is-protected', 'Protected') : null);
+  }
+
+  function payCard(d) {
+    var max = Number(d.payMax) || 0;
+    var open = writesOpen() && max > 0;
+    var why = max > 0 ? whyNoWrite() : 'Manual payments are off (Config.Staff.ManualPaymentMax is 0).';
+    return card('Pay', frag(
+      h('p.note', max > 0
+        ? 'Pays them cash or bank, at most ' + money(max) + ' at once (Config.Staff.ManualPaymentMax): '
+          + 'into their hands now when they are in the city, otherwise at their next login. It creates money, '
+          + 'so every payment is on the record with your reason.'
+        : why),
+      h('div.inline-form.is-wide.pay-form',
+        segmented('pay-account', [{ value: 'cash', label: 'Cash', disabled: !open },
+          { value: 'bank', label: 'Bank', disabled: !open }], S.pstaff.account),
+        field('pay.amount', { id: 'pay-amount', class: 'is-short', inputmode: 'numeric', maxlength: '9',
+          placeholder: 'Amount ($)', disabled: !open, 'aria-label': 'Amount to pay' })),
+      h('div.inline-form.is-wide',
+        field('pay.reason', { id: 'pay-reason', class: 'is-grow', maxlength: '120', disabled: !open,
+          placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the payment' }),
+        writeBtn('.is-danger', 'pay-send', open ? {} : { title: why }, 'Pay', 'Click again to pay',
+          'money-bill', false, open)),
+      answerBox(S.pstaff.pay)));
+  }
+
+  var MEASURE_LABEL = { freeze: 'Freeze', suspend: 'Suspension', protect: 'Protection' };
+  var ROLE_LABEL = { client: 'placed', target: 'on them', hitman: 'took' };
+
+  function moneyTable(rows, none) {
+    rows = asList(rows);
+    if (!rows.length) return empty(none);
+    return h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', 'Kind'), h('th.num', 'Amount'))),
+      h('tbody', rows.map(function (r) {
+        return h('tr', h('td', String(r.kind)), h('td.num', money(r.amount)));
+      }))));
+  }
+
+  function historyCard() {
+    var hd = S.pstaff.history;
+    if (S.pstaff.historyError) return card('History', empty(S.pstaff.historyError));
+    if (!hd) return card('History', loading('Reading their history…'));
+    var c = hd.counts || {};
+    var measures = asList(hd.measures);
+    var recent = asList(hd.recent);
+    var ident = hd.identified === true;
+    return card('History', frag(
+      h('p.hint', ident
+        ? 'Everything the store keeps of them, anonymous contracts included'
+          + (Number(hd.anonymous) > 0 ? ' (' + num(hd.anonymous) + ' anonymous)' : '') + '. Read-only.'
+        : 'What the store keeps of them, leaving out every contract they placed or took anonymously, '
+          + 'and any money or purchase on one, which only the identity ACE may see. No names. Read-only.'),
+      h('div.tiles.is-compact',
+        tile('Placed', h('p.big', num(c.placed))),
+        tile('Taken', h('p.big', num(c.taken))),
+        tile('Completed', h('p.big', num(c.completed))),
+        tile('Cancelled', h('p.big', num(c.cancelled))),
+        tile('On them', h('p.big', num(c.onThem))),
+        tile('Bought out', h('p.big', num(c.boughtOut)))),
+      h('div.tiles.is-compact',
+        tile('Buyouts paid', h('p.big', num(hd.buyouts && hd.buyouts.paid))),
+        tile('Paid for buyouts', h('p.big.is-sum', money(hd.buyouts && hd.buyouts.amount))),
+        tile('Informants bought', h('p.big', num(hd.informants && hd.informants.count))),
+        tile('Spent on informants', h('p.big.is-sum', money(hd.informants && hd.informants.spent)))),
+      h('div.cols',
+        card('Money in', moneyTable(hd.money && hd.money['in'], 'Nothing in that the store keeps.')),
+        card('Money out', moneyTable(hd.money && hd.money.out, 'Nothing out that the store keeps.'))),
+      card('Freezes, suspensions and protections', measures.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'What'), h('th', 'From'), h('th', 'Until'), h('th', 'State'),
+          h('th', 'Reason'))),
+        h('tbody', measures.map(function (m) {
+          return h('tr',
+            h('td', MEASURE_LABEL[m.kind] || String(m.kind)),
+            h('td.nowrap', when(m.from)),
+            h('td.nowrap', m.ended ? when(m.ended) : m['until'] ? when(m['until']) : '—'),
+            h('td', String(m.state || '—')),
+            h('td', String(m.reason || '—') + (m.by ? ' · by ' + String(m.by) : '')));
+        })))) : empty('None on record.')),
+      card('Contracts', recent.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Contract'), h('th', 'Their part'), h('th', 'State'), h('th', 'Placed'),
+          ident ? h('th', 'Client') : null, ident ? h('th', 'Target') : null)),
+        h('tbody', recent.map(function (r) {
+          var id = String(r.id);
+          return h('tr',
+            h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': id }, id)),
+            h('td', asList(r.roles).map(function (x) { return ROLE_LABEL[x] || String(x); }).join(', '),
+              r.anonymous ? h('span.chip.is-anon', 'anonymous') : null),
+            h('td', stateChip(r.state)), h('td.nowrap', when(r.created_at)),
+            ident ? h('td.name', String(r.client || '—')) : null,
+            ident ? h('td.name', String(r.target || '—')) : null);
+        })))) : empty('No contracts the store keeps.'), '', h('span.sub', 'newest first'))));
+  }
+
+  /** The cards under Freeze on a player's lookup. */
+  function playerStaffCards(d) {
+    return frag(h('div.cols', suspendCard(d), protectCard(d)), payCard(d), historyCard());
+  }
+
+  function loadHistory() {
+    var subject = S.players.subject;
+    if (!subject) return Promise.resolve();
+    S.pstaff.history = null;
+    S.pstaff.historyError = null;
+    return ask('history', { subject: subject }, 'history').then(function (reply) {
+      if (!reply || subject !== S.players.subject) return;
+      if (reply.ok) S.pstaff.history = reply.data || {};
+      else S.pstaff.historyError = words(reply);
+      drawPlayer();
+    });
+  }
+
+  /** A write from one of the cards: its answer kept on the card, a toast,
+      and the lookup and its history read again once it went through. */
+  function staffWrite(sent, slot) {
+    return sent.then(function (reply) {
+      if (!reply) return null;
+      S.pstaff[slot] = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) {
+        var keep = S.pstaff[slot];
+        loadPlayer().then(function () { S.pstaff[slot] = keep; drawPlayer(); });
+      } else {
+        drawPlayer();
+      }
+      return reply;
+    });
+  }
+
+  function refuse(slot, text) {
+    disarm();
+    S.pstaff[slot] = { ok: false, text: text };
+    drawPlayer();
+  }
+
+  ACTIONS['ps-days'] = function (node) {
+    S.forms['ps.days'] = node.getAttribute('data-value') || '';
+    disarm();
+    drawPlayer();
+  };
+  ACTIONS['ps-suspend'] = function (node) {
+    if (!S.players.subject) return;
+    var reason = trim(S.forms['ps.reason']);
+    var raw = trim(S.forms['ps.days']);
+    if (!/^\d{1,3}$/.test(raw) || Number(raw) > 365) {
+      return refuse('suspend', 'Choose how many days (1 to 365), or Until lifted.');
+    }
+    if (!reason) return refuse('suspend', 'Give a reason: they are shown it, and it goes on the record.');
+    if (!confirmed(node)) return;
+    staffWrite(write('suspend', { subject: S.players.subject, days: Number(raw),
+      reason: reason.slice(0, 120) }, 'pstaff:suspend', node), 'suspend');
+  };
+  ACTIONS['ps-lift'] = function (node) {
+    if (!S.players.subject) return;
+    staffWrite(write('unsuspend', { subject: S.players.subject }, 'pstaff:suspend', node), 'suspend');
+  };
+
+  ACTIONS['pp-unit'] = function (node) {
+    S.pstaff.unit = node.getAttribute('data-value') || 'h';
+    disarm();
+    drawPlayer();
+  };
+  ACTIONS['pp-protect'] = function (node) {
+    if (!S.players.subject) return;
+    var reason = trim(S.forms['pp.reason']);
+    var hours = 0;
+    if (S.pstaff.unit !== 'forever') {
+      var raw = trim(S.forms['pp.amount']);
+      var n = /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
+      hours = S.pstaff.unit === 'd' ? n * 24 : n;
+      if (n < 1 || hours > 8760) {
+        return refuse('protect', S.pstaff.unit === 'd' ? 'Give a number of days, 1 to 365, or choose Permanent.'
+          : 'Give a number of hours, 1 to 8760, or choose Permanent.');
+      }
+    }
+    if (!reason) return refuse('protect', 'Give a reason: it goes on the record.');
+    if (!confirmed(node)) return;
+    staffWrite(write('protect', { subject: S.players.subject, hours: hours,
+      reason: reason.slice(0, 120) }, 'pstaff:protect', node), 'protect');
+  };
+  ACTIONS['pp-lift'] = function (node) {
+    if (!S.players.subject) return;
+    staffWrite(write('unprotect', { subject: S.players.subject }, 'pstaff:protect', node), 'protect');
+  };
+
+  ACTIONS['pay-account'] = function (node) {
+    S.pstaff.account = node.getAttribute('data-value') === 'bank' ? 'bank' : 'cash';
+    disarm();
+    drawPlayer();
+  };
+  ACTIONS['pay-send'] = function (node) {
+    if (!S.players.subject) return;
+    var max = Number(S.players.data && S.players.data.payMax) || 0;
+    var amount = wholeNumber(S.forms['pay.amount']);
+    var reason = trim(S.forms['pay.reason']);
+    if (!amount) return refuse('pay', 'Give the amount, a whole number of dollars.');
+    if (max > 0 && amount > max) {
+      return refuse('pay', 'At most ' + money(max) + ' at once (Config.Staff.ManualPaymentMax).');
+    }
+    if (!reason) return refuse('pay', 'Give a reason: it goes on the record.');
+    if (!confirmed(node)) return;
+    staffWrite(write('manualPay', { subject: S.players.subject, amount: amount, account: S.pstaff.account,
+      reason: reason.slice(0, 120) }, 'pstaff:pay', node), 'pay');
+  };
+
+  STAFF_ACTIONS.push(
+    { title: 'Suspend or protect a player', icon: 'ban', view: 'players', go: 'Open Players',
+      text: 'Look the player up. Suspend bars them from placing or accepting contracts for some days or until '
+        + 'lifted, with a reason they are shown; Protect makes them untargetable for some hours, days or for '
+        + 'good. Neither touches live contracts: the freeze is the tool for those. Lift ends either at once.' },
+    { title: 'Pay a player', icon: 'money-bill', view: 'players', go: 'Open Players',
+      text: 'Look the player up, then Pay: cash or bank, with a reason, on two clicks, at most '
+        + 'Config.Staff.ManualPaymentMax. Paid at their next login when they are away. The staff ACE only.' });
+
+  HELP.push(
+    { title: 'Suspensions and protections', icon: 'ban',
+      text: 'Staff with the staff or moderator ACE can suspend a player from contracts (they cannot place or '
+        + 'accept one, and are told until when and why) or protect one from them (a new contract on them is '
+        + 'refused as "cannot be listed right now", and nothing says staff protect them). Both end on their '
+        + 'own, or with Lift. Neither touches a contract already running: the freeze is the tool for that.',
+      links: [] },
+    { title: 'Moderators', icon: 'gavel',
+      text: 'The moderator ACE (Config.Admin.ModeratorAce) reads everything the staff ACE reads, without '
+        + 'identities. They may freeze, suspend, protect, void and move a deadline. Settings, payments, '
+        + 'settling, the review queue and the Developer section stay with the staff ACE.',
+      links: [{ key: 'Staff.ManualPaymentMax', view: 'limits', label: 'Most one manual payment may be' }] });
+
   /* ---------- opening and closing -------------------------------------- */
 
   function clearTimers() {
@@ -3998,6 +4349,7 @@
     S.players.playtime = null;
     S.players.freeze = null;
     S.players.frozen = null;
+    resetPlayerStaff();
     S.settings.data = null;
     S.settings.answers = {};
     S.settings.photos = null;

@@ -1807,3 +1807,10 @@ html.is-whitelisted-view main {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* A suspension from contracts, at the top of the board (server/sanctions.lua). */
+.suspended-note {
+  margin: 0 0 0.75rem; padding: 0.7rem 0.85rem; border-radius: 10px;
+  border: 1px solid rgba(220, 70, 70, 0.55); background: rgba(220, 70, 70, 0.12);
+  font-size: 0.9rem; line-height: 1.35; overflow-wrap: anywhere;
+}

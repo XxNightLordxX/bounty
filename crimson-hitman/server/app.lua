@@ -626,7 +626,16 @@ function App.register()
     -- Listings ----------------------------------------------------------
 
     handler('list', 'load', function(actor, payload)
-        return deps.projection.listing(actor.cid, payload.page)
+        local listing = deps.projection.listing(actor.cid, payload.page)
+        -- Their own suspension from contracts, for the line on the board:
+        -- until when and the reason staff gave, never who
+        -- (server/sanctions.lua).
+        local suspension = deps.contracts.suspension and deps.contracts.suspension(actor.cid)
+        if suspension and type(listing) == 'table' then
+            listing.suspended = deps.sanctions and deps.sanctions.refusal(suspension)
+                or { untilAt = suspension.until_at, reason = suspension.reason }
+        end
+        return listing
     end)
 
     handler('mine', 'load', function(actor)

@@ -315,6 +315,11 @@ CH.ERR = {
     --- Every contract is on the restart hold, the last half hour before a
     --- scheduled restart (server/freeze.lua): a handover is not armed.
     RESTART_HOLD         = 'restart_hold',
+    --- Staff have suspended this player from contracts from the admin panel
+    --- (server/sanctions.lua): they may neither place nor accept one until
+    --- it ends or is lifted. Sent with { untilAt = os.time() or nil for
+    --- until lifted, reason }, their own suspension's, never who set it.
+    SUSPENDED            = 'suspended',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

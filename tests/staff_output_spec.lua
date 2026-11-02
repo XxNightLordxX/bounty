@@ -471,7 +471,9 @@ describe('every staff command has a button in the admin panel', function()
                 if not most or level == LEVELS.IDENTITY
                     or (level == LEVELS.WRITE and most == LEVELS.READ) then most = level end
             end
-            eq(most, entry.level, key .. ': its ops need ' .. tostring(most))
+            -- A command whose button a moderator may use (void) needs the
+            -- moderator level in the panel, and the staff ACE as a command.
+            eq(most, entry.moderator and LEVELS.MOD or entry.level, key .. ': its ops need ' .. tostring(most))
             if entry.level ~= LEVELS.READ then
                 local refused = ask(7, entry.ops[#entry.ops], {})
                 eq(refused.ok, false, key .. ' in the panel to an extra ACE')

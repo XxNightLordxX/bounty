@@ -11,6 +11,16 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Suspend, protect, a player's history, manual payments and moderators**:
+  under **Players** in the admin panel, staff suspend a player from placing
+  or accepting contracts (for some days or until lifted, with a reason they
+  are shown), protect a player from new contracts (for hours, days or for
+  good), read a player's history card, and pay a player cash or bank (at most
+  `Config.Staff.ManualPaymentMax`). The new `Config.Admin.ModeratorAce`
+  (`crimson.moderator`) reads everything without identities and may freeze,
+  suspend, protect, void and move a deadline; `crimson.admin` keeps
+  everything. See *Suspensions and protections*, *Player history* and
+  *Manual payments*.
 - **The staff panel is grouped by who uses it**: six sections (Live, Staff
   actions, Rules, Features, Logs & alerts, Developer), each with its views as
   tabs, a search box on every settings page, each setting's shipped default
@@ -307,8 +317,9 @@ look-ups), `crimson_mutes`, `crimson_photos`,
 on the whitelisted-job view's Notify me), `crimson_playtime` (each character's
 counted playtime), `crimson_location_tips` (the informant tips hitmen bought),
 `crimson_freezes` (the players staff have frozen from the admin panel),
-`crimson_contract_staff` (staff notes, removals and text edits on a contract)
-and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+`crimson_contract_staff` (staff notes, removals and text edits on a contract),
+`crimson_staff_records` (suspensions, protections, freezes' history and manual
+payments, from the admin panel) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
 engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
@@ -326,8 +337,9 @@ shows; NULL where no bulletin went), and the tables `crimson_review` (the
 review queue), `crimson_settings` (the admin panel's settings),
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (the
 whitelisted-job view's Notify me), `crimson_playtime` (the playtime counted
-here), `crimson_freezes` (the players staff have frozen) and
-`crimson_contract_staff` (staff notes, removals and text edits): import
+here), `crimson_freezes` (the players staff have frozen),
+`crimson_contract_staff` (staff notes, removals and text edits) and
+`crimson_staff_records` (suspensions, protections and manual payments): import
 `install/sql/crimson_hitman.sql`, or create them as a user that may. It also
 adds three indexes, which an existing database gets at its next start (about
 three seconds per million audit rows, with writes going on) or, for a user
@@ -791,11 +803,13 @@ Staff tools: `/hitmanadmin` and the F8 commands (see *Staff commands* and *Admin
 | `Config.Admin.Ace` | `'crimson.admin'` | The ACE for staff, and for everything that writes or moves money. The server console is always allowed. |
 | `Config.Admin.IdentityAce` | `'crimson.identity'` | Reading who is behind an anonymous party, gated apart and given to fewer people. Without it every staff view names each party by their place on the contract, and an anonymous one as Anonymous. |
 | `Config.Admin.DeveloperAce` | `crimson.developer` | Opens the admin panel's **Developer** section (console, diagnostics, storage, debug, rate limits and the read-only values). Staff holding `Config.Admin.Ace` see it too, so a server that never grants it locks nobody out; the panel then says how to grant it. Never changed from the panel. |
+| `Config.Admin.ModeratorAce` | `crimson.moderator` | The admin panel's moderator level: reads everything `Config.Admin.Ace` reads, scrubbed as without `IdentityAce`, and may freeze and unfreeze, suspend, protect, void and move a deadline. Never settings, manual payments, settling or refunds, the review queue or the **Developer** section. Nobody holds it until you grant it (`add_ace group.moderator crimson.moderator allow`). Never changed from the panel. |
 | `Config.Admin.ExtraAces` | `{ 'command' }` | Extra ACEs that open the read-only commands (diag, timeline, stuck, contracts) and the admin panel to read; void, settle, whois and every write need `Ace` itself. `command` is the ACE most admin groups already carry, so an owner can run the diagnosis before setting anything up. |
 | `Config.Admin.Commands` | `ch-timeline`, `ch-void`, `ch-stuck`, `ch-settle`, `ch-whois`, `ch-contracts`, `ch-diag`, `ch-refresh`, `ch-review`, `hitmanadmin` | Command names, without the slash. Answers print in F8 or the server console, never in chat. `refresh` brings every wait forward on a test server and needs `Ace` itself; `review` moves money and needs it too; `panel` opens the admin panel. |
 | `Config.Admin.PanelPageSize` | `25` | Rows per page in the panel's lists. |
 | `Config.Admin.PanelRefreshSeconds` | `10` | How often the overview refreshes while open. |
 | `Config.Admin.TimelineRows` | `200` | Audit rows read for one contract's timeline. |
+| `Config.Staff.ManualPaymentMax` | `100000` | The most one manual staff payment may be, in dollars (**Players**, **Pay**; `crimson.admin` itself). `0` turns manual payments off. Changeable from the panel under **Rules > Limits**, group *Staff*. |
 
 The staff webhook for financial movements and rejected attempts is
 `set crimson_hitman_webhook "..."` in server.cfg. Never put either webhook in
@@ -1919,7 +1933,8 @@ next request.
 |---|---|
 | `crimson.admin` (`Config.Admin.Ace`), or one of `Config.Admin.ExtraAces` | Opening the panel, and every section that reads: the overview, contracts and their detail, Stuck escrow, the review queue, the alerts, the audit log, players, the Rules and Features settings (to look at), the diagnosis under Tools, Permissions |
 | `crimson.developer` (`Config.Admin.DeveloperAce`), or `crimson.admin` itself | The **Developer** section: the console, diagnostics, and the developer settings (debug, storage, rate limits, timings, the read-only values). The server refuses the console and leaves the developer settings out of what it sends for staff without it. Staff holding `crimson.admin` always have it, so a server that never grants `crimson.developer` locks nobody out: they see a one-line note on how to grant it to its own people (`add_ace group.admin crimson.developer allow`) |
-| `crimson.admin` itself | Everything that writes: void, settle, resolve a review item, freeze, acknowledge an alert, send a test alert, change or reset a setting, remove the kill photos kept from before, the timer refresh, flushing the log |
+| `crimson.moderator` (`Config.Admin.ModeratorAce`), or `crimson.admin` itself | Everything that reads, scrubbed as without `crimson.identity`, and the moderator's writes: void, move a deadline, freeze and unfreeze, suspend and lift, protect and lift |
+| `crimson.admin` itself | Everything that writes: the moderator's, and settle, resolve a review item, a manual payment, acknowledge an alert, send a test alert, change or reset a setting, remove the kill photos kept from before, the timer refresh, flushing the log |
 | `crimson.identity` (`Config.Admin.IdentityAce`) as well | Who is behind an anonymous client or hitman, anywhere in the panel; every citizen id; finding a player's rows in the log; whois |
 
 Without `crimson.identity` an anonymous party is shown as *Anonymous*, every
@@ -2027,7 +2042,7 @@ writes `admin_panel_contract`.
 ### Staff freeze
 
 Look a player up under **Players**, type a reason and click **Freeze** twice.
-It is a *write* (`crimson.admin` itself), like **Void contract**, and is
+It is a moderator's *write* (`crimson.admin` or `crimson.moderator`), like **Void contract**, and is
 audited as `freeze_player` (your citizen id, theirs and the reason); the
 release is `unfreeze_player`. There is no slash command and no timer: a freeze
 ends only when you click **Unfreeze** on their lookup, or on their row under
@@ -2061,13 +2076,75 @@ player's lookup; without `crimson.identity`, a contract held only through an
 anonymous party carries none, so the badge never says that the player you
 froze is behind an anonymous client or operative.
 
+### Suspensions and protections
+
+Look a player up under **Players**. Both are the moderator's (`crimson.admin`
+or `crimson.moderator`), take a reason and the two-click confirm, and are
+lifted early with one click on **Lift**. Each ends by itself when its time
+runs out (read as over at once, written down as ended by the next
+maintenance tick). Both are kept by the store (`data/records.json` on json,
+the `crimson_staff_records` table on mysql), so they survive a restart, and
+an ended one stays for the player's history.
+
+- **Suspend** bars the player from placing or accepting a contract for 1 to
+  365 days, or until lifted. They are told *You are suspended from contracts
+  until <date>: <reason>* when they try (nothing is taken), at the top of
+  the app's board, and in a phone notice (kept for their next login when
+  away); never which staff member. Audited `staff_suspend`,
+  `staff_suspend_lifted` and `staff_suspend_expired`.
+- **Protect** makes the player untargetable for some hours or days, or for
+  good: a new player, a break from roleplay, a staff member off duty. A new
+  contract on them is refused as `target_protected`, *That target cannot be
+  listed right now.*, the answer the target rules already give, and the
+  target search and browse list them exactly as before, as they list a
+  barred job's member: nothing on the list or in the refusal says staff
+  protect them. The protected player is not told. Audited `staff_protect`,
+  `staff_protect_lifted` and `staff_protect_expired`.
+
+Neither touches a live contract: one the suspended player placed or holds,
+or one already on the protected player, runs on as before. The freeze is the
+tool for those, and both cards say so.
+
+### Player history
+
+A read-only **History** card under each player's lookup: the contracts they
+placed, took, completed and cancelled, contracts on them and buyouts, the
+informants they bought, the money in and out by kind (rewards put up and
+returned, payouts, stakes, buyout premiums and refunds, informants,
+anonymity fees, staff payments), and every freeze, suspension and protection
+with its dates. It reads what the store keeps: contracts and the audit log
+are pruned after `Config.Audit.ContractRetentionDays` and `RetentionDays`;
+the staff records are never pruned. Freezes are recorded from this version
+on.
+
+Without `crimson.identity` nobody's name is on it, and a contract the player
+placed or took anonymously is not theirs on it at all, not even in a count
+(a count one higher than the named contracts would say an anonymous contract
+on the board was theirs), and neither is any money or purchase on one, or any
+anonymity fee. Audited `admin_panel_history` (or `_identified`).
+
+### Manual payments
+
+**Pay** under a player's lookup pays them cash or bank, with a reason, on the
+two-click confirm. `crimson.admin` itself; a moderator cannot. At most
+`Config.Staff.ManualPaymentMax` (`100000`; `0` turns it off). It is paid the
+way a buyout refund is: into their hands when they are in the city,
+otherwise owed on a line of its own and handed over at their next login. The
+player is told *Staff paid you $… in …: <reason>*, never by whom.
+
+It creates money on purpose, so every payment is audited as
+`staff_manual_payment` (your citizen id, theirs, the amount, the account,
+the reason, and whether it was owed) and kept as a staff record for their
+history. The money conservation tests count `staff_manual_payment` as the one
+thing allowed to add to the world, by exactly its audited amount.
+
 ### Staff deadline changes
 
 Open a live contract (active or accepted) from **Contracts**. Its **Deadline**
 card shows the exact run time left, and **Extend** and **Shorten** move it:
 pick 15 min, 30 min, 1 h or 2 h, or type a number of minutes, type a reason,
 and click the button twice. The card shows the time left before and after.
-It is a *write* (`crimson.admin` itself), like **Void contract**, and is
+It is a moderator's *write* (`crimson.admin` or `crimson.moderator`), like **Void contract**, and is
 audited as `staff_deadline_adjust` (your citizen id, the seconds, the reason,
 and the old and new deadline), scrubbed for staff without `crimson.identity`
 as every contract's timeline is. No money moves.
@@ -2339,23 +2416,23 @@ resource (`GetParentResourceName()`):
 
 | op | Needs | `data` sent | `data` answered |
 |---|---|---|---|
-| `access` | read | — | `{ canWrite, canIdentify, canDevelop, developerAce, developerByAce, developerHint?, permissions = [{ ace, name, held, unlocks, grant }], pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version }` (no command names: the page is buttons only; read-only metadata for the sections and the Permissions page) |
+| `access` | read | — | `{ canWrite, canModerate, canIdentify, canDevelop, developerAce, developerByAce, developerHint?, permissions = [{ ace, name, held, unlocks, grant }], pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version }` (no command names: the page is buttons only; read-only metadata for the sections and the Permissions page) |
 | `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering; `leftForStaff` counts the lines something settles by hand, `total` every line listed)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, alerts = { open }, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
 | `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
 | `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid, deadline = { left, stopped, adjustable, maxAdjust, minLeft } }` (`left` the exact run time left, in seconds) |
-| `void` | write | `{ id, reason? }` | — (`message` is `/ch-void`'s answer, in the panel's words) |
+| `void` | moderate | `{ id, reason? }` | — (`message` is `/ch-void`'s answer, in the panel's words) |
 | `addNote` | write | `{ id, text }` (at most 300 characters) | `{ id }`; refused `too_many` (100 a contract), `not_found` or `invalid_input`. Audited `staff_note` |
 | `removeHitman` | write | `{ id, hitman, reason, returnStake?, block? }` (`hitman` the operative's row id from `contract`'s `hitmen`) | `{ stake, returned, forfeited, blocked, remaining }`; refused `bad_state`, `contract_frozen`, `no_operative`, `not_active`, `not_found` or `invalid_input`. Audited `staff_remove_hitman` |
 | `editText` | write | `{ id, field = 'reason', text, reason }` | `{ new }`; refused `reason_refused` (the rule in `message`), `unchanged`, `no_text`, `busy`, `not_found` or `invalid_input`. Audited `staff_text_edit` (old and new text) |
 | `exportContract` | read | `{ id }` | `{ text }`: the contract's record as plain text, scrubbed as `contract` is. Audited `admin_panel_export` |
 | `playerView` | read | `{ id, role = 'target'\|'placer'\|'hitman', hitman? }` | `{ role, shown, note?, view?, whitelisted?, alias?, viewer? }`: `view` is `Projection.contract` for that party (scrubbed without `crimson.identity`, which alone gets `viewer = { cid, name }`). Audited `admin_panel_player_view` |
-| `adjustDeadline` | write | `{ id, seconds, reason }` (`seconds` a signed whole number, not 0, within `Config.Limits.StaffDeadlineMaxAdjustSeconds` either way) | `{ seconds, leftBefore, leftAfter, deadline, lifetime = 'unchanged'\|'extended'\|'capped'?, expires? }`; refused `min_left` (with the most it can be shortened by in `message`), `at_limit`, `bad_state`, `not_found` or `invalid_input`. Audited `staff_deadline_adjust` |
+| `adjustDeadline` | moderate | `{ id, seconds, reason }` (`seconds` a signed whole number, not 0, within `Config.Limits.StaffDeadlineMaxAdjustSeconds` either way) | `{ seconds, leftBefore, leftAfter, deadline, lifetime = 'unchanged'\|'extended'\|'capped'?, expires? }`; refused `min_left` (with the most it can be shortened by in `message`), `at_limit`, `bad_state`, `not_found` or `invalid_input`. Audited `staff_deadline_adjust` |
 | `settle` | write | `{ line, disposition = 'pay'\|'return'\|'delivered', amount?` (with `pay`)`, owner?` (with `return`, a citizen id) `}` | `{ detail }` (`message` is `/ch-settle`'s answer, in the panel's words) |
 | `stuck` | read | — | `{ recovery, reviews, lines = [stuck] }`: every line waiting for staff, as `/ch-stuck` lists them, and the review queue's open count; `lines` absent while recovering. Audited `admin_stuck`, as the command is |
 | `reviews` | read | `{ all? }` | `{ items = [{ id, kind, about, contract, parties = [{ role, who }], amount, account, items, known, now, state, created_at, resolution, resolved_by, resolved_at, unwritten }] }` |
 | `resolve` | write | `{ id, action = 'refund'\|'pay'\|'dismiss'\|'finish', who?` (a role the item names, or a citizen id)`, amount?, account?, goods?, note? }` (`finish`, with no other field, finishes one left part-way as it was decided) | `{ detail = { action, settled, pending, parked, continued } }` (`message` is `/ch-review`'s answer, in the panel's words) |
 | `logs` | read | `{ kind?, action?, contract?, actor?, from?, to?, limit?, cursor? }` | `{ rows = [row], next }`: pass `next` back as `cursor` for the page after; absent on the last. `actor` without `crimson.identity` keeps only the rows that player acted in openly (audited `admin_panel_logs_player`) |
-| `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }` (with `crimson.identity` only)`, owed = [line + queued], pending, notices = { count, titles } }`; `not_found` for a citizen id nobody in the city has and nothing shown names |
+| `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }` (with `crimson.identity` only)`, owed = [line + queued], pending, notices = { count, titles }, frozen?, suspended?, protected?, payMax }` (`suspended` and `protected` are `{ since, until?, reason, by? }`, `by` with `crimson.identity` only); `not_found` for a citizen id nobody in the city has and nothing shown names |
 | `whois` | identity | `{ id }` | `{ creator = { cid, name, anonymous }, target = { cid, name }, hitmen = [{ alias, cid, name, anonymous, state }] }` |
 | `settings` | read | — | each `setting` carries its `category` (`rules-timers`, `rules-rewards`, `rules-limits`, `rules-targeting`, `features`, `developer`), `money` (its Rewards & money group), and `shipped`/`hasShipped` (defaults.lua's value); developer rows only for staff with the developer ACE. `{ features = [setting], limits = [setting], readonly = [setting], overrides, keptPhotos? = { count, open, links, files, waiting } }` (`keptPhotos` only while kill photos are off and some are kept from before) |
 | `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, a word for a `text` key, a list of names, or `{ min, max }` for a `range` key; a key on `Settings.DENY` is refused `read_only`, and a developer-category key needs the developer ACE) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value`, `store_failed` or `busy` (another change is being saved), with why in `message` |
@@ -2369,6 +2446,12 @@ resource (`GetParentResourceName()`):
 | `testAlert` | write | — | `{ seconds }`; refused `no_webhook` or `discord_off`. Audited `admin_alert_test` either way |
 | `console` | developer (`crimson.developer`, or `crimson.admin` itself; refused `developer_required` with the grant line) | — | `{ at, debug, count, problems = [text], boot = [{ text, kind = 'always'\|'debug' }], bootLeft, recent = [{ text, kind = 'always'\|'debug', at, times }]` (oldest first)`, bootKept, recentKept, alwaysKept }`: what `shared/log.lua` keeps (`Log.view`), every line without a webhook's address, a secret convar's value or a statement's values, and scrubbed without `crimson.identity` |
 | `removePhotos` | write | — | `{ removed, files, links, left, waiting }` (`left`: files that could not be deleted; `waiting`: open on a phone, removed when that view closes); refused `photos_on` while kill photos are on. Audited `admin_photos_removed`, with the count, every time |
+| `history` | read | `{ subject }` | `{ counts = { placed, taken, completed, cancelled, onThem, boughtOut }, recent = [{ id, state, roles, anonymous?, created_at, resolved_at, client?, target? }], buyouts = { paid, amount }, informants = { count, spent, informant, placerInformant, locationTip }, money = { in = [{ kind, amount }], out = [...] }, measures = [{ kind, from, until?, ended?, state, reason, by?, endedBy? }], anonymous?, identified, retentionDays }`. Names and `anonymous` only with `crimson.identity`; without it nothing anonymous is counted |
+| `suspend` | moderate | `{ subject, days (0 until lifted, at most 365), reason }` | `{ suspended = { since, until?, reason, by? } }`; also `already` |
+| `unsuspend` | moderate | `{ subject, reason? }` | —; also `not_active` |
+| `protect` | moderate | `{ subject, hours (0 for good, at most 8760), reason }` | `{ protected = { since, until?, reason, by? } }`; also `already` |
+| `unprotect` | moderate | `{ subject, reason? }` | —; also `not_active` |
+| `manualPay` | write | `{ subject, amount, account = 'cash'\|'bank', reason }` | `{ paid, owed }`; also `over_max`, `payments_off` |
 
 `line` (an escrow line) is `{ id, contract, slot, portion, source, amount?,
 item, quantity, state, owed_to, releasing_to, taken_from, staker, settled_to,

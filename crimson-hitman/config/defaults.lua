@@ -389,6 +389,7 @@ ConfigDefaults.Admin = {
     Ace                 = 'crimson.admin',      -- ACE for staff, and for anything that writes
     IdentityAce         = 'crimson.identity',   -- ACE to see who is behind an anonymous party
     DeveloperAce        = 'crimson.developer',  -- ACE for the panel's Developer section
+    ModeratorAce        = 'crimson.moderator',  -- ACE that reads, freezes, suspends, protects and voids
     ExtraAces           = { 'command' },        -- ACEs that may also read (never write)
     Commands            = { -- command names, without the slash
         timeline  = 'ch-timeline',   -- one contract's history
@@ -406,6 +407,8 @@ ConfigDefaults.Admin = {
     PanelRefreshSeconds = 10,                   -- how often the overview refreshes
     TimelineRows        = 200,                  -- audit rows read for one timeline
 }
+
+ConfigDefaults.Staff = { ManualPaymentMax = 100000 }  -- most one manual staff payment may be ($); 0 = off
 
 -- ============================================================================
 --                          ADVANCED AND DEVELOPER

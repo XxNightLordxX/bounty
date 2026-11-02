@@ -460,6 +460,9 @@
     contract_frozen: 'This contract is on hold by staff.',
     // The last half hour before a scheduled restart (server/freeze.lua).
     restart_hold: 'Contracts are paused until the server restart.',
+    // Staff suspended this player from contracts (server/sanctions.lua).
+    // failText says until when and why where the server sends them.
+    suspended: 'You are suspended from contracts.',
     // The informant tip (server/locationtip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',
@@ -1655,6 +1658,9 @@
     // A reason refused for what it says, by the rule it broke: a form full
     // of money fields said only "Check what you entered."
     if (result.err === 'reason_refused') { return reasonRefusedText(result.data); }
+
+    // Suspended by staff: until when, and the reason they gave.
+    if (result.err === 'suspended') { return suspendedText(result.data); }
 
     // A reward source staff switched off while the form was open, by name.
     if (result.err === 'source_disabled' && result.data && SOURCE_WORDS[result.data.source]) {
@@ -6085,10 +6091,30 @@
     return true;
   }
 
+  /* A suspension from contracts (server/sanctions.lua), in the player's own
+     words: until when, in their own time, and the reason staff gave. Never
+     who set it: the server sends no name. */
+  function suspendedText(data) {
+    var at = data && Number(data.untilAt);
+    var until = 'staff lift it';
+    if (at > 0) {
+      var d = new Date(at * 1000);
+      var two = function (n) { return (n < 10 ? '0' : '') + n; };
+      until = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate())
+        + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
+    }
+    var reason = data && typeof data.reason === 'string' && data.reason ? data.reason : 'no reason given';
+    return 'You are suspended from contracts until ' + until + ': ' + reason;
+  }
+
   function viewBoard(view) {
     if (drewFailure(view, 'board')) { return; }
     if (drewPending(view, 'board')) { return; }
     var data = state.board;
+    // Suspended by staff: said at the top of the board, the app's home.
+    if (data && data.suspended) {
+      view.appendChild(el('div', 'suspended-note', suspendedText(data.suspended)));
+    }
     var contracts = asList(data && data.contracts);
     if (!data || contracts.length === 0) {
       view.appendChild(el('div', 'empty', 'No contracts on the board.'));

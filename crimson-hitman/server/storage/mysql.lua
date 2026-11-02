@@ -701,6 +701,26 @@ local SCHEMA = {
         INDEX idx_cstaff_contract (contract_id),
         INDEX idx_cstaff_kind (kind)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- What staff did to one player from the admin panel that must outlast
+    -- a restart (server/sanctions.lua, server/payments.lua): a suspension,
+    -- a protection, a freeze's history, a manual payment. Never deleted: an
+    -- ended row stays for the player's history.
+    [[CREATE TABLE IF NOT EXISTS crimson_staff_records (
+        id VARCHAR(32) PRIMARY KEY,
+        kind VARCHAR(16) NOT NULL,
+        cid VARCHAR(32) NOT NULL,
+        name VARCHAR(128),
+        reason VARCHAR(255),
+        by_cid VARCHAR(64),
+        created_at INT NOT NULL,
+        until_at INT,
+        ended_at INT,
+        ended_by VARCHAR(64),
+        ended_why VARCHAR(16),
+        amount INT,
+        account VARCHAR(16),
+        INDEX idx_staff_records_cid (cid)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -896,7 +916,7 @@ end
 --- crimson_meta) was moved to InnoDB, rebuilt in utf8mb4 and given columns
 --- before the start refused, on "Multiple primary key", as a missing grant.
 --- Every table here has had the same key column since it was first made
---- (id, crimson_contract_staff's too; cid for crimson_stats,
+--- (id, crimson_contract_staff's and crimson_staff_records' too; cid for crimson_stats,
 --- crimson_view_alerts, crimson_playtime and crimson_freezes;
 --- setting_key; meta_key), so a table without it as its key is somebody
 --- else's.
@@ -3172,6 +3192,45 @@ function MySQLStore.readContractStaffMarks()
         end
     end
     return staffRows(rows)
+end
+
+--------------------------------------------------------------------------
+-- Staff records
+--------------------------------------------------------------------------
+
+--- See the memory backend. Read whole once at the start.
+function MySQLStore.readStaffRecords()
+    local rows = db.query([[
+        SELECT id, kind, cid, name, reason, by_cid, created_at, until_at, ended_at, ended_by,
+            ended_why, amount, account
+        FROM crimson_staff_records
+    ]]) or {}
+    local out = {}
+    for i = 1, #rows do
+        local row = rows[i]
+        out[#out + 1] = {
+            id = row.id, kind = row.kind, cid = row.cid, name = row.name, reason = row.reason,
+            by_cid = row.by_cid, created_at = tonumber(row.created_at), until_at = tonumber(row.until_at),
+            ended_at = tonumber(row.ended_at), ended_by = row.ended_by, ended_why = row.ended_why,
+            amount = tonumber(row.amount), account = row.account,
+        }
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+function MySQLStore.writeStaffRecord(row)
+    db.query([[
+        INSERT INTO crimson_staff_records (id, kind, cid, name, reason, by_cid, created_at, until_at,
+            ended_at, ended_by, ended_why, amount, account)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE kind = VALUES(kind), cid = VALUES(cid), name = VALUES(name),
+            reason = VALUES(reason), by_cid = VALUES(by_cid), created_at = VALUES(created_at),
+            until_at = VALUES(until_at), ended_at = VALUES(ended_at), ended_by = VALUES(ended_by),
+            ended_why = VALUES(ended_why), amount = VALUES(amount), account = VALUES(account)
+    ]], { row.id, row.kind, row.cid, row.name, row.reason, row.by_cid, row.created_at, row.until_at,
+          row.ended_at, row.ended_by, row.ended_why, row.amount, row.account })
+    return true
 end
 
 --------------------------------------------------------------------------

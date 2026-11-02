@@ -1161,6 +1161,11 @@ describe('every channel a player not entitled to it can read', function()
         Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:fff',
             firstname = 'Sam', lastname = 'Steward' })
         Env.aces[6] = { ['crimson.admin'] = true }
+        -- A moderator (Config.Admin.ModeratorAce): reads as staff without
+        -- IdentityAce do.
+        Env.addPlayer({ source = 8, citizenid = 'MODER001', license = 'license:hhh',
+            firstname = 'Mo', lastname = 'Derate' })
+        Env.aces[8] = { ['crimson.moderator'] = true }
         s.bridges.install(s)
         -- A phone that places calls: what the callee's phone is handed to
         -- show, recorded as reaching the callee.
@@ -1238,6 +1243,25 @@ describe('every channel a player not entitled to it can read', function()
         truthy(s.storage.readHitman(c.id, 'HITMAN02').state == 'abandoned', 'the named operative taken off')
         truthy(s.staffContract.edited(c.id), 'the text replaced')
         admin(6, 'contract', { id = c.id })
+        -- The history card of the target and of a bystander, and the staff
+        -- tools, from staff without IdentityAce and from a moderator:
+        -- nothing names a hidden party (a lookup by a hidden party's own
+        -- citizen id names who was typed, and staff_player_spec holds that
+        -- it attributes nothing anonymous to them). The suspended player's
+        -- own notice and board name no staff member.
+        for _, src in ipairs({ 6, 8 }) do
+            for _, subject in ipairs({ 'TARGET01', 'BYSTAND1' }) do
+                admin(src, 'history', { subject = subject })
+            end
+            admin(src, 'contract', { id = c.id })
+            admin(src, 'frozen', {})
+        end
+        admin(8, 'protect', { subject = 'BYSTAND1', hours = 1, reason = 'checked' })
+        admin(8, 'suspend', { subject = 'BYSTAND1', days = 1, reason = 'checked' })
+        admin(6, 'manualPay', { subject = 'BYSTAND1', amount = 10, account = 'bank', reason = 'checked' })
+        call('list', 4, { page = 1 })
+        admin(8, 'history', { subject = 'BYSTAND1' })
+        admin(8, 'unsuspend', { subject = 'BYSTAND1' })
         call('abandon', 3, { id = c.id })
         call('cancel', 1, { id = c.id })
         admin(6, 'contract', { id = c.id })
@@ -1270,6 +1294,8 @@ describe('every channel a player not entitled to it can read', function()
             -- Staff see a named operative as before; never the hidden ones.
             [6] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
             [7] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+            -- A moderator: as staff without IdentityAce.
+            [8] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
         }
         local reached, problems = {}, {}
         for _, event in ipairs(Env.clientEvents) do
@@ -1282,7 +1308,7 @@ describe('every channel a player not entitled to it can read', function()
                 end
             end
         end
-        for src = 1, 7 do truthy((reached[src] or 0) > 0, 'nothing reached source ' .. src) end
+        for src = 1, 8 do truthy((reached[src] or 0) > 0, 'nothing reached source ' .. src) end
         local kinds = {}
         for _, event in ipairs(Env.clientEvents) do kinds[event.name] = true end
         for _, name in ipairs({ 'lb-phone:CreateCall', 'lb-phone:SendNotification',

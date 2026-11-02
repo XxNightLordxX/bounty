@@ -394,6 +394,26 @@ CREATE TABLE IF NOT EXISTS crimson_contract_staff (
     INDEX idx_cstaff_kind (kind)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- What staff did to one player from the admin panel that must outlast a
+-- restart: a suspension, a protection, a freeze's history, a manual
+-- payment. Never deleted: an ended row stays for the player's history.
+CREATE TABLE IF NOT EXISTS crimson_staff_records (
+    id VARCHAR(32) PRIMARY KEY,
+    kind VARCHAR(16) NOT NULL,
+    cid VARCHAR(32) NOT NULL,
+    name VARCHAR(128),
+    reason VARCHAR(255),
+    by_cid VARCHAR(64),
+    created_at INT NOT NULL,
+    until_at INT,
+    ended_at INT,
+    ended_by VARCHAR(64),
+    ended_why VARCHAR(16),
+    amount INT,
+    account VARCHAR(16),
+    INDEX idx_staff_records_cid (cid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

@@ -113,6 +113,13 @@ function Admin.allowed(src, ace, strict)
     for _, extra in ipairs(Config.Admin.ExtraAces or {}) do
         if IsPlayerAceAllowed(src, extra) then return true end
     end
+    -- A moderator (Config.Admin.ModeratorAce) reads whatever staff read, as
+    -- staff without IdentityAce do; what they may change is the panel's
+    -- moderator level (server/panel.lua), never a strict check here.
+    local moderator = Config.Admin.ModeratorAce
+    if type(moderator) == 'string' and moderator ~= '' and IsPlayerAceAllowed(src, moderator) then
+        return true
+    end
     return false
 end
 

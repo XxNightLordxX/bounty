@@ -108,7 +108,10 @@ const PERMISSIONS = [
     unlocks: 'Shows who is behind an anonymous party.',
     grant: 'Grant it with add_ace identifier.license:<their licence> crimson.identity allow for one person.' },
   { ace: 'crimson.developer', name: 'Developer ACE (Config.Admin.DeveloperAce)', held: false,
-    unlocks: 'Opens the Developer section.', grant: 'Grant it with add_ace group.admin crimson.developer allow.' }
+    unlocks: 'Opens the Developer section.', grant: 'Grant it with add_ace group.admin crimson.developer allow.' },
+  { ace: 'crimson.moderator', name: 'Moderator ACE (Config.Admin.ModeratorAce)', held: false,
+    unlocks: 'Opens this panel to read, and to freeze, suspend, protect, void and move a deadline.',
+    grant: 'Grant it with add_ace group.moderator crimson.moderator allow.' }
 ];
 
 function access(extra) {
@@ -2309,7 +2312,7 @@ async function main() {
     it('Permissions lists each ACE, whether it is held, and how to grant one that is not', function () {
       const rows = app.$$('.perm-row');
       eq(rows.map(function (r) { return r.getAttribute('data-ace'); }),
-        ['crimson.admin', 'crimson.identity', 'crimson.developer']);
+        ['crimson.admin', 'crimson.identity', 'crimson.developer', 'crimson.moderator']);
       has(app.text(rows[0]), 'You hold it');
       has(app.text(rows[1]), 'You do not hold it');
       has(app.text(rows[2]), 'add_ace group.admin crimson.developer allow');
@@ -3568,6 +3571,236 @@ async function main() {
       }).length, 0);
     });
     clean(app, 'staff tools closed');
+  })();
+
+  /* ---- a player's staff tools: Suspend, Protect, Pay and the history card ---- */
+  function staffPlayerServer(extra) {
+    const state = { suspended: null, protected: null };
+    const history = { ok: true, data: {
+      counts: { placed: 2, taken: 1, completed: 1, cancelled: 1, onThem: 3, boughtOut: 1 },
+      recent: [{ id: 'ct00000007', state: 'completed', roles: ['hitman'], created_at: NOW - 7200 }],
+      buyouts: { paid: 1, amount: 15000 },
+      informants: { count: 2, spent: 50000, informant: 1, placerInformant: 0, locationTip: 1 },
+      money: { in: [{ kind: 'payouts', amount: 5000 }, { kind: 'staff payments', amount: 250 }],
+               out: [{ kind: 'rewards put up', amount: 12000 }] },
+      measures: [{ kind: 'suspend', from: NOW - 600, until: NOW + 86400, state: 'in force', reason: XSS },
+                 { kind: 'freeze', from: NOW - 9000, ended: NOW - 8000, state: 'lifted', reason: 'dispute' }],
+      identified: false, retentionDays: 30 } };
+    return Object.assign(standardServer({
+      player: function () {
+        const reply = player();
+        reply.data.suspended = state.suspended;
+        reply.data.protected = state.protected;
+        reply.data.payMax = 100000;
+        return reply;
+      },
+      history: history,
+      frozen: { ok: true, data: { rows: [] } },
+      suspend: function (data) {
+        state.suspended = { since: NOW, until: data.days > 0 ? NOW + data.days * 86400 : null, reason: data.reason };
+        return { ok: true, message: 'Dana Reyes is suspended from placing and accepting contracts for '
+          + data.days + ' days. Their live contracts are not touched: freeze them for that.',
+          data: { suspended: state.suspended } };
+      },
+      unsuspend: function () {
+        state.suspended = null;
+        return { ok: true, message: 'Suspension lifted. They may place and accept contracts again.' };
+      },
+      protect: function (data) {
+        state.protected = { since: NOW, until: data.hours > 0 ? NOW + data.hours * 3600 : null, reason: data.reason };
+        return { ok: true, message: 'Dana Reyes is protected from new contracts.' };
+      },
+      unprotect: function () {
+        state.protected = null;
+        return { ok: true, message: 'Protection lifted. New contracts may name them again.' };
+      },
+      manualPay: function (data) {
+        return { ok: true, message: 'Paid $' + data.amount + ' in ' + data.account + ' to Dana Reyes.',
+          data: { paid: true, owed: false } };
+      }
+    }), extra || {});
+  }
+
+  async function lookUp(app) {
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+  }
+
+  await (async function () {
+    const app = boot(staffPlayerServer());
+    app.open(ADMIN);
+    await settled();
+    await lookUp(app);
+    it('a lookup draws Suspend, Protect, Pay and the history card, and asks for the history', function () {
+      has(app.main(), 'Suspend from contracts');
+      has(app.main(), 'Protect from contracts');
+      has(app.main(), 'Pay');
+      has(app.main(), 'History');
+      eq(app.last('history').data, { subject: '12' });
+      has(app.main(), 'Their live contracts are not touched: freeze them for that.');
+      has(app.main(), 'Contracts already on them are not touched: freeze them for that.');
+    });
+    it('the history card shows the counts, money by kind and each measure with its dates, escaped', function () {
+      has(app.main(), 'Bought out');
+      has(app.main(), 'rewards put up');
+      has(app.main(), 'staff payments');
+      has(app.main(), 'Suspension');
+      has(app.main(), 'Freeze');
+      has(app.main(), XSS, 'the reason as text');
+      eq(app.$$('img').length, 0, 'never as markup');
+      lacks(app.main(), 'Client', 'no names column without the identity ACE');
+    });
+
+    app.click(app.button('Suspend'));
+    await settled();
+    it('refuses a suspension with no days chosen, sending nothing', function () {
+      eq(app.requests('suspend').length, 0);
+      has(app.main(), 'Choose how many days');
+    });
+    app.click(app.button('3 days'));
+    await settled();
+    app.click(app.button('Suspend'));
+    await settled();
+    it('and with no reason', function () {
+      eq(app.requests('suspend').length, 0);
+      has(app.main(), 'Give a reason');
+    });
+    app.type(app.byId('ps-reason'), 'Contract spam');
+    app.click(app.button('Suspend'));
+    await settled();
+    it('takes two clicks to suspend, and sends nothing on the first', function () {
+      eq(app.requests('suspend').length, 0);
+    });
+    app.click(app.button('Suspend'));
+    await settled();
+    it('suspends the player looked up, for the days picked, with the reason', function () {
+      eq(app.last('suspend').data, { subject: '12', days: 3, reason: 'Contract spam' });
+      has(app.main(), 'Dana Reyes is suspended');
+      truthy(app.button('Lift suspension'), 'Lift once suspended');
+      truthy(app.$$('.is-suspended').length >= 1, 'the Suspended badge');
+    });
+    app.click(app.button('Lift suspension'));
+    await settled();
+    it('lifts it with one click', function () {
+      eq(app.requests('unsuspend').length, 1);
+      eq(app.last('unsuspend').data, { subject: '12' });
+      truthy(app.button('Suspend'), 'Suspend again');
+    });
+
+    app.click(app.button('Days'));
+    await settled();
+    app.type(app.byId('pp-amount'), '2');
+    app.type(app.byId('pp-reason'), 'New player');
+    app.click(app.button('Protect'));
+    await settled();
+    app.click(app.button('Protect'));
+    await settled();
+    it('protects for the days typed, sent as hours, on two clicks', function () {
+      eq(app.requests('protect').length, 1);
+      eq(app.last('protect').data, { subject: '12', hours: 48, reason: 'New player' });
+      truthy(app.button('Lift protection'), 'Lift once protected');
+    });
+    app.click(app.button('Lift protection'));
+    await settled();
+    app.click(app.button('Permanent'));
+    await settled();
+    app.type(app.byId('pp-reason'), 'Off duty staff');
+    app.click(app.button('Protect'));
+    app.click(app.button('Protect'));
+    await settled();
+    it('protects for good as hours 0', function () {
+      eq(app.last('protect').data, { subject: '12', hours: 0, reason: 'Off duty staff' });
+    });
+
+    app.type(app.byId('pay-amount'), '250000');
+    app.type(app.byId('pay-reason'), 'Lost to a bug');
+    app.click(app.button('Pay'));
+    await settled();
+    it('refuses a payment over the cap, sending nothing', function () {
+      eq(app.requests('manualPay').length, 0);
+      has(app.main(), 'At most $100,000');
+    });
+    app.click(app.button('Bank'));
+    await settled();
+    app.type(app.byId('pay-amount'), '2500');
+    app.click(app.button('Pay'));
+    await settled();
+    it('takes two clicks to pay', function () {
+      eq(app.requests('manualPay').length, 0);
+    });
+    app.click(app.button('Pay'));
+    await settled();
+    it('pays the amount in the account chosen, with the reason', function () {
+      eq(app.last('manualPay').data, { subject: '12', amount: 2500, account: 'bank', reason: 'Lost to a bug' });
+      has(app.toasts(), 'Paid $2500 in bank');
+    });
+    clean(app, 'staff player tools');
+  })();
+
+  await (async function () {
+    const app = boot(staffPlayerServer());
+    app.open(access({ canWrite: false, canModerate: true, canIdentify: false }));
+    await settled();
+    it('a moderator is badged as one', function () {
+      has(app.text(app.byId('badges')), 'Moderator');
+    });
+    await lookUp(app);
+    it('a moderator may freeze, suspend and protect, and not pay', function () {
+      falsy(app.button('Freeze').disabled, 'Freeze');
+      falsy(app.button('Suspend').disabled, 'Suspend');
+      falsy(app.button('Protect').disabled, 'Protect');
+      truthy(app.button('Pay').disabled, 'Pay is the staff ACE\'s');
+      app.click(app.button('Pay'));
+      app.click(app.button('Pay'));
+      eq(app.requests('manualPay').length, 0);
+      truthy(app.byId('pay-amount').disabled, 'nor its amount');
+    });
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    it('a moderator may void and move a deadline from the contract view', function () {
+      falsy(app.button('Void contract', app.drawer()).disabled, 'Void');
+    });
+    clean(app, 'moderator');
+  })();
+
+  await (async function () {
+    const app = boot(staffPlayerServer());
+    app.open(READER);
+    await settled();
+    await lookUp(app);
+    it('a reader sees Suspend, Protect and Pay disabled, and they send nothing', function () {
+      ['Suspend', 'Protect', 'Pay'].forEach(function (label) {
+        const button = app.button(label);
+        truthy(button.disabled, label + ' disabled for a reader');
+        app.click(button);
+        app.click(button);
+      });
+      eq(app.requests('suspend').length + app.requests('protect').length + app.requests('manualPay').length, 0);
+      has(app.main(), 'History', 'the history card reads for them too');
+    });
+    clean(app, 'reader staff tools');
+  })();
+
+  await (async function () {
+    const app = boot(staffPlayerServer({ history: { ok: true, data: {
+      counts: { placed: 1 }, recent: [{ id: 'ct00000009', state: 'cancelled', roles: ['client'],
+        anonymous: true, created_at: NOW, client: 'Vic Marlowe', target: XSS }],
+      money: {}, measures: [], buyouts: {}, informants: {}, identified: true, anonymous: 1 } } }));
+    app.open(FULL);
+    await settled();
+    await lookUp(app);
+    it('with the identity ACE the history card names the parties, and how many were anonymous', function () {
+      has(app.main(), 'Vic Marlowe');
+      has(app.main(), XSS);
+      has(app.main(), '1 anonymous');
+      eq(app.$$('img').length, 0);
+    });
+    clean(app, 'identified history');
   })();
 
   console.log('');

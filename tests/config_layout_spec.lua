@@ -72,6 +72,10 @@ local ADDED = {
     -- and the least run time a shortening leaves.
     ['Limits.StaffDeadlineMaxAdjustSeconds'] = 86400,
     ['Limits.StaffDeadlineMinLeftSeconds'] = 300,
+    -- The admin panel's moderator level, and the cap on a manual staff
+    -- payment (Staff and permissions).
+    ['Admin.ModeratorAce'] = 'crimson.moderator',
+    ['Staff'] = { ManualPaymentMax = 100000 },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -179,7 +183,12 @@ describe('the configuration as one short file', function()
         for path, pair in pairs(differences(was, now)) do
             -- And settings added since, each new and shipped as ADDED says.
             local addedSince = pair[1] == nil and type(pair[2]) ~= 'table' and ADDED[path] == pair[2]
-                and path:match('^Limits%.StaffDeadline') ~= nil
+                and (path:match('^Limits%.StaffDeadline') ~= nil or path == 'Admin.ModeratorAce')
+            -- The Staff section, new and shipped as ADDED says.
+            if pair[1] == nil and path == 'Staff' and type(pair[2]) == 'table'
+                and pair[2].ManualPaymentMax == ADDED.Staff.ManualPaymentMax then
+                addedSince = true
+            end
             -- The board's placer switch, and its whitelisted-job counterpart,
             -- both new and shipped off.
             if pair[1] == nil and pair[2] == false and (path == 'Anonymity.ShowPlacerOnBoard'

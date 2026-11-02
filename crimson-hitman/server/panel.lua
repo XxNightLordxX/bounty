@@ -8,8 +8,11 @@
 ---
 ---   1. the engine's source, above zero;
 ---   2. the ACE check, again, every time (Admin.allowed): reading needs
----      Config.Admin.Ace or one of ExtraAces, as the read-only commands do;
----      anything that writes needs Ace itself; unmasking needs IdentityAce;
+---      Config.Admin.Ace, Config.Admin.ModeratorAce or one of ExtraAces, as
+---      the read-only commands do; the moderator's ops (MOD: freezing,
+---      suspending, protecting, voiding and moving a deadline) need Ace or
+---      ModeratorAce itself; anything else that writes needs Ace itself;
+---      unmasking needs IdentityAce;
 ---   3. a per-source token bucket (Config.Cooldowns.admin, and adminWrite
 ---      on top for writes);
 ---   4. type checks and clamps on every field;
@@ -29,25 +32,31 @@ local Panel = {}
 
 local deps
 
-local READ, WRITE, IDENTITY, DEVELOPER = 'read', 'write', 'identity', 'developer'
+local READ, MOD, WRITE, IDENTITY, DEVELOPER = 'read', 'moderate', 'write', 'identity', 'developer'
 
---- Every request the page may make, and what it needs.
+--- Every request the page may make, and what it needs, each named here:
+--- READ (anybody who may open the panel: Ace, ModeratorAce or an extra ACE,
+--- scrubbed without IdentityAce), MOD (Ace or ModeratorAce itself), WRITE
+--- (Ace itself), IDENTITY and DEVELOPER. An op with no entry is refused.
 local OPS = {
     access = READ, overview = READ, contracts = READ, contract = READ, reviews = READ,
     logs = READ, player = READ, settings = READ, diag = READ, stuck = READ, alerts = READ,
     -- The server's own console lines: the Developer section's, so
     -- Config.Admin.DeveloperAce (or Ace itself, see developer below).
     console = DEVELOPER,
-    void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
+    -- Voiding a contract refunds what it holds by the rules every ending
+    -- follows, and pays nobody anything staff choose: a moderator's.
+    void = MOD,
+    -- Money staff choose, settings and the rest: the staff ACE's alone.
+    settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
     resetSettings = WRITE, refresh = WRITE, flush = WRITE, ackAlerts = WRITE, testAlert = WRITE,
     removePhotos = WRITE, setPlaytime = WRITE,
     -- Staff freezes (server/freeze.lua): the list is a read; freezing and
-    -- releasing move no money and stop nothing for good, and are writes as
-    -- void and settle are.
-    frozen = READ, freeze = WRITE, unfreeze = WRITE,
+    -- releasing move no money and stop nothing for good: a moderator's.
+    frozen = READ, freeze = MOD, unfreeze = MOD,
     -- A live contract's deadline moved later or sooner (Admin.adjustDeadline):
-    -- the same write as void, on the contract's view.
-    adjustDeadline = WRITE,
+    -- a moderator's, as void is, on the contract's view.
+    adjustDeadline = MOD,
     whois = IDENTITY,
     -- Staff tools on one contract (server/staffcontract.lua), on its view:
     -- a private note, taking one operative off it, replacing a player's
@@ -55,6 +64,13 @@ local OPS = {
     -- reads, scrubbed as the view is.
     addNote = WRITE, removeHitman = WRITE, editText = WRITE,
     exportContract = READ, playerView = READ,
+    -- One player's history card (server/history.lua), under Players.
+    history = READ,
+    -- Suspending a player from contracts, and protecting one from them
+    -- (server/sanctions.lua): a moderator's, as the freeze is.
+    suspend = MOD, unsuspend = MOD, protect = MOD, unprotect = MOD,
+    -- Paying a player by hand (server/payments.lua): money staff choose.
+    manualPay = WRITE,
 }
 
 --- Every staff command (Config.Admin.Commands, but the panel's own) and the
@@ -72,7 +88,8 @@ Panel.COMMANDS = {
     stuck     = { ops = { 'stuck' }, level = READ, audit = 'admin_stuck',
                   button = 'Stuck escrow' },
     diagnose  = { ops = { 'diag' }, level = READ, button = 'Tools: Run the diagnosis' },
-    void      = { ops = { 'void' }, level = WRITE, confirm = true, audit = 'admin_void',
+    -- The command needs Ace itself; the button, the moderator level too.
+    void      = { ops = { 'void' }, level = WRITE, moderator = true, confirm = true, audit = 'admin_void',
                   button = 'the contract\'s view: Void contract' },
     settle    = { ops = { 'settle' }, level = WRITE, confirm = true, audit = 'admin_settle_line',
                   button = 'Stuck escrow, or the contract\'s view: Pay, Pay amount, Return, Delivered' },
@@ -83,7 +100,7 @@ Panel.COMMANDS = {
     whois     = { ops = { 'whois' }, level = IDENTITY, audit = 'admin_identify',
                   button = 'the contract\'s view, or Players: Whois' },
 }
-Panel.LEVELS = { READ = READ, WRITE = WRITE, IDENTITY = IDENTITY, DEVELOPER = DEVELOPER }
+Panel.LEVELS = { READ = READ, MOD = MOD, WRITE = WRITE, IDENTITY = IDENTITY, DEVELOPER = DEVELOPER }
 Panel.OPS = OPS
 
 --- Writes that wait for boot recovery, as the commands do. Flushing the
@@ -93,6 +110,7 @@ local WAITS_FOR_RECOVERY = {
     void = true, settle = true, resolve = true, setSetting = true, resetSetting = true,
     resetSettings = true, refresh = true, freeze = true, unfreeze = true, adjustDeadline = true,
     removeHitman = true, editText = true,
+    suspend = true, unsuspend = true, protect = true, unprotect = true, manualPay = true,
 }
 
 --- How long one overview is shared between requests. Each open panel asks
@@ -154,13 +172,24 @@ end
 -- Who is asking
 --------------------------------------------------------------------------
 
+--- The moderator ACE, as config.lua names it, or nil where it is unset.
+local function moderatorAce()
+    local ace = Config.Admin.ModeratorAce
+    return type(ace) == 'string' and ace ~= '' and ace or nil
+end
+
 --- Whether a source may make a request at a level.
 ---@param src number
----@param level string READ | WRITE | IDENTITY
+---@param level string READ | MOD | WRITE | IDENTITY
 ---@return boolean
 local function allowed(src, level)
     local Admin = deps.admin
     if level == WRITE then return Admin.allowed(src, Config.Admin.Ace, true) end
+    if level == MOD then
+        if Admin.allowed(src, Config.Admin.Ace, true) then return true end
+        local ace = moderatorAce()
+        return ace ~= nil and Admin.allowed(src, ace, true)
+    end
     if not Admin.allowed(src, Config.Admin.Ace) then return false end
     if level == IDENTITY then return Admin.allowed(src, Config.Admin.IdentityAce, true) end
     return true
@@ -218,9 +247,16 @@ local function permissionsFor(src)
     end
     local out = {
         { ace = Config.Admin.Ace, name = 'Staff ACE (Config.Admin.Ace)', held = holds(Config.Admin.Ace),
-          unlocks = 'Opens this panel and the staff commands, and is the only ACE that changes anything: '
-              .. 'voids, settles, reviews, freezes and every setting. Holders see the Developer section too.',
+          unlocks = 'Opens this panel and the staff commands, and changes anything: voids, settles, '
+              .. 'reviews, freezes, suspensions, protections, manual payments and every setting. Holders '
+              .. 'see the Developer section too.',
           grant = grant(Config.Admin.Ace) },
+        { ace = moderatorAce() or 'crimson.moderator', name = 'Moderator ACE (Config.Admin.ModeratorAce)',
+          held = moderatorAce() ~= nil and holds(moderatorAce()) or false,
+          unlocks = 'Opens this panel to read everything the staff ACE reads, scrubbed as without the '
+              .. 'identity ACE, and to freeze and unfreeze, suspend, protect, void and move a deadline. '
+              .. 'Never settings, payments, refunds or the Developer section.',
+          grant = grant(moderatorAce() or 'crimson.moderator') },
         { ace = Config.Admin.IdentityAce, name = 'Identity ACE (Config.Admin.IdentityAce)',
           held = holds(Config.Admin.IdentityAce),
           unlocks = 'Shows who is behind an anonymous party, and citizen ids, everywhere in the panel; '
@@ -246,6 +282,8 @@ local function accessFor(src)
     local isDeveloper = developer(src)
     return {
         canWrite = allowed(src, WRITE),
+        -- The moderator's ops (OPS = MOD): the staff ACE, or the moderator ACE.
+        canModerate = allowed(src, MOD),
         canIdentify = identifies(src),
         -- The Developer section, and whether it is open through the ACE of
         -- its own or only through the staff ACE (the page says how to grant
@@ -274,7 +312,8 @@ function Panel.open(src)
     local cid = staffOf(src)
     local access = accessFor(src)
     deps.audit.staff('admin_panel_opened', cid, nil,
-        { write = access.canWrite or nil, identify = access.canIdentify or nil })
+        { write = access.canWrite or nil, moderate = access.canModerate or nil,
+          identify = access.canIdentify or nil })
     return access
 end
 
@@ -1529,6 +1568,12 @@ H.player = function(src, data)
         -- Whether staff have put them on hold (server/freeze.lua). Who did,
         -- a staff member's citizen id, only with IdentityAce.
         frozen = freezeView(cid, canIdentify),
+        -- Whether staff have suspended them from contracts, or protect them
+        -- from contracts (server/sanctions.lua), the same way.
+        suspended = Panel.sanctionView('suspend', cid, canIdentify),
+        protected = Panel.sanctionView('protect', cid, canIdentify),
+        -- The most one manual payment may be now (Config.Staff), for Pay.
+        payMax = deps.payments and deps.payments.max() or 0,
     }
 end
 
@@ -1577,7 +1622,11 @@ H.freeze = function(src, data)
             .. 'has it. Check how it is spelt.'
     end
     local name = actor and actor.name or (who.typed and cid) or nil
-    local ok, err = deps.freeze.freeze(staffOf(src), cid, reason, name)
+    local staffCid = staffOf(src)
+    local ok, err = deps.freeze.freeze(staffCid, cid, reason, name)
+    -- Kept for their history card too (server/sanctions.lua): the freeze's
+    -- own row goes when it is lifted.
+    if ok and deps.sanctions then pcall(deps.sanctions.noteFreeze, staffCid, cid, reason, name) end
     if not ok then
         if err == 'already_frozen' then return false, err, 'They are already frozen.' end
         if err == CH.ERR.BUSY then
@@ -1601,7 +1650,9 @@ H.unfreeze = function(src, data)
         if not who then return false, whoErr, whoMessage end
         cid = who.cid
     end
-    local ok, err = deps.freeze.unfreeze(staffOf(src), cid, shortText(data.reason, 120))
+    local staffCid = staffOf(src)
+    local ok, err = deps.freeze.unfreeze(staffCid, cid, shortText(data.reason, 120))
+    if ok and deps.sanctions then pcall(deps.sanctions.noteUnfreeze, staffCid, cid) end
     if not ok then
         if err == 'not_frozen' then return false, err, 'They are not frozen.' end
         if err == CH.ERR.BUSY then
@@ -2393,6 +2444,187 @@ H.playerView = function(src, data)
 end
 
 --------------------------------------------------------------------------
+-- Suspensions, protections, the history card and manual payments
+--------------------------------------------------------------------------
+
+--- A suspension or a protection on a player as the panel shows it, or nil.
+--- Who set it, a staff member's citizen id, only with IdentityAce.
+---@param kind string 'suspend' | 'protect'
+---@param cid string
+---@param canIdentify boolean
+---@return table|nil
+function Panel.sanctionView(kind, cid, canIdentify)
+    local Sanctions = deps and deps.sanctions
+    if not Sanctions then return nil end
+    local row
+    if kind == 'suspend' then row = Sanctions.suspended(cid) else row = Sanctions.protected(cid) end
+    if not row then return nil end
+    return { since = row.created_at, ['until'] = row.until_at, reason = row.reason,
+             by = canIdentify and row.by_cid or nil }
+end
+
+--- The player a staff action names, as the freeze takes one: a player id or
+--- a citizen id, and refused for a citizen id no character has and nothing
+--- here names. nil, the error and what to say otherwise.
+local function actionSubject(subject)
+    local who, whoErr, whoMessage = playerSubject(subject)
+    if not who then return nil, whoErr, whoMessage end
+    if not who.actor and deps.identity.characterExists(who.cid) == false
+        and #(deps.storage.contractsInvolving(who.cid) or {}) == 0 then
+        return nil, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character '
+            .. 'has it. Check how it is spelt.'
+    end
+    who.name = who.actor and who.actor.name or (who.typed and who.cid) or nil
+    return who
+end
+
+--- A span in words: days where it is whole days, otherwise hours.
+local function spanWords(seconds)
+    if seconds % 86400 == 0 then
+        local days = seconds // 86400
+        return days == 1 and '1 day' or (days .. ' days')
+    end
+    local hours = seconds // 3600
+    return hours == 1 and '1 hour' or (hours .. ' hours')
+end
+
+--- What a refused suspension or protection says.
+local function sanctionRefusal(err, already, missing)
+    if err == 'already' then return false, err, already end
+    if err == 'not_active' then return false, err, missing end
+    if err == CH.ERR.BUSY then
+        return false, err, 'A change to them is still being saved. Try again in a moment.'
+    end
+    if err == CH.ERR.INVALID_INPUT then return false, err, 'The server could not read that request.' end
+    return false, err, 'Not changed: the store did not take it. Try again in a moment.'
+end
+
+--- One player's history (server/history.lua): read-only, and scrubbed as
+--- the player view is for staff without IdentityAce.
+H.history = function(src, data)
+    if not deps.history then return false, 'unavailable', 'The history card is not available here.' end
+    local canIdentify = identifies(src)
+    local who, whoErr, whoMessage = playerSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    -- The queue first, so the newest purchases are there to read.
+    deps.audit.flush()
+    local view = deps.history.build(deps, who.cid, canIdentify)
+    deps.audit.staff(canIdentify and 'admin_panel_history_identified' or 'admin_panel_history',
+        staffOf(src), nil, { subject = who.cid, typed = who.typed or nil })
+    return true, nil, nil, view
+end
+
+--- Suspend a player from placing or accepting contracts: { subject, days
+--- (0 until lifted), reason }. Their live contracts are not touched.
+H.suspend = function(src, data)
+    local Sanctions = deps.sanctions
+    if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
+    local reason = shortText(data.reason, 120)
+    if not reason then
+        return false, CH.ERR.INVALID_INPUT, 'Give a reason: the player is shown it, and it goes on the record.'
+    end
+    local days = wholeNumber(data.days, 0, Sanctions.MAX_SUSPEND_DAYS)
+    if not days then
+        return false, CH.ERR.INVALID_INPUT, ('Days are a whole number from 1 to %d, or 0 for until you '
+            .. 'lift it.'):format(Sanctions.MAX_SUSPEND_DAYS)
+    end
+    local who, whoErr, whoMessage = actionSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local ok, err = Sanctions.place('suspend', staffOf(src), who.cid, days > 0 and days * 86400 or nil,
+        reason, who.name)
+    if not ok then
+        return sanctionRefusal(err, 'They are suspended already. Lift it first to set another.')
+    end
+    return true, nil, ('%s is suspended from placing and accepting contracts %s. Their live '
+        .. 'contracts are not touched: freeze them for that.')
+        :format(who.name or 'They', days > 0 and ('for ' .. spanWords(days * 86400)) or 'until you lift it'),
+        { suspended = Panel.sanctionView('suspend', who.cid, identifies(src)) }
+end
+
+H.unsuspend = function(src, data)
+    local Sanctions = deps.sanctions
+    if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
+    local who, whoErr, whoMessage = playerSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local ok, err = Sanctions.lift('suspend', staffOf(src), who.cid, shortText(data.reason, 120))
+    if not ok then return sanctionRefusal(err, nil, 'They are not suspended.') end
+    return true, nil, 'Suspension lifted. They may place and accept contracts again.'
+end
+
+--- Protect a player from new contracts: { subject, hours (0 for good),
+--- reason }. Contracts already on them are not touched.
+H.protect = function(src, data)
+    local Sanctions = deps.sanctions
+    if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
+    local reason = shortText(data.reason, 120)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    local hours = wholeNumber(data.hours, 0, Sanctions.MAX_PROTECT_HOURS)
+    if not hours then
+        return false, CH.ERR.INVALID_INPUT, ('Hours are a whole number from 1 to %d, or 0 for good.')
+            :format(Sanctions.MAX_PROTECT_HOURS)
+    end
+    local who, whoErr, whoMessage = actionSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local ok, err = Sanctions.place('protect', staffOf(src), who.cid, hours > 0 and hours * 3600 or nil,
+        reason, who.name)
+    if not ok then
+        return sanctionRefusal(err, 'They are protected already. Lift it first to set another.')
+    end
+    return true, nil, ('%s is protected from new contracts %s. Contracts already on them run on: '
+        .. 'freeze them to put those on hold.')
+        :format(who.name or 'They', hours > 0 and ('for ' .. spanWords(hours * 3600)) or 'for good'),
+        { protected = Panel.sanctionView('protect', who.cid, identifies(src)) }
+end
+
+H.unprotect = function(src, data)
+    local Sanctions = deps.sanctions
+    if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
+    local who, whoErr, whoMessage = playerSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local ok, err = Sanctions.lift('protect', staffOf(src), who.cid, shortText(data.reason, 120))
+    if not ok then return sanctionRefusal(err, nil, 'They are not protected.') end
+    return true, nil, 'Protection lifted. New contracts may name them again.'
+end
+
+--- Pay a player by hand: { subject, amount, account ('cash' | 'bank'),
+--- reason }. At most Config.Staff.ManualPaymentMax; paid now, or owed at
+--- their next login (server/payments.lua). Audited as staff_manual_payment.
+H.manualPay = function(src, data)
+    local Payments = deps.payments
+    if not Payments then return false, 'unavailable', 'Manual payments are not available on this server.' end
+    local max = Payments.max()
+    if max <= 0 then
+        return false, 'payments_off', 'Manual payments are off (Config.Staff.ManualPaymentMax is 0).'
+    end
+    local reason = shortText(data.reason, 120)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    local account = (data.account == 'cash' or data.account == 'bank') and data.account or nil
+    if not account then return false, CH.ERR.INVALID_INPUT, 'Pay in cash or bank.' end
+    local amount = wholeNumber(data.amount, 1)
+    if not amount then return false, CH.ERR.INVALID_INPUT, 'The amount is a whole number of dollars.' end
+    if amount > max then
+        return false, 'over_max', ('Not paid: $%d is over the most one payment may be, $%d '
+            .. '(Config.Staff.ManualPaymentMax).'):format(amount, max)
+    end
+    local who, whoErr, whoMessage = actionSubject(data.subject)
+    if not who then return false, whoErr, whoMessage end
+    local ok, result = Payments.pay(staffOf(src), who.cid, amount, account, reason, who.name)
+    if not ok then
+        if result == CH.ERR.BUSY then
+            return false, result, 'A payment to them is still being made. Try again in a moment.'
+        end
+        return false, result, 'Not paid: the server could not pay or owe it. The log says why.'
+    end
+    local whom = who.name or 'them'
+    if result.paid then
+        return true, nil, ('Paid $%d in %s to %s.'):format(amount, account, whom),
+            { paid = true, owed = false }
+    end
+    return true, nil, ('$%d in %s is owed to %s, handed over at their next login or once they have '
+        .. 'room.'):format(amount, account, whom), { paid = false, owed = true }
+end
+
+--------------------------------------------------------------------------
 -- The one way in
 --------------------------------------------------------------------------
 
@@ -2435,9 +2667,16 @@ function Panel.handle(src, payload)
     if not byDeveloper
         and not allowed(src, (level == IDENTITY or level == DEVELOPER) and READ or level) then
         noteDenied(src, op, 'denied')
-        return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace, true)
-            .. (level == WRITE
-                and ' Changing anything needs that ACE itself; the extra ACEs only read.' or ''))
+        local why = ''
+        if level == MOD then
+            why = (' Freezing, suspending, protecting, voiding and moving a deadline need that ACE '
+                .. 'itself or the moderator ACE (%s); the extra ACEs only read.')
+                :format(tostring(moderatorAce() or 'Config.Admin.ModeratorAce'))
+        elseif level == WRITE then
+            why = ' Changing anything else needs that ACE itself; the moderator ACE only freezes, '
+                .. 'suspends, protects, voids and moves deadlines, and the extra ACEs only read.'
+        end
+        return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace, true) .. why)
     end
     if level == DEVELOPER and not developer(src) then
         noteDenied(src, op, 'developer_denied')
@@ -2460,7 +2699,8 @@ function Panel.handle(src, payload)
 
     -- Per staff member's source, and once more for anything that writes.
     local key = 'panel:' .. tostring(src)
-    for _, bucket in ipairs(level == WRITE and { 'admin', 'adminWrite' } or { 'admin' }) do
+    local writes = level == WRITE or level == MOD
+    for _, bucket in ipairs(writes and { 'admin', 'adminWrite' } or { 'admin' }) do
         if not deps.ratelimit.check(key, bucket) then
             local wait = deps.ratelimit.retryAfter(key, bucket) or 0
             return answer(false, CH.ERR.RATE_LIMITED,
@@ -2490,10 +2730,10 @@ function Panel.handle(src, payload)
         -- A write that raised may have moved money part-way, so the console
         -- hears of it whatever Config.Debug says; a read only with it on.
         -- Either is kept for the diagnosis, which is where this sends staff.
-        local say = level == WRITE and Log.always or Log.debug
+        local say = writes and Log.always or Log.debug
         say(('the admin panel\'s %s raised: %s'):format(op, tostring(ok)))
     end
-    if level == WRITE then
+    if writes then
         -- Whatever it moved shows in the next overview and search, not
         -- ones cached from before it: one that raised part-way included.
         overviewCache, contractsCache = nil, nil

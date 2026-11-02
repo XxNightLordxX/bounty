@@ -891,7 +891,9 @@ describe('the admin panel requests', function()
     local OPS = { 'access', 'overview', 'contracts', 'contract', 'reviews', 'logs', 'player',
                   'settings', 'diag', 'void', 'settle', 'resolve', 'setSetting',
                   'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois', 'adjustDeadline',
-                  'addNote', 'removeHitman', 'editText', 'exportContract', 'playerView' }
+                  'addNote', 'removeHitman', 'editText', 'exportContract', 'playerView',
+                  'frozen', 'freeze', 'unfreeze', 'history', 'suspend', 'unsuspend', 'protect',
+                  'unprotect', 'manualPay' }
 
     local function ask(src, op, data)
         Env.clientEvents = {}

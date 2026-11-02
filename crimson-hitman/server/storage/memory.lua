@@ -49,6 +49,7 @@ function Memory.open()
         photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
         playtime = {}, locationTips = {}, placerInformants = {}, freezes = {},
         contractStaff = {},
+        staffRecords = {},
     }
     return true
 end
@@ -1718,6 +1719,44 @@ function Memory.readContractStaffMarks()
     end
     table.sort(out, byWhen)
     return out
+end
+
+--------------------------------------------------------------------------
+-- Staff records
+--------------------------------------------------------------------------
+
+--- What staff did to one player from the admin panel that must outlast a
+--- restart (server/sanctions.lua, server/payments.lua): a suspension, a
+--- protection, a freeze's history, a manual payment. { id, kind, cid, name,
+--- reason, by_cid, created_at, until_at, ended_at, ended_by, ended_why,
+--- amount, account }. Never deleted: a row lifted or run out is ended, and
+--- stays for the player's history. Read whole once at the start.
+---@return table[]
+function Memory.readStaffRecords()
+    local out = {}
+    for _, row in pairs(db.staffRecords or {}) do
+        out[#out + 1] = {
+            id = row.id, kind = row.kind, cid = row.cid, name = row.name, reason = row.reason,
+            by_cid = row.by_cid, created_at = row.created_at, until_at = row.until_at,
+            ended_at = row.ended_at, ended_by = row.ended_by, ended_why = row.ended_why,
+            amount = row.amount, account = row.account,
+        }
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+--- Insert or replace one, by its id.
+---@param row table
+function Memory.writeStaffRecord(row)
+    db.staffRecords = db.staffRecords or {}
+    db.staffRecords[row.id] = {
+        id = row.id, kind = row.kind, cid = row.cid, name = row.name, reason = row.reason,
+        by_cid = row.by_cid, created_at = row.created_at, until_at = row.until_at,
+        ended_at = row.ended_at, ended_by = row.ended_by, ended_why = row.ended_why,
+        amount = row.amount, account = row.account,
+    }
+    return true
 end
 
 --------------------------------------------------------------------------

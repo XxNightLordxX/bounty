@@ -264,7 +264,10 @@ function serverStub() {
       }
       return out;
     })(), next: 99 } },
-    player: { ok: true, data: { player: { cid: 'TARGET01', name: LONG, online: true, server: 123 },
+    player: function (data) { return playerView(data.subject === '456'); },
+    history: null };
+  function playerView(plain) {
+    const view = { ok: true, data: { player: { cid: 'TARGET01', name: LONG, online: true, server: 123 },
       contracts: rows.slice(0, 10).map(function (r) {
         return { id: r.id, state: r.state, role: 'target', anonymous: false, target: r.target,
           created_at: r.created_at, resolution: r.resolution };
@@ -274,7 +277,33 @@ function serverStub() {
         queued: true }],
       pending: 2, notices: { count: 2, titles: ['Contract closed', REASON] },
       playtime: { hours: 1234.5, grandfathered: false, counted: true, counting: true, floor: 5,
-        from: 'provider' } } },
+        from: 'provider' },
+      // Suspended with the longest reason (its Lift measured), not protected
+      // (the Protect form, its unit picks and boxes measured), and Pay's cap.
+      suspended: { since: NOW - 600, until: NOW + 30 * 86400, reason: REASON, by: 'ADMIN001' },
+      payMax: 100000 } };
+    // Neither suspended nor protected: both forms, their picks and boxes.
+    if (plain) view.data.suspended = null;
+    return view;
+  }
+  Object.assign(answers, {
+    // A player's history card, with the longest things each holds.
+    history: { ok: true, data: {
+      counts: { placed: 1234, taken: 5678, completed: 4321, cancelled: 99, onThem: 12, boughtOut: 3 },
+      recent: rows.slice(0, 10).map(function (r) {
+        return { id: r.id, state: r.state, roles: ['client', 'hitman'], anonymous: true, created_at: r.created_at,
+          client: LONG, target: LONG };
+      }),
+      buyouts: { paid: 12, amount: 12500000 },
+      informants: { count: 40, spent: 1000000, informant: 20, placerInformant: 10, locationTip: 10 },
+      money: { in: [{ kind: 'payouts', amount: 125000000 }, { kind: 'buyout premiums', amount: 3000000 },
+                    { kind: 'staff payments', amount: 100000 }],
+               out: [{ kind: 'rewards put up', amount: 99000000 }, { kind: 'anonymity fees', amount: 25000 }] },
+      measures: [
+        { kind: 'suspend', from: NOW - 600, until: NOW + 30 * 86400, state: 'in force', reason: REASON, by: 'ADMIN001' },
+        { kind: 'protect', from: NOW - 60, state: 'in force', reason: REASON },
+        { kind: 'freeze', from: NOW - 90000, ended: NOW - 80000, state: 'lifted', reason: REASON, by: 'ADMIN001' }],
+      anonymous: 4, identified: true, retentionDays: 30 } },
     settings: { ok: true, data: settings },
     diag: { ok: true, data: { lines: (function () {
       const out = ['--- crimson-hitman diagnosis'];
@@ -307,14 +336,15 @@ function serverStub() {
           sources: { bank: 1250000, cash: 0, dirty: 0 }, goods: { count: 3, labels: ['a_long_item_name_1'] } },
         penaltyAmount: 25000, myAlias: 'Ghost of the Eastern Docks', creatorAnonymous: true,
         locationTip: { left: 2, waitSeconds: 0, note: REASON } } } }
-  };
+  });
   window.GetParentResourceName = function () { return 'crimson-hitman'; };
   window.__requests = [];
   window.fetch = function (url, options) {
     const event = url.split('/').pop();
     const body = JSON.parse((options && options.body) || '{}');
     window.__requests.push({ event: event, op: body.op });
-    const answer = event === 'adminRequest' ? (answers[body.op] || { ok: true }) : { ok: true };
+    let answer = event === 'adminRequest' ? (answers[body.op] || { ok: true }) : { ok: true };
+    if (typeof answer === 'function') answer = answer(body.data || {});
     return Promise.resolve({ json: function () { return Promise.resolve(acrossTheWire(answer)); } });
   };
 }
@@ -332,7 +362,11 @@ const ACCESS = { canWrite: true, canIdentify: true, pageSize: 25, refreshSeconds
       grant: 'Grant it with add_ace identifier.license:<their licence> crimson.identity allow for one person, or '
         + 'to a group of its own (add_ace group.<name> crimson.identity allow); not group.admin.' },
     { ace: 'crimson.developer', name: 'Developer ACE (Config.Admin.DeveloperAce)', held: false,
-      unlocks: 'Opens the Developer section.', grant: 'Grant it with add_ace group.admin crimson.developer allow.' }
+      unlocks: 'Opens the Developer section.', grant: 'Grant it with add_ace group.admin crimson.developer allow.' },
+    { ace: 'crimson.moderator', name: 'Moderator ACE (Config.Admin.ModeratorAce)', held: false,
+      unlocks: 'Opens this panel to read everything the staff ACE reads, scrubbed as without the identity ACE, and '
+        + 'to freeze and unfreeze, suspend, protect, void and move a deadline.',
+      grant: 'Grant it with add_ace group.moderator crimson.moderator allow, pasted into the server console.' }
   ] };
 
 /* Everything that can go wrong on one screen of the panel, measured. */
@@ -526,6 +560,30 @@ async function main() {
       const drawn = await page.evaluate(function () { return document.getElementById('main').textContent.length; });
       it(at + ': ' + section + ' drew something', function () { truthy(drawn > 40, 'only ' + drawn + ' characters'); });
     }
+
+    // A player neither suspended nor protected: the Suspend and Protect
+    // forms, their picks and boxes, with Pay and the history card, and the
+    // Suspend button armed with its confirm showing.
+    await go(page, 'players');
+    await page.fill('#pl-q', '456');
+    await page.press('#pl-q', 'Enter');
+    await page.waitForTimeout(150);
+    await page.click('button[data-act="ps-days"][data-value="7"]');
+    await page.waitForTimeout(60);
+    await page.fill('#ps-reason', 'Contract spam');
+    await page.click('button[data-act="ps-suspend"]');
+    await page.waitForTimeout(60);
+    const staffForms = await page.evaluate(measure, { tablesFit: size.tablesFit });
+    const staffArmed = await page.evaluate(function () {
+      const b = document.querySelector('button[data-act="ps-suspend"]');
+      return { armed: b && b.classList.contains('is-armed'), forms: !!document.getElementById('pp-amount')
+        && !!document.getElementById('pay-amount') && !!document.getElementById('ps-days') };
+    });
+    it(at + ': a player\'s Suspend, Protect and Pay forms fit, with Suspend armed', function () {
+      truthy(staffArmed.forms, 'the three forms are drawn');
+      truthy(staffArmed.armed, 'Suspend was not armed');
+      none(staffForms, 'staff forms');
+    });
 
     // The settings, grouped, with each control beside its words (on a
     // phone, below them).

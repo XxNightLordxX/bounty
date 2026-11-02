@@ -1783,6 +1783,7 @@ do
     ---@type table<string, string>
     local IMMUTABLE = {
         ['crimson_contracts.id']              = 'the primary key',
+        ['crimson_staff_records.id']          = 'the primary key',
         ['crimson_contracts.creator_cid']     = 'who placed it; a contract does not change hands',
         ['crimson_contracts.creator_account'] = 'the account behind the creator, fixed with them',
         ['crimson_contracts.creator_name']    = 'their name as it was when they placed it',

@@ -1340,6 +1340,28 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       click **Unfreeze** twice: the clock shows the same time left as before
       the freeze, and `freeze_player` / `unfreeze_player` rows are in the log.
       Restart the resource while frozen: still frozen after
+- [ ] Suspend a test player for 1 day under **Players** (reason, two clicks):
+      Place and Accept on their phone each answer *You are suspended from
+      contracts until <date>: <reason>* with no money moved, the same line
+      is at the top of their board, and a contract they already hold still
+      pays out. Click **Lift suspension** once: they can place again.
+      Restart while suspended: still suspended after
+- [ ] Protect a test player for 2 hours: a contract on them is refused with
+      *That target cannot be listed right now.*, they still show in the
+      target search with no badge, and a contract already on them runs on.
+      **Lift protection** once: a contract on them is placed again
+- [ ] Open a player's **History** card with and without `crimson.identity`:
+      without it, an anonymous contract of theirs is not in any count and no
+      name is shown; freezes, suspensions and protections are listed with
+      their dates
+- [ ] **Pay** a test player $1,000 cash online, and $1,000 bank while they
+      are logged off: the first arrives at once, the second at their next
+      login, each once, and `staff_manual_payment` rows are in the log. A
+      figure over `Config.Staff.ManualPaymentMax` is refused
+- [ ] Grant only `crimson.moderator` to a test account: the panel opens with
+      a **Moderator** badge, identities hidden; Freeze, Suspend, Protect, Void
+      and the deadline work; Pay, every setting and **Developer** are refused
+      or disabled
 - [ ] `resmon` with the panel open stays under 0.35ms, and back near idle once
       it is closed (the Escape watch runs every frame only while it is open)
 - [ ] Place a contract and take it: its card says *More than 2 hours left*,

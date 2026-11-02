@@ -742,3 +742,14 @@ ul, ol { padding: 0; list-style: none; }
 /* A key read once at start, and a rate limit's per and burst as one row. */
 .chip.is-restart { font-weight: 700; }
 .st-row.st-map .st-key { overflow-wrap: anywhere; }
+
+/* A player's staff tools under Players: suspend, protect, pay and the
+   history card. The moderator's badge beside Can change and Read only. */
+.badge.is-moderator { color: var(--blue); border-color: rgba(157, 180, 208, 0.35); }
+.chip.is-suspended, .chip.is-protected { margin-left: 6px; white-space: nowrap; }
+.chip.is-protected { color: var(--green); border-color: rgba(143, 191, 138, 0.35); }
+.ps-picks, .pp-picks, .pay-form { margin: 0.5rem 0 0.35rem; }
+.ps-picks .seg, .pp-picks .seg, .pay-form .seg { flex-wrap: wrap; }
+/* A sum of money on the history card: smaller, and wrapped rather than
+   spilled past its tile. */
+.big.is-sum { font-size: var(--t-lg); overflow-wrap: anywhere; }

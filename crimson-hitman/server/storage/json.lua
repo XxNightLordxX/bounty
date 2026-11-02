@@ -28,6 +28,7 @@ local EMPTY = {
     placerInformants = {},
     freezes = {},
     contractStaff = {},
+    staffRecords = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -57,7 +58,7 @@ local indexDirty = false
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
                   'alerts', 'viewAlerts', 'locationTips', 'placerInformants', 'freezes',
-                  'contractStaff' }
+                  'contractStaff', 'staffRecords' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -2341,6 +2342,40 @@ function JsonStore.readContractStaffMarks()
     end
     table.sort(out, staffByWhen)
     return out
+end
+
+--------------------------------------------------------------------------
+-- Staff records
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, and written at once, as a
+--- freeze is: a suspension is staff's word, and a crash must not take it
+--- back.
+function JsonStore.readStaffRecords()
+    local out = {}
+    for _, row in pairs(db.staffRecords or {}) do
+        out[#out + 1] = {
+            id = row.id, kind = row.kind, cid = row.cid, name = row.name, reason = row.reason,
+            by_cid = row.by_cid, created_at = tonumber(row.created_at),
+            until_at = tonumber(row.until_at), ended_at = tonumber(row.ended_at),
+            ended_by = row.ended_by, ended_why = row.ended_why, amount = tonumber(row.amount),
+            account = row.account,
+        }
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+function JsonStore.writeStaffRecord(row)
+    db.staffRecords = db.staffRecords or {}
+    db.staffRecords[row.id] = {
+        id = row.id, kind = row.kind, cid = row.cid, name = row.name, reason = row.reason,
+        by_cid = row.by_cid, created_at = row.created_at, until_at = row.until_at,
+        ended_at = row.ended_at, ended_by = row.ended_by, ended_why = row.ended_why,
+        amount = row.amount, account = row.account,
+    }
+    touch(true)
+    return true
 end
 
 --- When this process was last known to be running.

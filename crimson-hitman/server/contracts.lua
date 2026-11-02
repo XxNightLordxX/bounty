@@ -10,6 +10,8 @@ local Log = CrimsonBoot.requireShared('log')
 local Contracts = {}
 
 local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger, Freeze
+--- Staff suspensions and protections (server/sanctions.lua).
+local Sanctions
 
 --- What settles a take, or a contract row, the store would not confirm
 --- (server/review.lua's deciders); defined with the code they finish.
@@ -32,6 +34,9 @@ function Contracts.init(deps)
     -- The players staff have put on hold (server/freeze.lua): nothing on a
     -- contract one of them is party to moves until they are released.
     Freeze      = deps.freeze
+    -- The players staff have suspended from contracts, and the ones they
+    -- protect from them (server/sanctions.lua).
+    Sanctions   = deps.sanctions
     -- And the two kinds the server settles itself once the store answers,
     -- from the whole record the item carries (S12).
     if Review and Review.DECIDERS then
@@ -66,6 +71,22 @@ end
 ---@return boolean
 function Contracts.frozenPlayer(cid)
     return Freeze ~= nil and Freeze.of(cid) ~= nil
+end
+
+--- The suspension staff have put on this player (server/sanctions.lua):
+--- they may neither place nor accept a contract while it lasts. Or nil.
+---@param cid string|nil
+---@return table|nil
+function Contracts.suspension(cid)
+    return Sanctions ~= nil and Sanctions.suspended(cid) or nil
+end
+
+--- Whether staff protect this player from new contracts
+--- (server/sanctions.lua).
+---@param cid string|nil
+---@return boolean
+function Contracts.protectedByStaff(cid)
+    return Sanctions ~= nil and Sanctions.protected(cid) ~= nil
 end
 
 --- Whether a hitman row is on the contract: holding it, or part-way
@@ -470,6 +491,11 @@ function Contracts.canCreate(actor, targetActor)
     if Identity.isProtected(targetActor) and not Config.Targeting.AllowProtectedJobTargets then
         return false, CH.ERR.TARGET_IS_LEO
     end
+
+    -- Protected by staff (server/sanctions.lua): refused where a barred job
+    -- is, with the answer the target rules already give, so nothing says it
+    -- is staff. The target search lists them as it lists everybody.
+    if Contracts.protectedByStaff(targetActor.cid) then return false, CH.ERR.TARGET_PROTECTED end
 
     -- Only the contracts these two are involved in matter here, so this asks
     -- for those rather than for the whole table.
@@ -1022,6 +1048,10 @@ local function createUnlocked(actor, req, targetActor)
     if Contracts.frozenPlayer(actor.cid) or Contracts.frozenPlayer(req.targetCid) then
         return nil, CH.ERR.CONTRACT_FROZEN
     end
+    -- Suspended by staff (server/sanctions.lua): told until when and why.
+    -- Before anything is charged.
+    local suspension = Contracts.suspension(actor.cid)
+    if suspension then return nil, CH.ERR.SUSPENDED, Sanctions.refusal(suspension) end
 
     local ok, err, refusal = Contracts.canCreate(actor, targetActor)
     if not ok then return nil, err, refusal end
@@ -1385,6 +1415,9 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- it is told only "not right now": "on hold" to a stranger tapping Accept
     -- said which contracts a frozen player was on, anonymous ones included.
     if Contracts.frozenPlayer(actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- Suspended by staff (server/sanctions.lua): nothing is taken.
+    local suspension = Contracts.suspension(actor.cid)
+    if suspension then return false, CH.ERR.SUSPENDED, Sanctions.refusal(suspension) end
     if Contracts.heldByStaff(contract) then
         if Storage.readHitman(contract.id, actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
         return false, CH.ERR.BAD_STATE

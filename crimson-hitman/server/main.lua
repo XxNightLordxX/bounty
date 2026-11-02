@@ -132,6 +132,16 @@ local DEFAULTS = {
         -- config has. Staff holding Ace see it whether or not anybody holds
         -- this, so a config without it locks nobody out.
         DeveloperAce = 'crimson.developer',
+        -- The panel's moderator level (freeze, suspend, protect, void and
+        -- the deadline; reads scrubbed), added to a section every config
+        -- has. Nobody holds it until it is granted.
+        ModeratorAce = 'crimson.moderator',
+    },
+    --- The cap on a manual staff payment (server/payments.lua), read on
+    --- every payment: a config with a Staff section and no cap in it has the
+    --- shipped one, never none.
+    Staff = {
+        ManualPaymentMax = 100000,
     },
     Immunity = {
         MinTargetPlaytimeHours = 5,
@@ -1043,6 +1053,18 @@ local function validateConfig(quiet)
     end
     Config.Limits.MinContractReward = minReward
 
+    -- The most one manual staff payment may be (server/payments.lua): a
+    -- whole number of dollars, 0 turning manual payments off. Anything else
+    -- is read as the shipped figure and said so, never as no cap at all.
+    local payMax = tonumber(Config.Staff and Config.Staff.ManualPaymentMax)
+    if not payMax or payMax ~= payMax or payMax < 0 or payMax == math.huge then
+        warn[#warn + 1] = ('Staff.ManualPaymentMax is %s, not a number of dollars (0 turns manual '
+            .. 'payments off); using 100000.'):format(tostring(Config.Staff and Config.Staff.ManualPaymentMax))
+        payMax = 100000
+    end
+    if type(Config.Staff) ~= 'table' then Config.Staff = {} end
+    Config.Staff.ManualPaymentMax = math.floor(payMax)
+
     -- How slow a maintenance job may be before the console hears about it.
     -- 0 turns the warning off; /ch-diag still lists the slowest jobs.
     local slowMs = tonumber(Config.Diagnostics.SlowJobMs)
@@ -1770,6 +1792,9 @@ function StartCrimsonHitman()
     local locationTip = CrimsonBoot.require('server.locationtip')
     local freeze     = CrimsonBoot.require('server.freeze')
     local staffContract = CrimsonBoot.require('server.staffcontract')
+    local sanctions  = CrimsonBoot.require('server.sanctions')
+    local payments   = CrimsonBoot.require('server.payments')
+    local history    = CrimsonBoot.require('server.history')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1786,7 +1811,8 @@ function StartCrimsonHitman()
     progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
                      audit = audit, notify = notify, progression = progression,
-                     death = death, review = review, ledger = ledger, freeze = freeze })
+                     death = death, review = review, ledger = ledger, freeze = freeze,
+                     sanctions = sanctions })
     photos.init({ storage = Storage, audit = audit })
     ledger.init({ storage = Storage, photos = photos, notify = notify })
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
@@ -1818,6 +1844,12 @@ function StartCrimsonHitman()
     -- (server/staffcontract.lua): the edits and removals read once, here.
     staffContract.init({ storage = Storage, audit = audit, notify = notify,
                          contracts = contracts, identity = identity })
+    -- Staff suspensions and protections, and the staff records beside them
+    -- (server/sanctions.lua): read from the store once, here. Manual staff
+    -- payments (server/payments.lua) pay or owe through the buyout path.
+    sanctions.init({ storage = Storage, audit = audit, notify = notify })
+    payments.init({ storage = Storage, audit = audit, notify = notify, bailout = bailout,
+                    sanctions = sanctions })
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
@@ -1855,6 +1887,9 @@ function StartCrimsonHitman()
         -- Staff notes, removals and text edits on a contract, for the
         -- admin panel.
         staffContract = staffContract,
+        -- Suspensions and protections, manual payments and the player
+        -- history card, for the admin panel, the app and the tick.
+        sanctions = sanctions, payments = payments, history = history,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2435,6 +2470,8 @@ function Tick()
     job('bailout.processQueue', modules.bailout.processQueue)
     -- A restart hold the restart never came for (Config.Restart.MaxHoldMinutes).
     if modules.freeze and modules.freeze.restartTick then job('freeze.restartTick', modules.freeze.restartTick) end
+    -- Suspensions and protections whose time has passed, written down as ended.
+    if modules.sanctions then job('sanctions.tick', modules.sanctions.tick) end
     job('escrow.retryWaiting', RetryWaiting)
     if modules.notify.deliverKept then job('notify.deliverKept', DeliverKept) end
     -- Kill photos switched off (Config.Completion.KillPhotos): nothing below

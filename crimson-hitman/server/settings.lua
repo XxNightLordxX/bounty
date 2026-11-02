@@ -80,6 +80,8 @@ local DENY = {
         .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
     ['Admin.DeveloperAce'] = { why = 'Who sees the Developer section. An ACE renamed from here could '
         .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
+    ['Admin.ModeratorAce'] = { why = 'Who may freeze, suspend, protect and void from this panel. An ACE '
+        .. 'renamed from here could grant it to anyone.' .. EDIT_IN_CONFIG },
     ['Admin.ExtraAces'] = { why = 'ACEs that may read the staff tools. Changed from here, staff could '
         .. 'grant themselves access.' .. EDIT_IN_CONFIG },
     ['Reason.PatternDenylist'] = { why = 'Lua patterns: a malformed one raises in every reason check.'
@@ -639,6 +641,13 @@ local CATALOGUE = {
     { key = 'Limits.StaffDeadlineMinLeftSeconds', section = 'limits', category = 'rules-timers',
       group = 'Contract limits', kind = 'number', integer = true, min = 0, max = 86400,
       label = 'Least time a staff shortening leaves (s)', inflight = AT_USE },
+    -- Config.Staff (Staff and permissions in config.lua): the most one
+    -- manual payment from Players may be. Shown with the limits.
+    { key = 'Staff.ManualPaymentMax', section = 'limits', category = 'rules-limits', group = 'Staff',
+      kind = 'number', integer = true, min = 0, max = 100000000,
+      label = 'Most one manual staff payment may be ($, 0 off)',
+      about = 'Players, Pay: cash or bank paid to one player by staff with the staff ACE.',
+      inflight = AT_USE },
     { key = 'Limits.ExclusiveIdleReleaseSeconds', section = 'limits', group = 'Contract limits',
       category = 'rules-timers',
       kind = 'number', integer = true, min = 0, max = 604800,

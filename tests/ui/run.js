@@ -12332,6 +12332,51 @@ async function main() {
     drewCleanly(app, 'staff edited and barred');
   })();
 
+  /* A suspension from contracts (server/sanctions.lua): said at the top of
+     the board, the app's home, and as the answer to Accept, with until when
+     and the reason staff gave, as text. */
+  await (async function suspendedFromContracts() {
+    const until = Math.floor(Date.now() / 1000) + 3 * 86400;
+    const d = new Date(until * 1000);
+    const two = function (n) { return (n < 10 ? '0' : '') + n; };
+    const date = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate())
+      + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.suspended = { untilAt: until, reason: '<b>Contract spam</b>' };
+    const app = boot({ list: board, mine: MINE, ledger: LEDGER,
+      accept: { ok: false, err: 'suspended', data: { untilAt: until, reason: 'Contract spam' } } });
+    await settle(); await settle();
+    it('says the suspension at the top of the board, with the date and the reason as text', function () {
+      truthy(app.view.textContent.indexOf('You are suspended from contracts until ' + date
+        + ': <b>Contract spam</b>') !== -1, app.view.textContent);
+      falsy(app.view.innerHTML && app.view.innerHTML.indexOf('<b>Contract') !== -1 && !/&lt;b&gt;/.test(app.view.innerHTML),
+        'the reason is never markup');
+    });
+    click(app, 'Accept contract');
+    await settle();
+    click(app, 'Under my name');
+    await settle(); await settle();
+    it('answers Accept with until when and why', function () {
+      const said = app.notice();
+      truthy(said.indexOf('You are suspended from contracts until ' + date + ': Contract spam') !== -1, said);
+    });
+
+    const forever = JSON.parse(JSON.stringify(BOARD));
+    forever.data.suspended = { reason: 'Pending a ticket' };
+    const lifted = boot({ list: forever, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('says until staff lift it where there is no date', function () {
+      truthy(lifted.view.textContent.indexOf(
+        'You are suspended from contracts until staff lift it: Pending a ticket') !== -1, lifted.view.textContent);
+    });
+    const plain = boot({ list: BOARD, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('says nothing of it to anybody not suspended', function () {
+      falsy(plain.view.textContent.indexOf('suspended') !== -1, plain.view.textContent);
+    });
+    [app, lifted, plain].forEach(function (a) { drewCleanly(a); });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

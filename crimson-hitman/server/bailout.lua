@@ -981,4 +981,22 @@ function Bailout.queuedCount()
     return #readQueue()
 end
 
+--- Put money into a player's hands now, or on the books for their next
+--- login (Bailout.owe) when they are away or the credit is refused: the one
+--- pay-or-owe path, for a payment that is not a buyout (a manual staff
+--- payment, server/payments.lua). `lineOwner` is what the owed line is kept
+--- under, as a contract id is for every other owed line.
+---@return boolean placed in their hands or on the books
+---@return table|nil raise { error, arrived, before } when the credit raised
+---@return boolean|nil paid true when it reached their hands now
+function Bailout.payOrOwe(cid, lineOwner, amount, account, reason)
+    local who = Identity.byCitizenId(cid)
+    local placed, raise = deliver(cid, lineOwner, amount, account, reason)
+    -- In their hands now: they were here, nothing raised, and nothing was
+    -- written for them to collect later.
+    local paid = placed and who ~= nil and raise == nil
+        and #(Storage.readEscrow(lineOwner) or {}) == 0
+    return placed, raise, paid
+end
+
 return Bailout

@@ -5,15 +5,12 @@
     ╚═══════════════════════════════════════════════════════════════════════════╝
 
     The one file to edit, in the admin panel's order (/hitmanadmin): Debug
-    and storage, Rules, Features, Staff and permissions, then Advanced. The
-    full explanation of each setting is in README.md, "Configuration
-    reference", under the same section title.
-
-    The panel can change most of these live, and keeps its changes across
-    restarts: a value changed in the panel overrides the one in this file.
-
-    Every player's game downloads this file, so never put a secret in it:
-    the Discord webhooks are server.cfg convars (README, Admin panel).
+    and storage, Rules, Features, Staff and permissions, then Advanced. Each
+    setting is explained in README.md, "Configuration reference", under the
+    same section title. The panel changes most of these live and keeps its
+    changes across restarts, over the value in this file. Every player's
+    game downloads this file, so never put a secret in it: the Discord
+    webhooks are server.cfg convars (README, Admin panel).
 ]]
 
 Config = Config or {}
@@ -393,6 +390,7 @@ Config.Admin = {
     Ace                 = 'crimson.admin',      -- ACE for staff, and for anything that writes
     IdentityAce         = 'crimson.identity',   -- ACE to see who is behind an anonymous party
     DeveloperAce        = 'crimson.developer',  -- ACE for the panel's Developer section
+    ModeratorAce        = 'crimson.moderator',  -- ACE that reads, freezes, suspends, protects and voids
     ExtraAces           = { 'command' },        -- ACEs that may also read (never write)
     Commands            = { -- command names, without the slash
         timeline  = 'ch-timeline',   -- one contract's history
@@ -410,6 +408,8 @@ Config.Admin = {
     PanelRefreshSeconds = 10,                   -- how often the overview refreshes
     TimelineRows        = 200,                  -- audit rows read for one timeline
 }
+
+Config.Staff = { ManualPaymentMax = 100000 }  -- most one manual staff payment may be ($); 0 = off
 
 -- ============================================================================
 --                          ADVANCED AND DEVELOPER
