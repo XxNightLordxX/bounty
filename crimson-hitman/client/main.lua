@@ -621,6 +621,8 @@ local UI_EVENTS = {
     -- Roleplay (Config.Roleplay): asking the broker NPC about a rumour, and
     -- a broker player's who-is-near and brief.
     'rumourBrief', 'brokerNearby', 'brokerBrief',
+    -- Improvements (Config.Improvements): a tipped-off target going dark.
+    'goDark',
 }
 
 --------------------------------------------------------------------------

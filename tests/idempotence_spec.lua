@@ -1000,6 +1000,9 @@ describe('what this file leaves out', function()
         brokerNearby = 'a read: each asks afresh and mints new handles',
         brokerBrief = 'a second briefing on one contract renews it, nothing more',
         rpPlaces = 'a read of where the NPCs stand',
+        -- Going dark (imp_tips_spec): a second while dark is already_dark
+        -- and charges nothing twice.
+        goDark = 'a second while dark is refused as already_dark, charged once',
         addEscrow = 'a creator may top up a reward as many times as they like; '
             .. 'each call adds what it says it adds',
         improve   = 'extending a deadline twice extends it twice, which is the '

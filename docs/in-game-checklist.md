@@ -1441,7 +1441,18 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Informant in person on, with the tip on: buying a tip away from the informant says *Find the informant first.* and the bank is unchanged; beside it the tip is sold.
 - [ ] Reason quality on: *idk* is refused, *Debt owed* is refused as too short; with `LowEffortAction = 'review'` an *rdm* reason is placed and shows in **Needs review** as a low-effort reason, dismissed with a note.
 
-## If something fails
+## 15. Optional improvements: informant fairness (each off as shipped)
+
+- [ ] With every `Config.Improvements` switch off, a tip and the target's informant cost, limit and warn as before.
+- [ ] Tip warning delay on (60..300 s): buy a tip; the target gets no notice at once, then one within 5 minutes; On me's *Tipped off* time is a round 5 minutes.
+- [ ] Buy a tip with the delay on, restart the resource before it is sent: the target still gets the notice, once.
+- [ ] Tip limits, one per hitman: a second tip by the same hitman is refused, a second hitman may still buy one.
+- [ ] Tip limits, price doubling: the second tip's button quotes twice the price and charges it; the third stops at `MaxCost`.
+- [ ] Hold before a tip (10 min): the button says from when; buying earlier is refused with the time and the bank is unchanged.
+- [ ] Informant second try at 50%: the target's second look-up quotes and charges half.
+- [ ] Safe zone around the hospital: with the target inside, a tip says *Your informant can't place them right now.* and nothing is taken; outside it is sold.
+- [ ] Go dark: the tipped-off target taps **Go dark** twice and pays; a tip bought on them then says the informant couldn't find them and the hitman's bank is back where it was; after `Minutes` tips work again.
+
 
 The audit log records every financial movement and every rejected attempt.
 `/ch-timeline <contract>` shows one contract's state, escrow lines and audit

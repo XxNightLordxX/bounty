@@ -131,6 +131,10 @@ local CONDITIONAL = {
     protection       = 'target-only, while bodyguards are on and a job is posted',
     protectionOffer  = 'target-only, while bodyguards are on and none is posted',
     counterTargets   = 'target-only, while the hit on the hitman is on and an operative was named',
+    -- Informant fairness (server/imp_tips.lua), off as shipped: going dark,
+    -- and the price of the target's next look-up (imp_tips_spec).
+    goDark           = 'target-only, while going dark is on and they were told of a tip',
+    informantCost    = 'target-only, while the second-try price is on and differs',
 }
 
 --- Which roles see a contract at all, and through which projection call.

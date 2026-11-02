@@ -1339,6 +1339,29 @@ describe('every channel a player not entitled to it can read', function()
         admin(8, 'reviews', {})
         rp.Rumours.Enabled, rp.BurnerPhone.Enabled, rp.InformantNpc.Enabled = false, false, false
         rp.ReasonQuality.Enabled = false
+        -- Informant fairness (server/imp_tips.lua), all on: a tip whose
+        -- warning waits, a tip's limits and hold quoted on the card, a tip
+        -- refused in a safe zone, going dark, a tip that then finds nothing
+        -- and is given back, and the delayed warning sent. Off again after.
+        local imp = Config.Improvements
+        imp.TipWarningDelay.Enabled, imp.TipLimits.Enabled, imp.TipHoldFirst.Enabled = true, true, true
+        imp.TipLimits.PriceDoubling, imp.TipHoldFirst.MinHeldMinutes = true, 0
+        imp.InformantSecondTry.Enabled, imp.GoDark.Enabled = true, true
+        imp.TipSafeZones.Enabled = true
+        imp.TipSafeZones.Zones = { '1200, -800, 40, the safe house' }
+        call('locationTip', 3, { id = c.id, shown = {} })
+        imp.TipSafeZones.Enabled = false
+        Env.players[3].PlayerData.money.bank = 1000000
+        call('locationTip', 3, { id = c.id, shown = {} })
+        for _, src in ipairs({ 1, 2, 3, 4, 5 }) do call('mine', src, {}) end
+        Env.advance(imp.TipWarningDelay.MaxSeconds + 1)
+        call('goDark', 2, { id = c.id, shown = {} })
+        Env.advance(Config.LocationTip.CooldownMinutes * 60 + 1)
+        call('locationTip', 3, { id = c.id, shown = {} })
+        call('goDark', 3, { id = c.id, shown = {} })
+        for _, src in ipairs({ 1, 2, 3, 4, 5 }) do call('mine', src, {}) end
+        imp.TipWarningDelay.Enabled, imp.TipLimits.Enabled, imp.TipHoldFirst.Enabled = false, false, false
+        imp.InformantSecondTry.Enabled, imp.GoDark.Enabled = false, false
         call('abandon', 3, { id = c.id })
         call('cancel', 1, { id = c.id })
         -- The bodyguard job settled with the contract: the guard's notice.

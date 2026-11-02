@@ -11,6 +11,13 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Improvements: informant fairness** (six options, all off as shipped, all
+  changeable from the admin panel): a delayed tip warning for the target
+  (`Config.Improvements.TipWarningDelay`), one tip per hitman and/or doubling
+  tip prices (`TipLimits`), a hold before a tip (`TipHoldFirst`), a cheaper or
+  dearer second look-up for the target's informant (`InformantSecondTry`),
+  safe zones where no tip is sold (`TipSafeZones`), and going dark for a
+  tipped-off target (`GoDark`). See *Optional improvements*.
 - **Roleplay: proof of intent, earned reputation, bodyguards and the hit on
   the hitman** (all off as shipped, all changeable from the admin panel): a
   payout can wait until the hitman has worked the contract in character
@@ -859,6 +866,30 @@ Staff tools: `/hitmanadmin` and the F8 commands (see *Staff commands* and *Admin
 The staff webhook for financial movements and rejected attempts is
 `set crimson_hitman_webhook "..."` in server.cfg. Never put either webhook in
 `config.lua`: every player's game downloads it.
+
+### Improvements
+
+Optional changes to existing features, each its own block of `Config.Improvements` and each off as shipped (see *Optional improvements*). Every one is changeable from the panel: the switches under **Features**, the rest under **Rules**.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.Improvements.TipWarningDelay.Enabled` | `false` | The target's *someone knows your rough area* notice waits a random while after a tip. |
+| `Config.Improvements.TipWarningDelay.MinSeconds` | `60` | Shortest wait, seconds. At most `MaxSeconds`. |
+| `Config.Improvements.TipWarningDelay.MaxSeconds` | `300` | Longest wait, seconds. `0` sends it at once, as before. |
+| `Config.Improvements.TipLimits.Enabled` | `false` | The two tip limits below apply, on top of `Config.LocationTip`'s own. |
+| `Config.Improvements.TipLimits.OnePerHitman` | `true` | Each hitman buys one tip per contract. |
+| `Config.Improvements.TipLimits.PriceDoubling` | `false` | Each further tip on a contract costs twice the one before. |
+| `Config.Improvements.TipLimits.MaxCost` | `200000` | The most a doubled tip costs ($); never less than `Config.LocationTip.Cost`. |
+| `Config.Improvements.TipHoldFirst.Enabled` | `false` | A tip only once the hitman has held the contract `MinHeldMinutes`. |
+| `Config.Improvements.TipHoldFirst.MinHeldMinutes` | `10` | Minutes held, counted from when they accepted it. |
+| `Config.Improvements.InformantSecondTry.Enabled` | `false` | The target's look-ups after the first on a contract are priced apart. |
+| `Config.Improvements.InformantSecondTry.SecondTryCostPercent` | `50` | Their price as a % of `Config.Informant.Cost` (`100` = the same). The chance stays `Config.Informant.RevealChancePercent`. |
+| `Config.Improvements.TipSafeZones.Enabled` | `false` | No tip is sold while the target stands in one of `Zones`. |
+| `Config.Improvements.TipSafeZones.Zones` | none | `'x, y, radius, name'` each, such as `'300, -590, 80, Pillbox'`. The name is for staff only. |
+| `Config.Improvements.GoDark.Enabled` | `false` | A target told of a tip may pay to go dark from On me. |
+| `Config.Improvements.GoDark.Cost` | `50000` | Its price; `0` = free. |
+| `Config.Improvements.GoDark.Account` | `'bank'` | `'cash'` or `'bank'`. |
+| `Config.Improvements.GoDark.Minutes` | `30` | How long tips bought on them find nothing (and are given back). |
 
 ### Roleplay
 
@@ -2811,6 +2842,75 @@ refused (`LowEffortAction = 'refuse'`), or placed and put in **Needs
 review** as a *low-effort reason* with its contract (`'review'`), where
 staff read it and dismiss it with a note. The item names the placer by
 role to staff without `crimson.identity`. Refusals charge nothing.
+
+---
+
+## Optional improvements
+
+Changes to existing features that an owner may want, each **off as shipped**
+(`Config.Improvements.<Feature>.Enabled = false`): with it off the resource
+behaves exactly as before. Every setting is in the admin panel (the switches
+under **Features**, in groups *Improvements: ...*; the rest under **Rules >
+Timers**, **Rewards & money** or **Targeting**), is checked as `config.lua`
+is at start, is kept across restarts and applies at once. **Live > How it
+works** has a card for each.
+
+### Informant fairness
+
+Six rules over the informant tip (`Config.LocationTip`) and the target's
+informant (`Config.Informant`), in `server/imp_tips.lua`. Every price is
+read on the server, quoted on the card and checked against the page's echo
+before anything is charged (a price that moved is refused with the price
+now, nothing taken); every charge is last, after every check; and nothing
+here names the hitman, the placer or the target to anybody new.
+
+**Tip warning delay** (`TipWarningDelay`). The target's *someone knows your
+rough area* notice is sent a random `MinSeconds`..`MaxSeconds` after the tip
+instead of at once, so the hitman has a head start. The wait is kept in the
+store (`crimson_rp_rows`, kind `imp_tipwarn`, all three storage modes): after
+a restart a warning still waiting is sent when it falls due, or at once if it
+is past due; it is never lost and never sent twice. A contract that ended
+while the warning waited drops it. Until it is sent, the target's card shows
+nothing; after, its *Tipped off* time is rounded down to 5 minutes, so it
+does not give the delay away.
+
+**Tip limits** (`TipLimits`). On top of `MaxPurchasesPerContract` and
+`CooldownMinutes`: with `OnePerHitman`, each hitman buys one tip per
+contract (refused as *You have had your one informant tip on this
+contract.*); with `PriceDoubling`, each tip on a contract costs twice the one
+before (the first at `Config.LocationTip.Cost`), capped at `MaxCost`. The
+hitman's card quotes the real next price.
+
+**Hold before a tip** (`TipHoldFirst`). A hitman buys a tip only once they
+have held the contract for `MinHeldMinutes`, counted from when they accepted
+it. Before that the card says from when, and a purchase is refused with the
+time; nothing is charged.
+
+**Informant second try** (`InformantSecondTry`). The target's look-ups after
+their first on a contract cost `SecondTryCostPercent` of
+`Config.Informant.Cost`, whole dollars rounded down (`100` is today's price).
+The chance stays `Config.Informant.RevealChancePercent`, which the owner sets
+in the panel. The target's card quotes the next price.
+
+**Tip safe zones** (`TipSafeZones`). No tip is sold while the server sees the
+target inside one of `Zones` (`'x, y, radius, name'`). The hitman is told
+only *Your informant can't place them right now.*, never why or where, and
+nothing is charged. The refusal is audited (`location_tip_safe_zone`) without
+the zone.
+
+**Go dark** (`GoDark`). A target who was told of a tip on a contract on them
+gets a **Go dark** button on that card (two taps, price echoed). Paying
+`Cost` from `Account` (to nobody, as a tip's price is) makes every tip bought
+on them, on any contract, for `Minutes` come back *Your informant couldn't
+find them.*: the hitman's price is charged and given back in full at once
+(audited as `location_tip_refunded`, reason `gone_dark`; a refund that cannot
+be paid goes to **Needs review**), and nothing is kept or counted against the
+tip limits. Going dark is kept in the store (`crimson_rp_rows`, kind
+`imp_dark`) and holds across a restart, and to its end even if staff switch
+the feature off. A second purchase while dark is refused, nothing charged.
+It is offered on On me, not on the whitelisted-job view.
+
+No third-party resource is called by any of these.
 
 ---
 

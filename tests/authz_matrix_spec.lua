@@ -918,6 +918,26 @@ MATRIX.brokerBrief = {
 MATRIX.rpPlaces = { payload = {}, expect = ANYONE,
     why = 'where the NPCs stand is the same for every player and names nobody' }
 
+-- Informant fairness (server/imp_tips.lua, imp_tips_spec): going dark, on
+-- for this row (off as shipped), once the target was told of a tip on it.
+MATRIX.goDark = {
+    arrange = function(w)
+        Config.Improvements.GoDark.Enabled = true
+        Config.Notifications.ParanoidAlertJitter = { min = 0, max = 0 }
+        Env.players[CAST.hitman.source].PlayerData.money.bank = 100000
+        Env.players[CAST.target.source].PlayerData.money.bank = 100000
+        Env.players[CAST.target.source]._coords = { x = 1200.0, y = -800.0, z = 30.0 }
+        Env.advance(1)
+        truthy(w.s.locationTip.buy(w.who.hitman, w.held.id), 'the arrangement needs a tip told')
+    end,
+    payload = function(w, role, contract)
+        return { id = contract.id, shown = { cost = Config.Improvements.GoDark.Cost,
+            account = Config.Improvements.GoDark.Account } }
+    end,
+    expect = only('target', NOT_PARTY),
+    why = 'only the target of a contract, told of a tip on it, may pay to go dark',
+}
+
 -- The two events the victim's own client fires --------------------------
 --
 -- These reply to nobody, so they have no permit/refuse cell. What they do

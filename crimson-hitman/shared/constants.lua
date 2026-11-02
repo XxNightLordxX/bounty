@@ -528,6 +528,20 @@ CH.ERR = {
     --- Config.Roleplay.InformantNpc: an informant purchase away from the
     --- informant NPC. Nothing was charged.
     FIND_INFORMANT   = 'find_informant',
+
+    -- Informant fairness (server/imp_tips.lua, Config.Improvements), each
+    -- off as shipped. Nothing was charged for any but TIP_NOT_FOUND, whose
+    -- price was given back.
+    --- TipHoldFirst: the hitman has not held the contract long enough.
+    TIP_HOLD         = 'tip_hold',
+    --- TipSafeZones: the target cannot be placed now (never why or where).
+    TIP_CANT_PLACE   = 'tip_cant_place',
+    --- GoDark: the target went dark; the tip's price was given back.
+    TIP_NOT_FOUND    = 'tip_not_found',
+    --- GoDark: nobody was tipped off about this target on that contract.
+    NOT_TIPPED       = 'not_tipped',
+    --- GoDark: the target is dark already.
+    ALREADY_DARK     = 'already_dark',
 }
 
 --- The most lines one staff command output event carries

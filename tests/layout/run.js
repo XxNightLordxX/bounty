@@ -221,7 +221,9 @@ function serverStub() {
       // Roleplay (rpC): Hire protection, and the hit on a named operative.
       protectionOffer: { account: 'bank', min: 1000, max: 100000 },
       counterTargets: [{ label: 'Operative #1', name: 'Maximilian Featherstonehaugh-Cholmondeley',
-                         handle: 'tg00000042' }]
+                         handle: 'tg00000042' }],
+      // Improvements (impA): Go dark, at a long price, under the tip notice.
+      goDark: { cost: 1250000, account: 'bank', minutes: 1440 }
     }] } },
     ledger: { ok: true, data: { entries: [{
       // The client's row, with their kill photo waiting to be opened. Only

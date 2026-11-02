@@ -418,6 +418,48 @@ ConfigDefaults.Staff = {
     AlertRefusalsPer10Min = 30,     -- alert past this many refusals to one player in 10 min; 0 = off
 }
 -- ============================================================================
+--                               IMPROVEMENTS
+-- ============================================================================
+-- Optional changes to existing features, each its own block and each off as
+-- shipped (README, Optional improvements). All are changed from the panel.
+
+ConfigDefaults.Improvements = ConfigDefaults.Improvements or {}  -- the improvements, one block each
+
+ConfigDefaults.Improvements.TipWarningDelay = {
+    Enabled    = false,  -- the target's tip notice waits a random while
+    MinSeconds = 60,     -- shortest wait (s)
+    MaxSeconds = 300,    -- longest wait (s)
+}
+
+ConfigDefaults.Improvements.TipLimits = {
+    Enabled       = false,   -- the extra tip limits below apply
+    OnePerHitman  = true,    -- each hitman buys one tip per contract
+    PriceDoubling = false,   -- each further tip on a contract costs twice the last
+    MaxCost       = 200000,  -- the most a doubled tip costs ($)
+}
+
+ConfigDefaults.Improvements.TipHoldFirst = {
+    Enabled        = false,  -- a tip only once the contract was held a while
+    MinHeldMinutes = 10,     -- minutes the hitman must have held it
+}
+
+ConfigDefaults.Improvements.InformantSecondTry = {
+    Enabled              = false,  -- the target's later look-ups cost differently
+    SecondTryCostPercent = 50,     -- % of Informant.Cost after the first
+}
+
+ConfigDefaults.Improvements.TipSafeZones = {
+    Enabled = false,  -- no tip while the target is inside one of Zones
+    Zones   = {},     -- 'x, y, radius, name', e.g. '300, -590, 80, Pillbox'
+}
+
+ConfigDefaults.Improvements.GoDark = {
+    Enabled = false,   -- a tipped-off target may pay to go dark
+    Cost    = 50000,   -- price; 0 = free
+    Account = 'bank',  -- 'cash' | 'bank'
+    Minutes = 30,      -- tips bought on them this long find nothing
+}
+-- ============================================================================
 --                                 ROLEPLAY
 -- ============================================================================
 -- Optional roleplay features, each its own block and each off as shipped

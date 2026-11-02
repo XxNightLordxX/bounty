@@ -161,6 +161,14 @@ local ADDED = {
         LowEffort = { 'rdm', 'idk', 'cuz', 'no reason', 'test', 'because' },
         LowEffortAction = 'refuse',
     },
+    -- Group impA: informant fairness, every block off as shipped.
+    ['Improvements.TipWarningDelay'] = { Enabled = false, MinSeconds = 60, MaxSeconds = 300 },
+    ['Improvements.TipLimits'] = { Enabled = false, OnePerHitman = true, PriceDoubling = false,
+        MaxCost = 200000 },
+    ['Improvements.TipHoldFirst'] = { Enabled = false, MinHeldMinutes = 10 },
+    ['Improvements.InformantSecondTry'] = { Enabled = false, SecondTryCostPercent = 50 },
+    ['Improvements.TipSafeZones'] = { Enabled = false, Zones = {} },
+    ['Improvements.GoDark'] = { Enabled = false, Cost = 50000, Account = 'bank', Minutes = 30 },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -214,10 +222,13 @@ local function differences(a, b)
     -- The Roleplay section is new and shared by several features, each
     -- adding its own block: reported block by block, so each feature's
     -- ADDED entry stands on its own.
-    local whole = out.Roleplay
-    if whole and whole[1] == nil and type(whole[2]) == 'table' then
-        out.Roleplay = nil
-        for key, value in pairs(whole[2]) do out['Roleplay.' .. tostring(key)] = { nil, value } end
+    -- The Improvements section the same way.
+    for _, section in ipairs({ 'Roleplay', 'Improvements' }) do
+        local whole = out[section]
+        if whole and whole[1] == nil and type(whole[2]) == 'table' then
+            out[section] = nil
+            for key, value in pairs(whole[2]) do out[section .. '.' .. tostring(key)] = { nil, value } end
+        end
     end
     return out
 end
@@ -280,7 +291,7 @@ describe('the configuration as one short file', function()
             -- The Staff section and the report bucket, new and whole, as
             -- ADDED says.
             if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report'
-                or (path:match('^Roleplay%.') and ADDED[path] ~= nil)) then
+                or ((path:match('^Roleplay%.') or path:match('^Improvements%.')) and ADDED[path] ~= nil)) then
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
             end
@@ -334,12 +345,14 @@ describe('the configuration as one short file', function()
         -- EMS before re-listing, city news, dirty payouts), rpC's four (proof
         -- of intent, reputation, protection, the hit on the hitman) and rpA's
         -- four (rumours, burner phone, informant in person, reason quality).
-        truthy(lines < 653, 'config.lua is ' .. lines .. ' lines')
+        -- And the Improvements section: one header and impA's six blocks
+        -- (informant fairness).
+        truthy(lines < 695, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',
             'FEATURES: ADVISORY', 'FEATURES: EVERYTHING ELSE', 'STAFF AND PERMISSIONS',
-            'ROLEPLAY', 'ADVANCED AND DEVELOPER' }) do
+            'IMPROVEMENTS', 'ROLEPLAY', 'ADVANCED AND DEVELOPER' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')
             at = found

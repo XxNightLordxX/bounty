@@ -1588,6 +1588,89 @@ for _, entry in ipairs({
     CATALOGUE[#CATALOGUE + 1] = entry
 end
 
+--- The improvements (server/imp_*.lua, Config.Improvements), each off as
+--- shipped: the switch under Features, the rest under the rules they are.
+--- Informant fairness (server/imp_tips.lua), six blocks.
+local IMP_DELAY, IMP_LIMITS = 'Improvements: Tip warning delay', 'Improvements: Tip limits'
+local IMP_HOLD, IMP_SECOND = 'Improvements: Hold before a tip', 'Improvements: Informant second try'
+local IMP_ZONES, IMP_DARK = 'Improvements: Tip safe zones', 'Improvements: Go dark'
+MONEY['Improvements.TipLimits.MaxCost'] = 'Informant prices'
+MONEY['Improvements.InformantSecondTry.SecondTryCostPercent'] = 'Informant prices'
+MONEY['Improvements.GoDark.Cost'] = 'Informant prices'
+MONEY['Improvements.GoDark.Account'] = 'Informant prices'
+for _, entry in ipairs({
+    { key = 'Improvements.TipWarningDelay.Enabled', section = 'features', category = 'features',
+      group = IMP_DELAY, kind = 'switch', label = 'Delay the target\'s tip warning',
+      about = 'The target\'s "someone knows your rough area" notice waits a random while after a tip.',
+      inflight = 'Read at every tip: warnings already waiting are still sent when due.' },
+    { key = 'Improvements.TipWarningDelay.MinSeconds', section = 'limits', category = 'rules-timers',
+      group = IMP_DELAY, kind = 'number', integer = true, min = 0, max = 3600,
+      label = 'Shortest warning delay (s)', about = 'At most the longest delay.', inflight = AT_USE },
+    { key = 'Improvements.TipWarningDelay.MaxSeconds', section = 'limits', category = 'rules-timers',
+      group = IMP_DELAY, kind = 'number', integer = true, min = 0, max = 3600,
+      label = 'Longest warning delay (s)', about = '0 sends the warning at once, as before.',
+      inflight = AT_USE },
+
+    { key = 'Improvements.TipLimits.Enabled', section = 'features', category = 'features', group = IMP_LIMITS,
+      kind = 'switch', label = 'Extra tip limits',
+      about = 'One tip per hitman per contract, and/or each further tip twice the last one\'s price.',
+      inflight = 'Read at every tip: tips already bought stay bought.' },
+    { key = 'Improvements.TipLimits.OnePerHitman', section = 'features', category = 'features',
+      group = IMP_LIMITS, kind = 'switch', label = 'One tip per hitman per contract',
+      about = 'Each hitman on a contract buys one tip on it, on top of the contract\'s own limit.',
+      inflight = AT_USE },
+    { key = 'Improvements.TipLimits.PriceDoubling', section = 'features', category = 'features',
+      group = IMP_LIMITS, kind = 'switch', label = 'Each further tip costs double',
+      about = 'Each tip on a contract costs twice the one before, up to the most a tip costs.',
+      inflight = AT_USE },
+    { key = 'Improvements.TipLimits.MaxCost', section = 'limits', category = 'rules-rewards', group = IMP_LIMITS,
+      kind = 'number', integer = true, min = 0, max = 10000000, label = 'Most a doubled tip costs ($)',
+      about = 'Never less than the price of a tip.', inflight = AT_USE },
+
+    { key = 'Improvements.TipHoldFirst.Enabled', section = 'features', category = 'features', group = IMP_HOLD,
+      kind = 'switch', label = 'Hold a contract before a tip',
+      about = 'A hitman buys a tip only once they have held the contract a while.', inflight = AT_USE },
+    { key = 'Improvements.TipHoldFirst.MinHeldMinutes', section = 'limits', category = 'rules-timers',
+      group = IMP_HOLD, kind = 'number', integer = true, min = 0, max = 1440,
+      label = 'Hold before a tip (min)', about = 'Counted from when the hitman accepted it.',
+      inflight = AT_USE },
+
+    { key = 'Improvements.InformantSecondTry.Enabled', section = 'features', category = 'features',
+      group = IMP_SECOND, kind = 'switch', label = 'Target\'s later look-ups priced apart',
+      about = 'The target\'s look-ups after the first on a contract cost a share of the price.',
+      inflight = AT_USE },
+    { key = 'Improvements.InformantSecondTry.SecondTryCostPercent', section = 'limits',
+      category = 'rules-rewards', group = IMP_SECOND, kind = 'number', integer = true, min = 0, max = 1000,
+      label = 'Later look-ups cost (% of the price)',
+      about = '100 is the same price; the chance stays the informant\'s.', inflight = AT_USE },
+
+    { key = 'Improvements.TipSafeZones.Enabled', section = 'features', category = 'features', group = IMP_ZONES,
+      kind = 'switch', label = 'Safe zones for tips',
+      about = 'No tip is sold while the target stands in one of the zones; nothing is charged.',
+      inflight = AT_USE },
+    { key = 'Improvements.TipSafeZones.Zones', section = 'limits', category = 'rules-targeting',
+      group = IMP_ZONES, kind = 'list', array = true, whole = true, names = 'zone',
+      label = 'Safe zones (x, y, radius, name)',
+      about = 'The hitman is told only that the informant cannot place them.', inflight = AT_USE },
+
+    { key = 'Improvements.GoDark.Enabled', section = 'features', category = 'features', group = IMP_DARK,
+      kind = 'switch', label = 'Go dark',
+      about = 'A target told of a tip may pay so that tips on them find nothing for a while.',
+      inflight = 'Read at every purchase; a target already dark stays dark to the end.' },
+    { key = 'Improvements.GoDark.Cost', section = 'limits', category = 'rules-rewards', group = IMP_DARK,
+      kind = 'number', integer = true, min = 0, max = 10000000, label = 'Price to go dark ($)',
+      inflight = AT_USE },
+    { key = 'Improvements.GoDark.Account', section = 'limits', category = 'rules-rewards', group = IMP_DARK,
+      kind = 'choice', choices = { 'bank', 'cash' }, label = 'Account going dark is paid from',
+      inflight = AT_USE },
+    { key = 'Improvements.GoDark.Minutes', section = 'limits', category = 'rules-timers', group = IMP_DARK,
+      kind = 'number', integer = true, min = 1, max = 1440, label = 'Dark for (min)',
+      about = 'Tips bought on them meanwhile find nothing and are given back in full.',
+      inflight = 'A target already dark keeps the time they paid for.' },
+}) do
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+
 local byKey = {}
 for i = 1, #CATALOGUE do byKey[CATALOGUE[i].key] = CATALOGUE[i] end
 for key, group in pairs(MONEY) do
@@ -1736,6 +1819,10 @@ local NAMES = {
                           '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,[^%c<>@]+$' }, max = 60,
              says = 'areas as Name@x,y or x, y, name (such as Legion Square@195,-934), up to 60 characters' },
 }
+--- The improvements' lists: a tip safe zone, 'x, y, radius, name'
+--- (server/imp_tips.lua, Imp.parseZone).
+NAMES.zone = { pattern = '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,%s*%d+%.?%d*%s*,[^%c<>]+$', max = 80,
+               says = 'zones as x, y, radius, name (such as 300, -590, 80, Pillbox), up to 80 characters' }
 
 --- Whether one typed name keeps its list's rule: its pattern, or any one of
 --- its patterns.

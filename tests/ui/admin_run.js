@@ -4295,6 +4295,38 @@ async function main() {
     });
   })();
 
+  /* ---- informant fairness (Config.Improvements) ---- */
+  await (async function () {
+    const zones = { key: 'Improvements.TipSafeZones.Zones', category: 'rules-targeting',
+      group: 'Improvements: Tip safe zones', label: 'Safe zones (x, y, radius, name)', kind: 'list',
+      whole: true, live: true, inflight: 'Read each time it is used.', value: [], default: [],
+      source: 'config' };
+    const server = standardServer({ settings: settingsView({ limits: [zones] }) });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('targeting');
+    await settled();
+    const row = function () { return app.byId('st-row-Improvements.TipSafeZones.Zones'); };
+    app.type(row().querySelector('input'), '300, -590, 80, Pillbox Hill');
+    app.click(app.button('Add', row()));
+    await settled();
+    app.click(app.byId('st-save-Improvements.TipSafeZones.Zones'));
+    app.click(app.byId('st-save-Improvements.TipSafeZones.Zones'));
+    await settled();
+    it('a safe zone is added whole, commas and spaces kept', function () {
+      eq(app.last('setSetting').data, { key: 'Improvements.TipSafeZones.Zones',
+        value: ['300, -590, 80, Pillbox Hill'] });
+    });
+    app.nav('help');
+    await settled();
+    it('How it works has a card for each informant fairness option', function () {
+      ['Tip warning delay', 'Tip limits', 'Hold before a tip', 'Informant second try', 'Tip safe zones',
+        'Go dark'].forEach(function (t) { has(app.main(), t); });
+    });
+    clean(app, 'informant fairness settings');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

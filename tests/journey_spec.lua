@@ -355,6 +355,8 @@ describe('what this suite really covered', function()
         brokerNearby = 'roleplay_access_spec ("lets a broker player brief somebody")',
         brokerBrief  = 'roleplay_access_spec ("lets a broker player brief somebody")',
         rpPlaces     = 'roleplay_access_spec ("moves the broker between its places")',
+        -- Informant fairness (off as shipped), through the net event.
+        goDark       = 'imp_tips_spec ("charges the quote")',
         -- Read paths, exercised to an ok in their own specs.
         list           = 'projection_spec and the ui suite',
         mine           = 'projection_spec and the ui suite',

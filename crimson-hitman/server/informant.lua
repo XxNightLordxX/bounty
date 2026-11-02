@@ -361,6 +361,10 @@ targetBuy = function(actor, contractId, shown, pick)
     if purchases >= math.floor(tonumber(Config.Informant.MaxPurchasesPerContract) or 0) then
         return false, CH.ERR.LIMIT_REACHED
     end
+    -- A later look-up at its own price (Config.Improvements.InformantSecondTry;
+    -- off as shipped, the same price): the figure quoted on the card, checked
+    -- below and charged.
+    cost = CrimsonBoot.require('server.imp_tips').informantPrice(cost, purchases)
 
     -- The price the dialog quoted is the price charged: one raised from the
     -- admin panel while it was open is refused, with the price now.
@@ -431,6 +435,14 @@ function Informant.answerFor(contractId, cid)
     table.sort(found, function(a, b) return a.label < b.label end)
     local most = math.floor(tonumber(Config.Informant.MaxPurchasesPerContract) or 0)
     return found, math.max(0, most - (record and record.purchases or 0))
+end
+
+--- How many look-ups this target has bought on this contract (their card's
+--- price for the next, server/imp_tips.lua).
+---@return integer
+function Informant.purchasesBy(contractId, cid)
+    local record = recordFor(contractId, cid)
+    return record and record.purchases or 0
 end
 
 --- What the target may pick on this contract: every active operative, by

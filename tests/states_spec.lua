@@ -345,6 +345,9 @@ describe('the grid covers the whole action surface', function()
         -- The roleplay features: a briefing only on a contract on the board
         -- (live, not the asker's own as its target), roleplay_access_spec.
         rumourBrief = true, brokerNearby = true, brokerBrief = true, rpPlaces = true,
+        -- Going dark: only on a live contract on the caller, refused once it
+        -- ended (imp_tips_spec).
+        goDark = true,
         list = true, mine = true, ledger = true, searchTargets = true,
         browseTargets = true, mugshotImage = true, rewardOptions = true,
         create = true, pageError = true,

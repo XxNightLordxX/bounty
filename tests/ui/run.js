@@ -12974,6 +12974,115 @@ async function main() {
     });
   })();
 
+  /* Informant fairness (Config.Improvements): the hitman's card quotes the
+     real next tip price, waits out a hold, says one each was had, and words
+     the new refusals; the target's card offers Go dark, two taps, the price
+     echoed; and the target's informant quotes a later look-up's price. */
+  await (async function () {
+    const RULES = { enabled: true, cost: 25000, account: 'bank', radius: 350, showMinutes: 10,
+      cooldownMinutes: 10, maxPerContract: 3, tellsTarget: true };
+    function board() {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { relay: true, amendments: true, locationTip: RULES,
+          informant: { cost: 25000, account: 'bank', maxPerContract: 3, chance: 10 } } } };
+    }
+    function hitCard(tip) {
+      return { id: 'ct00000401', reason: 'Owes money', mode: 'competitive', state: 'accepted',
+        fulfilment: 'alive', reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0,
+        currentSlot: 1, hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes',
+        targetProtected: false, role: 'hitman', penaltyAmount: 0, myAlias: 'Operative #1',
+        creatorAnonymous: true, timeLeft: band(3 * 3600), locationTip: tip };
+    }
+    function button(app, starts) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf(starts) === 0;
+      })[0];
+    }
+    async function onMine(card, extra) {
+      const app = boot(Object.assign({ list: board(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
+        amendments: { ok: true, data: [] } }, extra || {}));
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+
+    let sent = null;
+    const dearer = await onMine(hitCard({ left: 2, cost: 50000 }), {
+      locationTip: function (body) { sent = body; return { ok: false, err: 'tip_cant_place' }; } });
+    it('improvements: the tip button quotes the card\'s next price, and echoes it', function () {
+      eq(button(dearer, 'Buy informant tip').textContent, 'Buy informant tip \u2014 $50,000');
+    });
+    button(dearer, 'Buy informant tip').onclick();
+    await settle();
+    button(dearer, 'Tap again to pay').onclick();
+    await settle(); await settle();
+    it('improvements: a safe-zone refusal says only that the informant cannot place them', function () {
+      eq(JSON.stringify(sent.shown), JSON.stringify({ cost: 50000, account: 'bank' }));
+      truthy(dearer.notice().indexOf('Your informant can\'t place them right now.') !== -1, dearer.notice());
+      drewCleanly(dearer);
+    });
+
+    const held = await onMine(hitCard({ left: 3, holdSeconds: 600 }));
+    it('improvements: a hold disables the button and says from when', function () {
+      const b = button(held, 'Buy informant tip');
+      truthy(b && b.disabled, 'disabled');
+      truthy(/held this contract a while longer: from \d\d:\d\d\./.test(held.view.textContent),
+        held.view.textContent);
+    });
+    const used = await onMine(hitCard({ left: 2, mineUsed: true }));
+    it('improvements: one each, had, says so', function () {
+      truthy(used.view.textContent.indexOf('You have had your one informant tip on this contract.') !== -1,
+        used.view.textContent);
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    let dark = null;
+    function targetCard(extra) {
+      return Object.assign({ id: 'ct00000402', reason: 'Owes money', mode: 'competitive',
+        state: 'accepted', reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 1, hitmenMax: 5, targetName: 'You', role: 'target', bailoutAvailable: false,
+        timeLeft: band(7200), tippedAt: now - 300,
+        goDark: { cost: 50000, account: 'bank', minutes: 30 } }, extra || {});
+    }
+    const target = boot({ list: board(), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [targetCard()] } },
+      goDark: function (body) { dark = body; return { ok: true, data: { untilAt: now + 1800, minutes: 30 } }; } });
+    await settle(); await settle(); await settle();
+    tab(target, 'onme');
+    await settle(); await settle();
+    it('improvements: a tipped-off target is offered Go dark at its price', function () {
+      truthy(button(target, 'Go dark'), target.view.textContent);
+      eq(button(target, 'Go dark').textContent, 'Go dark \u2014 $50,000');
+    });
+    button(target, 'Go dark').onclick();
+    await settle();
+    it('improvements: one tap only arms Go dark', function () {
+      eq(dark, null, 'nothing sent');
+      truthy(button(target, 'Tap again to pay $50,000'), target.view.textContent);
+    });
+    button(target, 'Tap again to pay').onclick();
+    await settle(); await settle();
+    it('improvements: the second tap goes dark, echoing the price', function () {
+      eq(dark && dark.id, 'ct00000402');
+      eq(JSON.stringify(dark.shown), JSON.stringify({ cost: 50000, account: 'bank' }));
+      truthy(target.notice().indexOf('You have gone dark.') !== -1, target.notice());
+      drewCleanly(target);
+    });
+
+    const darkNow = boot({ list: board(), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [targetCard({
+        goDark: { cost: 50000, account: 'bank', minutes: 30, untilAt: now + 900 } })] } } });
+    await settle(); await settle(); await settle();
+    tab(darkNow, 'onme');
+    await settle(); await settle();
+    it('improvements: once dark, the card says until when and offers nothing', function () {
+      truthy(/You have gone dark until \d\d:\d\d\./.test(darkNow.view.textContent), darkNow.view.textContent);
+      falsy(button(darkNow, 'Go dark'));
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

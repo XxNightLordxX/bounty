@@ -362,6 +362,7 @@ local MONEY_REQUESTS = {
     bailout = true, informant = true, placerInformant = true, submitPhoto = true, verifyKill = true,
     armKidnap = true, locationTip = true,
     protectionPost = true, protectionCancel = true,
+    goDark = true,
 }
 
 --- The roleplay features (server/rp_*.lua, Config.Roleplay), each off as
@@ -1842,6 +1843,17 @@ function App.register()
     -- server says one moved.
     handler('rpPlaces', 'load', function()
         return deps.rpPlaces.forClient()
+    end)
+
+    -- Improvements (server/imp_*.lua, Config.Improvements), each off as shipped.
+
+    -- Going dark (Config.Improvements.GoDark): a target told of a tip on a
+    -- contract on them pays to have every tip bought on them meanwhile find
+    -- nothing. The tip's bucket. `shown` is the price the card quoted.
+    handler('goDark', 'locationTip', function(actor, payload)
+        if not deps.impTips then return false, CH.ERR.FEATURE_OFF end
+        return deps.impTips.goDark(actor, payload.id,
+            type(payload.shown) == 'table' and payload.shown or {})
     end)
 end
 

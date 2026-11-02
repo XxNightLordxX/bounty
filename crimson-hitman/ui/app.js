@@ -739,7 +739,14 @@
     find_broker: 'Find the broker first.',
     not_broker: 'Only a broker can do that.',
     broker_too_far: 'They are no longer with you. Brief someone standing beside you.',
-    find_informant: 'Find the informant first.'
+    find_informant: 'Find the informant first.',
+    // Informant fairness (Config.Improvements). Nothing was taken for any;
+    // a tip that found nothing was given back.
+    tip_hold: 'Your informant will not talk yet. Hold the contract a while longer.',
+    tip_cant_place: 'Your informant can\'t place them right now.',
+    tip_not_found: 'Your informant couldn\'t find them. Your money was given back.',
+    not_tipped: 'Nobody has been tipped off about you on this contract.',
+    already_dark: 'You have already gone dark.'
   };
 
   /* The requests that can move money, each a handler in server/app.lua
@@ -750,7 +757,8 @@
   var MONEY_EVENTS = {
     create: true, accept: true, cancel: true, withdrawReward: true, abandon: true,
     bailout: true, informant: true, placerInformant: true, addEscrow: true, improve: true,
-    respondAmendment: true, submitPhoto: true, verifyKill: true, locationTip: true
+    respondAmendment: true, submitPhoto: true, verifyKill: true, locationTip: true,
+    goDark: true
   };
 
   /* What each reward source is called when a refusal names it. */
@@ -2439,6 +2447,16 @@
   /* Why a tip cannot be bought now, in a sentence, or null when it can. */
   function tipBlocked(rules, own, contract) {
     if (rules.enabled !== true) { return 'Informant tips are turned off on this server.'; }
+    // Informant fairness (Config.Improvements), off as shipped: held too
+    // briefly, or their one tip on it had.
+    if (own && Number(own.holdSeconds) > 0) {
+      var held = secondsLeftOf({ secondsLeft: own.holdSeconds, clockReadAt: contract.clockReadAt });
+      if (held > 0) {
+        return 'Your informant will talk once you have held this contract a while longer: from '
+          + clockAt(held) + '.';
+      }
+    }
+    if (own && own.mineUsed === true) { return 'You have had your one informant tip on this contract.'; }
     if (own && Number(own.left) <= 0) {
       return 'The most informant tips allowed on this contract, by all its hitmen, have been bought ('
         + (Number(rules.maxPerContract) || 0) + ').';
@@ -2474,6 +2492,11 @@
     var rules = settings().locationTip;
     if (!rules) { return null; }
     var own = contract.locationTip || null;
+    // The next tip's own price on this contract, where it differs from the
+    // board's (Config.Improvements.TipLimits): quoted, and echoed back.
+    if (own && typeof own.cost === 'number') {
+      rules = Object.assign({}, rules, { cost: own.cost });
+    }
     var box = el('div', 'tip');
     box.id = 'tip-' + contract.id;
 
@@ -2548,9 +2571,24 @@
       return 'A tip on this contract was bought a moment ago. The next one is sold at '
         + clockAt(d.retryAfter) + '. Nothing was taken.';
     }
+    if (r.err === 'limit_reached' && d.perHitman) {
+      return 'You have had your one informant tip on this contract. Nothing was taken.';
+    }
     if (r.err === 'limit_reached') {
       return 'The most informant tips allowed on this contract, by all its hitmen, have been '
         + 'bought. Nothing was taken.';
+    }
+    if (r.err === 'tip_hold' && Number(d.retryAfter) > 0) {
+      return 'Your informant will not talk yet. You can buy a tip on this contract at '
+        + clockAt(d.retryAfter) + '. Nothing was taken.';
+    }
+    if (r.err === 'tip_cant_place') {
+      return 'Your informant can\'t place them right now. Nothing was taken.';
+    }
+    if (r.err === 'tip_not_found') {
+      return d.refunded === false
+        ? 'Your informant couldn\'t find them. Your money could not be given back yet; staff have it.'
+        : 'Your informant couldn\'t find them. Your money was given back.';
     }
     if (r.err === 'insufficient_funds' && typeof d.cost === 'number') {
       return 'You cannot afford the tip: it costs ' + money(d.cost) + ' from '
@@ -2594,6 +2632,68 @@
       box.appendChild(el('div', 'hint', 'Tipped off ' + when.charAt(0).toLowerCase()
         + when.slice(1) + '.'));
     }
+    return box;
+  }
+
+  /* Going dark (Config.Improvements.GoDark): a target told of a tip pays so
+     that tips on them find nothing for a while. Two taps, the price echoed;
+     or until when they are dark. */
+  var darkArmed = null;   // the contract id whose Go dark waits for its second tap
+  function goDarkBox(contract) {
+    var terms = contract.goDark || {};
+    var box = el('div', 'tip-told');
+    box.id = 'dark-' + contract.id;
+    if (Number(terms.untilAt) > 0) {
+      var left = Math.max(0, Number(terms.untilAt) - Math.floor(Date.now() / 1000));
+      box.appendChild(el('div', 'tip-state ico i-eye', 'You have gone dark until '
+        + clockAt(left) + '. Tips bought on you meanwhile find nothing.'));
+      return box;
+    }
+    var cost = Number(terms.cost) || 0;
+    var account = terms.account === 'cash' ? 'cash' : 'bank';
+    var key = 'dark:' + contract.id;
+    var armed = darkArmed === contract.id;
+    var label = cost > 0 ? 'Go dark \u2014 ' + money(cost) : 'Go dark \u2014 free';
+    var buy;
+    if (isBusy(key)) {
+      buy = actionButton('ghost ico i-eye', label, key, 'Going dark\u2026');
+    } else {
+      buy = el('button', 'ghost ico i-eye' + (armed ? ' is-armed' : ''),
+        armed ? (cost > 0 ? 'Tap again to pay ' + money(cost) : 'Tap again to go dark') : label);
+      buy.onclick = function () {
+        if (darkArmed !== contract.id) {
+          darkArmed = contract.id;
+          setTimeout(function () {
+            if (darkArmed === contract.id) { darkArmed = null; redraw(); }
+          }, TIP_CONFIRM_MS);
+          return redraw();
+        }
+        darkArmed = null;
+        once(key, function () {
+          return post('goDark', { id: contract.id, shown: { cost: cost, account: account } })
+            .then(function (r) {
+              if (!r.ok) {
+                var d = r.data || {};
+                if (r.err === 'terms_changed' && typeof d.cost === 'number') {
+                  say('Going dark now costs ' + money(d.cost) + '. Nothing was taken.');
+                } else if (r.err === 'insufficient_funds') {
+                  say('You cannot afford to go dark. Nothing was taken.');
+                } else { fail(r); }
+                return refresh();
+              }
+              say('You have gone dark. Tips bought on you for the next '
+                + (Number(r.data && r.data.minutes) || 0) + ' minutes find nothing.', 'ok');
+              refresh();
+            });
+        });
+      };
+    }
+    buy.id = 'dark-buy-' + contract.id;
+    var actions = el('div', 'row tip-actions');
+    actions.appendChild(buy);
+    box.appendChild(actions);
+    box.appendChild(el('div', 'hint', 'Lie low: for ' + (Number(terms.minutes) || 0)
+      + ' minutes any informant asked about you finds nothing. Paid from your ' + account + '.'));
     return box;
   }
 
@@ -2926,6 +3026,8 @@
     if (contract.role === 'target') {
       // Somebody tipped off about where they were: first, it is about them now.
       if (contract.tippedAt) { row.appendChild(tipToldNotice(contract.tippedAt)); }
+      // Going dark, where the server sells it (Config.Improvements.GoDark).
+      if (contract.goDark) { row.appendChild(goDarkBox(contract)); }
       appendBuyout(row, contract);
       // Their bodyguard job and the hit on a revealed operative, where the
       // server offers them (server/rp_protection.lua).
@@ -4359,6 +4461,10 @@
   function buyInformant(contract) {
     var rules = settings().informant;
     if (!rules) { return say('This server does not run informants.'); }
+    // A later look-up's own price (Config.Improvements.InformantSecondTry).
+    if (typeof contract.informantCost === 'number') {
+      rules = Object.assign({}, rules, { cost: contract.informantCost });
+    }
     var shown = { cost: Number(rules.cost) || 0,
                   account: rules.account === 'cash' ? 'cash' : 'bank' };
     var detail = 'Your informant asks around about the one you pick. There is a '

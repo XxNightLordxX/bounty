@@ -5136,6 +5136,51 @@
         { key: 'Roleplay.ReasonQuality.LowEffort', view: 'limits', label: 'Low-effort phrases' },
         { key: 'Roleplay.ReasonQuality.LowEffortAction', view: 'limits', label: 'Refuse or review' }] });
 
+  /* ---------- the improvements (Config.Improvements) ---------- */
+
+  HELP.push(
+    { title: 'Tip warning delay', icon: 'clock',
+      text: 'Off as shipped. On, the target of an informant tip is told someone knows their rough area '
+        + 'a random while after the tip, between the shortest and longest delay, instead of at once. '
+        + 'A warning still waiting survives a restart and is sent late rather than lost. The time on '
+        + 'the target\'s card is rounded to 5 minutes, so it does not give the delay away.',
+      links: [{ key: 'Improvements.TipWarningDelay.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Improvements.TipWarningDelay.MinSeconds', view: 'timers', label: 'Shortest delay' },
+        { key: 'Improvements.TipWarningDelay.MaxSeconds', view: 'timers', label: 'Longest delay' }] },
+    { title: 'Tip limits', icon: 'scale-balanced',
+      text: 'Off as shipped. On, on top of the tips per contract and the wait between them: each hitman '
+        + 'may buy one tip per contract, and/or each further tip on a contract costs twice the one '
+        + 'before, up to the most a tip costs. The card quotes the real next price, and a price that '
+        + 'moved is refused, never charged.',
+      links: [{ key: 'Improvements.TipLimits.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Improvements.TipLimits.OnePerHitman', view: 'features', label: 'One per hitman' },
+        { key: 'Improvements.TipLimits.PriceDoubling', view: 'features', label: 'Price doubling' },
+        { key: 'Improvements.TipLimits.MaxCost', view: 'money', label: 'Most a tip costs' }] },
+    { title: 'Hold before a tip', icon: 'hourglass',
+      text: 'Off as shipped. On, a hitman can buy a tip only once they have held the contract for the '
+        + 'minutes set. Before that the card and the refusal say how long is left; nothing is charged.',
+      links: [{ key: 'Improvements.TipHoldFirst.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Improvements.TipHoldFirst.MinHeldMinutes', view: 'timers', label: 'Minutes held' }] },
+    { title: 'Informant second try', icon: 'user-secret',
+      text: 'Off as shipped. On, the target\'s look-ups after the first on a contract cost this share of '
+        + 'the informant\'s price (100 is the same price). The chance stays the informant\'s own.',
+      links: [{ key: 'Improvements.InformantSecondTry.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Improvements.InformantSecondTry.SecondTryCostPercent', view: 'money', label: 'Later price' },
+        { key: 'Informant.RevealChancePercent', view: 'limits', label: 'The chance' }] },
+    { title: 'Tip safe zones', icon: 'shield',
+      text: 'Off as shipped. On, no tip is sold while the target stands inside one of the zones '
+        + '(x, y, radius, name). The hitman is told only "Your informant can\'t place them right now.", '
+        + 'never why or where, and nothing is charged.',
+      links: [{ key: 'Improvements.TipSafeZones.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Improvements.TipSafeZones.Zones', view: 'targeting', label: 'The zones' }] },
+    { title: 'Go dark', icon: 'eye-slash',
+      text: 'Off as shipped. On, a target who was told of a tip can pay from On me to go dark. For the '
+        + 'minutes set, every tip bought on them finds nothing: the hitman is told the informant could '
+        + 'not find them and gets the price back in full. Nothing names anybody.',
+      links: [{ key: 'Improvements.GoDark.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Improvements.GoDark.Cost', view: 'money', label: 'The price' },
+        { key: 'Improvements.GoDark.Minutes', view: 'timers', label: 'How long' }] });
+
   /* Loaded to the end: admin.html's fallback, which gives the focus back
      when this file fails to load or throws while loading, stands down. */
   window.CH_ADMIN_READY = true;

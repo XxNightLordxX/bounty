@@ -429,6 +429,8 @@ function _G.newStack()
     package.loaded['server.rp_burner'] = nil
     package.loaded['server.rp_informant'] = nil
     package.loaded['server.rp_reason'] = nil
+    package.loaded['crimson-hitman.server.imp_tips'] = nil
+    package.loaded['server.imp_tips'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -478,6 +480,7 @@ function _G.newStack()
     local rpBurner    = require('server.rp_burner')
     local rpInformant = require('server.rp_informant')
     local rpReason    = require('server.rp_reason')
+    local impTips     = require('server.imp_tips')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -556,6 +559,8 @@ function _G.newStack()
     rpBurner.init({ audit = audit })
     rpInformant.init({ audit = audit })
     rpReason.init({ storage = storage, review = review, contracts = contracts })
+    impTips.init({ storage = storage, audit = audit, notify = notify, contracts = contracts,
+                   locationTip = locationTip, informant = informant, projection = projection })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was
@@ -597,6 +602,8 @@ function _G.newStack()
         -- The roleplay features.
         rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
         rpInformant = rpInformant, rpReason = rpReason,
+        -- The improvements.
+        impTips = impTips,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -618,6 +625,7 @@ function _G.newStack()
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
         rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
         rpInformant = rpInformant, rpReason = rpReason,
+        impTips = impTips,
     }
 end
 
@@ -660,6 +668,7 @@ local suites = {
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
     'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec',
+    'imp_tips_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

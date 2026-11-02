@@ -1420,6 +1420,8 @@ local function validateConfig(quiet)
     CrimsonBoot.require('server.rp_burner').validate(warn)
     CrimsonBoot.require('server.rp_informant').validate(warn)
     CrimsonBoot.require('server.rp_reason').validate(warn)
+    -- The improvements (server/imp_*.lua, Config.Improvements), the same way.
+    CrimsonBoot.require('server.imp_tips').validate(warn)
 
     if quiet then return #fatal == 0, fatal, warn end
 
@@ -1935,6 +1937,8 @@ function StartCrimsonHitman()
     local rpBurner    = CrimsonBoot.require('server.rp_burner')
     local rpInformant = CrimsonBoot.require('server.rp_informant')
     local rpReason    = CrimsonBoot.require('server.rp_reason')
+    -- The improvements (README, Optional improvements), each off as shipped.
+    local impTips     = CrimsonBoot.require('server.imp_tips')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -2029,6 +2033,10 @@ function StartCrimsonHitman()
     rpBurner.init({ audit = audit })
     rpInformant.init({ audit = audit })
     rpReason.init({ storage = Storage, review = review, contracts = contracts })
+    -- Informant fairness: the tip's and the target's informant's extra rules
+    -- (server/imp_tips.lua).
+    impTips.init({ storage = Storage, audit = audit, notify = notify, contracts = contracts,
+                   locationTip = locationTip, informant = informant, projection = projection })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -2074,6 +2082,8 @@ function StartCrimsonHitman()
         -- The roleplay features, for the app's gate and its requests.
         rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
         rpInformant = rpInformant, rpReason = rpReason,
+        -- The improvements, for the app's requests.
+        impTips = impTips,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2131,6 +2141,8 @@ function StartCrimsonHitman()
         -- the restart (Death.noteStarted).
         death.noteStarted()
         death.startSampler()
+        -- Tip warnings still waiting from before the restart (imp_tips).
+        impTips.resume()
         -- Where the roleplay NPCs stand moves on the clock: looked at by the
         -- maintenance tick once a minute (rp_places.announce).
     end)
