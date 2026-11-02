@@ -580,12 +580,13 @@ describe('every panel op, for every level', function()
     local EXPECTED = {
         access = 'read', overview = 'read', contracts = 'read', contract = 'read', reviews = 'read',
         logs = 'read', player = 'read', settings = 'read', diag = 'read', stuck = 'read', alerts = 'read',
-        frozen = 'read', history = 'read',
+        frozen = 'read', history = 'read', exportContract = 'read', playerView = 'read',
         void = 'moderate', freeze = 'moderate', unfreeze = 'moderate', adjustDeadline = 'moderate',
         suspend = 'moderate', unsuspend = 'moderate', protect = 'moderate', unprotect = 'moderate',
         settle = 'write', resolve = 'write', setSetting = 'write', resetSetting = 'write',
         resetSettings = 'write', refresh = 'write', flush = 'write', ackAlerts = 'write',
         testAlert = 'write', removePhotos = 'write', setPlaytime = 'write', manualPay = 'write',
+        addNote = 'write', removeHitman = 'write', editText = 'write',
         console = 'developer', whois = 'identity',
     }
 
