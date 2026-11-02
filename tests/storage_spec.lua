@@ -661,6 +661,21 @@ describe('storage conformance', function()
             eq(roster[1].id, 'h2', b.name .. ': by acceptance')
             eq(b.store.readHitman('ct2', 'HITMAN01').id, 'h3', b.name)
             eq(b.store.readHitman('ct2', 'HITMAN02'), nil, b.name)
+
+            -- The bulk reads answer every id exactly as the one-contract
+            -- reads do, an empty list for one with none, an id asked twice
+            -- once; more ids than one statement binds on mysql included.
+            local ids = { 'ct1', 'ct2', 'ct9', 'ct1' }
+            for i = 1, 150 do ids[#ids + 1] = ('cx%03d'):format(i) end
+            local lines, rosters = b.store.readEscrowMany(ids), b.store.readHitmenMany(ids)
+            for _, id in ipairs(ids) do
+                local one, many = b.store.readEscrow(id), lines[id]
+                eq(#many, #one, b.name .. ': escrow of ' .. id)
+                for k = 1, #one do eq(many[k].id, one[k].id, b.name .. ': in order') end
+                local roster, listed = b.store.readHitmen(id), rosters[id]
+                eq(#listed, #roster, b.name .. ': roster of ' .. id)
+                for k = 1, #roster do eq(listed[k].id, roster[k].id, b.name .. ': in order') end
+            end
         end
     end)
 end)
@@ -2972,6 +2987,8 @@ describe('every mysql statement is executable', function()
             function() m.recordBailout('c1', { bailout_queued_at=5, bailout_paid_by='B', bailout_paid_amount=10, bailout_paid_account='bank' }) end,
             function() m.clearBailout('c1', 5) end,
             function() m.readEscrow('c1') end,
+            function() m.readEscrowMany({ 'c1', 'c2' }) end,
+            function() m.readHitmenMany({ 'c1', 'c2' }) end,
             function() m.readEscrowLine('c1:1') end,
             function() m.orphanEscrow() end,
             function() m.parkedEscrow(3) end,

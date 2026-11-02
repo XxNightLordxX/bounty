@@ -57,6 +57,7 @@ local function noticesTo(src)
 end
 
 local function pushesTo(src)
+    Env.runTimers()   -- a push goes at the end of its tick (Notify)
     local n = 0
     for _, event in ipairs(Env.clientEvents) do
         if event.name == 'crimson-hitman:push' and event.target == src then n = n + 1 end

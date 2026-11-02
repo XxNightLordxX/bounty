@@ -57,6 +57,8 @@ local function toldHitman(title)
 end
 
 local function pushesTo(source)
+    -- A push goes at the end of the tick that queued it (Notify).
+    Env.runTimers()
     local n = 0
     for _, event in ipairs(Env.clientEvents) do
         if event.name == 'crimson-hitman:push' and event.target == source then n = n + 1 end
@@ -358,6 +360,7 @@ end)
 
 describe('two changes to a contract inside one second', function()
     local function pushesTo(source)
+        Env.runTimers()
         local n = 0
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:push' and event.target == source then n = n + 1 end
@@ -376,6 +379,9 @@ describe('two changes to a contract inside one second', function()
             cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
         Env.clientEvents = {}
         truthy(s.contracts.accept(f.hitman, c.id, false))
+        -- The first push goes at the end of its tick; the second acceptance
+        -- lands on a later one inside the floor.
+        Env.runTimers()
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
         eq(pushesTo(1), 1, 'one refresh now, not two')
 
@@ -391,6 +397,7 @@ describe('two changes to a contract inside one second', function()
         local f = fixture(s)
         Env.clientEvents = {}
         truthy(s.notify.push('CREATOR1', 'a'))
+        Env.runTimers()
         local timers = #Env.timers
         for _ = 1, 5 do s.notify.push('CREATOR1', 'b') end
         eq(#Env.timers, timers + 1, 'a timer per held push, where one would do')
@@ -408,6 +415,7 @@ describe('two changes to a contract inside one second', function()
         local f = fixture(s)
         Env.clientEvents = {}
         truthy(s.notify.push('CREATOR1', 'a'))
+        Env.runTimers()
         s.notify.push('CREATOR1', 'accepted')
         s.notify.push('CREATOR1', 'message')
         Env.advance(2)
@@ -438,6 +446,7 @@ describe('two changes to a contract inside one second', function()
         local f = fixture(s)
         Env.clientEvents = {}
         truthy(s.notify.push('CREATOR1', 'a'))
+        Env.runTimers()
         s.notify.push('CREATOR1', 'b')
         s.notify.clearPlayer('CREATOR1')
         Env.advance(2)
@@ -492,6 +501,7 @@ describe('a push names the contract it is about', function()
     --- board, Mine and the ledger share. A push names its contract now, to
     --- the people who already have that id, so the page re-reads that one.
     local function pushes(source)
+        Env.runTimers()
         local out = {}
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:push' and event.target == source then
@@ -542,6 +552,7 @@ describe('a push names the contract it is about', function()
     it('names every contract a held burst was about', function()
         local s = ready()
         truthy(s.notify.push('CREATOR1', 'a', 'ct1'))
+        Env.runTimers()
         s.notify.push('CREATOR1', 'proposal', 'ct3')
         s.notify.push('CREATOR1', 'amended', 'ct2')
         -- A message names none and needs none: the page re-reads the thread.
@@ -558,6 +569,7 @@ describe('a push names the contract it is about', function()
     it('names none once anything in the burst named none', function()
         local s = ready()
         truthy(s.notify.push('CREATOR1', 'a', 'ct1'))
+        Env.runTimers()
         s.notify.push('CREATOR1', 'proposal', 'ct2')
         s.notify.push('CREATOR1', 'settled')
         Env.advance(2)

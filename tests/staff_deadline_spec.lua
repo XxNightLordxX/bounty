@@ -109,6 +109,7 @@ local function notices(src)
 end
 
 local function pushes(src)
+    Env.runTimers()   -- a push goes at the end of its tick (Notify)
     local n = 0
     for _, event in ipairs(Env.clientEvents) do
         if event.name == 'crimson-hitman:push' and event.target == src then n = n + 1 end
@@ -437,6 +438,7 @@ describe('what the parties are told', function()
             clean(said[1])
         end
         -- The target's push names no contract, as every push to a target.
+        Env.runTimers()
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:push' and event.target == 2 then
                 eq(event.args[1].ids, nil, 'the target\'s push named the contract')

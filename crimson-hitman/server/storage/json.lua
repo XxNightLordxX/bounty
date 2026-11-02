@@ -2916,6 +2916,16 @@ function JsonStore.readEscrow(contractId)
     return out
 end
 
+--- Several contracts' escrow, by contract id: readEscrow for each. See
+--- the mysql backend, where it is one statement instead of one per contract.
+function JsonStore.readEscrowMany(ids)
+    local out = {}
+    for i = 1, #(ids or {}) do
+        if out[ids[i]] == nil then out[ids[i]] = JsonStore.readEscrow(ids[i]) end
+    end
+    return out
+end
+
 function JsonStore.readEscrowLine(id) return db.escrow[id] end
 
 --- Escrow not yet settled whose contract does not exist; see the memory
@@ -3099,6 +3109,15 @@ function JsonStore.liveHitmen()
             end)
             out[id] = list
         end
+    end
+    return out
+end
+
+--- Several contracts' rosters, by contract id: readHitmen for each.
+function JsonStore.readHitmenMany(ids)
+    local out = {}
+    for i = 1, #(ids or {}) do
+        if out[ids[i]] == nil then out[ids[i]] = JsonStore.readHitmen(ids[i]) end
     end
     return out
 end

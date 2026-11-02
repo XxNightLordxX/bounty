@@ -3109,6 +3109,66 @@ helps when one player's figure is high and nobody else's is. A figure that
 stays high with the phone put away and no NPC near is worth reporting with
 both.
 
+### Performance: the requests
+
+What the requests players and staff send most cost the server, measured
+with the test harness (`tests/handlers_spec.lua`, `CH_PERF=1` prints the
+table) on the same city as above: 200 live contracts, each held, 64 players,
+an officer on the whitelisted-job view and a staff member. Store calls are
+what one request asks the store for; on `mysql` each is an awaited statement.
+Times are the harness's (its `mysql` runs every statement in Lua, so read the
+call count there rather than the milliseconds); KB is what one request
+allocates.
+
+| Request | Store calls, before → now | KB (`json`), before → now |
+|---|---|---|
+| Board (`list`), nothing changed since the last viewer | 232 → 0 | 364 → 82 |
+| Board, the first viewer after a change | 232 → 3 (4 statements) | 364 → 160 |
+| Mine, the placer | 43 → 9 | 45 → 43 |
+| Mine, an operative | 48 → 3 | 38 → 38 |
+| Mine, a target | 53 → 23 | 41 → 41 |
+| Whitelisted-job view, an officer | 2 → 1 | 7 → 4 |
+| Admin panel: Contracts | 0 (read every 5 s) | 82 → 17 |
+| Admin panel: Logs | unchanged | 76 → 38 |
+
+A thousand requests in the mix a busy evening sends, with a write every
+tenth: `json` 1.3 s and 103 MB allocated before, 0.45 s and 40 MB now;
+`mysql` (harness) 24.6 s and 514 MB before, 3.2 s and 98 MB now.
+
+How:
+
+- **The board is read once per change, not once per viewer.** The running
+  contracts, what each holds and the order they are listed in are the same
+  for everybody until something is written, and a push sends every party's
+  app back for them in the same second. They are kept until the store is
+  next asked to write (anything but the audit log, playtime, messages, the
+  ledger, photos, reviews, settings and alerts, which the board never reads),
+  and read again, all at once, by the next viewer. Which contracts each
+  viewer is shown, and what of each, is still worked out per viewer from
+  them: their role, what they may see of an anonymous party, why they may
+  not take one. Nothing worked out for one viewer is kept for another.
+- **Several contracts in one statement.** A board's escrow and the rows'
+  rosters, and Mine's, are one `SELECT ... WHERE contract_id IN (...)` each
+  (`readEscrowMany`, `readHitmenMany`), not one per contract. Inside one
+  request a contract's roster is read once for the role, the card and the
+  operative's own row, and each person in the city is asked of `qbx_core`
+  once, however many contracts name them.
+- **Pushes are sent at the end of the tick.** Everything one tick does to a
+  player's contracts (a create and an acceptance, a hold on every contract of
+  a frozen player) is one push naming all of them, where it was one at once
+  and another behind `Config.Notifications.PushMinIntervalSeconds`: one
+  refresh instead of two. The floor works as before between ticks.
+- **The admin panel** sorts its contract list once when it reads it, not on
+  every search and page, and decides whether a reply goes as a latent event
+  by counting it rather than encoding it to JSON first.
+
+No index was added: every query these requests send is served by one the
+schema already has (`idx_contract` on escrow and hitmen for the bulk reads,
+`idx_state`, `idx_target`, `idx_creator`, `idx_hitman`, `idx_thread`,
+`idx_cid`). The admin panel's contract list still reads the whole table, at
+most once every five seconds while it is open: its pages are cut from that
+one read, so they agree with each other, and a name search needs every row.
+
 ---
 
 ## Dependencies

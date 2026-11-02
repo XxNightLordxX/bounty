@@ -909,6 +909,8 @@ end)
 --- on an unsolicited push.
 describe('app pushes', function()
     local function pushesTo(source)
+        -- A push goes at the end of the tick that queued it (Notify).
+        Env.runTimers()
         local out = {}
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:push' and event.target == source then
@@ -975,6 +977,7 @@ describe('app pushes', function()
         local s, f, c = seeded({ accept = false })
         Env.clientEvents = {}
         truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.runTimers()
 
         local seen = 0
         for _, event in ipairs(Env.clientEvents) do

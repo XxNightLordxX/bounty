@@ -52,6 +52,10 @@ local lastPush = {}
 --- { reason = string, ids = { [contractId] = true }, all = boolean }
 local trailing = {}
 
+--- The pushes due at the end of this tick, one per player: [cid] =
+--- { source, reason, ids, all }. One timer sends them all (deliver).
+local queued, flushArmed = {}, false
+
 --- [cid] = os.time() before which that target's paranoid alert is not sent
 --- again (Config.Notifications.ParanoidCooldownMinutes).
 local paranoidUntil = {}
@@ -95,6 +99,7 @@ function Notify.init(deps)
     budgets, relayBudgets, advisorySent = {}, {}, {}
     announced, told = {}, {}
     lastPush, trailing = {}, {}
+    queued, flushArmed = {}, false
     waiting = {}
     paranoidUntil = {}
     revealAt = {}
@@ -308,11 +313,70 @@ end
 -- not told which contract, or that one exists, by anything but the
 -- projection they are shown.
 
---- Send it now, or hold it behind the floor.
+--- Fold one push into one standing for several: `reason` replaces the one
+--- held (nil keeps it), except that a message held behind anything else
+--- must not take its place, since a message re-reads only the thread on the
+--- page and anything else re-reads the thread as well (the creator's card
+--- never showed the new operative); nor anything but a job change behind a
+--- settings change, which is the one that has the page read the settings
+--- again (replaced, the page kept the old fees and prices). And it is about
+--- every contract any of them was about, and about everything once any of
+--- them named none.
+local function merge(held, reason, ids, all)
+    if reason ~= nil and not (reason == 'message' and held.reason ~= 'message')
+        and not (held.reason == 'settings' and reason ~= 'access') then
+        held.reason = reason
+    end
+    for id in pairs(ids) do held.ids[id] = true end
+    held.all = held.all or all
+end
+
+--- One push, as the page reads it.
+local function send(entry)
+    local payload = { reason = entry.reason }
+    -- No ids is "everything": the page re-reads every contract's
+    -- proposals, as it did before pushes named any.
+    if not entry.all then
+        local list = {}
+        for id in pairs(entry.ids) do list[#list + 1] = id end
+        if #list > 0 then
+            table.sort(list)
+            payload.ids = list
+        end
+    end
+    TriggerClientEvent('crimson-hitman:push', entry.source, payload)
+end
+
+--- Send what this tick queued (deliver), one event per player.
+local function flushQueued()
+    local due = queued
+    queued, flushArmed = {}, false
+    for _, entry in pairs(due) do send(entry) end
+end
+
+--- Send one player's queued push now.
+local function sendQueued(cid)
+    local entry = queued[cid]
+    if not entry then return end
+    queued[cid] = nil
+    send(entry)
+end
+
+--- Send it at the end of this tick, or hold it behind the floor.
 ---@param ids table<string, boolean> the contracts it is about
 ---@param all boolean about something that names no contract
 local function deliver(cid, reason, ids, all)
     if not cid or not Config.Notifications.PushEnabled then return false end
+
+    -- Already going at the end of this tick: this change joins it, so the
+    -- page refreshes once for everything one tick did (a create and an
+    -- acceptance, a hold on every contract of a frozen player), not once
+    -- now and again behind the floor for the rest.
+    local going = queued[cid]
+    if going then
+        merge(going, reason, ids, all)
+        return true
+    end
 
     local now = os.time()
     local last = lastPush[cid]
@@ -332,24 +396,14 @@ local function deliver(cid, reason, ids, all)
             SetTimeout(math.max(1, floor - (now - last)) * 1000, function()
                 local due = trailing[cid]
                 trailing[cid] = nil
-                -- Due by now: the timer waits out the rest of the floor.
-                if due then deliver(cid, due.reason, due.ids, due.all) end
+                -- Due by now: the timer waits out the rest of the floor,
+                -- and it goes from here rather than a tick later.
+                if due and deliver(cid, due.reason, due.ids, due.all) then sendQueued(cid) end
             end)
-        -- A message re-reads only the thread on the page, and anything else
-        -- re-reads the thread as well. So a message held behind an
-        -- acceptance must not take its place: the creator's card never
-        -- showed the new operative. Nor anything but a job change behind a
-        -- settings change, which is the one that has the page read the
-        -- settings again: replaced, the page kept the old fees and prices.
-        elseif not (reason == 'message' and held.reason ~= 'message')
-            and not (held.reason == 'settings' and reason ~= 'access') then
-            held.reason = reason
+            merge(held, nil, ids, all)
+        else
+            merge(held, reason, ids, all)
         end
-        -- One push stands for the whole burst, so it is about every
-        -- contract any of them was about, and about everything once any of
-        -- them named none.
-        for id in pairs(ids) do held.ids[id] = true end
-        held.all = held.all or all
         return false
     end
 
@@ -357,18 +411,13 @@ local function deliver(cid, reason, ids, all)
     if not actor then return false end
 
     lastPush[cid] = now
-    local payload = { reason = reason }
-    -- No ids is "everything": the page re-reads every contract's
-    -- proposals, as it did before pushes named any.
-    if not all then
-        local list = {}
-        for id in pairs(ids) do list[#list + 1] = id end
-        if #list > 0 then
-            table.sort(list)
-            payload.ids = list
-        end
+    local entry = { source = actor.source, reason = reason, ids = {}, all = false }
+    merge(entry, nil, ids, all)
+    queued[cid] = entry
+    if not flushArmed then
+        flushArmed = true
+        SetTimeout(0, flushQueued)
     end
-    TriggerClientEvent('crimson-hitman:push', actor.source, payload)
     return true
 end
 
@@ -417,6 +466,8 @@ function Notify.pushParties(contract, hitmanCids, reason)
 end
 
 function Notify.clearPush(cid)
+    -- What this tick queued goes first, as it would have.
+    sendQueued(cid)
     lastPush[cid] = nil
     trailing[cid] = nil
 end
@@ -1750,6 +1801,7 @@ function Notify.clearPlayer(cid)
     relayBudgets[cid] = nil
     lastPush[cid] = nil
     trailing[cid] = nil
+    queued[cid] = nil
     -- A cooldown still running is kept: relogging must not buy a second
     -- alert, and with it a count.
     if (paranoidUntil[cid] or 0) <= os.time() then paranoidUntil[cid] = nil end

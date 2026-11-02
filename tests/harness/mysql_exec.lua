@@ -276,6 +276,16 @@ local function matches(row, conditions, params, from)
             if row[condition.column] ~= nil then return false end
         elseif condition.anyOf then
             if not condition.anyOf[tostring(row[condition.column])] then return false end
+        elseif condition.boundFrom then
+            local actual, any = tostring(row[condition.column]), false
+            for k = 0, condition.boundCount - 1 do
+                local expected = params[from + condition.boundFrom - 1 + k]
+                if expected ~= nil and tostring(expected) == actual then
+                    any = true
+                    break
+                end
+            end
+            if not any then return false end
         else
             local expected = condition.literal
             if expected == nil then
@@ -459,6 +469,19 @@ local function parseConditions(clause, sql)
         elseif notInColumn then
             error('mysql_exec: NOT IN is not supported by the generic reader: '
                 .. tostring(sql))
+        elseif inColumn and inList:find('?', 1, true) then
+            -- `col IN (?, ?, ...)`: every value bound, read from the
+            -- parameters in order, as the bulk reads send it.
+            local first, count = index + 1, 0
+            for mark in inList:gmatch('[^,]+') do
+                if not mark:match('^%s*%?%s*$') then
+                    error('mysql_exec: an IN list mixing bound and literal values is not '
+                        .. 'supported: ' .. tostring(sql))
+                end
+                count = count + 1
+            end
+            index = index + count
+            conditions[#conditions + 1] = { column = bare(inColumn), boundFrom = first, boundCount = count }
         elseif inColumn then
             local allowed = {}
             for entry in inList:gmatch("'([^']*)'") do allowed[entry] = true end

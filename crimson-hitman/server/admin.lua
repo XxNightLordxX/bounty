@@ -2988,19 +2988,45 @@ local PANEL_PLACES = {
 --- by the panel's place for it (PANEL_PLACES).
 ---@param line string
 ---@return string
-function Admin.panelWords(line)
-    line = tostring(line)
+--- The patterns panelWords replaces, built once for the command names in
+--- force: { key = the names they were built from, list = { pattern, place } }.
+--- The overview words every line of the diagnosis this way, and each line
+--- rebuilt and sorted the whole list.
+local panelPatterns = nil
+
+local function panelPatternsNow()
+    local commands = Config.Admin.Commands or {}
+    -- What they were built from, as read now: the same names give the same
+    -- key while the table is unchanged, and any change gives another.
+    local key = {}
+    for command, name in pairs(commands) do
+        if type(name) == 'string' and name ~= '' and PANEL_PLACES[command] then
+            key[#key + 1] = command .. '=' .. name
+        end
+    end
+    key = table.concat(key, '\n')
+    if panelPatterns and panelPatterns.key == key then return panelPatterns.list end
     local names = {}
-    for key, name in pairs(Config.Admin.Commands or {}) do
-        if type(name) == 'string' and name ~= '' and PANEL_PLACES[key] then
-            names[#names + 1] = { name = name, place = PANEL_PLACES[key] }
+    for command, name in pairs(commands) do
+        if type(name) == 'string' and name ~= '' and PANEL_PLACES[command] then
+            names[#names + 1] = { name = name, place = PANEL_PLACES[command] }
         end
     end
     -- Longest first, so ch-review is never read as a prefix of another.
     table.sort(names, function(a, b) return #a.name > #b.name end)
-    for _, entry in ipairs(names) do
-        local pattern = '/' .. entry.name:gsub('%p', '%%%0') .. '%f[^%w_%-]'
-        line = line:gsub(pattern, (entry.place:gsub('%%', '%%%%')))
+    local list = {}
+    for i = 1, #names do
+        list[i] = { pattern = '/' .. names[i].name:gsub('%p', '%%%0') .. '%f[^%w_%-]',
+                    place = (names[i].place:gsub('%%', '%%%%')) }
+    end
+    panelPatterns = { key = key, list = list }
+    return list
+end
+
+function Admin.panelWords(line)
+    line = tostring(line)
+    for _, entry in ipairs(panelPatternsNow()) do
+        line = line:gsub(entry.pattern, entry.place)
     end
     return line
 end

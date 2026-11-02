@@ -1928,6 +1928,57 @@ function MySQLStore.readEscrow(contractId)
     return rows
 end
 
+--- How many ids one bulk read binds. A read of fewer repeats its last id
+--- to fill the list, which matches nothing more, so each statement is one
+--- fixed text and the same prepared statement every time.
+local MANY_CHUNK = 100
+
+--- MANY_CHUNK placeholders, and the two statements built on them. Nothing
+--- but this fixed run of `?` is joined into them: every id is bound.
+local MANY_MARKS = ('?, '):rep(MANY_CHUNK - 1) .. '?'
+local ESCROW_MANY = table.concat({
+    'SELECT * FROM crimson_escrow WHERE contract_id IN (', MANY_MARKS, ') ORDER BY id' })
+local HITMEN_MANY = table.concat({
+    'SELECT * FROM crimson_hitmen WHERE contract_id IN (', MANY_MARKS, ') ORDER BY accepted_at, id' })
+
+--- Rows of one of those statements for every contract in `ids`, by contract
+--- id, in as few statements as MANY_CHUNK allows. Every id asked for is
+--- answered, with an empty list where it has none, so a caller can treat
+--- the answer exactly as one per-contract read per id.
+local function rowsForContracts(sql, ids, hydrate)
+    local out, wanted = {}, {}
+    for i = 1, #(ids or {}) do
+        local id = ids[i]
+        if id ~= nil and out[id] == nil then
+            out[id] = {}
+            wanted[#wanted + 1] = id
+        end
+    end
+    for first = 1, #wanted, MANY_CHUNK do
+        local params = {}
+        for i = 0, MANY_CHUNK - 1 do
+            params[i + 1] = wanted[math.min(first + i, #wanted)]
+        end
+        local rows = db.query(sql, params) or {}
+        for i = 1, #rows do
+            local row = hydrate(rows[i])
+            local list = out[row.contract_id]
+            if list then list[#list + 1] = row end
+        end
+    end
+    return out
+end
+
+--- Several contracts' escrow, by contract id: readEscrow for each, in one
+--- statement per MANY_CHUNK contracts. The board prices every contract it
+--- lists, and one readEscrow each was an awaited SELECT per live contract
+--- per board opened.
+---@param ids string[]
+---@return table<string, table[]>
+function MySQLStore.readEscrowMany(ids)
+    return rowsForContracts(ESCROW_MANY, ids, hydrateEscrow)
+end
+
 function MySQLStore.readEscrowLine(id)
     local rows = db.query('SELECT * FROM crimson_escrow WHERE id = ?', { id })
     return hydrateEscrow(rows and rows[1])
@@ -2117,6 +2168,14 @@ function MySQLStore.liveHitmen()
         list[#list + 1] = h
     end
     return out
+end
+
+--- Several contracts' rosters, by contract id: readHitmen for each, in
+--- one statement per MANY_CHUNK contracts (rowsForContracts).
+---@param ids string[]
+---@return table<string, table[]>
+function MySQLStore.readHitmenMany(ids)
+    return rowsForContracts(HITMEN_MANY, ids, hydrateHitman)
 end
 
 function MySQLStore.readHitman(contractId, cid)

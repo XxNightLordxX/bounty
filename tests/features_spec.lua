@@ -815,6 +815,7 @@ end)
 --- came to keep the old fees unnoticed.
 describe('a setting changed from the panel, on every open app', function()
     local function pushes(target)
+        Env.runTimers()   -- a push goes at the end of its tick (Notify)
         local out = {}
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:push' and (target == nil or event.target == target) then
@@ -840,7 +841,8 @@ describe('a setting changed from the panel, on every open app', function()
         local s = newStack()
         fixture(s)
         Env.clientEvents = {}
-        truthy(s.notify.push('CREATOR1', 'accepted'), 'the first goes at once')
+        truthy(s.notify.push('CREATOR1', 'accepted'), 'the first goes at the end of the tick')
+        Env.runTimers()
         falsy(s.notify.push('CREATOR1', 'settings'), 'held by the floor')
         s.notify.push('CREATOR1', 'accepted', 'ct00000001')
         Env.advance((Config.Notifications.PushMinIntervalSeconds or 1) + 1)

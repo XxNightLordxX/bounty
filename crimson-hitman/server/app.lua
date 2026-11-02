@@ -715,15 +715,24 @@ function App.register()
         return listing
     end)
 
-    handler('mine', 'load', function(actor)
+    -- The three tabs under one memo (Projection.cached): a contract they
+    -- placed is also one they are involved in, and its escrow and roster
+    -- were read once for each tab.
+    local function mineOf(cid)
         return {
-            created  = deps.projection.mine(actor.cid),
-            accepted = deps.projection.accepted(actor.cid),
-            onMe     = deps.projection.onMe(actor.cid),
-            -- Payouts of theirs held for proof of intent, the contract done
-            -- or not (server/rp_intent.lua, off as shipped: absent).
-            intentHeld = deps.rpIntent and deps.rpIntent.enabled() and deps.rpIntent.heldFor(actor.cid) or nil,
+            created  = deps.projection.mine(cid),
+            accepted = deps.projection.accepted(cid),
+            onMe     = deps.projection.onMe(cid),
         }
+    end
+
+    handler('mine', 'load', function(actor)
+        local out = deps.projection.cached and deps.projection.cached(mineOf, actor.cid)
+            or mineOf(actor.cid)
+        -- Payouts of theirs held for proof of intent, the contract done
+        -- or not (server/rp_intent.lua, off as shipped: absent).
+        out.intentHeld = deps.rpIntent and deps.rpIntent.enabled() and deps.rpIntent.heldFor(actor.cid) or nil
+        return out
     end)
 
     -- The whitelisted-job view (Config.WhitelistedView): the one screen a

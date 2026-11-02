@@ -529,6 +529,16 @@ function Memory.readEscrow(contractId)
     return out
 end
 
+--- Several contracts' escrow, by contract id: readEscrow for each. See
+--- the mysql backend, where it is one statement instead of one per contract.
+function Memory.readEscrowMany(ids)
+    local out = {}
+    for i = 1, #(ids or {}) do
+        if out[ids[i]] == nil then out[ids[i]] = Memory.readEscrow(ids[i]) end
+    end
+    return out
+end
+
 function Memory.readEscrowLine(id)
     return db.escrow[id]
 end
@@ -726,6 +736,15 @@ function Memory.liveHitmen()
             end)
             out[id] = list
         end
+    end
+    return out
+end
+
+--- Several contracts' rosters, by contract id: readHitmen for each.
+function Memory.readHitmenMany(ids)
+    local out = {}
+    for i = 1, #(ids or {}) do
+        if out[ids[i]] == nil then out[ids[i]] = Memory.readHitmen(ids[i]) end
     end
     return out
 end

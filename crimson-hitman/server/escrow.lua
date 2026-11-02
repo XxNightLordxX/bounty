@@ -119,11 +119,14 @@ end
 local memo = nil
 
 local function readLines(contractId)
-    if not memo then return Storage.readEscrow(contractId) end
-    local hit = memo[contractId]
+    local filling = memo
+    if not filling then return Storage.readEscrow(contractId) end
+    local hit = filling[contractId]
     if hit == nil then
         hit = Storage.readEscrow(contractId)
-        memo[contractId] = hit
+        -- The memo it was read for, and only while it is still the one in
+        -- use: on mysql the read waits, and a write meanwhile drops it.
+        if memo == filling then filling[contractId] = hit end
     end
     return hit
 end
@@ -145,6 +148,38 @@ function Escrow.cached(fn, ...)
     memo = outer
     if not ok then error(a, 0) end
     return a, b, c
+end
+
+--- Fill the memo of the Escrow.cached call under way with several
+--- contracts' lines in one read (Storage.readEscrowMany), so pricing a
+--- board of them is one statement on mysql rather than one per contract.
+--- `known` is lines already read for some of them ([contractId] = lines,
+--- as readEscrow answers): those are taken as they are, and only the rest
+--- read. Contracts already memoised keep what they read. Outside a cached
+--- call it reads nothing: there is no memo to fill and nothing would read it.
+---@param ids string[]
+---@param known table<string, table[]>|nil
+function Escrow.prime(ids, known)
+    if not memo then return end
+    local filling = memo
+    local missing = {}
+    for i = 1, #(ids or {}) do
+        local id = ids[i]
+        if filling[id] == nil then
+            local lines = known and known[id]
+            if lines ~= nil then filling[id] = lines else missing[#missing + 1] = id end
+        end
+    end
+    if #missing == 0 or not Storage.readEscrowMany then return end
+    local read = Storage.readEscrowMany(missing) or {}
+    -- Only into the memo it was read for: on mysql the read waits, and a
+    -- write in the meantime throws the memo away (forget), which must not
+    -- be filled again with what was read before it.
+    if memo ~= filling then return end
+    for i = 1, #missing do
+        local lines = read[missing[i]]
+        if lines ~= nil and filling[missing[i]] == nil then filling[missing[i]] = lines end
+    end
 end
 
 

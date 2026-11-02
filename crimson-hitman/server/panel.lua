@@ -163,12 +163,24 @@ function Panel.init(d)
     freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
 end
 
---- Every contract the store keeps, read at most once per OVERVIEW_SECONDS.
+--- Newest first, then by id: the order the Contracts section lists in.
+local function newestFirst(a, b)
+    if (a.created_at or 0) ~= (b.created_at or 0) then
+        return (a.created_at or 0) > (b.created_at or 0)
+    end
+    return tostring(a.id) > tostring(b.id)
+end
+
+--- Every contract the store keeps, read at most once per OVERVIEW_SECONDS,
+--- newest first: sorted once when read, not once per search or page asked
+--- of it (a filter keeps the order).
 ---@return table[]
 local function everyContract()
     local now = os.time()
     if not contractsCache or now - contractsCache.at >= OVERVIEW_SECONDS then
-        contractsCache = { at = now, rows = deps.storage.allContracts() or {} }
+        local rows = deps.storage.allContracts() or {}
+        table.sort(rows, newestFirst)
+        contractsCache = { at = now, rows = rows }
     end
     return contractsCache.rows
 end
@@ -974,12 +986,7 @@ H.contracts = function(src, data)
         if hit and to and (tonumber(contract.created_at) or 0) > to then hit = false end
         if hit then matched[#matched + 1] = contract end
     end
-    table.sort(matched, function(a, b)
-        if (a.created_at or 0) ~= (b.created_at or 0) then
-            return (a.created_at or 0) > (b.created_at or 0)
-        end
-        return tostring(a.id) > tostring(b.id)
-    end)
+    -- Already newest first (everyContract).
 
     local size = pageSize()
     local pages = math.max(1, math.ceil(#matched / size))
@@ -2871,12 +2878,56 @@ function Panel.handle(src, payload)
     return answer(ok, err, message, result)
 end
 
+--- Whether `value` written out as JSON would be more than `limit` bytes,
+--- counted as it walks and given up at the limit: the reply was encoded
+--- whole only to be measured, then serialised again to be sent, and a page
+--- of the log is a few hundred KB of string built and thrown away. A
+--- string counts its bytes and its quotes, a number its digits, a key its
+--- name and the punctuation around it. Escapes are not counted, so a reply
+--- of quotes and control characters is counted a little short, which only
+--- moves where the line falls by those few bytes.
+---@param value any
+---@param limit integer
+---@return boolean
+function Panel.over(value, limit)
+    local total = 0
+    local function walk(v, depth)
+        if total > limit then return end
+        local kind = type(v)
+        if kind == 'string' then
+            total = total + #v + 2
+        elseif kind == 'number' then
+            if v == math.floor(v) and v > -1e15 and v < 1e15 then
+                local n, digits = math.abs(v), 1
+                while n >= 10 do n, digits = n // 10, digits + 1 end
+                total = total + digits + (v < 0 and 1 or 0)
+            else
+                total = total + 17
+            end
+        elseif kind == 'boolean' then
+            total = total + 5
+        elseif kind == 'table' then
+            if depth > 32 then return end
+            total = total + 2
+            for k, child in pairs(v) do
+                total = total + 1
+                if type(k) == 'string' then total = total + #k + 3 end
+                walk(child, depth + 1)
+                if total > limit then return end
+            end
+        else
+            total = total + 4
+        end
+    end
+    walk(value, 0)
+    return total > limit
+end
+
 --- Send a reply to the page's client: as a latent event when it is large.
 ---@param src number
 ---@param reply table
 function Panel.send(src, reply)
-    local okSize, encoded = pcall(json.encode, reply)
-    if okSize and type(encoded) == 'string' and #encoded > LATENT_OVER then
+    if Panel.over(reply, LATENT_OVER) then
         TriggerLatentClientEvent('crimson-hitman:adminResult', src, LATENT_BPS, reply)
     else
         TriggerClientEvent('crimson-hitman:adminResult', src, reply)

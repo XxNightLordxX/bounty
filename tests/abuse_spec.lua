@@ -1004,6 +1004,7 @@ describe('a muted thread', function()
         Env.clientEvents = {}
         truthy(s.comms.send(f.hitman, c.id, nil, 'On my way.'))
         eq(count('crimson-hitman:notify', 1, 'Contract message'), 0, 'the muted thread rang')
+        Env.runTimers()   -- a push goes at the end of its tick (Notify)
         eq(count('crimson-hitman:push', 1), 1, 'an open thread still has to redraw')
 
         local read = call('readThread', 1, { id = c.id, thread = handle })

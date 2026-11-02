@@ -39,6 +39,252 @@ function Projection.init(deps)
     LocationTip = deps.locationTip
     Freeze = deps.freeze
     StaffContract = deps.staffContract
+    Projection.watchStore(Storage)
+end
+
+--------------------------------------------------------------------------
+-- What the store has changed since
+--------------------------------------------------------------------------
+--
+-- The board is the same for everybody until something is written: the
+-- running contracts, what each holds and who is on it. A push sends every
+-- party's open app back for it at once, so the same store was read and the
+-- same two hundred contracts priced and sorted once per player within a
+-- second. Kept here once per change instead (boardBase), and anything the
+-- store is asked to write ends it: every store function not named below
+-- counts as a write, so one added later is safe by default.
+
+--- Store functions that change nothing the board is built from: the
+--- reads, and the writes to tables it never reads (the audit log, the
+--- playtime counts, messages, the ledger, photos, the staff tools' own
+--- records, settings). Every other one moves `generation`.
+local KEEPS = {}
+for name in ([[
+    _raw readContract allContracts countContractsByState liveContracts contractsInvolving
+    contractsNaming queuedBailouts contractsBy contractsByAccount readEscrow readEscrowMany
+    readEscrowLine unsettledEscrow unsettledEscrowContracts orphanEscrow parkedEscrow
+    owedHeldEscrow releasingEscrow strandedEscrow readHitmen liveHitmen readHitmenMany
+    readHitman readHitmanById countHitmanContracts readAmendment openAmendmentContracts
+    readOpenAmendments applyingAmendments readMessages readLedger readPending readStats
+    readAudit queryAudit auditForContract auditByAction readReveal readPlacerInformants
+    readLocationTips liveLocationTips readMute readPhoto photosOf photosForContract
+    photosOpenedBefore anyPhoto readPhotoByPublic photoTotals photosCreatedBefore photosNotOpen
+    photoCounts readReview reviewItems readSettings readAlerts readViewAlerts readFreezes
+    readContractStaff readContractStaffMarks readStaffRecords readPlaytime readPlaytimeInstall
+    readStaffMeta playersTopId playerNumber readRpRows lastHeartbeat health healthy timedOut
+    notSent inspect quarantined readBackMismatches nextId
+    writeAudit writeAuditBatch writeAuditNoWait writePlaytime writePlaytimeNoWait
+    writePlaytimeInstall writeStaffMeta heartbeat flush save writeMessage setMute writeLedger
+    forgetLedgerPhotos queuePending clearPending bumpStat writeReview setReviewState
+    writeSetting deleteSetting clearSettings writeAlert writeAlertNoWait deleteAlert
+    setViewAlerts writePhoto openPhoto closePhoto publishPhoto movePhoto keepPhoto deletePhoto
+    deletePhotosIn
+]]):gmatch('[%w_]+') do KEEPS[name] = true end
+
+--- Moved before and after every write: a board read while a write waits on
+--- the database (mysql) is never kept as current.
+local generation = 0
+
+--- What boardBase built, for the generation it was built at.
+local board = nil
+
+--- Store tables already watched, so a second init does not wrap twice.
+local watched = setmetatable({}, { __mode = 'k' })
+
+--- Count the writes made through this store table (KEEPS says which are
+--- not), in place: every module holds the table, not its functions.
+---@param storage table
+function Projection.watchStore(storage)
+    if type(storage) ~= 'table' or watched[storage] then return end
+    watched[storage] = true
+    for name, fn in pairs(storage) do
+        if type(fn) == 'function' and not KEEPS[name] then
+            storage[name] = function(...)
+                generation = generation + 1
+                local out = table.pack(pcall(fn, ...))
+                generation = generation + 1
+                if not out[1] then error(out[2], 0) end
+                return table.unpack(out, 2, out.n)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- Reads memoised for one request
+--------------------------------------------------------------------------
+--
+-- A player's reads (the board, Mine, Accepted, On me) ask for the same
+-- rows several times: a contract's roster for the role, again for the card,
+-- and once more for the hitman's own row on it; an operative's record once
+-- per contract they are on. Inside Projection.cached each is read once, and
+-- a whole page's worth is read in one statement on mysql
+-- (Storage.readHitmenMany, Escrow.prime). Kept per coroutine, so two
+-- requests waiting on the database at once never read each other's, and
+-- dropped when the call ends: nothing here outlives the request, so nothing
+-- needs invalidating. None of the reads under it writes.
+
+--- [coroutine] = { rosters = { [contractId] = roster }, records = { [cid] = record },
+--- actors = { [cid] = actor or false } }
+local scopes = setmetatable({}, { __mode = 'k' })
+
+local function scope()
+    return scopes[coroutine.running()]
+end
+
+--- A contract's roster, as Storage.readHitmen answers it.
+local function rosterOf(contractId)
+    local memo = scope()
+    if not memo then return Storage.readHitmen(contractId) end
+    local hit = memo.rosters[contractId]
+    if hit == nil then
+        local base = board ~= nil and board.gen == generation and board or nil
+        hit = base and base.rosters[contractId]
+        if hit == nil then
+            hit = Storage.readHitmen(contractId) or {}
+            if base and board == base and base.gen == generation and base.live[contractId] then
+                base.rosters[contractId] = hit
+            end
+        end
+        memo.rosters[contractId] = hit
+    end
+    return hit
+end
+
+--- One player's row on a contract, as Storage.readHitman answers it: there
+--- is at most one (a returning operative's row is reused), so it is the
+--- roster's.
+local function hitmanOf(contractId, cid)
+    if not scope() then return Storage.readHitman(contractId, cid) end
+    local roster = rosterOf(contractId)
+    for i = 1, #roster do
+        if roster[i].hitman_cid == cid then return roster[i] end
+    end
+    return nil
+end
+
+--- Several contracts' rosters in one read, into the memo.
+local function primeRosters(ids)
+    local memo = scope()
+    if not memo or not Storage.readHitmenMany then return end
+    -- What the board kept for this change already (boardBase), then one
+    -- read for the rest, kept with it while it is still current.
+    local base = board ~= nil and board.gen == generation and board or nil
+    local missing = {}
+    for i = 1, #ids do
+        local id = ids[i]
+        if memo.rosters[id] == nil then
+            local kept = base and base.rosters[id]
+            if kept ~= nil then memo.rosters[id] = kept else missing[#missing + 1] = id end
+        end
+    end
+    if #missing == 0 then return end
+    local read = Storage.readHitmenMany(missing) or {}
+    local current = base ~= nil and board == base and base.gen == generation
+    for i = 1, #missing do
+        local id, roster = missing[i], read[missing[i]]
+        if roster ~= nil then
+            if memo.rosters[id] == nil then memo.rosters[id] = roster end
+            if current and base.live[id] then base.rosters[id] = roster end
+        end
+    end
+end
+
+local function idsOf(contracts)
+    local ids = {}
+    for i = 1, #contracts do ids[i] = contracts[i].id end
+    return ids
+end
+
+--- Escrow and rosters of these contracts, each read once for the request:
+--- from the board's while it is current, and one read for the rest.
+local function prime(contracts)
+    if not scope() or #contracts == 0 then return end
+    local ids = idsOf(contracts)
+    Escrow.prime(ids, board ~= nil and board.gen == generation and board.lines or nil)
+    primeRosters(ids)
+end
+
+--- The running contracts, each priced, in board order (by what the slot
+--- being competed for pays, then by id), and their escrow lines: what every
+--- viewer's board is cut from. Built once per change to the store
+--- (`generation`), not once per viewer. Never anything one viewer may see
+--- and another may not: which of these each viewer is shown, and what of
+--- each, is decided per viewer from here (listedFor, Projection.contract).
+--- Under Projection.cached only.
+---@return table { gen, order = contract[], read = contract[] as the store listed them,
+--- live = { [id] = true }, lines, rosters }
+local function boardBase()
+    if board ~= nil and board.gen == generation then return board end
+    local gen = generation
+    local read = Storage.liveContracts()
+    local all = table.move(read, 1, #read, 1, {})
+    local ids, live = idsOf(all), {}
+    for i = 1, #ids do live[ids[i]] = true end
+    local lines = Storage.readEscrowMany and Storage.readEscrowMany(ids) or {}
+    -- Sorted by reward rather than creation order: creation order leaks
+    -- when an anonymous contract was placed, which is half of a timing
+    -- attack on anonymity (§14.32).
+    --
+    -- The sort key is computed up front and the comparator only reads that
+    -- table. A comparator that queried storage would run a database call
+    -- per comparison — and under oxmysql that call yields, which is not
+    -- allowed inside table.sort's C frame and would fail the whole listing.
+    Escrow.prime(ids, lines)
+    local score = {}
+    for i = 1, #all do
+        local c = all[i]
+        score[c.id] = Escrow.moneyValue(c.id, { slot = c.next_slot or 1 })
+    end
+    table.sort(all, function(a, b)
+        local ra, rb = score[a.id] or 0, score[b.id] or 0
+        if ra == rb then return a.id < b.id end
+        return ra > rb
+    end)
+    local built = { gen = gen, order = all, read = read, live = live, lines = lines, rosters = {} }
+    -- Kept only if nothing was written while it was read.
+    if generation == gen then board = built end
+    return built
+end
+
+--- A player in the city (Identity.byCitizenId), asked of qbx_core once per
+--- request: the board asks it of every listed contract's placer and target,
+--- which on a busy board is the same few dozen people hundreds of times.
+local function actorOf(cid)
+    local memo = scope()
+    if not memo or type(cid) ~= 'string' then return Identity.byCitizenId(cid) end
+    local hit = memo.actors[cid]
+    if hit == nil then
+        hit = Identity.byCitizenId(cid) or false
+        memo.actors[cid] = hit
+    end
+    return hit or nil
+end
+
+--- An operative's record (Progression.record), once per request.
+local function recordOf(cid)
+    local memo = scope()
+    if not memo then return Progression.record(cid) end
+    local hit = memo.records[cid]
+    if hit == nil then
+        hit = Progression.record(cid)
+        memo.records[cid] = hit
+    end
+    return hit
+end
+
+--- Run `fn` with escrow (Escrow.cached), rosters and records memoised for
+--- its length. Nested calls share the outer memo.
+---@param fn function
+---@return any
+function Projection.cached(fn, ...)
+    local co = coroutine.running()
+    if scopes[co] then return Escrow.cached(fn, ...) end
+    scopes[co] = { rosters = {}, records = {}, actors = {} }
+    local ok, a, b, c = pcall(Escrow.cached, fn, ...)
+    scopes[co] = nil
+    if not ok then error(a, 0) end
+    return a, b, c
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -47,7 +293,7 @@ end
 local function roleOf(contract, viewerCid)
     if contract.creator_cid == viewerCid then return 'creator' end
     if contract.target_cid == viewerCid then return 'target' end
-    local hitman = Storage.readHitman(contract.id, viewerCid)
+    local hitman = hitmanOf(contract.id, viewerCid)
     if hitman and hitman.state == 'active' then return 'hitman' end
     return 'public'
 end
@@ -65,8 +311,8 @@ local function listedFor(contract, viewerCid)
     -- after a few evenings the intersection is one person. The target's
     -- presence is theirs to reveal, and the contract is about them anyway.
     local creatorOnline = contract.anon_creator == true
-        or Identity.byCitizenId(contract.creator_cid) ~= nil
-    local targetOnline = Identity.byCitizenId(contract.target_cid) ~= nil
+        or actorOf(contract.creator_cid) ~= nil
+    local targetOnline = actorOf(contract.target_cid) ~= nil
     if not (creatorOnline and targetOnline) then return false end
 
     -- A target is not shown their own contract in the public list; they see
@@ -151,7 +397,7 @@ end
 function Projection.contract(contract, viewerCid, opts)
     local peek = type(opts) == 'table' and opts.peek == true
     local role = roleOf(contract, viewerCid)
-    local hitmen = Storage.readHitmen(contract.id)
+    local hitmen = rosterOf(contract.id)
     local heldSince = role ~= 'public' and Freeze and Freeze.heldSince(contract, hitmen) or nil
 
     local activeHitmen = 0
@@ -251,7 +497,7 @@ function Projection.contract(contract, viewerCid, opts)
     -- and a contract another of the viewer's own characters placed or is
     -- the target of. Only the reason is sent, never whose account matched.
     if role == 'public' then
-        local viewer = Identity.byCitizenId(viewerCid)
+        local viewer = actorOf(viewerCid)
         local account = viewer and viewer.account
         for i = 1, #hitmen do
             local h = hitmen[i]
@@ -267,7 +513,7 @@ function Projection.contract(contract, viewerCid, opts)
             out.barred = 'staff_removed'
         end
         if not out.barred and Config.AntiCollusion.BlockSameAccount and account then
-            local target = Identity.byCitizenId(contract.target_cid)
+            local target = actorOf(contract.target_cid)
             if Identity.sameAccount(contract.creator_account, account)
                 or (target and Identity.sameAccount(target.account, account)) then
                 out.barred = 'same_account'
@@ -335,8 +581,8 @@ function Projection.contract(contract, viewerCid, opts)
                     -- stable fingerprint that links the same person across
                     -- contracts, which is the thing anonymity is for.
                     record = Progression and (h.anon
-                        and { standing = Progression.record(h.hitman_cid).standing }
-                        or Progression.record(h.hitman_cid)) or nil,
+                        and { standing = recordOf(h.hitman_cid).standing }
+                        or recordOf(h.hitman_cid)) or nil,
                     -- The newest message from them in their thread, for the
                     -- unread dot on Threads: a time already in that thread.
                     lastMessageAt = Comms and Config.Relay.Enabled
@@ -355,7 +601,7 @@ function Projection.contract(contract, viewerCid, opts)
             out.meetingSet = contract.meeting_x ~= nil
         end
     elseif role == 'hitman' then
-        local mine = Storage.readHitman(contract.id, viewerCid)
+        local mine = hitmanOf(contract.id, viewerCid)
         out.myAlias = mine and mine.alias or nil
         -- Their own, so nothing is disclosed. The page worded "accepted,
         -- anonymously" from the button pressed, not from what was recorded.
@@ -451,36 +697,29 @@ local function buildListing(viewerCid, page)
     page = math.floor(page)
     local pageSize = Config.Listing.PageSize
 
-    -- Live contracts only: nothing else is ever listed (listedFor).
-    local all = Storage.liveContracts()
-    local visible = {}
-    for i = 1, #all do
-        if listedFor(all[i], viewerCid) then visible[#visible + 1] = all[i] end
+    -- Live contracts only: nothing else is ever listed (listedFor), in
+    -- board order, read and sorted once per change for every viewer
+    -- (boardBase). Which of them this viewer is shown is theirs alone.
+    local base = boardBase()
+    -- Counted, and only this page's rows kept: the list of every one shown
+    -- to this viewer was a table as long as the board, every board opened.
+    local from = ((page - 1) * pageSize) + 1
+    local upto = from + pageSize - 1
+    local visible, onPage, shown = 0, {}, {}
+    for i = 1, #base.order do
+        local c = base.order[i]
+        if listedFor(c, viewerCid) then
+            visible = visible + 1
+            if visible >= from and visible <= upto then
+                onPage[#onPage + 1] = c
+                shown[#shown + 1] = c.id
+            end
+        end
     end
-
-    -- Sorted by reward rather than creation order: creation order leaks when
-    -- an anonymous contract was placed, which is half of a timing attack on
-    -- anonymity (§14.32).
-    --
-    -- The sort key is computed up front and the comparator only reads that
-    -- table. A comparator that queried storage would run a database call per
-    -- comparison — and under oxmysql that call yields, which is not allowed
-    -- inside table.sort's C frame and would fail the whole listing.
-    local score = {}
-    for i = 1, #visible do
-        local c = visible[i]
-        score[c.id] = Escrow.moneyValue(c.id, { slot = c.next_slot or 1 })
-    end
-
-    table.sort(visible, function(a, b)
-        local ra, rb = score[a.id] or 0, score[b.id] or 0
-        if ra == rb then return a.id < b.id end
-        return ra > rb
-    end)
 
     local out = {
         page = page,
-        pages = math.max(1, math.ceil(#visible / pageSize)),
+        pages = math.max(1, math.ceil(visible / pageSize)),
         contracts = {},
         -- The app asks the server how loudly to warn about law enforcement
         -- targets, rather than deciding for itself (§7.5).
@@ -680,9 +919,13 @@ local function buildListing(viewerCid, page)
         },
     }
     extendAll(Projection.settingsExtenders, out.settings)
-    local from = ((page - 1) * pageSize) + 1
-    for i = from, math.min(from + pageSize - 1, #visible) do
-        local row = Projection.contract(visible[i], viewerCid)
+    -- The rows' escrow as the board read it, and their rosters in one read
+    -- (one each for the role and the card was two per row), kept with the
+    -- board for the next viewer.
+    Escrow.prime(shown, base.lines)
+    primeRosters(shown)
+    for i = 1, #onPage do
+        local row = Projection.contract(onPage[i], viewerCid)
         -- Never on the board, not even to its placer or a hitman on it:
         -- their own cards under Mine carry it.
         row.meetingSet = nil
@@ -700,13 +943,13 @@ end
 --- request.
 local function buildMine(viewerCid)
     local involved = Storage.contractsBy(viewerCid)
-    local out = {}
+    local open = {}
     for i = 1, #involved do
-        local c = involved[i]
-        if not CH.TERMINAL[c.state] then
-            out[#out + 1] = Projection.contract(c, viewerCid)
-        end
+        if not CH.TERMINAL[involved[i].state] then open[#open + 1] = involved[i] end
     end
+    prime(open)
+    local out = {}
+    for i = 1, #open do out[#out + 1] = Projection.contract(open[i], viewerCid) end
     return out
 end
 
@@ -804,37 +1047,43 @@ end
 --- Contracts the viewer holds as hitman.
 local function buildAccepted(viewerCid)
     local involved = Storage.contractsInvolving(viewerCid)
-    local out = {}
+    local open = {}
     for i = 1, #involved do
-        local c = involved[i]
-        if not CH.TERMINAL[c.state] then
-            local hitman = Storage.readHitman(c.id, viewerCid)
-            if hitman and hitman.state == 'active' then
-                out[#out + 1] = Projection.contract(c, viewerCid)
-            end
-        end
+        if not CH.TERMINAL[involved[i].state] then open[#open + 1] = involved[i] end
     end
+    primeRosters(idsOf(open))
+    local held = {}
+    for i = 1, #open do
+        local hitman = hitmanOf(open[i].id, viewerCid)
+        if hitman and hitman.state == 'active' then held[#held + 1] = open[i] end
+    end
+    prime(held)
+    local out = {}
+    for i = 1, #held do out[#out + 1] = Projection.contract(held[i], viewerCid) end
     return out
 end
 
 --- Contracts naming the viewer as target — their Cleanse tab.
 local function buildOnMe(viewerCid)
     local naming = Storage.contractsNaming(viewerCid)
-    local out = {}
+    local shown = {}
     for i = 1, #naming do
         local c = naming[i]
         -- Not until the alert's wait is over (Notify.shownToTarget): listed
         -- at once, the tab dated the placement for a target who looked.
-        if not CH.TERMINAL[c.state] and Notify.shownToTarget(c) then
-            local row = Projection.contract(c, viewerCid)
-            -- A target learns a price exists on them and what freedom costs,
-            -- and, as their whitelisted-job view says it, a placer who put
-            -- their name to it (creatorName, from Projection.contract): the
-            -- informant will not sell a named placer, as already known. An
-            -- anonymous one stays creatorAnonymous. Never the hitman roster.
-            row.hitmen = nil
-            out[#out + 1] = row
-        end
+        if not CH.TERMINAL[c.state] and Notify.shownToTarget(c) then shown[#shown + 1] = c end
+    end
+    prime(shown)
+    local out = {}
+    for i = 1, #shown do
+        local row = Projection.contract(shown[i], viewerCid)
+        -- A target learns a price exists on them and what freedom costs,
+        -- and, as their whitelisted-job view says it, a placer who put
+        -- their name to it (creatorName, from Projection.contract): the
+        -- informant will not sell a named placer, as already known. An
+        -- anonymous one stays creatorAnonymous. Never the hitman roster.
+        row.hitmen = nil
+        out[#out + 1] = row
     end
     return out
 end
@@ -890,7 +1139,7 @@ local function whitelistedEntry(contract, job, advised)
         end
     else
         active = 0
-        local hitmen = Storage.readHitmen(contract.id)
+        local hitmen = rosterOf(contract.id)
         for i = 1, #hitmen do
             if hitmen[i].state == 'active' then active = active + 1 end
         end
@@ -1001,7 +1250,7 @@ end
 --- whether the advisory reaches them
 ---@param heldJob string|nil the held job that bars them (Identity.barredBy)
 ---@return table { onYou = entry[], colleagues = entry[]|nil, settings = table, heldJob = string|nil, alerts = table|nil }
-function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
+local function buildWhitelistedView(viewerCid, viewerJob, heldJob)
     local onYou, colleagues = {}, nil
 
     local naming = Storage.contractsNaming(viewerCid)
@@ -1027,7 +1276,7 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
             -- while names are shown to the target. Their own entry only;
             -- a colleague's never carries a name.
             if c.anon_creator ~= true then entry.creatorName = c.creator_name end
-            local hitmen = Storage.readHitmen(c.id)
+            local hitmen = rosterOf(c.id)
             entry.operatives = namedOperatives(c, hitmen)
             -- Their informant, as On me offers it, where it is sold to a
             -- member of a whitelisted job (InformantsWhitelistedTargets).
@@ -1040,7 +1289,8 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
     local advised = advisedFor(viewerJob)
     if advised then
         colleagues = {}
-        local live = Storage.liveContracts()
+        -- As the store lists them, read once per change (boardBase).
+        local live = scope() and boardBase().read or Storage.liveContracts()
         for i = 1, #live do
             local c = live[i]
             if c.target_cid ~= viewerCid and Notify.shownToTarget(c) then
@@ -1086,6 +1336,10 @@ function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
     }
 end
 
+function Projection.whitelistedView(viewerCid, viewerJob, heldJob)
+    return Projection.cached(buildWhitelistedView, viewerCid, viewerJob, heldJob)
+end
+
 --- The exact key set of a whitelisted-job view entry, asserted by the suite
 --- like ALLOWED_KEYS: `entry` for every one, `own` added to a contract on
 --- the viewer.
@@ -1109,19 +1363,19 @@ Projection.WHITELISTED_KEYS = {
 --- question. None of these writes anything, which is what makes memoising
 --- them safe.
 function Projection.listing(viewerCid, page)
-    return Escrow.cached(buildListing, viewerCid, page)
+    return Projection.cached(buildListing, viewerCid, page)
 end
 
 function Projection.mine(viewerCid)
-    return Escrow.cached(buildMine, viewerCid)
+    return Projection.cached(buildMine, viewerCid)
 end
 
 function Projection.accepted(viewerCid)
-    return Escrow.cached(buildAccepted, viewerCid)
+    return Projection.cached(buildAccepted, viewerCid)
 end
 
 function Projection.onMe(viewerCid)
-    return Escrow.cached(buildOnMe, viewerCid)
+    return Projection.cached(buildOnMe, viewerCid)
 end
 
 --- How many readings of a player's retry queue count toward what their
