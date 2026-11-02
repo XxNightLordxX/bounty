@@ -2279,7 +2279,7 @@
       // in the box afterwards.
       S.players.subject = reply.ok ? subject.slice(0, 64) : null;
       if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
-      if (reply.ok) loadHistory();
+      if (reply.ok) loadPlayerHistory();
     });
   }
 
@@ -4405,12 +4405,12 @@
     return frag(h('div.cols', suspendCard(d), protectCard(d)), payCard(d), historyCard());
   }
 
-  function loadHistory() {
+  function loadPlayerHistory() {
     var subject = S.players.subject;
     if (!subject) return Promise.resolve();
     S.pstaff.history = null;
     S.pstaff.historyError = null;
-    return ask('history', { subject: subject }, 'history').then(function (reply) {
+    return ask('history', { subject: subject }, 'playerHistory').then(function (reply) {
       if (!reply || subject !== S.players.subject) return;
       if (reply.ok) S.pstaff.history = reply.data || {};
       else S.pstaff.historyError = words(reply);

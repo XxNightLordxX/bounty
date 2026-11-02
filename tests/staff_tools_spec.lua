@@ -228,7 +228,7 @@ describe('the daily summary to the staff Discord', function()
         truthy(body:find('Frozen players: 1', 1, true), body)
         truthy(body:find('Open review items: 0', 1, true), body)
         truthy(body:find('Money in escrow: $5,000', 1, true), body)
-        truthy(body:find('Suspended players: not tracked', 1, true), body)
+        truthy(body:find('Suspended players: 0', 1, true), body)
         for _, needle in ipairs({ 'CREATOR1', 'HITMAN01', 'TARGET01', 'PUBLIC01', 'Vic', 'Marlowe',
             'Dana', 'Reyes', 'Rook', 'Pat Lee', done.id, refunded.id, 'license:' }) do
             falsy(body:find(needle, 1, true), 'the summary names ' .. needle)
@@ -255,6 +255,34 @@ describe('the daily summary to the staff Discord', function()
         local next = 0
         for _, b in ipairs(posts()) do if b:find('daily summary', 1, true) then next = next + 1 end end
         eq(next, 1, 'the next day posts again')
+    end)
+
+    it('counts the suspensions in force (server/sanctions.lua), not lifted or run-out ones', function()
+        local main, s = boot()
+        people(s)
+        Natives.convars['crimson_hitman_alert_webhook'] = WEBHOOK
+        eq(s.sanctions.count(), 0, 'nobody suspended')
+        truthy(s.sanctions.place('suspend', 'ADMIN001', 'PUBLIC01', nil, 'spam'), 'until lifted')
+        truthy(s.sanctions.place('suspend', 'ADMIN001', 'HITMAN02', 3600, 'spam'), 'for an hour')
+        truthy(s.sanctions.place('suspend', 'ADMIN001', 'CREATOR1', 86400, 'spam'), 'for a day')
+        truthy(s.sanctions.place('protect', 'ADMIN001', 'TARGET01', nil, 'event'), 'a protection')
+        eq(s.sanctions.count(), 3, 'three suspended, the protection not counted')
+        truthy(s.sanctions.lift('suspend', 'ADMIN001', 'CREATOR1', 'sorted'), 'lifted')
+        Env.advance(3601)
+        eq(s.sanctions.count(), 1, 'the lifted one and the one run out are not')
+        eq(s.summary.counts(os.time()).suspended, 1)
+        Config.Staff.DailySummary = true
+        Config.Staff.DailySummaryHour = 0
+        Natives.calls.http = {}
+        main.tick()
+        local body
+        for _, b in ipairs(posts()) do if b:find('daily summary', 1, true) then body = b end end
+        truthy(body, 'posted')
+        truthy(body:find('Suspended players: 1', 1, true), body)
+        falsy(body:find('not tracked', 1, true), body)
+        for _, needle in ipairs({ 'PUBLIC01', 'HITMAN02', 'ADMIN001', 'spam' }) do
+            falsy(body:find(needle, 1, true), 'the summary names ' .. needle)
+        end
     end)
 
     it('without a webhook posts nothing and leaves the day open for one set later', function()

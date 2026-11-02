@@ -119,6 +119,19 @@ function Sanctions.suspended(cid) return current('suspend', cid) end
 ---@return table|nil
 function Sanctions.protected(cid) return current('protect', cid) end
 
+--- How many players are suspended right now: the daily summary's count
+--- (server/summary.lua). One whose time has passed is not, before the tick
+--- ends it.
+---@return integer
+function Sanctions.count()
+    if (counts.suspend or 0) == 0 then return 0 end
+    local n = 0
+    for cid in pairs(open.suspend) do
+        if current('suspend', cid) then n = n + 1 end
+    end
+    return n
+end
+
 --- Every staff record about one player, oldest first.
 ---@param cid string
 ---@return table[]

@@ -509,7 +509,8 @@ function _G.newStack()
     payments.init({ storage = storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
     settings.watch('Staff.AppPaused', freeze.syncAppPause)
-    summary.init({ storage = storage, review = review, freeze = freeze, audit = audit, alerts = alerts })
+    summary.init({ storage = storage, review = review, freeze = freeze, audit = audit, alerts = alerts,
+                   sanctions = sanctions })
     thresholds.init({ audit = audit })
     announce.init({ storage = storage, notify = notify, audit = audit, identity = identity })
     reports.init({ storage = storage, identity = identity, audit = audit, review = review,

@@ -1897,8 +1897,9 @@ function StartCrimsonHitman()
                     sanctions = sanctions })
     -- The app pause follows its switch the moment it changes.
     settings.watch('Staff.AppPaused', freeze.syncAppPause)
+    -- The daily summary counts the suspended players through sanctions.
     summary.init({ storage = Storage, review = review, freeze = freeze, audit = audit,
-                   alerts = alerts })
+                   alerts = alerts, sanctions = sanctions })
     thresholds.init({ audit = audit })
     announce.init({ storage = Storage, notify = notify, audit = audit, identity = identity })
     reports.init({ storage = Storage, identity = identity, audit = audit, review = review,

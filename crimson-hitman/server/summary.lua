@@ -26,7 +26,7 @@ local DAY_META = 'staff_summary_day'
 --- back to the placer.
 local REFUNDED = { [CH.STATE.CANCELLED] = true, [CH.STATE.EXPIRED] = true, [CH.STATE.VOIDED] = true }
 
----@param d table { storage, review, freeze, audit, alerts?, suspensions? }
+---@param d table { storage, review, freeze, audit, alerts?, sanctions? (Sanctions.count) }
 function Summary.init(d)
     deps = d
     lastDay = nil
@@ -77,10 +77,10 @@ function Summary.counts(now)
     end
     out.reviews = deps.review and deps.review.openCount() or 0
     out.frozen = deps.freeze and deps.freeze.count() or 0
-    -- Suspensions are another module's (none ships with this resource yet):
-    -- counted where one is wired in, and said not tracked where none is.
-    if deps.suspensions and type(deps.suspensions.count) == 'function' then
-        local ok, n = pcall(deps.suspensions.count)
+    -- Suspensions are server/sanctions.lua's (Sanctions.count, wired in by
+    -- main.lua): counted where it is, and said not tracked where it is not.
+    if deps.sanctions and type(deps.sanctions.count) == 'function' then
+        local ok, n = pcall(deps.sanctions.count)
         out.suspended = ok and tonumber(n) or nil
     end
     return out

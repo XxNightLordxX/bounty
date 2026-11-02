@@ -238,8 +238,9 @@ describe('the configuration as one short file', function()
     it('is a short file in the sections an owner reads in order, with no secret in it', function()
         local text = file('crimson-hitman/config/config.lua')
         local lines = select(2, text:gsub('\n', '')) + 1
-        -- 500 before the staff tools' section (Config.Staff) and their bucket.
-        truthy(lines < 520, 'config.lua is ' .. lines .. ' lines')
+        -- 500 before the Staff section (Config.Staff: the manual payment cap
+        -- and the staff tools) and the report bucket; no room beyond them.
+        truthy(lines < 508, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',

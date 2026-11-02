@@ -2258,8 +2258,8 @@ the same poster the alerts use, at `Config.Staff.DailySummaryHour` server
 time: the contracts placed, completed and refunded (cancelled, expired or
 voided) in the last 24 hours, the money in escrow (cash, bank and dirty, and
 how many goods lines), the open review items, and how many players are
-frozen and suspended (no suspension ships with this resource, so that line
-says *not tracked* unless one is wired in). Counts only: no name, citizen id
+frozen and suspended (the suspensions in force, see *Suspensions and
+protections*). Counts only: no name, citizen id
 or contract id. The day it was posted is kept by the store (`crimson_meta`
 on mysql, `records.json` on json), so it is posted at most once a day, a
 restart included; without a webhook nothing is posted, and setting one later
