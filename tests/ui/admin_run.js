@@ -4087,6 +4087,50 @@ async function main() {
     clean(app, 'roleplay settings');
   })();
 
+  /* ---- Roleplay (group rpC): help cards and the switches ---- */
+  await (async function () {
+    const view = settingsView();
+    view.data.features.push({ key: 'Roleplay.Protection.Enabled', category: 'features',
+      group: 'Roleplay: Bodyguards', label: 'Bodyguard contracts', about: 'A target may hire a bodyguard.',
+      kind: 'switch', live: true, inflight: 'Jobs already posted are still paid.', value: false,
+      default: false, shipped: false, hasShipped: true, source: 'config' });
+    view.data.limits.push({ key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', category: 'rules-timers',
+      group: 'Roleplay: Proof of intent', label: 'Longest a payout is held for proof of intent (min)',
+      kind: 'number', integer: true, min: 1, max: 10080, live: true, inflight: 'Read at every give.',
+      value: 60, default: 60, source: 'config' });
+    const app = boot(standardServer({ settings: view }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('help');
+    await settled();
+    const help = app.window.CH_ADMIN_HELP;
+    it('How it works has a card for each rpC roleplay feature, linking to its settings', function () {
+      ['proof of intent', 'reputation', 'bodyguards', 'hit on the hitman'].forEach(function (w) {
+        const found = help.filter(function (c) { return c.title.toLowerCase().indexOf('roleplay: ' + w) === 0; });
+        eq(found.length, 1, 'a card on ' + w);
+        truthy(found[0].links.length >= 1, w + ' links to its settings');
+        truthy(/off as shipped/i.test(found[0].text), w + ' says it ships off');
+      });
+    });
+    const link = app.$$('button[data-act="help-jump"]').filter(function (b) {
+      return b.getAttribute('data-key') === 'Roleplay.ProofOfIntent.HoldMaxMinutes';
+    })[0];
+    truthy(link, 'the hold time link');
+    app.click(link);
+    await settled();
+    it('a roleplay help link lands on its setting under Rules > Timers', function () {
+      eq(app.byId('nav-timers').getAttribute('aria-current'), 'page');
+      truthy(app.byId('st-row-Roleplay.ProofOfIntent.HoldMaxMinutes').classList.contains('is-focus'));
+    });
+    app.nav('features');
+    await settled();
+    it('the bodyguard switch is under Features, in its Roleplay group', function () {
+      has(app.main(), 'Roleplay: Bodyguards');
+      truthy(app.byId('st-row-Roleplay.Protection.Enabled'), 'its row');
+    });
+    clean(app, 'roleplay rpC');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

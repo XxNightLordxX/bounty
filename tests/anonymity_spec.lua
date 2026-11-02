@@ -1226,6 +1226,25 @@ describe('every channel a player not entitled to it can read', function()
         call('report', 3, { id = c.id, note = 'They threatened me' })
         call('report', 1, { id = c.id, thread = handle, note = 'Rude' })
         call('report', 4, { id = c.id })
+        -- The roleplay channels (server/rp_protection.lua, rp_intent.lua):
+        -- a bodyguard job on the officer, posted server-side (their app is
+        -- the whitelisted-job view), read and taken by the bystander, who is
+        -- given the target's name and pin and never the client or an
+        -- operative; the operative reads the Protection tab too, and is
+        -- offered nothing; and the payout hold on every card.
+        Config.Roleplay.Protection.Enabled = true
+        Config.Roleplay.ProofOfIntent.Enabled = true
+        Config.Roleplay.Reputation.Enabled = true
+        Config.Roleplay.HitOnHitman.Enabled = true
+        Env.players[2].PlayerData.money.bank = 200000
+        local posted = s.rpProtection.post(s.identity.resolve(2), { id = c.id, amount = 2000,
+            account = Config.Roleplay.Protection.Account })
+        truthy(posted and posted.job, 'a bodyguard job posted')
+        call('protectionBoard', 3, {})
+        call('protectionBoard', 4, {})
+        call('protectionAccept', 4, { job = posted.job, reward = 2000 })
+        call('protectionWaypoint', 4, { job = posted.job })
+        call('protectionBoard', 4, {})
         admin(6, 'announce', { text = 'Event tonight: stay clear of the pier.' })
         admin(6, 'announce', { text = 'Server event at eight.', scope = 'online' })
         admin(6, 'setSetting', { key = 'Relay.AllowMaskedCalls', value = true })
@@ -1278,6 +1297,9 @@ describe('every channel a player not entitled to it can read', function()
         admin(8, 'unsuspend', { subject = 'BYSTAND1' })
         call('abandon', 3, { id = c.id })
         call('cancel', 1, { id = c.id })
+        -- The bodyguard job settled with the contract: the guard's notice.
+        s.rpProtection.sweep()
+        call('protectionBoard', 4, {})
         admin(6, 'contract', { id = c.id })
         s.audit.flush()
         Env.advance(60)

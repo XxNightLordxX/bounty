@@ -12508,6 +12508,118 @@ async function main() {
     });
   })();
 
+
+  /* Roleplay, group rpC: the board's Protection tab (bodyguard jobs), the
+     target's Hire protection and the hit on the hitman on their On me card,
+     and a payout held for proof of intent on the hitman's card and Mine.
+     Drawn only from what the server sends; nothing without it. */
+  await (async function roleplayRpC() {
+    // Off (no protection in the settings): no Contracts | Protection switch.
+    const plain = boot({ list: BOARD, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('rpC off: the board has no Protection tab', function () {
+      falsy(plain.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Protection';
+      }), 'a Protection tab with the feature off');
+      drewCleanly(plain, 'the plain board');
+    });
+
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.settings.protection = true;
+    const onMe = {
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive', state: 'accepted',
+      reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+      role: 'target', protectionOffer: { account: 'bank', min: 1000, max: 100000 },
+      counterTargets: [{ label: 'Operative #1', name: 'Rook Ash', handle: 'tg00000042' }]
+    };
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hitman';
+    held.myAlias = 'Operative #1';
+    held.intentHold = { missing: '2 more messages to the client in the contract thread', minutesLeft: 30 };
+    let posted = null, accepted = null;
+    const app = boot({
+      list: board,
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [onMe],
+        intentHeld: [{ ref: 'ct00000009', missing: '3 more messages', minutesLeft: 12 }] } },
+      ledger: LEDGER,
+      protectionBoard: { ok: true, data: { enabled: true, maxJobs: 2,
+        open: [{ job: 'prot00000001', reward: 2500 }],
+        mine: [{ job: 'prot00000002', reward: 4000, targetName: 'Kim Lane', pinSet: true }] } },
+      protectionAccept: function (body) {
+        accepted = body;
+        return { ok: true, data: { enabled: true, open: [], mine: [] } };
+      },
+      protectionPost: function (body) { posted = body; return { ok: true, data: {} }; }
+    });
+    await settle(); await settle();
+
+    click(app, 'Protection');
+    await settle(); await settle();
+    it('the Protection tab lists a job by its reward and the people this player guards', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Protection: $2,500') !== -1, text);
+      truthy(text.indexOf('Kim Lane') !== -1, 'the guarded target: ' + text);
+      truthy(app.sent.some(function (s) { return s.name === 'protectionBoard'; }), 'read');
+      drewCleanly(app, 'the Protection tab');
+    });
+
+    click(app, 'Take the job');
+    await settle();
+    click(app, 'Take it');
+    await settle(); await settle();
+    it('taking a job asks first and echoes the reward shown', function () {
+      truthy(accepted, 'nothing sent');
+      eq(accepted.job, 'prot00000001');
+      eq(accepted.reward, 2500);
+    });
+
+    tab(app, 'mine');
+    await settle();
+    it('Mine says a held payout and what is missing, and the hitman card too', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Ref ct00000009') !== -1, text);
+      truthy(text.indexOf('2 more messages to the client') !== -1, 'the card: ' + text);
+      drewCleanly(app, 'Mine');
+    });
+
+    tab(app, 'onme');
+    await settle();
+    it('On me offers Hire protection and the hit on the named operative', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Hire protection') !== -1, labels.join(' | '));
+      truthy(labels.indexOf('Place a contract on Rook Ash') !== -1, labels.join(' | '));
+      drewCleanly(app, 'On me');
+    });
+
+    click(app, 'Hire protection');
+    await settle();
+    app.document.getElementById('dialog-amount').value = '3000';
+    click(app, 'Next');
+    await settle();
+    click(app, 'Pay $3,000');
+    await settle(); await settle();
+    it('hiring protection confirms the price and sends the account it showed', function () {
+      truthy(posted, 'nothing posted');
+      eq(posted.id, 'ct00000001');
+      eq(posted.amount, 3000);
+      eq(posted.account, 'bank');
+    });
+
+    tab(app, 'onme');
+    await settle();
+    click(app, 'Place a contract on Rook Ash');
+    await settle();
+    it('the hit on the hitman opens Place with them chosen, by handle', function () {
+      truthy(app.view.textContent.indexOf('Contract will be placed on Rook Ash.') !== -1,
+        app.view.textContent.slice(0, 400));
+      const handle = app.document.getElementById('target-handle');
+      eq(handle && handle.value, 'tg00000042');
+      drewCleanly(app, 'Place');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

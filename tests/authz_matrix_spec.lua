@@ -763,6 +763,62 @@ MATRIX.report = {
        .. 'may report it to staff; the reply says only that it was sent',
 }
 
+-- Bodyguard contracts (server/rp_protection.lua, rpC_roleplay_spec) -------
+--
+-- On for these rows (off as shipped, when every role is told feature_off).
+-- A job is posted by the target, once they are shown the contract; taken by
+-- anybody who is no party to it; its pin is the guard's alone.
+local function protectionOn(w, posted, taken)
+    Config.Roleplay.Protection.Enabled = true
+    Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+    Env.runTimers()
+    Env.players[CAST.target.source].PlayerData.money.bank = 100000
+    if posted then
+        local job = w.s.rpProtection.post(w.who.target, { id = w.held.id, amount = 1000,
+            account = Config.Roleplay.Protection.Account })
+        truthy(job and job.job, 'the arrangement has to post a job')
+        w.job = job.job
+        if taken then
+            truthy(w.s.rpProtection.accept(w.who.stranger, { job = w.job, reward = 1000 }), 'taken')
+        end
+    end
+end
+MATRIX.protectionBoard = { arrange = function(w) protectionOn(w) end, payload = {}, expect = ANYONE,
+    why = 'the open jobs by reward alone, and the caller\'s own guard jobs' }
+MATRIX.protectionPost = {
+    arrange = function(w) protectionOn(w) end,
+    payload = function(w, role, contract)
+        return { id = contract.id, amount = 1000, account = Config.Roleplay.Protection.Account }
+    end,
+    expect = only('target', CH.ERR.NOT_FOUND),
+    why = 'only the person a contract names may hire protection against it',
+}
+MATRIX.protectionCancel = {
+    arrange = function(w) protectionOn(w, true) end,
+    payload = function(w) return { job = w.job } end,
+    expect = only('target', CH.ERR.NOT_FOUND),
+    why = 'a job is its target\'s to take back, and nobody else\'s',
+}
+MATRIX.protectionPin = {
+    arrange = function(w) protectionOn(w, true) end,
+    payload = function(w) return { job = w.job } end,
+    expect = only('target', CH.ERR.NOT_FOUND),
+    why = 'the pin is where its target stands, moved by them alone',
+}
+MATRIX.protectionAccept = {
+    arrange = function(w) protectionOn(w, true) end,
+    payload = function(w) return { job = w.job, reward = 1000 } end,
+    expect = { creator = CH.ERR.PROTECTION_PARTY, target = CH.ERR.NOT_FOUND,
+               hitman = CH.ERR.PROTECTION_PARTY, otherHitman = ALLOW, stranger = ALLOW, admin = ALLOW },
+    why = 'anybody but the target and the parties to the contract may guard them',
+}
+MATRIX.protectionWaypoint = {
+    arrange = function(w) protectionOn(w, true, true) end,
+    payload = function(w) return { job = w.job } end,
+    expect = only('stranger', CH.ERR.NOT_FOUND),
+    why = 'the meeting pin is for the guard who took the job, and nobody else',
+}
+
 MATRIX.endCall = { payload = {}, expect = ANYONE,
     why = 'hangs up the caller own call and names no contract' }
 

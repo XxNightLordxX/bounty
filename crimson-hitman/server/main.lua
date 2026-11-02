@@ -754,6 +754,68 @@ local function validateConfig(quiet)
             .. 'are being used for them: %s.'):format(#rpFilled, table.concat(rpFilled, ', ')), #rpFilled)
     end
 
+    -- Roleplay (group rpC, README Roleplay features): proof of intent,
+    -- earned reputation, bodyguards and the hit on the hitman. A block this
+    -- config does not have (one written before it) is the shipped one; each
+    -- switch a switch, each figure in its range, corrected to the shipped
+    -- value and said.
+    if type(Config.Roleplay) ~= 'table' then Config.Roleplay = {} end
+    local rpShipped = type(ConfigDefaults) == 'table' and type(ConfigDefaults.Roleplay) == 'table'
+        and ConfigDefaults.Roleplay or {}
+    for _, name in ipairs({ 'ProofOfIntent', 'Reputation', 'Protection', 'HitOnHitman' }) do
+        if type(Config.Roleplay[name]) ~= 'table' then
+            Config.Roleplay[name] = copyOf(rpShipped[name] or { Enabled = false })
+        end
+        local block = Config.Roleplay[name]
+        if type(block.Enabled) ~= 'boolean' then
+            warn[#warn + 1] = ('Config.Roleplay.%s.Enabled is %s; it has to be true or false. Using false.')
+                :format(name, tostring(block.Enabled))
+            block.Enabled = false
+        end
+    end
+    for _, bound in ipairs({
+        { 'ProofOfIntent', 'MinMessages', 0, 100, 3, true },
+        { 'ProofOfIntent', 'HoldMaxMinutes', 1, 10080, 60, true },
+        { 'Reputation', 'BaseFactor', 0, 10, 0.5 },
+        { 'Reputation', 'ThreadBonus', 0, 10, 0.2 },
+        { 'Reputation', 'MeetingBonus', 0, 10, 0.2 },
+        { 'Reputation', 'HandoverBonus', 0, 10, 0.3 },
+        { 'Reputation', 'WitnessFreeBonus', 0, 10, 0.2 },
+        { 'Reputation', 'WitnessRadius', 1, 500, 50.0 },
+        { 'Reputation', 'MaxFactor', 0, 10, 1.5 },
+        { 'Protection', 'MinReward', 1, 10000000, 1000, true },
+        { 'Protection', 'MaxReward', 1, 10000000, 100000, true },
+        { 'Protection', 'PayOnCompletionPercent', 0, 100, 25, true },
+        { 'Protection', 'MaxJobsPerGuard', 1, 20, 2, true },
+    }) do
+        local block = Config.Roleplay[bound[1]]
+        local value = block[bound[2]]
+        if type(value) ~= 'number' or value ~= value or value < bound[3] or value > bound[4]
+            or (bound[6] and math.floor(value) ~= value) then
+            warn[#warn + 1] = ('Config.Roleplay.%s.%s is %s; it has to be %s from %s to %s. Using %s.')
+                :format(bound[1], bound[2], tostring(value), bound[6] and 'a whole number' or 'a number',
+                    tostring(bound[3]), tostring(bound[4]), tostring(bound[5]))
+            block[bound[2]] = bound[5]
+        end
+    end
+    local protection = Config.Roleplay.Protection
+    if protection.Account ~= 'cash' and protection.Account ~= 'bank' then
+        warn[#warn + 1] = ('Config.Roleplay.Protection.Account is %s; it has to be cash or bank. Using bank.')
+            :format(tostring(protection.Account))
+        protection.Account = 'bank'
+    end
+    if protection.MinReward > protection.MaxReward then
+        warn[#warn + 1] = ('Config.Roleplay.Protection.MinReward (%d) is above MaxReward (%d). Using %d for both.')
+            :format(protection.MinReward, protection.MaxReward, protection.MaxReward)
+        protection.MinReward = protection.MaxReward
+    end
+    local reputation = Config.Roleplay.Reputation
+    if reputation.BaseFactor > reputation.MaxFactor then
+        warn[#warn + 1] = ('Config.Roleplay.Reputation.BaseFactor (%s) is above MaxFactor (%s). Using %s for both.')
+            :format(tostring(reputation.BaseFactor), tostring(reputation.MaxFactor), tostring(reputation.MaxFactor))
+        reputation.BaseFactor = reputation.MaxFactor
+    end
+
     local mode = Config.Database.Mode
     if mode ~= 'mysql' and mode ~= 'json' and mode ~= 'memory' then
         fatal[#fatal + 1] = ('Config.Database.Mode is "%s"; expected mysql, json or memory'):format(tostring(mode))
@@ -1855,6 +1917,11 @@ function StartCrimsonHitman()
     -- features): witness heat, EMS before re-listing, city news and dirty
     -- money payouts, each off as shipped.
     local rpConsequences = CrimsonBoot.require('server.rp_consequences')
+    -- Roleplay (README Roleplay features, each off as shipped): proof of
+    -- intent, earned reputation, bodyguards and the hit on the hitman.
+    local rpIntent     = CrimsonBoot.require('server.rp_intent')
+    local rpReputation = CrimsonBoot.require('server.rp_reputation')
+    local rpProtection = CrimsonBoot.require('server.rp_protection')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1923,6 +1990,15 @@ function StartCrimsonHitman()
     -- the payout (Contracts.afterClaim, Contracts.relistHold, Escrow.payoutAs).
     rpConsequences.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
                           ledger = ledger, contracts = contracts, escrow = escrow })
+    -- Roleplay: a payout held for proof of intent gates the escrow's give
+    -- and is asked by the claim; reputation scales the claim's trust; a
+    -- bodyguard job's money is its own (server/rp_*.lua).
+    rpIntent.init({ storage = Storage, audit = audit, notify = notify, escrow = escrow,
+                    contracts = contracts, projection = projection })
+    rpReputation.init({ storage = Storage, identity = identity, contracts = contracts })
+    rpProtection.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
+                        app = app, informant = informant, projection = projection })
+    rpProtection.boot()
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
@@ -1969,6 +2045,8 @@ function StartCrimsonHitman()
         -- The roleplay consequences: the tick's look at recovering targets,
         -- and the medic's revive the bridge hears.
         rpConsequences = rpConsequences,
+        -- Roleplay: proof of intent, reputation and bodyguards.
+        rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2560,6 +2638,11 @@ function Tick()
     -- Targets recovering from a kill on a contract, looked at
     -- (Config.Roleplay.EmsRelisting): nothing while it is off.
     if modules.rpConsequences then job('rp.tick', modules.rpConsequences.tick) end
+    -- Roleplay: holds for proof of intent whose time is up, and bodyguard
+    -- jobs whose contract ended or whose money is still owed. Both run with
+    -- the switches off too, so turning one off strands nothing.
+    if modules.rpIntent then job('rp_intent.sweep', modules.rpIntent.sweep) end
+    if modules.rpProtection then job('rp_protection.sweep', modules.rpProtection.sweep) end
     job('escrow.retryWaiting', RetryWaiting)
     if modules.notify.deliverKept then job('notify.deliverKept', DeliverKept) end
     -- Kill photos switched off (Config.Completion.KillPhotos): nothing below

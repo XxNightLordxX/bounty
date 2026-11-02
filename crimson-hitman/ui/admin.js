@@ -4966,6 +4966,44 @@
     else schedule(gen);
   }
 
+  /* ---------- roleplay (group rpC): help cards ------------------------- */
+
+  HELP.push(
+    { title: 'Roleplay: proof of intent', icon: 'comments',
+      text: 'Off as shipped. On, a hitman\'s payout is held, never refused, until they have shown they worked '
+        + 'the contract in character: enough messages to the client in the contract thread, or a live '
+        + 'handover, or a meeting point set. Their receipt and their card say what is missing. After the hold '
+        + 'time it is handed over anyway, so money is never stuck. The money stays in escrow, owed to them, '
+        + 'and every hold is audited (intent_hold_started, intent_hold_released).',
+      links: [{ key: 'Roleplay.ProofOfIntent.Enabled', view: 'features', label: 'Proof of intent' },
+        { key: 'Roleplay.ProofOfIntent.MinMessages', view: 'limits', label: 'Messages that count' },
+        { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', view: 'timers', label: 'Longest hold' }] },
+    { title: 'Roleplay: reputation earned in character', icon: 'star',
+      text: 'Off as shipped. On, the progression trust a completion earns is multiplied: a base factor for a '
+        + 'plain completion, plus a bonus each for the thread used, a meeting point, a live handover and no '
+        + 'witnesses near the hitman, up to a cap. The hitman sees the breakdown on their completion notice. '
+        + 'It needs Criminal progression on to give any trust.',
+      links: [{ key: 'Roleplay.Reputation.Enabled', view: 'features', label: 'Reputation' },
+        { key: 'Roleplay.Reputation.BaseFactor', view: 'limits', label: 'Factors and cap' },
+        { key: 'Roleplay.Reputation.WitnessRadius', view: 'limits', label: 'Witness radius' }] },
+    { title: 'Roleplay: bodyguards', icon: 'shield-halved',
+      text: 'Off as shipped. On, a target can hire protection from their On me card: a reward taken from them '
+        + 'at once and held, and a meeting pin where they stand. Other players see the job on the board\'s '
+        + 'Protection tab by its reward alone; the one who takes it gets the target\'s name and the pin, and '
+        + 'never who placed the hit or who is on it. Ended without a completion (expired, cancelled, bought '
+        + 'out): the guard is paid. Completed anyway: the guard gets their share and the rest goes back. '
+        + 'Nobody took it, or staff voided the contract: all of it goes back to the target.',
+      links: [{ key: 'Roleplay.Protection.Enabled', view: 'features', label: 'Bodyguard contracts' },
+        { key: 'Roleplay.Protection.MinReward', view: 'money', label: 'Reward bounds and account' },
+        { key: 'Roleplay.Protection.PayOnCompletionPercent', view: 'money', label: 'Share if completed' },
+        { key: 'Roleplay.Protection.MaxJobsPerGuard', view: 'limits', label: 'Jobs per guard' }] },
+    { title: 'Roleplay: hit on the hitman', icon: 'crosshairs',
+      text: 'Off as shipped. On, a target whose informant found out an operative\'s name gets a button on that '
+        + 'card to place a contract on them: the Place form opens with them chosen, and every rule of placing '
+        + 'a contract applies. Nothing is offered for an operative found only by description.',
+      links: [{ key: 'Roleplay.HitOnHitman.Enabled', view: 'features', label: 'Hit on the hitman' },
+        { key: 'Informant.Enabled', view: 'features', label: 'The target\'s informant' }] });
+
   window.addEventListener('message', function (event) {
     var message = (event && event.data) || {};
     if (message.type === 'open') {

@@ -361,6 +361,7 @@ local MONEY_REQUESTS = {
     addEscrow = true, improve = true, propose = true, respondAmendment = true,
     bailout = true, informant = true, placerInformant = true, submitPhoto = true, verifyKill = true,
     armKidnap = true, locationTip = true,
+    protectionPost = true, protectionCancel = true,
 }
 
 ---@param access string|nil who the gate lets through: nil for everyone the
@@ -648,6 +649,9 @@ function App.register()
             created  = deps.projection.mine(actor.cid),
             accepted = deps.projection.accepted(actor.cid),
             onMe     = deps.projection.onMe(actor.cid),
+            -- Payouts of theirs held for proof of intent, the contract done
+            -- or not (server/rp_intent.lua, off as shipped: absent).
+            intentHeld = deps.rpIntent and deps.rpIntent.enabled() and deps.rpIntent.heldFor(actor.cid) or nil,
         }
     end)
 
@@ -1702,6 +1706,38 @@ function App.register()
         end
         local ok, err = pcall(deps.death.onRevivedVerified, src, actor.cid)
         if not ok then deps.audit.rejected('error_iRevived', actor.cid, nil, { error = tostring(err) }) end
+    end)
+
+    -- Bodyguard contracts (server/rp_protection.lua, Config.Roleplay
+    -- .Protection, off as shipped). Each through the gate and the buckets
+    -- every other request spends: the board read as a read, posting as
+    -- placing, taking, cancelling and the pin as accepting. Each handler
+    -- type-checks what it reads; money moves only in post, cancel and the
+    -- tick, by the server's own figures and the reward the dialog showed.
+    handler('protectionBoard', 'load', function(actor)
+        if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
+        return deps.rpProtection.board(actor)
+    end)
+    handler('protectionPost', 'create', function(actor, payload)
+        if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
+        return deps.rpProtection.post(actor, { id = payload.id, amount = payload.amount,
+                                               account = payload.account })
+    end)
+    handler('protectionCancel', 'accept', function(actor, payload)
+        if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
+        return deps.rpProtection.cancel(actor, { job = payload.job })
+    end)
+    handler('protectionAccept', 'accept', function(actor, payload)
+        if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
+        return deps.rpProtection.accept(actor, { job = payload.job, reward = payload.reward })
+    end)
+    handler('protectionPin', 'accept', function(actor, payload)
+        if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
+        return deps.rpProtection.movePin(actor, { job = payload.job })
+    end)
+    handler('protectionWaypoint', 'load', function(actor, payload)
+        if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
+        return deps.rpProtection.waypoint(actor, { job = payload.job })
     end)
 end
 

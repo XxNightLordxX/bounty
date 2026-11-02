@@ -30,6 +30,7 @@ local EMPTY = {
     contractStaff = {},
     staffRecords = {},
     staffMeta = {},
+    rpRows = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -59,7 +60,7 @@ local indexDirty = false
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
                   'alerts', 'viewAlerts', 'locationTips', 'placerInformants', 'freezes',
-                  'contractStaff', 'staffRecords', 'staffMeta' }
+                  'contractStaff', 'staffRecords', 'staffMeta', 'rpRows' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -2395,6 +2396,36 @@ function JsonStore.writeStaffMeta(key, value)
     db.staffMeta = db.staffMeta or {}
     db.staffMeta[key] = math.floor(tonumber(value) or 0)
     touch(true)
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Roleplay features' own rows
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, written at once: a payout held
+--- for proof of intent, and a bodyguard job's money, are money paths.
+function JsonStore.readRpRows(kind)
+    local out = {}
+    for _, row in pairs(db.rpRows or {}) do
+        if row.kind == kind then out[#out + 1] = Util.copy(row) end
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+function JsonStore.writeRpRow(row)
+    db.rpRows = db.rpRows or {}
+    db.rpRows[row.id] = Util.copy(row)
+    touch(true)
+    return true
+end
+
+function JsonStore.deleteRpRow(id)
+    if db.rpRows and db.rpRows[id] then
+        db.rpRows[id] = nil
+        touch(true)
+    end
     return true
 end
 

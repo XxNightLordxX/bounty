@@ -744,6 +744,10 @@ do
             .. 'elapsed time into the next',
         ['Informant.setRandom']        = 'the random source every informant roll draws '
             .. 'from, so a spec can force a look-up to find out or not',
+        ['Protection.held']            = 'what the bodyguard jobs hold, for the conservation '
+            .. 'checks (rpC_roleplay_spec)',
+        ['Protection.all']             = 'every bodyguard job kept, so a spec can assert on them',
+        ['Intent.count']               = 'how many payouts are held for proof of intent',
     }
 
     local function read_all(dir, filter)
@@ -1784,6 +1788,7 @@ do
     local IMMUTABLE = {
         ['crimson_contracts.id']              = 'the primary key',
         ['crimson_staff_records.id']          = 'the primary key',
+        ['crimson_rp_rows.id']                = 'the primary key',
         ['crimson_contracts.creator_cid']     = 'who placed it; a contract does not change hands',
         ['crimson_contracts.creator_account'] = 'the account behind the creator, fixed with them',
         ['crimson_contracts.creator_name']    = 'their name as it was when they placed it',

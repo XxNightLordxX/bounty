@@ -721,6 +721,12 @@
     camera_no_answer: 'The camera never came back, and the time to verify '
       + 'this kill has run out. Nothing was sent.',
     no_token: 'Nothing to verify yet.',
+    // Bodyguard contracts (server/rp_protection.lua).
+    protection_amount: 'That reward is outside what this server allows for a protection job.',
+    protection_exists: 'There is already a protection job on this contract.',
+    protection_taken: 'Somebody else took that protection job first.',
+    protection_limit: 'You are guarding as many people as you can at once.',
+    protection_party: 'You are part of the contract on them, so you cannot guard them.',
     timeout: 'No answer. Try again.',
     unreachable: 'No answer. Try again.'
   };
@@ -2232,6 +2238,12 @@
       node.appendChild(el('div', 'notice hold', 'This contract is on hold by staff.'));
     }
 
+    // A payout of theirs held for proof of intent: what is still missing.
+    if (contract.intentHold) {
+      node.appendChild(el('div', 'notice gold intent-hold',
+        intentHoldText(contract.intentHold, 'Your payout here is held.')));
+    }
+
     // What this player's informant found out, kept by the server with the
     // purchase: the target's on their On me card, the placer's on Mine.
     informantFound(node, contract.informantFound);
@@ -2887,6 +2899,9 @@
       // Somebody tipped off about where they were: first, it is about them now.
       if (contract.tippedAt) { row.appendChild(tipToldNotice(contract.tippedAt)); }
       appendBuyout(row, contract);
+      // Their bodyguard job and the hit on a revealed operative, where the
+      // server offers them (server/rp_protection.lua).
+      appendCounterplay(row, more, contract);
       // Only where the server offers this target something to pick: never to
       // a member of a whitelisted job, who keeps their buyout.
       if (informantOffered(contract)) {
@@ -3895,10 +3910,13 @@
       // the hitman stood there with nothing and no reason to think anything
       // was owed. The server says which happened; this now reads it.
       var owed = r.data && Number(r.data.pending) > 0;
-      say(owed
+      // Held for proof of intent (Config.Roleplay.ProofOfIntent): not room.
+      var held = r.data && r.data.intentHold;
+      say((held ? intentHoldText(held, 'Verified.')
+        : owed
         ? 'Verified. Some of the reward would not fit and is being held for '
           + 'you \u2014 make room and it will be handed over.' + staffChecking(r.data)
-        : 'Verified. Payment released.' + staffChecking(r.data), 'ok');
+        : 'Verified. Payment released.' + staffChecking(r.data)) + reputationText(r.data), 'ok');
       refresh();
     });
   }
@@ -6116,6 +6134,11 @@
   }
 
   function viewBoard(view) {
+    // The board's Protection tab, where the server runs bodyguard jobs.
+    if (settings().protection === true) {
+      view.appendChild(boardTabs());
+      if (state.boardTab === 'protection') { return viewProtection(view); }
+    } else { state.boardTab = 'contracts'; }
     if (drewFailure(view, 'board')) { return; }
     if (drewPending(view, 'board')) { return; }
     var data = state.board;
@@ -6157,6 +6180,13 @@
 
     var accepted = asList(data.accepted);
     var created = asList(data.created);
+
+    // Payouts held for proof of intent, the contract finished or not.
+    asList(data.intentHeld).forEach(function (h) {
+      any = true;
+      view.appendChild(el('div', 'notice gold intent-hold', (h.ref ? 'Ref ' + h.ref + ': ' : '')
+        + intentHoldText(h, 'A payout of yours is held.')));
+    });
 
     if (accepted.length) {
       any = true;
@@ -8874,6 +8904,8 @@
         var settingsWere = JSON.stringify(settings());
         state.board = r.data;
         stampClocks(r.data.contracts);
+        // The Protection tab, when that is the one open, read with it.
+        if (state.boardTab === 'protection' && state.tab === 'board') { readProtection(); }
         if (JSON.stringify(settings()) !== settingsWere) {
           if (state.dialog && typeof state.dialog.redo === 'function') { state.dialog.redo(); }
           redraw();
@@ -8952,6 +8984,7 @@
     state.wallet = null; state.walletFailed = null;
     state.dialog = null; state.thread = null; state.call = null; state.reward = null;
     state.draft = {}; state.picked = {}; state.proposals = {}; state.drafts = {};
+    state.protection = null; state.boardTab = 'contracts';
     state.lastRefusal = {}; state.progress = {}; state.images = {};
     state.loadFailed = {}; state.loadFinal = {}; state.loaded = {};
     state.boardPage = 1; state.leoConfirmed = false;
@@ -9277,6 +9310,204 @@
       window.onSettingsChange(applyTheme);
     }
   } catch (err) { /* the dark page as before */ }
+
+
+  /* ---------- roleplay: proof of intent, reputation, bodyguards ----------
+
+     Proof of intent (Config.Roleplay.ProofOfIntent): a payout held until
+     the hitman shows they worked the contract, said on their card, at the
+     top of Mine and in the Verify kill answer. Reputation: the trust a
+     completion earned and why, in that answer too. Bodyguards
+     (Config.Roleplay.Protection): the board's Protection tab, and the
+     target's own job on their On me card. The hit on the hitman
+     (Config.Roleplay.HitOnHitman): a button by an operative the target's
+     informant named, opening Place with them chosen. Everything here is
+     drawn from what the server sent; nothing here names a party it did
+     not. */
+
+  function intentHoldText(hold, lead) {
+    var minutes = Number(hold.minutesLeft !== undefined ? hold.minutesLeft : hold.minutes) || 0;
+    return lead + ' Your payout is held until you show intent: '
+      + (hold.missing || 'proof of intent') + '.'
+      + (minutes > 0 ? ' It is released anyway within ' + durationText(minutes) + '.' : '');
+  }
+
+  function reputationText(data) {
+    var rep = data && data.reputation;
+    return rep && rep.text ? ' ' + rep.text : '';
+  }
+
+  function boardTabs() {
+    var tabs = el('div', 'row target-modes board-tabs');
+    [['contracts', 'Contracts'], ['protection', 'Protection']].forEach(function (pair) {
+      var on = (state.boardTab || 'contracts') === pair[0];
+      var b = el('button', on ? 'primary' : 'ghost', pair[1]);
+      b.onclick = function () {
+        state.boardTab = pair[0];
+        if (pair[0] === 'protection') { readProtection(); }
+        render();
+      };
+      tabs.appendChild(b);
+    });
+    return tabs;
+  }
+
+  function readProtection() {
+    state.protection = state.protection || {};
+    state.protection.pending = true;
+    return post('protectionBoard', {}).then(function (r) {
+      state.protection.pending = false;
+      if (!r.ok) {
+        state.protection.failed = failText(r) || 'Could not read the protection jobs.';
+      } else {
+        state.protection.failed = null;
+        state.protection.data = r.data;
+      }
+      if (state.tab === 'board') { redraw(); }
+    });
+  }
+
+  function viewProtection(view) {
+    var p = state.protection || {};
+    if (!p.data && !p.pending && !p.failed) { readProtection(); }
+    if (p.failed) {
+      var failed = el('div', 'card');
+      failed.appendChild(el('div', 'hint', p.failed));
+      failed.appendChild(actionButton('ghost ico i-refresh', 'Try again', 'protection:read',
+        'Reading…', readProtection));
+      view.appendChild(failed);
+      return;
+    }
+    if (!p.data) {
+      view.appendChild(el('div', 'empty', 'Reading the protection jobs…'));
+      return;
+    }
+    var data = p.data;
+    var mine = asList(data.mine);
+    if (mine.length) {
+      view.appendChild(el('h3', 'section', 'People you guard'));
+      mine.forEach(function (job) {
+        var c = el('div', 'card protection-job');
+        c.appendChild(el('div', 'target', job.targetName || 'Your client'));
+        c.appendChild(el('div', 'hint', 'Paid ' + money(job.reward) + ' if the contract on them '
+          + 'ends without being carried out.'));
+        if (job.pinSet) {
+          var row = el('div', 'row actions');
+          row.appendChild(actionButton('ghost ico i-pin', 'Set GPS to the pin',
+            'protection:gps:' + job.job, 'Setting…', function () {
+              return post('protectionGps', { job: job.job }).then(function (r) {
+                if (r.ok) { say('Waypoint set to the meeting pin.', 'ok'); } else { fail(r); }
+              });
+            }));
+          c.appendChild(row);
+        }
+        view.appendChild(c);
+      });
+    }
+    view.appendChild(el('h3', 'section', 'Protection jobs'));
+    if (!data.enabled) {
+      view.appendChild(el('div', 'empty', 'This server is not taking protection jobs right now.'));
+      return;
+    }
+    var open = asList(data.open);
+    if (!open.length) {
+      view.appendChild(el('div', 'empty', 'Nobody is asking for protection right now.'));
+      return;
+    }
+    open.forEach(function (job) {
+      var c = el('div', 'card protection-job');
+      c.appendChild(el('div', 'target', 'Protection: ' + money(job.reward)));
+      c.appendChild(el('div', 'hint', 'Somebody with a price on their head wants a bodyguard. '
+        + 'Take it and you get their name and where to meet them; you are paid if the contract '
+        + 'on them ends without being carried out.'));
+      var take = el('button', 'primary ico i-shield', 'Take the job');
+      take.onclick = function () {
+        ask('Take this protection job for ' + money(job.reward) + '?',
+          'You get their name and a meeting pin. You never learn who wants them dead.',
+          function () {
+            return once('protection:take:' + job.job, function () {
+              return post('protectionAccept', { job: job.job, reward: job.reward }).then(function (r) {
+                if (!r.ok) { fail(r); return readProtection(); }
+                state.protection.data = r.data;
+                say('You took the job. Their name and the pin are under People you guard.', 'ok');
+                redraw();
+              });
+            });
+          }, { yes: 'Take it', no: 'Not now' });
+      };
+      c.appendChild(take);
+      view.appendChild(c);
+    });
+  }
+
+  /* The target's side, on their On me card. */
+  function appendCounterplay(row, more, contract) {
+    var job = contract.protection;
+    if (job) {
+      row.appendChild(el('div', 'notice ok protection-state', job.state === 'taken'
+        ? 'Your protection job (' + money(job.reward) + ') was taken'
+          + (job.guardName ? ' by ' + job.guardName : '') + '. They have your name and your pin.'
+        : 'Your protection job (' + money(job.reward) + ') is waiting for a bodyguard.'));
+      more.appendChild(actionButton('ghost ico i-pin', 'Move the pin here',
+        'protection:pin:' + job.job, 'Moving…', function () {
+          return post('protectionPin', { job: job.job }).then(function (r) {
+            if (r.ok) { say('The meeting pin is where you stand now.', 'ok'); } else { fail(r); }
+          });
+        }));
+      if (job.state !== 'taken') {
+        var back = el('button', 'ghost ico i-xcircle', 'Cancel protection');
+        back.onclick = function () {
+          ask('Cancel your protection job?', 'Nobody has taken it, so the ' + money(job.reward)
+            + ' comes back to you.', function () {
+            return once('protection:cancel:' + job.job, function () {
+              return post('protectionCancel', { job: job.job }).then(function (r) {
+                if (r.ok) { say('Cancelled. The money is on its way back to you.', 'ok'); refresh(); }
+                else { fail(r); }
+              });
+            });
+          }, { yes: 'Cancel it', no: 'Keep it' });
+        };
+        more.appendChild(back);
+      }
+    } else if (contract.protectionOffer) {
+      var offer = contract.protectionOffer;
+      var hire = el('button', 'ghost ico i-shield', 'Hire protection');
+      hire.onclick = function () {
+        askFields('Hire a bodyguard?', 'Post an anonymous protection job. The reward is taken from '
+          + 'your ' + offer.account + ' now and held: the bodyguard is paid if the contract on you '
+          + 'ends without being carried out, and it comes back to you if nobody takes the job. '
+          + 'They get your name and a meeting pin where you stand.',
+          [{ id: 'amount', label: 'Reward (' + money(offer.min) + ' to ' + money(offer.max) + ')',
+             type: 'number', value: offer.min, min: offer.min, max: offer.max }],
+          function (values) {
+            ask('Pay ' + money(values.amount) + ' from your ' + offer.account + '?',
+              'Held until the contract on you ends.', function () {
+                return once('protection:post:' + contract.id, function () {
+                  return post('protectionPost', { id: contract.id, amount: values.amount,
+                                                  account: offer.account }).then(function (r) {
+                    if (r.ok) { say('Your protection job is posted.', 'ok'); refresh(); }
+                    else { fail(r); }
+                  });
+                });
+              }, { yes: 'Pay ' + money(values.amount), no: 'Cancel' });
+          }, 'Next');
+      };
+      more.appendChild(hire);
+    }
+    asList(contract.counterTargets).forEach(function (t) {
+      var hit = el('button', 'ghost ico i-crosshair counter-hit', 'Place a contract on ' + (t.name || t.label));
+      hit.onclick = function () {
+        state.draft = state.draft || {};
+        state.draft.target = t.handle;
+        state.draft.targetName = t.name || t.label;
+        state.draft.targetProtected = false;
+        delete state.draft.targetProtectedAs;
+        state.tab = 'place';
+        render();
+      };
+      more.appendChild(hit);
+    });
+  }
 
   // Installed before the first render: a throw in that render is exactly
   // the kind this exists to catch, and catching it needs the handler

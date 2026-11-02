@@ -1241,7 +1241,16 @@ function Notify.hitmanReceipt(contract, delivered, result)
             .. (what and (': ' .. what .. ' released to you.') or ': your payout was released.')
     end
 
-    if (tonumber(result.pending) or 0) > 0 then
+    -- Held for proof of intent (Config.Roleplay.ProofOfIntent): not a
+    -- matter of room, so said as what it is, with what is missing and when
+    -- it comes anyway.
+    local held = type(result.intentHold) == 'table' and result.intentHold or nil
+    if held then
+        body = body .. (' Your payout is held until you show intent: %s. It is released anyway '
+            .. 'within %d minutes.'):format(tostring(held.missing or 'proof of intent'),
+            math.floor(tonumber(held.minutes) or 0))
+    end
+    if (tonumber(result.pending) or 0) > 0 and not held then
         body = body .. (result.recovered
             and ' Part of it is held for you and is handed over as soon as you can take it.'
             or ' Part of it is held until you make room: make room and it is handed over.')
@@ -1264,6 +1273,12 @@ function Notify.hitmanReceipt(contract, delivered, result)
         end
     elseif type(result.stake) == 'table' then
         body = body .. stakeSentence(result.stake)
+    end
+    -- How the trust it earned was scaled (Config.Roleplay.Reputation), where
+    -- trust is given at all.
+    if type(result.reputation) == 'table' and type(result.reputation.text) == 'string'
+        and Config.Progression.Enabled == true then
+        body = body .. ' ' .. result.reputation.text
     end
     return title, body
 end

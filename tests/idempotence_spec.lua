@@ -1035,6 +1035,16 @@ describe('what this file leaves out', function()
         -- Two reports are two items for staff, bounded by their own bucket
         -- (staff_tools_spec, "is rate-limited by its own bucket").
         report = 'two reports are two items in the review queue; the report allowance bounds them',
+        -- Bodyguard contracts (rpC_roleplay_spec): a second post is
+        -- protection_exists, a second cancel already_settled and charges
+        -- nothing twice, a second take protection_taken; the board, the pin
+        -- and the waypoint are reads or a move to where the target stands.
+        protectionPost = 'a second post on the same contract is refused as protection_exists, charged once',
+        protectionCancel = 'a second cancel is already_settled; refunded once',
+        protectionAccept = 'a second take is protection_taken',
+        protectionBoard = 'a read of the caller\'s own view',
+        protectionPin = 'the pin moved again to where the target stands',
+        protectionWaypoint = 'a read of the guard\'s own pin',
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

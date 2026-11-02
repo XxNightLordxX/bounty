@@ -592,6 +592,11 @@ local UI_EVENTS = {
     -- everything else: it is an NUI endpoint like any other and is
     -- addressable from any frame the phone draws.
     'pageError',
+    -- Bodyguard contracts (server/rp_protection.lua): the board's Protection
+    -- tab, posting, cancelling and taking a job, and moving the pin (read by
+    -- the server where it sees this player stand). Set GPS is answered here
+    -- (crimson:protectionGps), below.
+    'protectionBoard', 'protectionPost', 'protectionCancel', 'protectionAccept', 'protectionPin',
 }
 
 --------------------------------------------------------------------------
@@ -791,6 +796,24 @@ end)
 
 --- Set GPS on a tip: the waypoint on the centre of the area this game was
 --- sent. The page is told only that it was set.
+--- Set GPS on a protection job's meeting pin: the server answers the guard
+--- who holds the job with where the pin is, and it is marked on their map
+--- here. The page is told only that it was.
+RegisterNUICallback('crimson:protectionGps', function(data, cb)
+    local job = type(data) == 'table' and type(data.job) == 'string' and data.job or nil
+    App.request('protectionWaypoint', { job = job }, function(result)
+        local where = type(result) == 'table' and result.ok == true
+            and type(result.data) == 'table' and result.data or nil
+        local x, y = where and tonumber(where.x), where and tonumber(where.y)
+        if x and y then
+            SetNewWaypoint(x + 0.0, y + 0.0)
+            return cb({ ok = true, event = 'protectionGps' })
+        end
+        cb({ ok = false, event = 'protectionGps',
+             err = type(result) == 'table' and result.err or 'not_found' })
+    end)
+end)
+
 RegisterNUICallback('crimson:tipGps', function(data, cb)
     local id = type(data) == 'table' and data.id or nil
     local tip = type(id) == 'string' and tips[id] or nil

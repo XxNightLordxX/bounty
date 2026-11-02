@@ -372,6 +372,10 @@ describe('the grid covers the whole action surface', function()
         -- A report to staff: on a live contract by anybody who sees it, on an
         -- ended one only by its parties (staff_tools_spec).
         report = true,
+        -- Bodyguard jobs: posted only on a live contract the target is shown,
+        -- taken only while it is live, settled by its end (rpC_roleplay_spec).
+        protectionBoard = true, protectionPost = true, protectionCancel = true,
+        protectionAccept = true, protectionPin = true, protectionWaypoint = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

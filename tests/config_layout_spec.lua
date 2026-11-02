@@ -83,36 +83,48 @@ local ADDED = {
         AlertPlacedPerHour = 5, AlertTargetPerDay = 3, AlertRefusalsPer10Min = 30,
     },
     ['Cooldowns.report'] = { per = 600, burst = 3 },
-    -- The roleplay features, each its own block and each off as shipped.
-    ['Roleplay'] = {
-        WitnessHeat = {
-            Enabled = false, WitnessRadius = 60.0, MinWitnesses = 1, AlwaysAlert = false,
-            SendCoords = true, FuzzMeters = 120.0, DispatchPriority = 2, Title = 'Witness report',
-            Phrases = {
-                'a person in dark clothing fled {direction}',
-                'someone in a hood was seen running {direction}',
-                'a masked figure left the scene heading {direction}',
-            },
-            Areas = {
-                'Legion Square@195,-934', 'Mission Row@430,-980', 'Little Seoul@-700,-900',
-                'Vespucci Beach@-1300,-1400', 'Del Perro@-1550,-500', 'Rockford Hills@-800,-200',
-                'Vinewood@300,200', 'Mirror Park@1100,-550', 'La Mesa@800,-1100',
-                'Strawberry@200,-1400', 'Davis@100,-1700', 'the docks@600,-2800',
-                'the airport@-1050,-2700', 'Sandy Shores@1850,3700', 'Grapeseed@1700,4800',
-                'Paleto Bay@-250,6300', 'Harmony@550,2700', 'Chumash@-3150,1100',
-            },
+    -- The roleplay features, each its own block and each off as shipped,
+    -- reported block by block (differences splits the new section).
+    -- Group rpB: witness heat, EMS before re-listing, city news, dirty payouts.
+    ['Roleplay.WitnessHeat'] = {
+        Enabled = false, WitnessRadius = 60.0, MinWitnesses = 1, AlwaysAlert = false,
+        SendCoords = true, FuzzMeters = 120.0, DispatchPriority = 2, Title = 'Witness report',
+        Phrases = {
+            'a person in dark clothing fled {direction}',
+            'someone in a hood was seen running {direction}',
+            'a masked figure left the scene heading {direction}',
         },
-        EmsRelisting = { Enabled = false, TreatedMinutes = 10, RequireEMS = false, MaxHoldMinutes = 120 },
-        CityNews = {
-            Enabled = false, AllTargets = false, NameTarget = false, App = 'birdy', Account = 'LSNews',
-            Event = 'crimson-hitman:cityNews',
-            Templates = {
-                'Police are appealing for witnesses after an attack on a {job} near {zone} at {time}.',
-                'Breaking: a {job} was targeted near {zone} around {time}. Police are on scene.',
-            },
+        Areas = {
+            'Legion Square@195,-934', 'Mission Row@430,-980', 'Little Seoul@-700,-900',
+            'Vespucci Beach@-1300,-1400', 'Del Perro@-1550,-500', 'Rockford Hills@-800,-200',
+            'Vinewood@300,200', 'Mirror Park@1100,-550', 'La Mesa@800,-1100',
+            'Strawberry@200,-1400', 'Davis@100,-1700', 'the docks@600,-2800',
+            'the airport@-1050,-2700', 'Sandy Shores@1850,3700', 'Grapeseed@1700,4800',
+            'Paleto Bay@-250,6300', 'Harmony@550,2700', 'Chumash@-3150,1100',
         },
-        DirtyPayouts = { Enabled = false, Item = 'black_money', Mode = 'count', WorthKey = 'worth', Rate = 1 },
     },
+    ['Roleplay.EmsRelisting'] = { Enabled = false, TreatedMinutes = 10, RequireEMS = false, MaxHoldMinutes = 120 },
+    ['Roleplay.CityNews'] = {
+        Enabled = false, AllTargets = false, NameTarget = false, App = 'birdy', Account = 'LSNews',
+        Event = 'crimson-hitman:cityNews',
+        Templates = {
+            'Police are appealing for witnesses after an attack on a {job} near {zone} at {time}.',
+            'Breaking: a {job} was targeted near {zone} around {time}. Police are on scene.',
+        },
+    },
+    ['Roleplay.DirtyPayouts'] = { Enabled = false, Item = 'black_money', Mode = 'count', WorthKey = 'worth', Rate = 1 },
+    -- Group rpC: proof of intent, earned reputation, bodyguards and the hit
+    -- on the hitman.
+    ['Roleplay.ProofOfIntent'] = { Enabled = false, MinMessages = 3, HoldMaxMinutes = 60 },
+    ['Roleplay.Reputation'] = {
+        Enabled = false, BaseFactor = 0.5, ThreadBonus = 0.2, MeetingBonus = 0.2, HandoverBonus = 0.3,
+        WitnessFreeBonus = 0.2, WitnessRadius = 50.0, MaxFactor = 1.5,
+    },
+    ['Roleplay.Protection'] = {
+        Enabled = false, Account = 'bank', MinReward = 1000, MaxReward = 100000,
+        PayOnCompletionPercent = 25, MaxJobsPerGuard = 2,
+    },
+    ['Roleplay.HitOnHitman'] = { Enabled = false },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -163,6 +175,14 @@ local function differences(a, b)
         end
     end
     walk(a, b, '')
+    -- The Roleplay section is new and shared by several features, each
+    -- adding its own block: reported block by block, so each feature's
+    -- ADDED entry stands on its own.
+    local whole = out.Roleplay
+    if whole and whole[1] == nil and type(whole[2]) == 'table' then
+        out.Roleplay = nil
+        for key, value in pairs(whole[2]) do out['Roleplay.' .. tostring(key)] = { nil, value } end
+    end
     return out
 end
 
@@ -223,7 +243,8 @@ describe('the configuration as one short file', function()
                 and (path:match('^Limits%.StaffDeadline') ~= nil or path == 'Admin.ModeratorAce')
             -- The Staff section and the report bucket, new and whole, as
             -- ADDED says.
-            if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report' or path == 'Roleplay') then
+            if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report'
+                or (path:match('^Roleplay%.') and ADDED[path] ~= nil)) then
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
             end
@@ -269,9 +290,11 @@ describe('the configuration as one short file', function()
         local text = file('crimson-hitman/config/config.lua')
         local lines = select(2, text:gsub('\n', '')) + 1
         -- 500 before the Staff section (Config.Staff: the manual payment cap
-        -- and the staff tools) and the report bucket, and 60 for the
-        -- roleplay section's four blocks (rp_consequences); no room beyond.
-        truthy(lines < 568, 'config.lua is ' .. lines .. ' lines')
+        -- and the staff tools) and the report bucket; no room beyond them.
+        -- And the Roleplay section: one header, rpB's four blocks (witness heat,
+        -- EMS before re-listing, city news, dirty payouts) and rpC's four
+        -- (proof of intent, reputation, protection, the hit on the hitman).
+        truthy(lines < 597, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',

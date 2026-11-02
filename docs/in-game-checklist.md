@@ -1406,6 +1406,23 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Roleplay, dirty money payouts: turn it on and complete a cash
       contract: the hitman receives `black_money` for the figure, not cash;
       with full pockets it arrives once they make room
+- [ ] Roleplay, proof of intent: turn on **Proof of intent before a payout**,
+      verify a kill on a contract with no thread messages and no meeting
+      point: the answer says the payout is held and what is missing, the card
+      and **Mine** say it too; send the messages and it arrives within half a
+      minute (or after the hold time without them)
+- [ ] Roleplay, reputation: with **Criminal progression** and **Reputation
+      earned in character** on, complete a contract: the receipt ends with
+      *Reputation x...* and its parts, and the trust given matches
+- [ ] Roleplay, bodyguards: turn on **Bodyguard contracts**; as a target,
+      **Hire protection** on On me (the reward leaves the account); as a third
+      player take it on the board's **Protection** tab: you see the target's
+      name and **Set GPS to the pin** works, and nothing names the placer or
+      an operative; let the contract expire: the guard is paid. Cancel an
+      untaken job: the target is refunded
+- [ ] Roleplay, hit on the hitman: turn on **Hit on the hitman**, have the
+      target's informant find an operative's name: **Place a contract on
+      <name>** opens Place with them chosen, and placing follows every rule
 
 ---
 

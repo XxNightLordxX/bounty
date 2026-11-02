@@ -478,6 +478,35 @@ Config.Roleplay.DirtyPayouts = {
     Rate     = 1,              -- 'count': items paid for each dollar (no loss)
 }
 
+Config.Roleplay.ProofOfIntent = {
+    Enabled        = false, -- hold a payout until the hitman shows intent
+    MinMessages    = 3,     -- messages to the client in the thread that count
+    HoldMaxMinutes = 60,    -- released anyway after this long (min)
+}
+
+Config.Roleplay.Reputation = {
+    Enabled          = false, -- trust for a completion scaled by how it was done
+    BaseFactor       = 0.5,   -- a plain completion
+    ThreadBonus      = 0.2,   -- the hitman wrote to the client in the thread
+    MeetingBonus     = 0.2,   -- a meeting point was set
+    HandoverBonus    = 0.3,   -- a live handover
+    WitnessFreeBonus = 0.2,   -- nobody else within WitnessRadius
+    WitnessRadius    = 50.0,  -- metres around the hitman
+    MaxFactor        = 1.5,   -- the most it may reach
+}
+
+Config.Roleplay.Protection = {
+    Enabled                = false,  -- targets may hire a bodyguard from On me
+    Account                = 'bank', -- the reward is paid from: 'cash' | 'bank'
+    MinReward              = 1000,   -- least reward ($)
+    MaxReward              = 100000, -- most reward ($)
+    PayOnCompletionPercent = 25,     -- the guard's share if the hit completes anyway
+    MaxJobsPerGuard        = 2,      -- protection jobs one guard holds at once
+}
+
+Config.Roleplay.HitOnHitman = {
+    Enabled = false, -- a target may place a contract on an operative revealed
+}
 -- ============================================================================
 --                          ADVANCED AND DEVELOPER
 -- ============================================================================

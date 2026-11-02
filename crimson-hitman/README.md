@@ -11,6 +11,15 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## What's New in 1.1.0
 
+- **Roleplay: proof of intent, earned reputation, bodyguards and the hit on
+  the hitman** (all off as shipped, all changeable from the admin panel): a
+  payout can wait until the hitman has worked the contract in character
+  (`Config.Roleplay.ProofOfIntent`); progression trust can be scaled by how a
+  contract was done (`Config.Roleplay.Reputation`); a target can hire an
+  anonymous bodyguard from On me, paid from escrow-style holds when the
+  contract ends without a completion (`Config.Roleplay.Protection`); and a
+  target whose informant named an operative can place a contract on them
+  (`Config.Roleplay.HitOnHitman`). See *Roleplay features*.
 - **Suspend, protect, a player's history, manual payments and moderators**:
   under **Players** in the admin panel, staff suspend a player from placing
   or accepting contracts (for some days or until lifted, with a reason they
@@ -336,7 +345,8 @@ counted playtime), `crimson_location_tips` (the informant tips hitmen bought),
 `crimson_freezes` (the players staff have frozen from the admin panel),
 `crimson_contract_staff` (staff notes, removals and text edits on a contract),
 `crimson_staff_records` (suspensions, protections, freezes' history and manual
-payments, from the admin panel) and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+payments, from the admin panel), `crimson_meta` and `crimson_rp_rows` (payouts held
+for proof of intent, and bodyguard jobs). Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
 engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
@@ -848,6 +858,24 @@ The roleplay features, each its own block of `Config.Roleplay` and each off as s
 | `Config.Roleplay.EmsRelisting.Enabled` / `EmsRelisting.TreatedMinutes` / `EmsRelisting.RequireEMS` / `EmsRelisting.MaxHoldMinutes` | `false` / `10` / `false` / `120` | EMS before re-listing: after a kill on a contract, a new contract on that target is refused (*They are still recovering.*) until they have been up, neither dead nor downed, for `TreatedMinutes`; with `RequireEMS`, until an on-duty medic's defibrillator has revived them instead. Never longer than `MaxHoldMinutes` after the kill. |
 | `Config.Roleplay.CityNews.Enabled` / `CityNews.AllTargets` / `CityNews.NameTarget` / `CityNews.App` / `CityNews.Account` / `CityNews.Event` / `CityNews.Templates` | `false` / `false` / `false` / `'birdy'` / `'LSNews'` / `'crimson-hitman:cityNews'` / two templates | City news: a completion on a whitelisted-job target (every target with `AllTargets`) posts one of `Templates` (`{job}`, `{zone}`, `{time}`, `{name}`) on Birdy from `Account` (`App = 'birdy'`), or fires the server event `Event` with `{ account, text }` (`App = 'event'`). `{name}` is *a resident* unless `NameTarget` is on. |
 | `Config.Roleplay.DirtyPayouts.Enabled` / `DirtyPayouts.Item` / `DirtyPayouts.Mode` / `DirtyPayouts.WorthKey` / `DirtyPayouts.Rate` | `false` / `'black_money'` / `'count'` / `'worth'` / `1` | Dirty money payouts: a hitman's cash or bank payout is handed over as `Item`, `Rate` items a dollar (`'count'`), or one item whose metadata `WorthKey` holds the figure (`'worth'`, for QBox marked bills). Escrow keeps the money; refunds go back as taken. |
+| `Config.Roleplay.ProofOfIntent.Enabled` | `false` | Holds a hitman's payout (never refuses it) until they have shown intent on the contract: `MinMessages` messages to the client in the thread, a live handover, or a meeting point set. Released anyway after `HoldMaxMinutes`. |
+| `Config.Roleplay.ProofOfIntent.MinMessages` | `3` | Messages from the hitman to the client in the contract thread that count as intent. `0`: none needed. |
+| `Config.Roleplay.ProofOfIntent.HoldMaxMinutes` | `60` | The longest a payout is held, in minutes; then it is handed over whatever is missing. |
+| `Config.Roleplay.Reputation.Enabled` | `false` | Scales the progression trust a completion earns (`Config.Progression`) by how it was done, and shows the hitman the breakdown on their completion notice. |
+| `Config.Roleplay.Reputation.BaseFactor` | `0.5` | The factor for a plain completion. |
+| `Config.Roleplay.Reputation.ThreadBonus` | `0.2` | Added when the hitman wrote to the client in the contract thread. |
+| `Config.Roleplay.Reputation.MeetingBonus` | `0.2` | Added when a meeting point was set on the contract. |
+| `Config.Roleplay.Reputation.HandoverBonus` | `0.3` | Added for a live handover. |
+| `Config.Roleplay.Reputation.WitnessFreeBonus` | `0.2` | Added when no other player (but the target and the placer) was within `WitnessRadius` of the hitman, by the server's positions. |
+| `Config.Roleplay.Reputation.WitnessRadius` | `50.0` | Metres around the hitman a witness is looked for in. |
+| `Config.Roleplay.Reputation.MaxFactor` | `1.5` | The most the factor may reach. |
+| `Config.Roleplay.Protection.Enabled` | `false` | A target may post one anonymous protection job on a contract on them, from On me, and other players may take it from the board's **Protection** tab. |
+| `Config.Roleplay.Protection.Account` | `'bank'` | The account a protection reward is taken from and paid back to: `'cash'` or `'bank'`. |
+| `Config.Roleplay.Protection.MinReward` | `1000` | The least protection reward, in dollars. |
+| `Config.Roleplay.Protection.MaxReward` | `100000` | The most protection reward, in dollars. |
+| `Config.Roleplay.Protection.PayOnCompletionPercent` | `25` | The guard's share when the contract is carried out anyway; the rest goes back to the target. |
+| `Config.Roleplay.Protection.MaxJobsPerGuard` | `2` | Protection jobs one guard may hold at once. |
+| `Config.Roleplay.HitOnHitman.Enabled` | `false` | A target whose informant found out an operative's name may place a contract on them from that card, through the normal Place form. |
 
 ### Advanced and developer
 
@@ -2458,13 +2486,19 @@ they say.
 
 ## Roleplay features
 
-Four consequences of a completed contract, in `server/rp_consequences.lua`.
-Each is off as shipped (`Config.Roleplay.<Feature>.Enabled = false`), and
-with all four off the resource behaves exactly as before. Each is changed
-live from the admin panel: its switches under **Features** (groups
-*Roleplay: ...*), the rest under **Rules > Limits**, **Rules > Timers** or
-**Rewards & money**, and each has a card in **How it works**. Nothing here
-ever names the hitman or the placer.
+Eight optional roleplay features. Four are consequences of a completed
+contract, in `server/rp_consequences.lua` (witness heat, EMS before
+re-listing, city news, dirty money payouts); four reward playing a contract in
+character and give a target ways to fight back, in `server/rp_intent.lua`,
+`server/rp_reputation.lua` and `server/rp_protection.lua` (proof of intent,
+reputation, bodyguards, the hit on the hitman). Each is **off as shipped**
+(`Config.Roleplay.<Feature>.Enabled = false`), and with its switch off the
+resource behaves exactly as before. Every setting is in the admin panel (the
+switches under **Features**, in groups *Roleplay: ...*; the rest under
+**Rules > Limits**, **Rules > Timers** or **Rewards & money**), is checked as
+`config.lua` is at start, is kept across restarts and applies at once.
+**Live > How it works** has a card for each. Nothing here ever names the
+hitman or the placer to anyone who could not already see them.
 
 ### Witness heat
 
@@ -2531,6 +2565,97 @@ fit (`CanCarryItem`) is owed through the usual owed path and handed over when
 they make room or next log in, still as the item. Each one is audited as
 `escrow_paid_as_item`. The item must exist in ox_inventory's `data/items.lua`: `black_money`
 ships there; add `markedbills` if your server has not got it.
+
+### Proof of intent
+
+`Config.Roleplay.ProofOfIntent`. With it on, a payout is **held, never
+refused**: the completion stands, and the money waits until the hitman has
+shown intent on the contract, which is any one of:
+
+- at least `MinMessages` messages from the hitman to the client in the
+  contract's thread;
+- a live handover (a delivery completes it, so a handover is never held);
+- a meeting point set on the contract.
+
+The hitman's receipt and Verify kill answer say what is missing, and so do
+their card and the top of **Mine** while it is held. After
+`HoldMaxMinutes` it is handed over anyway, so money is never stuck. With
+*Dirty money payouts* on too, a held payout stays held, and is handed over as
+the dirty money item once the hold lifts. The money stays in escrow, owed to
+the hitman and queued, exactly as a payout that does not fit in their pockets: the same retry hands it over (every 30 seconds while
+they are in the city, and at their login) once the hold lifts. Only the
+hitman's payout lines (baseline and bonus) are held, never a refund or a
+stake. Holds are kept in the store (`crimson_rp_rows`, kind `intent`), so a
+restart neither forgets nor releases one early. Audited as
+`intent_hold_started` and `intent_hold_released` (why: `proof`, `timeout`,
+`switched_off`). Turned off, every held payout is handed over at its next try.
+A completed contract's thread is closed, so for one that is already over only
+the timer releases the hold: the messages count while the contract runs.
+
+### Reputation earned in character
+
+`Config.Roleplay.Reputation`. With it on, the progression trust a completion
+earns (`Config.Progression.TrustPerElimination` or `TrustPerKidnapping`) is
+multiplied by a factor: `BaseFactor` for a plain completion, plus
+`ThreadBonus` when the hitman wrote to the client in the thread,
+`MeetingBonus` when a meeting point was set, `HandoverBonus` for a live
+handover and `WitnessFreeBonus` when no other player but the target and the
+placer was within `WitnessRadius` of the hitman (by the server's own
+positions; a hitman it cannot place is not witness-free), capped at
+`MaxFactor` and rounded to a whole amount of trust. The hitman's completion
+notice ends with the breakdown, for example *Reputation x0.9 (plain 0.5,
+thread +0.2, meeting point +0.2).* It needs `Config.Progression.Enabled` (and
+its resource) to give any trust; the breakdown is shown only then.
+
+### Bodyguard contracts
+
+`Config.Roleplay.Protection`. With it on, a target with a live contract on
+them (on their **On me** tab) may **Hire protection**: one anonymous
+protection job per contract, with a reward from `MinReward` to `MaxReward`
+taken from their `Account` at once, and a meeting pin where they stand
+(**Move the pin here** moves it). Other players see the job on the board's
+**Protection** tab by its reward alone. One of them may take it: not the
+target, not the placer, and nobody who holds or ever held the contract; at
+most `MaxJobsPerGuard` at once. The guard is given the target's name and the
+pin (**Set GPS to the pin**), and **never** the contract, who placed it or who
+is on it. The target is told the job was taken, and sees the guard's name only
+where operatives who put their name to a contract are shown to targets
+(`Config.Anonymity.ShowOperativeNames` and its whitelisted-job counterpart).
+
+When the contract ends, the money goes:
+
+| The contract | The guard | The target |
+|---|---|---|
+| Expired, cancelled or bought out, with a guard | all of it | nothing |
+| Carried out (any payout collected), with a guard | `PayOnCompletionPercent` | the rest |
+| Nobody took the job, or staff voided the contract | nothing | all of it |
+
+Until a guard takes it the target may **Cancel protection** and have it back;
+once taken it stands, as a contract an operative holds does. The money is held
+in this feature's own rows (`crimson_rp_rows`, kind `protection`), not among
+the contract's escrow lines, which are the reward the board shows, the
+placer's to withdraw and swept back to the placer at its end. It moves by the
+escrow's rules: charged last, after every check (the balance read first); the
+row written before the charge and dropped if the charge fails, so a refusal
+costs nothing; a payout claimed on the row before it moves; owed and tried
+again on the maintenance tick while the player is away or their account
+refuses it; and left for staff, never paid twice, when a payment raised and
+cannot be checked. Audited as `protection_taken`, `protection_accepted`,
+`protection_cancelled`, `protection_settled`, `protection_paid`,
+`protection_refunded`, `protection_owed`, `protection_payout_unconfirmed` and
+`protection_charge_unknown` (a charge a stop interrupted, said in the console
+at the next start for staff to check). Turned off, no job is posted or taken;
+jobs already posted are paid or refunded as their contract ends.
+
+### Hit on the hitman
+
+`Config.Roleplay.HitOnHitman`. With it on, a target whose informant
+(`Config.Informant`) found out an operative's **name** gets **Place a contract
+on <name>** on that card. It opens the Place form with them chosen, through
+the same kind of target handle the form's own list uses, and everything after
+is the normal place flow with all its rules (reward, cooldowns, limits,
+anonymity). There is no special path. Nothing is offered for an operative the
+informant found only by description, or for the placer.
 
 ---
 

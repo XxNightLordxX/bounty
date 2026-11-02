@@ -1863,6 +1863,14 @@ function Escrow.deliver(recipientCid, line)
     -- Left for staff: nothing gives it again until they have looked.
     if Escrow.parked(line) then return false end
 
+    -- Held for proof of intent (server/rp_intent.lua, off as shipped): not
+    -- given yet, and kept owed and queued like a payout that would not fit,
+    -- so the same retry gives it once the hold lifts. Nothing moved.
+    if Escrow.holdBack then
+        local asked, wait = pcall(Escrow.holdBack, recipientCid, line)
+        if asked and wait then return false end
+    end
+
     local recipient = exports.qbx_core:GetPlayerByCitizenId(recipientCid)
     if not recipient or not recipient.PlayerData then return false, true end
 

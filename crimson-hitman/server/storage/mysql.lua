@@ -728,6 +728,19 @@ local SCHEMA = {
         meta_key VARCHAR(32) PRIMARY KEY,
         meta_value INT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- The roleplay features' own rows (server/rp_intent.lua,
+    -- server/rp_protection.lua): a payout held for proof of intent, and a
+    -- bodyguard job with the money its target put up. One row each, its
+    -- fields as JSON. Created on an existing database by the CREATE TABLE
+    -- IF NOT EXISTS at the next start, like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_rp_rows (
+        id VARCHAR(48) PRIMARY KEY,
+        kind VARCHAR(16) NOT NULL,
+        contract_id VARCHAR(32),
+        body TEXT NOT NULL,
+        updated_at INT NOT NULL,
+        INDEX idx_rp_rows_kind (kind)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
 }
 
 --------------------------------------------------------------------------
@@ -3363,6 +3376,39 @@ end
 function MySQLStore.playerNumber(cid)
     local row = (db.query('SELECT id FROM players WHERE citizenid = ?', { cid }) or {})[1]
     return row and math.tointeger(tonumber(row.id) or 0) or nil
+end
+
+--------------------------------------------------------------------------
+-- Roleplay features' own rows
+--------------------------------------------------------------------------
+
+--- See the memory backend. crimson_rp_rows, the fields as JSON in `body`.
+function MySQLStore.readRpRows(kind)
+    local rows = db.query('SELECT id, body FROM crimson_rp_rows WHERE kind = ?', { kind }) or {}
+    local out = {}
+    for i = 1, #rows do
+        local ok, decoded = pcall(json.decode, rows[i].body or '')
+        if ok and type(decoded) == 'table' then
+            decoded.id, decoded.kind = rows[i].id, kind
+            out[#out + 1] = decoded
+        end
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+function MySQLStore.writeRpRow(row)
+    db.query([[
+        INSERT INTO crimson_rp_rows (id, kind, contract_id, body, updated_at) VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE kind = VALUES(kind), contract_id = VALUES(contract_id),
+            body = VALUES(body), updated_at = VALUES(updated_at)
+    ]], { row.id, row.kind, row.contract_id, json.encode(row), os.time() })
+    return true
+end
+
+function MySQLStore.deleteRpRow(id)
+    db.query('DELETE FROM crimson_rp_rows WHERE id = ?', { id })
+    return true
 end
 
 function MySQLStore.heartbeat(at)

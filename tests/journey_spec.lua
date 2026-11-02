@@ -384,6 +384,13 @@ describe('what this suite really covered', function()
             .. 'through the net event',
         -- A player's report to staff.
         report          = 'staff_tools_spec ("a player\'s report to staff"), through the net event',
+        -- Bodyguard contracts (off as shipped), each through the net event.
+        protectionBoard    = 'rpC_roleplay_spec ("bodyguard contracts"), through the net event',
+        protectionPost     = 'rpC_roleplay_spec ("posts a job"), through the net event',
+        protectionCancel   = 'rpC_roleplay_spec ("gives it all back"), through the net event',
+        protectionAccept   = 'rpC_roleplay_spec ("lets one guard take it"), through the net event',
+        protectionPin      = 'authz_matrix_spec (protectionPin, the target), through the net event',
+        protectionWaypoint = 'rpC_roleplay_spec ("the guard gets the pin"), through the net event',
     }
 
     it('got an ok from every handler the server registers', function()

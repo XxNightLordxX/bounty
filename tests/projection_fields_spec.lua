@@ -120,6 +120,14 @@ local CONDITIONAL = {
     -- The operatives who took it under their name, shown to the target
     -- while Config.Anonymity.ShowOperativeNames is on (anonymity_spec).
     operatives       = 'target-only, while names are shown and a named operative is on it',
+    -- Roleplay (server/rp_intent.lua, server/rp_protection.lua), all off
+    -- as shipped: a payout of the hitman's held for proof of intent; the
+    -- target's bodyguard job, the offer to post one, and the operatives
+    -- their informant named (rpC_roleplay_spec).
+    intentHold       = 'hitman-only, while a payout of theirs on it is held',
+    protection       = 'target-only, while bodyguards are on and a job is posted',
+    protectionOffer  = 'target-only, while bodyguards are on and none is posted',
+    counterTargets   = 'target-only, while the hit on the hitman is on and an operative was named',
 }
 
 --- Which roles see a contract at all, and through which projection call.

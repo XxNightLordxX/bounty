@@ -1814,3 +1814,14 @@ html.is-whitelisted-view main {
   border: 1px solid rgba(220, 70, 70, 0.55); background: rgba(220, 70, 70, 0.12);
   font-size: 0.9rem; line-height: 1.35; overflow-wrap: anywhere;
 }
+
+/* Roleplay (group rpC): a payout held for proof of intent, the board's
+   Contracts | Protection switch, a protection job's card and the target's
+   own job on their On me card. */
+.notice.intent-hold { margin-bottom: 0.6rem; }
+.row.board-tabs { margin-bottom: 0.75rem; }
+.card.protection-job > .hint { margin-top: 0.4rem; }
+.row.actions > .notice.protection-state { flex: 1 1 100%; margin: 0 0 0.5rem; }
+/* The hit on the hitman names the operative, whose name may be long: a row
+   of its own, wrapping rather than running off the card. */
+.more > button.counter-hit { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }

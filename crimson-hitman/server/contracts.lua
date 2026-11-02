@@ -2981,6 +2981,21 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     end
     contract, hitman, slot = held, fresh, held.next_slot or 1
 
+    -- The roleplay features (README Roleplay features, both off as shipped),
+    -- asked while the contract still carries its meeting point: whether this
+    -- payout waits for proof of intent (server/rp_intent.lua, which gates
+    -- the escrow's give, so nothing below changes), and how the trust it
+    -- earns is scaled (server/rp_reputation.lua). Neither may stop a claim.
+    local intentHold, reputation
+    if Contracts.intentOnClaim then
+        local asked, hold = pcall(Contracts.intentOnClaim, contract, hitmanCid, fulfilment)
+        if asked then intentHold = hold end
+    end
+    if Contracts.reputationFor then
+        local asked, earned = pcall(Contracts.reputationFor, contract, hitmanCid, fulfilment)
+        if asked then reputation = earned end
+    end
+
     -- Whose each of this collection's lines is, written before any of them
     -- moves. The baseline and the bonus are released one after the other,
     -- and a process that died between the two left the bonus held and owed
@@ -3061,7 +3076,9 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- penalty and walk away at no cost. Stakes settle when the contract
     -- ends, in finalise() and resolve().
 
-    if Progression then Progression.onCompleted(hitmanCid, fulfilment) end
+    if Progression then
+        Progression.onCompleted(hitmanCid, fulfilment, reputation and reputation.factor or nil)
+    end
     creditedClaims[contractId .. ':' .. slot] = true
 
     -- A line whose give raised and was left for staff (Escrow.parked) is in
@@ -3122,6 +3139,10 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
         money = money,
         goods = goods,
         stake = stake,
+        -- Held for proof of intent, and what is missing; the trust earned
+        -- and how (both nil with the roleplay features off).
+        intentHold = intentHold,
+        reputation = reputation,
     }
 end
 

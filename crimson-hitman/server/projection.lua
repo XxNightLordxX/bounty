@@ -7,6 +7,19 @@
 
 local Projection = {}
 
+--- What other modules add to a card, by name (the roleplay features,
+--- server/rp_*.lua): fn(out, contract, viewerCid, role, hitmen), each
+--- adding only keys ALLOWED_KEYS lists for that role. And to the board's
+--- settings: fn(settings). Asked in name order; one that raises adds nothing.
+Projection.extenders, Projection.settingsExtenders = {}, {}
+
+local function extendAll(list, ...)
+    local names = {}
+    for name in pairs(list) do names[#names + 1] = name end
+    table.sort(names)
+    for i = 1, #names do pcall(list[names[i]], ...) end
+end
+
 local Util = CrimsonBoot.requireShared('util')
 
 local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify
@@ -421,6 +434,7 @@ function Projection.contract(contract, viewerCid, opts)
         out.tippedAt = LocationTip and LocationTip.toldAt(contract.id) or nil
     end
 
+    extendAll(Projection.extenders, out, contract, viewerCid, role, hitmen)
     return out
 end
 
@@ -665,6 +679,7 @@ local function buildListing(viewerCid, page)
             } or nil,
         },
     }
+    extendAll(Projection.settingsExtenders, out.settings)
     local from = ((page - 1) * pageSize) + 1
     for i = from, math.min(from + pageSize - 1, #visible) do
         local row = Projection.contract(visible[i], viewerCid)
@@ -1131,7 +1146,9 @@ function Projection.waitingForRoom(viewerCid)
             seen[id] = true
             local line = Storage.readEscrowLine(id)
             if line and line.state == CH.ESCROW_STATE.HELD and line.owed_to == viewerCid
-                and not Escrow.parked(line) then
+                and not Escrow.parked(line)
+                -- Not a payout held for proof of intent: no room makes it come.
+                and not (Escrow.holdBack and Escrow.holdBack(viewerCid, line)) then
                 count = count + 1
             end
         end
@@ -1157,11 +1174,16 @@ Projection.ALLOWED_KEYS = {
                 placerInformantLeft = true, placerInformantWait = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
                 buyoutClosesIn = true, lastMessageAt = true, meetingSet = true,
-                locationTip = true },
+                locationTip = true,
+                -- A payout of theirs held for proof of intent (server/rp_intent.lua).
+                intentHold = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantFound = true,
                 informantLeft = true, informantPicks = true, tippedAt = true,
-                operatives = true },
+                operatives = true,
+                -- Their bodyguard job and the offer to post one, and the
+                -- operatives they may place a contract on (server/rp_protection.lua).
+                protection = true, protectionOffer = true, counterTargets = true },
     public  = { barred = true },
 }
 

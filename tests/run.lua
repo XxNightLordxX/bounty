@@ -416,6 +416,9 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.announce'] = nil
     package.loaded['crimson-hitman.server.reports'] = nil
     package.loaded['crimson-hitman.server.rp_consequences'] = nil
+    package.loaded['crimson-hitman.server.rp_intent'] = nil
+    package.loaded['crimson-hitman.server.rp_reputation'] = nil
+    package.loaded['crimson-hitman.server.rp_protection'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -457,6 +460,9 @@ function _G.newStack()
     local announce   = require('crimson-hitman.server.announce')
     local reports    = require('crimson-hitman.server.reports')
     local rpConsequences = require('crimson-hitman.server.rp_consequences')
+    local rpIntent     = require('crimson-hitman.server.rp_intent')
+    local rpReputation = require('crimson-hitman.server.rp_reputation')
+    local rpProtection = require('crimson-hitman.server.rp_protection')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -519,6 +525,12 @@ function _G.newStack()
                    comms = comms, notify = notify })
     rpConsequences.init({ storage = storage, identity = identity, notify = notify, audit = audit,
                           ledger = ledger, contracts = contracts, escrow = escrow })
+    -- Roleplay, as main.lua wires it.
+    rpIntent.init({ storage = storage, audit = audit, notify = notify, escrow = escrow,
+                    contracts = contracts, projection = projection })
+    rpReputation.init({ storage = storage, identity = identity, contracts = contracts })
+    rpProtection.init({ storage = storage, identity = identity, audit = audit, notify = notify,
+                        app = app, informant = informant, projection = projection })
     meeting.init({ storage = storage, notify = notify, audit = audit })
     playtime.init({ storage = storage, identity = identity })
 
@@ -557,6 +569,8 @@ function _G.newStack()
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         -- The roleplay consequences.
         rpConsequences = rpConsequences,
+        -- Roleplay.
+        rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -575,6 +589,7 @@ function _G.newStack()
         sanctions = sanctions, payments = payments, history = history,
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         rpConsequences = rpConsequences,
+        rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
     }
 end
 
@@ -615,6 +630,7 @@ local suites = {
     'location_tip_spec', 'informant_spec', 'freeze_spec', 'clock_rule_spec', 'untaken_terms_spec',
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
+    'rpC_roleplay_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

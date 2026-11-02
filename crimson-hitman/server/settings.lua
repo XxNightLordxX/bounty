@@ -1389,6 +1389,84 @@ for _, key in ipairs({ 'Roleplay.DirtyPayouts.Item', 'Roleplay.DirtyPayouts.Mode
     MONEY[key] = 'Payouts'
 end
 
+--- Roleplay (group rpC, README Roleplay features): proof of intent, earned
+--- reputation, bodyguards and the hit on the hitman. Each switch under
+--- Features, each figure under Rules; all read at use, with no restart.
+local RP_INTENT, RP_REPUTATION = 'Roleplay: Proof of intent', 'Roleplay: Reputation'
+local RP_PROTECTION, RP_HIT = 'Roleplay: Bodyguards', 'Roleplay: Hit on the hitman'
+for _, entry in ipairs({
+    { key = 'Roleplay.ProofOfIntent.Enabled', section = 'features', category = 'features', group = RP_INTENT,
+      kind = 'switch', label = 'Proof of intent before a payout',
+      about = 'A payout waits until the hitman sent enough messages to the client in the thread, or the '
+          .. 'contract had a live handover or a meeting point; released anyway after the hold time.',
+      inflight = 'Read at every give. Turned off, every held payout is handed over at its next try.' },
+    { key = 'Roleplay.ProofOfIntent.MinMessages', section = 'limits', category = 'rules-limits', group = RP_INTENT,
+      kind = 'number', integer = true, min = 0, max = 100,
+      label = 'Messages to the client that count as intent (0 = none needed)', inflight = AT_USE },
+    { key = 'Roleplay.ProofOfIntent.HoldMaxMinutes', section = 'limits', category = 'rules-timers', group = RP_INTENT,
+      kind = 'number', integer = true, min = 1, max = 10080,
+      label = 'Longest a payout is held for proof of intent (min)',
+      inflight = 'Read at every give: a hold already on ends at the new length.' },
+
+    { key = 'Roleplay.Reputation.Enabled', section = 'features', category = 'features', group = RP_REPUTATION,
+      kind = 'switch', label = 'Reputation earned in character',
+      about = 'The progression trust a completion earns is scaled: a base factor, plus bonuses for the '
+          .. 'thread used, a meeting point, a live handover and no witnesses, up to a cap. The hitman '
+          .. 'sees the breakdown on their completion notice.',
+      inflight = 'Read at each completion; trust already given stands.' },
+    { key = 'Roleplay.Reputation.BaseFactor', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Trust factor for a plain completion', inflight = AT_USE },
+    { key = 'Roleplay.Reputation.ThreadBonus', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Bonus: the hitman wrote in the thread', inflight = AT_USE },
+    { key = 'Roleplay.Reputation.MeetingBonus', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Bonus: a meeting point was set', inflight = AT_USE },
+    { key = 'Roleplay.Reputation.HandoverBonus', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Bonus: a live handover', inflight = AT_USE },
+    { key = 'Roleplay.Reputation.WitnessFreeBonus', section = 'limits', category = 'rules-limits',
+      group = RP_REPUTATION, kind = 'number', min = 0, max = 10, label = 'Bonus: no witnesses',
+      inflight = AT_USE },
+    { key = 'Roleplay.Reputation.WitnessRadius', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
+      kind = 'number', min = 1, max = 500, label = 'Witness radius around the hitman (m)', inflight = AT_USE },
+    { key = 'Roleplay.Reputation.MaxFactor', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Most the trust factor may reach', inflight = AT_USE },
+
+    { key = 'Roleplay.Protection.Enabled', section = 'features', category = 'features', group = RP_PROTECTION,
+      kind = 'switch', label = 'Bodyguard contracts',
+      about = 'A target may post an anonymous protection job from On me, its reward taken at once; another '
+          .. 'player takes it from the board\'s Protection tab and gets the target\'s name and meeting pin, '
+          .. 'never who placed the hit or who is on it. Paid when the contract ends without a completion.',
+      inflight = 'Turned off, no job is posted or taken; jobs already posted are still paid or refunded '
+          .. 'when their contract ends.' },
+    { key = 'Roleplay.Protection.Account', section = 'limits', category = 'rules-rewards', group = RP_PROTECTION,
+      kind = 'choice', choices = { 'cash', 'bank' }, label = 'Bodyguard reward paid from',
+      inflight = 'New jobs only: a job is paid out from the account it was taken from.' },
+    { key = 'Roleplay.Protection.MinReward', section = 'limits', category = 'rules-rewards', group = RP_PROTECTION,
+      kind = 'number', integer = true, min = 1, max = 10000000, label = 'Least bodyguard reward ($)',
+      inflight = 'New jobs only.' },
+    { key = 'Roleplay.Protection.MaxReward', section = 'limits', category = 'rules-rewards', group = RP_PROTECTION,
+      kind = 'number', integer = true, min = 1, max = 10000000, label = 'Most bodyguard reward ($)',
+      inflight = 'New jobs only.' },
+    { key = 'Roleplay.Protection.PayOnCompletionPercent', section = 'limits', category = 'rules-rewards',
+      group = RP_PROTECTION, kind = 'number', integer = true, min = 0, max = 100,
+      label = 'Guard\'s share if the contract completes anyway (%)',
+      inflight = 'Read when the contract ends.' },
+    { key = 'Roleplay.Protection.MaxJobsPerGuard', section = 'limits', category = 'rules-limits', group = RP_PROTECTION,
+      kind = 'number', integer = true, min = 1, max = 20, label = 'Protection jobs one guard holds at once',
+      inflight = CAP },
+
+    { key = 'Roleplay.HitOnHitman.Enabled', section = 'features', category = 'features', group = RP_HIT,
+      kind = 'switch', label = 'Hit on the hitman',
+      about = 'A target whose informant found out an operative\'s name may place a contract on them from '
+          .. 'that card: the Place form opens with them chosen, and every rule of placing applies.',
+      inflight = AT_USE },
+}) do
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+MONEY['Roleplay.Protection.Account'] = 'Payouts'
+MONEY['Roleplay.Protection.MinReward'] = 'Payouts'
+MONEY['Roleplay.Protection.MaxReward'] = 'Payouts'
+MONEY['Roleplay.Protection.PayOnCompletionPercent'] = 'Payouts'
+
 local byKey = {}
 for i = 1, #CATALOGUE do byKey[CATALOGUE[i].key] = CATALOGUE[i] end
 for key, group in pairs(MONEY) do

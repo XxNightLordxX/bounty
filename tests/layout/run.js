@@ -174,6 +174,10 @@ function serverStub() {
   own[1].placerInformantPicks = [];
   own[1].placerInformantLeft = 2;
   own[1].placerInformantFound = [{ label: 'Operative #2', text: 'Nel Vey' }];
+  // Roleplay (rpC): a payout held for proof of intent on the most crowded
+  // hitman card, measured at every width with the rest.
+  taken[0].intentHold = { missing: '3 more messages to the client in the contract thread, a live '
+    + 'handover, or a meeting point set', minutesLeft: 45 };
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
@@ -186,8 +190,17 @@ function serverStub() {
                            maxPerContract: 2, cooldownMinutes: 10 },
         locationTip: { enabled: true, cost: 25000, account: 'bank', radius: 350,
           showMinutes: 10, cooldownMinutes: 10, maxPerContract: 3, tellsTarget: true },
-        reasonMode: 'freetext', reasonMaxLength: 140 } } },
-    mine: { ok: true, data: { created: own, accepted: taken, onMe: [{
+        reasonMode: 'freetext', reasonMaxLength: 140,
+        // The board's Protection tab (rpC bodyguards).
+        protection: true } } },
+    // Its jobs: one to take and one guarded, with a long name.
+    protectionBoard: { ok: true, data: { enabled: true, maxJobs: 2,
+      open: [{ job: 'prot00000001', reward: 1250000 }],
+      mine: [{ job: 'prot00000002', reward: 4000,
+               targetName: 'Maximilian Featherstonehaugh-Cholmondeley', pinSet: true }] } },
+    mine: { ok: true, data: { created: own, accepted: taken,
+      intentHeld: [{ ref: 'ct00000099', missing: '3 more messages to the client in the contract '
+        + 'thread, a live handover, or a meeting point set', minutesLeft: 45 }], onMe: [{
       // A price on this player's head. The buyout is the only move the
       // target of a contract has, and it was drawn as an outline no louder
       // than the paid extra beside it.
@@ -204,7 +217,11 @@ function serverStub() {
       informantLeft: 2,
       informantPicks: [{ pick: 'op_bbbbbbbbbbbb', label: 'Operative #1' },
                        { pick: 'op_cccccccccccc', label: 'Operative #2' },
-                       { pick: 'placer', label: 'The person who placed it' }]
+                       { pick: 'placer', label: 'The person who placed it' }],
+      // Roleplay (rpC): Hire protection, and the hit on a named operative.
+      protectionOffer: { account: 'bank', min: 1000, max: 100000 },
+      counterTargets: [{ label: 'Operative #1', name: 'Maximilian Featherstonehaugh-Cholmondeley',
+                         handle: 'tg00000042' }]
     }] } },
     ledger: { ok: true, data: { entries: [{
       // The client's row, with their kill photo waiting to be opened. Only
@@ -1050,7 +1067,11 @@ async function main() {
                    ['mine', 'Extend deadline'],
                    ['mine', 'Edit'],
                    ['mine', 'Withdraw'],
-                   ['ledger', 'View photo']];
+                   ['ledger', 'View photo'],
+                   // Roleplay (rpC): the board's Protection tab, and the
+                   // Hire protection dialog on On me.
+                   ['board', 'Protection'],
+                   ['onme', 'Hire protection']];
 
     for (const [tab, press] of steps) {
       await p2.click(`[data-tab="${tab}"]`);

@@ -716,6 +716,28 @@ function Informant.clearPlayer(cid)
     return false
 end
 
+--- The operatives this target's informant found out by name on this
+--- contract, for the hit on the hitman (server/rp_protection.lua,
+--- Config.Roleplay.HitOnHitman): their citizen id stays on the server, and
+--- the caller hands the page a target handle for each. Never the placer,
+--- and never one found only by description: placing a contract on them
+--- would name them on its card, which the look-up did not.
+---@param contractId string
+---@param cid string the target who bought the look-ups
+---@return table[] { cid, label, name }
+function Informant.revealedOperatives(contractId, cid)
+    local record = recordFor(contractId, cid)
+    local out = {}
+    for pick, p in pairs(record and record.picks or {}) do
+        if pick ~= PLACER and p.found and type(p.answer) == 'table' and type(p.answer.name) == 'string'
+            and p.answer.name ~= 'Unknown operative' then
+            out[#out + 1] = { cid = pick, label = p.label or 'An operative', name = p.answer.name }
+        end
+    end
+    table.sort(out, function(a, b) return a.label < b.label end)
+    return out
+end
+
 function Informant.clearContract(contractId)
     local prefix = contractId .. ':'
     for key in pairs(reveals) do

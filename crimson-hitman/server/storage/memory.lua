@@ -50,6 +50,7 @@ function Memory.open()
         playtime = {}, locationTips = {}, placerInformants = {}, freezes = {}, staffMeta = {},
         contractStaff = {},
         staffRecords = {},
+        rpRows = {},
     }
     return true
 end
@@ -1831,6 +1832,38 @@ end
 
 function Memory.lastHeartbeat()
     return db.heartbeat
+end
+
+--------------------------------------------------------------------------
+-- Roleplay features' own rows
+--------------------------------------------------------------------------
+
+--- What the roleplay features keep across a restart (server/rp_intent.lua,
+--- server/rp_protection.lua): one row each, by id, with its kind
+--- ('intent' a payout held for proof of intent, 'protection' a bodyguard
+--- job) and its fields. Each is written whole and handed back as a copy.
+---@param kind string
+---@return table[] rows, by id
+function Memory.readRpRows(kind)
+    local out = {}
+    for _, row in pairs(db.rpRows or {}) do
+        if row.kind == kind then out[#out + 1] = Util.copy(row) end
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+---@param row table { id, kind, ... }
+function Memory.writeRpRow(row)
+    db.rpRows = db.rpRows or {}
+    db.rpRows[row.id] = Util.copy(row)
+    return true
+end
+
+---@param id string
+function Memory.deleteRpRow(id)
+    if db.rpRows then db.rpRows[id] = nil end
+    return true
 end
 
 function Memory.flush() return true end

@@ -418,3 +418,15 @@ CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The roleplay features' own rows: a payout held for proof of intent, and a
+-- bodyguard job with the money its target put up. One row each, its fields
+-- as JSON in `body`.
+CREATE TABLE IF NOT EXISTS crimson_rp_rows (
+    id VARCHAR(48) PRIMARY KEY,
+    kind VARCHAR(16) NOT NULL,
+    contract_id VARCHAR(32),
+    body TEXT NOT NULL,
+    updated_at INT NOT NULL,
+    INDEX idx_rp_rows_kind (kind)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

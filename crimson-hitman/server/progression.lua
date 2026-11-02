@@ -58,7 +58,7 @@ end
 --- the server's wider criminal progression.
 ---@param cid string
 ---@param fulfilment string
-function Progression.onCompleted(cid, fulfilment)
+function Progression.onCompleted(cid, fulfilment, factor)
     Storage.bumpStat(cid, 'completed')
 
     if not Config.Progression.Enabled then return end
@@ -66,6 +66,12 @@ function Progression.onCompleted(cid, fulfilment)
     local amount = fulfilment == CH.FULFILMENT.KIDNAPPING
         and Config.Progression.TrustPerKidnapping
         or Config.Progression.TrustPerElimination
+
+    -- Scaled by how it was done (Config.Roleplay.Reputation, off as shipped:
+    -- no factor is passed then), rounded to a whole amount.
+    if amount and type(factor) == 'number' and factor == factor and factor >= 0 then
+        amount = math.floor(amount * factor + 0.5)
+    end
 
     if not amount or amount <= 0 then return end
 
@@ -79,7 +85,8 @@ function Progression.onCompleted(cid, fulfilment)
     end)
 
     if ok then
-        Audit.action('progression_awarded', cid, nil, { amount = amount, fulfilment = fulfilment })
+        Audit.action('progression_awarded', cid, nil, { amount = amount, fulfilment = fulfilment,
+            factor = type(factor) == 'number' and factor or nil })
     else
         Audit.rejected('progression_failed', cid, nil, { error = tostring(err) })
     end
