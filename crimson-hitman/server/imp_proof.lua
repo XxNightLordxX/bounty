@@ -212,7 +212,7 @@ function Proof.handover(actor, rawId)
     local told, tellErr = pcall(deps.notify.contractCompleted, after, actor.cid, { item = true }, result,
         { receipt = true })
     if not told then
-        Log.debug(('telling the client contract %s was fulfilled raised: %s')
+        Log.debug(('telling the placer contract %s was fulfilled raised: %s')
             :format(tostring(contractId), Util.dbError(tellErr)))
     end
     return true, nil, result

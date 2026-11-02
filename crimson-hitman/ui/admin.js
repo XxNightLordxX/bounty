@@ -679,7 +679,10 @@
         top.setAttribute('aria-current', g === current ? 'page' : 'false');
         if (g.developer) {
           var lbl = top.querySelector('.lbl');
-          if (lbl) lbl.textContent = canDevelop() ? 'Developer' : 'Permissions';
+          // Without the Developer ACE the section holds Permissions and the
+          // settings History (where a change is undone): both named, or
+          // History was found by nobody who was not looking for it.
+          if (lbl) lbl.textContent = canDevelop() ? 'Developer' : 'Permissions & history';
         }
       }
     });
@@ -1188,7 +1191,7 @@
         btn('.is-ghost', 'ct-clear', {}, 'Clear', 'eraser')),
       h('p.hint', canIdentify()
         ? 'You see who is behind anonymous parties. Every search and every contract you open is on the record.'
-        : 'Anonymous clients and operatives show as Anonymous, and a search by citizen id or name never '
+        : 'Anonymous placers and operatives show as Anonymous, and a search by citizen id or name never '
           + 'finds a contract through a party who stayed anonymous.'),
       h('div.results', { id: 'ct-results' }, contractRows()),
       h('div.pager', { id: 'ct-pager' }, contractPager()));
@@ -2290,14 +2293,14 @@
         field('lg.actor', { id: 'lg-actor', class: 'is-mid', placeholder: 'Citizen id',
           'data-live': 'lg-search', 'data-enter': 'lg-search-now',
           title: canIdentify() ? null : 'Without the identity ACE, only the rows they acted in under their own '
-            + 'name: as the target, or a client or operative who did not stay anonymous.',
+            + 'name: as the target, or a placer or operative who did not stay anonymous.',
           'aria-label': 'Citizen id' }),
         dropdown('lg-range'),
         rangeInputs('lg', S.logs.range, 'lg-search'),
         btn('.is-ghost', 'lg-clear', {}, 'Clear', 'eraser')),
       h('p.hint', canIdentify()
         ? 'Every row as it was written. Reading the log as you can see it is on the record.'
-        : 'Citizen ids show as the party\'s place on the contract (the client, the target, an operative) and '
+        : 'Citizen ids show as the party\'s place on the contract (the placer, the target, an operative) and '
           + 'anonymous parties as Anonymous. A citizen id finds only the rows that player acted in under their '
           + 'own name.'),
       h('div.results', { id: 'lg-results' }, logRows()),
@@ -2383,7 +2386,7 @@
         h('p.note', 'Every live contract they are party to is on hold: its clocks stopped, and nothing '
           + 'on it is accepted, paid, refunded or ended. Unfreeze gives the time on hold back.'))
       : h('p.note', 'Freezing puts every live contract they are party to on hold, as the target, the '
-          + 'client or an operative: its clocks stop and nothing on it moves until you unfreeze them. '
+          + 'placer or an operative: its clocks stop and nothing on it moves until you unfreeze them. '
           + 'Players are told only that it is on hold by staff.');
     return card('Freeze', frag(about, form, answerBox(S.players.freeze)), '',
       frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null);
@@ -2546,9 +2549,34 @@
       return value && typeof value === 'object' ? num(value.min) + ' to ' + num(value.max) : '(not set)';
     }
     if (value === null || value === undefined) return '(not set)';
-    if (typeof value === 'number') return num(value) + spanOf(entry, value);
+    if (typeof value === 'number') {
+      var span = spanOf(entry, value);
+      if (span) return num(value) + span;
+      var unit = unitOf(entry);
+      return unit === '$' ? '$' + num(value) : num(value) + unit;
+    }
     return String(value);
   }
+
+  /** The unit a number setting is counted in, from its key: ' s', ' ms',
+      ' min', ' h', ' d', ' m' (metres), '%', ' ×' or '$'; '' for a plain
+      count. Every number the panel shows carries it. */
+  var MONEY_KEY = /(Cost|Fee|MinReward|MaxReward|MaxAmount|AbsoluteMax|MaxContractValue|MinContractReward|PaymentMax|MaxCost)$|^Sources\.(cash|bank|dirty)\.max$/;
+  function unitOf(entry) {
+    var key = String((entry && entry.key) || '');
+    if (MONEY_KEY.test(key)) return '$';
+    if (/Ms$/.test(key)) return ' ms';
+    if (/Seconds$/.test(key)) return ' s';
+    if (/Minutes$/.test(key)) return ' min';
+    if (/Hours$/.test(key)) return ' h';
+    if (/Days$/.test(key)) return ' d';
+    if (/(Radius|Meters|Metres|Distance)$/.test(key)) return ' m';
+    if (/(Percent|percent)$/.test(key)) return '%';
+    if (/Multiplier$/.test(key)) return ' \u00d7';
+    return '';
+  }
+  /** For the tests. */
+  window.CH_ADMIN_UNIT_OF = unitOf;
 
   /** A duration setting's figure in hours and minutes too: '10800 s = 3 h',
       '90 min = 1 h 30 min'. Nothing for anything else, or under a minute. */
@@ -2873,9 +2901,29 @@
 
   /** Rewards & money, in these groups (the catalogue's `money`). */
   var MONEY_ORDER = ['Rewards', 'Payouts', 'Buyouts', 'Informant prices', 'Anonymity fees', 'Escrow'];
-  /** Features, these groups first, each with what it controls. */
-  var FEATURE_ORDER = ['Anonymity', 'Anonymity (whitelisted-job targets)', 'Informant', 'Informant tip',
-    'Informants (whitelisted-job targets)', 'Law enforcement advisory'];
+  /** Features, in the README's and config.lua's order: the core switches
+      first (in the catalogue's order), then Anonymity, the Informants, the
+      Advisory, Staff tools, Roleplay and Improvements. */
+  var FEATURE_AREAS = [
+    ['Anonymity', 'Anonymity (whitelisted-job targets)'],
+    ['Informant', 'Informant tip', 'Informants (whitelisted-job targets)'],
+    ['Law enforcement advisory'],
+    ['Staff tools']
+  ];
+  /** Where a Features group sorts: 0 for the core, then by area; a group's
+      place inside its area as a fraction. */
+  function featureRank(group) {
+    var g = String(group);
+    for (var i = 0; i < FEATURE_AREAS.length; i++) {
+      var at = FEATURE_AREAS[i].indexOf(g);
+      if (at !== -1) return i + 1 + at / 10;
+    }
+    if (g.indexOf('Roleplay: ') === 0) return FEATURE_AREAS.length + 1;
+    if (g.indexOf('Improvements: ') === 0) return FEATURE_AREAS.length + 2;
+    return 0;
+  }
+  /** For the tests. */
+  window.CH_ADMIN_FEATURE_RANK = featureRank;
   var GROUP_INTRO = {
     'Anonymity': 'Whether a contract may be placed or accepted anonymously, and whether a target sees an '
       + 'operative\'s name.',
@@ -2902,7 +2950,27 @@
     'Progression': 'Criminal trust for completed contracts.',
     'Audit and debug': 'What the log keeps, and alerts to Discord.',
     'Staff tools': 'Pausing the whole app for an event, and the daily summary to the staff Discord.',
-    'Staff alerts': 'When one player or one target goes past a threshold, one staff alert, and on Discord too.'
+    'Staff alerts': 'When one player or one target goes past a threshold, one staff alert, and on Discord too.',
+    'Contract limits': 'How long contracts run and how many a player may place, take or carry.',
+    'Server restart': 'How contracts pause before a txAdmin restart, and how long that pause may last.',
+    'Ledger': 'What a player\'s Ledger keeps, and for how long.',
+    'Immunity': 'Who cannot be a target yet: new characters and players just online.',
+    'Payouts': 'How many times a contract pays, and how owed payouts are retried.',
+    'Informant prices': 'What each informant look-up and tip costs, and which account pays.',
+    'Anonymity fees': 'What staying anonymous costs the placer and the hitman.',
+    'Escrow': 'What a reward may never hold, and the stake a hitman may be asked for.',
+    'Buyout pricing': 'What a target pays to buy a contract out.',
+    'Staff': 'Limits on what staff may do from this panel.',
+    'Contract reasons': 'What a placer must give as a reason, and what is refused.',
+    'Advisory job lists': 'Which jobs raise a police advisory, and which jobs are told.',
+    'Barred jobs': 'Jobs that may not use the app.',
+    'Storage': 'Where contracts and money are kept. Read only: changed in config.lua.',
+    'Diagnostics': 'What the console says about slow jobs.',
+    'Rate limits': 'How often each player may send each request.',
+    'Staff commands': 'The names of the staff commands.',
+    'Edit in config.lua': 'Settings this panel never changes: edit config.lua and restart.',
+    'Kept in the store, not on this list': 'Panel changes for keys this version does not have; Reset all clears them.',
+    'Other': 'Settings not in any group above.'
   };
 
   function settingsHead() {
@@ -2976,10 +3044,14 @@
       if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
       byGroup[g].push(entry);
     });
-    var order = view === 'money' ? MONEY_ORDER : view === 'features' ? FEATURE_ORDER : [];
+    // Stable: groups of the same rank keep the catalogue's order.
+    var seq = {};
+    groups.forEach(function (g, i) { seq[g] = i; });
     groups.sort(function (a, b) {
-      var x = order.indexOf(a), y = order.indexOf(b);
-      if (x === -1 && y === -1) return 0;
+      if (view === 'features') return (featureRank(a) - featureRank(b)) || (seq[a] - seq[b]);
+      if (view !== 'money') return seq[a] - seq[b];
+      var x = MONEY_ORDER.indexOf(a), y = MONEY_ORDER.indexOf(b);
+      if (x === -1 && y === -1) return seq[a] - seq[b];
       if (x === -1) return 1;
       if (y === -1) return -1;
       return x - y;
@@ -2998,7 +3070,7 @@
     if (!groups.length && !buckets.length) return frag(h('p.hint', intro), note, empty('Nothing here.'));
     return frag(h('p.hint', intro), note, groups.map(function (g) {
       return h('section.st-group', { 'data-group': g.toLowerCase() }, h('h3.st-group-title', g),
-        view === 'features' && GROUP_INTRO[g] ? h('p.st-group-about', GROUP_INTRO[g]) : null,
+        GROUP_INTRO[g] ? h('p.st-group-about', GROUP_INTRO[g]) : null,
         byGroup[g].map(settingRow));
     }), buckets.length ? h('section.st-group', { 'data-group': 'rate limits' }, h('h3.st-group-title', 'Rate limits'),
       h('p.st-group-about', 'Per player: a full allowance of burst requests refills over per seconds.'),
@@ -3176,8 +3248,11 @@
     { title: 'Settings', icon: 'sliders', view: 'timers', go: 'Open Rules',
       text: 'Every setting is changed in Rules or Features, each Save, reset or list edit taking the same '
         + 'confirms as before.', also: { view: 'features', go: 'Features' } },
+    { title: 'Undo a setting change', icon: 'arrow-rotate-left', view: 'history', go: 'Open History',
+      text: 'History lists every setting changed from this panel, who changed it and when, with both values. '
+        + 'Undo puts the value before back, on two clicks, checked as any change is.' },
     { title: 'Contract tools', icon: 'clipboard-list', view: 'contracts', go: 'Open Contracts',
-      text: 'Open a contract: Staff notes, Remove an operative (stake to the client as a walk-away, or returned; '
+      text: 'Open a contract: Staff notes, Remove an operative (stake to the placer as a walk-away, or returned; '
         + 'optionally barred), Edit text through the checks a player\'s text gets, Export the record for a '
         + 'ticket, and As a player sees it.' }
   ];
@@ -3331,10 +3406,40 @@
   /** For the tests. */
   window.CH_ADMIN_HELP = HELP;
 
+  /** The help cards in the order the README, config.lua and Features use:
+      the core, Anonymity, the informants, the advisory, the staff tools,
+      Roleplay and Improvements, each feature in config.lua's order. */
+  var HELP_AREA = { 'Anonymity': 1, 'The informants': 2, 'Police advisories': 3, 'The staff freeze': 4,
+    'Suspensions and protections': 4, 'Moderators': 4 };
+  var HELP_BLOCKS = ['Roleplay.WitnessHeat', 'Roleplay.EmsRelisting', 'Roleplay.CityNews', 'Roleplay.DirtyPayouts',
+    'Roleplay.ProofOfIntent', 'Roleplay.Reputation', 'Roleplay.Protection', 'Roleplay.HitOnHitman',
+    'Roleplay.Rumours', 'Roleplay.BurnerPhone', 'Roleplay.InformantNpc', 'Roleplay.ReasonQuality',
+    'Improvements.TipWarningDelay', 'Improvements.TipLimits', 'Improvements.TipHoldFirst',
+    'Improvements.InformantSecondTry', 'Improvements.TipSafeZones', 'Improvements.GoDark',
+    'Improvements.PlacerRecord', 'Improvements.HitmanHeat', 'Improvements.Tiers', 'Improvements.ContractDecay',
+    'Improvements.ProofItems', 'Improvements.SerialScrub', 'Improvements.WeeklyStats',
+    'Limits.TargetCooldownAfterCompletionSeconds'];
+  function helpRank(c) {
+    var key = String((c.links[0] && c.links[0].key) || '');
+    for (var i = 0; i < HELP_BLOCKS.length; i++) {
+      if (key === HELP_BLOCKS[i] || key.indexOf(HELP_BLOCKS[i] + '.') === 0) {
+        return (HELP_BLOCKS[i].indexOf('Roleplay.') === 0 ? 5 : 6) + i / 100;
+      }
+    }
+    return HELP_AREA[c.title] || 0;
+  }
+  function helpOrdered() {
+    return HELP.map(function (c, i) { return { c: c, i: i }; }).sort(function (a, b) {
+      return (helpRank(a.c) - helpRank(b.c)) || (a.i - b.i);
+    }).map(function (x) { return x.c; });
+  }
+  /** For the tests. */
+  window.CH_ADMIN_HELP_ORDERED = helpOrdered;
+
   SHELL.help = function () {
     return h('section.view', h('p.hint', 'How the contract app works, in plain words. Each link opens the setting '
       + 'that controls it.'),
-      h('div.cards-grid', HELP.map(function (c, i) {
+      h('div.cards-grid', helpOrdered().map(function (c, i) {
         return card(frag(icon(c.icon), ' ', c.title), frag(
           h('p.about', c.text),
           c.links.length ? h('div.help-links', c.links.map(function (l) {
@@ -4817,7 +4922,7 @@
     var open = writesOpen();
     var off = { disabled: !open, title: open ? null : whyNoWrite() };
     return frag(
-      h('p.note', 'Takes them off without ending it for anybody else. The client and the other operatives are '
+      h('p.note', 'Takes them off without ending it for anybody else. The placer and the other operatives are '
         + 'told an operative left, as a walk-away says it; they are told "Staff removed you from a contract."'),
       h('div.ct-row', h('span.ct-label', 'Operative'),
         segmented('ct-rm-pick', active.map(function (m) {
@@ -4826,7 +4931,7 @@
         }), st.pick)),
       h('div.ct-row', h('span.ct-label', 'Their stake'),
         segmented('ct-rm-stake', [
-          { value: 'client', label: 'To the client (as a walk-away)', disabled: !open, title: off.title },
+          { value: 'client', label: 'To the placer (as a walk-away)', disabled: !open, title: off.title },
           { value: 'return', label: 'Return the stake', disabled: !open, title: off.title }
         ], st.stake)),
       h('div.ct-row', h('span.ct-label', 'Afterwards'),
@@ -5099,16 +5204,16 @@
   /* ---------- roleplay (group rpC): help cards ------------------------- */
 
   HELP.push(
-    { title: 'Roleplay: proof of intent', icon: 'comments',
+    { title: 'Roleplay: Proof of intent', icon: 'comments',
       text: 'Off as shipped. On, a hitman\'s payout is held, never refused, until they have shown they worked '
-        + 'the contract in character: enough messages to the client in the contract thread, or a live '
+        + 'the contract in character: enough messages to the placer in the contract thread, or a live '
         + 'handover, or a meeting point set. Their receipt and their card say what is missing. After the hold '
         + 'time it is handed over anyway, so money is never stuck. The money stays in escrow, owed to them, '
         + 'and every hold is audited (intent_hold_started, intent_hold_released).',
       links: [{ key: 'Roleplay.ProofOfIntent.Enabled', view: 'features', label: 'Proof of intent' },
         { key: 'Roleplay.ProofOfIntent.MinMessages', view: 'limits', label: 'Messages that count' },
         { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', view: 'timers', label: 'Longest hold' }] },
-    { title: 'Roleplay: reputation earned in character', icon: 'star',
+    { title: 'Roleplay: Reputation earned in character', icon: 'star',
       text: 'Off as shipped. On, the progression trust a completion earns is multiplied: a base factor for a '
         + 'plain completion, plus a bonus each for the thread used, a meeting point, a live handover and no '
         + 'witnesses near the hitman, up to a cap. The hitman sees the breakdown on their completion notice. '
@@ -5116,7 +5221,7 @@
       links: [{ key: 'Roleplay.Reputation.Enabled', view: 'features', label: 'Reputation' },
         { key: 'Roleplay.Reputation.BaseFactor', view: 'limits', label: 'Factors and cap' },
         { key: 'Roleplay.Reputation.WitnessRadius', view: 'limits', label: 'Witness radius' }] },
-    { title: 'Roleplay: bodyguards', icon: 'shield-halved',
+    { title: 'Roleplay: Bodyguards', icon: 'shield-halved',
       text: 'Off as shipped. On, a target can hire protection from their On me card: a reward taken from them '
         + 'at once and held, and a meeting pin where they stand. Other players see the job on the board\'s '
         + 'Protection tab by its reward alone; the one who takes it gets the target\'s name and the pin, and '
@@ -5127,7 +5232,7 @@
         { key: 'Roleplay.Protection.MinReward', view: 'money', label: 'Reward bounds and account' },
         { key: 'Roleplay.Protection.PayOnCompletionPercent', view: 'money', label: 'Share if completed' },
         { key: 'Roleplay.Protection.MaxJobsPerGuard', view: 'limits', label: 'Jobs per guard' }] },
-    { title: 'Roleplay: hit on the hitman', icon: 'crosshairs',
+    { title: 'Roleplay: Hit on the hitman', icon: 'crosshairs',
       text: 'Off as shipped. On, a target whose informant found out an operative\'s name gets a button on that '
         + 'card to place a contract on them: the Place form opens with them chosen, and every rule of placing '
         + 'a contract applies. Nothing is offered for an operative found only by description.',
@@ -5160,9 +5265,27 @@
   GROUP_INTRO['Roleplay: EMS before re-listing'] = 'A target killed on a contract is treated before a new one.';
   GROUP_INTRO['Roleplay: City news'] = 'An anonymous news post after a completed contract.';
   GROUP_INTRO['Roleplay: Dirty money payouts'] = 'A hitman\'s cash or bank payout handed over as a dirty money item.';
+  GROUP_INTRO['Roleplay: Proof of intent'] = 'A payout waits until the hitman has worked the contract in character.';
+  GROUP_INTRO['Roleplay: Reputation'] = 'Trust for a completion scaled by how it was done.';
+  GROUP_INTRO['Roleplay: Bodyguards'] = 'A target may hire a bodyguard from On me.';
+  GROUP_INTRO['Roleplay: Hit on the hitman'] = 'A target may place a contract on an operative revealed to them.';
+  GROUP_INTRO['Roleplay: Rumours and broker'] = 'New contracts show as rumours until a broker briefs the hitman.';
+  GROUP_INTRO['Roleplay: Burner phone'] = 'Placing and accepting need a burner phone item.';
+  GROUP_INTRO['Roleplay: Informant in person'] = 'Informant purchases only beside the informant NPC.';
+  GROUP_INTRO['Roleplay: Reason quality'] = 'Free-text reasons held to a length and a low-effort word list.';
+  GROUP_INTRO['Improvements: Tip warning delay'] = 'The target hears of an informant tip a random while later.';
+  GROUP_INTRO['Improvements: Tip limits'] = 'One tip per hitman per contract, and doubling prices.';
+  GROUP_INTRO['Improvements: Hold before a tip'] = 'A tip only once the hitman has held the contract a while.';
+  GROUP_INTRO['Improvements: Informant second try'] = 'What the target\'s later look-ups cost.';
+  GROUP_INTRO['Improvements: Tip safe zones'] = 'No tip while the target is inside a safe zone.';
+  GROUP_INTRO['Improvements: Go dark'] = 'A tipped-off target may pay so tips on them find nothing for a while.';
+  GROUP_INTRO['Improvements: Proof items'] = 'A hitman may finish with an item taken from the target.';
+  GROUP_INTRO['Improvements: Serial scrubbing'] = 'An anonymous placer\'s weapon reaches the hitman with a new serial.';
+  GROUP_INTRO['Improvements: Weekly stats'] = 'The week\'s totals posted to Discord, counts only.';
+  GROUP_INTRO['Improvements: Completion cooldown'] = 'A wait before a completed contract\'s target can be listed again.';
 
   HELP.push(
-    { title: 'Witness heat', icon: 'eye',
+    { title: 'Roleplay: Witness heat', icon: 'eye',
       text: 'When it is on, every completion, a kill or a handover, is checked on the server for players near '
         + 'the hitman who are no party to the contract. With enough of them, or always if set, officers get a '
         + 'vague witness report on their phones and in sc-dispatch: a phrase, the way the hitman went, and the '
@@ -5172,7 +5295,7 @@
         { key: 'Roleplay.WitnessHeat.WitnessRadius', view: 'limits', label: 'Radius and witnesses' },
         { key: 'Roleplay.WitnessHeat.Phrases', view: 'limits', label: 'What a witness says' },
         { key: 'Roleplay.WitnessHeat.Areas', view: 'limits', label: 'Named areas' }] },
-    { title: 'EMS before re-listing', icon: 'kit-medical',
+    { title: 'Roleplay: EMS before re-listing', icon: 'kit-medical',
       text: 'When it is on, a target killed on a contract cannot have a new one placed on them straight away. '
         + 'They have to have been up, neither dead nor downed, for the treated minutes first; the placer is '
         + 'told they are still recovering. With the medic switch on, an on-duty medic\'s defibrillator revive '
@@ -5181,7 +5304,7 @@
       links: [{ key: 'Roleplay.EmsRelisting.Enabled', view: 'features', label: 'On or off' },
         { key: 'Roleplay.EmsRelisting.TreatedMinutes', view: 'timers', label: 'Minutes up' },
         { key: 'Roleplay.EmsRelisting.RequireEMS', view: 'features', label: 'A medic\'s revive' }] },
-    { title: 'City news', icon: 'newspaper',
+    { title: 'Roleplay: City news', icon: 'newspaper',
       text: 'When it is on, a completed contract on a whitelisted-job target, or on any target if set, posts an '
         + 'anonymous news item. It goes out on lb-phone\'s Birdy from the configured account, or as a server '
         + 'event another resource posts. The words come from the templates, with the target\'s job, the area '
@@ -5189,7 +5312,7 @@
       links: [{ key: 'Roleplay.CityNews.Enabled', view: 'features', label: 'On or off' },
         { key: 'Roleplay.CityNews.App', view: 'limits', label: 'Where it is posted' },
         { key: 'Roleplay.CityNews.Templates', view: 'limits', label: 'Templates' }] },
-    { title: 'Dirty money payouts', icon: 'sack-dollar',
+    { title: 'Roleplay: Dirty money payouts', icon: 'sack-dollar',
       text: 'When it is on, a hitman\'s cash or bank payout is handed over as a dirty money item instead, by '
         + 'count or as one item worth the figure. Escrow keeps the money it took, and only the payout '
         + 'converts it, so nothing is lost. A refund to the placer goes back as it was taken. A payout that '
@@ -5201,7 +5324,7 @@
   /* ---------- the roleplay features (Config.Roleplay) ---------- */
 
   HELP.push(
-    { title: 'Rumours and the broker', icon: 'user-secret',
+    { title: 'Roleplay: Rumours and the broker', icon: 'user-secret',
       text: 'Off as shipped. On, a hitman sees a new contract only as a rumour: a rough area and a reward '
         + 'band, with no name, face or Accept. Asking the broker NPC about it, standing beside it, or '
         + 'being briefed by a player on a broker job, shows the whole card and Accept for a while. The '
@@ -5210,20 +5333,20 @@
         { key: 'Roleplay.Rumours.Locations', view: 'limits', label: 'Broker places' },
         { key: 'Roleplay.Rumours.BriefValidMinutes', view: 'timers', label: 'How long a briefing lasts' },
         { key: 'Roleplay.Rumours.BrokerJobs', view: 'targeting', label: 'Broker jobs' }] },
-    { title: 'Burner phone', icon: 'mobile-screen',
+    { title: 'Roleplay: Burner phone', icon: 'mobile-screen',
       text: 'Off as shipped. On, placing, accepting and every contract action need the burner phone item '
         + 'in the inventory, counted on the server. Without one a player is told "You need a burner '
         + 'phone." and, as shipped, sees no contracts at all. Live contracts stay; a burner can be used '
         + 'up on placing or accepting. Sell it through sc-blackmarket (README).',
       links: [{ key: 'Roleplay.BurnerPhone.Enabled', view: 'features', label: 'Burner phone on or off' },
         { key: 'Roleplay.BurnerPhone.Item', view: 'limits', label: 'The item' }] },
-    { title: 'The informant in person', icon: 'user-secret',
+    { title: 'Roleplay: The informant in person', icon: 'user-secret',
       text: 'Off as shipped. On, every informant purchase (the target\'s, the placer\'s and the tip) is '
         + 'sold only to a buyer standing beside the informant NPC, which moves between its own places. '
         + 'Anywhere else it is refused with "Find the informant first." and nothing is charged.',
       links: [{ key: 'Roleplay.InformantNpc.Enabled', view: 'features', label: 'Informant in person' },
         { key: 'Roleplay.InformantNpc.Locations', view: 'limits', label: 'Informant places' }] },
-    { title: 'Reason quality', icon: 'pen',
+    { title: 'Roleplay: Reason quality', icon: 'pen',
       text: 'Off as shipped. On, a typed reason needs a least length and number of words, on top of the '
         + 'other reason rules. A reason with a low-effort phrase (rdm, idk, test) is refused, or placed '
         + 'and put in Needs review as a low-effort reason, as set.',
@@ -5234,7 +5357,7 @@
   /* ---------- the improvements (Config.Improvements) ---------- */
 
   HELP.push(
-    { title: 'Tip warning delay', icon: 'clock',
+    { title: 'Improvements: Tip warning delay', icon: 'clock',
       text: 'Off as shipped. On, the target of an informant tip is told someone knows their rough area '
         + 'a random while after the tip, between the shortest and longest delay, instead of at once. '
         + 'A warning still waiting survives a restart and is sent late rather than lost. The time on '
@@ -5242,7 +5365,7 @@
       links: [{ key: 'Improvements.TipWarningDelay.Enabled', view: 'features', label: 'On or off' },
         { key: 'Improvements.TipWarningDelay.MinSeconds', view: 'timers', label: 'Shortest delay' },
         { key: 'Improvements.TipWarningDelay.MaxSeconds', view: 'timers', label: 'Longest delay' }] },
-    { title: 'Tip limits', icon: 'scale-balanced',
+    { title: 'Improvements: Tip limits', icon: 'scale-balanced',
       text: 'Off as shipped. On, on top of the tips per contract and the wait between them: each hitman '
         + 'may buy one tip per contract, and/or each further tip on a contract costs twice the one '
         + 'before, up to the most a tip costs. The card quotes the real next price, and a price that '
@@ -5251,24 +5374,24 @@
         { key: 'Improvements.TipLimits.OnePerHitman', view: 'features', label: 'One per hitman' },
         { key: 'Improvements.TipLimits.PriceDoubling', view: 'features', label: 'Price doubling' },
         { key: 'Improvements.TipLimits.MaxCost', view: 'money', label: 'Most a tip costs' }] },
-    { title: 'Hold before a tip', icon: 'hourglass',
+    { title: 'Improvements: Hold before a tip', icon: 'hourglass',
       text: 'Off as shipped. On, a hitman can buy a tip only once they have held the contract for the '
         + 'minutes set. Before that the card and the refusal say how long is left; nothing is charged.',
       links: [{ key: 'Improvements.TipHoldFirst.Enabled', view: 'features', label: 'On or off' },
         { key: 'Improvements.TipHoldFirst.MinHeldMinutes', view: 'timers', label: 'Minutes held' }] },
-    { title: 'Informant second try', icon: 'user-secret',
+    { title: 'Improvements: Informant second try', icon: 'user-secret',
       text: 'Off as shipped. On, the target\'s look-ups after the first on a contract cost this share of '
         + 'the informant\'s price (100 is the same price). The chance stays the informant\'s own.',
       links: [{ key: 'Improvements.InformantSecondTry.Enabled', view: 'features', label: 'On or off' },
         { key: 'Improvements.InformantSecondTry.SecondTryCostPercent', view: 'money', label: 'Later price' },
         { key: 'Informant.RevealChancePercent', view: 'limits', label: 'The chance' }] },
-    { title: 'Tip safe zones', icon: 'shield',
+    { title: 'Improvements: Tip safe zones', icon: 'shield',
       text: 'Off as shipped. On, no tip is sold while the target stands inside one of the zones '
         + '(x, y, radius, name). The hitman is told only "Your informant can\'t place them right now.", '
         + 'never why or where, and nothing is charged.',
       links: [{ key: 'Improvements.TipSafeZones.Enabled', view: 'features', label: 'On or off' },
         { key: 'Improvements.TipSafeZones.Zones', view: 'targeting', label: 'The zones' }] },
-    { title: 'Go dark', icon: 'eye-slash',
+    { title: 'Improvements: Go dark', icon: 'eye-slash',
       text: 'Off as shipped. On, a target who was told of a tip can pay from On me to go dark. For the '
         + 'minutes set, every tip bought on them finds nothing: the hitman is told the informant could '
         + 'not find them and gets the price back in full. Nothing names anybody.',
@@ -5284,7 +5407,7 @@
   GROUP_INTRO['Improvements: Contract decay'] = 'An untaken contract\'s reward rises, or it ends sooner.';
 
   HELP.push(
-    { title: 'Improvements: placer record', icon: 'briefcase',
+    { title: 'Improvements: Placer record', icon: 'briefcase',
       text: 'Off as shipped. On, a board card shows how many contracts its placer placed, had paid out and '
         + 'cancelled over the last days set, not counting this one, and never who they are. A named placer\'s '
         + 'counts are exact. An anonymous placer shows nothing unless "anonymous placers too" is on, and then '
@@ -5293,7 +5416,7 @@
       links: [{ key: 'Improvements.PlacerRecord.Enabled', view: 'features', label: 'Placer record' },
         { key: 'Improvements.PlacerRecord.ShowForAnonymous', view: 'features', label: 'Anonymous placers' },
         { key: 'Improvements.PlacerRecord.LookbackDays', view: 'limits', label: 'Days counted' }] },
-    { title: 'Improvements: hitman heat', icon: 'fire',
+    { title: 'Improvements: Hitman heat', icon: 'fire',
       text: 'Off as shipped. On, a hitman gets heat for a completion on a whitelisted-job target, a witness '
         + 'report on a completion, and a police bulletin about their acceptance or tip on a whitelisted-job '
         + 'target. Heat fades after the hours set. At the threshold they are known: a contract they take warns '
@@ -5303,7 +5426,7 @@
         { key: 'Improvements.HitmanHeat.Threshold', view: 'limits', label: 'Heat and threshold' },
         { key: 'Improvements.HitmanHeat.DecayHours', view: 'timers', label: 'How long heat stays' },
         { key: 'Improvements.HitmanHeat.BulletinText', view: 'limits', label: 'The bulletin' }] },
-    { title: 'Improvements: tiered board', icon: 'layer-group',
+    { title: 'Improvements: Tiered board', icon: 'layer-group',
       text: 'Off as shipped, and only with Criminal progression on. Each tier is a name, the least reward and '
         + 'the least level. A hitman\'s level is 1, plus one for each so many contracts they completed. A card '
         + 'in a tier above their level shows locked, with the level needed, and the server refuses Accept on '
@@ -5312,7 +5435,7 @@
         { key: 'Improvements.Tiers.Tiers', view: 'limits', label: 'Tiers' },
         { key: 'Improvements.Tiers.CompletionsPerLevel', view: 'limits', label: 'Completions per level' },
         { key: 'Progression.Enabled', view: 'features', label: 'Criminal progression' }] },
-    { title: 'Improvements: contract decay', icon: 'hourglass-half',
+    { title: 'Improvements: Contract decay', icon: 'hourglass-half',
       text: 'Off as shipped. On, a contract nobody has taken changes every so many hours. "rise": its reward '
         + 'goes up by the percent set, charged to its placer through their own add-to-reward path, up to the '
         + 'most set in all; it waits while they are away, and stops for good if they cannot pay. "shorten": '
@@ -5326,7 +5449,7 @@
   /* ---------- the staff and economy improvements (Config.Improvements) ---------- */
 
   HELP.push(
-    { title: 'Proof items', icon: 'id-card',
+    { title: 'Improvements: Proof items', icon: 'id-card',
       text: 'Off as shipped. On, a hitman on a contract a kill completes can tap Hand over proof '
         + 'standing beside the person who placed it, carrying an item taken from the target (as '
         + 'shipped an id card whose citizenid names them). The server finds the item in the '
@@ -5337,18 +5460,18 @@
         { key: 'Improvements.ProofItems.Item', view: 'limits', label: 'The item' },
         { key: 'Improvements.ProofItems.MetadataKey', view: 'limits', label: 'The field naming the target' },
         { key: 'Improvements.ProofItems.HandoverRadius', view: 'limits', label: 'The distance' }] },
-    { title: 'Completion cooldown', icon: 'hourglass',
+    { title: 'Improvements: Completion cooldown', icon: 'hourglass',
       text: 'Off as shipped (0). Set, nobody may place a contract on somebody for this long after '
         + 'a contract on them was completed, or for the ordinary wait after any contract if that '
         + 'is longer. The placer is told how many hours are left, and nothing else.',
       links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', view: 'timers', label: 'The wait' }] },
-    { title: 'Weapon serial scrubbing', icon: 'gun',
+    { title: 'Improvements: Weapon serial scrubbing', icon: 'gun',
       text: 'Off as shipped. On, a weapon an anonymous placer put up reaches the hitman with a new '
         + 'random serial, so it cannot be traced back to them by its number. A refund to the placer '
         + 'is their own weapon unchanged. Each scrub is in the log; the original serial is shown '
         + 'only to staff with the identity ACE.',
       links: [{ key: 'Improvements.SerialScrub.Enabled', view: 'features', label: 'Scrubbing on or off' }] },
-    { title: 'Weekly stats to Discord', icon: 'chart-column',
+    { title: 'Improvements: Weekly stats to Discord', icon: 'chart-column',
       text: 'Off as shipped. On, once a week on the day and hour set, one post of the last seven '
         + 'days: contracts placed, contracts completed and money paid out to hitmen. Totals only, '
         + 'never a name, a citizen id or a handle for any hitman. To the webhook in '

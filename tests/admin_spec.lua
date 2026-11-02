@@ -1857,7 +1857,7 @@ describe('a pay on a line already queued for whom it names', function()
         local cmd = commands(s)
         Env.chat = {}
         truthy(pcall(cmd[Config.Admin.Commands.settle], 3, { line.id, 'pay' }))
-        truthy(said(3):find('Already queued for the client', 1, true), said(3))
+        truthy(said(3):find('Already queued for the placer', 1, true), said(3))
 
         Env.players[1], Env.byCitizen.CREATOR1 = creator, 1
         local before = money(1)

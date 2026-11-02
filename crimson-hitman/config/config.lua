@@ -4,8 +4,8 @@
     ║                lb-phone contract app for Qbox - Crimson RP                ║
     ╚═══════════════════════════════════════════════════════════════════════════╝
 
-    The one file to edit, in the admin panel's order (/hitmanadmin): Debug
-    and storage, Rules, Features, Staff and permissions, then Advanced. Each
+    The one file to edit, in the admin panel's order (/hitmanadmin): Debug and
+    storage, Rules, Features, Staff, Roleplay, Improvements, Advanced. Each
     setting is explained in README.md, "Configuration reference", under the
     same section title. The panel changes most of these live and keeps its
     changes across restarts, over the value in this file. Every player's
@@ -227,6 +227,57 @@ Config.Mugshot = {
 }
 
 -- ============================================================================
+--                               FEATURES: CORE
+-- ============================================================================
+-- The app itself, proposals, notices, messages and calls, progression and
+-- the alerts staff get.
+
+Config.App = {
+    DefaultInstalled = false,  -- true = on every eligible home screen; false = in the App Store
+}
+
+Config.Amendments = {
+    Enabled               = true,  -- placer and hitman may agree changes to a contract
+    ProposalExpirySeconds = 300,   -- a proposal lapses after this
+    MaxOpenPerContract    = 1,     -- proposals open at once
+    CancelCooldownSeconds = 300,   -- wait after cancelling before another
+}
+
+Config.Notifications = {
+    ParanoidAlert            = true,                     -- the target is told "You feel eyes on you"
+    ParanoidAlertJitter      = { min = 60, max = 600 },  -- seconds it waits, drawn at random
+    ParanoidCooldownMinutes  = 30,                       -- at most one such alert per target this long
+    MaxPerRecipientPerMinute = 6,                        -- notices one player may get a minute
+    MaxPerRecipientPerHour   = 40,                       -- and an hour
+    PushEnabled              = true,                     -- refresh an open app when its contract changes
+    PushMinIntervalSeconds   = 1,                        -- least time between two refreshes
+}
+
+Config.Relay = {
+    Enabled                    = true,  -- anonymous messages between the parties
+    MaxLength                  = 200,   -- characters a message (255 at most on mysql)
+    MaxMessagesPerThread       = 100,   -- newest messages a thread keeps
+    AllowMaskedCalls           = true,  -- calls with the caller's alias shown
+    CallExport                 = nil,   -- your own call export { resource, export }; nil = lb-phone's
+    RequireMaskingForAnonymous = true,  -- no call for an anonymous party the phone cannot mask
+}
+
+Config.Progression = {
+    Enabled             = true,              -- feed completions into the criminal progression
+    Resource            = 'sc-blackmarket',  -- the resource that keeps it
+    TrustPerElimination = 10,                -- trust per kill
+    TrustPerKidnapping  = 20,                -- trust per live handover
+}
+
+Config.AntiCollusion = {
+    BlockSameAccount = true,  -- one account may not be two parties to a contract
+}
+
+Config.Alerts = {
+    ToDiscord = true,  -- post each alert to the alert webhook (server.cfg)
+}
+
+-- ============================================================================
 --                            FEATURES: ANONYMITY
 -- ============================================================================
 -- Whether a contract may be placed or accepted anonymously, what that costs,
@@ -329,57 +380,6 @@ Config.Advisory = {
 }
 
 -- ============================================================================
---                          FEATURES: EVERYTHING ELSE
--- ============================================================================
--- The app itself, proposals, notices, messages and calls, progression and
--- the alerts staff get.
-
-Config.App = {
-    DefaultInstalled = false,  -- true = on every eligible home screen; false = in the App Store
-}
-
-Config.Amendments = {
-    Enabled               = true,  -- placer and hitman may agree changes to a contract
-    ProposalExpirySeconds = 300,   -- a proposal lapses after this
-    MaxOpenPerContract    = 1,     -- proposals open at once
-    CancelCooldownSeconds = 300,   -- wait after cancelling before another
-}
-
-Config.Notifications = {
-    ParanoidAlert            = true,                     -- the target is told "You feel eyes on you"
-    ParanoidAlertJitter      = { min = 60, max = 600 },  -- seconds it waits, drawn at random
-    ParanoidCooldownMinutes  = 30,                       -- at most one such alert per target this long
-    MaxPerRecipientPerMinute = 6,                        -- notices one player may get a minute
-    MaxPerRecipientPerHour   = 40,                       -- and an hour
-    PushEnabled              = true,                     -- refresh an open app when its contract changes
-    PushMinIntervalSeconds   = 1,                        -- least time between two refreshes
-}
-
-Config.Relay = {
-    Enabled                    = true,  -- anonymous messages between the parties
-    MaxLength                  = 200,   -- characters a message (255 at most on mysql)
-    MaxMessagesPerThread       = 100,   -- newest messages a thread keeps
-    AllowMaskedCalls           = true,  -- calls with the caller's alias shown
-    CallExport                 = nil,   -- your own call export { resource, export }; nil = lb-phone's
-    RequireMaskingForAnonymous = true,  -- no call for an anonymous party the phone cannot mask
-}
-
-Config.Progression = {
-    Enabled             = true,              -- feed completions into the criminal progression
-    Resource            = 'sc-blackmarket',  -- the resource that keeps it
-    TrustPerElimination = 10,                -- trust per kill
-    TrustPerKidnapping  = 20,                -- trust per live handover
-}
-
-Config.AntiCollusion = {
-    BlockSameAccount = true,  -- one account may not be two parties to a contract
-}
-
-Config.Alerts = {
-    ToDiscord = true,  -- post each alert to the alert webhook (server.cfg)
-}
-
--- ============================================================================
 --                           STAFF AND PERMISSIONS
 -- ============================================================================
 -- The staff tools: /hitmanadmin and the F8 commands. ACE names are never
@@ -418,104 +418,6 @@ Config.Staff = {
     AlertTargetPerDay     = 3,      -- alert past this many on one target a day; 0 = off
     AlertRefusalsPer10Min = 30,     -- alert past this many refusals to one player in 10 min; 0 = off
 }
--- ============================================================================
---                               IMPROVEMENTS
--- ============================================================================
--- Optional changes to existing features, each its own block and each off as
--- shipped (README, Optional improvements). All are changed from the panel.
-
-Config.Improvements = Config.Improvements or {}  -- the improvements, one block each
-
-Config.Improvements.TipWarningDelay = {
-    Enabled    = false,  -- the target's tip notice waits a random while
-    MinSeconds = 60,     -- shortest wait (s)
-    MaxSeconds = 300,    -- longest wait (s)
-}
-
-Config.Improvements.TipLimits = {
-    Enabled       = false,   -- the extra tip limits below apply
-    OnePerHitman  = true,    -- each hitman buys one tip per contract
-    PriceDoubling = false,   -- each further tip on a contract costs twice the last
-    MaxCost       = 200000,  -- the most a doubled tip costs ($)
-}
-
-Config.Improvements.TipHoldFirst = {
-    Enabled        = false,  -- a tip only once the contract was held a while
-    MinHeldMinutes = 10,     -- minutes the hitman must have held it
-}
-
-Config.Improvements.InformantSecondTry = {
-    Enabled              = false,  -- the target's later look-ups cost differently
-    SecondTryCostPercent = 50,     -- % of Informant.Cost after the first
-}
-
-Config.Improvements.TipSafeZones = {
-    Enabled = false,  -- no tip while the target is inside one of Zones
-    Zones   = {},     -- 'x, y, radius, name', e.g. '300, -590, 80, Pillbox'
-}
-
-Config.Improvements.GoDark = {
-    Enabled = false,   -- a tipped-off target may pay to go dark
-    Cost    = 50000,   -- price; 0 = free
-    Account = 'bank',  -- 'cash' | 'bank'
-    Minutes = 30,      -- tips bought on them this long find nothing
-}
-
-Config.Improvements.PlacerRecord = {
-    Enabled          = false,  -- hitmen see the placer's record on a board card
-    LookbackDays     = 30,     -- days of contracts the record counts
-    ShowForAnonymous = false,  -- an anonymous placer's record too, in rough bands
-}
-
-Config.Improvements.HitmanHeat = {
-    Enabled                 = false,  -- hitmen gather heat the city can feel
-    ProtectedCompletionHeat = 3,      -- heat for a completion on a whitelisted-job target
-    WitnessHeat             = 2,      -- heat for a witness report on their completion
-    AdvisoryHeat            = 1,      -- heat for a police bulletin on their acceptance
-    DecayHours              = 24,     -- hours each heat stays
-    Threshold               = 5,      -- heat at which a hitman counts as known
-    WarnTargetChancePercent = 50,     -- chance their next target is warned, 0-100
-    BulletinEveryMinutes    = 60,     -- least minutes between police bulletins; 0 = none
-    BulletinTitle           = 'Intelligence bulletin',  -- the bulletin's title
-    BulletinText            = 'A known contract killer is believed active in the city.',  -- its words
-}
-
-Config.Improvements.Tiers = {
-    Enabled             = false,  -- big rewards need a progression level
-    CompletionsPerLevel = 5,      -- completed contracts per level above 1
-    Tiers               = { -- 'name, least reward, least level'
-        'Professional, 50000, 2',
-        'Elite, 150000, 4',
-    },
-}
-
-Config.Improvements.ContractDecay = {
-    Enabled            = false,   -- an untaken contract changes as it waits
-    Mode               = 'rise',  -- 'rise': its reward goes up; 'shorten': it ends sooner
-    Percent            = 10,      -- how much each step changes it
-    Hours              = 1,       -- hours between steps
-    MaxIncreasePercent = 50,      -- most a reward rises in all ('rise')
-    Account            = 'bank',  -- where a rise is charged from: 'cash' or 'bank'
-}
-
-Config.Improvements.ProofItems = {
-    Enabled        = false,        -- a hitman may finish with an item taken from the target
-    Item           = 'id_card',    -- the ox_inventory item (qbx_idcard's id card as shipped)
-    MetadataKey    = 'citizenid',  -- the item's metadata field that must name the target
-    HandoverRadius = 3.0,          -- metres between the hitman and the placer at the handover
-}
-
-Config.Improvements.SerialScrub = {
-    Enabled = false,  -- a weapon from an anonymous placer reaches the hitman with a new serial
-}
-
-Config.Improvements.WeeklyStats = {
-    Enabled = false,     -- post the week's totals to Discord once a week (counts only)
-    Day     = 'sunday',  -- the day it is posted, server time
-    Hour    = 18,        -- the hour it is posted, server time (0-23)
-}
-
-Config.Limits.TargetCooldownAfterCompletionSeconds = 0  -- wait after a completed contract on them; 0 = off
 -- ============================================================================
 --                                 ROLEPLAY
 -- ============================================================================
@@ -661,6 +563,104 @@ Config.Roleplay.ReasonQuality = {
     LowEffort       = { 'rdm', 'idk', 'cuz', 'no reason', 'test', 'because' }, -- words to catch
     LowEffortAction = 'refuse',  -- 'refuse' | 'review' (placed, and queued for staff)
 }
+-- ============================================================================
+--                               IMPROVEMENTS
+-- ============================================================================
+-- Optional changes to existing features, each its own block and each off as
+-- shipped (README, Optional improvements). All are changed from the panel.
+
+Config.Improvements = Config.Improvements or {}  -- the improvements, one block each
+
+Config.Improvements.TipWarningDelay = {
+    Enabled    = false,  -- the target's tip notice waits a random while
+    MinSeconds = 60,     -- shortest wait (s)
+    MaxSeconds = 300,    -- longest wait (s)
+}
+
+Config.Improvements.TipLimits = {
+    Enabled       = false,   -- the extra tip limits below apply
+    OnePerHitman  = true,    -- each hitman buys one tip per contract
+    PriceDoubling = false,   -- each further tip on a contract costs twice the last
+    MaxCost       = 200000,  -- the most a doubled tip costs ($)
+}
+
+Config.Improvements.TipHoldFirst = {
+    Enabled        = false,  -- a tip only once the contract was held a while
+    MinHeldMinutes = 10,     -- minutes the hitman must have held it
+}
+
+Config.Improvements.InformantSecondTry = {
+    Enabled              = false,  -- the target's later look-ups cost differently
+    SecondTryCostPercent = 50,     -- % of Informant.Cost after the first
+}
+
+Config.Improvements.TipSafeZones = {
+    Enabled = false,  -- no tip while the target is inside one of Zones
+    Zones   = {},     -- 'x, y, radius, name', e.g. '300, -590, 80, Pillbox'
+}
+
+Config.Improvements.GoDark = {
+    Enabled = false,   -- a tipped-off target may pay to go dark
+    Cost    = 50000,   -- price; 0 = free
+    Account = 'bank',  -- 'cash' | 'bank'
+    Minutes = 30,      -- tips bought on them this long find nothing
+}
+
+Config.Improvements.PlacerRecord = {
+    Enabled          = false,  -- hitmen see the placer's record on a board card
+    LookbackDays     = 30,     -- days of contracts the record counts
+    ShowForAnonymous = false,  -- an anonymous placer's record too, in rough bands
+}
+
+Config.Improvements.HitmanHeat = {
+    Enabled                 = false,  -- hitmen gather heat the city can feel
+    ProtectedCompletionHeat = 3,      -- heat for a completion on a whitelisted-job target
+    WitnessHeat             = 2,      -- heat for a witness report on their completion
+    AdvisoryHeat            = 1,      -- heat for a police bulletin on their acceptance
+    DecayHours              = 24,     -- hours each heat stays
+    Threshold               = 5,      -- heat at which a hitman counts as known
+    WarnTargetChancePercent = 50,     -- chance their next target is warned, 0-100
+    BulletinEveryMinutes    = 60,     -- least minutes between police bulletins; 0 = none
+    BulletinTitle           = 'Intelligence bulletin',  -- the bulletin's title
+    BulletinText            = 'A known contract killer is believed active in the city.',  -- its words
+}
+
+Config.Improvements.Tiers = {
+    Enabled             = false,  -- big rewards need a progression level
+    CompletionsPerLevel = 5,      -- completed contracts per level above 1
+    Tiers               = { -- 'name, least reward, least level'
+        'Professional, 50000, 2',
+        'Elite, 150000, 4',
+    },
+}
+
+Config.Improvements.ContractDecay = {
+    Enabled            = false,   -- an untaken contract changes as it waits
+    Mode               = 'rise',  -- 'rise': its reward goes up; 'shorten': it ends sooner
+    Percent            = 10,      -- how much each step changes it
+    Hours              = 1,       -- hours between steps
+    MaxIncreasePercent = 50,      -- most a reward rises in all ('rise')
+    Account            = 'bank',  -- where a rise is charged from: 'cash' or 'bank'
+}
+
+Config.Improvements.ProofItems = {
+    Enabled        = false,        -- a hitman may finish with an item taken from the target
+    Item           = 'id_card',    -- the ox_inventory item (qbx_idcard's id card as shipped)
+    MetadataKey    = 'citizenid',  -- the item's metadata field that must name the target
+    HandoverRadius = 3.0,          -- metres between the hitman and the placer at the handover
+}
+
+Config.Improvements.SerialScrub = {
+    Enabled = false,  -- a weapon from an anonymous placer reaches the hitman with a new serial
+}
+
+Config.Improvements.WeeklyStats = {
+    Enabled = false,     -- post the week's totals to Discord once a week (counts only)
+    Day     = 'sunday',  -- the day it is posted, server time
+    Hour    = 18,        -- the hour it is posted, server time (0-23)
+}
+
+Config.Limits.TargetCooldownAfterCompletionSeconds = 0  -- wait after a completed contract on them; 0 = off
 -- ============================================================================
 --                          ADVANCED AND DEVELOPER
 -- ============================================================================

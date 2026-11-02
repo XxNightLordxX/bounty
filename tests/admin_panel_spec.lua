@@ -674,8 +674,8 @@ describe('the review queue in the admin panel', function()
             falsy(mentions(items, 'SER0042'), 'nor anything else of its metadata')
             for _, item in ipairs(items) do
                 if item.id == fee then
-                    eq(item.resolution.cid, 'the client', 'whom it paid, as the party\'s place')
-                    eq(item.known.error, 'credit to the client raised')
+                    eq(item.resolution.cid, 'the placer', 'whom it paid, as the party\'s place')
+                    eq(item.known.error, 'credit to the placer raised')
                     eq(item.items[1].item, 'WEAPON_PISTOL', 'what it records still shows')
                 end
             end
@@ -690,7 +690,7 @@ describe('the review queue in the admin panel', function()
         for _, line in ipairs(Env.chat) do said[#said + 1] = line.text end
         truthy(#said > 0, 'the command lists them')
         falsy(table.concat(said, '\n'):find('CREATOR1', 1, true), table.concat(said, '\n'))
-        truthy(table.concat(said, '\n'):find('to the client', 1, true), table.concat(said, '\n'))
+        truthy(table.concat(said, '\n'):find('to the placer', 1, true), table.concat(said, '\n'))
     end)
 
     it('settles a review payout left for staff on a contract that was never stored', function()
@@ -860,7 +860,7 @@ describe('errors and notes, to staff who may not unmask', function()
         for _, row in ipairs(timeline) do
             if row.action == 'review_resolved' then note = row.detail.note end
         end
-        eq(note, 'refunded the client (Anonymous) by hand; told Anonymous', 'the note, scrubbed')
+        eq(note, 'refunded the placer (Anonymous) by hand; told Anonymous', 'the note, scrubbed')
         truthy(mentions(ask(8, 'contract', { id = c.id }).data.timeline, 'Vic Marlowe'),
             'crimson.identity reads it as written')
     end)
@@ -901,7 +901,7 @@ describe('the audit log in the admin panel', function()
         end
         local row
         for _, r in ipairs(rows) do if r.action == 'test_row' then row = r end end
-        eq(row.actor, 'the client', 'a role instead')
+        eq(row.actor, 'the placer', 'a role instead')
         eq(row.detail.from, 'active', 'and what is not a citizen id is left alone')
 
         -- Without it, only the rows they acted in under their own name:

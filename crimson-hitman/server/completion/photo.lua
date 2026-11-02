@@ -552,7 +552,7 @@ local function afterPaid(actor, contractId, fallback, capture, result)
     local told, tellErr = pcall(Notify.contractCompleted, contract, actor,
         { photo = handle }, result)
     if not told then
-        Log.debug(('telling the client contract %s was fulfilled raised: %s')
+        Log.debug(('telling the placer contract %s was fulfilled raised: %s')
             :format(tostring(contractId), Util.dbError(tellErr)))
     end
 end

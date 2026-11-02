@@ -86,11 +86,6 @@ function Summary.counts(now)
     return out
 end
 
-local function money(n)
-    local text = tostring(math.floor(n))
-    local formatted = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
-    return '$' .. formatted:gsub('^,', '')
-end
 
 --- The post, from the counts: one line each, nothing else.
 ---@param counts table
@@ -106,7 +101,8 @@ function Summary.text(counts, day)
         ('- Contracts completed: %d'):format(counts.completed),
         ('- Contracts refunded (cancelled, expired or voided): %d'):format(counts.refunded),
         ('- Money in escrow: %s (cash %s, bank %s, dirty %s), and %d goods line(s)')
-            :format(money(total), money(e.cash), money(e.bank), money(e.dirty), e.goods),
+            :format(Util.dollars(total), Util.dollars(e.cash), Util.dollars(e.bank), Util.dollars(e.dirty),
+                e.goods),
         ('- Open review items: %d'):format(counts.reviews),
         ('- Frozen players: %d'):format(counts.frozen),
         counts.suspended and ('- Suspended players: %d'):format(counts.suspended)

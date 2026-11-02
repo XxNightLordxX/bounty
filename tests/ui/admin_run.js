@@ -2314,7 +2314,7 @@ async function main() {
       permissions: PERMISSIONS.map(function (p) { return Object.assign({}, p, { held: p.ace === 'crimson.admin' }); }) }));
     await settled();
     it('without the developer ACE the section is Permissions alone', function () {
-      has(app.text(app.byId('grp-developer')), 'Permissions');
+      has(app.text(app.byId('grp-developer')), 'Permissions & history');
       lacks(app.text(app.byId('grp-developer')), 'Developer');
     });
     app.click(app.byId('grp-developer'));
@@ -4408,7 +4408,7 @@ async function main() {
     const help = app.window.CH_ADMIN_HELP;
     it('How it works has a card for each improvement, linking to its settings', function () {
       ['Proof items', 'Completion cooldown', 'Weapon serial scrubbing', 'Weekly stats to Discord'].forEach(function (t) {
-        const found = help.filter(function (c) { return c.title === t; });
+        const found = help.filter(function (c) { return c.title === 'Improvements: ' + t; });
         eq(found.length, 1, 'a card on ' + t);
         truthy(found[0].links.length >= 1, t + ' links to its settings');
         truthy(/off as shipped/i.test(found[0].text), t + ' says it ships off');
@@ -4576,6 +4576,105 @@ async function main() {
       eq(subjects, ['contract:ct00000001:target']);
     });
     clean(app, 'anonymous parties');
+  })();
+
+  /* ---- final pass: the Features order, units, group headers, How it works ---- */
+  await (async function () {
+    const view = settingsView();
+    function sw(key, group) {
+      return { key: key, category: 'features', group: group, label: key.split('.').slice(-2).join(' '),
+        kind: 'switch', live: true, value: false, default: false, shipped: false, hasShipped: true, source: 'config' };
+    }
+    view.data.features.push(sw('Improvements.GoDark.Enabled', 'Improvements: Go dark'));
+    view.data.features.push(sw('Roleplay.CityNews.Enabled', 'Roleplay: City news'));
+    view.data.features.push(sw('Staff.AppPaused', 'Staff tools'));
+    view.data.features.push(sw('Advisory.Enabled', 'Law enforcement advisory'));
+    view.data.features.push(sw('InformantsEnabled', 'Informant'));
+    view.data.features.push(sw('Anonymity.AllowAnonymousCreate', 'Anonymity'));
+    view.data.limits.push({ key: 'Informant.Cost', category: 'rules-rewards', group: 'Informant', money: 'Informant prices',
+      label: 'Price of a look-up', kind: 'number', integer: true, min: 0, max: 1000000, live: true,
+      value: 25000, default: 25000, source: 'config' });
+    view.data.limits.push({ key: 'Roleplay.WitnessHeat.WitnessRadius', category: 'rules-limits',
+      group: 'Roleplay: Witness heat', label: 'How far a bystander sees it from', kind: 'number', min: 1, max: 500,
+      live: true, value: 60, default: 60, source: 'config' });
+    const app = boot(standardServer({ settings: view }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('features');
+    await settled();
+    const rank = app.window.CH_ADMIN_FEATURE_RANK;
+    it('Features lists the core first, then Anonymity, Informants, Advisory, Staff tools, Roleplay, Improvements', function () {
+      const groups = app.$$('.st-group').map(function (g) { return g.getAttribute('data-group'); });
+      const order = ['anonymity', 'informant', 'law enforcement advisory', 'staff tools', 'roleplay: city news',
+        'improvements: go dark'];
+      let last = -1;
+      order.forEach(function (g) {
+        const at = groups.indexOf(g);
+        truthy(at > last, g + ' after the group before it: ' + groups.join(' | '));
+        last = at;
+      });
+      truthy(groups.indexOf('buyouts') !== -1 && groups.indexOf('buyouts') < groups.indexOf('anonymity'),
+        'a core group (Buyouts) before Anonymity');
+      eq(rank('Access'), 0);
+      truthy(rank('Anonymity') < rank('Informant tip') && rank('Informant tip') < rank('Law enforcement advisory')
+        && rank('Law enforcement advisory') < rank('Staff tools') && rank('Staff tools') < rank('Roleplay: X')
+        && rank('Roleplay: X') < rank('Improvements: Y'), 'the areas in order');
+    });
+    it('every group drawn says in one line what it does', function () {
+      app.$$('.st-group').forEach(function (g) {
+        truthy(g.querySelector('.st-group-about'), g.getAttribute('data-group') + ' has no line saying what it does');
+      });
+    });
+    app.nav('money');
+    await settled();
+    it('every group in Rules says what it does too', function () {
+      truthy(app.$$('.st-group').length > 0, 'groups');
+      app.$$('.st-group').forEach(function (g) {
+        truthy(g.querySelector('.st-group-about'), g.getAttribute('data-group') + ' has no line saying what it does');
+      });
+    });
+    it('every number shows its unit: dollars, seconds, metres, percent', function () {
+      has(app.text(app.byId('st-row-Informant.Cost')), 'Now: $25,000');
+      const unit = app.window.CH_ADMIN_UNIT_OF;
+      eq(unit({ key: 'Informant.Cost' }), '$');
+      eq(unit({ key: 'Sources.cash.max' }), '$');
+      eq(unit({ key: 'Limits.SlotCooldownSeconds' }), ' s');
+      eq(unit({ key: 'PendingEscrow.LoginRetryDelayMs' }), ' ms');
+      eq(unit({ key: 'Restart.MaxHoldMinutes' }), ' min');
+      eq(unit({ key: 'Improvements.HitmanHeat.DecayHours' }), ' h');
+      eq(unit({ key: 'Audit.ContractRetentionDays' }), ' d');
+      eq(unit({ key: 'Roleplay.WitnessHeat.WitnessRadius' }), ' m');
+      eq(unit({ key: 'Improvements.ContractDecay.Percent' }), '%');
+      eq(unit({ key: 'Bailout.MaxMultiplier' }), ' \u00d7');
+      eq(unit({ key: 'Limits.MaxActiveContractsPerCreator' }), '', 'a count has none');
+    });
+    app.nav('help');
+    await settled();
+    it('How it works: every optional feature has a card, titled by its area, in config.lua\'s order', function () {
+      const ordered = app.window.CH_ADMIN_HELP_ORDERED();
+      eq(app.$$('.help-card').length, ordered.length);
+      const titles = ordered.map(function (c) { return c.title; });
+      const rp = titles.filter(function (t) { return /^Roleplay: /.test(t); });
+      const imp = titles.filter(function (t) { return /^Improvements: /.test(t); });
+      eq(rp.length, 12, 'twelve roleplay cards: ' + rp.join(', '));
+      eq(imp.length, 14, 'thirteen improvements and the completion cooldown: ' + imp.join(', '));
+      truthy(titles.indexOf(rp[0]) > titles.indexOf('Moderators'), 'Roleplay after the staff tools');
+      truthy(titles.indexOf(imp[0]) > titles.indexOf(rp[rp.length - 1]), 'Improvements after Roleplay');
+      truthy(titles.indexOf('Anonymity') < titles.indexOf('The informants')
+        && titles.indexOf('The informants') < titles.indexOf('Police advisories')
+        && titles.indexOf('Police advisories') < titles.indexOf('The staff freeze'), 'the core areas in order');
+      eq(rp[0], 'Roleplay: Witness heat', 'config.lua\'s first roleplay block first');
+      eq(imp[0], 'Improvements: Tip warning delay', 'and its first improvement');
+    });
+    app.nav('actions');
+    await settled();
+    it('Actions offers the hardest one to find: undoing a setting change, in History', function () {
+      has(app.main(), 'Undo a setting change');
+      truthy(app.$$('button[data-act="section"]').some(function (b) {
+        return b.getAttribute('data-section') === 'history';
+      }), 'a button to History');
+    });
+    clean(app, 'final pass panel');
   })();
 
   console.log('');

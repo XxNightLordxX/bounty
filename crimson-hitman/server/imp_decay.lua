@@ -81,11 +81,6 @@ local function rowFor(contract, now, hours)
     return row
 end
 
-local function money(n)
-    local s = tostring(math.floor(n))
-    local out = s:reverse():gsub('(%d%d%d)', '%1,'):reverse()
-    return '$' .. out:gsub('^,', '')
-end
 
 --- Stop the rise on a contract for good, and tell its placer why.
 local function stop(row, contract, why, text)
@@ -124,7 +119,7 @@ local function rise(cfg, row, contract, now)
     if ran and ok then
         Notify.toCitizen(contract.creator_cid, 'Contract reward',
             ('Nobody has taken your contract yet, so its reward rose by %s, taken from your %s.')
-                :format(money(amount), account))
+                :format(Util.dollars(amount), account))
         Audit.financial('imp_decay_rose', contract.creator_cid, contract.id,
             { amount = amount, account = account, step = row.steps, added = row.added })
         return
@@ -143,7 +138,7 @@ local function rise(cfg, row, contract, now)
     if err == CH.ERR.BAD_STATE or err == CH.ERR.NOT_FOUND then return write(row) end
     stop(row, contract, tostring(err),
         ('Your untaken contract\'s reward could not rise by %s from your %s, so it will not rise '
-            .. 'any more.'):format(money(amount), account))
+            .. 'any more.'):format(Util.dollars(amount), account))
 end
 
 --- One 'shorten' step on one contract.

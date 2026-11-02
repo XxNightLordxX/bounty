@@ -82,29 +82,43 @@ local RESTART = 'Read once at start: kept now, and in force after the next resta
 --- all the same. [key] = { why, secret, convar }
 local EDIT_IN_CONFIG = ' Edit it in config.lua.'
 local DENY = {
-    ['Database.Mode'] = { why = 'Changing it needs the money in the old mode settled and a restart '
+    ['Database.Mode'] = { label = 'Storage mode',
+        why = 'Changing it needs the money in the old mode settled and a restart '
         .. '(README, Changing storage mode).' .. EDIT_IN_CONFIG },
-    ['Database.Json.Directory'] = { why = 'Where the json store lives on disk: moved from here, the '
+    ['Database.Json.Directory'] = { label = 'json store folder',
+        why = 'Where the json store lives on disk: moved from here, the '
         .. 'next start would open an empty store.' .. EDIT_IN_CONFIG },
-    ['Admin.Ace'] = { why = 'Who may use this panel. An ACE renamed from here could grant or lock '
+    ['Admin.Ace'] = { label = 'Staff panel ACE',
+        why = 'Who may use this panel. An ACE renamed from here could grant or lock '
         .. 'out staff.' .. EDIT_IN_CONFIG },
-    ['Admin.IdentityAce'] = { why = 'Who may unmask anonymous parties. An ACE renamed from here could '
+    ['Admin.IdentityAce'] = { label = 'Identity ACE (unmask anonymous parties)',
+        why = 'Who may unmask anonymous parties. An ACE renamed from here could '
         .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
-    ['Admin.DeveloperAce'] = { why = 'Who sees the Developer section. An ACE renamed from here could '
+    ['Admin.DeveloperAce'] = { label = 'Developer section ACE',
+        why = 'Who sees the Developer section. An ACE renamed from here could '
         .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
-    ['Admin.ModeratorAce'] = { why = 'Who may freeze, suspend, protect and void from this panel. An ACE '
+    ['Admin.ModeratorAce'] = { label = 'Moderator ACE',
+        why = 'Who may freeze, suspend, protect and void from this panel. An ACE '
         .. 'renamed from here could grant it to anyone.' .. EDIT_IN_CONFIG },
-    ['Admin.ExtraAces'] = { why = 'ACEs that may read the staff tools. Changed from here, staff could '
+    ['Admin.ExtraAces'] = { label = 'Extra ACEs that may read the staff tools',
+        why = 'ACEs that may read the staff tools. Changed from here, staff could '
         .. 'grant themselves access.' .. EDIT_IN_CONFIG },
-    ['Reason.PatternDenylist'] = { why = 'Lua patterns: a malformed one raises in every reason check.'
+    ['Reason.PatternDenylist'] = { label = 'Patterns a reason may not contain',
+        why = 'Lua patterns: a malformed one raises in every reason check.'
         .. EDIT_IN_CONFIG },
-    ['Completion.DeathStateProviders'] = { why = 'Exports of other resources, called by name.'
+    ['Completion.DeathStateProviders'] = { label = 'Death-state exports',
+        why = 'Exports of other resources, called by name.'
         .. EDIT_IN_CONFIG },
-    ['Completion.PhotoPublicUrl'] = { why = 'The address photos are served from.' .. EDIT_IN_CONFIG },
-    ['Completion.KeptPhotoDays'] = { why = 'nil keeps a saved photo until deleted.' .. EDIT_IN_CONFIG },
-    ['Kidnap.RestraintProvider'] = { why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
-    ['Immunity.PlaytimeProvider'] = { why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
-    ['Relay.CallExport'] = { why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    ['Completion.PhotoPublicUrl'] = { label = 'Address photos are served from',
+        why = 'The address photos are served from.' .. EDIT_IN_CONFIG },
+    ['Completion.KeptPhotoDays'] = { label = 'Days a saved photo is kept',
+        why = 'nil keeps a saved photo until deleted.' .. EDIT_IN_CONFIG },
+    ['Kidnap.RestraintProvider'] = { label = 'Restraint export',
+        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    ['Immunity.PlaytimeProvider'] = { label = 'Playtime export',
+        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    ['Relay.CallExport'] = { label = 'Phone call export',
+        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['convar:crimson_hitman_webhook'] = { secret = true, convar = 'crimson_hitman_webhook',
         why = 'The Discord webhook for the log: a secret, set in server.cfg with set (never setr).' },
     ['convar:crimson_hitman_alert_webhook'] = { secret = true, convar = 'crimson_hitman_alert_webhook',
@@ -269,8 +283,8 @@ local CATALOGUE = {
       inflight = AT_USE },
     { key = 'Ledger.StorePhotos', section = 'features', category = 'features', group = 'Completion', kind = 'switch',
       needs = 'Completion.KillPhotos',
-      label = 'Keep kill photos for the client',
-      about = 'The client who placed the contract can open its kill photo once.',
+      label = 'Keep kill photos for the placer',
+      about = 'The placer who placed the contract can open its kill photo once.',
       inflight = 'Photos already kept stay openable; kills verified while it is off keep none.' },
 
     { key = 'Kidnap.RequireConscious', section = 'features', group = 'Handovers', kind = 'switch',
@@ -373,7 +387,7 @@ local CATALOGUE = {
       about = 'A bulletin when a contract on an officer is cancelled or voided with a refund.',
       inflight = AT_USE },
     { key = 'Advisory.WarnCreator', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'Warn the client', about = 'Before escrow is taken.', inflight = AT_USE },
+      kind = 'switch', label = 'Warn the placer', about = 'Before escrow is taken.', inflight = AT_USE },
     { key = 'Advisory.WarnHitman', section = 'features', category = 'features', group = 'Law enforcement advisory',
       kind = 'switch', label = 'Warn the hitman', about = 'Before they accept.', inflight = AT_USE },
     { key = 'Advisory.FlagListing', section = 'features', category = 'features', group = 'Law enforcement advisory',
@@ -918,7 +932,7 @@ local CATALOGUE = {
       inflight = 'Applies to the next kill; one already waiting keeps its time.' },
     { key = 'Completion.PhotoOpenSeconds', section = 'limits', category = 'rules-timers',
       group = 'Completion', kind = 'number', integer = true, min = 10, max = 86400,
-      label = 'Time the client may view a photo (s)', about = 'After this the opened photo is deleted.',
+      label = 'Time the placer may view a photo (s)', about = 'After this the opened photo is deleted.',
       inflight = AT_USE },
     { key = 'Kidnap.RearmCooldownSeconds', section = 'limits', category = 'rules-timers',
       group = 'Handovers', kind = 'number', integer = true, min = 0, max = 3600,
@@ -1185,7 +1199,7 @@ local BUCKET_ABOUT = {
         .. 'threads and the whitelisted-job view, and the buyout command\'s list. Opening the app '
         .. 'is four of these at once, and every refresh two more.',
     search = 'Browsing and searching names on the Place form.',
-    wallet = 'Reading what the client carries, once per Place form.',
+    wallet = 'Reading what the placer carries, once per Place form.',
     create = 'Placing a contract.',
     accept = 'Accepting, abandoning and cancelling a contract, and arming a handover.',
     amend = 'Proposals and the answers to them, revising, improving and adding to a reward, and '
@@ -1397,12 +1411,12 @@ local RP_PROTECTION, RP_HIT = 'Roleplay: Bodyguards', 'Roleplay: Hit on the hitm
 for _, entry in ipairs({
     { key = 'Roleplay.ProofOfIntent.Enabled', section = 'features', category = 'features', group = RP_INTENT,
       kind = 'switch', label = 'Proof of intent before a payout',
-      about = 'A payout waits until the hitman sent enough messages to the client in the thread, or the '
+      about = 'A payout waits until the hitman sent enough messages to the placer in the thread, or the '
           .. 'contract had a live handover or a meeting point; released anyway after the hold time.',
       inflight = 'Read at every give. Turned off, every held payout is handed over at its next try.' },
     { key = 'Roleplay.ProofOfIntent.MinMessages', section = 'limits', category = 'rules-limits', group = RP_INTENT,
       kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Messages to the client that count as intent (0 = none needed)', inflight = AT_USE },
+      label = 'Messages to the placer that count as intent (0 = none needed)', inflight = AT_USE },
     { key = 'Roleplay.ProofOfIntent.HoldMaxMinutes', section = 'limits', category = 'rules-timers', group = RP_INTENT,
       kind = 'number', integer = true, min = 1, max = 10080,
       label = 'Longest a payout is held for proof of intent (min)',
@@ -1834,12 +1848,8 @@ Settings.CATALOGUE = CATALOGUE
 -- Reading and writing a key
 --------------------------------------------------------------------------
 
-local function copyOf(value)
-    if type(value) ~= 'table' then return value end
-    local out = {}
-    for k, v in pairs(value) do out[k] = copyOf(v) end
-    return out
-end
+--- A deep copy (Util.copy, the one shared copy).
+local copyOf = Util.copy
 
 local function same(a, b)
     if type(a) ~= type(b) then return false end
@@ -2709,7 +2719,8 @@ function Settings.view()
             if type(value) == 'table' then value = json and json.encode(value) or '(a table)' end
         end
         out.readonly[#out.readonly + 1] = {
-            key = key, group = 'Edit in config.lua', label = rule.secret and ('Secret: ' .. rule.convar) or key,
+            key = key, group = 'Edit in config.lua',
+            label = rule.secret and ('Secret: ' .. rule.convar) or rule.label or key,
             kind = 'text', category = 'developer', readonly = rule.why, denied = true,
             secret = rule.secret or nil, value = value, source = 'config',
         }

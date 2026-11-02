@@ -191,7 +191,7 @@ function serverStub() {
   own[1].placerInformantFound = [{ label: 'Operative #2', text: 'Nel Vey' }];
   // Roleplay (rpC): a payout held for proof of intent on the most crowded
   // hitman card, measured at every width with the rest.
-  taken[0].intentHold = { missing: '3 more messages to the client in the contract thread, a live '
+  taken[0].intentHold = { missing: '3 more messages to the person who placed it in the contract thread, a live '
     + 'handover, or a meeting point set', minutesLeft: 45 };
   // Improvements (impB): the placer's record on board cards (counts, and an
   // anonymous placer's bands), a card locked above the viewer's tier, and
@@ -224,7 +224,7 @@ function serverStub() {
       mine: [{ job: 'prot00000002', reward: 4000,
                targetName: 'Maximilian Featherstonehaugh-Cholmondeley', pinSet: true }] } },
     mine: { ok: true, data: { created: own, accepted: taken,
-      intentHeld: [{ ref: 'ct00000099', missing: '3 more messages to the client in the contract '
+      intentHeld: [{ ref: 'ct00000099', missing: '3 more messages to the person who placed it in the contract '
         + 'thread, a live handover, or a meeting point set', minutesLeft: 45 }], onMe: [{
       // A price on this player's head. The buyout is the only move the
       // target of a contract has, and it was drawn as an outline no louder

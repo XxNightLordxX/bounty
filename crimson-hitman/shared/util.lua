@@ -601,6 +601,17 @@ function Util.copy(tbl)
     return out
 end
 
+--- A whole number of dollars as players read it: '$1,234,567'. The one
+--- formatter the server's own notices and posts use (contract decay, the
+--- weekly stats, the daily summary each had a copy of it).
+---@param n number
+---@return string
+function Util.dollars(n)
+    local text = tostring(math.floor(tonumber(n) or 0))
+    local formatted = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
+    return '$' .. formatted:gsub('^,', ''):gsub('^%-,', '-')
+end
+
 --- Sum the money value of a set of escrow lines, per source.
 ---@param lines table[] escrow lines
 ---@param portion string|nil restrict to a portion, or nil for all

@@ -124,11 +124,6 @@ function Weekly.totals(now)
     return out
 end
 
-local function money(n)
-    local text = tostring(math.floor(n))
-    local formatted = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
-    return '$' .. formatted:gsub('^,', '')
-end
 
 --- The post, from the totals: one line each, nothing else.
 ---@param totals table
@@ -140,7 +135,7 @@ function Weekly.text(totals, day)
             :format(day // 10000, (day // 100) % 100, day % 100),
         ('- Contracts placed: %d'):format(totals.placed),
         ('- Contracts completed: %d'):format(totals.completed),
-        ('- Paid out to hitmen: %s'):format(money(totals.paid)),
+        ('- Paid out to hitmen: %s'):format(Util.dollars(totals.paid)),
     }, '\n')
 end
 

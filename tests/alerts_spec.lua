@@ -520,7 +520,7 @@ describe('the Alerts section', function()
         for _, needle in ipairs({ 'CREATOR1', 'Vic Marlowe', 'license:aaa', 'owes' }) do
             falsy(seen:find(needle, 1, true), needle .. ' reaches staff without crimson.identity: ' .. seen)
         end
-        truthy(seen:find('the client', 1, true), 'the party by their place: ' .. seen)
+        truthy(seen:find('the placer', 1, true), 'the party by their place: ' .. seen)
         truthy(seen:find('Anonymous', 1, true), 'the anonymous name as Anonymous: ' .. seen)
         truthy(seen:find('Deadlock found', 1, true), 'the server\'s words kept: ' .. seen)
         truthy(seen:find(c.id, 1, true), 'and the contract: ' .. seen)
@@ -698,7 +698,7 @@ describe('posting to Discord', function()
                                   'http', '@everyone' }) do
             falsy(body:find(needle, 1, true), needle .. ' left the server: ' .. body)
         end
-        truthy(body:find('the target', 1, true) and body:find('the client', 1, true), body)
+        truthy(body:find('the target', 1, true) and body:find('the placer', 1, true), body)
 
         local reply = ask(8, 'alerts', {})
         for _, text in ipairs(strings(reply)) do

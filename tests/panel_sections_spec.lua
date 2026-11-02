@@ -399,3 +399,108 @@ describe('the Developer section', function()
         truthy(by['crimson.identity'].grant:find('not group.admin', 1, true), 'unmasking is for fewer people')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Final pass: every group says what it does, every optional feature has a
+-- How it works card linked to its switch, plain labels, one shared helper
+--------------------------------------------------------------------------
+
+local function adminSource()
+    local handle = assert(io.open('crimson-hitman/ui/admin.js', 'r'))
+    local text = handle:read('a')
+    handle:close()
+    return text
+end
+
+describe('the panel, as an owner reads it', function()
+    it('says in one line what every group does, in every section', function()
+        local s = stack()
+        local src = adminSource()
+        local intro = {}
+        for name in src:gmatch("GROUP_INTRO%['([^']+)'%]") do intro[name] = true end
+        local block = src:match('var GROUP_INTRO = (%b{})') or ''
+        for name in block:gmatch("\n%s+'([^'\n]+)':") do intro[name] = true end
+        local v = s.settings.view()
+        local missing, seen = {}, {}
+        for _, list in ipairs({ 'features', 'limits', 'readonly' }) do
+            for _, e in ipairs(v[list]) do
+                for _, g in ipairs({ e.group or 'Other', e.money }) do
+                    if g and not seen[g] then
+                        seen[g] = true
+                        if not intro[g] then missing[#missing + 1] = g end
+                    end
+                end
+            end
+        end
+        table.sort(missing)
+        truthy(next(seen) ~= nil, 'groups read')
+        eq(#missing, 0, 'groups with no line saying what they do: ' .. table.concat(missing, ', '))
+    end)
+
+    it('has a How it works card for every optional feature, linked to its switch', function()
+        local src = adminSource()
+        local linked = {}
+        for key in src:gmatch("{ key: '([%w_.]+)', view: '[%w]+'") do linked[key] = true end
+        local missing = {}
+        for _, root in ipairs({ 'Roleplay', 'Improvements' }) do
+            for name, block in pairs(Config[root]) do
+                if type(block) == 'table' and block.Enabled ~= nil and not linked[root .. '.' .. name .. '.Enabled'] then
+                    missing[#missing + 1] = root .. '.' .. name
+                end
+            end
+        end
+        truthy(linked['Limits.TargetCooldownAfterCompletionSeconds'], 'the completion cooldown has its card')
+        table.sort(missing)
+        eq(#missing, 0, 'optional features with no card linked to their switch: ' .. table.concat(missing, ', '))
+    end)
+
+    it('labels every row in plain words, never a config key', function()
+        local s = stack()
+        local v = s.settings.view()
+        local keys = {}
+        for _, list in ipairs({ 'features', 'limits', 'readonly' }) do
+            for _, e in ipairs(v[list]) do
+                local label = tostring(e.label or '')
+                if label == '' or label == e.key or label:match('^%u%w+%.%u[%w.]+$') then
+                    keys[#keys + 1] = e.key
+                end
+            end
+        end
+        eq(#keys, 0, 'rows labelled with a key: ' .. table.concat(keys, ', '))
+    end)
+
+    it('lists no setting twice', function()
+        local s = stack()
+        local v = s.settings.view()
+        local seen, twice = {}, {}
+        for _, list in ipairs({ 'features', 'limits', 'readonly' }) do
+            for _, e in ipairs(v[list]) do
+                if seen[e.key] then twice[#twice + 1] = e.key end
+                seen[e.key] = true
+            end
+        end
+        eq(#twice, 0, 'settings shown twice: ' .. table.concat(twice, ', '))
+    end)
+end)
+
+describe('the shared helpers the optional features use', function()
+    local Util = require('crimson-hitman.shared.util')
+
+    it('formats dollars once, for the decay notice, the weekly stats and the daily summary', function()
+        eq(Util.dollars(0), '$0')
+        eq(Util.dollars(999), '$999')
+        eq(Util.dollars(1000), '$1,000')
+        eq(Util.dollars(1234567.9), '$1,234,567')
+        eq(Util.dollars(-100), '$-100')
+        eq(Util.dollars(nil), '$0')
+    end)
+
+    it('copies deeply, as each module\'s own copy did', function()
+        local a = { x = { y = { 1, 2 } }, z = 'q' }
+        local b = Util.copy(a)
+        b.x.y[1] = 9
+        eq(a.x.y[1], 1, 'a nested table is not shared')
+        eq(b.z, 'q')
+        eq(Util.copy(5), 5)
+    end)
+end)

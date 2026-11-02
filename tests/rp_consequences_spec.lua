@@ -240,7 +240,7 @@ describe('EMS before re-listing', function()
 
     it('says so to the placer in the app\'s words', function()
         local app = read_file('crimson-hitman/ui/app.js')
-        truthy(app:find("target_recovering: 'They are still recovering.'", 1, true))
+        truthy(app:find("target_recovering: 'They are still recovering.", 1, true))
     end)
 
     it('lets them be listed once they have been up for TreatedMinutes', function()

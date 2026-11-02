@@ -2236,7 +2236,7 @@ local function placeLate(item, copy)
         Escrow.release(id, copy.creator_cid, nil, 'contract_write_failed')
         Audit.financial('contract_never_placed', copy.creator_cid, id,
             { review = item.id, error = Util.dbError(err) })
-        return 'done', 'the database refused the contract, so its escrow was handed back to the client'
+        return 'done', 'the database refused the contract, so its escrow was handed back to the placer'
     end
 
     local note
@@ -2254,7 +2254,7 @@ local function placeLate(item, copy)
             ('Your contract on %s, placed while the server\'s records were not answering, is on '
                 .. 'the board now. You can withdraw it from Mine while nobody has taken it.')
                 :format(tostring(found.target_name or 'your target')), { bypassBudget = true })
-        note = 'placed late: the contract is on the board with its escrow, and the client was told'
+        note = 'placed late: the contract is on the board with its escrow, and the placer was told'
     else
         -- It landed and has been closed since: its ending settled it.
         Audit.action('contract_created', copy.creator_cid, id,

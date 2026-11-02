@@ -19,6 +19,8 @@
 --- (main.lua's validateConfig, which the admin panel also runs against a
 --- copy with a change in it), the wiring, and the one tick job.
 
+local Util = CrimsonBoot.requireShared('util')
+
 local ImpBoard = {}
 
 local Record = CrimsonBoot.require('server.imp_placer_record')
@@ -106,12 +108,8 @@ local function fits(rule, value)
     return false
 end
 
-local function copyOf(value)
-    if type(value) ~= 'table' then return value end
-    local out = {}
-    for k, v in pairs(value) do out[k] = copyOf(v) end
-    return out
-end
+--- A deep copy (Util.copy, the one shared copy).
+local copyOf = Util.copy
 
 --- The start-up checks for these four blocks, against the global Config. A
 --- block or a setting missing is filled from defaults.lua; one that breaks

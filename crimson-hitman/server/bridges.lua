@@ -1320,7 +1320,7 @@ function Bridges.installCommands(modules)
                     describeLine(line)))
             end
             reply(src, ('The server finishes each ending as a restart would: a stake by why the contract '
-                .. 'ended, the rest back to the client. Nothing for /%s to do.'):format(names.settle))
+                .. 'ended, the rest back to the placer. Nothing for /%s to do.'):format(names.settle))
         end
 
         -- Lines left for staff (Escrow.parked): a give that kept raising with

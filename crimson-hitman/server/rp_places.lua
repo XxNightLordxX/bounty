@@ -24,12 +24,8 @@ Places.NPCS = {
     informant = { block = 'InformantNpc', salt = 1 },
 }
 
-local function copyOf(value)
-    if type(value) ~= 'table' then return value end
-    local out = {}
-    for k, v in pairs(value) do out[k] = copyOf(v) end
-    return out
-end
+--- A deep copy (Util.copy, the one shared copy).
+local copyOf = Util.copy
 
 --- One feature's block of Config.Roleplay, or an empty table.
 ---@param name string 'Rumours' | 'BurnerPhone' | 'InformantNpc' | 'ReasonQuality'

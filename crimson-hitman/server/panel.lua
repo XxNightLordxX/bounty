@@ -424,7 +424,7 @@ local function redactor(canIdentify, contract, hitmen)
     local labels, hidden, needles = {}, {}, {}
     if contract then
         if contract.target_cid then labels[contract.target_cid] = 'the target' end
-        if contract.creator_cid then labels[contract.creator_cid] = 'the client' end
+        if contract.creator_cid then labels[contract.creator_cid] = 'the placer' end
         if contract.anon_creator == true and contract.creator_name then
             hidden[contract.creator_name] = true
         end
@@ -526,7 +526,7 @@ function Panel.scrubText(text, canIdentify, contractId, outside, parties)
     text = redactor(false, contract, hitmen).value(nil, text)
     if outside then
         local names = {}
-        if contract and contract.creator_name then names[contract.creator_name] = 'the client' end
+        if contract and contract.creator_name then names[contract.creator_name] = 'the placer' end
         if contract and contract.target_name then names[contract.target_name] = 'the target' end
         for _, hitman in ipairs(hitmen or {}) do
             if hitman.hitman_name then
@@ -926,7 +926,7 @@ local function frozenShown(contract, hitmen, canIdentify)
     for _, party in ipairs(parties) do
         if canIdentify or not party.anonymous then
             out[#out + 1] = party.role == 'target' and 'the target'
-                or party.role == 'client' and 'the client'
+                or party.role == 'client' and 'the placer'
                 or ('operative %s'):format(tostring(aliases[party.cid] or '?'))
         end
     end
@@ -1492,7 +1492,7 @@ local function contractParty(subject, canIdentify)
         cid = contract.target_cid
     elseif role == 'client' then
         if contract.anon_creator == true and not canIdentify then
-            return nil, CH.ERR.NOT_PARTICIPANT, 'The client placed it anonymously: only staff with '
+            return nil, CH.ERR.NOT_PARTICIPANT, 'The placer placed it anonymously: only staff with '
                 .. 'the identity permission may look them up.'
         end
         cid = contract.creator_cid
@@ -2458,9 +2458,9 @@ H.removeHitman = function(src, data)
     if (detail.returned or 0) > 0 then
         stake = (' Their $%d stake went back to them.'):format(detail.returned)
     elseif (detail.forfeited or 0) > 0 then
-        stake = (' Their $%d stake went to the client, as a walk-away hands it over.'):format(detail.forfeited)
+        stake = (' Their $%d stake went to the placer, as a walk-away hands it over.'):format(detail.forfeited)
     end
-    return true, nil, ('%s taken off the contract.%s%s They were told "%s"; the client was told an '
+    return true, nil, ('%s taken off the contract.%s%s They were told "%s"; the placer was told an '
         .. 'operative left, as a walk-away says it.'):format(tostring(detail.alias or 'The operative'), stake,
             detail.blocked and ' They may not take it again.' or '', deps.staffContract.REMOVED_TEXT),
         { stake = detail.stake or 0, returned = detail.returned or 0, forfeited = detail.forfeited or 0,

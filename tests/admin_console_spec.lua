@@ -197,7 +197,7 @@ describe('the Console section', function()
         for _, needle in ipairs({ 'CREATOR1', 'Vic Marlowe', 'license:aaa' }) do
             falsy(seen:find(needle, 1, true), needle .. ' reaches staff without crimson.identity: ' .. seen)
         end
-        truthy(seen:find('the client', 1, true) and seen:find('Anonymous', 1, true), seen)
+        truthy(seen:find('the placer', 1, true) and seen:find('Anonymous', 1, true), seen)
         local whole = lineWith(ask(8, 'console', {}).data.recent, c.id).text
         truthy(whole:find('CREATOR1', 1, true) and whole:find('Vic Marlowe', 1, true),
             'crimson.identity reads it whole: ' .. whole)

@@ -1568,7 +1568,7 @@ describe('switching mode away from a json store', function()
         truthy(err:find('json mode: 4 escrow line(s) and 1 payout(s) owed', 1, true), err)
         truthy(err:find('ctswap03 (accepted): 50000 bank, 2000 cash; running: let it finish', 1, true),
             err)
-        truthy(err:find('ctswap04 (completed): 7000 cash owed to the client; owed to a player who '
+        truthy(err:find('ctswap04 (completed): 7000 cash owed to the placer; owed to a player who '
             .. 'is away: handed over at their next login', 1, true), err)
         truthy(err:find(('ctswap05 (completed): 9000 bank owed to an operative; left for staff: /%s '
             .. 'lists it, /%s settles it'):format(Config.Admin.Commands.stuck,

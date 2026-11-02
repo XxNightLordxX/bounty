@@ -424,12 +424,8 @@ local DEFAULTS = {
 
 --- A deep copy of a shipped default, so the live config and the fallback
 --- are never the same table.
-local function copyOf(value)
-    if type(value) ~= 'table' then return value end
-    local out = {}
-    for k, v in pairs(value) do out[k] = copyOf(v) end
-    return out
-end
+--- A deep copy (Util.copy, the one shared copy).
+local copyOf = Util.copy
 
 --- Whether a default is a record whose missing fields can be filled one by
 --- one, rather than a set or a list the operator owns whole.
@@ -1520,7 +1516,7 @@ local function heldLine(entry, mode)
             amounts[source] = (amounts[source] or 0) + (tonumber(line.amount) or 0)
         end
         if line.owed_to ~= nil then
-            local role = (contract and line.owed_to == contract.creator_cid and 'the client')
+            local role = (contract and line.owed_to == contract.creator_cid and 'the placer')
                 or (contract and line.owed_to == contract.target_cid and 'the target')
                 or ((entry.hitmen or {})[line.owed_to] and 'an operative') or 'a player'
             if not owed[role] then
@@ -1549,7 +1545,7 @@ local function heldLine(entry, mode)
     if staff then
         clears = ('left for staff: /%s lists it, /%s settles it'):format(commands.stuck, commands.settle)
     elseif not CH.TERMINAL[contract.state] then
-        clears = ('running: let it finish, the client can cancel it in the app while nobody has '
+        clears = ('running: let it finish, the placer can cancel it in the app while nobody has '
             .. 'taken it, or staff can void it (/%s)'):format(commands.void)
     elseif #owedOrder > 0 then
         clears = 'owed to a player who is away: handed over at their next login'

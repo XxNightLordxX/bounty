@@ -416,7 +416,7 @@
     // The whitelisted-job view's read, answered for somebody who left the
     // job: the page goes back to the whole app on it rather than say this.
     not_whitelisted: 'That screen is only for players on a whitelisted job.',
-    rate_limited: 'Slow down.',
+    rate_limited: 'Slow down: wait a few seconds, then try again.',
     // Policy waits, not throttling. Both shared rate_limited, so a creator
     // with two hours to wait read "Slow down." — and three of this page's
     // recovery paths treat rate_limited as a transient condition worth
@@ -448,7 +448,8 @@
     retake_too_soon: 'You walked away from this contract a moment ago. It is open '
       + 'to everybody else for a while before you can take it again.',
     // A proposal answered after it lapsed (answerProposal says it the same way).
-    proposal_expired: 'That proposal ran out before it was answered.',
+    proposal_expired: 'That proposal ran out before it was answered. '
+      + 'Propose it again if you still want it.',
     // The handover's meeting point (server/meeting.lua).
     meeting_no_hitman: 'Nobody is on this contract now, so there is nobody to meet.',
     meeting_not_here: 'Could not place a meeting point where you are standing. Stand still '
@@ -457,18 +458,21 @@
     no_meeting: 'No meeting point is set on this contract now.',
     // Staff put the contract on hold (server/freeze.lua). Plain, and never
     // which party it is about. Nothing was taken.
-    contract_frozen: 'This contract is on hold by staff.',
+    contract_frozen: 'This contract is on hold by staff. '
+      + 'It goes on when they release it; you can still message and report.',
     // The last half hour before a scheduled restart (server/freeze.lua).
-    restart_hold: 'Contracts are paused until the server restart.',
+    restart_hold: 'Contracts are paused until the server restart. Try again once it is back.',
     // Staff suspended this player from contracts (server/sanctions.lua).
     // failText says until when and why where the server sends them.
-    suspended: 'You are suspended from contracts.',
+    suspended: 'You are suspended from contracts. '
+      + 'The banner says until when; ask staff if you think it is wrong.',
     // Staff paused the whole app (Config.Staff.AppPaused). Nothing was taken.
-    app_paused: 'Contracts are paused by staff.',
+    app_paused: 'Contracts are paused by staff. Try again once they switch them back on.',
     // Killed on a contract and not yet treated (Config.Roleplay.EmsRelisting).
-    target_recovering: 'They are still recovering.',
+    target_recovering: 'They are still recovering. Try again once they have been treated.',
     // The tiered board (Config.Improvements.Tiers). Nothing was taken.
-    tier_locked: 'This contract is in a tier above your level. Nothing was taken.',
+    tier_locked: 'This contract is in a tier above your level. Nothing was taken. '
+      + 'Complete more contracts to reach it.',
     // The informant tip (server/locationtip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',
@@ -507,14 +511,16 @@
     /* A reward source, or the payout ceiling, changed from the admin panel
        while the form was open. failText names which; the Place form reads
        what is on offer again. */
-    source_disabled: 'This server no longer takes that kind of reward. Nothing was taken.',
-    slots_over: 'This server now takes fewer payouts per contract. Nothing was taken.',
+    source_disabled: 'This server no longer takes that kind of reward. Nothing was taken. '
+      + 'Take it out of the reward and try again.',
+    slots_over: 'This server now takes fewer payouts per contract. Nothing was taken. '
+      + 'Lower the payouts and try again.',
     // failText says which rule (reasonRefusedText).
     reason_refused: 'This server will not take that reason. Word it differently.',
     // The phone's word filter, or nothing left once cleaned. The draft is
     // kept (sendMessage clears it only on success).
     message_refused: 'A word in that message is not allowed here. Your draft is kept.',
-    limit_reached: 'You are holding too many contracts.',
+    limit_reached: 'You are holding too many contracts. Finish or leave one under Mine first.',
     /* A different rule entirely, and it used to share the message above —
        which told a hitman holding nothing that they were holding too much,
        and sent them to cancel their own work over somebody else's contract
@@ -555,7 +561,7 @@
     proof_too_far: 'Stand right beside the person who placed this contract to hand it over.',
     // The paths a player meets most — accept, buy out, place — word their
     // own; this is what is left, and it at least says it is about money.
-    insufficient_funds: 'You do not have enough money for that.',
+    insufficient_funds: 'You do not have enough money for that. Lower the amount or bring more.',
     invalid_reward: 'That reward does not add up.',
     // Worth too little in money (Config.Limits.MinContractReward). Said with
     // the figure where the reply or the Place form carries it (failText);
@@ -580,8 +586,8 @@
        may still land, or is settled by the server, which says so. */
     db_timeout: 'The server’s records did not answer in time. If you were '
       + 'paying for something, look before you try again: it may still go through.',
-    not_participant: 'That is not yours.',
-    already_settled: 'That contract is closed.',
+    not_participant: 'That is not yours. Open the tab again to see what is.',
+    already_settled: 'That contract is closed. It is under Ledger.',
     // The rules are on the server and the numbers are configurable, so the
     // words carry what the settings say rather than figures hardcoded here.
     // "Take the target down" was said to a hitman who just had: a downed
@@ -622,7 +628,7 @@
       + 'person who placed the contract, and that pays the whole reward, so '
       + 'there is no separate bonus. Add it to the reward instead.',
     // Not a fault. The poller stops on this and says the handover ended.
-    no_handover: 'That handover is not running.',
+    no_handover: 'That handover is not running. Tap Deliver alive to start one.',
     // A page that thought kill photos were off, on a server that takes
     // them. verifyKill opens the camera on this rather than saying it.
     photo_required: 'This server verifies a kill with a photo. Tap Verify kill again '
@@ -635,7 +641,7 @@
     // its kill, so this one is final, and saying "take it again" was not.
     proof_expired: 'The time to verify this kill ran out before the photo '
       + 'arrived. Nothing was sent for it, and this kill can no longer be claimed.',
-    photo_rejected: 'The photo was not accepted.',
+    photo_rejected: 'The photo was not accepted. Tap Verify kill and take it again.',
     photo_too_far: 'You are too far from the body. Stand over them and take it again.',
     photo_revived: 'They were brought back before you sent the photo, so this is '
       + 'not an elimination any more.',
@@ -671,7 +677,7 @@
     photo_bad_image: 'The photo could not be read. Tap Verify kill and take it again.',
     photo_too_large: 'The photo was too big to send. Tap Verify kill and take it again.',
     photo_unreadable: 'The photo could not be made. Tap Verify kill and take it again.',
-    bad_state: 'Not right now.',
+    bad_state: 'Not right now: the contract has moved on. Open it again to see where it stands.',
 
     /* The six ways a buyout is refused. They shared bad_state — "Not right
        now" — which is wrong for four of them: three will never work however
@@ -685,7 +691,7 @@
     incapacitated: 'Not from the floor. Get up first.',
     handover_in_progress: 'Somebody has hold of you. You cannot buy your way '
       + 'out of a handover already under way.',
-    locked: 'Someone got there first.',
+    locked: 'Someone got there first. Open it again to see where it stands.',
     /* Nothing was changed: the contract was busy with something else in
        that instant, or the server had only just started. Asking again
        works, so it says so rather than calling it a failure. */
@@ -705,7 +711,7 @@
       + 'allows. The deadline cannot go any later.',
     buyout_needs_clean: 'A buyout has to be backed by cash or bank in the '
       + 'reward. Add some, or set the buyout to 0.',
-    not_found: 'Gone.',
+    not_found: 'That is gone. Open the tab again to see what is there now.',
     // The player closed the camera themselves. They know; saying so is
     // telling them what they just did.
     cancelled: null,
@@ -725,7 +731,7 @@
        straight into "No kill on this contract is waiting for proof". */
     camera_no_answer: 'The camera never came back, and the time to verify '
       + 'this kill has run out. Nothing was sent.',
-    no_token: 'Nothing to verify yet.',
+    no_token: 'Nothing to verify yet. Tap Verify kill first.',
     // Bodyguard contracts (server/rp_protection.lua).
     protection_amount: 'That reward is outside what this server allows for a protection job.',
     protection_exists: 'There is already a protection job on this contract.',
@@ -739,12 +745,12 @@
     timeout: 'No answer. Try again.',
     unreachable: 'No answer. Try again.',
     // The roleplay features (Config.Roleplay). Nothing was taken for any.
-    need_burner: 'You need a burner phone.',
+    need_burner: 'You need a burner phone. Carry one and open this again.',
     not_briefed: 'You only know the rumour. See the broker about this one first.',
-    find_broker: 'Find the broker first.',
+    find_broker: 'Find the broker first: the rumour says roughly where.',
     not_broker: 'Only a broker can do that.',
     broker_too_far: 'They are no longer with you. Brief someone standing beside you.',
-    find_informant: 'Find the informant first.',
+    find_informant: 'Find the informant first, then ask again beside them.',
     // Informant fairness (Config.Improvements). Nothing was taken for any;
     // a tip that found nothing was given back.
     tip_hold: 'Your informant will not talk yet. Hold the contract a while longer.',
@@ -2327,7 +2333,7 @@
       // The rule while it can still be met, before a payout is held by it.
       var times = Number(contract.intentRule.messages);
       node.appendChild(el('div', 'hint intent-rule ico i-message',
-        'Payouts here are held unless you message the client ' + times
+        'Payouts here are held unless you message the person who placed it ' + times
         + (times === 1 ? ' time' : ' times') + ', do a live handover, or a meeting point is set.'));
     }
 
@@ -4060,7 +4066,7 @@
     var deliver = (mustRestrain() ? 'restrain them or get them into your vehicle, bring them '
       : 'bring them, alive and conscious, ')
       + (within ? 'within ' + within + ' m of' : 'to')
-      + ' the client, tap Deliver alive and hold '
+      + ' the person who placed it, tap Deliver alive and hold '
       + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : 'until it finishes.');
     // With kill photos off (settings().killPhotos) nothing is photographed:
     // Verify kill is checked at the scene.

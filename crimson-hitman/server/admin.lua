@@ -745,7 +745,7 @@ end
 function Admin.partyRole(contract, cid)
     if not cid then return '(nobody)' end
     if not contract then return '(a player)' end
-    if cid == contract.creator_cid then return 'the client' end
+    if cid == contract.creator_cid then return 'the placer' end
     if cid == contract.target_cid then return 'the target' end
     return 'an operative'
 end
@@ -899,7 +899,7 @@ function Admin.settleAnswer(ok, err, detail, panel)
         return ('Not settled: ending unfinished; it settles itself within a minute. '
             .. 'Contract %s closed, but its ending raised before it handed this line over; the '
             .. 'server finishes that ending as a restart would (a stake by why it ended, the rest '
-            .. 'back to the client), so there is nothing for you to settle. Nothing moved.')
+            .. 'back to the placer), so there is nothing for you to settle. Nothing moved.')
             :format(tostring(detail))
     end
     if err == 'intent_held' then

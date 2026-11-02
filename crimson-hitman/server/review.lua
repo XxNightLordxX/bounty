@@ -57,7 +57,7 @@ Review.KINDS = {
     bailout_refund_stranded = 'a buyout premium handed back reached nobody: refund the payer '
         .. 'what did not arrive',
     bailout_settle_raised = 'a queued buyout kept raising as it was settled, and the server '
-        .. 'stopped trying: if the contract is bought out and the client has not had the premium, '
+        .. 'stopped trying: if the contract is bought out and the placer has not had the premium, '
         .. 'pay the creator; if it ended another way, refund the payer',
     owe_id_exhausted = 'money owed to a player could not be put on the books (the store had no '
         .. 'line id left): pay them',
@@ -76,7 +76,7 @@ Review.KINDS = {
         .. 'back: refund what did not arrive',
     contract_unrecorded = 'a contract\'s escrow was taken, and the store would neither write the '
         .. 'contract nor say whether it had. The server places it, with its escrow, by itself once '
-        .. 'the database answers, and tells the client; Refund does the same now. No anonymity '
+        .. 'the database answers, and tells the placer; Refund does the same now. No anonymity '
         .. 'fee was taken for it. An older one without that record: its escrow is handed back by '
         .. 'the server, so refund only the anonymity fee it names, where the contract does not exist',
     escrow_settle_lost = 'a payout reached its recipient, and something else settled its line as '
@@ -241,12 +241,8 @@ local function untrack(id)
 end
 
 --- A copy, so nothing read from the in-process stores is changed under them.
-local function copyOf(value)
-    if type(value) ~= 'table' then return value end
-    local out = {}
-    for k, v in pairs(value) do out[k] = copyOf(v) end
-    return out
-end
+--- A deep copy (Util.copy, the one shared copy).
+local copyOf = Util.copy
 
 --- The log written now, and on json to the disk as well, rather than at the
 --- next tick: a resolution is money moved by hand.

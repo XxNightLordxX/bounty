@@ -138,12 +138,8 @@ local function fits(rule, value)
     return false
 end
 
-local function copyOf(value)
-    if type(value) ~= 'table' then return value end
-    local out = {}
-    for k, v in pairs(value) do out[k] = copyOf(v) end
-    return out
-end
+--- A deep copy (Util.copy, the one shared copy).
+local copyOf = Util.copy
 
 --- The start-up checks for these four blocks, against the global Config
 --- (main.lua's validateConfig, which the admin panel also runs against a

@@ -436,7 +436,7 @@ describe('nobody is told which party is frozen', function()
         local view = ask(6, 'contract', { id = c.id })
         eq(view.data.frozen, nil, 'the contract view said its anonymous client is frozen')
         local seen = ask(8, 'contract', { id = c.id })
-        eq(seen.data.frozen and seen.data.frozen[1], 'the client', 'with the identity ACE, which party')
+        eq(seen.data.frozen and seen.data.frozen[1], 'the placer', 'with the identity ACE, which party')
 
         -- A visible party frozen is shown to every reader.
         truthy(ask(6, 'freeze', { subject = 2, reason = 'also' }).ok, 'the target frozen')

@@ -5235,6 +5235,33 @@ async function main() {
         'a refused read told the player they were safe');
     });
 
+    /* Every refusal says what to do next (final pass): the codes that only
+       said what went wrong now say where to look or what to try. */
+    const NEXT_STEP = {
+      bad_state: 'Open it again to see where it stands.',
+      locked: 'Open it again to see where it stands.',
+      not_found: 'Open the tab again to see what is there now.',
+      not_participant: 'Open the tab again to see what is.',
+      already_settled: 'It is under Ledger.',
+      no_token: 'Tap Verify kill first.',
+      no_handover: 'Tap Deliver alive to start one.',
+      photo_rejected: 'Tap Verify kill and take it again.',
+      limit_reached: 'Finish or leave one under Mine first.',
+      insufficient_funds: 'Lower the amount or bring more.',
+      proposal_expired: 'Propose it again if you still want it.',
+      contract_frozen: 'you can still message and report.',
+      target_recovering: 'Try again once they have been treated.',
+      need_burner: 'Carry one and open this again.'
+    };
+    const nextSteps = {};
+    for (const code of Object.keys(NEXT_STEP)) { nextSteps[code] = await refusedWith(code); }
+    it('says what to do next on every refusal that used to only say what went wrong', function () {
+      Object.keys(NEXT_STEP).forEach(function (code) {
+        const shown = nextSteps[code].view.textContent;
+        truthy(shown.indexOf(NEXT_STEP[code]) !== -1, code + ': ' + JSON.stringify(shown));
+      });
+    });
+
     const limited = await refusedWithReply({ ok: false, err: 'rate_limited',
                                              data: { retryAfter: 7 } });
 
@@ -9883,7 +9910,7 @@ async function main() {
     });
     it('words a refusal on hold plainly', function () {
       const source = require('fs').readFileSync(APP, 'utf8');
-      truthy(/contract_frozen: 'This contract is on hold by staff\.'/.test(source), 'the page has words for it');
+      truthy(/contract_frozen: 'This contract is on hold by staff\. '/.test(source), 'the page has words for it');
     });
   })();
 
@@ -10480,7 +10507,7 @@ async function main() {
       truthy(eitherWork.view.textContent.indexOf('Kill: a downed target is not dead. Finish '
         + 'them, then stand over the body and tap Verify kill to photograph it before they '
         + 'are revived. Alive: restrain them or get them into your vehicle, bring them '
-        + 'within 10 m of the client, tap Deliver alive and hold for 30s.') !== -1,
+        + 'within 10 m of the person who placed it, tap Deliver alive and hold for 30s.') !== -1,
         eitherWork.view.textContent);
     });
     const eitherTerms = await working('either', 'either');
@@ -12744,7 +12771,7 @@ async function main() {
     await settle(); await settle();
     const source = fs.readFileSync(APP, 'utf8');
     it('has words for the app paused by staff', function () {
-      truthy(/app_paused: 'Contracts are paused by staff\.'/.test(source), 'the page has words for it');
+      truthy(/app_paused: 'Contracts are paused by staff\. /.test(source), 'the page has words for it');
     });
     const accept = app.view.all().filter(function (n) {
       return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
@@ -12863,7 +12890,7 @@ async function main() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
     held.role = 'hitman';
     held.myAlias = 'Operative #1';
-    held.intentHold = { missing: '2 more messages to the client in the contract thread', minutesLeft: 30 };
+    held.intentHold = { missing: '2 more messages to the person who placed it in the contract thread', minutesLeft: 30 };
     let posted = null, accepted = null;
     const app = boot({
       list: board,
@@ -12961,7 +12988,7 @@ async function main() {
     it('Mine says a held payout and what is missing, and the hitman card too', function () {
       const text = app.view.textContent;
       truthy(text.indexOf('Ref ct00000009') !== -1, text);
-      truthy(text.indexOf('2 more messages to the client') !== -1, 'the card: ' + text);
+      truthy(text.indexOf('2 more messages to the person who placed it') !== -1, 'the card: ' + text);
       drewCleanly(app, 'Mine');
     });
 
@@ -13046,7 +13073,7 @@ async function main() {
     button(far, 'Ask the broker').onclick();
     await settle(); await settle();
     it('rumours: away from the broker it says to find him', function () {
-      truthy(far.notice().indexOf('Find the broker first.') !== -1, far.notice());
+      truthy(far.notice().indexOf('Find the broker first') !== -1, far.notice());
     });
 
     let briefed = null;
@@ -13439,12 +13466,12 @@ async function main() {
     it('W2: a hold on a closed contract says only when it is released', function () {
       const text = closedHold.view.textContent;
       truthy(text.indexOf('Payout held: released within 30 minutes.') !== -1, text);
-      falsy(/message the client|meeting point/.test(text), text);
+      falsy(/message the (client|person who placed it)|meeting point/.test(text), text);
     });
     const rule = await onMine([], [base({ role: 'hitman', myAlias: 'Operative #1',
       intentRule: { messages: 3 } })]);
     it('W2: states the proof-of-intent rule on the hitman\'s card while it is live', function () {
-      truthy(rule.view.textContent.indexOf('Payouts here are held unless you message the client 3 '
+      truthy(rule.view.textContent.indexOf('Payouts here are held unless you message the person who placed it 3 '
         + 'times, do a live handover, or a meeting point is set.') !== -1, rule.view.textContent);
     });
 

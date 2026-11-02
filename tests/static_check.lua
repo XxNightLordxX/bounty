@@ -2691,6 +2691,62 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 39. One word for one thing (the README's glossary)
+--------------------------------------------------------------------------
+--
+-- The person who placed a contract is "the placer" to staff and "the person
+-- who placed it" to players; "the client" crept into the phone, the panel
+-- and the server's notices for the same person, beside both. No text a
+-- player or a staff member reads (a quoted string outside a comment) says
+-- "the client", and none says "bounty" or "contractor" for a contract or
+-- its placer. And the helpers the optional features each had a copy of
+-- (a deep copy, a dollar formatter) are Util's, written once.
+
+do
+    local DRIFT = { 'the client', 'bounty', 'bounties', 'contractor' }
+    local function drifted(path, src, quote, comment)
+        for line in src:gmatch('[^\n]+') do
+            local code = line
+            local at = code:find(comment, 1, true)
+            if at and not code:sub(1, at):find(quote, 1, true) then code = code:sub(1, at - 1) end
+            if not code:match('^%s*%*') and not code:match('^%s*/%*') then
+                for literal in code:gmatch(quote .. '([^' .. quote .. ']*)' .. quote) do
+                    local lower = literal:lower()
+                    for _, word in ipairs(DRIFT) do
+                        if lower:find('%f[%w]' .. word .. '%f[%W]') then
+                            failures[#failures + 1] = ('%s says "%s" in "%s": the glossary\'s word is the '
+                                .. 'placer (staff) or the person who placed it (players), and contract')
+                                :format(path, word, literal:sub(1, 80))
+                        end
+                    end
+                end
+            end
+        end
+    end
+    -- Not vacuous: a sample with the word is found.
+    local before = #failures
+    drifted('sample', "local x = 'tell the client'\n-- the client in a comment is fine\n", "'", '--')
+    if #failures ~= before + 1 then
+        failures[#failures + 1] = 'the glossary check no longer finds "the client" in its own sample'
+    else
+        failures[#failures] = nil
+    end
+    for _, path in ipairs(files) do drifted(path, read(path) or '', "'", '--') end
+    for _, path in ipairs({ 'crimson-hitman/ui/app.js', 'crimson-hitman/ui/admin.js' }) do
+        drifted(path, read(path) or '', "'", '//')
+    end
+    for _, path in ipairs(files) do
+        local src = read(path) or ''
+        for _, name in ipairs({ 'copyOf', 'money' }) do
+            if src:find('\nlocal function ' .. name .. '%(') then
+                failures[#failures + 1] = ('%s defines its own %s: use %s'):format(path, name,
+                    name == 'copyOf' and 'Util.copy' or 'Util.dollars')
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

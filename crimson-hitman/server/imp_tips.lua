@@ -150,12 +150,8 @@ local function says(rule)
     return "a list of 'x, y, radius, name'"
 end
 
-local function copyOf(value)
-    if type(value) ~= 'table' then return value end
-    local out = {}
-    for k, v in pairs(value) do out[k] = copyOf(v) end
-    return out
-end
+--- A deep copy (Util.copy, the one shared copy).
+local copyOf = Util.copy
 
 --- Fill a block config.lua has none of from the shipped one, and hold every
 --- field to its rule: one that does not fit is put back to what ships, with

@@ -379,10 +379,13 @@ describe('the configuration as one short file', function()
         -- scrubbing, weekly stats) with its completion cooldown line.
         truthy(lines < 751, 'config.lua is ' .. lines .. ' lines')
         local at = 0
+        -- The admin panel's order: Features' core switches first, then
+        -- Anonymity, the Informants, the Advisory, Staff, Roleplay and
+        -- Improvements (ui/admin.js featureRank).
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
-            'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',
-            'FEATURES: ADVISORY', 'FEATURES: EVERYTHING ELSE', 'STAFF AND PERMISSIONS',
-            'IMPROVEMENTS', 'ROLEPLAY', 'ADVANCED AND DEVELOPER' }) do
+            'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: CORE', 'FEATURES: ANONYMITY',
+            'FEATURES: INFORMANTS', 'FEATURES: ADVISORY', 'STAFF AND PERMISSIONS',
+            'ROLEPLAY', 'IMPROVEMENTS', 'ADVANCED AND DEVELOPER' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')
             at = found

@@ -156,8 +156,8 @@ function Intent.proof(contract, hitmanCid, fulfilment, claiming)
     if sent >= want then return true end
     if closedFor(contract, claiming) then return false, nil, true end
     local left = want - sent
-    return false, ('%d more message%s to the client in the contract thread, a live handover, '
-        .. 'or a meeting point set'):format(left, left == 1 and '' or 's')
+    return false, ('%d more message%s to the person who placed it in the contract thread, '
+        .. 'a live handover, or a meeting point set'):format(left, left == 1 and '' or 's')
 end
 
 --- A claim is about to release a payout to this hitman (Contracts.claimSlot,
