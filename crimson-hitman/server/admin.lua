@@ -872,6 +872,12 @@ function Admin.settleAnswer(ok, err, detail, panel)
             .. 'back to the client), so there is nothing for you to settle. Nothing moved.')
             :format(tostring(detail))
     end
+    if err == 'intent_held' then
+        return ('Not settled: held for proof of intent (releases at %s). The payout is theirs and '
+            .. 'stays owed in escrow; it is handed over once they show intent on the contract, or '
+            .. 'at that time at the latest. Nothing to settle.')
+            :format(os.date('!%Y-%m-%d %H:%M UTC', math.floor(tonumber(detail) or 0)))
+    end
     if ok and err == 'queued' and detail == 'refused' then
         return ('Queued: they are in the city, but the give was refused (no room in their '
             .. 'pockets, their account would not take it, or their inventory could not be read), '
@@ -1432,6 +1438,16 @@ local function repointLine(src, line, owner)
     return false, CH.ERR.LOCKED
 end
 
+--- When a payout held for proof of intent (server/rp_intent.lua) is
+--- released anyway, or nil when nothing holds this give: staff settling it
+--- are told that, not that it is queued or was refused.
+---@return integer|nil releasesAt os.time()
+local function intentHeldUntil(recipient, line)
+    if not Escrow.holdUntil or not recipient then return nil end
+    local asked, at = pcall(Escrow.holdUntil, recipient, line)
+    return asked and tonumber(at) or nil
+end
+
 --- Settle one interrupted line deliberately: either to the person it was
 --- being paid to, or back to the contract's creator, or, for a line left for
 --- staff (Escrow.parked), as already delivered to the person it was being
@@ -1531,6 +1547,8 @@ function Admin.settleLine(src, lineId, disposition, owner)
         if nobody and owner then return repointLine(src, line, owner) end
         if nobody then return false, 'owed_to_nobody', nobodyFor(src, line.owed_to) end
         if nobody == nil and owner then return false, 'unchecked' end
+        local heldUntil = intentHeldUntil(line.owed_to, line)
+        if heldUntil then return false, 'intent_held', heldUntil end
         return false, 'already_queued', partyFor(src, contract, line.owed_to)
     end
 
@@ -1780,6 +1798,10 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- queued for a player who is in the city. So is one refused to a player
     -- who is in the city (pockets full, an account that would not take it).
     if settled > 0 then return true, nil end
+    if (result.why == 'queued' or (pending > 0 and not result.why)) and disposition == 'pay' then
+        local at = intentHeldUntil(recipient, line)
+        if at then return false, 'intent_held', at end
+    end
     if result.why == 'queued' then
         return false, 'already_queued', partyFor(src, contract, result.owed_to)
     end
@@ -2762,6 +2784,17 @@ function Admin.diagnose(source, subjectId, later, opts)
     else
         say('photo storage: server (taken in the app and kept in data/photos; no image '
             .. 'host is used)')
+        -- And whether it can: a binary file written there and read back.
+        if Photos and Photos.selfTest then
+            local ran, ok, detail = pcall(Photos.selfTest)
+            if ran and ok then
+                say(('  data/photos write and read-back: ok (%s)'):format(tostring(detail)))
+            else
+                say(('  -> data/photos write and read-back FAILED (%s). Kill photos cannot be '
+                    .. 'kept on this server: make sure data/photos exists in this resource and '
+                    .. 'the server can write to it.'):format(ran and tostring(detail) or 'it raised'))
+            end
+        end
     end
     -- How a photo kept on this server reaches the client's phone's Photos,
     -- which keeps links, never pictures. A link this server serves needs a

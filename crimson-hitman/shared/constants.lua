@@ -507,6 +507,10 @@ CH.ERR = {
     PROTECTION_LIMIT  = 'protection_limit',
     PROTECTION_PARTY  = 'protection_party',
     PROTECTION_GUARDING = 'protection_guarding',
+    -- The reward was taken and the job could not be recorded: it is being
+    -- handed back. And a new job on that contract while it still is.
+    PROTECTION_NOT_RECORDED = 'protection_not_recorded',
+    PROTECTION_REFUND_PENDING = 'protection_refund_pending',
 
     -- Roleplay features (server/rp_*.lua), each off as shipped.
     --- Config.Roleplay.BurnerPhone: a contract action without the burner

@@ -1054,94 +1054,101 @@ local function loggedIn(state)
     return state and state.isLoggedIn and true or false
 end
 
+--- One pass of the death watch, once a second. Its own function, run in a
+--- pcall below: a native or a medical resource's state that raises costs
+--- this pass, never the watch (and with it every death this session).
+local function deathPass()
+    -- Nobody to watch while no character is loaded. Read then, the last
+    -- character's isdead was reported as a death nobody had, and the
+    -- next character standing up as a revive without one, which the
+    -- server posts to the staff webhook as a probe.
+    local state = localState()
+    if not loggedIn(state) then
+        forgetDeath()
+        return
+    end
+    local ped = PlayerPedId()
+    local medDead, lastStand, readable = medical(state)
+    local engineDead = IsEntityDead(ped)
+    -- Its word counts only when it can be read. A medical resource that
+    -- is running but whose state never reaches this client would
+    -- otherwise mean no death is ever reported.
+    local managed = readable and medicalRunning()
+
+    local dead, down
+    if managed then
+        dead = medDead
+        -- The engine's death at the downing is followed by a resurrect,
+        -- and only then by last stand: a tick between the two read the
+        -- player as up again and reported a revive that never happened.
+        down = medDead or lastStand
+    else
+        -- And its word is kept while it restarts. The metadata stays;
+        -- falling back to the engine for those ticks read a dead player
+        -- as revived, then reported the same death a second time.
+        dead = engineDead or (readable and medDead)
+        down = dead or engineDead or (readable and lastStand)
+    end
+
+    if engineDead and not wasEngineDead then
+        engineDeathAt, engineKiller = nowMs(), killerOf(ped)
+    end
+    wasEngineDead = engineDead
+
+    if dead then
+        notDeadFor = 0
+    elseif reportedDead then
+        notDeadFor = notDeadFor + 1
+        -- Down but not dead after a reported death is last stand, and
+        -- only a defibrillator takes a player there from dead: finished
+        -- seconds after the shock, the new death went unreported and the
+        -- hitman who finished them was never credited. A bare blink of
+        -- the death flag, with no last stand in it, still waits.
+        if down or notDeadFor >= UP_CONFIRM_TICKS then reportedDead = false end
+    end
+
+    if dead and not reportedDead then
+        reportedDead = true
+        diedSinceUp = true
+
+        -- The victim reports who killed them, read from their own game.
+        -- A killer's claim about their own kill is exactly what an
+        -- attacker forges; a victim has no reason to hand credit to
+        -- their killer, and the server corroborates it either way,
+        -- against a damage log with a window of its own.
+        local killer
+        if lethalByAt and nowMs() - lethalByAt <= KILLER_FRESH_MS then
+            killer = lethalBy
+        elseif engineDead then
+            killer = killerOf(ped)
+        elseif engineDeathAt and nowMs() - engineDeathAt <= KILLER_FRESH_MS then
+            killer = engineKiller
+        end
+        TriggerServerEvent('crimson-hitman:iDied', killer)
+    end
+    if down then
+        upFor = 0
+        wasDown = true
+    elseif wasDown then
+        upFor = upFor + 1
+        if upFor >= UP_CONFIRM_TICKS then
+            -- Only after a death this client reported. Somebody picked
+            -- up from last stand never died, and the server takes a
+            -- revive from a player it never saw dead as a probe, and
+            -- posts it to the staff webhook as one.
+            if diedSinceUp then TriggerServerEvent('crimson-hitman:iRevived') end
+            reportedDead, diedSinceUp = false, false
+            engineDeathAt, engineKiller = nil, nil
+            wasDown, upFor = false, 0
+        end
+    end
+end
+
 CreateThread(function()
     while true do
         Wait(1000)
-        -- Nobody to watch while no character is loaded. Read then, the last
-        -- character's isdead was reported as a death nobody had, and the
-        -- next character standing up as a revive without one, which the
-        -- server posts to the staff webhook as a probe.
-        local state = localState()
-        if not loggedIn(state) then
-            forgetDeath()
-            goto continue
-        end
-        local ped = PlayerPedId()
-        local medDead, lastStand, readable = medical(state)
-        local engineDead = IsEntityDead(ped)
-        -- Its word counts only when it can be read. A medical resource that
-        -- is running but whose state never reaches this client would
-        -- otherwise mean no death is ever reported.
-        local managed = readable and medicalRunning()
-
-        local dead, down
-        if managed then
-            dead = medDead
-            -- The engine's death at the downing is followed by a resurrect,
-            -- and only then by last stand: a tick between the two read the
-            -- player as up again and reported a revive that never happened.
-            down = medDead or lastStand
-        else
-            -- And its word is kept while it restarts. The metadata stays;
-            -- falling back to the engine for those ticks read a dead player
-            -- as revived, then reported the same death a second time.
-            dead = engineDead or (readable and medDead)
-            down = dead or engineDead or (readable and lastStand)
-        end
-
-        if engineDead and not wasEngineDead then
-            engineDeathAt, engineKiller = nowMs(), killerOf(ped)
-        end
-        wasEngineDead = engineDead
-
-        if dead then
-            notDeadFor = 0
-        elseif reportedDead then
-            notDeadFor = notDeadFor + 1
-            -- Down but not dead after a reported death is last stand, and
-            -- only a defibrillator takes a player there from dead: finished
-            -- seconds after the shock, the new death went unreported and the
-            -- hitman who finished them was never credited. A bare blink of
-            -- the death flag, with no last stand in it, still waits.
-            if down or notDeadFor >= UP_CONFIRM_TICKS then reportedDead = false end
-        end
-
-        if dead and not reportedDead then
-            reportedDead = true
-            diedSinceUp = true
-
-            -- The victim reports who killed them, read from their own game.
-            -- A killer's claim about their own kill is exactly what an
-            -- attacker forges; a victim has no reason to hand credit to
-            -- their killer, and the server corroborates it either way,
-            -- against a damage log with a window of its own.
-            local killer
-            if lethalByAt and nowMs() - lethalByAt <= KILLER_FRESH_MS then
-                killer = lethalBy
-            elseif engineDead then
-                killer = killerOf(ped)
-            elseif engineDeathAt and nowMs() - engineDeathAt <= KILLER_FRESH_MS then
-                killer = engineKiller
-            end
-            TriggerServerEvent('crimson-hitman:iDied', killer)
-        end
-        if down then
-            upFor = 0
-            wasDown = true
-        elseif wasDown then
-            upFor = upFor + 1
-            if upFor >= UP_CONFIRM_TICKS then
-                -- Only after a death this client reported. Somebody picked
-                -- up from last stand never died, and the server takes a
-                -- revive from a player it never saw dead as a probe, and
-                -- posts it to the staff webhook as one.
-                if diedSinceUp then TriggerServerEvent('crimson-hitman:iRevived') end
-                reportedDead, diedSinceUp = false, false
-                engineDeathAt, engineKiller = nil, nil
-                wasDown, upFor = false, 0
-            end
-        end
-        ::continue::
+        local ok, err = pcall(deathPass)
+        if not ok then CrimsonLog.debug(('death watch: %s'):format(tostring(err))) end
     end
 end)
 
@@ -1270,6 +1277,11 @@ end
 AddEventHandler('onResourceStop', function(resource)
     if resource ~= GetCurrentResourceName() then return end
     App.walkableCam(false)
+    -- And the icon off the phone: its page and callbacks die with this
+    -- resource, so an app left registered opens onto nothing until the
+    -- restart registers it again. Guarded inside (phone), as every lb-phone
+    -- call is.
+    unregisterApp()
 end)
 
 RegisterNUICallback('crimson:verificationCamera', function(data, cb)

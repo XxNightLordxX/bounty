@@ -115,37 +115,50 @@ end
 ---
 --- Memoised for the length of one projection and dropped afterwards. Strictly
 --- a read path: Escrow.cached wraps code that does not write, and every
---- writer here drops the memo anyway, so nothing can read its own stale rows.
-local memo = nil
+--- writer here drops the memos anyway, so nothing can read its own stale rows.
+---
+--- One memo per coroutine, not one for the module. Two requests waiting on
+--- the database at once (mysql) each run in a coroutine of their own, and a
+--- single module-level memo saved and restored around each was left open
+--- when they finished out of order: every later read, write paths included,
+--- answered from it. Weak keys, so a coroutine that dies mid-request takes
+--- its memo with it.
+---@type table<thread, table<string, table[]>>
+local memos = setmetatable({}, { __mode = 'k' })
 
 local function readLines(contractId)
-    local filling = memo
+    local co = coroutine.running()
+    local filling = memos[co]
     if not filling then return Storage.readEscrow(contractId) end
     local hit = filling[contractId]
     if hit == nil then
         hit = Storage.readEscrow(contractId)
         -- The memo it was read for, and only while it is still the one in
         -- use: on mysql the read waits, and a write meanwhile drops it.
-        if memo == filling then filling[contractId] = hit end
+        if memos[co] == filling then filling[contractId] = hit end
     end
     return hit
 end
 
---- Anything that changes escrow throws the memo away rather than trying to
---- keep it correct. A cache that is sometimes right is worse than none.
-local function forget() memo = nil end
+--- Anything that changes escrow throws every memo away rather than trying
+--- to keep them correct. A cache that is sometimes right is worse than none.
+local function forget()
+    for co in pairs(memos) do memos[co] = nil end
+end
 
 --- Run a read-only projection with escrow reads memoised.
 ---
 --- Nested calls share the outer memo, and an error inside still clears it:
 --- a memo left open would be read by the next write path to come along.
+--- Only the call that opened the memo closes it.
 ---@param fn function
 ---@return any
 function Escrow.cached(fn, ...)
-    local outer = memo
-    memo = outer or {}
+    local co = coroutine.running()
+    local opened = memos[co] == nil
+    if opened then memos[co] = {} end
     local ok, a, b, c = pcall(fn, ...)
-    memo = outer
+    if opened then memos[co] = nil end
     if not ok then error(a, 0) end
     return a, b, c
 end
@@ -157,11 +170,13 @@ end
 --- as readEscrow answers): those are taken as they are, and only the rest
 --- read. Contracts already memoised keep what they read. Outside a cached
 --- call it reads nothing: there is no memo to fill and nothing would read it.
+--- Only the calling coroutine's memo: another request's is its own.
 ---@param ids string[]
 ---@param known table<string, table[]>|nil
 function Escrow.prime(ids, known)
-    if not memo then return end
-    local filling = memo
+    local co = coroutine.running()
+    local filling = memos[co]
+    if not filling then return end
     local missing = {}
     for i = 1, #(ids or {}) do
         local id = ids[i]
@@ -175,7 +190,7 @@ function Escrow.prime(ids, known)
     -- Only into the memo it was read for: on mysql the read waits, and a
     -- write in the meantime throws the memo away (forget), which must not
     -- be filled again with what was read before it.
-    if memo ~= filling then return end
+    if memos[co] ~= filling then return end
     for i = 1, #missing do
         local lines = read[missing[i]]
         if lines ~= nil and filling[missing[i]] == nil then filling[missing[i]] = lines end

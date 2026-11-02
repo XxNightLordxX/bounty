@@ -1418,8 +1418,12 @@ end)
 describe('a medical resource without the server exports asked for', function()
     --- qbx_medical's IsDead and IsLaststand are client exports. Asked on the
     --- server, FiveM raises "No such export" and leaves a callback behind,
-    --- every time.
+    --- every time. It ships listed without them now (round 3, F2), so this
+    --- is an operator's entry that still names them.
     local function qbxMedical(modules)
+        Config.Completion.DeathStateProviders = {
+            { resource = 'qbx_medical', dead = 'IsDead', lastStand = 'IsLaststand' },
+        }
         Natives.resourceStates['sc-ambulance'] = 'missing'
         Natives.resourceStates['qbx_medical'] = 'started'
         local looked, real = 0, _G.exports

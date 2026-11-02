@@ -66,6 +66,11 @@ local loaded = false
 --- so two requests never act on one at once. [id] = true
 local busy = {}
 
+--- How often settled jobs are looked at for removal, in seconds, and when
+--- that last ran (os.time()). See Protection.prune.
+local PRUNE_EVERY = 600
+local prunedAt = 0
+
 local function rp()
     return type(Config.Roleplay) == 'table' and Config.Roleplay or {}
 end
@@ -87,6 +92,7 @@ function Protection.init(deps)
     App, Informant = deps.app, deps.informant
     Review, Contracts = deps.review, deps.contracts
     jobs, busy, loaded = {}, {}, false
+    prunedAt = 0
     -- Asked by Contracts' acceptance: a guard may not take a contract on
     -- the person they guard.
     if Contracts then Contracts.guardsTarget = Protection.guardsTarget end
@@ -177,6 +183,21 @@ local function jobOn(contractId)
         if job.contract_id == contractId and (live(job) or job.state == 'charging') then return job end
     end
     return nil
+end
+
+--- Whether this target is still owed money back from a job on this
+--- contract: one ended (a row that could not be written after the charge,
+--- one cancelled) whose refund has not reached them yet. A new job on it
+--- waits for that: posted meanwhile, they were charged again while the
+--- first money was still on its way back.
+local function refundOwed(contractId, cid)
+    for _, job in pairs(jobs) do
+        if job.contract_id == contractId and job.target_cid == cid and job.state == 'settling'
+            and not job.target_paid and (tonumber(job.target_due) or 0) > 0 then
+            return true
+        end
+    end
+    return false
 end
 
 --- How many live jobs this player guards.
@@ -381,13 +402,51 @@ local function outcomeOf(contract)
     return 'survived', contract.state
 end
 
+--- Remove the rows of jobs that are settled, owe nobody anything and whose
+--- contract the store has pruned (Config.Audit.ContractRetentionDays):
+--- nothing reads them again, and crimson_rp_rows grew with every job ever
+--- posted. A job with a share left stuck and no review item yet (the next
+--- start opens one, Protection.boot), or in any state but settled, stays.
+---@return integer removed
+function Protection.prune()
+    load()
+    if not loaded then return 0 end
+    local removed = 0
+    local ids = {}
+    for id, job in pairs(jobs) do
+        if job.state == 'settled' and not busy[id]
+            and not (job.guard_stuck and not job.guard_review)
+            and not (job.target_stuck and not job.target_review) then
+            ids[#ids + 1] = id
+        end
+    end
+    table.sort(ids)
+    for i = 1, #ids do
+        local job = jobs[ids[i]]
+        local read, contract = pcall(Storage.readContract, job.contract_id)
+        if read and contract == nil and jobs[ids[i]] == job and job.state == 'settled' then
+            if pcall(Storage.deleteRpRow, job.id) then
+                jobs[ids[i]] = nil
+                removed = removed + 1
+            end
+        end
+    end
+    return removed
+end
+
 --- The tick: settle every job whose contract has ended, and pay what is
 --- still owed to anybody in the city. Runs whether the switch is on or off,
---- so turning it off strands nothing.
+--- so turning it off strands nothing. Every PRUNE_EVERY seconds, the rows
+--- of settled jobs on pruned contracts go too (Protection.prune).
 ---@return integer settled
 function Protection.sweep()
     load()
     if not loaded then return 0 end
+    local now = os.time()
+    if now - prunedAt >= PRUNE_EVERY then
+        prunedAt = now
+        Protection.prune()
+    end
     local settled = 0
     local ids = {}
     for id in pairs(jobs) do ids[#ids + 1] = id end
@@ -471,6 +530,7 @@ function Protection.post(actor, payload)
     -- On hold by staff: no money moves on it. Told to its own target only.
     if heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if jobOn(contractId) then return false, CH.ERR.PROTECTION_EXISTS end
+    if refundOwed(contractId, actor.cid) then return false, CH.ERR.PROTECTION_REFUND_PENDING end
     local pin = standing(actor.source)
     if not pin then return false, CH.ERR.BUSY end
 
@@ -526,7 +586,10 @@ function Protection.post(actor, payload)
             Log.always(('protection job %s: %s %d was taken and the row could not be written; '
                 .. 'it is handed back to the target.'):format(id, account, amount))
             settle(job, 'refund', 'not_recorded')
-            return false, CH.ERR.BUSY
+            -- Said as it is: their money was taken and is on its way back.
+            -- "Busy" read as nothing having happened, and invited a second
+            -- try, and a second charge.
+            return false, CH.ERR.PROTECTION_NOT_RECORDED
         end
         return Protection.targetView(contract, actor.cid)
     end)

@@ -854,10 +854,11 @@ describe('damage observation is actually wired', function()
         truthy(ran <= 90, ('one client ran it %d times in one window'):format(ran))
     end)
 
-    it('ignores a damage event reporting no damage', function()
+    it('ignores a damage event whose own figure, overriding the game\'s, is no damage', function()
         local s = wiredStack()
         local f = fixture(s)
-        eq(s.bridges.onWeaponDamage(s, 3, { weaponDamage = 0, hitGlobalIds = { 1002 } }), 0)
+        eq(s.bridges.onWeaponDamage(s, 3, { overrideDefaultDamage = true, weaponDamage = 0,
+            hitGlobalIds = { 1002 } }), 0)
     end)
 
     it('ignores self-damage', function()

@@ -6149,6 +6149,8 @@ async function main() {
       ['target_protected', 'protected'],
       ['party_offline', 'online'],
       ['limit_reached', 'in progress'],
+      // round 3 F1: in another routing bucket (an interior, an apartment).
+      ['not_together', 'same place'],
     ];
 
     for (const [code, words] of REFUSALS) {
@@ -10752,6 +10754,14 @@ async function main() {
       truthy(slipping.view.textContent.indexOf('The person who placed this contract must be '
         + 'within 8 m of you and the target — handover fails in 1.2s') !== -1,
         slipping.view.textContent);
+    });
+
+    // round 3 F1: slipping because one of them went into another instance.
+    const apart = await workingOn(heldFrom({ kidnapProgress: { elapsed: 5, required: 30,
+      graceLeft: 1200, graceTotal: 3000, breaking: 'not_together', radius: 8 } }), NO_PHOTOS);
+    it('round 3 F1: a countdown slipping across instances says they are not in the same place', function () {
+      truthy(apart.view.textContent.indexOf('You and your target are not in the same place') !== -1,
+        apart.view.textContent);
     });
 
     // How a failed handover is told, when the placer never came.

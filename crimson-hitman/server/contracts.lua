@@ -3237,6 +3237,12 @@ end
 function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
     local out = table.pack(pcall(Escrow.whileClaiming, contractId, claimSlot, contractId,
         hitmanCid, fulfilment, opts))
+    -- A hold for proof of intent this claim started is written down only
+    -- now it is known how the claim ended (Intent.afterClaim): refused, it
+    -- goes; raised part-way, its payout may still be owed, and it stays.
+    if Contracts.intentAfterClaim then
+        pcall(Contracts.intentAfterClaim, contractId, hitmanCid, not out[1] or out[2] == true)
+    end
     if not out[1] then
         if contractId ~= nil then
             stuckClaims[contractId] = { at = os.time(), hitman = hitmanCid, fulfilment = fulfilment }

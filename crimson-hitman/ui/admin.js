@@ -879,14 +879,22 @@
     S.overviewTimer = setTimeout(function () {
       S.overviewTimer = null;
       if (gen !== S.gen || !S.open) return;
-      // Stuck escrow too while it is on screen, so its list and the badge
-      // agree after another staff member settles a line.
-      if (S.section === 'stuck' && !S.drawer.id) loadStuck(true);
-      // And the alerts, unless a button there waits for its second click.
-      if (S.section === 'alerts' && !S.drawer.id && !S.armed) loadAlerts();
-      // And the console: its live updates, at this pace and no faster.
-      if (S.section === 'console' && !S.drawer.id) loadConsole();
-      loadOverview(false).then(function () { schedule(gen); });
+      // The next one is set however this one ends: a draw that threw (a
+      // rejected promise, or a raise before it) used to end the chain, and
+      // the panel stopped refreshing until it was closed and opened again.
+      var next = function () { schedule(gen); };
+      try {
+        // Stuck escrow too while it is on screen, so its list and the badge
+        // agree after another staff member settles a line.
+        if (S.section === 'stuck' && !S.drawer.id) loadStuck(true);
+        // And the alerts, unless a button there waits for its second click.
+        if (S.section === 'alerts' && !S.drawer.id && !S.armed) loadAlerts();
+        // And the console: its live updates, at this pace and no faster.
+        if (S.section === 'console' && !S.drawer.id) loadConsole();
+        loadOverview(false).then(next, next);
+      } catch (err) {
+        next();
+      }
     }, refreshMs());
   }
 
@@ -4485,6 +4493,8 @@
   };
   ACTIONS['ps-lift'] = function (node) {
     if (!S.players.subject) return;
+    // Two clicks, as every other write here is (3 s to confirm).
+    if (!confirmed(node)) return;
     staffWrite(write('unsuspend', { subject: S.players.subject }, 'pstaff:suspend', node), 'suspend');
   };
 
@@ -4513,6 +4523,8 @@
   };
   ACTIONS['pp-lift'] = function (node) {
     if (!S.players.subject) return;
+    // Two clicks, as every other write here is (3 s to confirm).
+    if (!confirmed(node)) return;
     staffWrite(write('unprotect', { subject: S.players.subject }, 'pstaff:protect', node), 'protect');
   };
 
@@ -5123,4 +5135,8 @@
       links: [{ key: 'Roleplay.ReasonQuality.Enabled', view: 'features', label: 'Reason quality on or off' },
         { key: 'Roleplay.ReasonQuality.LowEffort', view: 'limits', label: 'Low-effort phrases' },
         { key: 'Roleplay.ReasonQuality.LowEffortAction', view: 'limits', label: 'Refuse or review' }] });
+
+  /* Loaded to the end: admin.html's fallback, which gives the focus back
+     when this file fails to load or throws while loading, stands down. */
+  window.CH_ADMIN_READY = true;
 })();

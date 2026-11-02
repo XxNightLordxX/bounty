@@ -47,13 +47,18 @@ function Reputation.witnessFree(contract, hitmanCid)
     local ok, here = pcall(function() return GetEntityCoords(GetPlayerPed(hitman.source)) end)
     if not ok or not here then return false end
     local radius = num(cfg().WitnessRadius)
+    -- Only those in the hitman's instance (routing bucket) saw anything:
+    -- a player in an apartment shell at the same coordinates did not.
+    local okB, bucket = pcall(GetPlayerRoutingBucket, hitman.source)
+    if not okB or bucket == nil then return false end
     local parties = { [tostring(hitman.source)] = true }
     for _, cid in ipairs({ contract.target_cid, contract.creator_cid }) do
         local party = cid and Identity.byCitizenId(cid)
         if party and party.source then parties[tostring(party.source)] = true end
     end
     for _, src in ipairs(GetPlayers() or {}) do
-        if not parties[tostring(src)] then
+        local okT, theirs = pcall(GetPlayerRoutingBucket, src)
+        if not parties[tostring(src)] and (not okT or theirs == bucket) then
             local read, there = pcall(function() return GetEntityCoords(GetPlayerPed(src)) end)
             if read and there then
                 local dx, dy, dz = num(there.x) - num(here.x), num(there.y) - num(here.y),

@@ -141,10 +141,32 @@
   <aside id="drawer" class="drawer" aria-label="Contract" hidden></aside>
 </div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
+<!-- The fallback for a page that never came up: admin.js failing to load,
+     or throwing before it got to the end (it says so, CH_ADMIN_READY). The
+     client gives this page the focus when the server says open, and only
+     the page could give it back, so a broken load left staff with a cursor
+     and no panel. Here the focus is handed back (adminClose, which the
+     client answers on every path) on the error, and again on any open that
+     arrives while the page is not ready. -->
 <script>
   (function () {
+    var resource = (typeof GetParentResourceName === 'function' && GetParentResourceName())
+      || (/^cfx-nui-(.+)$/.exec(String(location.hostname || '')) || [])[1] || 'crimson-hitman';
+    function release() {
+      if (window.CH_ADMIN_READY) return;
+      try {
+        fetch('https://' + resource + '/adminClose', {
+          method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: '{}'
+        }).catch(function () {});
+      } catch (err) { /* nothing else to do */ }
+    }
+    window.addEventListener('error', release);
+    window.addEventListener('message', function (event) {
+      if (event && event.data && event.data.type === 'open') release();
+    });
     var js = document.createElement('script');
     js.src = 'admin.js?v=' + encodeURIComponent(window.CH_ADMIN_BUILD || 'dev');
+    js.onerror = release;
     document.body.appendChild(js);
   })();
 </script>

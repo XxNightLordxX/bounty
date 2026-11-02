@@ -196,7 +196,7 @@ local DEFAULTS = {
         --- A list, so filled whole or not at all: see isRecord.
         DeathStateProviders = {
             { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
-            { resource = 'qbx_medical',  dead = 'IsDead', lastStand = 'IsLaststand' },
+            { resource = 'qbx_medical' },
         },
     },
     Penalty = {
@@ -1979,7 +1979,8 @@ function StartCrimsonHitman()
                       comms = comms, informant = informant, notify = notify,
                       locationTip = locationTip, freeze = freeze, staffContract = staffContract })
     -- Staff freezes (server/freeze.lua): read from the store once, here.
-    freeze.init({ storage = Storage, audit = audit, notify = notify, kidnap = kidnap })
+    freeze.init({ storage = Storage, audit = audit, notify = notify, kidnap = kidnap,
+                  contracts = contracts })
     -- Staff notes, removals and text edits on a contract
     -- (server/staffcontract.lua): the edits and removals read once, here.
     staffContract.init({ storage = Storage, audit = audit, notify = notify,
@@ -2770,6 +2771,11 @@ function Tick()
     -- the switches off too, so turning one off strands nothing.
     if modules.rpIntent then job('rp_intent.sweep', modules.rpIntent.sweep) end
     if modules.rpProtection then job('rp_protection.sweep', modules.rpProtection.sweep) end
+    -- Informant purchases the store would not take when they were made,
+    -- written again so their counts and waits survive a restart.
+    if modules.informant and modules.informant.retryUnsaved then
+        job('informant.retryUnsaved', modules.informant.retryUnsaved)
+    end
     job('escrow.retryWaiting', RetryWaiting)
     if modules.notify.deliverKept then job('notify.deliverKept', DeliverKept) end
     -- Kill photos switched off (Config.Completion.KillPhotos): nothing below

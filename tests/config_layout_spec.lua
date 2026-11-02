@@ -35,6 +35,10 @@ local CHANGED = {
         CooldownMinutes = 10,
     } },
     ['Cooldowns.placerInformant'] = { nil, { per = 300, burst = 1 } },
+    -- qbx_medical's IsDead and IsLaststand are client exports: listed for
+    -- the client only now, never asked on the server (round 3, F2).
+    ['Completion.DeathStateProviders.2.dead'] = { 'IsDead', nil },
+    ['Completion.DeathStateProviders.2.lastStand'] = { 'IsLaststand', nil },
 }
 
 --- Settings added since the rewrite, by the path the comparison reports
@@ -286,8 +290,11 @@ describe('the configuration as one short file', function()
                 or path == 'Anonymity.WhitelistedTargets.ShowPlacerOnBoard') then
                 addedSince = true
             end
+            -- qbx_medical's client-only exports, taken off its entry (F2).
+            local f2 = CHANGED[path] ~= nil and path:match('^Completion%.DeathStateProviders%.2%.') ~= nil
+                and pair[1] == CHANGED[path][1] and pair[2] == CHANGED[path][2]
             if not (path == 'Admin.DeveloperAce' and pair[1] == nil and pair[2] == 'crimson.developer')
-                and not addedSince then
+                and not addedSince and not f2 then
                 off[#off + 1] = ('%s: %s -> %s'):format(path, tostring(pair[1]), tostring(pair[2]))
             end
         end

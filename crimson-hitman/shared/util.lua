@@ -751,6 +751,34 @@ local function persist(player)
     pcall(function() exports.qbx_core:Save(src) end)
 end
 
+--- The server id a character is loaded at, asked of qbx_core now: nil when
+--- the player object is not a loaded character (offline, no source), or
+--- when that citizen id is no longer at that server id. A player object
+--- read before an await can belong to somebody who has since switched
+--- character or left, and the same server id then names another character:
+--- money moved by server id would go to, or come from, the wrong one.
+---@param player table qbx_core player
+---@return integer|nil src
+local function liveSource(player)
+    local playerData = type(player) == 'table' and player.PlayerData
+    local src = type(playerData) == 'table' and tonumber(playerData.source)
+    local cid = type(playerData) == 'table' and playerData.citizenid
+    if not src or not cid or player.Offline then return nil end
+    local ok, now = pcall(function() return exports.qbx_core:GetPlayerByCitizenId(cid) end)
+    local nowData = ok and type(now) == 'table' and now.PlayerData
+    if type(nowData) ~= 'table' or tonumber(nowData.source) ~= src then return nil end
+    return src
+end
+
+--- A balance by qbx_core's GetMoney export, or nil when it cannot be read.
+---@param src integer
+---@param account string
+---@return number|nil
+local function balance(src, account)
+    local ok, value = pcall(function() return exports.qbx_core:GetMoney(src, account) end)
+    return ok and tonumber(value) or nil
+end
+
 --- Take money from a player, refusing rather than overdrawing them.
 ---
 --- RemoveMoney's return is not an affordability check. qbx_core applies its
@@ -775,20 +803,29 @@ end
 --- down by the amount is paid, anything else is not. A raise that left
 --- this function used to unwind its caller past the code that gives back
 --- what it had already taken.
+---
+--- Through qbx_core's GetMoney / RemoveMoney / AddMoney exports by server
+--- id, not the deprecated Player.Functions, and only once qbx_core says the
+--- character is still at that server id (liveSource): a player object read
+--- before an await may be stale by now. Refused, the caller parks or
+--- refunds as for any refusal.
 ---@param player table qbx_core player
 ---@param account string
 ---@param amount number
 ---@return boolean paid
 function Util.charge(player, account, amount)
-    if not player or not player.Functions then return false end
     amount = tonumber(amount) or 0
     if amount <= 0 then return true end
-    local before = tonumber(player.Functions.GetMoney(account)) or 0
-    if before < amount then return false end
-    local ran, removed = pcall(player.Functions.RemoveMoney, account, amount, Util.MONEY_REASON)
+    local src = liveSource(player)
+    if not src then return false end
+    local before = balance(src, account)
+    if not before or before < amount then return false end
+    local ran, removed = pcall(function()
+        return exports.qbx_core:RemoveMoney(src, account, amount, Util.MONEY_REASON)
+    end)
     if not ran then
-        local read, after = pcall(player.Functions.GetMoney, account)
-        removed = read and (tonumber(after) or 0) <= before - amount
+        local after = balance(src, account)
+        removed = after ~= nil and after <= before - amount
     end
     if not removed then return false end
     persist(player)
@@ -833,18 +870,19 @@ end
 --- for none, nil when that could not be read
 ---@return integer|nil before the balance before the credit, after a raise
 function Util.credit(player, account, amount)
-    if not player or not player.Functions then return false end
-    local read, before = pcall(player.Functions.GetMoney, account)
-    before = read and tonumber(before) or nil
+    local src = liveSource(player)
+    if not src then return false end
+    local before = balance(src, account)
     if not before then return false end
-    local ok, gave = pcall(player.Functions.AddMoney, account, amount, Util.MONEY_REASON)
+    local ok, gave = pcall(function()
+        return exports.qbx_core:AddMoney(src, account, amount, Util.MONEY_REASON)
+    end)
     if ok then
         if not gave then return false end
         persist(player)
         return true
     end
-    local readAfter, after = pcall(player.Functions.GetMoney, account)
-    after = readAfter and tonumber(after) or nil
+    local after = balance(src, account)
     local arrived = after and after - before or nil
     local credited = arrived ~= nil and arrived >= (tonumber(amount) or 0)
     if credited then persist(player) end

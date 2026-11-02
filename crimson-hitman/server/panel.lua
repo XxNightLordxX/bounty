@@ -2883,9 +2883,11 @@ end
 --- whole only to be measured, then serialised again to be sent, and a page
 --- of the log is a few hundred KB of string built and thrown away. A
 --- string counts its bytes and its quotes, a number its digits, a key its
---- name and the punctuation around it. Escapes are not counted, so a reply
---- of quotes and control characters is counted a little short, which only
---- moves where the line falls by those few bytes.
+--- name and the punctuation around it. Escapes count too: a quote, a
+--- backslash or a newline is two bytes written out, any other control
+--- character six (\u00XX), so a reply made mostly of them (a diagnosis
+--- dump, a log page of multi-line reasons) is not counted short of the
+--- line and sent in one frame.
 ---@param value any
 ---@param limit integer
 ---@return boolean
@@ -2896,6 +2898,12 @@ function Panel.over(value, limit)
         local kind = type(v)
         if kind == 'string' then
             total = total + #v + 2
+            if v:find('[\0-\31"\\]') then
+                local _, quotes = v:gsub('["\\]', '')
+                local _, short = v:gsub('[\b\f\n\r\t]', '')
+                local _, control = v:gsub('[\0-\31]', '')
+                total = total + quotes + short + (control - short) * 5
+            end
         elseif kind == 'number' then
             if v == math.floor(v) and v > -1e15 and v < 1e15 then
                 local n, digits = math.abs(v), 1

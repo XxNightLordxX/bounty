@@ -53,8 +53,13 @@ function Intent.init(deps)
     holds, recent, loaded = {}, {}, false
     -- The escrow asks before every give (Escrow.deliver).
     if Escrow then Escrow.holdBack = Intent.holds end
+    -- And staff settling a line it holds are told until when (Admin.settleLine).
+    if Escrow then Escrow.holdUntil = Intent.releasesAt end
     -- And the claim tells this module a payout is about to be released.
-    if deps.contracts then deps.contracts.intentOnClaim = Intent.onClaim end
+    if deps.contracts then
+        deps.contracts.intentOnClaim = Intent.onClaim
+        deps.contracts.intentAfterClaim = Intent.afterClaim
+    end
     -- The hitman's card says what is missing while one of theirs is held.
     if deps.projection and deps.projection.extenders then
         deps.projection.extenders.intent = function(out, contract, viewerCid, role)
@@ -124,18 +129,42 @@ function Intent.onClaim(contract, hitmanCid, fulfilment)
     local key = keyOf(contract.id, hitmanCid)
     local row = holds[key]
     if not row then
+        -- Held from here (the escrow's give asks holds[] as the claim
+        -- releases), and written to the store only once the claim has gone
+        -- through (Intent.afterClaim): a claim refused after this point
+        -- left a row for a payout that never happened.
         row = { id = 'intent:' .. key, kind = KIND, contract_id = contract.id,
-                hitman_cid = hitmanCid, since = os.time() }
+                hitman_cid = hitmanCid, since = os.time(), unwritten = true, missing = missing }
         holds[key] = row
-        local ok, err = pcall(Storage.writeRpRow, row)
-        if not ok then
-            Audit.rejected('intent_hold_not_written', hitmanCid, contract.id, { error = tostring(err) })
-        end
-        Audit.financial('intent_hold_started', hitmanCid, contract.id, { missing = missing })
     end
     recent[key] = { at = os.time(), met = false, missing = missing }
     local minutes = math.floor(tonumber(cfg().HoldMaxMinutes) or 0)
     return { missing = missing, minutes = minutes }
+end
+
+--- The claim a hold was started for has ended (Contracts.claimSlot): gone
+--- through, or raised part-way (its payout may be owed and recovered), and
+--- the hold is written down; refused, and a hold it started goes, with
+--- nothing written. A hold already written is left as it is either way.
+---@param contractId string
+---@param hitmanCid string
+---@param claimed boolean
+function Intent.afterClaim(contractId, hitmanCid, claimed)
+    local key = keyOf(contractId, hitmanCid)
+    local row = holds[key]
+    if not row or not row.unwritten then return end
+    if not claimed then
+        holds[key], recent[key] = nil, nil
+        return
+    end
+    row.unwritten = nil
+    local missing = row.missing
+    row.missing = nil
+    local ok, err = pcall(Storage.writeRpRow, row)
+    if not ok then
+        Audit.rejected('intent_hold_not_written', hitmanCid, contractId, { error = tostring(err) })
+    end
+    Audit.financial('intent_hold_started', hitmanCid, contractId, { missing = missing })
 end
 
 --- Release a hold: the row goes, the release is audited, the hitman is told,
@@ -198,6 +227,20 @@ function Intent.holds(recipientCid, line)
     local row = holds[key]
     if not row then return false end
     return (stillHolding(key, row))
+end
+
+--- When the hold on this give is released anyway (os.time()), or nil when
+--- nothing holds it: for staff who settle a held line and are told why it
+--- did not go (Admin.settleLine), rather than only that it is queued.
+---@param recipientCid string
+---@param line table
+---@return integer|nil releasesAt
+function Intent.releasesAt(recipientCid, line)
+    if not Intent.holds(recipientCid, line) then return nil end
+    local row = holds[keyOf(line.contract_id, recipientCid)]
+    if not row then return nil end
+    local minutes = math.floor(tonumber(cfg().HoldMaxMinutes) or 0)
+    return (tonumber(row.since) or 0) + minutes * 60
 end
 
 --- What the hitman's card says while a payout of theirs on this contract is

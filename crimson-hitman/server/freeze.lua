@@ -50,7 +50,7 @@ local Util = CrimsonBoot.requireShared('util')
 
 local Freeze = {}
 
-local Storage, Audit, Notify, Kidnap
+local Storage, Audit, Notify, Kidnap, Contracts
 
 local frozen = {}   -- [cid] = { cid, name, reason, by_cid, frozen_at }
 --- How many are frozen: always counted from `frozen` (recount), never kept
@@ -76,6 +76,7 @@ local function oneAtATime(cid, fn, ...)
     if not out[1] then error(out[2], 0) end
     return table.unpack(out, 2, out.n)
 end
+
 --- The restart hold now, or nil: { since }. Kept in memory only, so
 --- the resource starting again after the restart is what ends it.
 local restartHold = nil
@@ -95,6 +96,29 @@ Freeze.TEXT = {
 --- began: it is already being paid, and stopping there strands the money.
 local LIVE = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true }
 
+--- Give a contract's lifetime `back` seconds, added to the expiry as it is
+--- right now: read again under the contract's lock (Contracts.serialized)
+--- just before the write. Added to a copy read before a pass's awaits, the
+--- write put back whatever a staff deadline or lifetime change had written
+--- in between. A lock another call holds is not waited for: the contract is
+--- still read again, just before the write, rather than not given back.
+---@param contractId string
+---@param back integer seconds
+local function giveBack(contractId, back)
+    if not back or back <= 0 then return end
+    local function apply()
+        local fresh = Storage.readContract(contractId)
+        if not fresh or not LIVE[fresh.state] or not fresh.expires_at then return true end
+        Storage.setContractFields(contractId, { expires_at = (tonumber(fresh.expires_at) or 0) + back })
+        return true
+    end
+    if Contracts and Contracts.serialized then
+        local ran, done = pcall(Contracts.serialized, { 'contract:' .. contractId }, apply)
+        if ran and done == true then return end
+    end
+    pcall(apply)
+end
+
 local REASON_MAX = 120
 
 --- The app pause now, or nil: { since }. Kept by the store, so it holds
@@ -102,12 +126,13 @@ local REASON_MAX = 120
 local appPause = nil
 local PAUSE_META = 'staff_pause_since'
 
----@param deps table { storage, audit, notify, kidnap }
+---@param deps table { storage, audit, notify, kidnap, contracts }
 local giveBackRestart
 local loadAppPause
 
 function Freeze.init(deps)
     Storage, Audit, Notify, Kidnap = deps.storage, deps.audit, deps.notify, deps.kidnap
+    Contracts = deps.contracts
     -- A restart hold ends with the restart: this start is it.
     restartHold = nil
     Freeze.reload()
@@ -376,9 +401,19 @@ unfreezeUnlocked = function(staffCid, cid, reason)
         -- Nor past the app pause's: its end gives that back.
         if appPause then stop = math.min(stop, appPause.since) end
         local back = math.max(0, stop - row.frozen_at)
-        if back > 0 and contract.expires_at then
-            pcall(Storage.setContractFields, contract.id,
-                { expires_at = (tonumber(contract.expires_at) or now) + back })
+        if back > 0 and contract.expires_at then giveBack(contract.id, back) end
+        -- And every open amendment proposal on it the same time: none could
+        -- be answered while it was held, and none ran out meanwhile
+        -- (Amendments.expire), so each is given the hold back to be answered.
+        if back > 0 and Storage.readOpenAmendments and Storage.writeAmendment then
+            pcall(function()
+                for _, proposal in ipairs(Storage.readOpenAmendments(contract.id) or {}) do
+                    if proposal.expires_at then
+                        proposal.expires_at = (tonumber(proposal.expires_at) or now) + back
+                        Storage.writeAmendment(proposal)
+                    end
+                end
+            end)
         end
         if not others then
             -- Banked now only where nothing else stops it: not while the
@@ -423,10 +458,7 @@ giveBackRestart = function(since, now)
             -- Nor the part the app pause covers, which its end gives back.
             if appPause then stop = math.min(stop, appPause.since) end
             local back = stop - from
-            if back > 0 then
-                pcall(Storage.setContractFields, contract.id,
-                    { expires_at = (tonumber(contract.expires_at) or now) + back })
-            end
+            if back > 0 then giveBack(contract.id, back) end
         end
     end
 end
@@ -590,10 +622,7 @@ local function giveBackApp(since, now)
             local stop = math.min(now, Freeze.heldSince(contract) or now)
             if restartHold then stop = math.min(stop, restartHold.since) end
             local back = stop - from
-            if back > 0 then
-                pcall(Storage.setContractFields, contract.id,
-                    { expires_at = (tonumber(contract.expires_at) or now) + back })
-            end
+            if back > 0 then giveBack(contract.id, back) end
         end
     end
 end

@@ -326,12 +326,20 @@ function Comms.read(actor, contractId, threadHandle)
     -- the stores were bounded is pruned only by its next message.
     local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
     local first = (keep > 0 and #rows > keep) and (#rows - keep + 1) or 1
+    -- What the placer's messages are signed: by name to the hitman where
+    -- the placer chose to be seen, as the inbox names them (Comms.threads);
+    -- by role otherwise, and always to the placer themselves.
+    local placer = PLACER_ALIAS
+    if ctx.role == 'hitman' and ctx.contract.anon_creator ~= true
+        and type(ctx.contract.creator_name) == 'string' and ctx.contract.creator_name ~= '' then
+        placer = ctx.contract.creator_name
+    end
     for i = first, #rows do
         -- The placer's, by who sent it: one stored before they were called
         -- this was signed "Client".
         local alias = rows[i].from_alias
         if rows[i].from_cid == ctx.contract.creator_cid or alias == OLD_PLACER_ALIAS then
-            alias = PLACER_ALIAS
+            alias = placer
         end
         out[#out + 1] = {
             alias = alias,

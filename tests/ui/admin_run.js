@@ -3706,7 +3706,12 @@ async function main() {
     });
     app.click(app.button('Lift suspension'));
     await settled();
-    it('lifts it with one click', function () {
+    it('round 3 L7: takes two clicks to lift a suspension, and sends nothing on the first', function () {
+      eq(app.requests('unsuspend').length, 0);
+    });
+    app.click(app.button('Lift suspension'));
+    await settled();
+    it('lifts it on the second click', function () {
       eq(app.requests('unsuspend').length, 1);
       eq(app.last('unsuspend').data, { subject: '12' });
       truthy(app.button('Suspend'), 'Suspend again');
@@ -3727,6 +3732,15 @@ async function main() {
     });
     app.click(app.button('Lift protection'));
     await settled();
+    it('round 3 L7: takes two clicks to lift a protection too', function () {
+      eq(app.requests('unprotect').length, 0);
+    });
+    app.click(app.button('Lift protection'));
+    await settled();
+    it('and lifts it on the second', function () {
+      eq(app.requests('unprotect').length, 1);
+      eq(app.last('unprotect').data, { subject: '12' });
+    });
     app.click(app.button('Permanent'));
     await settled();
     app.type(app.byId('pp-reason'), 'Off duty staff');
@@ -4199,6 +4213,86 @@ async function main() {
       });
     });
     clean(app, 'roleplay settings and review');
+  })();
+
+  /* ---- round 3 P8: the overview chain outlives a refresh that threw ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(FULL);
+    await settled();
+    const realGet = app.document.getElementById;
+    let broken = true;
+    app.document.getElementById = function (id) {
+      if (broken && String(id).indexOf('count-') === 0) throw new Error('a draw failed');
+      return realGet.apply(this, arguments);
+    };
+    const before = app.requests('overview').length;
+    app.fire(10000);
+    await settled();
+    broken = false;
+    it('round 3 P8: a refresh whose draw threw still sets the next one', function () {
+      eq(app.requests('overview').length, before + 1, 'the refresh ran');
+      eq(app.live(10000), 1, 'and the chain goes on');
+    });
+    app.fire(10000);
+    await settled();
+    it('round 3 P8: and the next one runs', function () {
+      eq(app.requests('overview').length, before + 2);
+      eq(app.live(10000), 1);
+    });
+  })();
+
+  /* ---- round 3: admin.html gives the focus back when admin.js never came up ---- */
+  await (function () {
+    const scripts = [];
+    PAGE_HTML.replace(/<script>([\s\S]*?)<\/script>/gi, function (_, body) { scripts.push(body); return _; });
+    const loader = scripts.filter(function (s) { return s.indexOf('admin.js?v=') !== -1; })[0];
+    function run() {
+      const listeners = {};
+      const posted = [];
+      const appended = [];
+      const sandbox = {
+        window: { addEventListener: function (t, fn) { (listeners[t] = listeners[t] || []).push(fn); } },
+        location: { hostname: 'cfx-nui-crimson-hitman' },
+        document: {
+          createElement: function () { return {}; },
+          body: { appendChild: function (n) { appended.push(n); } }
+        },
+        GetParentResourceName: function () { return 'crimson-hitman-renamed'; },
+        fetch: function (url) { posted.push(url); return Promise.resolve({}); },
+        encodeURIComponent: encodeURIComponent
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(loader, sandbox, { filename: 'admin.html' });
+      return {
+        posted, appended, sandbox,
+        fire: function (type, ev) { (listeners[type] || []).forEach(function (fn) { fn(ev || {}); }); }
+      };
+    }
+    it('round 3: the loader posts adminClose when admin.js fails to load', function () {
+      truthy(loader, 'the loader script is in admin.html');
+      const page = run();
+      eq(page.appended.length, 1, 'admin.js is loaded');
+      page.appended[0].onerror();
+      eq(page.posted, ['https://crimson-hitman-renamed/adminClose']);
+    });
+    it('round 3: and on an open that arrives while the page is not ready, or an error while loading', function () {
+      const page = run();
+      page.fire('message', { data: { type: 'open' } });
+      page.fire('error');
+      eq(page.posted.length, 2);
+    });
+    it('round 3: and never once admin.js has loaded', function () {
+      const page = run();
+      page.sandbox.window.CH_ADMIN_READY = true;
+      page.fire('message', { data: { type: 'open' } });
+      page.fire('error');
+      eq(page.posted.length, 0);
+    });
+    it('round 3: admin.js says it loaded, at its end', function () {
+      const app = boot(standardServer());
+      eq(app.window.CH_ADMIN_READY, true);
+    });
   })();
 
   console.log('');

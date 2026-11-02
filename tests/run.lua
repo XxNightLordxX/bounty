@@ -525,7 +525,8 @@ function _G.newStack()
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify,
                       locationTip = locationTip, freeze = freeze, staffContract = staffContract })
-    freeze.init({ storage = storage, audit = audit, notify = notify, kidnap = kidnap })
+    freeze.init({ storage = storage, audit = audit, notify = notify, kidnap = kidnap,
+                  contracts = contracts })
     staffContract.init({ storage = storage, audit = audit, notify = notify,
                          contracts = contracts, identity = identity })
     sanctions.init({ storage = storage, audit = audit, notify = notify })
@@ -658,7 +659,7 @@ local suites = {
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
-    'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec',
+    'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

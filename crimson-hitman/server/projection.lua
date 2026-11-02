@@ -81,6 +81,21 @@ for name in ([[
     deletePhotosIn
 ]]):gmatch('[%w_]+') do KEEPS[name] = true end
 
+--- Writes the board is never built from either, though they write: the
+--- prune removes finished contracts only, which are never on the live board
+--- (boardBase reads liveContracts), and the roleplay rows are not read by
+--- any projection. The prune runs every tick, so counting it as a write
+--- threw the kept board away every ten seconds for nothing.
+for name in ([[
+    prune pruneContracts writeRpRow deleteRpRow
+]]):gmatch('[%w_]+') do KEEPS[name] = true end
+
+--- Writes that change the board only when they say they did: an expiry
+--- that found the contract no longer due wrote nothing.
+local MOVES_IF = {
+    expireIfDue = function(moved) return moved == true end,
+}
+
 --- Moved before and after every write: a board read while a write waits on
 --- the database (mysql) is never kept as current.
 local generation = 0
@@ -98,7 +113,17 @@ function Projection.watchStore(storage)
     if type(storage) ~= 'table' or watched[storage] then return end
     watched[storage] = true
     for name, fn in pairs(storage) do
-        if type(fn) == 'function' and not KEEPS[name] then
+        local movesIf = MOVES_IF[name]
+        if type(fn) == 'function' and movesIf then
+            -- Moved once, after, and only on a change: a board built while
+            -- it waited is still thrown away, by the move after it.
+            storage[name] = function(...)
+                local out = table.pack(pcall(fn, ...))
+                if not out[1] or movesIf(out[2]) then generation = generation + 1 end
+                if not out[1] then error(out[2], 0) end
+                return table.unpack(out, 2, out.n)
+            end
+        elseif type(fn) == 'function' and not KEEPS[name] then
             storage[name] = function(...)
                 generation = generation + 1
                 local out = table.pack(pcall(fn, ...))

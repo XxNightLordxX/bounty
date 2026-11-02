@@ -724,6 +724,9 @@
     // Bodyguard contracts (server/rp_protection.lua).
     protection_amount: 'That reward is outside what this server allows for a protection job.',
     protection_exists: 'There is already a protection job on this contract.',
+    protection_not_recorded: 'Something went wrong; your money is being returned.',
+    protection_refund_pending: 'Your money from the last protection job on this contract is still '
+      + 'being returned. Post a new one once it has arrived.',
     protection_taken: 'Somebody else took that protection job first.',
     protection_limit: 'You are guarding as many people as you can at once.',
     protection_party: 'You are part of the contract on them, so you cannot guard them.',
@@ -2990,6 +2993,7 @@
     target_too_hurt: 'Your target is too badly hurt',
     not_coerced: 'Your target is not restrained',
     target_too_far: 'Your target is too far from you',
+    not_together: 'You and your target are not in the same place',
     creator_too_far: function (radius) {
       return 'The person who placed this contract must be ' + nearPlacer(radius);
     }
@@ -3971,6 +3975,10 @@
             + nearPlacer() + '. Take the target to them, then tap Deliver alive '
             + 'again.' + findThem,
           target_too_far: 'Keep the target close.',
+          // Another instance (an interior, an apartment) is somewhere
+          // else, whatever the coordinates say.
+          not_together: 'You and the target must be in the same place, not one '
+            + 'of you inside somewhere the other is not.',
           // A live delivery skips the rule about getting back up, so that is
           // never why; it said so to hitmen holding somebody fresh in town.
           target_just_on: 'They have only just come into the city. A handover '
@@ -4211,6 +4219,7 @@
         + 'They must be online and ' + nearPlacer() + ' for the whole handover.',
       target_not_conscious: 'The target went down. A handover has to be alive.',
       target_too_hurt: 'The target got too badly hurt. Get them patched up first.',
+      not_together: 'You and the target were not in the same place.',
       contract_locked: 'The contract was stuck settling another payout.'
     };
     return say('The handover failed. ' + (failed[ended.reason]

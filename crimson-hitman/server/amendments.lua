@@ -1278,8 +1278,17 @@ function Amendments.expire()
         local open = Storage.readOpenAmendments(contractId)
         local remaining = 0
         local closed = false
+        -- On hold by staff (server/freeze.lua): nobody can answer a proposal
+        -- meanwhile, so none runs out. The release gives each back the time
+        -- the hold took (Freeze.unfreeze). Read only once one is due.
+        local held
         for j = 1, #open do
-            if now > open[j].expires_at then
+            if held == nil and now > open[j].expires_at then
+                held = Contracts.heldByStaff(Storage.readContract(contractId)) == true
+            end
+            if held and now > open[j].expires_at then
+                remaining = remaining + 1
+            elseif now > open[j].expires_at then
                 open[j].outcome = 'expired'
                 Storage.writeAmendment(open[j])
                 expired = expired + 1

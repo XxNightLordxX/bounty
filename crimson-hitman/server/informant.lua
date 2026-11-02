@@ -25,6 +25,12 @@ local reveals = {}
 --- [contractId .. ':' .. placerCid] = { { hitman_cid, bought_at, revealed, alerted, seq } }
 local placerBought = {}
 
+--- Purchases paid for whose store write failed, written again by the tick
+--- (Informant.retryUnsaved) so the purchase count and the cooldown survive a
+--- restart. Target records by key; the placer's rows as they were to be
+--- written. [contractId .. ':' .. cid] = true, and { row, ... }
+local unsavedReveals, unsavedPlacer = {}, {}
+
 --- The handles a contract's operatives are offered under.
 --- [contractId] = { byCid = { [hitmanCid] = handle }, byHandle = { [handle] = hitmanCid } }
 local handles = {}
@@ -57,6 +63,7 @@ function Informant.init(deps)
     -- be handed back at once (Bailout.owe).
     Notify, Bailout = deps.notify, deps.bailout
     reveals, placerBought, handles = {}, {}, {}
+    unsavedReveals, unsavedPlacer = {}, {}
     locksAgedAt = nil
 end
 
@@ -258,7 +265,10 @@ end
 local function rememberPaid(contractId, cid, record, action)
     local wrote, err = pcall(remember, contractId, cid, record)
     if not wrote then
+        unsavedReveals[contractId .. ':' .. cid] = true
         Audit.financial(action, cid, contractId, { error = tostring(err) })
+    else
+        unsavedReveals[contractId .. ':' .. cid] = nil
     end
 end
 
@@ -632,16 +642,18 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
     local record = { hitman_cid = row.hitman_cid, bought_at = os.time(), revealed = revealed,
                      alerted = alerted, seq = #rows + 1 }
     rows[#rows + 1] = record
+    local stored = {
+        contract_id = contractId, placer_cid = actor.cid, hitman_cid = row.hitman_cid,
+        bought_at = record.bought_at, revealed = revealed, alerted = alerted,
+        seq = record.seq,
+    }
     local wrote, err = pcall(function()
-        if Storage.writePlacerInformant then
-            Storage.writePlacerInformant({
-                contract_id = contractId, placer_cid = actor.cid, hitman_cid = row.hitman_cid,
-                bought_at = record.bought_at, revealed = revealed, alerted = alerted,
-                seq = record.seq,
-            })
-        end
+        if Storage.writePlacerInformant then Storage.writePlacerInformant(stored) end
     end)
     if not wrote then
+        -- Kept to be written again on the tick: only in memory, a restart
+        -- counted the cap from zero and forgot the wait.
+        unsavedPlacer[#unsavedPlacer + 1] = stored
         Audit.financial('placer_informant_unremembered', actor.cid, contractId,
             { error = tostring(err) })
     end
@@ -738,11 +750,48 @@ function Informant.revealedOperatives(contractId, cid)
     return out
 end
 
+--- Write again every purchase the store would not take when it was made:
+--- the tick's job, as the bodyguard rows are. Answers how many are written.
+---@return integer written
+function Informant.retryUnsaved()
+    local written = 0
+    for key in pairs(unsavedReveals) do
+        local record = reveals[key]
+        local contractId, cid = key:match('^([^:]+):(.+)$')
+        if not record or not contractId then
+            unsavedReveals[key] = nil
+        elseif pcall(remember, contractId, cid, record) then
+            unsavedReveals[key] = nil
+            written = written + 1
+        end
+    end
+    if #unsavedPlacer > 0 and Storage and Storage.writePlacerInformant then
+        local left = {}
+        for i = 1, #unsavedPlacer do
+            if pcall(Storage.writePlacerInformant, unsavedPlacer[i]) then
+                written = written + 1
+            else
+                left[#left + 1] = unsavedPlacer[i]
+            end
+        end
+        unsavedPlacer = left
+    end
+    return written
+end
+
 function Informant.clearContract(contractId)
     local prefix = contractId .. ':'
     for key in pairs(reveals) do
         if key:sub(1, #prefix) == prefix then reveals[key] = nil end
     end
+    for key in pairs(unsavedReveals) do
+        if key:sub(1, #prefix) == prefix then unsavedReveals[key] = nil end
+    end
+    local kept = {}
+    for i = 1, #unsavedPlacer do
+        if unsavedPlacer[i].contract_id ~= contractId then kept[#kept + 1] = unsavedPlacer[i] end
+    end
+    unsavedPlacer = kept
     for key in pairs(placerBought) do
         if key:sub(1, #prefix) == prefix then placerBought[key] = nil end
     end

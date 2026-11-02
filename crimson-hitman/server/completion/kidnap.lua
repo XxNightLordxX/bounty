@@ -39,6 +39,16 @@ local function metres(radius)
     return ('%.1f'):format(r)
 end
 
+--- A player's routing bucket, or nil when the server cannot say: nil is
+--- never anybody's bucket, so an unanswered read refuses rather than
+--- counts as together.
+---@param src number
+---@return integer|nil
+local function bucketOf(src)
+    local ok, bucket = pcall(GetPlayerRoutingBucket, src)
+    return ok and tonumber(bucket) or nil
+end
+
 --------------------------------------------------------------------------
 -- Coercion
 --------------------------------------------------------------------------
@@ -131,6 +141,17 @@ function Kidnap.conditionsMet(contract, hitman, target, creator, radius)
     local coerced = Kidnap.isCoerced(hitman.source, target.source)
     if not coerced then return false, 'not_coerced' end
 
+    -- One instance (routing bucket) for all of them. Three players in three
+    -- apartment shells stand at the same coordinates and are nowhere near
+    -- each other, so the distances below say nothing across buckets. The
+    -- person who placed it in another one is not here, said as the absent
+    -- or distant placer is (creator_too_far), so it tells nobody whether an
+    -- anonymous one is online.
+    local hitmanBucket = bucketOf(hitman.source)
+    if hitmanBucket == nil or bucketOf(target.source) ~= hitmanBucket then
+        return false, 'not_together'
+    end
+
     radius = tonumber(radius) or Config.Kidnap.Radius
     local r2 = radius * radius
     local hitmanCoords = GetEntityCoords(GetPlayerPed(hitman.source))
@@ -138,6 +159,7 @@ function Kidnap.conditionsMet(contract, hitman, target, creator, radius)
 
     if Util.dist2(hitmanCoords, targetCoords) > r2 then return false, 'target_too_far' end
     if not creator then return false, 'creator_too_far' end
+    if bucketOf(creator.source) ~= hitmanBucket then return false, 'creator_too_far' end
 
     local creatorCoords = GetEntityCoords(GetPlayerPed(creator.source))
     if Util.dist2(hitmanCoords, creatorCoords) > r2 then return false, 'creator_too_far' end
@@ -509,6 +531,9 @@ function Kidnap.tick(deltaMs)
                         elseif reason == 'target_too_hurt' then
                             why = 'The target got too badly hurt before the handover '
                                 .. 'finished. Get them patched up first.'
+                        elseif reason == 'not_together' then
+                            why = 'You and the target were not in the same place (one of '
+                                .. 'you went inside somewhere) before the handover finished.'
                         else
                             why = 'You lost hold of the target.'
                         end

@@ -257,6 +257,17 @@ local function readCondition(source)
     }
 end
 
+--- Whether two players are in the same routing bucket. Two players in two
+--- instances (apartment shells, interiors) can stand at the same
+--- coordinates and be nowhere near each other, so no distance is read
+--- across buckets. A bucket the server cannot read is nobody's.
+---@return boolean
+local function sameBucket(a, b)
+    local okA, ba = pcall(GetPlayerRoutingBucket, a)
+    local okB, bb = pcall(GetPlayerRoutingBucket, b)
+    return okA and okB and ba ~= nil and ba == bb
+end
+
 --- Health and armour as one figure: a shot into a vest costs no health.
 local function total(c) return (c.health or 0) + (c.armour or 0) end
 
@@ -1070,6 +1081,9 @@ function Death.noteDefib(medicSource, targetSource)
     local dead = Identity.deathState(patientSource)
     if not dead then return false end
 
+    -- Over the patient means in the same instance too.
+    if not sameBucket(medicSource, patientSource) then return false end
+
     local reach = ((Config.Completion and Config.Completion.DefibRange) or 3.0) + 2.0
     local gap = Util.dist2(GetEntityCoords(GetPlayerPed(medicSource)),
         GetEntityCoords(GetPlayerPed(patientSource)))
@@ -1100,7 +1114,11 @@ function Death.onVictimReport(victimSource, killerServerId)
     local named
     if killerServerId then
         local killer = Identity.resolve(killerServerId)
-        if killer and killer.cid ~= victim.cid then
+        if killer and killer.cid ~= victim.cid and not sameBucket(killerServerId, victimSource) then
+            -- In another instance: not in range, whatever the coordinates.
+            Audit.rejected('killer_out_of_range', killer.cid, nil,
+                { victim = victim.cid, instance = true })
+        elseif killer and killer.cid ~= victim.cid then
             local distance = math.sqrt(Util.dist2(
                 GetEntityCoords(GetPlayerPed(killerServerId)),
                 GetEntityCoords(GetPlayerPed(victimSource))))

@@ -638,7 +638,7 @@ Config.Completion.DefibItem             = 'defibrillator'       -- as sc-ambulan
 Config.Completion.DefibRange            = 3.0                   -- as sc-ambulance's Defib.Distance
 Config.Completion.DeathStateProviders   = { -- medical resources asked who is dead, in order
     { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
-    { resource = 'qbx_medical',  dead = 'IsDead', lastStand = 'IsLaststand' },
+    { resource = 'qbx_medical' },  -- no server exports: read from the QBox metadata it writes
 }
 
 Config.Mugshot.MinRefreshMinutes = 5      -- least time between two headshots of one target

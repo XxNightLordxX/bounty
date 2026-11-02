@@ -708,7 +708,9 @@ end
 --- Medical resources found running without the death-state exports this
 --- server asks them for, until they next start: [resource] = true.
 ---
---- qbx_medical is one. Its IsDead and IsLaststand are client exports
+--- qbx_medical was one, and ships listed without exports now, so it is
+--- never asked at all; this still catches an operator's entry naming
+--- exports a resource does not have. Its IsDead and IsLaststand are client exports
 --- (qbx_medical client/main.lua); its server exports nothing of the kind
 --- (server/main.lua: ResetHungerAndThirst, Revive, Heal, HealPartially,
 --- GetPlayerStatus), and writes the isdead and inlaststand metadata the
@@ -742,7 +744,12 @@ end
 function Identity.deathState(source)
     for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
         local resource = provider.resource
-        if resource and not noExport[resource] and GetResourceState(resource) == 'started' then
+        -- A provider named without exports (qbx_medical as shipped: its
+        -- IsDead and IsLaststand are client exports, and its server's
+        -- GetPlayerStatus says nothing of death) is listed for the client
+        -- only, and never asked here: the metadata below is its answer.
+        local asks = type(provider.dead) == 'string' and type(provider.lastStand) == 'string'
+        if resource and asks and not noExport[resource] and GetResourceState(resource) == 'started' then
             local ok, dead = pcall(function() return exports[resource][provider.dead](nil, source) end)
             local ok2, last = pcall(function() return exports[resource][provider.lastStand](nil, source) end)
             if ok and ok2 then

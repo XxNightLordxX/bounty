@@ -8,7 +8,7 @@ local function seeded(opts)
         targetCid = 'TARGET01', reason = 'Unpaid debt',
         mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
-        bailoutAmount = opts.bailout,
+        bailoutAmount = opts.bailout, anonymous = opts.anonCreator == true,
     })
     if opts.accept ~= false then s.contracts.accept(f.hitman, c.id, opts.anonHitman == true) end
     return s, f, c
@@ -255,7 +255,9 @@ describe('masked relay', function()
 
         local thread = s.comms.read(f.hitman, c.id, nil)
         eq(#thread, 2)
-        eq(thread[1].alias, 'The person who placed it')
+        -- A placer who chose to be seen is signed by name to the hitman, as
+        -- the inbox names them (round 3, L9); an anonymous one by role.
+        eq(thread[1].alias, 'Vic Marlowe')
         eq(thread[2].alias, 'Operative #1')
     end)
 
@@ -307,7 +309,8 @@ describe('masked relay', function()
     end)
 
     it('never returns the other partys identity', function()
-        local s, f, c = seeded()
+        -- An anonymous placer: one who chose to be seen is named (L9).
+        local s, f, c = seeded({ anonCreator = true })
         local threads = s.comms.threads(f.creator, c.id)
         s.comms.send(f.creator, c.id, threads[1].handle, 'hello')
         local thread = s.comms.read(f.hitman, c.id, nil)

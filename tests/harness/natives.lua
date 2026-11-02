@@ -780,6 +780,32 @@ function Natives.exportsProxy()
 
     resources['qbx_core'] = {
         GetPlayer = function(_, src) return Env.players[tonumber(src)] end,
+        --- qbx_core's money exports (server/player.lua): by server id or
+        --- citizen id (resolvePlayer), false for nobody there. They do to
+        --- the record what its Functions do, so they go through the
+        --- fixture's own Functions: a test that makes AddMoney refuse or
+        --- raise there makes the export do the same, as the export and the
+        --- method share one implementation in qbx_core.
+        GetMoney = function(_, identifier, account)
+            local src = type(identifier) == 'string' and Env.byCitizen[identifier] or tonumber(identifier)
+            local p = src and Env.players[src]
+            if not p or not account then return false end
+            return p.Functions.GetMoney(account)
+        end,
+        AddMoney = function(_, identifier, account, amount, reason)
+            local src = type(identifier) == 'string' and Env.byCitizen[identifier] or tonumber(identifier)
+            local p = src and Env.players[src]
+            if not p then return false end
+            Natives.calls.moneyExports = (Natives.calls.moneyExports or 0) + 1
+            return p.Functions.AddMoney(account, amount, reason)
+        end,
+        RemoveMoney = function(_, identifier, account, amount, reason)
+            local src = type(identifier) == 'string' and Env.byCitizen[identifier] or tonumber(identifier)
+            local p = src and Env.players[src]
+            if not p then return false end
+            Natives.calls.moneyExports = (Natives.calls.moneyExports or 0) + 1
+            return p.Functions.RemoveMoney(account, amount, reason)
+        end,
         GetPlayerByCitizenId = function(_, cid)
             local src = Env.byCitizen[cid]
             return src and Env.players[src] or nil

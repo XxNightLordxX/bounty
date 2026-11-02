@@ -253,6 +253,38 @@ local function writeFile(file, data)
     return false
 end
 
+--- The self-test's file: no handle (handleIn reads none from it), so the
+--- start-up sweep and every photo path leave it alone.
+local SELF_TEST_FILE = PHOTO_DIR .. '/.selftest.bin'
+
+--- Write a few bytes of binary, NULs included, into data/photos, read them
+--- back, compare, and remove the file: whether 'server' photo storage can
+--- keep a picture on this server at all. /ch-diag runs it. A folder the
+--- server cannot write, or a build that cuts binary at the first NUL, is
+--- otherwise found only by the first real kill photo that will not open.
+---@return boolean ok
+---@return string detail
+function Photos.selfTest()
+    makeFolder(PHOTO_DIR)
+    local bytes = { '\255\216\255\224\0\16JFIF\0' }
+    for i = 0, 255 do bytes[#bytes + 1] = string.char(i) end
+    local data = table.concat(bytes)
+    local resource = GetCurrentResourceName()
+    local okWrite, wrote = pcall(SaveResourceFile, resource, SELF_TEST_FILE, data, #data)
+    if not okWrite or wrote == false then
+        return false, ('could not write %s'):format(SELF_TEST_FILE)
+    end
+    local okRead, back = pcall(LoadResourceFile, resource, SELF_TEST_FILE)
+    removeFile(SELF_TEST_FILE)
+    if not okRead or type(back) ~= 'string' then
+        return false, ('wrote %s but could not read it back'):format(SELF_TEST_FILE)
+    end
+    if back ~= data then
+        return false, ('read back %d of %d bytes, not the same'):format(#back, #data)
+    end
+    return true, ('wrote and read back %d bytes'):format(#data)
+end
+
 --- What a record points at, read before the store lets go of it: closing a
 --- record clears its link and file name, and on the memory store a record
 --- read a moment ago is the stored one, cleared with it.

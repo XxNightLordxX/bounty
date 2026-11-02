@@ -188,6 +188,20 @@ RegisterNUICallback('adminClose', function(_, cb)
     cb({ ok = true })
 end)
 
+-- The way out when the page itself cannot give the focus back (it failed
+-- to load and its own fallback did not reach this client): typed in the F8
+-- console, which opens over the page. /<panel command>-close, so it sits
+-- beside the command that opened it. It only closes this player's own page;
+-- anyone may run it, and it opens nothing.
+do
+    local commands = Config and Config.Admin and Config.Admin.Commands
+    local panel = type(commands) == 'table' and type(commands.panel) == 'string' and commands.panel
+        or 'hitmanadmin'
+    RegisterCommand(panel .. '-close', function()
+        AdminPanel.close()
+    end, false)
+end
+
 -- A restart with the page open: the focus is this resource's, and nothing
 -- else would ever give it back.
 AddEventHandler('onResourceStop', function(resource)

@@ -21,7 +21,12 @@ local Bridges = {}
 ---@param data table
 function Bridges.onWeaponDamage(modules, sender, data)
     if not modules.death or type(data) ~= 'table' then return 0 end
-    if (data.weaponDamage or 0) <= 0 then return 0 end
+    -- weaponDamage is the sender's figure only where it overrides the
+    -- game's own (overrideDefaultDamage); otherwise the engine sends 0 and
+    -- the victim's game works the damage out. A hit like that is still a
+    -- hit, kept for attribution: what it cost is read from the victim's
+    -- condition (Death.recordDamage), never from this figure.
+    if data.overrideDefaultDamage and (tonumber(data.weaponDamage) or 0) <= 0 then return 0 end
 
     local hits = data.hitGlobalIds
     if type(hits) ~= 'table' then return 0 end
