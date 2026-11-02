@@ -1270,6 +1270,10 @@ local PASSES = {
     { name = 'anonymous', opts = { anonymous = true } },
 }
 
+--- Tests that turn roleplay features on live put Config.Roleplay back
+--- after them (tests/harness/roleplay.lua), so no later spec sees them on.
+local RP = require('tests.harness.roleplay')
+
 local function runRow(name)
     local entry = MATRIX[name]
     local failures = {}
@@ -1310,7 +1314,7 @@ describe('the authorisation matrix, driven through the real net events', functio
     table.sort(names)
 
     for _, name in ipairs(names) do
-        it(name .. ' answers each role the way the resource intends', function()
+        RP.it(name .. ' answers each role the way the resource intends', function()
             runRow(name)
         end)
     end

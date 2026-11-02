@@ -321,10 +321,14 @@ end)
 -- is one item (at Rate 1) in the hitman's pockets, never more or fewer.
 --------------------------------------------------------------------------
 
+--- Tests that turn roleplay features on live put Config.Roleplay back
+--- after them (tests/harness/roleplay.lua), so no later spec sees them on.
+local RP = require('tests.harness.roleplay')
+
 describe('conservation with dirty money payouts', function()
     local function value(t) return t.cash + t.bank + t.dirty end
 
-    it('keeps the value across a handover, an elimination and a cancel', function()
+    RP.it('keeps the value across a handover, an elimination and a cancel', function()
         local s = newStack()
         local f = fixture(s)
         Config.Roleplay.DirtyPayouts.Enabled = true
@@ -359,7 +363,7 @@ describe('conservation with dirty money payouts', function()
         conserved(s, mid, 'a cancel refunds by source')
     end)
 
-    it('keeps the value of a payout that waits for room', function()
+    RP.it('keeps the value of a payout that waits for room', function()
         local s = newStack()
         local f = fixture(s)
         Config.Roleplay.DirtyPayouts.Enabled = true

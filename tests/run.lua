@@ -630,7 +630,7 @@ local suites = {
     'location_tip_spec', 'informant_spec', 'freeze_spec', 'clock_rule_spec', 'untaken_terms_spec',
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
-    'rpC_roleplay_spec',
+    'rpC_roleplay_spec', 'rp_together_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

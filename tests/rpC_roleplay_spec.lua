@@ -9,6 +9,10 @@
 --- bodyguard jobs hold); permissions hold; nothing names a hidden party; and
 --- each setting changes live from the admin panel.
 
+--- Every test here puts Config.Roleplay back as it found it (the features
+--- it turns on live), so no later spec sees them on, whatever the order.
+local it = require('tests.harness.roleplay').it
+
 local Exec = require('tests.harness.mysql_exec')
 
 local HIT = 1
@@ -98,9 +102,11 @@ end
 
 describe('rpC as shipped', function()
     it('ships every switch off', function()
-        local shipped = ConfigDefaults.Roleplay
+        -- Read from the files: another spec may have turned one on live.
+        local shipped = require('tests.harness.shipped').fromFile().Roleplay
         for _, name in ipairs({ 'ProofOfIntent', 'Reputation', 'Protection', 'HitOnHitman' }) do
             eq(shipped[name].Enabled, false, name .. ' ships off')
+            eq(ConfigDefaults.Roleplay[name].Enabled, false, name .. ' ships off in defaults.lua')
         end
     end)
 

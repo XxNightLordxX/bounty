@@ -20,6 +20,10 @@
 ---   * every setting is changed from the panel, held to its rule, and only
 ---     by staff who may write.
 
+--- Every test here puts Config.Roleplay back as it found it (the features
+--- it turns on live), so no later spec sees them on, whatever the order.
+local it = require('tests.harness.roleplay').it
+
 local function stack(opts)
     opts = opts or {}
     local s = newStack()

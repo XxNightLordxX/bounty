@@ -7,6 +7,10 @@
 --- two answers differ in any way at all, the difference is the leak.
 
 --- A value as one string, keys sorted, so two answers compare whole.
+--- Tests that turn roleplay features on live put Config.Roleplay back
+--- after them (tests/harness/roleplay.lua), so no later spec sees them on.
+local RP = require('tests.harness.roleplay')
+
 local function encode(value)
     if type(value) ~= 'table' then
         return type(value) == 'string' and ('%q'):format(value) or tostring(value)
@@ -1310,7 +1314,7 @@ describe('every channel a player not entitled to it can read', function()
     end
 
     for _, namesShown in ipairs({ true, false }) do
-    it(('names neither hidden party to anybody not entitled, on any channel (names to the '
+    RP.it(('names neither hidden party to anybody not entitled, on any channel (names to the '
         .. 'target %s)'):format(namesShown and 'on' or 'off'), function()
         local _, _, c = city(namesShown)
         truthy(c)
@@ -1756,7 +1760,7 @@ end)
 --------------------------------------------------------------------------
 
 describe('the roleplay consequences\' channels', function()
-    it('name neither hidden party in a witness report, a phone notice, a news post or its event', function()
+    RP.it('name neither hidden party in a witness report, a phone notice, a news post or its event', function()
         local s = newStack()
         local f = fixture(s, { targetJob = { name = 'police', type = 'leo', onduty = true } })
         Config.Limits.TargetCooldownAfterResolveSeconds = 0
