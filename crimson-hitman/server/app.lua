@@ -363,6 +363,7 @@ local MONEY_REQUESTS = {
     armKidnap = true, locationTip = true,
     protectionPost = true, protectionCancel = true,
     goDark = true,
+    proofItem = true,
 }
 
 --- The roleplay features (server/rp_*.lua, Config.Roleplay), each off as
@@ -1868,6 +1869,13 @@ function App.register()
         local ok, err, card = deps.impBoard.decay.turnOff(actor, payload.id)
         if not ok then return false, err end
         return card or { off = true }
+    end)
+
+    -- Proof items: the hitman hands the placer an item taken from the target
+    -- and is paid as for a verified kill. Distance and item read on the server.
+    handler('proofItem', 'photo', function(actor, payload)
+        if not deps.impProof then return false, CH.ERR.FEATURE_OFF end
+        return deps.impProof.handover(actor, payload.id)
     end)
 end
 

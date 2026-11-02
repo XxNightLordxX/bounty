@@ -358,6 +358,8 @@ describe('what this suite really covered', function()
         -- Informant fairness (off as shipped), through the net event.
         goDark       = 'imp_tips_spec ("charges the quote")',
         decayOff     = 'impB_board_spec ("lets the placer turn it off for their contract")',
+        -- The improvements, answered ok through the net event.
+        proofItem    = 'imp_staffeco_spec ("pays a hitman who hands over the target\'s id card")',
         -- Read paths, exercised to an ok in their own specs.
         list           = 'projection_spec and the ui suite',
         mine           = 'projection_spec and the ui suite',

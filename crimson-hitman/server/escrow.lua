@@ -1557,7 +1557,7 @@ end
 --- from, who gets back what they put up: a contract that was never stored
 --- cannot be read, and its client's own weapon went back to them unregistered.
 ---@return table|nil metadata
-local function handedOver(recipientCid, line)
+local function unregistered(recipientCid, line)
     local meta = line.metadata
     if type(meta) ~= 'table' or type(meta.registered) ~= 'string' then return meta end
     if line.taken_from ~= nil and line.taken_from == recipientCid then return meta end
@@ -1568,6 +1568,23 @@ local function handedOver(recipientCid, line)
     local copy = Util.copy(meta)
     copy.registered = false
     return copy
+end
+
+--- Set by server/imp_scrub.lua (Config.Improvements.SerialScrub, off as
+--- shipped): the metadata with a new serial, or nil to leave it.
+Escrow.scrubSerial = nil
+
+--- The metadata a weapon is handed over with: unregistered where it must be
+--- (above), and its serial scrubbed where that improvement is on. A scrub
+--- that raises hands the weapon over as it was.
+---@return table|nil metadata
+local function handedOver(recipientCid, line)
+    local meta = unregistered(recipientCid, line)
+    if Escrow.scrubSerial then
+        local ok, scrubbed = pcall(Escrow.scrubSerial, recipientCid, line, meta)
+        if ok and type(scrubbed) == 'table' then meta = scrubbed end
+    end
+    return meta
 end
 
 --- How many gives of one line may raise with nothing arriving before it is

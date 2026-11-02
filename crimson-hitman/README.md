@@ -29,6 +29,17 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   hitmen below a progression level (`Config.Improvements.Tiers`); and an
   untaken contract's reward can rise, charged to its placer, or it can end
   sooner (`Config.Improvements.ContractDecay`). See *Optional improvements*.
+- **Improvements: proof items** (off as shipped): a hitman may finish a
+  contract a kill completes by handing the placer an item taken from the
+  target (qbx_idcard's `id_card`, its `citizenid` naming them), checked on
+  the server. See *Optional improvements*.
+- **Improvements: completion cooldown** (off as shipped):
+  `Config.Limits.TargetCooldownAfterCompletionSeconds` keeps a target off the
+  board for longer after a contract on them was completed.
+- **Improvements: weapon serial scrubbing** (off as shipped): a weapon an
+  anonymous placer put up reaches the hitman with a new serial.
+- **Improvements: weekly stats to Discord** (off as shipped): one post a week
+  of the totals placed, completed and paid out. Counts only.
 - **Roleplay: proof of intent, earned reputation, bodyguards and the hit on
   the hitman** (all off as shipped, all changeable from the admin panel): a
   payout can wait until the hitman has worked the contract in character
@@ -906,6 +917,15 @@ Optional changes to existing features, each its own block of `Config.Improvement
 | `Config.Improvements.HitmanHeat.WarnTargetChancePercent` / `HitmanHeat.BulletinEveryMinutes` / `HitmanHeat.BulletinTitle` / `HitmanHeat.BulletinText` | `50` / `60` / `'Intelligence bulletin'` / *A known contract killer is believed active in the city.* | A known hitman's acceptance sends the target the paranoid alert at this chance (100 = always). While a known hitman holds a live contract, officers and sc-dispatch get `BulletinText` at most every `BulletinEveryMinutes` (`0` = never). It names nobody. |
 | `Config.Improvements.Tiers.Enabled` / `Tiers.CompletionsPerLevel` / `Tiers.Tiers` | `false` / `5` / two tiers | The tiered board, while `Config.Progression.Enabled` is on: each tier `'name, least reward, level'`; a contract whose current payout reaches a tier's reward is locked to hitmen below its level (1 plus one per `CompletionsPerLevel` completed contracts), and Accept is refused on the server. |
 | `Config.Improvements.ContractDecay.Enabled` / `ContractDecay.Mode` / `ContractDecay.Percent` / `ContractDecay.Hours` / `ContractDecay.MaxIncreasePercent` / `ContractDecay.Account` | `false` / `'rise'` / `10` / `1` / `50` / `'bank'` | Contract decay: every `Hours` a contract waits untaken, `'rise'` adds `Percent` of its reward, charged to its placer from `Account`, up to `MaxIncreasePercent` in all; `'shorten'` brings its deadline in by `Percent` of the time left. The placer is told and can turn it off for their contract. |
+| `Config.Improvements.ProofItems.Enabled` | `false` | A hitman on a contract a kill completes may hand the placer an item taken from the target, and is paid as for a verified kill. |
+| `Config.Improvements.ProofItems.Item` | `'id_card'` | The ox_inventory item handed over (qbx_idcard's id card). |
+| `Config.Improvements.ProofItems.MetadataKey` | `'citizenid'` | The item's metadata field that must hold the target's citizen id (qbx_idcard writes `citizenid`). |
+| `Config.Improvements.ProofItems.HandoverRadius` | `3.0` | Metres between the hitman and the placer, read on the server from their peds. |
+| `Config.Improvements.SerialScrub.Enabled` | `false` | A weapon an anonymous placer put up reaches anybody but them with a new random ox_inventory `serial`; the original is in the log for staff with `crimson.identity`. |
+| `Config.Improvements.WeeklyStats.Enabled` | `false` | One post a week of the last seven days' totals (placed, completed, paid out to hitmen) to `crimson_hitman_stats_webhook`, or else the alert webhook. Counts only. |
+| `Config.Improvements.WeeklyStats.Day` | `'sunday'` | The day it is posted, server time (`'sunday'` to `'saturday'`). |
+| `Config.Improvements.WeeklyStats.Hour` | `18` | The hour it is posted, server time (0 to 23); a start later that day posts it then. |
+| `Config.Limits.TargetCooldownAfterCompletionSeconds` | `0` | After a **completed** contract, nobody may place one on that target for this long (the longer of this and `TargetCooldownAfterResolveSeconds`). The placer is told the wait in hours. `0` turns it off. Under **Rules > Timers**. |
 
 ### Roleplay
 
@@ -2748,6 +2768,72 @@ to turn it off for that contract. A contract already older than a step when
 decay first sees it (placed before it was turned on) starts counting then.
 What each contract has had is kept in the store (`crimson_rp_rows`, kind
 `imp_decay`), so a restart neither repeats a step nor forgets an opt-out.
+
+### Staff and economy
+
+Four rules for staff and the economy, in `server/imp_proof.lua`,
+`server/imp_scrub.lua` and `server/imp_weekly.lua`, with their shared checks
+(and the completion cooldown) in `server/imp_staffeco.lua`.
+
+#### Proof items
+
+With `Config.Improvements.ProofItems.Enabled` on, a hitman on a contract a
+kill completes (`Config.Completion.Fulfilment = 'either'` when it was placed)
+sees **Hand over proof** beside Verify kill. Standing within
+`HandoverRadius` metres of the person who placed it, carrying an `Item`
+(as shipped qbx_idcard's `id_card`) whose metadata `MetadataKey`
+(`citizenid`) is the target's citizen id, they tap it. The server reads
+both players' positions from their peds, finds the item with ox_inventory's
+`Search`, takes that very slot with `RemoveItem`, and claims the next payout
+as for a verified kill (`Contracts.claimSlot`, an elimination): ledger rows,
+the client's notice and the hitman's receipt as usual. A payout refused
+(frozen, a payout wait, protection) gives the item back with `AddItem`,
+exactly as it was; so one id card never pays two collections. An anonymous
+placer not in the city is refused exactly as one standing too far away
+(*Stand within 3 m of the person who placed this contract*), so nothing
+says whether they are online. A contract placed for a live delivery only is
+never paid this way. With ox_inventory not started the feature does nothing.
+The ox_inventory calls (`Search` with a metadata filter, `RemoveItem` with a
+slot, `AddItem`) and qbx_idcard's `citizenid` field were checked against
+their published source.
+
+#### Completion cooldown
+
+`Config.Limits.TargetCooldownAfterCompletionSeconds` (`0`, off, as shipped):
+after a contract on somebody is **completed**, nobody may place a new one on
+them for this long, or for `TargetCooldownAfterResolveSeconds` if that is
+longer. The placer is told *You can place a contract on them again in N
+hours* and nothing else: not who, not how. `/ch-refresh` brings it forward
+with the other waits. Under **Rules > Timers**.
+
+#### Weapon serial scrubbing
+
+With `Config.Improvements.SerialScrub.Enabled` on, a weapon an anonymous
+placer put up as a reward reaches anybody but them (the hitman it pays) with
+a new random serial in ox_inventory's own form (six digits, three letters,
+six digits; ox_inventory keeps a serial longer than three characters as
+given, and leaves an unregistered weapon's alone). It already goes
+unregistered. The stored escrow line is not changed: a refund is the
+placer's own weapon. Each scrub is in the log as *weapon_serial_scrubbed*
+with the new serial and the original; the original reads *(identity only)*
+to staff without `crimson.identity`, since it can trace the placer. A named
+placer's weapons are never scrubbed.
+
+#### Weekly stats to Discord
+
+With `Config.Improvements.WeeklyStats.Enabled` on, once a week on `Day` at
+`Hour` (server time) one post goes to the webhook in
+`set crimson_hitman_stats_webhook "..."` (server.cfg), or, without one, to
+the alert webhook the daily summary uses: contracts placed, contracts
+completed and money paid out of rewards to hitmen, over the last seven
+days. **Totals only.** A leaderboard of hitmen by alias was considered and
+left out: an alias belongs to one contract, and any handle that stays the
+same for one hitman across a week lets a reader who knows one of that
+hitman's contracts tie the others to it. So no hitman, placer or target is
+named, counted or ranked on their own. The week last posted is kept by the
+store (`imp_weekly_day` in `crimson_meta`, records.json or memory), so a
+restart never posts it twice; a start within the day after the hour posts
+a week not yet posted.
 
 ---
 

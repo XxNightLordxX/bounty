@@ -5228,6 +5228,40 @@
         { key: 'Improvements.ContractDecay.Percent', view: 'money', label: 'Step, cap and account' },
         { key: 'Improvements.ContractDecay.Hours', view: 'timers', label: 'Hours between steps' }] });
 
+  /* ---------- the staff and economy improvements (Config.Improvements) ---------- */
+
+  HELP.push(
+    { title: 'Proof items', icon: 'id-card',
+      text: 'Off as shipped. On, a hitman on a contract a kill completes can tap Hand over proof '
+        + 'standing beside the person who placed it, carrying an item taken from the target (as '
+        + 'shipped an id card whose citizenid names them). The server finds the item in the '
+        + 'hitman\'s inventory, checks it names the target and the distance, takes the item and '
+        + 'pays as for a verified kill. A payout refused gives the item back. Contracts placed '
+        + 'for a live delivery only are never paid this way.',
+      links: [{ key: 'Improvements.ProofItems.Enabled', view: 'features', label: 'Proof items on or off' },
+        { key: 'Improvements.ProofItems.Item', view: 'limits', label: 'The item' },
+        { key: 'Improvements.ProofItems.MetadataKey', view: 'limits', label: 'The field naming the target' },
+        { key: 'Improvements.ProofItems.HandoverRadius', view: 'limits', label: 'The distance' }] },
+    { title: 'Completion cooldown', icon: 'hourglass',
+      text: 'Off as shipped (0). Set, nobody may place a contract on somebody for this long after '
+        + 'a contract on them was completed, or for the ordinary wait after any contract if that '
+        + 'is longer. The placer is told how many hours are left, and nothing else.',
+      links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', view: 'timers', label: 'The wait' }] },
+    { title: 'Weapon serial scrubbing', icon: 'gun',
+      text: 'Off as shipped. On, a weapon an anonymous placer put up reaches the hitman with a new '
+        + 'random serial, so it cannot be traced back to them by its number. A refund to the placer '
+        + 'is their own weapon unchanged. Each scrub is in the log; the original serial is shown '
+        + 'only to staff with the identity ACE.',
+      links: [{ key: 'Improvements.SerialScrub.Enabled', view: 'features', label: 'Scrubbing on or off' }] },
+    { title: 'Weekly stats to Discord', icon: 'chart-column',
+      text: 'Off as shipped. On, once a week on the day and hour set, one post of the last seven '
+        + 'days: contracts placed, contracts completed and money paid out to hitmen. Totals only, '
+        + 'never a name, a citizen id or a handle for any hitman. To the webhook in '
+        + 'crimson_hitman_stats_webhook, or else the alert webhook. At most once a week.',
+      links: [{ key: 'Improvements.WeeklyStats.Enabled', view: 'features', label: 'Weekly stats on or off' },
+        { key: 'Improvements.WeeklyStats.Day', view: 'timers', label: 'The day' },
+        { key: 'Improvements.WeeklyStats.Hour', view: 'timers', label: 'The hour' }] });
+
   /* Loaded to the end: admin.html's fallback, which gives the focus back
      when this file fails to load or throws while loading, stands down. */
   window.CH_ADMIN_READY = true;

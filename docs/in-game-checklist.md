@@ -1463,6 +1463,16 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Tiered board on (with **Criminal progression** on): a hitman with few completions sees the big contract with *Elite tier: you need level 4 (you are level 1).* and no Accept; their money is unchanged. Raise their completions (or the level setting down) and Accept appears.
 - [ ] Contract decay on (`rise`, Hours 1): leave a contract untaken an hour: the placer's bank drops by 10% of the reward, they get a *Contract reward* notice, the board shows the higher reward, and Mine says *Added so far*. **Stop the rise** (two taps) stops it; withdraw the contract: every dollar comes back. With an empty bank the next step is refused, nothing is taken, and the placer is told it stopped. With `shorten`, the time band on the card drops instead and nothing is charged.
 
+### Staff and economy
+
+- [ ] With every `Config.Improvements` switch off and `TargetCooldownAfterCompletionSeconds = 0`, completing, re-listing, weapon payouts and Discord behave as before.
+- [ ] Proof items on, a contract placed under `Fulfilment = 'either'`: the hitman sees **Hand over proof**. Without the target's `id_card` it says *You are not carrying anything that proves who the target is.*; with an id card of somebody else, the same.
+- [ ] With the target's `id_card` (its `citizenid` theirs), more than 3 m from the placer: *Stand within 3 m...*, the card is still in the hitman's inventory; beside the placer: paid, the card is gone, the placer is told the contract was fulfilled.
+- [ ] Proof items on a contract placed for live delivery only: no **Hand over proof** button.
+- [ ] Completion cooldown at `7200`: complete a contract, then place another on the same target: *You can place a contract on them again in 2 hours.* Cancel a contract nobody took instead: the usual rules apply.
+- [ ] Serial scrubbing on: an anonymous placer puts up a pistol, a hitman completes it: the pistol in the hitman's inventory has a different serial and no registered owner; **Logs** shows *weapon_serial_scrubbed*, the original as *(identity only)* without `crimson.identity`. A refund to the placer keeps the original.
+- [ ] Weekly stats on, with `set crimson_hitman_stats_webhook` in server.cfg: set the day and hour to now from the panel; one post arrives with three totals and no names; a restart does not post it again.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

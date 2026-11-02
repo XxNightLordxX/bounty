@@ -1056,6 +1056,9 @@ describe('what this file leaves out', function()
         protectionBoard = 'a read of the caller\'s own view',
         protectionPin = 'the pin moved again to where the target stands',
         protectionWaypoint = 'a read of the guard\'s own pin',
+        -- Proof items (imp_staffeco_spec): the item is used up by the first
+        -- payout, so a second is refused as proof_missing and pays nothing.
+        proofItem = 'a second handover finds no item left and is refused; paid once',
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

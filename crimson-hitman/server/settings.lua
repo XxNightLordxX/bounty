@@ -1770,6 +1770,58 @@ for _, key in ipairs({ 'Improvements.ContractDecay.Percent', 'Improvements.Contr
     MONEY[key] = 'Rewards'
 end
 
+--- Proof items, serial scrubbing, the weekly stats and the completion cooldown
+--- (server/imp_proof.lua, imp_scrub.lua, imp_weekly.lua, imp_staffeco.lua).
+local IMP_PROOF, IMP_SCRUB = 'Improvements: Proof items', 'Improvements: Serial scrubbing'
+local IMP_WEEKLY, IMP_COOLDOWN = 'Improvements: Weekly stats', 'Improvements: Completion cooldown'
+for _, entry in ipairs({
+    { key = 'Improvements.ProofItems.Enabled', section = 'features', category = 'features', group = IMP_PROOF,
+      kind = 'switch', label = 'Proof items',
+      about = 'On a contract a kill completes, a hitman beside the placer may hand over an item '
+          .. 'taken from the target (an id card naming them) and is paid as for a verified kill.',
+      inflight = 'Read at every handover: on, the button shows on contracts already held; a '
+          .. 'payout already made is untouched.' },
+    { key = 'Improvements.ProofItems.Item', section = 'limits', category = 'rules-limits', group = IMP_PROOF,
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Proof item',
+      about = 'The ox_inventory item a hitman hands over.', inflight = AT_USE },
+    { key = 'Improvements.ProofItems.MetadataKey', section = 'limits', category = 'rules-limits',
+      group = IMP_PROOF, kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64,
+      label = 'Metadata field that names the target',
+      about = 'Must hold the target\'s citizen id: citizenid on qbx_idcard\'s id_card.', inflight = AT_USE },
+    { key = 'Improvements.ProofItems.HandoverRadius', section = 'limits', category = 'rules-limits',
+      group = IMP_PROOF, kind = 'number', min = 1, max = 50, label = 'Distance to the placer (m)',
+      about = 'How close the hitman stands to the placer to hand it over.', inflight = AT_USE },
+
+    { key = 'Improvements.SerialScrub.Enabled', section = 'features', category = 'features', group = IMP_SCRUB,
+      kind = 'switch', label = 'Weapon serial scrubbing',
+      about = 'A weapon an anonymous placer put up reaches the hitman with a new random serial; '
+          .. 'the original is kept in the log for staff with the identity ACE.',
+      inflight = 'Read at every give: weapons already handed over keep the serial they had.' },
+
+    { key = 'Improvements.WeeklyStats.Enabled', section = 'features', category = 'features', group = IMP_WEEKLY,
+      kind = 'switch', label = 'Weekly stats to Discord',
+      about = 'Once a week, a post of the last seven days\' totals: contracts placed, completed '
+          .. 'and money paid out to hitmen. Counts only, never a name or a handle. To '
+          .. 'crimson_hitman_stats_webhook, or else the alert webhook.',
+      inflight = 'Read at the hour. At most once a week, a restart included.' },
+    { key = 'Improvements.WeeklyStats.Day', section = 'limits', category = 'rules-timers', group = IMP_WEEKLY,
+      kind = 'choice', choices = { 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday' },
+      label = 'Day the weekly stats are posted', about = 'Server time.',
+      inflight = 'Read every tick: a week already posted is not posted again.' },
+    { key = 'Improvements.WeeklyStats.Hour', section = 'limits', category = 'rules-timers', group = IMP_WEEKLY,
+      kind = 'number', integer = true, min = 0, max = 23,
+      label = 'Hour the weekly stats are posted (server time, 0-23)',
+      inflight = 'Read every tick: a week already posted is not posted again.' },
+
+    { key = 'Limits.TargetCooldownAfterCompletionSeconds', section = 'limits', category = 'rules-timers',
+      group = IMP_COOLDOWN, kind = 'number', integer = true, min = 0, max = 2592000,
+      label = 'Wait after a completed contract before its target is listed again (s, 0 = off)',
+      about = 'The longer of this and the wait after any contract. The placer is told the wait '
+          .. 'in hours, nothing else.', inflight = AT_USE },
+}) do
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+
 local byKey = {}
 for i = 1, #CATALOGUE do byKey[CATALOGUE[i].key] = CATALOGUE[i] end
 for key, group in pairs(MONEY) do

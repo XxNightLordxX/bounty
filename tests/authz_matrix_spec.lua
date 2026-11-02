@@ -948,6 +948,24 @@ MATRIX.goDark = {
     why = 'only the target of a contract, told of a tip on it, may pay to go dark',
 }
 
+-- Proof items (server/imp_proof.lua, imp_staffeco_spec), on for this row:
+-- everybody stands with the placer and carries the target's
+-- id card, so the one thing left to refuse them is not holding the contract.
+MATRIX.proofItem = {
+    arrange = function(w)
+        Config.Improvements.ProofItems.Enabled = true
+        for _, who in pairs(CAST) do
+            local p = Env.players[who.source]
+            p._coords = { x = SCENE.x, y = SCENE.y, z = SCENE.z }
+            p._inventory[#p._inventory + 1] = { name = 'id_card', count = 1, slot = 40,
+                metadata = { citizenid = CAST.target.cid, firstname = 'Dana', lastname = 'Reyes' } }
+        end
+    end,
+    payload = function(w, role, contract) return { id = contract.id } end,
+    expect = HITMAN_ONLY,
+    why = 'a proof item is handed over by the operative holding the contract',
+}
+
 -- The two events the victim's own client fires --------------------------
 --
 -- These reply to nobody, so they have no permit/refuse cell. What they do
@@ -1347,6 +1365,7 @@ local PASSES = {
 --- Tests that turn roleplay features on live put Config.Roleplay back
 --- after them (tests/harness/roleplay.lua), so no later spec sees them on.
 local RP = require('tests.harness.roleplay')
+local IMP = require('tests.harness.improvements')
 
 local function runRow(name)
     local entry = MATRIX[name]
@@ -1388,9 +1407,9 @@ describe('the authorisation matrix, driven through the real net events', functio
     table.sort(names)
 
     for _, name in ipairs(names) do
-        RP.it(name .. ' answers each role the way the resource intends', function()
+        RP.it(name .. ' answers each role the way the resource intends', IMP.guard(function()
             runRow(name)
-        end)
+        end))
     end
 end)
 

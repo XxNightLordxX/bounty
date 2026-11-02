@@ -498,6 +498,24 @@ Config.Improvements.ContractDecay = {
     Account            = 'bank',  -- where a rise is charged from: 'cash' or 'bank'
 }
 
+Config.Improvements.ProofItems = {
+    Enabled        = false,        -- a hitman may finish with an item taken from the target
+    Item           = 'id_card',    -- the ox_inventory item (qbx_idcard's id card as shipped)
+    MetadataKey    = 'citizenid',  -- the item's metadata field that must name the target
+    HandoverRadius = 3.0,          -- metres between the hitman and the placer at the handover
+}
+
+Config.Improvements.SerialScrub = {
+    Enabled = false,  -- a weapon from an anonymous placer reaches the hitman with a new serial
+}
+
+Config.Improvements.WeeklyStats = {
+    Enabled = false,     -- post the week's totals to Discord once a week (counts only)
+    Day     = 'sunday',  -- the day it is posted, server time
+    Hour    = 18,        -- the hour it is posted, server time (0-23)
+}
+
+Config.Limits.TargetCooldownAfterCompletionSeconds = 0  -- wait after a completed contract on them; 0 = off
 -- ============================================================================
 --                                 ROLEPLAY
 -- ============================================================================

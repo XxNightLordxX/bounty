@@ -1391,6 +1391,18 @@ describe('every channel a player not entitled to it can read', function()
         call('mine', 1, {})
         imp.PlacerRecord.Enabled, imp.HitmanHeat.Enabled = false, false
         imp.Tiers.Enabled, imp.ContractDecay.Enabled = false, false
+        -- The improvements' channels (server/imp_*.lua), all on: a proof
+        -- handover by each operative (refused on this alive-only contract),
+        -- and the weekly stats post to Discord. Off again after.
+        imp.ProofItems.Enabled, imp.SerialScrub.Enabled, imp.WeeklyStats.Enabled = true, true, true
+        call('proofItem', 3, { id = c.id })
+        call('proofItem', 7, { id = c.id })
+        local today = os.date('*t', os.time())
+        imp.WeeklyStats.Day = ({ 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday',
+            'saturday' })[today.wday]
+        imp.WeeklyStats.Hour = today.hour
+        truthy(s.impWeekly.tick(), 'the weekly stats were posted')
+        imp.ProofItems.Enabled, imp.SerialScrub.Enabled, imp.WeeklyStats.Enabled = false, false, false
         call('abandon', 3, { id = c.id })
         call('cancel', 1, { id = c.id })
         -- The bodyguard job settled with the contract: the guard's notice.
@@ -1916,6 +1928,81 @@ describe('the roleplay consequences\' channels', function()
                 leaks(event.args, problems, event.name .. ' to ' .. tostring(event.target))
             end
         end
+        eq(#problems, 0, table.concat(problems, '\n'))
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- The improvements' channels (server/imp_*.lua)
+--------------------------------------------------------------------------
+
+describe('the improvements\' channels', function()
+    local IMP = require('tests.harness.improvements')
+
+    IMP.it('a proof handover and a scrubbed weapon name neither anonymous party, nor the '
+        .. 'original serial to staff without IdentityAce', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.addPlayer({ source = 4, citizenid = 'BYSTAND1', license = 'license:ddd',
+            firstname = 'Bea', lastname = 'Stander' })
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:fff',
+            firstname = 'Sam', lastname = 'Steward' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        s.bridges.install(s)
+        Config.Improvements.ProofItems.Enabled = true
+        Config.Improvements.SerialScrub.Enabled = true
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            anonymous = true, mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } } })
+        truthy(c and s.contracts.accept(f.hitman, c.id, true), 'placed and taken, both anonymous')
+        local p = Env.players[3]
+        p._inventory[#p._inventory + 1] = { name = 'id_card', count = 1, slot = 41,
+            metadata = { citizenid = 'TARGET01' } }
+        local from = #Env.clientEvents
+        Env.players[3]._coords = { x = 40.0, y = 0.0, z = 0.0 }
+        call('proofItem', 3, { id = c.id })
+        Env.players[3]._coords = { x = 0.0, y = 0.0, z = 0.0 }
+        call('proofItem', 3, { id = c.id })
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED, 'paid by the proof item')
+        for _, src in ipairs({ 1, 2, 3, 4 }) do
+            call('mine', src, {})
+            call('ledger', src, {})
+        end
+        s.audit.flush()
+        for _, op in ipairs({ 'logs', 'contracts' }) do
+            _G.source = 6
+            Env.events['crimson-hitman:admin']({ op = op, data = {}, __rid = 9 })
+            _G.source = nil
+        end
+        _G.source = 6
+        Env.events['crimson-hitman:admin']({ op = 'contract', data = { id = c.id }, __rid = 9 })
+        _G.source = nil
+        local CLIENT = { 'CREATOR1', 'Vic Marlowe', 'Marlowe', 'license:aaa' }
+        local OPERATIVE = { 'HITMAN01', 'Rook Ash', 'license:ccc' }
+        local forbidden = {
+            [1] = OPERATIVE, [2] = { 'CREATOR1', 'Marlowe', 'HITMAN01', 'Rook Ash' },
+            [3] = CLIENT, [4] = { 'CREATOR1', 'Marlowe', 'HITMAN01', 'Rook Ash' },
+            [6] = { 'CREATOR1', 'Marlowe', 'HITMAN01', 'Rook Ash', 'ABC123' },
+        }
+        local problems, reached = {}, {}
+        local function scan(value, needles, where)
+            if type(value) == 'string' then
+                for _, needle in ipairs(needles) do
+                    if value:find(needle, 1, true) then problems[#problems + 1] = where .. ': ' .. needle end
+                end
+            elseif type(value) == 'table' then
+                for k, v in pairs(value) do scan(k, needles, where) scan(v, needles, where) end
+            end
+        end
+        for i = from + 1, #Env.clientEvents do
+            local event = Env.clientEvents[i]
+            local needles = forbidden[event.target]
+            if needles then
+                reached[event.target] = true
+                scan(event.args, needles, event.name .. ' to ' .. tostring(event.target))
+            end
+        end
+        for _, src in ipairs({ 1, 3, 6 }) do truthy(reached[src], 'nothing reached ' .. src) end
         eq(#problems, 0, table.concat(problems, '\n'))
     end)
 end)

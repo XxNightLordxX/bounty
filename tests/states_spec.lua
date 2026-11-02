@@ -385,6 +385,10 @@ describe('the grid covers the whole action surface', function()
         -- Contract decay turned off: on a live contract of the caller's,
         -- refused once it has ended (impB_board_spec).
         decayOff = true,
+        -- Proof items: paid only on an accepted contract, as a verified kill
+        -- is (Contracts.claimSlot); refused on any other state with the item
+        -- kept (imp_staffeco_spec).
+        proofItem = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

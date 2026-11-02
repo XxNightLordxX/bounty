@@ -550,6 +550,9 @@
     target_just_up: 'They have only just got back on their feet. Give it a moment.',
     target_recently_on: 'There was a contract on them very recently. There is a '
       + 'cooling-off period before another one.',
+    // Proof items (Config.Improvements.ProofItems). Nothing was taken.
+    proof_missing: 'You are not carrying anything that proves who the target is.',
+    proof_too_far: 'Stand right beside the person who placed this contract to hand it over.',
     // The paths a player meets most — accept, buy out, place — word their
     // own; this is what is left, and it at least says it is about money.
     insufficient_funds: 'You do not have enough money for that.',
@@ -760,7 +763,7 @@
     create: true, accept: true, cancel: true, withdrawReward: true, abandon: true,
     bailout: true, informant: true, placerInformant: true, addEscrow: true, improve: true,
     respondAmendment: true, submitPhoto: true, verifyKill: true, locationTip: true,
-    goDark: true
+    goDark: true, proofItem: true
   };
 
   /* What each reward source is called when a refusal names it. */
@@ -1765,6 +1768,20 @@
       if (least > 0) { return minRewardText(least); }
       return 'A contract here has to be worth more in money than that: ' + moneyCounted()
         + ' Items and weapons do not count towards it.';
+    }
+
+    // The cooling-off after a completed contract
+    // (Config.Limits.TargetCooldownAfterCompletionSeconds): how long, in
+    // hours, and nothing else.
+    if (result.err === 'target_recently_on' && result.data && Number(result.data.hours) > 0) {
+      var hours = Math.ceil(Number(result.data.hours));
+      return 'There is a cooling-off period on them. You can place a contract on them again in '
+        + hours + ' hour' + (hours === 1 ? '' : 's') + '.';
+    }
+    // Too far from the placer to hand over a proof item, by the server's distance.
+    if (result.err === 'proof_too_far' && result.data && Number(result.data.radius) > 0) {
+      return 'Stand within ' + Number(result.data.radius) + ' m of the person who placed this '
+        + 'contract to hand it over. Nothing was taken.';
     }
 
     // A kill on a contract only a live handover completes: what to do
@@ -2855,6 +2872,14 @@
       row.appendChild(actionButton(killPays ? null : 'primary', 'Deliver alive',
         'kidnap:' + contract.id, 'Starting handover\u2026',
         function () { return armKidnap(contract); }));
+
+      // Proof items (Config.Improvements.ProofItems, off as shipped): where
+      // a kill pays, handing the placer an item taken from the target.
+      if (killPays && settings().proofItem) {
+        row.appendChild(actionButton(null, 'Hand over proof',
+          'proof:' + contract.id, 'Handing over\u2026',
+          function () { return handOverProof(contract); }));
+      }
 
       // What the last photo was refused for, under the buttons that retry
       // it, until the next go at either.
@@ -4061,6 +4086,24 @@
         ? 'Verified. Some of the reward would not fit and is being held for '
           + 'you \u2014 make room and it will be handed over.' + staffChecking(r.data)
         : 'Verified. Payment released.' + staffChecking(r.data)) + reputationText(r.data), 'ok');
+      refresh();
+    });
+  }
+
+  /* Proof items (Config.Improvements.ProofItems): the server checks the
+     item, the target it names and the distance to the placer, and pays as
+     for a verified kill. */
+  function handOverProof(contract) {
+    delete state.lastRefusal[contract.id];
+    return post('proofItem', { id: contract.id }).then(function (r) {
+      if (!r.ok) { return fail(r); }
+      var owed = r.data && Number(r.data.pending) > 0;
+      var held = r.data && r.data.intentHold;
+      say((held ? intentHoldText(held, 'Handed over.')
+        : owed
+        ? 'Handed over. Some of the reward would not fit and is being held for '
+          + 'you \u2014 make room and it will be handed over.' + staffChecking(r.data)
+        : 'Handed over. Payment released.' + staffChecking(r.data)) + reputationText(r.data), 'ok');
       refresh();
     });
   }

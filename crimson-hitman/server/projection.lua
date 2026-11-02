@@ -21,6 +21,8 @@ local function extendAll(list, ...)
 end
 
 local Util = CrimsonBoot.requireShared('util')
+-- Proof items (Config.Improvements.ProofItems), for the page's settings.
+local ImpProof = CrimsonBoot.require('server.imp_proof')
 
 local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify
 --- Informant tips (server/locationtip.lua): a hitman's own, on their card,
@@ -863,6 +865,9 @@ local function buildListing(viewerCid, page)
             -- Whether this server runs buyouts at all, so the page can tell
             -- "the client offered none" from "there are none here".
             buyouts = Config.Bailout.Enabled == true,
+            -- Proof items (Config.Improvements.ProofItems, off as shipped):
+            -- the item and the distance, for Hand over proof; nil while off.
+            proofItem = ImpProof.forPage(),
             -- How long a buyout paid while a hitman is on the contract waits
             -- before it closes. The confirmation said "close this contract"
             -- and the target read it as safe at once, when a hitman had two

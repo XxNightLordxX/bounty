@@ -626,6 +626,9 @@ local UI_EVENTS = {
     -- Improvements (Config.Improvements): the placer turning contract decay
     -- off for one contract of theirs.
     'decayOff',
+    -- Improvements (Config.Improvements): handing over a proof item, checked
+    -- on the server where it sees both players stand.
+    'proofItem',
 }
 
 --------------------------------------------------------------------------

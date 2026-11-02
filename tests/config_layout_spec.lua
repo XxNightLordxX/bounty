@@ -184,6 +184,14 @@ local ADDED = {
     ['Improvements.ContractDecay'] = {
         Enabled = false, Mode = 'rise', Percent = 10, Hours = 1, MaxIncreasePercent = 50, Account = 'bank',
     },
+    -- Group impC (the IMPROVEMENTS section): proof items, serial scrubbing,
+    -- weekly stats, and the completion cooldown in Config.Limits.
+    ['Improvements.ProofItems'] = {
+        Enabled = false, Item = 'id_card', MetadataKey = 'citizenid', HandoverRadius = 3.0,
+    },
+    ['Improvements.SerialScrub'] = { Enabled = false },
+    ['Improvements.WeeklyStats'] = { Enabled = false, Day = 'sunday', Hour = 18 },
+    ['Limits.TargetCooldownAfterCompletionSeconds'] = 0,
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -237,7 +245,8 @@ local function differences(a, b)
     -- The Roleplay section is new and shared by several features, each
     -- adding its own block: reported block by block, so each feature's
     -- ADDED entry stands on its own.
-    -- The Improvements section the same way.
+    -- The Improvements section the same way, block by block (impA, impB
+    -- and impC each add their own).
     for _, section in ipairs({ 'Roleplay', 'Improvements' }) do
         local whole = out[section]
         if whole and whole[1] == nil and type(whole[2]) == 'table' then
@@ -310,6 +319,10 @@ describe('the configuration as one short file', function()
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
             end
+            -- The completion cooldown (impC), new and shipped off.
+            if pair[1] == nil and path == 'Limits.TargetCooldownAfterCompletionSeconds' and pair[2] == 0 then
+                addedSince = true
+            end
             -- The board's placer switch, and its whitelisted-job counterpart,
             -- both new and shipped off.
             if pair[1] == nil and pair[2] == false and (path == 'Anonymity.ShowPlacerOnBoard'
@@ -361,9 +374,10 @@ describe('the configuration as one short file', function()
         -- of intent, reputation, protection, the hit on the hitman) and rpA's
         -- four (rumours, burner phone, informant in person, reason quality).
         -- And the Improvements section: one header, impA's six blocks
-        -- (informant fairness) and impB's four (placer record, hitman heat,
-        -- tiers, contract decay).
-        truthy(lines < 733, 'config.lua is ' .. lines .. ' lines')
+        -- (informant fairness), impB's four (placer record, hitman heat,
+        -- tiers, contract decay) and impC's three (proof items, serial
+        -- scrubbing, weekly stats) with its completion cooldown line.
+        truthy(lines < 751, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',

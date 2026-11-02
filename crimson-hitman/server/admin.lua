@@ -3121,7 +3121,8 @@ function Admin.refreshTimers(src)
         tonumber(Config.Limits.TargetCooldownAfterResolveSeconds) or 0,
         tonumber(Config.Limits.SameCreatorSameTargetCooldownSeconds) or 0,
         tonumber(Config.Amendments.CancelCooldownSeconds) or 0,
-        tonumber(Config.Immunity.AfterBailoutSeconds) or 0) + 1
+        tonumber(Config.Immunity.AfterBailoutSeconds) or 0,
+        tonumber(Config.Limits.TargetCooldownAfterCompletionSeconds) or 0) + 1
 
     counts.deadlines, counts.resolved, counts.slots, counts.proposals = 0, 0, 0, 0
     counts.failed = 0

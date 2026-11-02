@@ -1430,8 +1430,14 @@ local function validateConfig(quiet)
     CrimsonBoot.require('server.rp_burner').validate(warn)
     CrimsonBoot.require('server.rp_informant').validate(warn)
     CrimsonBoot.require('server.rp_reason').validate(warn)
-    -- The improvements (server/imp_*.lua, Config.Improvements), the same way.
+    -- The improvements (server/imp_*.lua, Config.Improvements), the same way
+    -- (the board's are checked above, with the defaults they fill); and the
+    -- completion cooldown, 0 (off) where config.lua has none.
     CrimsonBoot.require('server.imp_tips').validate(warn)
+    CrimsonBoot.require('server.imp_proof').validate(warn)
+    CrimsonBoot.require('server.imp_scrub').validate(warn)
+    CrimsonBoot.require('server.imp_weekly').validate(warn)
+    CrimsonBoot.require('server.imp_staffeco').checkCompletionCooldown(warn)
 
     if quiet then return #fatal == 0, fatal, warn end
 
@@ -1953,6 +1959,10 @@ function StartCrimsonHitman()
     -- improvements), each off as shipped: the placer's record, hitman heat,
     -- tiers and contract decay.
     local impBoard    = CrimsonBoot.require('server.imp_board')
+    -- Proof items, serial scrubbing and the weekly stats, each off as shipped.
+    local impProof    = CrimsonBoot.require('server.imp_proof')
+    local impScrub    = CrimsonBoot.require('server.imp_scrub')
+    local impWeekly   = CrimsonBoot.require('server.imp_weekly')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -2057,6 +2067,13 @@ function StartCrimsonHitman()
                     escrow = escrow, contracts = contracts, amendments = amendments,
                     projection = projection, progression = progression,
                     rpConsequences = rpConsequences })
+    -- The improvements: proof items, serial scrubbing (asked by the escrow
+    -- for every weapon it gives) and the weekly stats (server/imp_*.lua).
+    impProof.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
+                    notify = notify, ledger = ledger })
+    impScrub.init({ storage = Storage, audit = audit })
+    escrow.scrubSerial = impScrub.scrub
+    impWeekly.init({ storage = Storage, audit = audit, alerts = alerts })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -2107,6 +2124,8 @@ function StartCrimsonHitman()
         -- The board and progression improvements: the app's gate, its
         -- after-steps and decayOff, and the tick.
         impBoard = impBoard,
+        -- The improvements, for the app's requests and the tick.
+        impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2800,6 +2819,8 @@ function Tick()
     -- The staff tools' own clocks: the once-a-day summary, and the alert
     -- thresholds' counts aged out.
     if modules.summary then job('summary.tick', modules.summary.tick) end
+    -- The weekly stats (Config.Improvements.WeeklyStats): nothing while off.
+    if modules.impWeekly then job('imp_weekly.tick', modules.impWeekly.tick) end
     if modules.thresholds then every('thresholds.sweep', modules.thresholds.sweep, now) end
     -- Targets recovering from a kill on a contract, looked at
     -- (Config.Roleplay.EmsRelisting): nothing while it is off.

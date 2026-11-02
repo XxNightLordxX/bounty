@@ -3386,7 +3386,7 @@ local META_UPSERT = [[
 function MySQLStore.readStaffMeta()
     local rows = db.query([[
         SELECT meta_key, meta_value FROM crimson_meta
-        WHERE meta_key IN ('staff_summary_day', 'staff_pause_since')
+        WHERE meta_key IN ('staff_summary_day', 'staff_pause_since', 'imp_weekly_day')
     ]]) or {}
     local out = {}
     for i = 1, #rows do out[rows[i].meta_key] = tonumber(rows[i].meta_value) or 0 end

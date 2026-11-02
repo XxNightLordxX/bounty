@@ -200,7 +200,9 @@ function serverStub() {
           showMinutes: 10, cooldownMinutes: 10, maxPerContract: 3, tellsTarget: true },
         reasonMode: 'freetext', reasonMaxLength: 140,
         // The board's Protection tab (rpC bodyguards).
-        protection: true } } },
+        protection: true,
+        // Hand over proof on a hitman's card (Config.Improvements.ProofItems).
+        proofItem: { item: 'id_card', radius: 3 } } } },
     // Its jobs: one to take and one guarded, with a long name.
     protectionBoard: { ok: true, data: { enabled: true, maxJobs: 2,
       open: [{ job: 'prot00000001', reward: 1250000 }],
@@ -738,6 +740,29 @@ async function main() {
     truthy(lone.beside === 1, 'it shares the line with ' + (lone.beside - 1) + ' other button(s)');
     atLeast(lone.width, lone.room - 1, 'Deliver alive across its row (px)');
     atLeast(lone.height, 36, 'Deliver alive height (px)');
+  });
+
+  /* Hand over proof (Config.Improvements.ProofItems) on the card a kill
+     completes, the third way to finish: whole, inside its card, tall enough
+     to tap; and never on the card only a live delivery completes. */
+  const proof = await page.evaluate(function () {
+    return Array.prototype.slice.call(document.querySelectorAll('.actions.is-working > button'))
+      .filter(function (b) { return b.textContent === 'Hand over proof'; })
+      .map(function (b) {
+        const card = b.closest('.card').getBoundingClientRect();
+        const r = b.getBoundingClientRect();
+        return { height: r.height, inside: r.left >= card.left - 1 && r.right <= card.right + 1,
+                 clipped: b.scrollWidth > b.clientWidth + 1 };
+      });
+  });
+
+  it('draws Hand over proof whole, inside its card and tall enough to tap', function () {
+    truthy(proof.length === 1, proof.length + ' Hand over proof button(s); one card a kill completes');
+    proof.forEach(function (b) {
+      truthy(b.inside, 'outside its card');
+      truthy(!b.clipped, 'its label is cut off');
+      atLeast(b.height, 36, 'Hand over proof height (px)');
+    });
   });
 
   /* The handover's meeting point at phone width, on both sides: the

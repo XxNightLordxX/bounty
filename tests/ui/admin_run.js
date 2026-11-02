@@ -4388,6 +4388,51 @@ async function main() {
     clean(app, 'improvements impB');
   })();
 
+  /* ---- the staff and economy improvements (Config.Improvements) ---- */
+  await (async function () {
+    const view = settingsView();
+    view.data.features.push({ key: 'Improvements.ProofItems.Enabled', category: 'features',
+      group: 'Improvements: Proof items', label: 'Proof items', about: 'A hitman may hand over an id card.',
+      kind: 'switch', live: true, inflight: 'Read at every handover.', value: false,
+      default: false, shipped: false, hasShipped: true, source: 'config' });
+    view.data.limits.push({ key: 'Limits.TargetCooldownAfterCompletionSeconds', category: 'rules-timers',
+      group: 'Improvements: Completion cooldown',
+      label: 'Wait after a completed contract before its target is listed again (s, 0 = off)',
+      kind: 'number', integer: true, min: 0, max: 2592000, live: true, inflight: 'Read at every placing.',
+      value: 0, default: 0, source: 'config' });
+    const app = boot(standardServer({ settings: view }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('help');
+    await settled();
+    const help = app.window.CH_ADMIN_HELP;
+    it('How it works has a card for each improvement, linking to its settings', function () {
+      ['Proof items', 'Completion cooldown', 'Weapon serial scrubbing', 'Weekly stats to Discord'].forEach(function (t) {
+        const found = help.filter(function (c) { return c.title === t; });
+        eq(found.length, 1, 'a card on ' + t);
+        truthy(found[0].links.length >= 1, t + ' links to its settings');
+        truthy(/off as shipped/i.test(found[0].text), t + ' says it ships off');
+      });
+    });
+    const link = app.$$('button[data-act="help-jump"]').filter(function (b) {
+      return b.getAttribute('data-key') === 'Limits.TargetCooldownAfterCompletionSeconds';
+    })[0];
+    truthy(link, 'the completion cooldown link');
+    app.click(link);
+    await settled();
+    it('the completion cooldown link lands on its setting under Rules > Timers', function () {
+      eq(app.byId('nav-timers').getAttribute('aria-current'), 'page');
+      truthy(app.byId('st-row-Limits.TargetCooldownAfterCompletionSeconds').classList.contains('is-focus'));
+    });
+    app.nav('features');
+    await settled();
+    it('the proof items switch is under Features, in its Improvements group', function () {
+      has(app.main(), 'Improvements: Proof items');
+      truthy(app.byId('st-row-Improvements.ProofItems.Enabled'), 'its row');
+    });
+    clean(app, 'improvements impC');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

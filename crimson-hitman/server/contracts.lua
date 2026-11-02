@@ -6,6 +6,8 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+-- The completion cooldown (Config.Limits.TargetCooldownAfterCompletionSeconds).
+local Imp = CrimsonBoot.require('server.imp_staffeco')
 
 local Contracts = {}
 
@@ -580,6 +582,15 @@ function Contracts.canCreate(actor, targetActor)
                 local cooldown = (c.state == CH.STATE.BAILED_OUT)
                     and Config.Immunity.AfterBailoutSeconds
                     or Config.Limits.TargetCooldownAfterResolveSeconds
+                -- After a completed one, the longer wait where it is set
+                -- (Config.Limits.TargetCooldownAfterCompletionSeconds, off as
+                -- shipped: server/imp_staffeco.lua). Said in whole hours
+                -- left, and nothing else about the contract.
+                local afterCompletion = c.state == CH.STATE.COMPLETED and Imp.completionCooldown() or 0
+                if afterCompletion > (tonumber(cooldown) or 0) and since < afterCompletion then
+                    return false, CH.ERR.TARGET_RECENTLY_ON,
+                        { hours = math.max(1, math.ceil((afterCompletion - since) / 3600)) }
+                end
                 -- Except a withdrawal nobody ever took up, which cost the
                 -- target nothing to earn a breather for. It started one for
                 -- everybody all the same, so a friend could shield them from

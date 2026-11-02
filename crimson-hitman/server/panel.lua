@@ -598,6 +598,9 @@ end
 --- citizen id in a field that says so, so nothing else here redacted them.
 local IDENTITY_ONLY = {
     admin_panel_search_identified = { query = true, rows = true },
+    -- A weapon's serial before it was scrubbed (Config.Improvements.SerialScrub,
+    -- server/imp_scrub.lua): it can be traced to the anonymous placer.
+    weapon_serial_scrubbed = { original = true },
 }
 local IDENTITY_ONLY_SHOWN = '(identity only)'
 

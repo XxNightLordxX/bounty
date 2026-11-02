@@ -7341,6 +7341,66 @@ async function main() {
       }
     })();
 
+    /* ---------- proof items (Config.Improvements.ProofItems) ---------- */
+    await (async function handsOverProof() {
+      const off = boot({ list: boardWithoutPhotos(), mine: mineWithAJob(), ledger: NEW_HITMAN });
+      await settle(); await settle();
+      tab(off, 'mine');
+      await settle();
+      it('draws no Hand over proof while the server has it off', function () {
+        falsy(off.view.textContent.indexOf('Hand over proof') !== -1, off.view.textContent);
+      });
+
+      const app = boot({
+        list: boardWithoutPhotos({ proofItem: { item: 'id_card', radius: 3 } }), mine: mineWithAJob(),
+        ledger: NEW_HITMAN, proofItem: { ok: true, data: { settled: 1, pending: 0 } }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Hand over proof');
+      await settle(); await settle();
+      it('hands over the proof item with the contract id alone, and says it was paid', function () {
+        const asked = app.sent.filter(function (x) { return x.name === 'proofItem'; });
+        eq(asked.length, 1);
+        eq(JSON.stringify(Object.keys(asked[0].body).filter(function (k) { return k !== '__rid'; })), '["id"]');
+        eq(asked[0].body.id, 'ct00000001');
+        truthy(app.notice().indexOf('Handed over. Payment released.') !== -1, app.notice());
+      });
+
+      for (const [err, words, data] of [['proof_missing', 'not carrying anything', null],
+                                        ['proof_too_far', 'within 3 m', { radius: 3 }],
+                                        ['kill_not_allowed', '', null]]) {
+        const refused = boot({
+          list: boardWithoutPhotos({ proofItem: { item: 'id_card', radius: 3 } }), mine: mineWithAJob(),
+          ledger: NEW_HITMAN, proofItem: { ok: false, err: err, data: data }
+        });
+        await settle(); await settle();
+        tab(refused, 'mine');
+        await settle();
+        click(refused, 'Hand over proof');
+        await settle(); await settle();
+        it('words ' + err + ' for a proof handover', function () {
+          truthy(refused.notice().length > 0, 'something is said');
+          if (words) { truthy(refused.notice().indexOf(words) !== -1, refused.notice()); }
+        });
+      }
+
+      const alive = boot({
+        list: boardWithoutPhotos({ proofItem: { item: 'id_card', radius: 3 }, fulfilment: 'alive' }),
+        mine: { ok: true, data: { created: [], accepted: [Object.assign({},
+          mineWithAJob().data.accepted[0], { fulfilment: 'alive' })], onMe: [] } },
+        ledger: NEW_HITMAN
+      });
+      await settle(); await settle();
+      tab(alive, 'mine');
+      await settle();
+      it('draws no Hand over proof on a contract only a live delivery completes', function () {
+        falsy(alive.view.textContent.indexOf('Hand over proof') !== -1, alive.view.textContent);
+        truthy(alive.view.textContent.indexOf('Deliver alive') !== -1);
+      });
+    })();
+
     await (async function followsTheServerWhenItSwitched() {
       // The page read "off", the server has turned photos on since.
       const turnedOn = boot({
@@ -11835,6 +11895,22 @@ async function main() {
     await settle(); await settle(); await settle();
     it('says a target killed on a contract is still recovering', function () {
       truthy(recovering.notice().indexOf('They are still recovering.') !== -1, recovering.notice());
+    });
+
+    // The completion cooldown (Config.Limits.TargetCooldownAfterCompletionSeconds):
+    // the wait in hours, and nothing else.
+    const cooling = await formWith({ create: { ok: false, err: 'target_recently_on', data: { hours: 3 } } });
+    pick(cooling, 'slot-cash-1', 5000);
+    press(cooling, 'place-submit');
+    await settle(); await settle(); await settle();
+    const coolingOne = await formWith({ create: { ok: false, err: 'target_recently_on', data: { hours: 1 } } });
+    pick(coolingOne, 'slot-cash-1', 5000);
+    press(coolingOne, 'place-submit');
+    await settle(); await settle(); await settle();
+    it('says how many hours are left after a completed contract, and nothing more', function () {
+      eq(cooling.notice(), 'There is a cooling-off period on them. You can place a contract on '
+        + 'them again in 3 hours.');
+      truthy(coolingOne.notice().indexOf('again in 1 hour.') !== -1, coolingOne.notice());
     });
 
     const placed = await formWith({ create: { ok: true, data: { fulfilment: 'either',

@@ -1,0 +1,188 @@
+--- Weekly stats to Discord (Config.Improvements.WeeklyStats, README
+--- "Optional improvements"). Off as shipped, and off it posts nothing.
+---
+--- On, once a week, on Day at Hour (server time), one post of the last
+--- seven days' totals: contracts placed, contracts completed, and the money
+--- paid out of rewards to hitmen. Totals only. A leaderboard of hitmen was
+--- asked for, by alias only; but an alias is per contract, and any handle
+--- that stays the same for one hitman across the week would let a reader
+--- tie that hitman's contracts together (a client who knows their own
+--- contract's operative did three that week learns which others were his).
+--- With any doubt about anonymity the owner's rule is counts only, so no
+--- hitman, placer or target is named, counted or ranked on their own.
+---
+--- Posted to the convar crimson_hitman_stats_webhook where it is set (a
+--- public channel, say), else to the alerts' webhook as the daily summary
+--- is (Alerts.post). At most once a week, a restart included: the date of
+--- the post it last made is kept by the store (Storage.writeStaffMeta
+--- 'imp_weekly_day', yyyymmdd), in every backend. A start inside the day
+--- after the hour, with that week's post not made, posts it then; a week
+--- the server was down for the whole day after the hour is not caught up.
+
+local Log = CrimsonBoot.requireShared('log')
+local Util = CrimsonBoot.requireShared('util')
+local Imp = CrimsonBoot.require('server.imp_staffeco')
+
+local Weekly = {}
+
+local deps
+local lastDay = nil
+Weekly.META = 'imp_weekly_day'
+Weekly.CONVAR = 'crimson_hitman_stats_webhook'
+local WEEK = 7 * 86400
+
+Weekly.RULES = {
+    Enabled = { kind = 'switch', default = false },
+    Day = { kind = 'choice', choices = Imp.DAYS, default = 'sunday' },
+    Hour = { kind = 'number', integer = true, min = 0, max = 23, default = 18 },
+}
+
+---@param warn string[]
+function Weekly.validate(warn)
+    Imp.checkBlock('WeeklyStats', Weekly.RULES, warn)
+end
+
+---@param d table { storage, audit, alerts }
+function Weekly.init(d)
+    deps = d
+    lastDay = nil
+    if deps.storage and deps.storage.readStaffMeta then
+        local ok, meta = pcall(deps.storage.readStaffMeta)
+        if ok and type(meta) == 'table' then lastDay = tonumber(meta[Weekly.META]) end
+        if not ok then
+            Log.debug(('the day the weekly stats were last posted could not be read (%s)')
+                :format(Util.dbError(meta)))
+        end
+    end
+end
+
+local function dayNumber(at)
+    local t = os.date('*t', at)
+    return t.year * 10000 + t.month * 100 + t.day
+end
+
+--- The last time the post fell due at or before `now`: Day at Hour.
+---@param now integer
+---@return integer
+function Weekly.lastDue(now)
+    local rules = Imp.block('WeeklyStats')
+    local want = 1
+    for i, name in ipairs(Imp.DAYS) do if name == rules.Day then want = i end end
+    local hour = math.floor(tonumber(rules.Hour) or 18)
+    -- Counted back from now in seconds, from the clock's own fields: the
+    -- start of today's hour moved to Hour, then back to the day.
+    local t = os.date('*t', now)
+    local back = (t.wday - want) % 7
+    local due = now - back * 86400 - ((t.hour - hour) * 3600 + t.min * 60 + t.sec)
+    if due > now then due = due - 7 * 86400 end
+    return due
+end
+
+--- The totals over the seven days up to `now`. Counts and sums only.
+---@param now integer|nil
+---@return table { placed, completed, paid }
+function Weekly.totals(now)
+    now = now or os.time()
+    local since = now - WEEK
+    local out = { placed = 0, completed = 0, paid = 0 }
+    local Storage = deps.storage
+    local ids = {}
+    local byId = {}
+    for _, contract in ipairs(Storage.allContracts() or {}) do
+        local created = tonumber(contract.created_at) or 0
+        local resolved = tonumber(contract.resolved_at) or 0
+        if created > since and created <= now then out.placed = out.placed + 1 end
+        if resolved > since and resolved <= now and contract.state == CH.STATE.COMPLETED then
+            out.completed = out.completed + 1
+        end
+        -- A payout of the week can be on any contract still live, or one
+        -- that ended within it.
+        if resolved == 0 or resolved > since then
+            ids[#ids + 1] = contract.id
+            byId[contract.id] = contract
+        end
+    end
+    -- Money paid out of a reward: a money line settled within the week to
+    -- somebody other than who put it up and the placer (a stake given back,
+    -- a refund, a buyout to the placer are none of them a payout).
+    local lines = #ids > 0 and Storage.readEscrowMany and Storage.readEscrowMany(ids) or {}
+    for id, list in pairs(lines) do
+        local contract = byId[id]
+        for _, line in ipairs(list or {}) do
+            local at = tonumber(line.settled_at) or 0
+            if contract and CH.MONEY_SOURCES[line.source] and line.state == CH.ESCROW_STATE.SETTLED
+                and at > since and at <= now and line.settled_to ~= nil
+                and line.settled_to ~= contract.creator_cid and line.settled_to ~= line.taken_from
+                and line.settled_to ~= line.staker then
+                out.paid = out.paid + math.max(0, tonumber(line.amount) or 0)
+            end
+        end
+    end
+    return out
+end
+
+local function money(n)
+    local text = tostring(math.floor(n))
+    local formatted = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
+    return '$' .. formatted:gsub('^,', '')
+end
+
+--- The post, from the totals: one line each, nothing else.
+---@param totals table
+---@param day integer yyyymmdd
+---@return string
+function Weekly.text(totals, day)
+    return table.concat({
+        ('**Crimson Hitman: the week in numbers** (seven days to %04d-%02d-%02d)')
+            :format(day // 10000, (day // 100) % 100, day % 100),
+        ('- Contracts placed: %d'):format(totals.placed),
+        ('- Contracts completed: %d'):format(totals.completed),
+        ('- Paid out to hitmen: %s'):format(money(totals.paid)),
+    }, '\n')
+end
+
+--- Send the text: to the stats webhook where one is set, else the alerts'.
+---@return boolean queued
+---@return string|nil err
+local function send(text)
+    local url = type(GetConvar) == 'function' and GetConvar(Weekly.CONVAR, '') or ''
+    if type(url) == 'string' and url ~= '' then
+        local body = json.encode({ content = (text:gsub('@', '@\226\128\139')) })
+        local ok = pcall(PerformHttpRequest, url, function(status)
+            local code = tonumber(status) or 0
+            if code < 200 or code >= 300 then
+                Log.debug(('the weekly stats could not be posted to Discord (HTTP %d)'):format(code))
+            end
+        end, 'POST', body, { ['Content-Type'] = 'application/json' })
+        if not ok then return false, 'unavailable' end
+        return true
+    end
+    local alerts = deps.alerts
+    if not (alerts and alerts.post) then return false, 'unavailable' end
+    return alerts.post(text)
+end
+
+--- Post this week's totals if due: switched on, inside the day after Day at
+--- Hour, and not posted for it yet. From the maintenance tick.
+---@return boolean posted
+---@return string|nil why 'off' | 'early' | 'done' | 'no_webhook' | 'unavailable'
+function Weekly.tick()
+    if not Imp.on('WeeklyStats') then return false, 'off' end
+    local now = os.time()
+    local due = Weekly.lastDue(now)
+    if now - due >= 86400 then return false, 'early' end
+    local day = dayNumber(due)
+    if lastDay == day then return false, 'done' end
+    local queued, err = send(Weekly.text(Weekly.totals(now), day))
+    if not queued then return false, err end
+    lastDay = day
+    local wrote, writeErr = pcall(deps.storage.writeStaffMeta, Weekly.META, day)
+    if not wrote then
+        Log.always(('the weekly stats were posted, but the day could not be kept by the store (%s): '
+            .. 'a restart today may post them again'):format(Util.dbError(writeErr)))
+    end
+    pcall(deps.audit.staff, 'weekly_stats_posted', nil, nil, { day = day })
+    return true
+end
+
+return Weekly

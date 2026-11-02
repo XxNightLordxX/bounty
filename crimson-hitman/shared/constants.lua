@@ -547,6 +547,14 @@ CH.ERR = {
     --- hitman's progression level. Sent with { tier, level, yours }.
     --- Nothing was taken.
     TIER_LOCKED      = 'tier_locked',
+    -- Proof items (server/imp_proof.lua), off as shipped.
+    --- Config.Improvements.ProofItems: no item in the hitman's inventory
+    --- whose metadata names the target. Nothing was taken.
+    PROOF_MISSING    = 'proof_missing',
+    --- Config.Improvements.ProofItems: the hitman is not within
+    --- HandoverRadius of the placer (or the placer is not here). Sent with
+    --- { radius }. Nothing was taken.
+    PROOF_TOO_FAR    = 'proof_too_far',
 }
 
 --- The most lines one staff command output event carries

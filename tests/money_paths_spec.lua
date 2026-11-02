@@ -870,3 +870,39 @@ describe('a deadline that runs out during a live handover, as this resource ship
         eq(worth(1) - before.creator, 5000 + 2000, 'the escrow back and the stake forfeited')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Proof items (Config.Improvements.ProofItems, server/imp_proof.lua)
+--------------------------------------------------------------------------
+
+describe('a payout for a proof item', function()
+    local IMP = require('tests.harness.improvements')
+
+    IMP.it('moves the reward and no more, on memory and on mysql, once per card', function()
+        for _, which in ipairs({ 'memory', 'mysql' }) do
+            local s = which == 'mysql' and newMysqlStack() or newStack()
+            s.impProof.init({ storage = s.storage, identity = s.identity, contracts = s.contracts,
+                              audit = s.audit, notify = s.notify, ledger = s.ledger })
+            local f = fixture(s)
+            Config.Improvements.ProofItems.Enabled = true
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+            })
+            truthy(c and s.contracts.accept(f.hitman, c.id, false), which)
+            local p = Env.players[3]
+            p._inventory[#p._inventory + 1] = { name = 'id_card', count = 1, slot = 41,
+                metadata = { citizenid = 'TARGET01' } }
+            local creator, hitman = worth(1), worth(3)
+            truthy(s.impProof.handover(f.hitman, c.id), which .. ': the first collection')
+            eq(worth(3) - hitman, 1000, which .. ': paid the first collection')
+            eq(carried(3, 'id_card'), 0, which .. ': the card is spent on it')
+            -- The same hitman again, with no card left: nothing moves.
+            Env.advance(Config.Limits.SlotCooldownSeconds + 1)
+            eq(select(2, s.impProof.handover(f.hitman, c.id)), CH.ERR.PROOF_MISSING, which)
+            eq(worth(3) - hitman, 1000, which .. ': paid once')
+            eq(worth(1), creator, which .. ': the client is never charged again')
+            eq(s.escrow.moneyValue(c.id), 2000, which .. ': the second collection still held')
+        end
+    end)
+end)
