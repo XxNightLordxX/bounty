@@ -82,7 +82,8 @@ stops and prints the `ALTER TABLE` to run. The tables are `crimson_contracts`,
 `crimson_photos`, `crimson_review`, `crimson_settings`, `crimson_alerts`,
 `crimson_view_alerts`, `crimson_playtime`, `crimson_location_tips`,
 `crimson_freezes`, `crimson_contract_staff`, `crimson_staff_records`,
-`crimson_meta` and `crimson_rp_rows` (the roleplay and improvements rows). A
+`crimson_meta` and `crimson_rp_rows` (the roleplay and improvements rows,
+and each held exclusive contract's idle clocks). A
 start refuses, changing nothing, where a table of one of these names belongs
 to another resource. Money columns are `INT` (at most $2,147,483,647; the
 start holds every money setting to it), reasons and messages at most 255
@@ -905,7 +906,9 @@ and `tests/handlers_spec.lua` pin these figures.
 shipped). Every job runs inside `pcall` (a job that raises is logged and the
 others go on) and stops with the resource. On a busy `mysql` server with
 nothing to do, a tick sends two statements at most: the heartbeat, and every
-third tick the endings check (`tests/loops_spec.lua` pins it job by job).
+third tick the endings check; while holds are idling, each held contract's
+idle clocks are written too, at most once a minute each and 25 a pass
+(`tests/loops_spec.lua` pins it job by job).
 
 The last column says why each job cannot reasonably cost less: its interval
 is bound by what it guards, and what is left is the least it must read. Where
@@ -913,7 +916,7 @@ a trade-off is left on purpose, it says which and why.
 
 | Job | Interval | Cost a pass (`mysql` / `json`) | Why it cannot reasonably go lower |
 |---|---|---|---|
-| `contracts.releaseIdleHolds` | 10 s | 1.9 / 1.0 ms, 0 statements with nothing due; 75 ms and 252 statements releasing its cap of 25 | A hold is released within one tick of its window. It reads the shared snapshot (`Projection.liveSnapshot`, re-read only after a write) and asks `qbx_core` once per person; **at most 25 releases a pass** |
+| `contracts.releaseIdleHolds` | 10 s | 1.9 / 1.0 ms, 0 statements with nothing due; 75 ms and 252 statements releasing its cap of 25 | A hold is released within one tick of its window. It reads the shared snapshot (`Projection.liveSnapshot`, re-read only after a write) and asks `qbx_core` once per person; **at most 25 releases a pass**. The idle and attempt clocks are kept in `crimson_rp_rows` (kind `idle_clock`, a row a held contract) so a restart resumes them, downtime not counted: a row is written at most once a minute, at once when a count goes back to nothing, and at most 25 a pass |
 | `expireContracts` | 10 s, skipped until the next deadline, a presence change or a contract change | 0.11 / 0.07 ms; 317 ms and 726 statements ending its cap of 25 | Sleeps until the soonest deadline; reads the snapshot. **At most 25 endings a pass.** Trade-off: each ending re-reads its contract under its lock, kept because it moves money |
 | `audit.flush`, `storage.flush` | 10 s | 0.28 / 0.88 ms; 0 / 0.33 ms | A crash loses at most ten seconds of log rows and (`json`) changed files; only what changed is written |
 | `storage.heartbeat` | `json` 60 s, `mysql` 10 s | 0.01 ms; one statement or file | A restart's downtime is dated from it; on a tick of its own |

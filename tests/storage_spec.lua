@@ -197,17 +197,19 @@ describe('storage conformance', function()
                 quantity = 3, state = CH.ESCROW_STATE.HELD }
             b.store.writeEscrow('ct1', { fresh })
             local part = Util.copy(b.store.readEscrowLine('ct1:1'))
-            part.deliver_before, part.deliver_arrived = 4, 1
+            part.deliver_before, part.deliver_arrived, part.deliver_part = 4, 1, 2
             b.store.writeEscrow('ct1', { part })
             local line = b.store.readEscrowLine('ct1:1')
             eq(tonumber(line.deliver_before), 4, b.name .. ': what they held before is kept')
             eq(tonumber(line.deliver_arrived), 1, b.name .. ': what arrived is kept')
+            eq(tonumber(line.deliver_part), 2, b.name .. ': and the items of a dollar begun')
 
             local stale = Util.copy(fresh)
             stale.owed_to = 'HITMAN01'
             b.store.writeEscrow('ct1', { stale })
             line = b.store.readEscrowLine('ct1:1')
             eq(tonumber(line.deliver_arrived), 1, b.name .. ': a copy without it leaves it')
+            eq(tonumber(line.deliver_part), 2, b.name .. ': and the items of a dollar begun')
             eq(tonumber(line.deliver_before), 4, b.name .. ': and what they held')
             eq(line.owed_to, 'HITMAN01', b.name .. ': while the rest of the copy is written')
         end

@@ -133,6 +133,48 @@ describe('the handover meeting point across a restart', function()
     end
 end)
 
+--- An exclusive hold's idle clock is kept in the store (crimson_rp_rows,
+--- kind 'idle_clock'), so a restart resumes it rather than starting it
+--- again: kept in memory only, a server restarting every two hours never
+--- released a hold for want of an attempt.
+describe('an exclusive hold\'s idle clock across a restart', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': resumes where it was, not counting the downtime', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Config.Limits.ExclusiveAttemptWindowSeconds = 0
+            local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+                mode = CH.MODE.EXCLUSIVE, reward = { baseline = { cash = 5000 } } })
+            truthy(c, 'placed')
+            truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
+            Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
+            s.contracts.releaseIdleHolds()
+            for _ = 1, 20 do
+                Env.advance(60)
+                s.contracts.releaseIdleHolds()
+            end
+            -- json saves the row at the tick's flush, ten seconds at most.
+            if mode == 'json' then s.storage.flush() end
+
+            Env.advance(3600)
+            local _, after = restart(mode, s)
+            Config.Limits.ExclusiveAttemptWindowSeconds = 0
+            Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
+            after.contracts.releaseIdleHolds()
+            for _ = 1, 9 do
+                Env.advance(60)
+                after.contracts.releaseIdleHolds()
+            end
+            eq(after.storage.readHitman(c.id, 'HITMAN01').state, 'active', mode .. ': not yet')
+            Env.advance(60)
+            after.contracts.releaseIdleHolds()
+            eq(after.storage.readHitman(c.id, 'HITMAN01').state, 'released',
+                mode .. ': thirty minutes counted across the restart')
+            eq(#after.storage.readRpRows('idle_clock'), 0, mode .. ': and the row went with it')
+        end)
+    end
+end)
+
 --- Notify me on the whitelisted-job view is a choice kept by the store: a
 --- crash straight after turning it on keeps it, the view still says so, and
 --- the next new entry on their screen still reaches their phone.

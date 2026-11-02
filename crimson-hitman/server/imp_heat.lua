@@ -46,11 +46,7 @@ local function rules()
     return Board and Board.on('HitmanHeat') or nil
 end
 
-local function num(value, fallback)
-    local n = tonumber(value)
-    if not n or n ~= n then return fallback or 0 end
-    return n
-end
+local num = Util.num
 
 --- Drop what has cooled from one hitman's heat.
 ---@return boolean changed

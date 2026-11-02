@@ -91,6 +91,17 @@ backend against the same tests. Same rows in all three:
 Database changes only add (new tables, `ADD COLUMN` inside `pcall`); nothing
 drops or renames a column that holds player data.
 
+Kept across a restart besides the rows above: an exclusive (or full
+competitive) hold's idle and attempt clocks, one `crimson_rp_rows` row a held
+contract (kind `idle_clock`, written by `Contracts.releaseIdleHolds`, read
+back by `Contracts.reindexHolds`). Only time the clock could run is counted
+(the first pass after a start adds nothing for the downtime); a row is
+written when its counts have grown and a minute has passed since this
+process last wrote it, at once when a count goes back to nothing, at most
+`Contracts.IDLE_CLOCK_WRITES_PER_PASS` (25) a pass, and dropped with the
+hold. On `json` it is saved at the tick's flush, not synced at once: it
+holds no money.
+
 ## Testing
 
 No FiveM server runs in CI, so the real modules run against a stubbed
@@ -121,7 +132,7 @@ And the linter, from `crimson-hitman/`:
 | Documents (`docs_spec`) | The README's config reference equals config.lua; every refusal has words; every panel op is in the README; every switch has a checklist line | `CH_PRINT_DOCS=1 CH_SUITES=docs_spec lua5.4 tests/run.lua` prints the reference to paste |
 | Static (`tests/static_check.lua`) | No SQL built by concatenation; no handler reading an identity from a payload; every module, event and config key consistent; the schema holds every field; one word for one thing (the glossary); cited documents exist | Reads the source |
 | Phone page (`tests/ui/run.js`) | The real `ui/app.js` against a scripted server: forms, refusals, taps, two-click confirms, escaping | `tests/ui/dom.js`, a minimal DOM |
-| Panel page (`tests/ui/admin_run.js`) | Every section and action of `ui/admin.js`, access levels, stale answers, player text staying text | The same DOM, reading `admin.html` (`tests/ui/markup.js`) |
+| Panel page (`tests/ui/admin_run.js`) | Every section and action of `ui/admin.js`, access levels, stale answers, player text staying text | The same DOM, reading `admin.html` (`tests/ui/markup.js`); a test that asserts a time the page works out from the clock boots it with `{ clock: { ms } }`, so the page's `Date` stands still unless the test moves it |
 | Layout (`tests/layout/*.js`) | Tap targets, clipping, the tab bar and status bar on the phone; the panel without its icon font | Playwright; skipped where it is not installed |
 
 **Adding a spec.** Write `tests/<area>_spec.lua` with `describe` / `it` and the
@@ -131,7 +142,13 @@ made); add its name to the `suites` list in `tests/run.lua`. Every stack starts
 from the shipped config, so a test changes config through `withConfig` or the
 roleplay and improvements guards (`tests/harness/roleplay.lua`,
 `improvements.lua`) and never leaves it changed. A spec that builds a big city
-to measure cost goes in `MEASUREMENT_SPECS` so the invariant run skips it.
+to measure cost goes in `MEASUREMENT_SPECS` so the invariant run skips it,
+and a test that writes a state straight to the store (ending a contract
+without releasing its escrow) marks that store
+`rawset(store, '__rawFixture', true)` so the invariant run does not audit
+its fixture. The invariant run holds the stores it watches weakly, so it
+stays at a few tens of megabytes and well inside its 3 GB and 30-minute
+limits.
 
 **Changing a setting.** Add it to `config/config.lua` (with one short note)
 and `config/defaults.lua` in the same place, to the panel's catalogue
@@ -166,7 +183,12 @@ payout that cannot be given is owed, then left for staff, never dropped
 (§9.3, §14.12). Every movement is in the audit log (§9.8). Completion takes
 the contract's lock and happens once (§9.7, §14.34). Charges come last and are
 refunded on failure; a write the database did not confirm is settled by the
-server from its whole record (the review queue).
+server from its whole record (the review queue). A payout given as a
+dirty money item at `Rate` items a dollar (`Config.Roleplay.DirtyPayouts`)
+that raised part-way keeps the items of a dollar not yet whole on the line
+(`deliver_part`) beside the whole dollars that arrived (`deliver_arrived`),
+so the give staff finish hands over exactly the rest; any part arriving,
+even less than a dollar's worth, leaves the line for staff at once.
 
 **Load.** Nothing per frame while idle; loops sleep until due, share their
 reads and cap their passes; optional features cost nothing while off.

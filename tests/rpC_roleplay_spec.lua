@@ -524,6 +524,10 @@ describe('bodyguard contracts', function()
         local job3 = post(2, c3).data.job
         call('protectionAccept', 4, { job = job3, reward = 2000 })
         s3.storage.compareSetContractState(c3.id, CH.STATE.ACCEPTED, CH.STATE.VOIDED)
+        -- Ended by writing the state straight to the store, its escrow left
+        -- held: a fixture no release produced, so not the resource's output
+        -- for the invariant run (tests/invariants.lua).
+        rawset(s3.storage, '__rawFixture', true)
         s3.rpProtection.sweep()
         eq(bank(2), before3, 'voided: back to the target')
         eq(bank(4), 0)

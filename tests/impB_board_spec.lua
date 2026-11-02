@@ -791,3 +791,39 @@ describe('the improvements in the admin panel', function()
         eq(Config.Improvements.ContractDecay.Enabled, true, 'changed by staff')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- The shared number reading (Util.num)
+--------------------------------------------------------------------------
+
+describe('the number reading heat and decay share', function()
+    --- imp_decay.lua and imp_heat.lua each had this, word for word; both
+    --- now read Util.num. Held to the old definition over every kind of
+    --- value a setting can hold, so nothing either accepts has changed.
+    local function old(value, fallback)
+        local n = tonumber(value)
+        if not n or n ~= n then return fallback or 0 end
+        return n
+    end
+    local values = { 0, 1, -1, 2.5, 24, 1e308, math.huge, -math.huge, 0 / 0, '12', ' 7 ', '0x10',
+        '1e2', 'abc', '', true, false, {}, function() end }
+    it('answers exactly what the two copies answered, with and without a fallback', function()
+        local Util = require('crimson-hitman.shared.util')
+        for i = 1, #values + 1 do
+            local v = values[i] -- the last is nil
+            for _, fallback in ipairs({ false, 24, 5, -3 }) do
+                local fb = fallback or nil
+                local want, got = old(v, fb), Util.num(v, fb)
+                eq(math.type(got), math.type(want), ('the kind of number for %s, %s'):format(tostring(v), tostring(fb)))
+                eq(got, want, ('%s, %s'):format(tostring(v), tostring(fb)))
+            end
+        end
+    end)
+    it('is the one both modules read', function()
+        for _, file in ipairs({ 'imp_decay', 'imp_heat' }) do
+            local src = read_file('crimson-hitman/server/' .. file .. '.lua')
+            truthy(src:find('local num = Util.num', 1, true), file .. ' reads Util.num')
+            falsy(src:find('local function num', 1, true), file .. ' keeps no copy of its own')
+        end
+    end)
+end)

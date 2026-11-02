@@ -2426,6 +2426,12 @@ end
 -- Roleplay features' own rows
 --------------------------------------------------------------------------
 
+--- Rows that hold no money: an exclusive hold's idle clocks
+--- (Contracts.releaseIdleHolds), saved at the next flush rather than at once.
+local function rpRowHoldsMoney(id)
+    return not (type(id) == 'string' and id:sub(1, 5) == 'idle:')
+end
+
 --- See the memory backend. In records.json, written at once: a payout held
 --- for proof of intent, and a bodyguard job's money, are money paths.
 function JsonStore.readRpRows(kind)
@@ -2440,14 +2446,14 @@ end
 function JsonStore.writeRpRow(row)
     db.rpRows = db.rpRows or {}
     db.rpRows[row.id] = Util.copy(row)
-    touch(true)
+    touch(rpRowHoldsMoney(row.id))
     return true
 end
 
 function JsonStore.deleteRpRow(id)
     if db.rpRows and db.rpRows[id] then
         db.rpRows[id] = nil
-        touch(true)
+        touch(rpRowHoldsMoney(id))
     end
     return true
 end
@@ -2943,6 +2949,11 @@ function JsonStore.writeEscrow(contractId, lines)
             end
             if incoming.deliver_arrived ~= nil then
                 existing.deliver_arrived = incoming.deliver_arrived
+            end
+            -- And the items of a dollar not yet whole, of a payout given as Rate
+            -- items a dollar (Escrow.deliver).
+            if incoming.deliver_part ~= nil then
+                existing.deliver_part = incoming.deliver_part
             end
         else
             if existing then unindexRow(escrowBy, existing, incoming.id) end

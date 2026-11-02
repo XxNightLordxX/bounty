@@ -76,6 +76,29 @@ local function value(s, rate)
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
             if CH.MONEY_SOURCES[line.source] and line.state ~= CH.ESCROW_STATE.SETTLED then
                 total = total + (line.amount or 0) - (tonumber(line.deliver_arrived) or 0)
+                    - (tonumber(line.deliver_part) or 0) / (rate or 1)
+            end
+        end
+    end
+    return total
+end
+
+--- The same, counted in items of black money at `rate` a dollar, so a
+--- part of a dollar is a whole number and nothing is compared as a float.
+local function units(s, rate)
+    local total = 0
+    for _, p in pairs(Env.players) do
+        total = total + ((p.PlayerData.money.cash or 0) + (p.PlayerData.money.bank or 0)) * rate
+        for _, e in ipairs(p._inventory or {}) do
+            if e.name == 'black_money' then total = total + (e.count or 0) end
+        end
+    end
+    for _, c in ipairs(s.storage.allContracts()) do
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if CH.MONEY_SOURCES[line.source] and line.state ~= CH.ESCROW_STATE.SETTLED then
+                local owed = (line.amount or 0) - (tonumber(line.deliver_arrived) or 0)
+                total = total + owed * (line.source == 'dirty' and 1 or rate)
+                    - (tonumber(line.deliver_part) or 0)
             end
         end
     end
@@ -455,6 +478,46 @@ describe('dirty money payouts', function()
         eq(carried(3, 'black_money'), 300, 'three items a dollar')
         eq(value(s2, 3), before2, 'value conserved at the rate')
     end)
+
+    --- A give that raised with part of it placed was counted in whole
+    --- dollars (arrived // Rate): up to Rate - 1 items that reached the
+    --- hitman went uncounted, and the rest was given in full on top of
+    --- them. Fewer than Rate items arriving counted as nothing at all, so
+    --- the line was not even left for staff: it was given again in full.
+    --- Exact now: the items of a dollar not yet whole are kept on the line
+    --- (deliver_part), and every later give hands over only the rest.
+    for _, arrivedItems in ipairs({ 4, 2, 7 }) do
+        it(('conserves every item when a give at Rate 3 raises with %d of them placed'):format(arrivedItems),
+            function()
+            local s, f = stack()
+            Config.Roleplay.DirtyPayouts.Enabled = true
+            Config.Roleplay.DirtyPayouts.Rate = 3
+            local before = units(s, 3)
+            local c = place(s, f, { baseline = { cash = 100 } })
+            local real = exports.ox_inventory.AddItem
+            exports.ox_inventory.AddItem = function(self, src, name, count, metadata)
+                real(self, src, name, arrivedItems, metadata)
+                error('sync raised part-way', 0)
+            end
+            local ok, err = pcall(s.contracts.claimSlot, c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+            exports.ox_inventory.AddItem = real
+            truthy(ok, tostring(err))
+            eq(carried(3, 'black_money'), arrivedItems, 'the part that was placed')
+            local line
+            for _, l in ipairs(s.storage.readEscrow(c.id)) do
+                if l.portion == CH.PORTION.BASELINE then line = l end
+            end
+            truthy(s.escrow.parked(line), 'part of it arrived: left for staff at once, never given blind')
+            eq(units(s, 3), before, 'value conserved while it waits for staff')
+
+            -- Retries give nothing while it waits; staff pay gives the rest.
+            for _ = 1, 3 do s.escrow.retryPending('HITMAN01') end
+            eq(carried(3, 'black_money'), arrivedItems, 'not given again by a retry')
+            truthy(s.admin.settleLine(0, line.id, 'pay'))
+            eq(carried(3, 'black_money'), 300, 'exactly three hundred items, not one more')
+            eq(units(s, 3), before, 'value conserved to the item')
+        end)
+    end
 end)
 
 --------------------------------------------------------------------------

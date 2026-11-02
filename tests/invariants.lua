@@ -139,7 +139,14 @@ local function auditAtRest(store)
     end
 end
 
-local watched = {}
+--- Every store the suite has built, held weakly: a store nothing else
+--- refers to any more cannot be called again, so it has nothing left to
+--- audit. Held strongly, every stack the suite ever built stayed in memory,
+--- and the run reached its 3 GB limit about a third of the way in and
+--- crawled on through one emergency collection after another: past the
+--- half-hour timeout, with console_spec alone taking thirteen minutes of
+--- what is four seconds on its own.
+local watched = setmetatable({}, { __mode = 'k' })
 
 --- The watched stores anything called since the last at-rest audit.
 ---
@@ -152,7 +159,7 @@ local watched = {}
 --- a test cannot have changed in it, so only the ones something did call
 --- are audited; every function on a store marks it, a read included, so a
 --- write this file does not wrap is not missed.
-local touched = {}
+local touched = setmetatable({}, { __mode = 'k' })
 
 --- Wrap every write on every backend, so the monitor runs wherever the
 --- suite happens to be pointed.
@@ -163,7 +170,7 @@ local WRITES = {
 }
 
 local function monitor(store, name)
-    watched[#watched + 1] = store
+    watched[store] = true
     for key, real in pairs(store) do
         if type(real) == 'function' then
             store[key] = function(...)
@@ -208,7 +215,7 @@ setmetatable(_G, {
             rawset(t, key, function(name, fn)
                 current = name
                 value(name, fn)
-                for _, store in ipairs(watched) do
+                for store in pairs(watched) do
                     if touched[store] then pcall(auditAtRest, store) end
                 end
                 -- Cleared after, since the audit's own reads mark them too.

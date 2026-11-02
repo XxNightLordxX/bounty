@@ -452,6 +452,18 @@ function boot(server, opts) {
     clearInterval: function () {},
     Promise: Promise, console: console
   };
+  /* A test that reads a time the page works out from the clock (the deadline
+     preview counts down from when the contract was read) passes
+     opts.clock = { ms }: the page's Date then reads that and only that, so a
+     second rolling over between the read and the assertion cannot change
+     what it draws. The test moves the clock itself when it means to. */
+  if (opts && opts.clock) {
+    const clock = opts.clock;
+    sandbox.Date = class FixedDate extends Date {
+      constructor(...args) { if (args.length) super(...args); else super(clock.ms); }
+      static now() { return clock.ms; }
+    };
+  }
   vm.createContext(sandbox);
   vm.runInContext(PAGE_JS, sandbox, { filename: 'admin.js' });
 
@@ -3144,7 +3156,11 @@ async function main() {
           data: { seconds: data.seconds, leftBefore: 5400, leftAfter: 5400 + data.seconds } };
       },
     });
-    const app = boot(server);
+    // The clock stands still unless the test moves it: the preview counts
+    // down from the read, and a real second rolling over between the read
+    // and an assertion once took a minute off what it drew.
+    const clock = { ms: NOW * 1000 + 999 };
+    const app = boot(server, { clock: clock });
     app.open(ADMIN);
     await settled();
     app.nav('contracts');
@@ -3187,6 +3203,13 @@ async function main() {
       has(app.text(app.byId('dr-dl-preview')), 'the most is 1 h 25 min');
       has(app.text(app.byId('dr-dl-preview')), 'Extend: 3 h 10 min left after');
     });
+    clock.ms += 1;
+    app.type(app.drawer().querySelector('[data-bind="dr.dl.min"]'), '60');
+    it('the preview counts down from the read: a second later it shows a second less', function () {
+      has(app.text(app.byId('dr-dl-preview')), 'Extend: 2 h 29 min 59 s left after');
+      has(app.text(app.byId('dr-dl-preview')), 'Shorten: 29 min 59 s left after');
+    });
+    clock.ms -= 1;
     app.type(app.drawer().querySelector('[data-bind="dr.dl.min"]'), '45');
     app.type(app.drawer().querySelector('[data-bind="dr.dl.reason"]'), 'Server crash cost them time');
     const extend = app.button('Extend', app.drawer());

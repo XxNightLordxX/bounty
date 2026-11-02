@@ -519,6 +519,11 @@ function Memory.writeEscrow(contractId, lines)
             if incoming.deliver_arrived ~= nil then
                 existing.deliver_arrived = incoming.deliver_arrived
             end
+            -- And the items of a dollar not yet whole, of a payout given as Rate
+            -- items a dollar (Escrow.deliver).
+            if incoming.deliver_part ~= nil then
+                existing.deliver_part = incoming.deliver_part
+            end
         else
             if existing then unindexRow(escrowBy, existing, incoming.id) end
             db.escrow[incoming.id] = incoming

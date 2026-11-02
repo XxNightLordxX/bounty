@@ -464,6 +464,10 @@ describe('the rest of the loops', function()
         -- Once a minute: everybody's time in the city, one transaction of a
         -- row each for the 64 here.
         ['playtime.pass'] = 64,
+        -- Each held contract's idle clocks, kept for a restart: a row a
+        -- contract at most once a minute, and at most 25 rows a pass
+        -- (Contracts.IDLE_CLOCK_WRITES_PER_PASS).
+        ['contracts.releaseIdleHolds'] = 25,
     }
 
     it('sends the database nothing from a job with nothing to do, on a busy mysql server', function()

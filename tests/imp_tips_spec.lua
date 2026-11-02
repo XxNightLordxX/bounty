@@ -214,6 +214,10 @@ describe('the target\'s tip warning, delayed (TipWarningDelay)', function()
         truthy(buy(3, c).ok)
         local now = s.storage.readContract(c.id)
         truthy(s.storage.compareSetContractState(c.id, now.state, CH.STATE.CANCELLED), 'ended')
+        -- Ended by writing the state straight to the store, its escrow left
+        -- held: a fixture no release produced, so not the resource's output
+        -- for the invariant run (tests/invariants.lua).
+        rawset(s.storage, '__rawFixture', true)
         Env.clientEvents = {}
         Env.advance(61)
         eq(tipNoticesToTarget(), 0, 'nothing to warn of')

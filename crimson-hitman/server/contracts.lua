@@ -2489,12 +2489,128 @@ local unattemptedFor = {}
 local armedAt = {}
 
 --- The most holds one pass of the sweep releases. Each release is a
---- serialized read, write and push; the clocks are kept in memory only, so
---- every hold on the server falls due on the same pass half an hour after a
---- restart, and that pass released them all in one server frame (2,000
---- statements on mysql, 219 ms on json with two hundred). The rest stay due,
---- their clocks standing, and go on the passes after, ten seconds apart.
+--- serialized read, write and push; when every hold on the server falls due
+--- on the same pass (a city's worth of holds taken together), that pass
+--- released them all in one server frame (2,000 statements on mysql, 219 ms
+--- on json with two hundred). The rest stay due, their clocks standing, and
+--- go on the passes after, ten seconds apart.
 Contracts.IDLE_RELEASES_PER_PASS = 25
+
+--- The two clocks above are kept in the store as well (crimson_rp_rows,
+--- kind 'idle_clock', one row a contract with a count for each holder) and
+--- read back at boot (Contracts.reindexHolds). Kept in memory only, a server
+--- restarting every two hours or less never released a hold for want of an
+--- attempt (Limits.ExclusiveAttemptWindowSeconds, 7200), and every hold fell
+--- due together half an hour after each restart. The store holds only time
+--- the clock could run: a pass adds the seconds since the pass before, and
+--- the first pass after a start adds none, so downtime is never counted.
+---
+--- A contract's row is written when its counts have grown and a minute has
+--- passed since this process last wrote it, never on every pass; a count
+--- going back to nothing (the hitman worked it, made an attempt or was
+--- released) is written at once, so a restart cannot bring back idle time
+--- the hitman has since worked off. At most IDLE_CLOCK_WRITES_PER_PASS rows
+--- a pass; the rest wait, their counts kept, for the next.
+local CLOCK_KIND = 'idle_clock'
+local CLOCK_WRITE_SECONDS = 60
+Contracts.IDLE_CLOCK_WRITES_PER_PASS = 25
+
+--- What the store holds of each contract's clocks, as this process last
+--- wrote or read it. [contractId] = { at = os.time() of this process's last
+--- write (nil for a row read at boot), clocks = { [hitmanCid] = { idle,
+--- unattempted } } }.
+local clockRows = {}
+
+local function clockRowId(contractId) return 'idle:' .. contractId end
+
+--- Drop a contract's row from the store, if it has one.
+local function dropClockRow(contractId)
+    if not clockRows[contractId] then return end
+    clockRows[contractId] = nil
+    if Storage.deleteRpRow then pcall(Storage.deleteRpRow, clockRowId(contractId)) end
+end
+
+--- Drop every row the store holds (the idle windows off, or nothing held).
+local function dropClockRows()
+    local ids = {}
+    for contractId in pairs(clockRows) do ids[#ids + 1] = contractId end
+    for i = 1, #ids do dropClockRow(ids[i]) end
+end
+
+--- Bring the store's rows up to the clocks in memory: the contracts whose
+--- holds were counted this pass, in the order the pass met them, and
+--- `keys` their holders' keys by citizen id. Rows of contracts no longer
+--- counted are dropped.
+---@param order string[]
+---@param keysOf table<string, table<string, string>>
+---@param now integer
+local function keepClocks(order, keysOf, now)
+    if not Storage.writeRpRow then return end
+    local writes = 0
+    for _, contractId in ipairs(order) do
+        local want, any = {}, false
+        for hitmanCid, k in pairs(keysOf[contractId]) do
+            local idle = math.floor(idleFor[k] or 0)
+            local unattempted = math.floor(unattemptedFor[k] or 0)
+            if idle > 0 or unattempted > 0 then
+                want[hitmanCid] = { idle = idle, unattempted = unattempted }
+                any = true
+            end
+        end
+        local row = clockRows[contractId]
+        if not any then
+            dropClockRow(contractId)
+        else
+            local have = row and row.clocks or {}
+            local changed, wentBack = false, false
+            for hitmanCid, v in pairs(want) do
+                local h = have[hitmanCid]
+                if not h or h.idle ~= v.idle or h.unattempted ~= v.unattempted then changed = true end
+                if h and (v.idle < h.idle or v.unattempted < h.unattempted) then wentBack = true end
+            end
+            for hitmanCid in pairs(have) do
+                if not want[hitmanCid] then changed, wentBack = true, true end
+            end
+            local due = wentBack or not row or not row.at or (now - row.at) >= CLOCK_WRITE_SECONDS
+            if changed and due and writes < Contracts.IDLE_CLOCK_WRITES_PER_PASS then
+                writes = writes + 1
+                clockRows[contractId] = { at = now, clocks = want }
+                pcall(Storage.writeRpRow, { id = clockRowId(contractId), kind = CLOCK_KIND,
+                    contract_id = contractId, clocks = want })
+            end
+        end
+    end
+    local stale = {}
+    for contractId in pairs(clockRows) do
+        if not keysOf[contractId] then stale[#stale + 1] = contractId end
+    end
+    for i = 1, #stale do dropClockRow(stale[i]) end
+end
+
+--- Read the clocks the store holds back into memory, at boot.
+local function restoreClocks()
+    clockRows = {}
+    if not Storage.readRpRows then return end
+    local ok, rows = pcall(Storage.readRpRows, CLOCK_KIND)
+    if not ok or type(rows) ~= 'table' then return end
+    for _, row in ipairs(rows) do
+        local contractId = row.contract_id
+        if type(contractId) == 'string' and type(row.clocks) == 'table' then
+            local clocks = {}
+            for hitmanCid, v in pairs(row.clocks) do
+                if type(hitmanCid) == 'string' and type(v) == 'table' then
+                    local idle = math.max(0, math.floor(tonumber(v.idle) or 0))
+                    local unattempted = math.max(0, math.floor(tonumber(v.unattempted) or 0))
+                    clocks[hitmanCid] = { idle = idle, unattempted = unattempted }
+                    local k = contractId .. ':' .. hitmanCid
+                    if idle > 0 then idleFor[k] = idle end
+                    if unattempted > 0 then unattemptedFor[k] = unattempted end
+                end
+            end
+            clockRows[contractId] = { at = nil, clocks = clocks }
+        end
+    end
+end
 
 --- A handover was armed: an attempt, which keeps an exclusive hold.
 function Contracts.noteAttempt(contractId, hitmanCid)
@@ -2515,6 +2631,9 @@ function Contracts.reindexHolds()
             n = n + 1
         end
     end
+    -- And how long each hold has gone unworked, as the last process kept it.
+    -- A row for a hold that has ended since is dropped by the first pass.
+    restoreClocks()
     return n
 end
 
@@ -2700,7 +2819,10 @@ function Contracts.releaseIdleHolds()
     local elapsed = lastIdleSweep and math.max(0, now - lastIdleSweep) or 0
     lastIdleSweep = now
     local idling = window > 0 or attemptWindow > 0
-    if not idling then idleFor, unattemptedFor = {}, {} end
+    if not idling then
+        idleFor, unattemptedFor = {}, {}
+        dropClockRows()
+    end
 
     local marked = {}
     for contractId in pairs(leaving) do marked[#marked + 1] = contractId end
@@ -2710,6 +2832,9 @@ function Contracts.releaseIdleHolds()
     -- Releases tried this pass (Contracts.IDLE_RELEASES_PER_PASS).
     local tried = 0
     local live = {}
+    -- The contracts whose holds were counted, in the order met, and their
+    -- holders' keys (keepClocks).
+    local counted, keysOf = {}, {}
 
     -- The contracts somebody has taken, from the index rather than a walk of
     -- the table: this runs every ten seconds for the life of the server, and
@@ -2726,6 +2851,7 @@ function Contracts.releaseIdleHolds()
         if idling then
             idleFor, unattemptedFor = {}, {}
             for k in pairs(armedAt) do armedAt[k] = nil end
+            dropClockRows()
         end
         return released
     end
@@ -2821,6 +2947,11 @@ function Contracts.releaseIdleHolds()
                 if h.state == 'active' then
                     local k = c.id .. ':' .. h.hitman_cid
                     live[k] = true
+                    if not keysOf[c.id] then
+                        keysOf[c.id] = {}
+                        counted[#counted + 1] = c.id
+                    end
+                    keysOf[c.id][h.hitman_cid] = k
 
                     local engaged = Death and Death.lastEngaged
                         and Death.lastEngaged(c.id, h.hitman_cid, c.target_cid)
@@ -2892,6 +3023,8 @@ function Contracts.releaseIdleHolds()
     for k in pairs(armedAt) do
         if not live[k] then armedAt[k] = nil end
     end
+
+    keepClocks(counted, keysOf, now)
 
     return released
 end

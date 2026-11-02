@@ -788,6 +788,103 @@ describe('an exclusive contract held by somebody who is not working it', functio
         local _ = f
     end)
 
+    --- The clocks were in memory only: a server restarting every two hours
+    --- or less never released a hold for want of an attempt, and every hold
+    --- fell due together half an hour after each restart.
+    local function restarted(s)
+        package.loaded['crimson-hitman.server.contracts'] = nil
+        local fresh = require('crimson-hitman.server.contracts')
+        fresh.init({ storage = s.storage, escrow = s.escrow, identity = s.identity,
+                     audit = s.audit, notify = s.notify, progression = s.progression,
+                     death = s.death })
+        s.contracts = fresh
+        fresh.reindexHolds()
+        -- The first pass of the new process: it counts nothing, since the
+        -- last pass before the restart.
+        fresh.releaseIdleHolds()
+        return fresh
+    end
+
+    it('resumes its idle count after a restart, rather than starting it again', function()
+        local s, f, c = held()
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
+        s.contracts.releaseIdleHolds()
+        run(s, 20)
+        local rows = s.storage.readRpRows('idle_clock')
+        eq(#rows, 1, 'one row for the contract')
+        eq(rows[1].contract_id, c.id)
+        eq(rows[1].clocks.HITMAN01.idle, 1200, 'twenty minutes kept')
+
+        -- Down for an hour: none of it is counted.
+        Env.advance(3600)
+        restarted(s)
+        run(s, 9)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'twenty-nine minutes, not thirty')
+        run(s, 1)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released',
+            'thirty minutes unworked across the restart')
+        eq(#s.storage.readRpRows('idle_clock'), 0, 'and its row went with the hold')
+        local _ = f
+    end)
+
+    it('is still released for no attempt on a server that restarts every 25 minutes', function()
+        local s, f, c = held()
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        s.contracts.releaseIdleHolds()
+        local restarts = 0
+        for _ = 1, 6 do
+            run(s, 25)
+            if s.storage.readHitman(c.id, 'HITMAN01').state ~= 'active' then break end
+            Env.advance(120)
+            restarted(s)
+            restarts = restarts + 1
+        end
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released',
+            'two hours without an attempt, across ' .. restarts .. ' restarts')
+        eq(restarts, 4, 'released in the fifth stretch, at two hours counted')
+        local _ = f
+    end)
+
+    it('keeps no row while nothing is counted, and writes one at most once a minute', function()
+        local s, f, c = held()
+        local real, writes = s.storage.writeRpRow, 0
+        s.storage.writeRpRow = function(row)
+            if row.kind == 'idle_clock' then writes = writes + 1 end
+            return real(row)
+        end
+        -- Staff hold the hitman: no clock runs, so nothing is written.
+        s.contracts.releaseIdleHolds()
+        local frozen = s.contracts.heldByStaff
+        s.contracts.heldByStaff = function() return true end
+        for _ = 1, 30 do Env.advance(10); s.contracts.releaseIdleHolds() end
+        eq(writes, 0, 'held: nothing counted, nothing written')
+        eq(#s.storage.readRpRows('idle_clock'), 0)
+        s.contracts.heldByStaff = frozen
+        -- A pass every ten seconds for five minutes: thirty passes.
+        for _ = 1, 30 do Env.advance(10); s.contracts.releaseIdleHolds() end
+        truthy(writes >= 4 and writes <= 6, 'once a minute, not every pass: ' .. writes)
+        eq(s.storage.readRpRows('idle_clock')[1].clocks.HITMAN01.idle >= 240, true)
+        local _ = f
+        local _ = c
+    end)
+
+    it('writes a count going back to nothing at once, so a restart cannot bring it back', function()
+        local s, f, c = held()
+        s.contracts.releaseIdleHolds()
+        run(s, 20)
+        eq(s.storage.readRpRows('idle_clock')[1].clocks.HITMAN01.idle, 1200)
+        -- The hitman goes to work, ten seconds after a write.
+        Env.players[3]._coords = Env.players[2]._coords or { x = 0.0, y = 0.0, z = 0.0 }
+        Env.advance(10)
+        s.death.watchTargets(s.storage.allContracts())
+        s.contracts.releaseIdleHolds()
+        local rows = s.storage.readRpRows('idle_clock')
+        local idle = rows[1] and rows[1].clocks.HITMAN01 and rows[1].clocks.HITMAN01.idle or 0
+        eq(idle, 0, 'the worked-off count is in the store now')
+        local _ = f
+        local _ = c
+    end)
+
     it('can be switched off', function()
         local s, f, c = held()
         Config.Limits.ExclusiveIdleReleaseSeconds = 0

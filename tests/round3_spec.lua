@@ -162,6 +162,10 @@ describe('round 3 D1 cheap: the kept board and the latent line', function()
         m.projection.listing('VIEW1', 1)
         eq(reads, 0, 'kept')
         truthy(m.storage.expireIfDue(id, c.state, CH.STATE.EXPIRED, os.time() + 10 * 86400 * 365, true), 'due')
+        -- Ended by writing the state straight to the store, its escrow left
+        -- held: a fixture no release produced, so not the resource's output
+        -- for the invariant run (tests/invariants.lua).
+        rawset(m.storage, '__rawFixture', true)
         m.projection.listing('VIEW1', 1)
         truthy(reads > 0, 'rebuilt after a real expiry')
         m.storage.liveContracts = live

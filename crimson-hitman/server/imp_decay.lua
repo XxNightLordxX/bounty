@@ -51,11 +51,7 @@ local function rules()
     return Board and Board.on('ContractDecay') or nil
 end
 
-local function num(value, fallback)
-    local n = tonumber(value)
-    if not n or n ~= n then return fallback or 0 end
-    return n
-end
+local num = Util.num
 
 local function write(row)
     rows[row.contract_id] = row

@@ -393,6 +393,11 @@ local SCHEMA = {
         -- none.
         deliver_before INT,
         deliver_arrived INT,
+        -- A payout given as Rate items a dollar (Config.Roleplay.DirtyPayouts),
+        -- the items of a dollar not yet whole that have reached them, so a
+        -- later give hands over only the rest. Added to existing databases
+        -- by migrate; NULL when none.
+        deliver_part INT,
         -- Settled by staff without anything given (/ch-settle delivered),
         -- 'delivered', and who; settled_at says when. Added to existing
         -- databases by migrate; NULL on every other line.
@@ -735,7 +740,8 @@ local SCHEMA = {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- The roleplay features' own rows (server/rp_intent.lua,
     -- server/rp_protection.lua): a payout held for proof of intent, and a
-    -- bodyguard job with the money its target put up. One row each, its
+    -- bodyguard job with the money its target put up; and a held contract's
+    -- idle clocks (server/contracts.lua, kind 'idle_clock'). One row each, its
     -- fields as JSON. Created on an existing database by the CREATE TABLE
     -- IF NOT EXISTS at the next start, like any table added since.
     [[CREATE TABLE IF NOT EXISTS crimson_rp_rows (
@@ -1877,8 +1883,8 @@ local ESCROW_UPSERT = [[
     INSERT INTO crimson_escrow
         (id, contract_id, slot, line_portion, source, amount, item, quantity, metadata,
          staker, inv_slot, owed_to, releasing_to, state, derived, taken_from, deliver_raises,
-         deliver_before, deliver_arrived)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         deliver_before, deliver_arrived, deliver_part)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     -- State and amount are NOT written here, as they move only through
     -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
     -- guarded. Writing them from a caller-held copy could resurrect a
@@ -1890,7 +1896,8 @@ local ESCROW_UPSERT = [[
         releasing_to = VALUES(releasing_to),
         deliver_raises = COALESCE(VALUES(deliver_raises), deliver_raises),
         deliver_before = COALESCE(VALUES(deliver_before), deliver_before),
-        deliver_arrived = COALESCE(VALUES(deliver_arrived), deliver_arrived)
+        deliver_arrived = COALESCE(VALUES(deliver_arrived), deliver_arrived),
+        deliver_part = COALESCE(VALUES(deliver_part), deliver_part)
 ]]
 
 local function escrowParams(contractId, l)
@@ -1914,6 +1921,7 @@ local function escrowParams(contractId, l)
         -- here; the exact figure is in the escrow_deliver_raised row.
         l.deliver_before and math.max(-2147483648, math.min(2147483647, l.deliver_before)),
         l.deliver_arrived,
+        l.deliver_part,
     }
 end
 
@@ -1942,8 +1950,8 @@ local ESCROW_INSERT = [[
     INSERT INTO crimson_escrow
         (id, contract_id, slot, line_portion, source, amount, item, quantity, metadata,
          staker, inv_slot, owed_to, releasing_to, state, derived, taken_from, deliver_raises,
-         deliver_before, deliver_arrived)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         deliver_before, deliver_arrived, deliver_part)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON DUPLICATE KEY UPDATE id = id
 ]]
 

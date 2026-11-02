@@ -132,6 +132,9 @@ CREATE TABLE IF NOT EXISTS crimson_escrow (
     -- rest. NULL when none.
     deliver_before INT,
     deliver_arrived INT,
+    -- A payout given as Rate items a dollar, the items of a dollar not yet
+    -- whole that have reached them. NULL when none.
+    deliver_part INT,
     -- Settled by staff without anything given (/ch-settle delivered),
     -- 'delivered', and who; settled_at says when. NULL on every other line.
     settled_by_staff VARCHAR(16),
@@ -435,8 +438,8 @@ CREATE TABLE IF NOT EXISTS crimson_meta (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- The roleplay features' own rows: a payout held for proof of intent, and a
--- bodyguard job with the money its target put up. One row each, its fields
--- as JSON in `body`.
+-- bodyguard job with the money its target put up; and a held contract's idle
+-- clocks (kind 'idle_clock'). One row each, its fields as JSON in `body`.
 CREATE TABLE IF NOT EXISTS crimson_rp_rows (
     id VARCHAR(48) PRIMARY KEY,
     kind VARCHAR(16) NOT NULL,

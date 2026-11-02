@@ -1840,7 +1840,7 @@ end
 ---@param before integer what they held before it
 ---@param arrived integer|nil how much of it arrived; nil when it could not be read
 ---@return boolean delivered
-local function afterRaise(recipientCid, line, name, count, raised, before, arrived)
+local function afterRaise(recipientCid, line, name, count, raised, before, arrived, movedSome)
     if arrived and arrived >= count then
         -- Given, and the raise came after: delivered.
         Audit.financial('escrow_deliver_raised', recipientCid, line.contract_id, {
@@ -1852,7 +1852,10 @@ local function afterRaise(recipientCid, line, name, count, raised, before, arriv
 
     -- An outcome that cannot be told goes to the limit at once.
     local raises = (tonumber(line.deliver_raises) or 0) + 1
-    local unknown = arrived ~= 0
+    -- Something arrived, even less than one of what `arrived` counts (a
+    -- dollar paid as Rate items, of which only some were placed): only part
+    -- of it is with them, and that goes to staff at once like any other.
+    local unknown = arrived ~= 0 or movedSome == true
     if unknown then raises = math.max(raises, Escrow.DELIVER_RAISE_LIMIT) end
     line.deliver_raises = raises
     line.deliver_before = before
@@ -2029,14 +2032,19 @@ function Escrow.deliver(recipientCid, line)
 
     -- The dollars still owed, as the item: Rate of it a dollar, or one item
     -- worth the figure. Every count below is of items; what arrived is told
-    -- back to the line in dollars (afterRaise), which is what it holds.
-    local dollars
+    -- back to the line in dollars (afterRaise), which is what it holds, and
+    -- the items of a dollar not yet whole in deliver_part, so a later give
+    -- hands over exactly the rest (Rate - part of the dollar begun, then
+    -- Rate a dollar).
+    local dollars, rate, part
     if asItem then
         dollars = math.floor(tonumber(count) or 0)
         if asItem.worth then
             count, metadata = 1, { [asItem.worth] = dollars }
         else
-            count = dollars * math.max(1, math.floor(tonumber(asItem.rate) or 1))
+            rate = math.max(1, math.floor(tonumber(asItem.rate) or 1))
+            part = math.max(0, math.min(rate - 1, math.floor(tonumber(line.deliver_part) or 0)))
+            count = dollars * rate - part
         end
     end
 
@@ -2058,6 +2066,7 @@ function Escrow.deliver(recipientCid, line)
     if asItem and not raised and gave then
         Audit.financial('escrow_paid_as_item', recipientCid, line.contract_id, {
             line = line.id, source = line.source, amount = dollars, item = name, count = count,
+            part = part and part > 0 and part or nil,
         })
     end
     if not raised then return gave end
@@ -2066,13 +2075,21 @@ function Escrow.deliver(recipientCid, line)
     local arrived = after and after - before
     if asItem then
         -- In dollars, as the line counts: a whole item worth the figure, or
-        -- Rate items to each dollar.
+        -- Rate items to each dollar. In 'count' mode the items of a dollar
+        -- not yet whole are kept on the line (deliver_part) rather than
+        -- dropped: counted in whole dollars alone, up to Rate - 1 items that
+        -- had reached the player went uncounted and were given again, and
+        -- fewer than Rate counted as nothing arrived at all.
+        local movedSome = false
         if arrived and asItem.worth then
             arrived = arrived >= 1 and dollars or 0
         elseif arrived then
-            arrived = arrived // math.max(1, math.floor(tonumber(asItem.rate) or 1))
+            movedSome = arrived > 0
+            local total = part + math.max(0, arrived)
+            arrived = total // rate
+            if arrived < dollars then line.deliver_part = total % rate end
         end
-        return afterRaise(recipientCid, line, name, dollars, raised, before, arrived)
+        return afterRaise(recipientCid, line, name, dollars, raised, before, arrived, movedSome)
     end
     return afterRaise(recipientCid, line, name, count, raised, before, arrived)
 end

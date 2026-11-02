@@ -29,6 +29,18 @@ function Util.toPositive(value, max)
     return n
 end
 
+--- A setting read as a number: tonumber's answer, or `fallback` (0 when
+--- none) for anything that is not a number or is NaN. For values config.lua
+--- holds, never for anything a client sends (Util.toCount is for those).
+---@param value any
+---@param fallback number|nil
+---@return number
+function Util.num(value, fallback)
+    local n = tonumber(value)
+    if not n or n ~= n then return fallback or 0 end
+    return n
+end
+
 --- Validate an opaque server-issued identifier coming back from a client.
 --- Rejects anything that is not our own id shape, so an id can never be used
 --- as a path fragment, a format string or a SQL identifier.
