@@ -817,15 +817,16 @@ async function main() {
     });
     app.nav('logs');
     await settled();
-    it('without identity the log\'s citizen id filter is disabled and never sent', function () {
+    it('without identity the log\'s citizen id filter is open, and says it finds only rows under their own name', function () {
       const input = app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'lg.actor'; })[0];
-      eq(input.disabled, true);
+      falsy(input.disabled, 'disabled');
+      has(app.main(), 'A citizen id finds only the rows that player acted in under their own name.');
       app.type(input, 'ABC12345');
       app.fire(350);
     });
     await settled();
-    it('(and typing into it anyway sends nothing that names a player)', function () {
-      app.requests('logs').forEach(function (r) { eq(r.data.actor, undefined); });
+    it('(and the server is asked, which keeps the rows they acted in anonymously out)', function () {
+      eq(app.last('logs').data.actor, 'ABC12345');
     });
     app.nav('players');
     await settled();
@@ -3365,6 +3366,208 @@ async function main() {
       eq(app.requests('freeze').length, 0);
     });
     clean(app, 'freeze reader');
+  })();
+
+  /* ---- staff tools on a contract: notes, remove an operative, edit text,
+     export, the player view ---- */
+  function staffPart(extra) {
+    return Object.assign({
+      notes: [{ id: 'cs1', at: NOW - 900, by: 'Staff', text: XSS }],
+      removals: [{ id: 'cs2', at: NOW - 600, who: 'operative Ghost', by: 'Staff', reason: 'rdm',
+        stakeReturned: true, blocked: true }],
+      edits: [{ id: 'cs3', at: NOW - 300, field: 'reason', by: 'Staff', reason: 'a slur' }],
+      noteMax: 300, removable: true,
+      text: { editable: true, mode: 'freetext', max: 120, edited: true }
+    }, extra || {});
+  }
+
+  await (async function () {
+    const found = [];
+    const server = standardServer({
+      contract: contractDetail({ staff: staffPart() }),
+      addNote: { ok: true, message: 'Note added.', data: { id: 'cs9' } },
+      removeHitman: { ok: true, message: 'Ghost taken off the contract.', data: { stake: 2500 } },
+      editText: { ok: true, message: 'Reason replaced.', data: { new: 'Settling a score' } },
+      exportContract: { ok: true, data: { text: 'Contract ct00000001\nState: accepted\n' + XSS } },
+      playerView: function (data) {
+        return { ok: true, data: { role: data.role, shown: true, alias: data.hitman ? 'Ghost' : undefined,
+          view: { id: 'ct00000001', role: data.role === 'placer' ? 'creator' : data.role, targetName: 'Dana Reyes',
+            reason: XSS, staffEdited: true, timeLeft: '1–2 hours left', penaltyAmount: 2500,
+            reward: { baseline: 5000, bonus: 0 }, creatorAnonymous: true, myAlias: data.hitman ? 'Ghost' : undefined } } };
+      }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    markupFrom(app, 'the staff tools', found);
+    it('the contract view has the five staff tools, the notes and history escaped', function () {
+      const text = app.text(app.drawer());
+      ['Staff notes', 'Remove an operative', 'Edit text', 'Export the record', 'As a player sees it'].forEach(function (t) {
+        has(text, t);
+      });
+      eq(found.length, 0, found.join(', '));
+      has(text, 'operative Ghost');
+      has(text, 'stake returned');
+      has(text, 'barred');
+      has(text, 'edited by staff');
+      has(text, 'reason replaced by Staff');
+    });
+
+    // Notes.
+    app.click(app.button('Add note', app.drawer()));
+    await settled();
+    it('Add note with nothing written sends nothing', function () {
+      eq(app.requests('addNote').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'Write the note.');
+    });
+    app.type(app.drawer().querySelector('[data-bind="dr.note.ct00000001"]'), 'ticket #42, waiting on clip');
+    const add = app.button('Add note', app.drawer());
+    app.click(add);
+    await settled();
+    it('Add note takes two clicks', function () {
+      eq(app.requests('addNote').length, 0);
+      has(app.text(add), 'Click again to add');
+    });
+    app.click(add);
+    await settled();
+    it('and sends the note for this contract', function () {
+      eq(app.last('addNote').data, { id: 'ct00000001', text: 'ticket #42, waiting on clip' });
+      has(app.text(app.drawer().querySelector('.answer')), 'Note added.');
+    });
+
+    // Remove an operative.
+    app.type(app.drawer().querySelector('[data-bind="dr.rm.reason.ct00000001"]'), 'combat logging');
+    app.click(app.button('Remove', app.drawer()));
+    await settled();
+    it('Remove with no operative picked sends nothing', function () {
+      eq(app.requests('removeHitman').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'Pick the operative');
+    });
+    app.click(app.button('Ghost · Anonymous', app.drawer()));
+    app.click(app.button('Return the stake', app.drawer()));
+    app.click(app.button('Bar them from it', app.drawer()));
+    const remove = app.button('Remove', app.drawer());
+    app.click(remove);
+    await settled();
+    it('Remove takes two clicks', function () {
+      eq(app.requests('removeHitman').length, 0);
+      has(app.text(remove), 'Click again to remove');
+    });
+    app.click(remove);
+    await settled();
+    it('and sends the operative, the reason, the stake choice and the bar', function () {
+      eq(app.last('removeHitman').data, { id: 'ct00000001', hitman: 'hm1', reason: 'combat logging',
+        returnStake: true, block: true });
+      has(app.text(app.drawer().querySelector('.answer')), 'Ghost taken off the contract.');
+    });
+
+    // Edit text.
+    app.type(app.drawer().querySelector('[data-bind="dr.tx.text.ct00000001"]'), 'Settling a score');
+    app.click(app.button('Replace', app.drawer()));
+    await settled();
+    it('Replace with no reason sends nothing', function () {
+      eq(app.requests('editText').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'Give a reason');
+    });
+    app.type(app.drawer().querySelector('[data-bind="dr.tx.reason.ct00000001"]'), 'a slur');
+    const replace = app.button('Replace', app.drawer());
+    app.click(replace);
+    app.click(replace);
+    await settled();
+    it('Replace, on the second click, sends the new text and the reason', function () {
+      eq(app.last('editText').data, { id: 'ct00000001', field: 'reason', text: 'Settling a score', reason: 'a slur' });
+    });
+
+    // Export.
+    app.click(app.button('Copy the record', app.drawer()));
+    await settled();
+    it('Copy the record asks for it and puts it on the clipboard, as plain text', function () {
+      eq(app.last('exportContract').data, { id: 'ct00000001' });
+      eq(app.document.clipboard, 'Contract ct00000001\nState: accepted\n' + XSS);
+      has(app.toasts(), 'on the clipboard');
+    });
+    app.document.copyRefused = true;
+    app.click(app.button('Copy the record', app.drawer()));
+    await settled();
+    it('and shows it to copy by hand when the game will not copy', function () {
+      const box = app.drawer().querySelector('textarea');
+      truthy(box, 'a box to copy from');
+      has(box.textContent || box.value, 'Contract ct00000001');
+      markupFrom(app, 'the export box', found);
+      eq(found.length, 0, found.join(', '));
+    });
+
+    // The player view.
+    app.click(app.button('Target', app.drawer()));
+    await settled();
+    it('the target\'s card is asked for, and drawn, escaped, with its edited mark', function () {
+      eq(app.last('playerView').data, { id: 'ct00000001', role: 'target' });
+      const text = app.text(app.drawer().querySelector('.ct-view'));
+      has(text, 'Dana Reyes');
+      has(text, '1–2 hours left');
+      has(text, 'edited by staff');
+      has(text, '$5,000');
+      markupFrom(app, 'the player view', found);
+      eq(found.length, 0, found.join(', '));
+    });
+    app.click(app.button('Ghost', app.drawer()));
+    await settled();
+    it('an operative\'s card by their row, not by who they are', function () {
+      eq(app.last('playerView').data, { id: 'ct00000001', role: 'hitman', hitman: 'hm1' });
+      has(app.text(app.drawer().querySelector('.ct-view')), 'myAlias');
+    });
+    clean(app, 'staff tools');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ contract: contractDetail({ staff: staffPart() }),
+      playerView: { ok: true, data: { role: 'placer', shown: false, note: 'Closed: it is off their phone.' } } }));
+    app.open(READER);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    it('a reader sees the notes and the history, and every tool that writes disabled', function () {
+      ['Add note', 'Remove', 'Replace'].forEach(function (label) {
+        truthy(app.button(label, app.drawer()).disabled, label + ' disabled');
+      });
+      falsy(app.button('Copy the record', app.drawer()).disabled, 'exporting is not a write');
+      falsy(app.button('Placer', app.drawer()).disabled, 'looking is not a write');
+      app.click(app.button('Add note', app.drawer()));
+      app.click(app.button('Remove', app.drawer()));
+      eq(app.requests('addNote').length + app.requests('removeHitman').length, 0);
+    });
+    app.click(app.button('Placer', app.drawer()));
+    await settled();
+    it('a card not shown says why', function () {
+      has(app.text(app.drawer().querySelector('.ct-view')), 'Closed: it is off their phone.');
+    });
+    clean(app, 'staff tools reader');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ contract: contractDetail({ staff: staffPart({
+      removable: false, text: { editable: false, mode: 'off' } }) }) }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    it('a closed contract offers no Remove, and a server with no reason no Replace', function () {
+      has(app.text(app.drawer()), 'Only a live contract (active or accepted) has operatives to remove.');
+      has(app.text(app.drawer()), 'This server keeps no reason on a contract.');
+      eq(app.drawer().querySelectorAll('button').filter(function (b) {
+        const act = b.getAttribute('data-act') || '';
+        return act === 'ct-remove' || act === 'ct-text';
+      }).length, 0);
+    });
+    clean(app, 'staff tools closed');
   })();
 
   console.log('');

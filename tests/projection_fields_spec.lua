@@ -66,6 +66,8 @@ local CONDITIONAL = {
     -- Only on a contract staff have put on hold (server/freeze.lua): its
     -- absence is a contract running as usual.
     onHold = 'only while staff hold the contract, and only to its parties',
+    -- Staff replaced what a player wrote on it: true or absent.
+    staffEdited = 'only where staff replaced its text',
     -- Only on a contract the viewer is the target of. Its absence elsewhere
     -- is the rule, not a gap.
     bailoutAvailable = 'target-only',

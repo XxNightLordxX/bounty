@@ -49,6 +49,12 @@ local OPS = {
     -- the same write as void, on the contract's view.
     adjustDeadline = WRITE,
     whois = IDENTITY,
+    -- Staff tools on one contract (server/staffcontract.lua), on its view:
+    -- a private note, taking one operative off it, replacing a player's
+    -- text are writes; its record as text and the card a party sees are
+    -- reads, scrubbed as the view is.
+    addNote = WRITE, removeHitman = WRITE, editText = WRITE,
+    exportContract = READ, playerView = READ,
 }
 
 --- Every staff command (Config.Admin.Commands, but the panel's own) and the
@@ -86,6 +92,7 @@ Panel.OPS = OPS
 local WAITS_FOR_RECOVERY = {
     void = true, settle = true, resolve = true, setSetting = true, resetSetting = true,
     resetSettings = true, refresh = true, freeze = true, unfreeze = true, adjustDeadline = true,
+    removeHitman = true, editText = true,
 }
 
 --- How long one overview is shared between requests. Each open panel asks
@@ -981,7 +988,7 @@ end
 --- left for staff, and this is the one view that can settle them (Return
 --- to, which names who put the money up). Answered not found, only the
 --- console's settle command could.
-H.contract = function(src, data)
+H.contract = function(src, data, quiet)
     local Storage = deps.storage
     local id = Util.toId(data.id)
     if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
@@ -1016,8 +1023,10 @@ H.contract = function(src, data)
     end
 
     if not contract then
-        deps.audit.staff(canIdentify and 'admin_panel_contract_identified' or 'admin_panel_contract',
-            staffOf(src), id, { never_stored = true })
+        if not quiet then
+            deps.audit.staff(canIdentify and 'admin_panel_contract_identified' or 'admin_panel_contract',
+                staffOf(src), id, { never_stored = true })
+        end
         return true, nil, nil, {
             contract = { id = id, neverStored = true },
             escrow = escrow, hitmen = {}, amendments = {}, timeline = timeline,
@@ -1050,8 +1059,10 @@ H.contract = function(src, data)
     -- Not while recovery is still deciding them.
     local stuck = stuckOf(src, id)
 
-    deps.audit.staff(canIdentify and 'admin_panel_contract_identified' or 'admin_panel_contract',
-        staffOf(src), id, {})
+    if not quiet then
+        deps.audit.staff(canIdentify and 'admin_panel_contract_identified' or 'admin_panel_contract',
+            staffOf(src), id, {})
+    end
 
     return true, nil, nil, {
         contract = {
@@ -1093,6 +1104,8 @@ H.contract = function(src, data)
         -- On hold by staff (server/freeze.lua), with which of its parties
         -- this staff member may be told.
         frozen = frozenShown(contract, hitmen, canIdentify),
+        -- Staff notes, removals and text edits on it (server/staffcontract.lua).
+        staff = Panel.staffPart(contract, r),
     }
 end
 
@@ -1291,9 +1304,32 @@ H.resolve = function(src, data)
     return ok, err, deps.admin.reviewAnswer(id, ok, err, detail, true), { detail = detail }
 end
 
+--- Whether a log row a citizen id acted in may be listed, for staff without
+--- IdentityAce who searched by it: only a row about a contract they are a
+--- party of in a role they did not pay to keep anonymous (its target, a
+--- client who placed it under their name, an operative who took it under
+--- theirs). A row about no contract, or one that cannot be read, is left
+--- out: whether the player is behind something anonymous is not to be
+--- learned from what a search leaves out or keeps.
+local function actedOpenly(row, cid, parties)
+    local contract, hitmen = parties(row.contract_id)
+    if not contract then return false end
+    if contract.target_cid == cid then return true end
+    if contract.creator_cid == cid then return contract.anon_creator ~= true end
+    for _, hitman in ipairs(hitmen or {}) do
+        if hitman.hitman_cid == cid then return hitman.anon ~= true end
+    end
+    return false
+end
+
+--- Pages of the log read at most for one page of a search by citizen id
+--- without IdentityAce, which keeps only the rows actedOpenly allows.
+local OPEN_SEARCH_READS = 10
+
 --- The audit log, newest first, a page at a time (Storage.queryAudit). By
---- a citizen id only for staff with IdentityAce: the rows a player acted in
---- include the ones they acted in anonymously.
+--- a citizen id: every row they acted in for staff with IdentityAce, which
+--- includes the ones they acted in anonymously; for staff without it, only
+--- the rows they acted in openly (actedOpenly), each scrubbed as ever.
 H.logs = function(src, data)
     local canIdentify = identifies(src)
     local filter = {
@@ -1307,20 +1343,33 @@ H.logs = function(src, data)
         return false, CH.ERR.INVALID_INPUT, 'That is not a contract id.'
     end
     if data.actor ~= nil then
-        if not canIdentify then
-            return false, 'identity_required', ('Finding a player\'s rows needs %s.')
-                :format(tostring(Config.Admin.IdentityAce))
-        end
         filter.actor = typedCitizenId(data.actor)
         if not filter.actor then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
     end
+    local openly = filter.actor ~= nil and not canIdentify
     local limit = math.min(LOG_ROWS_MAX, wholeNumber(data.limit, 1, LOG_ROWS_MAX) or pageSize())
     local cursor = wholeNumber(data.cursor, 0)
 
     -- The queue first, so the newest rows are there to read.
     deps.audit.flush()
-    local rows, next_ = deps.storage.queryAudit(filter, cursor, limit)
     local parties = partiesReader()
+    local rows, next_ = deps.storage.queryAudit(filter, cursor, limit)
+    if openly then
+        -- Only the rows they acted in openly, read on until a page's worth
+        -- or the log ends (a few pages at most, then the rest is Older).
+        local kept, reads = {}, 1
+        while true do
+            for _, row in ipairs(rows or {}) do
+                -- Every one a page read holds, so a page is never cut
+                -- part-way and its rest skipped by the cursor.
+                if actedOpenly(row, filter.actor, parties) then kept[#kept + 1] = row end
+            end
+            if #kept >= limit or next_ == nil or reads >= OPEN_SEARCH_READS then break end
+            rows, next_ = deps.storage.queryAudit(filter, next_, limit)
+            reads = reads + 1
+        end
+        rows = kept
+    end
     local out = {}
     for _, row in ipairs(rows or {}) do
         local contract, hitmen = parties(row.contract_id)
@@ -1328,6 +1377,9 @@ H.logs = function(src, data)
     end
     if canIdentify then
         deps.audit.staff('admin_panel_logs_identified', staffOf(src), filter.contract,
+            { actor = filter.actor, rows = #out })
+    elseif openly then
+        deps.audit.staff('admin_panel_logs_player', staffOf(src), filter.contract,
             { actor = filter.actor, rows = #out })
     end
     return true, nil, nil, { rows = out, next = next_ }
@@ -1976,6 +2028,368 @@ H.flush = function(src)
     end
     return true, nil, ('Audit log flushed: %d row(s) written%s.')
         :format(written, unsaved), { written = written }
+end
+
+--------------------------------------------------------------------------
+-- Staff tools on one contract (server/staffcontract.lua)
+--------------------------------------------------------------------------
+
+--- Who a staff member is, for the records they leave on a contract.
+local function staffRecordOf(src)
+    local actor = deps.identity.resolve(src)
+    return { cid = actor and actor.cid or nil, name = actor and actor.name or nil, source = src }
+end
+
+--- How the author of a staff record on a contract is shown: their name and
+--- citizen id with IdentityAce, and 'Staff' without, as a freeze's `by` is.
+local function authorShown(row, canIdentify)
+    if not canIdentify then return 'Staff' end
+    if row.author_name and row.author_cid then return ('%s (%s)'):format(row.author_name, row.author_cid) end
+    return tostring(row.author_name or row.author_cid or 'Staff')
+end
+
+--- The staff records on one contract, as one staff member may read them:
+--- its notes, the operatives taken off it, the edits to its text, and what
+--- its text may be replaced with. Each text scrubbed as the timeline is.
+---@param contract table
+---@param r table a redactor
+---@return table|nil
+function Panel.staffPart(contract, r)
+    local SC = deps.staffContract
+    if not SC then return nil end
+    local notes, removals, edits = {}, {}, {}
+    for _, row in ipairs(SC.records(contract.id)) do
+        local shown = { id = row.id, at = row.created_at, by = authorShown(row, r.canIdentify) }
+        if row.kind == 'note' then
+            shown.text = r.value(nil, tostring(row.body or ''))
+            notes[#notes + 1] = shown
+        elseif row.kind == 'removal' then
+            shown.who = r.who(row.subject_cid)
+            shown.reason = r.value(nil, tostring(row.body or ''))
+            shown.stakeReturned = row.stake_returned == true
+            shown.blocked = row.blocked == true
+            removals[#removals + 1] = shown
+        elseif row.kind == 'edit' then
+            shown.field = row.field
+            shown.reason = r.value(nil, tostring(row.body or ''))
+            edits[#edits + 1] = shown
+        end
+    end
+    local mode = Config.Reason.Mode
+    return {
+        notes = notes, removals = removals, edits = edits, noteMax = (SC.noteLimits()),
+        removable = not CH.TERMINAL[contract.state] and contract.state ~= CH.STATE.COMPLETING,
+        text = {
+            editable = mode == 'freetext' or mode == 'preset', mode = mode,
+            max = tonumber(Config.Reason.MaxLength) or 0,
+            presets = mode == 'preset' and Config.Reason.Presets or nil,
+            edited = SC.edited(contract.id) == true,
+        },
+    }
+end
+
+--- A private note on a contract, kept with its author and time; shown in
+--- the contract's view and nowhere a player reads.
+H.addNote = function(src, data)
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if type(data.text) ~= 'string' then return false, CH.ERR.INVALID_INPUT, 'Write the note.' end
+    local ok, err, detail = deps.staffContract.addNote(staffRecordOf(src), id, data.text:sub(1, 4000))
+    if not ok then
+        if err == 'empty' then return false, CH.ERR.INVALID_INPUT, 'Write the note.' end
+        if err == 'too_long' then
+            return false, CH.ERR.INVALID_INPUT, ('A note is at most %d characters.')
+                :format(detail.max)
+        end
+        if err == 'too_many' then
+            return false, err, ('This contract holds %d notes already, the most one may.')
+                :format(detail.max)
+        end
+        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
+        return false, err, 'Not added: the store did not take it. Try again in a moment.'
+    end
+    return true, nil, 'Note added.', { id = detail.id }
+end
+
+--- What a refusal of a player's text says, by the rule it broke.
+local function textRefusal(rule)
+    if rule == 'length' then
+        return ('At most %d characters (Config.Reason.MaxLength).'):format(tonumber(Config.Reason.MaxLength) or 0)
+    end
+    if rule == 'digits' then
+        return ('At most %d digits (Config.Reason.MaxDigits).'):format(tonumber(Config.Reason.MaxDigits) or 0)
+    end
+    if rule == 'pattern' then
+        return 'It holds something players may not write (Config.Reason.PatternDenylist): a link, an '
+            .. 'invite or a handle.'
+    end
+    if rule == 'phone' then return 'lb-phone\'s word blacklist refuses something in it.' end
+    if rule == 'preset' then
+        return 'This server uses preset reasons (Config.Reason.Mode): pick one of them.'
+    end
+    return 'Type the new text.'
+end
+
+--- Replace what a player wrote on a contract (its reason) through the same
+--- checks a player's text gets, with a reason for the edit. The original
+--- stays in the log (staff_text_edit); players see the new text marked
+--- 'edited by staff'.
+H.editText = function(src, data)
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    local field = data.field == nil and 'reason' or data.field
+    if type(field) ~= 'string' or not deps.staffContract.FIELDS[field] then
+        return false, CH.ERR.INVALID_INPUT, 'Only a contract\'s reason is text a player wrote on it.'
+    end
+    if type(data.text) ~= 'string' then return false, CH.ERR.INVALID_INPUT, 'Type the new text.' end
+    local reason = shortText(data.reason, 120)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    local ok, err, detail = deps.staffContract.editText(staffRecordOf(src), id, field,
+        data.text:sub(1, 4000), reason)
+    if not ok then
+        if err == CH.ERR.REASON_REFUSED then
+            return false, err, 'Not replaced. ' .. textRefusal(type(detail) == 'table' and detail.rule or nil)
+        end
+        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
+        if err == 'unchanged' then return false, err, 'That is what it says already.' end
+        if err == 'no_text' then
+            return false, err, 'This server keeps no reason on a contract (Config.Reason.Mode is off).'
+        end
+        if err == CH.ERR.BUSY then
+            return false, err, 'Something else was changing this contract. Try again in a moment.'
+        end
+        return false, err, 'Not replaced: the store did not take it. Try again in a moment.'
+    end
+    return true, nil, 'Reason replaced. Players see the new text, marked "edited by staff"; '
+        .. 'the original is kept in the log.', { new = detail.new }
+end
+
+--- Take one operative off a live contract without ending it for anybody
+--- else, with a reason; optionally barred from taking it again, and their
+--- stake given back instead of handed to the client as a walk-away hands it.
+H.removeHitman = function(src, data)
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    local hitman = Util.toId(data.hitman)
+    if not hitman then return false, CH.ERR.INVALID_INPUT, 'Pick the operative to remove.' end
+    local reason = shortText(data.reason, 120)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    local ok, err, detail = deps.staffContract.removeHitman(staffRecordOf(src), id, hitman, reason,
+        { block = data.block == true, returnStake = data.returnStake == true })
+    if not ok then
+        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
+        if err == CH.ERR.BAD_STATE then
+            return false, err, 'Only a live contract (active or accepted) has operatives to remove.'
+        end
+        if err == CH.ERR.CONTRACT_FROZEN then
+            return false, err, 'It is on hold by staff, and nothing on it moves: unfreeze first.'
+        end
+        if err == 'no_operative' then return false, err, 'No operative on this contract has that id.' end
+        if err == 'not_active' or err == CH.ERR.NOT_PARTICIPANT then
+            return false, err, 'That operative is no longer on it.'
+        end
+        if err == CH.ERR.ALREADY_SETTLED then return false, err, 'It ended meanwhile.' end
+        return false, err, 'Not removed: try again in a moment.'
+    end
+    local stake = ''
+    if (detail.returned or 0) > 0 then
+        stake = (' Their $%d stake went back to them.'):format(detail.returned)
+    elseif (detail.forfeited or 0) > 0 then
+        stake = (' Their $%d stake went to the client, as a walk-away hands it over.'):format(detail.forfeited)
+    end
+    return true, nil, ('%s taken off the contract.%s%s They were told "%s"; the client was told an '
+        .. 'operative left, as a walk-away says it.'):format(tostring(detail.alias or 'The operative'), stake,
+            detail.blocked and ' They may not take it again.' or '', deps.staffContract.REMOVED_TEXT),
+        { stake = detail.stake or 0, returned = detail.returned or 0, forfeited = detail.forfeited or 0,
+          blocked = detail.blocked == true, remaining = detail.remaining or 0 }
+end
+
+--- A time as an export writes it.
+local function stamp(ts)
+    ts = tonumber(ts)
+    if not ts then return '-' end
+    return os.date('!%Y-%m-%d %H:%M:%S', math.floor(ts)) .. ' UTC'
+end
+
+--- Any value from the view as one line of plain text.
+local function flat(value, depth)
+    depth = depth or 0
+    if type(value) ~= 'table' then return tostring(value) end
+    if depth > 3 then return '{...}' end
+    local keys = {}
+    for k in pairs(value) do keys[#keys + 1] = k end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    local parts = {}
+    for _, k in ipairs(keys) do
+        parts[#parts + 1] = (type(k) == 'number' and '' or (tostring(k) .. '=')) .. flat(value[k], depth + 1)
+    end
+    if depth == 0 then return table.concat(parts, ', ') end
+    return '{' .. table.concat(parts, ', ') .. '}'
+end
+
+local function holdsText(line)
+    if line.amount ~= nil then
+        return ('$%d %s'):format(math.floor(tonumber(line.amount) or 0), tostring(line.source or ''))
+    end
+    return ('%s x%d'):format(tostring(line.item or line.source or '?'), math.floor(tonumber(line.quantity) or 1))
+end
+
+--- A contract's view (H.contract) as plain text for a ticket: its terms, its
+--- operatives, its payments, its open proposals, the staff notes and the
+--- whole timeline. Built from the view itself, so it is scrubbed exactly as
+--- the view is for staff without IdentityAce.
+local function exportText(view)
+    local c = view.contract or {}
+    local out = {}
+    local function add(line) out[#out + 1] = line end
+    local function person(p)
+        p = p or {}
+        return tostring(p.name or '-') .. (p.cid and (' [' .. p.cid .. ']') or '')
+    end
+    local staff = view.staff or {}
+    add(('Contract %s'):format(tostring(c.id)))
+    add('Exported: ' .. stamp(os.time()))
+    if c.neverStored then
+        add('Never stored: escrow under this id has no contract record.')
+    else
+        add(('State: %s | Mode: %s | Completes by: %s'):format(tostring(c.state), tostring(c.mode),
+            tostring(c.rule)))
+        add('Reason: ' .. tostring(c.reason or '-')
+            .. ((staff.text and staff.text.edited) and ' (edited by staff)' or ''))
+        add('Client: ' .. person(c.client) .. (c.anonymous and ' (anonymous)' or ''))
+        add('Target: ' .. person(c.target) .. (c.target_protected and ' (whitelisted job)' or ''))
+        add(('Placed: %s | Deadline: %s | Expires: %s'):format(stamp(c.created_at), stamp(c.deadline_at),
+            stamp(c.expires_at)))
+        add('Ended: ' .. (c.resolved_at and (tostring(c.resolution or '') .. ' ' .. stamp(c.resolved_at))
+            or 'not yet'))
+        add(('Payouts: %s of %s claimed | Bonus: %s%% | Stake: $%s | Buyout price: $%s%s'):format(
+            tostring(c.claimed or 0), tostring(c.slots or 1), tostring(c.bonus_percent or 0),
+            tostring(c.penalty_amount or 0), tostring(c.bailout_amount or 0),
+            c.buyout_queued and ' (a buyout is queued)' or ''))
+    end
+    add('')
+    add('Operatives:')
+    if #(view.hitmen or {}) == 0 then add('- none') end
+    for _, m in ipairs(view.hitmen or {}) do
+        add(('- %s | %s%s | %s | accepted %s | left %s | claims %s | stake $%s'):format(
+            tostring(m.alias or '-'), tostring(m.name or '-'), m.cid and (' [' .. m.cid .. ']') or '',
+            tostring(m.state), stamp(m.accepted_at), stamp(m.left_at), tostring(m.claims or 0),
+            tostring(m.stake or 0)))
+    end
+    add('')
+    add('Payments (escrow lines):')
+    if #(view.escrow or {}) == 0 then add('- none') end
+    for _, line in ipairs(view.escrow or {}) do
+        local to = line.owed_to or line.releasing_to or line.settled_to
+        add(('- %s | payout %s %s | %s | %s%s%s'):format(tostring(line.id), tostring(line.slot or '-'),
+            tostring(line.portion or '-'), holdsText(line), tostring(line.state),
+            to and (' | to ' .. tostring(to)) or '',
+            line.settled_at and (' | settled ' .. stamp(line.settled_at)) or ''))
+    end
+    add('')
+    add('Open proposals:')
+    if #(view.amendments or {}) == 0 then add('- none') end
+    for _, a in ipairs(view.amendments or {}) do
+        add(('- %s by %s | runs out %s | %s'):format(tostring(a.kind), tostring(a.proposer or '-'),
+            stamp(a.expires_at), flat(a.payload or {})))
+    end
+    add('')
+    add('Staff notes:')
+    if #(staff.notes or {}) == 0 then add('- none') end
+    for _, note in ipairs(staff.notes or {}) do
+        add(('- %s | %s | %s'):format(stamp(note.at), tostring(note.by), tostring(note.text)))
+    end
+    add('')
+    add('Timeline (oldest first: states, amendments, payments and staff actions):')
+    if #(view.timeline or {}) == 0 then add('- the log keeps nothing for it') end
+    for _, row in ipairs(view.timeline or {}) do
+        add(('- %s | %s | %s | %s | %s'):format(stamp(row.ts), tostring(row.kind), tostring(row.action),
+            tostring(row.actor or '-'), flat(row.detail or {})))
+    end
+    return table.concat(out, '\n')
+end
+
+--- One contract's whole record as plain text, for a ticket (Export on its
+--- view): scrubbed exactly as the view is, being made from it.
+H.exportContract = function(src, data)
+    local ok, err, message, view = H.contract(src, data, true)
+    if not ok then return ok, err, message end
+    deps.audit.staff(identifies(src) and 'admin_panel_export_identified' or 'admin_panel_export',
+        staffOf(src), Util.toId(data.id), {})
+    return true, nil, nil, { text = exportText(view) }
+end
+
+local VIEW_ROLES = { target = true, placer = true, hitman = true }
+
+--- The contract as one of its parties sees it on their phone: the real
+--- projection for that viewer (Projection.contract, as On me, Mine and the
+--- operative's card build it), read-only. Without IdentityAce, scrubbed as
+--- the view is, so no anonymous party is named; with it, who the viewer is.
+H.playerView = function(src, data)
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    local role = type(data.role) == 'string' and data.role or nil
+    if not role or not VIEW_ROLES[role] then
+        return false, CH.ERR.INVALID_INPUT, 'Pick whose view: the target, the placer or an operative.'
+    end
+    local Storage = deps.storage
+    local contract = Storage.readContract(id)
+    if not contract then return false, CH.ERR.NOT_FOUND, 'No contract has that id.' end
+    local hitmen = Storage.readHitmen(id) or {}
+    local canIdentify = identifies(src)
+    local r = redactor(canIdentify, contract, hitmen)
+
+    local viewerCid, operative
+    if role == 'target' then
+        viewerCid = contract.target_cid
+    elseif role == 'placer' then
+        viewerCid = contract.creator_cid
+    else
+        local wanted = Util.toId(data.hitman)
+        for _, row in ipairs(hitmen) do
+            if row.id == wanted then operative = row end
+        end
+        if not operative then return false, CH.ERR.INVALID_INPUT, 'Pick one of its operatives.' end
+        viewerCid = operative.hitman_cid
+    end
+
+    local shown, note, view, whitelisted = true, nil, nil, nil
+    if CH.TERMINAL[contract.state] then
+        shown, note = false, 'Closed: it is off their phone (only their history keeps it).'
+    elseif role == 'target' and not deps.notify.shownToTarget(contract) then
+        shown, note = false, 'Not shown to the target yet: their On me tab lists it once the alert\'s '
+            .. 'wait is over.'
+    else
+        view = deps.projection.contract(contract, viewerCid, { peek = true })
+        if role == 'target' then
+            -- As On me sends it: never the roster.
+            if view then view.hitmen = nil end
+            if contract.target_protected == true then
+                whitelisted = deps.projection.whitelistedListing(contract, viewerCid, nil)
+                note = 'Recorded on a whitelisted job: while they work one they see the whitelisted-job '
+                    .. 'view instead, below.'
+            end
+        elseif role == 'hitman' and operative.state ~= 'active' then
+            note = ('No longer on it (%s): this is the card the board would show them.')
+                :format(tostring(operative.state))
+        end
+    end
+    if not canIdentify then
+        view = view and r.value(nil, view) or nil
+        whitelisted = whitelisted and r.value(nil, whitelisted) or nil
+    end
+
+    deps.audit.staff(canIdentify and 'admin_panel_player_view_identified' or 'admin_panel_player_view',
+        staffOf(src), id, { role = role, alias = operative and operative.alias or nil })
+    local viewerName
+    if role == 'target' then viewerName = contract.target_name
+    elseif role == 'placer' then viewerName = contract.creator_name
+    else viewerName = operative.hitman_name end
+    return true, nil, nil, {
+        role = role, shown = shown, note = note, view = view, whitelisted = whitelisted,
+        alias = operative and operative.alias or nil,
+        viewer = canIdentify and { cid = viewerCid, name = viewerName } or nil,
+    }
 end
 
 --------------------------------------------------------------------------

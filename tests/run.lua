@@ -407,6 +407,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.meeting'] = nil
     package.loaded['crimson-hitman.server.playtime'] = nil
     package.loaded['crimson-hitman.server.locationtip'] = nil
+    package.loaded['crimson-hitman.server.staffcontract'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -439,6 +440,7 @@ function _G.newStack()
     local playtime   = require('crimson-hitman.server.playtime')
     local locationTip = require('crimson-hitman.server.locationtip')
     local freeze     = require('crimson-hitman.server.freeze')
+    local staffContract = require('crimson-hitman.server.staffcontract')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -485,8 +487,10 @@ function _G.newStack()
     projection.init({ storage = storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify,
-                      locationTip = locationTip, freeze = freeze })
+                      locationTip = locationTip, freeze = freeze, staffContract = staffContract })
     freeze.init({ storage = storage, audit = audit, notify = notify, kidnap = kidnap })
+    staffContract.init({ storage = storage, audit = audit, notify = notify,
+                         contracts = contracts, identity = identity })
     meeting.init({ storage = storage, notify = notify, audit = audit })
     playtime.init({ storage = storage, identity = identity })
 
@@ -517,6 +521,8 @@ function _G.newStack()
         locationTip = locationTip,
         -- Staff freezes.
         freeze = freeze,
+        -- Staff notes, removals and text edits on a contract.
+        staffContract = staffContract,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -531,7 +537,7 @@ function _G.newStack()
         mugshot = mugshot, progression = progression, app = app, admin = admin,
         photos = photos, review = review, settings = settings, panel = panel, timing = timing,
         alerts = alerts, meeting = meeting, playtime = playtime, locationTip = locationTip,
-        freeze = freeze,
+        freeze = freeze, staffContract = staffContract,
     }
 end
 
@@ -570,7 +576,7 @@ local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
     'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec', 'admin_panel_spec', 'settings_spec', 'features_spec', 'console_spec', 'staff_output_spec', 'whitelisted_view_spec', 'alerts_spec', 'admin_console_spec', 'meeting_spec', 'speed_spec', 'handover_spec', 'config_layout_spec',
     'location_tip_spec', 'informant_spec', 'freeze_spec', 'clock_rule_spec', 'untaken_terms_spec',
-    'panel_sections_spec', 'staff_deadline_spec',
+    'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

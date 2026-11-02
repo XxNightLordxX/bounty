@@ -219,6 +219,9 @@ CH.ERR = {
     --- working it and was released from it, so it is not theirs to take
     --- again (§14.8). Without the bar, releasing an idle hold only reset it.
     HOLD_RELEASED        = 'hold_released',
+    --- Staff took this player (on any character) off this contract and
+    --- barred them from taking it again (server/staffcontract.lua).
+    STAFF_BARRED         = 'staff_barred',
     --- This player (on any character) walked away from this exclusive
     --- contract too recently to take it again: within
     --- Config.Limits.ExclusiveIdleReleaseSeconds, with { retryAfter =

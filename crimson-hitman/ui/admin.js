@@ -299,7 +299,7 @@
       open), and the panel closes on it, as the README says it does. */
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
-                   alerts: true, console: true, frozen: true };
+                   alerts: true, console: true, frozen: true, exportContract: true, playerView: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -1432,6 +1432,7 @@
       stuckPart,
       deadlinePart,
       stub ? null : card('Terms', terms),
+      stub ? null : contractTools(d),
       stub ? null : card('Payouts', slotSummary(escrow, c)),
       card('Escrow lines', escrow.length ? h('div.table-wrap', h('table.grid',
         h('thead', h('tr', h('th', 'Line'), h('th', 'Payout'), h('th', 'Holds'),
@@ -2143,7 +2144,7 @@
     if (S.logs.kind) data.kind = S.logs.kind;
     var action = trim(S.forms['lg.action']).slice(0, 48);
     if (action) data.action = action;
-    var typed = { contract: trim(S.forms['lg.contract']), actor: canIdentify() ? trim(S.forms['lg.actor']) : '' };
+    var typed = { contract: trim(S.forms['lg.contract']), actor: trim(S.forms['lg.actor']) };
     var bad = null;
     Object.keys(LOG_IDS).forEach(function (name) {
       var wrong = typed[name] !== '' && !LOG_IDS[name].re.test(typed[name]);
@@ -2235,9 +2236,10 @@
           'data-enter': 'lg-search-now', 'aria-label': 'Action contains' }),
         field('lg.contract', { id: 'lg-contract', class: 'is-mid', placeholder: 'Contract id', 'data-live': 'lg-search',
           'data-enter': 'lg-search-now', 'aria-label': 'Contract id' }),
-        field('lg.actor', { id: 'lg-actor', class: 'is-mid', placeholder: canIdentify() ? 'Citizen id' : 'Citizen id (needs identity)',
-          'data-live': 'lg-search', 'data-enter': 'lg-search-now', disabled: !canIdentify(),
-          title: canIdentify() ? null : 'Finding a player\'s rows needs the identity ACE.',
+        field('lg.actor', { id: 'lg-actor', class: 'is-mid', placeholder: 'Citizen id',
+          'data-live': 'lg-search', 'data-enter': 'lg-search-now',
+          title: canIdentify() ? null : 'Without the identity ACE, only the rows they acted in under their own '
+            + 'name: as the target, or a client or operative who did not stay anonymous.',
           'aria-label': 'Citizen id' }),
         dropdown('lg-range'),
         rangeInputs('lg', S.logs.range, 'lg-search'),
@@ -2245,7 +2247,8 @@
       h('p.hint', canIdentify()
         ? 'Every row as it was written. Reading the log as you can see it is on the record.'
         : 'Citizen ids show as the party\'s place on the contract (the client, the target, an operative) and '
-          + 'anonymous parties as Anonymous.'),
+          + 'anonymous parties as Anonymous. A citizen id finds only the rows that player acted in under their '
+          + 'own name.'),
       h('div.results', { id: 'lg-results' }, logRows()),
       h('div.pager', { id: 'lg-pager' }, logPager()));
   };
@@ -3040,7 +3043,11 @@
         + 'is not showing something.' },
     { title: 'Settings', icon: 'sliders', view: 'timers', go: 'Open Rules',
       text: 'Every setting is changed in Rules or Features, each Save, reset or list edit taking the same '
-        + 'confirms as before.', also: { view: 'features', go: 'Features' } }
+        + 'confirms as before.', also: { view: 'features', go: 'Features' } },
+    { title: 'Contract tools', icon: 'clipboard-list', view: 'contracts', go: 'Open Contracts',
+      text: 'Open a contract: Staff notes, Remove an operative (stake to the client as a walk-away, or returned; '
+        + 'optionally barred), Edit text through the checks a player\'s text gets, Export the record for a '
+        + 'ticket, and As a player sees it.' }
   ];
 
   SHELL.actions = function () {
@@ -4018,6 +4025,337 @@
     setHtml(byId('main'), frag());
     return was;
   }
+
+  /* ---- staff tools on one contract ----
+
+     Five cards on a contract's view (server/staffcontract.lua and the
+     panel's addNote, removeHitman, editText, exportContract and playerView):
+     private notes; taking one operative off it; replacing a player's text
+     through the checks a player's text gets; its whole record as plain text
+     on the clipboard; and the card one of its parties sees on their phone.
+     Every write is on the two-click confirm. What each card has picked lives
+     on S.drawer, so another contract starts from nothing; what is typed is
+     kept per contract id. */
+
+  function ctState() {
+    if (!S.drawer.ct) S.drawer.ct = { pick: '', stake: 'client', block: '', view: null, viewKey: '', exported: null };
+    return S.drawer.ct;
+  }
+
+  function activeOperatives(d) {
+    return asList(d.hitmen).filter(function (m) { return m.state === 'active'; });
+  }
+
+  function contractTools(d) {
+    var staff = d.staff;
+    if (!staff) return null;
+    return frag(
+      card('Staff notes', notesBody(staff), '.ct-notes'),
+      card('Remove an operative', removeBody(d, staff), '.ct-remove'),
+      card('Edit text', textBody(d, staff), '.ct-text'),
+      card('Export the record', exportBody(), '.ct-export'),
+      card('As a player sees it', playerViewBody(d), '.ct-view'));
+  }
+
+  /* -- notes -- */
+
+  function notesBody(staff) {
+    var id = S.drawer.id;
+    var notes = asList(staff.notes);
+    return frag(
+      notes.length ? h('ol.ct-note-list', notes.map(function (n) {
+        return h('li', h('span.time', when(n.at)), ' ', h('span.sub', String(n.by || 'Staff')),
+          h('p.text', String(n.text || '')));
+      })) : empty('No notes yet. Only staff see them.'),
+      h('div.inline-form.is-wide',
+        field('dr.note.' + id, { class: 'is-grow', placeholder: 'A note for staff, e.g. ticket #42, waiting on clip',
+          maxlength: String(Number(staff.noteMax) || 300), disabled: !writesOpen(), 'aria-label': 'A staff note' }),
+        writeBtn('', 'ct-note', {}, 'Add note', 'Click again to add', 'note-sticky')));
+  }
+
+  ACTIONS['ct-note'] = function (node) {
+    var id = S.drawer.id;
+    if (!id) return;
+    var text = trim(S.forms['dr.note.' + id]);
+    if (!text) {
+      disarm();
+      S.drawer.answer = { ok: false, text: 'Write the note.' };
+      drawDrawer();
+      return;
+    }
+    if (!confirmed(node)) {
+      if (S.armed) S.armed.bind = 'dr.note.' + id;
+      return;
+    }
+    write('addNote', { id: id, text: text }, 'note:' + id, node).then(function (reply) {
+      if (!reply || S.drawer.id !== id) return;
+      drawerAnswer(reply);
+      if (reply.ok) S.forms['dr.note.' + id] = '';
+      drawDrawer();
+      loadContract();
+    });
+  };
+
+  /* -- remove an operative -- */
+
+  function removeBody(d, staff) {
+    var id = S.drawer.id;
+    var st = ctState();
+    var active = activeOperatives(d);
+    var past = asList(staff.removals);
+    var history = past.length ? h('ul.plain.ct-history', past.map(function (r) {
+      return h('li', h('span.time', when(r.at)), ' ', h('b', String(r.who || 'an operative')),
+        ' removed by ' + String(r.by || 'Staff'),
+        r.stakeReturned ? h('span.chip', 'stake returned') : null,
+        r.blocked ? h('span.chip.is-warn', 'barred') : null,
+        h('span.detail', ' ' + String(r.reason || '')));
+    })) : null;
+    if (!staff.removable) {
+      return frag(h('p.note', 'Only a live contract (active or accepted) has operatives to remove.'), history);
+    }
+    if (!active.length) return frag(h('p.note', 'Nobody is on it now.'), history);
+    if (!active.some(function (m) { return String(m.id) === st.pick; })) st.pick = '';
+    var open = writesOpen();
+    var off = { disabled: !open, title: open ? null : whyNoWrite() };
+    return frag(
+      h('p.note', 'Takes them off without ending it for anybody else. The client and the other operatives are '
+        + 'told an operative left, as a walk-away says it; they are told "Staff removed you from a contract."'),
+      h('div.ct-row', h('span.ct-label', 'Operative'),
+        segmented('ct-rm-pick', active.map(function (m) {
+          return { value: String(m.id), label: String(m.alias || 'operative') + (m.name ? ' · ' + m.name : ''),
+                   disabled: !open, title: off.title };
+        }), st.pick)),
+      h('div.ct-row', h('span.ct-label', 'Their stake'),
+        segmented('ct-rm-stake', [
+          { value: 'client', label: 'To the client (as a walk-away)', disabled: !open, title: off.title },
+          { value: 'return', label: 'Return the stake', disabled: !open, title: off.title }
+        ], st.stake)),
+      h('div.ct-row', h('span.ct-label', 'Afterwards'),
+        segmented('ct-rm-block', [
+          { value: '', label: 'May take it again', disabled: !open, title: off.title },
+          { value: 'block', label: 'Bar them from it', disabled: !open, title: off.title }
+        ], st.block)),
+      h('div.inline-form.is-wide',
+        field('dr.rm.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
+          maxlength: '120', disabled: !open, 'aria-label': 'Reason for removing the operative' }),
+        writeBtn('.is-danger', 'ct-remove', {}, 'Remove', 'Click again to remove', 'user-minus')),
+      history);
+  }
+
+  ACTIONS['ct-rm-pick'] = function (node) { disarm(); ctState().pick = node.getAttribute('data-value') || ''; drawDrawer(); };
+  ACTIONS['ct-rm-stake'] = function (node) { disarm(); ctState().stake = node.getAttribute('data-value') || 'client'; drawDrawer(); };
+  ACTIONS['ct-rm-block'] = function (node) { disarm(); ctState().block = node.getAttribute('data-value') || ''; drawDrawer(); };
+
+  ACTIONS['ct-remove'] = function (node) {
+    var id = S.drawer.id;
+    if (!id) return;
+    var st = ctState();
+    var reason = trim(S.forms['dr.rm.reason.' + id]).slice(0, 120);
+    var problem = !st.pick ? 'Pick the operative to remove.' : (!reason ? 'Give a reason: it goes on the record.' : null);
+    if (problem) {
+      disarm();
+      S.drawer.answer = { ok: false, text: problem };
+      drawDrawer();
+      return;
+    }
+    if (!confirmed(node)) {
+      if (S.armed) S.armed.bind = 'dr.rm.reason.' + id;
+      return;
+    }
+    write('removeHitman', { id: id, hitman: st.pick, reason: reason, returnStake: st.stake === 'return',
+      block: st.block === 'block' }, 'remove:' + id, node).then(function (reply) {
+      if (!reply || S.drawer.id !== id) return;
+      drawerAnswer(reply);
+      if (reply.ok) {
+        S.forms['dr.rm.reason.' + id] = '';
+        st.pick = '';
+        if (S.section === 'contracts') loadContracts();
+      }
+      drawDrawer();
+      loadContract();
+    });
+  };
+
+  /* -- edit a player's text -- */
+
+  function textBody(d, staff) {
+    var id = S.drawer.id;
+    var c = d.contract || {};
+    var text = staff.text || {};
+    var edits = asList(staff.edits);
+    var now = h('p', 'Reason now: ', h('span.text', String(c.reason || '—')),
+      text.edited ? h('span.chip', 'edited by staff') : null);
+    var history = edits.length ? h('ul.plain.ct-history', edits.map(function (e) {
+      return h('li', h('span.time', when(e.at)), ' ', String(e.field || 'reason') + ' replaced by '
+        + String(e.by || 'Staff'), h('span.detail', ' ' + String(e.reason || '')));
+    })) : null;
+    if (!text.editable) return frag(now, h('p.note', 'This server keeps no reason on a contract.'), history);
+    var open = writesOpen();
+    var input = text.mode === 'preset'
+      ? h('div.ct-row', h('span.ct-label', 'New reason'), segmented('ct-tx-preset', asList(text.presets).map(function (p) {
+        return { value: String(p), label: String(p), disabled: !open, title: open ? null : whyNoWrite() };
+      }), S.forms['dr.tx.text.' + id] || ''))
+      : h('div.inline-form.is-wide', field('dr.tx.text.' + id, { class: 'is-grow', placeholder: 'The new text',
+        maxlength: String(Number(text.max) || 120), disabled: !open, 'aria-label': 'The new reason' }));
+    return frag(now,
+      h('p.note', 'Goes through the same checks a player\'s text gets. Players see the new text marked '
+        + '"edited by staff"; the original stays in the log.'),
+      input,
+      h('div.inline-form.is-wide',
+        field('dr.tx.reason.' + id, { class: 'is-grow', placeholder: 'Why (required, kept in the log)',
+          maxlength: '120', disabled: !open, 'aria-label': 'Reason for the edit' }),
+        writeBtn('', 'ct-text', {}, 'Replace', 'Click again to replace', 'pen')),
+      history);
+  }
+
+  ACTIONS['ct-tx-preset'] = function (node) {
+    disarm();
+    S.forms['dr.tx.text.' + S.drawer.id] = node.getAttribute('data-value') || '';
+    drawDrawer();
+  };
+
+  ACTIONS['ct-text'] = function (node) {
+    var id = S.drawer.id;
+    if (!id) return;
+    var text = trim(S.forms['dr.tx.text.' + id]);
+    var reason = trim(S.forms['dr.tx.reason.' + id]).slice(0, 120);
+    var problem = !text ? 'Type the new text.' : (!reason ? 'Give a reason: it goes on the record.' : null);
+    if (problem) {
+      disarm();
+      S.drawer.answer = { ok: false, text: problem };
+      drawDrawer();
+      return;
+    }
+    if (!confirmed(node)) {
+      if (S.armed) S.armed.bind = 'dr.tx.text.' + id;
+      return;
+    }
+    write('editText', { id: id, field: 'reason', text: text, reason: reason }, 'text:' + id, node)
+      .then(function (reply) {
+        if (!reply || S.drawer.id !== id) return;
+        drawerAnswer(reply);
+        if (reply.ok) {
+          S.forms['dr.tx.text.' + id] = '';
+          S.forms['dr.tx.reason.' + id] = '';
+        }
+        drawDrawer();
+        loadContract();
+      });
+  };
+
+  /* -- export -- */
+
+  function exportBody() {
+    var st = ctState();
+    return frag(
+      h('p.note', 'Its whole timeline as plain text for a ticket: states, proposals, payments, staff actions and '
+        + 'notes, shown as this view shows them to you.'),
+      h('div.drawer-actions', btn('', 'ct-export', {}, 'Copy the record', 'copy')),
+      st.exported && !st.exported.copied
+        ? h('textarea.input.ct-export-text', { readonly: 'readonly', rows: '8', 'aria-label': 'The record, to copy' },
+          st.exported.text)
+        : null);
+  }
+
+  ACTIONS['ct-export'] = function () {
+    var id = S.drawer.id;
+    if (!id) return;
+    ask('exportContract', { id: id }, 'export').then(function (reply) {
+      if (!reply || S.drawer.id !== id) return;
+      if (!reply.ok) { drawerAnswer(reply); drawDrawer(); return; }
+      var text = String((reply.data || {}).text || '');
+      var copied = copyText(text);
+      ctState().exported = { text: text, copied: copied };
+      toast(copied ? 'The record is on the clipboard.' : 'Select the text below and copy it.', copied ? 'ok' : 'error');
+      drawDrawer();
+    });
+  };
+
+  /* -- as a player sees it -- */
+
+  /** The keys of a card in the order the phone shows them, with words. */
+  var VIEW_KEYS = [
+    ['role', 'Seen as'], ['targetName', 'Target'], ['reason', 'Reason'], ['state', 'State'], ['mode', 'Mode'],
+    ['fulfilment', 'Completes by'], ['timeLeft', 'Time left'], ['onHold', 'On hold'], ['reward', 'Reward'],
+    ['penaltyAmount', 'Stake to accept'], ['bonusPercent', 'Bonus %'], ['slots', 'Payouts'],
+    ['slotsClaimed', 'Claimed'], ['hitmenActive', 'Operatives on it'], ['creatorName', 'Placed by'],
+    ['creatorAnonymous', 'Placed anonymously'], ['barred', 'Barred']
+  ];
+
+  function viewValue(value) {
+    if (value === true) return 'yes';
+    if (value === false) return 'no';
+    if (value && typeof value === 'object') return h('pre.json', prettyJson(value));
+    return String(value);
+  }
+
+  function viewCard(view) {
+    var seen = {};
+    var rows = [];
+    VIEW_KEYS.forEach(function (pair) {
+      seen[pair[0]] = true;
+      if (view[pair[0]] === undefined || view[pair[0]] === null) return;
+      var value = pair[0] === 'reason'
+        ? frag(String(view.reason || '—'), view.staffEdited ? h('span.chip', 'edited by staff') : null)
+        : (pair[0] === 'reward' && view.reward && typeof view.reward === 'object'
+          ? money(Number(view.reward.baseline) || 0) + (Number(view.reward.bonus) ? ' + ' + money(view.reward.bonus) + ' bonus' : '')
+          : viewValue(view[pair[0]]));
+      rows.push(h('dt', pair[1]), h('dd', value));
+    });
+    seen.staffEdited = true;
+    Object.keys(view).sort().forEach(function (key) {
+      if (seen[key] || view[key] === undefined || view[key] === null) return;
+      rows.push(h('dt.mono', key), h('dd', viewValue(view[key])));
+    });
+    return h('dl.facts.ct-view-facts', rows);
+  }
+
+  function playerViewBody(d) {
+    var st = ctState();
+    var options = [{ value: 'target', label: 'Target' }, { value: 'placer', label: 'Placer' }];
+    asList(d.hitmen).forEach(function (m) {
+      options.push({ value: 'hitman:' + m.id, label: String(m.alias || 'operative') + (m.state === 'active' ? '' : ' (left)') });
+    });
+    var v = st.view;
+    var body = null;
+    if (v && v.key === st.viewKey) {
+      var r = v.data || {};
+      body = frag(
+        r.viewer ? h('p.sub', 'As ', h('b', String(r.viewer.name || '—')), ' ', h('span.cid', String(r.viewer.cid || ''))) : null,
+        r.note ? h('p.note', String(r.note)) : null,
+        r.shown === false || !r.view ? null : viewCard(r.view),
+        r.whitelisted ? frag(h('p.slot-title', 'Whitelisted-job view'), viewCard(r.whitelisted)) : null);
+    } else if (st.viewKey) {
+      body = loading('Reading their card…');
+    }
+    return frag(
+      h('p.note', 'Read-only: exactly what their phone is sent for this contract. Anonymous parties stay hidden '
+        + 'unless you hold the identity ACE.'),
+      segmented('ct-view', options, st.viewKey),
+      body);
+  }
+
+  ACTIONS['ct-view'] = function (node) {
+    var id = S.drawer.id;
+    if (!id) return;
+    var key = node.getAttribute('data-value') || '';
+    var st = ctState();
+    st.viewKey = key;
+    st.view = null;
+    drawDrawer();
+    var data = { id: id, role: key.indexOf('hitman:') === 0 ? 'hitman' : key };
+    if (data.role === 'hitman') data.hitman = key.slice(7);
+    ask('playerView', data, 'playerView').then(function (reply) {
+      if (!reply || S.drawer.id !== id || ctState().viewKey !== key) return;
+      if (!reply.ok) {
+        ctState().viewKey = '';
+        drawerAnswer(reply);
+      } else {
+        ctState().view = { key: key, data: reply.data || {} };
+      }
+      drawDrawer();
+    });
+  };
 
   /** Close from the page (its button, Escape, or the server no longer
       letting this staff member read): the client releases the focus, in its

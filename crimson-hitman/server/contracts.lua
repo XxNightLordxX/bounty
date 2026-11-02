@@ -229,8 +229,17 @@ end
 --- instead of tapping Abandon is walking away too.
 ---@param hitman table|nil a hitman row
 ---@return boolean
+---
+--- Except a stint staff took the hitman off and chose to give the stake
+--- back on (server/staffcontract.lua, Contracts.staffContract): that stake is
+--- theirs whatever the ending, as an active row's is.
 local function walkedAway(hitman)
-    return hitman ~= nil and (hitman.state == 'abandoned' or hitman.state == 'released')
+    if hitman == nil or (hitman.state ~= 'abandoned' and hitman.state ~= 'released') then return false end
+    if Contracts.staffContract
+        and Contracts.staffContract.stakeReturned(hitman.contract_id, hitman.hitman_cid, hitman.accepted_at) then
+        return false
+    end
+    return true
 end
 
 --- What each hitman has staked and still has held, by citizen id. Read
@@ -1499,6 +1508,11 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
             return false, CH.ERR.HOLD_RELEASED
         end
     end
+    -- Taken off it by staff, who barred them from taking it again
+    -- (server/staffcontract.lua): on this character or another.
+    if Contracts.staffContract and Contracts.staffContract.barred(contractId, actor.cid, actor.account) then
+        return false, CH.ERR.STAFF_BARRED
+    end
 
     -- Walked away from an exclusive contract a moment ago, on this
     -- character or another: not again until a whole idle window has passed.
@@ -2192,7 +2206,14 @@ end
 
 --- A hitman walks away. The contract reverts to open rather than resolving,
 --- and the failure penalty applies if one was staked.
-local function walkAway(actor, contractId)
+---
+--- Or staff take them off it (opts.staff, server/staffcontract.lua): the
+--- same path, the same compare and set and the same words to everybody
+--- else, the stake to the client unless staff chose to give it back
+--- (opts.returnStake, recorded first, so every later path reads it as the
+--- hitman's: walkedAway), and no failure counted against the hitman.
+local function walkAway(actor, contractId, opts)
+    opts = type(opts) == 'table' and opts or {}
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
 
@@ -2226,14 +2247,24 @@ local function walkAway(actor, contractId)
     -- for a client who is away. Nothing is released, and nothing written,
     -- for a contract staked at nothing.
     local stake = heldStakes(contractId)[actor.cid] or 0
-    local moved = 0
-    if stake > 0 then
+    local moved, returned = 0, 0
+    if stake > 0 and opts.staff and opts.returnStake then
+        -- Staff chose to give it back: to the hitman, as an ending gives an
+        -- active hitman theirs.
+        local _, released = Escrow.release(contractId, actor.cid,
+            { portion = CH.PORTION.STAKE, staker = actor.cid }, 'stake_returned')
+        returned = released and ((released.settled or 0) + (released.pending or 0)) or 0
+        if returned > 0 then
+            Audit.financial('stake_returned_by_staff', actor.cid, contractId,
+                { amount = stake, queued = (released.pending or 0) > 0 })
+        end
+    elseif stake > 0 then
         local _, released = Escrow.release(contractId, contract.creator_cid,
             { portion = CH.PORTION.STAKE, staker = actor.cid }, 'penalty_forfeited')
         moved = released and ((released.settled or 0) + (released.pending or 0)) or 0
         if moved > 0 then
             Audit.financial('stake_forfeited', actor.cid, contractId,
-                { amount = stake, queued = (released.pending or 0) > 0 })
+                { amount = stake, queued = (released.pending or 0) > 0, staff = opts.staff or nil })
         end
     end
 
@@ -2268,14 +2299,15 @@ local function walkAway(actor, contractId)
     -- accepted, is taken off with it (Storage.setMeeting refuses one after).
     if active == 0 then dropMeeting(contractId) end
 
-    if Progression then Progression.onFailed(actor.cid) end
+    -- Not a failure of theirs when staff took them off it.
+    if Progression and not opts.staff then Progression.onFailed(actor.cid) end
 
     -- Anything holding state for this hitman on this contract is told.
     -- A handover they had armed is the one that matters: it does not pay
     -- out to somebody who walked away, but it does hold a countdown slot
     -- until the process restarts.
     if Contracts.onHitmanLeft then
-        Contracts.onHitmanLeft(contractId, actor.cid, 'abandoned')
+        Contracts.onHitmanLeft(contractId, actor.cid, opts.staff and 'staff_removed' or 'abandoned')
     end
 
     -- The client's card still said who was on it, and Edit and Withdraw
@@ -2295,6 +2327,13 @@ local function walkAway(actor, contractId)
     -- (another release had the line) gave them nothing to be told of.
     Notify.hitmanLeft(after, moved > 0 and stake or 0, #others)
 
+    if opts.staff then
+        -- Their own card leaves Mine; the caller tells them why.
+        Notify.push(actor.cid, 'released', contractId)
+        return true, nil, { stake = stake, forfeited = moved > 0 and stake or 0,
+                            returned = returned > 0 and stake or 0, remaining = #others,
+                            state = after.state }
+    end
     Audit.action('contract_abandoned', actor.cid, contractId, {})
     return true
 end
@@ -2302,9 +2341,9 @@ end
 --- See walkAway. One that raises part-way, after its row and before its
 --- stake or the board, is left for the maintenance tick to finish
 --- (Contracts.repairHeld); a restart is finished by Recover.
-function Contracts.abandon(actor, contractId)
+function Contracts.abandon(actor, contractId, opts)
     abandoning[contractId] = (abandoning[contractId] or 0) + 1
-    local out = table.pack(pcall(walkAway, actor, contractId))
+    local out = table.pack(pcall(walkAway, actor, contractId, opts))
     abandoning[contractId] = abandoning[contractId] > 1 and abandoning[contractId] - 1 or nil
     if not out[1] then
         leaving[contractId] = true

@@ -442,6 +442,7 @@
     already_holding: 'You are already on this contract. It is under Mine.',
     hold_released: 'You held this one without working it and were taken off '
       + 'it. It is not yours to take again.',
+    staff_barred: 'Staff removed you from this contract. It is not yours to take again.',
     // Walked away from this exclusive one a moment ago. failText says how
     // long when the server sends it.
     retake_too_soon: 'You walked away from this contract a moment ago. It is open '
@@ -1999,7 +2000,14 @@
 
     var who = el('div', 'identity');
     who.appendChild(el('div', 'target', contract.targetName));
-    who.appendChild(el('div', 'reason', contract.reason || '—'));
+    // Staff replaced what a player wrote here (the admin panel's Edit text):
+    // the words, then a small mark after them.
+    var reasonLine = el('div', 'reason', contract.staffEdited ? null : (contract.reason || '—'));
+    if (contract.staffEdited) {
+      reasonLine.appendChild(el('span', null, contract.reason || '—'));
+      reasonLine.appendChild(el('span', 'edited-mark', 'edited by staff'));
+    }
+    who.appendChild(reasonLine);
     left.appendChild(who);
     head.appendChild(left);
 
@@ -2578,6 +2586,9 @@
     if (contract.barred === 'hold_released') {
       return 'You were taken off this one for not working it. It is not yours '
         + 'to take again.';
+    }
+    if (contract.barred === 'staff_removed') {
+      return 'Staff removed you from this one. It is not yours to take again.';
     }
     if (contract.barred === 'same_account') {
       return 'This one involves another of your own characters.';
@@ -3271,7 +3282,8 @@
           if (r.err === 'terms_changed' || r.err === 'already_settled'
               || r.err === 'contract_full' || r.err === 'already_holding'
               || r.err === 'too_little_time' || r.err === 'locked'
-              || r.err === 'not_found' || r.err === 'hold_released') {
+              || r.err === 'not_found' || r.err === 'hold_released'
+              || r.err === 'staff_barred') {
             refresh();
           }
           // How much, and from where (§14.18: "naming the shortfall").

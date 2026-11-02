@@ -399,6 +399,22 @@ ul, ol { padding: 0; list-style: none; }
 #dr-dl-preview { margin-bottom: 0.5rem; }
 #dr-dl-preview .is-warn { color: var(--gold); }
 
+/* Staff tools on a contract: notes, remove an operative, edit text, export,
+   the player view. Labelled rows of choices that wrap at a phone's width. */
+.ct-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.4rem 0; }
+.ct-row .seg { flex-wrap: wrap; max-width: 100%; }
+.ct-label { min-width: 6.5rem; color: var(--ink-dim); font-size: 0.85rem; }
+.ct-note-list { margin: 0 0 0.5rem; }
+.ct-note-list li { padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
+.ct-note-list .text, .ct-history .detail { overflow-wrap: anywhere; }
+.ct-history { margin-top: 0.5rem; }
+.ct-export-text { width: 100%; min-height: 8rem; font-family: var(--f-mono); white-space: pre; }
+.ct-view-facts dd { overflow-wrap: anywhere; min-width: 0; }
+.ct-view .seg { flex-wrap: wrap; max-width: 100%; }
+/* A choice named by a long alias or name wraps inside the drawer. */
+.ct-row .seg-btn, .ct-view .seg-btn { white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+  min-width: 0; text-align: left; padding-top: 0.3rem; padding-bottom: 0.3rem; }
+
 .switch {
   display: inline-flex; align-items: center; gap: 0.55rem;
   min-height: var(--control); padding: 0 0.7rem 0 0.35rem;

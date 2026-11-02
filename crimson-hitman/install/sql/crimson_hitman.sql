@@ -373,6 +373,27 @@ CREATE TABLE IF NOT EXISTS crimson_freezes (
     frozen_at INT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- What staff wrote down or did on one contract from the admin panel:
+-- private notes, the player text they replaced, the operatives they took
+-- off it. Never shown to a player; removed with its contract.
+CREATE TABLE IF NOT EXISTS crimson_contract_staff (
+    id VARCHAR(64) PRIMARY KEY,
+    contract_id VARCHAR(32) NOT NULL,
+    kind VARCHAR(16) NOT NULL,
+    author_cid VARCHAR(64),
+    author_name VARCHAR(128),
+    body VARCHAR(500),
+    field VARCHAR(32),
+    subject_cid VARCHAR(32),
+    subject_account VARCHAR(64),
+    stint INT,
+    stake_returned TINYINT(1) NOT NULL DEFAULT 0,
+    blocked TINYINT(1) NOT NULL DEFAULT 0,
+    created_at INT NOT NULL,
+    INDEX idx_cstaff_contract (contract_id),
+    INDEX idx_cstaff_kind (kind)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

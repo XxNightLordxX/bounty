@@ -408,6 +408,13 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
   font-style: italic;
   overflow-wrap: anywhere;
 }
+/* Staff replaced what a player wrote: a small plain tag after the words. */
+.reason .edited-mark {
+  display: inline-block; margin-left: 0.4rem; padding: 0 0.3rem;
+  font-style: normal; font-size: 0.72em; letter-spacing: 0.02em;
+  border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink-faint);
+  white-space: nowrap;
+}
 
 /* The job a target holds, on the whitelisted-job view, where the reason
    would be on any other card: plain, since it is a fact and nobody's words. */

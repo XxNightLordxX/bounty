@@ -12308,6 +12308,30 @@ async function main() {
      throttled, dotted].forEach(function (app) { drewCleanly(app); });
   })();
 
+  /* Staff replaced what a player wrote (the admin panel's Edit text): the
+     card shows the new text with a small 'edited by staff' mark, and never
+     who or what it said before. Taken off a contract by staff and barred
+     from it: the board says so and draws no Accept. */
+  await (async function staffEditedAndBarred() {
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.contracts[0].reason = 'Settling a score';
+    board.data.contracts[0].staffEdited = true;
+    board.data.contracts[0].barred = 'staff_removed';
+    const app = boot({ list: board, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('marks a reason staff replaced as edited by staff', function () {
+      const reason = app.view.all().filter(function (n) { return n.className === 'reason'; })[0];
+      truthy(reason && reason.textContent.indexOf('Settling a score') !== -1, reason && reason.textContent);
+      const mark = app.view.all().filter(function (n) { return n.className === 'edited-mark'; })[0];
+      truthy(mark, 'no mark');
+      eq(mark.textContent, 'edited by staff');
+    });
+    it('says staff removed them, on a card they are barred from', function () {
+      truthy(app.view.textContent.indexOf('Staff removed you from this one.') !== -1, app.view.textContent);
+    });
+    drewCleanly(app, 'staff edited and barred');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

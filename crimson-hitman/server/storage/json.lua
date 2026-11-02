@@ -27,6 +27,7 @@ local EMPTY = {
     locationTips = {},
     placerInformants = {},
     freezes = {},
+    contractStaff = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -55,7 +56,8 @@ local indexDirty = false
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
-                  'alerts', 'viewAlerts', 'locationTips', 'placerInformants', 'freezes' }
+                  'alerts', 'viewAlerts', 'locationTips', 'placerInformants', 'freezes',
+                  'contractStaff' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -1855,6 +1857,12 @@ function JsonStore.prune()
             recordsDirty = true
         end
     end
+    for id, row in pairs(db.contractStaff or {}) do
+        if gone[row.contract_id] then
+            db.contractStaff[id] = nil
+            recordsDirty = true
+        end
+    end
 
     -- The index that no longer names them goes to disk first, and the files
     -- only after it has. Unlinked first, a crash before the next flush left
@@ -2277,6 +2285,62 @@ function JsonStore.deleteFreeze(cid)
     if db.freezes then db.freezes[cid] = nil end
     touch(true)
     return true
+end
+
+--------------------------------------------------------------------------
+-- Staff records on a contract
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, written at once as a freeze
+--- is: a removal's choices (the stake given back, the bar on taking it
+--- again) must not be taken back by a crash.
+local STAFF_FIELDS = { 'id', 'contract_id', 'kind', 'author_cid', 'author_name', 'body', 'field',
+                       'subject_cid', 'subject_account', 'stint', 'stake_returned', 'blocked',
+                       'created_at' }
+
+local function staffRowCopy(row)
+    local out = {}
+    for i = 1, #STAFF_FIELDS do out[STAFF_FIELDS[i]] = row[STAFF_FIELDS[i]] end
+    out.stint, out.created_at = tonumber(out.stint), tonumber(out.created_at)
+    out.stake_returned = out.stake_returned == true
+    out.blocked = out.blocked == true
+    return out
+end
+
+local function staffByWhen(a, b)
+    if (a.created_at or 0) ~= (b.created_at or 0) then return (a.created_at or 0) < (b.created_at or 0) end
+    return tostring(a.id) < tostring(b.id)
+end
+
+function JsonStore.addContractStaff(row)
+    db.contractStaff = db.contractStaff or {}
+    db.contractStaff[row.id] = staffRowCopy(row)
+    touch(true)
+    return true
+end
+
+function JsonStore.deleteContractStaff(id)
+    if db.contractStaff then db.contractStaff[id] = nil end
+    touch(true)
+    return true
+end
+
+function JsonStore.readContractStaff(contractId)
+    local out = {}
+    for _, row in pairs(db.contractStaff or {}) do
+        if row.contract_id == contractId then out[#out + 1] = staffRowCopy(row) end
+    end
+    table.sort(out, staffByWhen)
+    return out
+end
+
+function JsonStore.readContractStaffMarks()
+    local out = {}
+    for _, row in pairs(db.contractStaff or {}) do
+        if row.kind == 'edit' or row.kind == 'removal' then out[#out + 1] = staffRowCopy(row) end
+    end
+    table.sort(out, staffByWhen)
+    return out
 end
 
 --- When this process was last known to be running.

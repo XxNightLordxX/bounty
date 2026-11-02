@@ -890,7 +890,7 @@ describe('the audit log in the admin panel', function()
         eq(ask(6, 'logs', { contract = 'not an id' }).err, CH.ERR.INVALID_INPUT)
     end)
 
-    it('shows no citizen id without crimson.identity, and finds a player\'s rows only with it', function()
+    it('shows no citizen id without crimson.identity, and finds a player\'s anonymous rows only with it', function()
         local s, f = stack()
         local c = place(s, f, { anonymous = true })
         s.audit.financial('test_row', 'CREATOR1', c.id, { to = 'TARGET01', from = 'active' })
@@ -904,7 +904,11 @@ describe('the audit log in the admin panel', function()
         eq(row.actor, 'the client', 'a role instead')
         eq(row.detail.from, 'active', 'and what is not a citizen id is left alone')
 
-        eq(ask(6, 'logs', { actor = 'CREATOR1' }).err, 'identity_required')
+        -- Without it, only the rows they acted in under their own name:
+        -- an anonymous client's are never found by their citizen id.
+        local hidden = ask(6, 'logs', { actor = 'CREATOR1' })
+        truthy(hidden.ok, tostring(hidden.message))
+        eq(#hidden.data.rows, 0, 'an anonymous client found by their citizen id')
         local theirs = ask(8, 'logs', { actor = 'CREATOR1', limit = 100 }).data.rows
         truthy(#theirs > 0)
         eq(theirs[1].actor, 'CREATOR1', 'crimson.identity reads them as they are')

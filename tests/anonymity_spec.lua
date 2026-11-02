@@ -1218,6 +1218,26 @@ describe('every channel a player not entitled to it can read', function()
             admin(6, op, {})
         end
         admin(6, 'contract', { id = c.id })
+        -- The staff tools on a contract (server/staffcontract.lua), by staff
+        -- without IdentityAce: a note and an edit naming the hidden parties,
+        -- every party's card, the record as text, the log by citizen id, and
+        -- the named operative taken off it.
+        admin(6, 'addNote', { id = c.id, text = 'ticket #42: Vic Marlowe and Rook Ash, CREATOR1' })
+        admin(6, 'editText', { id = c.id, text = 'Settling a score', reason = 'Vic Marlowe asked' })
+        admin(6, 'playerView', { id = c.id, role = 'placer' })
+        admin(6, 'playerView', { id = c.id, role = 'target' })
+        local named
+        for _, row in ipairs(s.storage.readHitmen(c.id) or {}) do
+            admin(6, 'playerView', { id = c.id, role = 'hitman', hitman = row.id })
+            if row.hitman_cid == 'HITMAN02' then named = row.id end
+        end
+        admin(6, 'exportContract', { id = c.id })
+        admin(6, 'logs', { actor = 'CREATOR1' })
+        admin(6, 'logs', { actor = 'HITMAN01' })
+        admin(6, 'removeHitman', { id = c.id, hitman = named, reason = 'Rook Ash complained' })
+        truthy(s.storage.readHitman(c.id, 'HITMAN02').state == 'abandoned', 'the named operative taken off')
+        truthy(s.staffContract.edited(c.id), 'the text replaced')
+        admin(6, 'contract', { id = c.id })
         call('abandon', 3, { id = c.id })
         call('cancel', 1, { id = c.id })
         admin(6, 'contract', { id = c.id })

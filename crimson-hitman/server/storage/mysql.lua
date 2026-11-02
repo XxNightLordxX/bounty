@@ -679,6 +679,28 @@ local SCHEMA = {
         by_cid VARCHAR(64),
         frozen_at INT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- What staff wrote down or did on one contract from the admin panel
+    -- (server/staffcontract.lua): private notes, the player text they
+    -- replaced, the operatives they took off it. Never shown to a player;
+    -- removed with its contract by the prune. Created on an existing
+    -- database by the CREATE TABLE IF NOT EXISTS at the next start.
+    [[CREATE TABLE IF NOT EXISTS crimson_contract_staff (
+        id VARCHAR(64) PRIMARY KEY,
+        contract_id VARCHAR(32) NOT NULL,
+        kind VARCHAR(16) NOT NULL,
+        author_cid VARCHAR(64),
+        author_name VARCHAR(128),
+        body VARCHAR(500),
+        field VARCHAR(32),
+        subject_cid VARCHAR(32),
+        subject_account VARCHAR(64),
+        stint INT,
+        stake_returned TINYINT(1) NOT NULL DEFAULT 0,
+        blocked TINYINT(1) NOT NULL DEFAULT 0,
+        created_at INT NOT NULL,
+        INDEX idx_cstaff_contract (contract_id),
+        INDEX idx_cstaff_kind (kind)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -874,8 +896,8 @@ end
 --- crimson_meta) was moved to InnoDB, rebuilt in utf8mb4 and given columns
 --- before the start refused, on "Multiple primary key", as a missing grant.
 --- Every table here has had the same key column since it was first made
---- (id; cid for crimson_stats, crimson_view_alerts, crimson_playtime and
---- crimson_freezes;
+--- (id, crimson_contract_staff's too; cid for crimson_stats,
+--- crimson_view_alerts, crimson_playtime and crimson_freezes;
 --- setting_key; meta_key), so a table without it as its key is somebody
 --- else's.
 ---@param engines table<string, string> tablesPresent()
@@ -2588,6 +2610,7 @@ function MySQLStore.pruneContracts(cutoff)
             db.query('DELETE FROM crimson_placer_informants WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_mutes WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_location_tips WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_contract_staff WHERE contract_id = ?', { id })
             db.query('DELETE FROM crimson_contracts WHERE id = ?', { id })
             removed = removed + 1
         end
@@ -3088,6 +3111,67 @@ end
 function MySQLStore.deleteFreeze(cid)
     db.query('DELETE FROM crimson_freezes WHERE cid = ?', { cid })
     return true
+end
+
+--------------------------------------------------------------------------
+-- Staff records on a contract
+--------------------------------------------------------------------------
+
+--- See the memory backend.
+local function hydrateStaffRow(row)
+    return {
+        id = row.id, contract_id = row.contract_id, kind = row.kind, author_cid = row.author_cid,
+        author_name = row.author_name, body = row.body, field = row.field,
+        subject_cid = row.subject_cid, subject_account = row.subject_account,
+        stint = tonumber(row.stint), stake_returned = flag(row.stake_returned),
+        blocked = flag(row.blocked), created_at = tonumber(row.created_at),
+    }
+end
+
+local function staffRows(rows)
+    local out = {}
+    for i = 1, #(rows or {}) do out[#out + 1] = hydrateStaffRow(rows[i]) end
+    table.sort(out, function(a, b)
+        if (a.created_at or 0) ~= (b.created_at or 0) then return (a.created_at or 0) < (b.created_at or 0) end
+        return tostring(a.id) < tostring(b.id)
+    end)
+    return out
+end
+
+function MySQLStore.addContractStaff(row)
+    db.query([[
+        INSERT INTO crimson_contract_staff
+            (id, contract_id, kind, author_cid, author_name, body, field, subject_cid,
+             subject_account, stint, stake_returned, blocked, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ]], {
+        row.id, row.contract_id, row.kind, row.author_cid, row.author_name, row.body, row.field,
+        row.subject_cid, row.subject_account, row.stint, row.stake_returned and 1 or 0,
+        row.blocked and 1 or 0, row.created_at,
+    })
+    return true
+end
+
+function MySQLStore.deleteContractStaff(id)
+    db.query('DELETE FROM crimson_contract_staff WHERE id = ?', { id })
+    return true
+end
+
+--- Indexed by contract: one contract's view reads its own.
+function MySQLStore.readContractStaff(contractId)
+    return staffRows(db.query('SELECT * FROM crimson_contract_staff WHERE contract_id = ?',
+        { contractId }))
+end
+
+--- Read once at the start; notes, the bulk of the table, are left out.
+function MySQLStore.readContractStaffMarks()
+    local rows = {}
+    for _, kind in ipairs({ 'edit', 'removal' }) do
+        for _, row in ipairs(db.query('SELECT * FROM crimson_contract_staff WHERE kind = ?', { kind }) or {}) do
+            rows[#rows + 1] = row
+        end
+    end
+    return staffRows(rows)
 end
 
 --------------------------------------------------------------------------

@@ -70,6 +70,15 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   accepted, paid, bought out, amended, cancelled or expired, and no money
   moves. **Unfreeze** gives the time on hold back to the second. See *Staff
   freeze* under *Admin panel*.
+- **Staff tools on a contract**: on every contract's view in the admin
+  panel, private **Staff notes**; **Remove an operative** (their stake to the
+  client as a walk-away hands it over, or returned, optionally barred from
+  taking it again); **Edit text** to replace a player's reason through the
+  same checks a player's text gets, marked *edited by staff* for players;
+  **Export the record** as plain text for a ticket; and **As a player sees
+  it**, the real card a party's phone gets. **Logs** finds a player's rows by
+  citizen id without `crimson.identity` too, only where they acted under
+  their own name. See *Staff tools on a contract* under *Admin panel*.
 - **Informant tip for hitmen** (`Config.LocationTip`): a hitman who has
   accepted a live contract can buy, for $25,000 from the bank, the rough area
   its target was in at that moment: a red circle 700 m across on their map
@@ -297,7 +306,8 @@ look-ups), `crimson_mutes`, `crimson_photos`,
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (who turned
 on the whitelisted-job view's Notify me), `crimson_playtime` (each character's
 counted playtime), `crimson_location_tips` (the informant tips hitmen bought),
-`crimson_freezes` (the players staff have frozen from the admin panel)
+`crimson_freezes` (the players staff have frozen from the admin panel),
+`crimson_contract_staff` (staff notes, removals and text edits on a contract)
 and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
@@ -316,7 +326,8 @@ shows; NULL where no bulletin went), and the tables `crimson_review` (the
 review queue), `crimson_settings` (the admin panel's settings),
 `crimson_alerts` (the admin panel's alerts), `crimson_view_alerts` (the
 whitelisted-job view's Notify me), `crimson_playtime` (the playtime counted
-here) and `crimson_freezes` (the players staff have frozen): import
+here), `crimson_freezes` (the players staff have frozen) and
+`crimson_contract_staff` (staff notes, removals and text edits): import
 `install/sql/crimson_hitman.sql`, or create them as a user that may. It also
 adds three indexes, which an existing database gets at its next start (about
 three seconds per million audit rows, with writes going on) or, for a user
@@ -2076,6 +2087,77 @@ shown the contract) is told *Staff have extended this contract's time.* or
 *Staff have shortened this contract's time.*, never with a figure or a name;
 their cards, and a whitelisted-job target's view, refresh with the new band.
 
+### Staff tools on a contract
+
+Five cards on every contract's view (open it from **Contracts**, a log row or
+a player lookup). The three that write need `crimson.admin` itself and take
+two clicks; **Export the record** and **As a player sees it** only read. The
+records they leave are kept in every storage mode (memory, `records.json`,
+the `crimson_contract_staff` table on mysql) and removed with the contract
+when it is pruned.
+
+- **Staff notes**: private notes on any contract (*ticket #42, waiting on
+  clip*), as many as a ticket needs (up to 100 a contract, 300 characters
+  each), each with its author and time. Shown in the contract's view and
+  its export, never to a player. The author is shown by name and citizen id
+  to staff with `crimson.identity`, and as *Staff* to everyone else, as a
+  freeze's author is. Each note is also in the log (`staff_note`), with its
+  text scrubbed for staff without `crimson.identity` as the timeline is.
+- **Remove an operative**: take one operative off a live contract (active or
+  accepted) without ending it for anybody else. Pick them, give a reason,
+  choose where their stake goes and whether they may take it again, and
+  click **Remove** twice. It runs the walk-away's own path
+  (`Contracts.abandon`), so the same compare and set orders it against every
+  ending, an exclusive contract nobody is left on goes back on the board,
+  and the stake is handled exactly as a walk-away hands it over: to the
+  client. **Return the stake** gives it back to the operative instead (the
+  way an ending gives an active operative theirs); the choice is recorded
+  before anything moves, so a repair, an ending or a restart after a removal
+  that stopped part-way reads the stake as theirs too. **Bar them from it**
+  refuses them taking it again, on that character or another of the same
+  account (*Staff removed you from this contract. It is not yours to take
+  again.*), and their board card draws no Accept. The operative is told
+  *Staff removed you from a contract.*; the client is told an operative left
+  in exactly a walk-away's words, and the other operatives' cards refresh.
+  No failure is counted against the operative. Refused on a contract on hold
+  by a staff freeze (unfreeze first). Audited as `staff_remove_hitman` (the
+  operative, the reason, the stake and where it went, the bar), with the
+  stake's own `stake_forfeited` or `stake_returned_by_staff` row.
+- **Edit text**: replace a contract's reason, the one piece of text a player
+  writes on a contract, with a reason for the edit. It goes through the same
+  checks a player's text gets (`Config.Reason.MaxLength`, `MaxDigits`,
+  `PatternDenylist` and lb-phone's word blacklist; in preset mode, only one
+  of the presets), and is refused with the rule it broke. The original stays
+  in the log for staff (`staff_text_edit`, with the old and new text);
+  players see the new text with a small *edited by staff* mark, never who or
+  what it said before.
+- **Export the record**: **Copy the record** puts the contract's whole
+  record on the clipboard as plain text for a ticket: its terms, operatives,
+  payments (escrow lines), open proposals, staff notes and the full timeline
+  (states, amendments, payments, staff actions). It is built from the
+  contract's view, so it is scrubbed for staff without `crimson.identity`
+  exactly as the view is. Where the game will not copy, the text is shown to
+  copy by hand. Audited as `admin_panel_export`.
+- **As a player sees it**: pick the target, the placer or one of its
+  operatives to see the contract as their phone is sent it: the real
+  projection for that viewer (`Projection.contract`, as On me, Mine and the
+  operative's card build it), drawn read-only. Without `crimson.identity`
+  every anonymous party stays hidden (the view is scrubbed as the contract
+  view is); with it, the panel also says who the viewer is. Looking writes
+  nothing and sends nothing to anybody (not even a headshot request). It
+  says when the target has not been shown the contract yet, or the contract
+  is closed. Audited as `admin_panel_player_view`.
+
+**Logs search by contract or citizen id.** In **Logs & alerts > Logs**, a
+contract id returns every log row for that contract, staff actions and notes
+included. A citizen id returns every row that player acted in for staff with
+`crimson.identity`; for staff without it, only the rows they acted in under
+their own name (as the target, or a client or operative who did not stay
+anonymous), still shown by their place on the contract, never their citizen
+id. Rows about no contract are left out for them, so nothing about an
+anonymous role can be read from what a search keeps or leaves out. Such a
+search is on the record as `admin_panel_logs_player`.
+
 **Using the page.** The panel is sized for a game window 1280 to 1920 pixels
 wide, and still works at 1024. It opens on the overview, with the open review
 items, the lines left for you to settle, the open alerts and the settings
@@ -2262,12 +2344,17 @@ resource (`GetParentResourceName()`):
 | `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
 | `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid, deadline = { left, stopped, adjustable, maxAdjust, minLeft } }` (`left` the exact run time left, in seconds) |
 | `void` | write | `{ id, reason? }` | — (`message` is `/ch-void`'s answer, in the panel's words) |
+| `addNote` | write | `{ id, text }` (at most 300 characters) | `{ id }`; refused `too_many` (100 a contract), `not_found` or `invalid_input`. Audited `staff_note` |
+| `removeHitman` | write | `{ id, hitman, reason, returnStake?, block? }` (`hitman` the operative's row id from `contract`'s `hitmen`) | `{ stake, returned, forfeited, blocked, remaining }`; refused `bad_state`, `contract_frozen`, `no_operative`, `not_active`, `not_found` or `invalid_input`. Audited `staff_remove_hitman` |
+| `editText` | write | `{ id, field = 'reason', text, reason }` | `{ new }`; refused `reason_refused` (the rule in `message`), `unchanged`, `no_text`, `busy`, `not_found` or `invalid_input`. Audited `staff_text_edit` (old and new text) |
+| `exportContract` | read | `{ id }` | `{ text }`: the contract's record as plain text, scrubbed as `contract` is. Audited `admin_panel_export` |
+| `playerView` | read | `{ id, role = 'target'\|'placer'\|'hitman', hitman? }` | `{ role, shown, note?, view?, whitelisted?, alias?, viewer? }`: `view` is `Projection.contract` for that party (scrubbed without `crimson.identity`, which alone gets `viewer = { cid, name }`). Audited `admin_panel_player_view` |
 | `adjustDeadline` | write | `{ id, seconds, reason }` (`seconds` a signed whole number, not 0, within `Config.Limits.StaffDeadlineMaxAdjustSeconds` either way) | `{ seconds, leftBefore, leftAfter, deadline, lifetime = 'unchanged'\|'extended'\|'capped'?, expires? }`; refused `min_left` (with the most it can be shortened by in `message`), `at_limit`, `bad_state`, `not_found` or `invalid_input`. Audited `staff_deadline_adjust` |
 | `settle` | write | `{ line, disposition = 'pay'\|'return'\|'delivered', amount?` (with `pay`)`, owner?` (with `return`, a citizen id) `}` | `{ detail }` (`message` is `/ch-settle`'s answer, in the panel's words) |
 | `stuck` | read | — | `{ recovery, reviews, lines = [stuck] }`: every line waiting for staff, as `/ch-stuck` lists them, and the review queue's open count; `lines` absent while recovering. Audited `admin_stuck`, as the command is |
 | `reviews` | read | `{ all? }` | `{ items = [{ id, kind, about, contract, parties = [{ role, who }], amount, account, items, known, now, state, created_at, resolution, resolved_by, resolved_at, unwritten }] }` |
 | `resolve` | write | `{ id, action = 'refund'\|'pay'\|'dismiss'\|'finish', who?` (a role the item names, or a citizen id)`, amount?, account?, goods?, note? }` (`finish`, with no other field, finishes one left part-way as it was decided) | `{ detail = { action, settled, pending, parked, continued } }` (`message` is `/ch-review`'s answer, in the panel's words) |
-| `logs` | read | `{ kind?, action?, contract?, actor?, from?, to?, limit?, cursor? }` | `{ rows = [row], next }`: pass `next` back as `cursor` for the page after; absent on the last |
+| `logs` | read | `{ kind?, action?, contract?, actor?, from?, to?, limit?, cursor? }` | `{ rows = [row], next }`: pass `next` back as `cursor` for the page after; absent on the last. `actor` without `crimson.identity` keeps only the rows that player acted in openly (audited `admin_panel_logs_player`) |
 | `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }` (with `crimson.identity` only)`, owed = [line + queued], pending, notices = { count, titles } }`; `not_found` for a citizen id nobody in the city has and nothing shown names |
 | `whois` | identity | `{ id }` | `{ creator = { cid, name, anonymous }, target = { cid, name }, hitmen = [{ alias, cid, name, anonymous, state }] }` |
 | `settings` | read | — | each `setting` carries its `category` (`rules-timers`, `rules-rewards`, `rules-limits`, `rules-targeting`, `features`, `developer`), `money` (its Rewards & money group), and `shipped`/`hasShipped` (defaults.lua's value); developer rows only for staff with the developer ACE. `{ features = [setting], limits = [setting], readonly = [setting], overrides, keptPhotos? = { count, open, links, files, waiting } }` (`keptPhotos` only while kill photos are off and some are kept from before) |

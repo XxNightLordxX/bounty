@@ -1348,6 +1348,18 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Schedule a txAdmin restart under 30 minutes away: every party gets
       *Contracts are paused until the server restart.* once, and the panel
       shows every deadline stopped; skip it in txAdmin and they run again
+- [ ] Staff tools on a contract: open a taken contract in the panel, add a
+      note (it shows with your name, and never on any phone); **Remove** one
+      operative with a reason: they get *Staff removed you from a contract.*,
+      the client *An operative left your contract…* as for a walk-away, and the
+      stake goes to the client (or back to them with **Return the stake**);
+      with **Bar them from it** their board card says so and Accept is
+      refused. **Replace** the reason with a link: refused; with plain words:
+      every party's card shows it marked *edited by staff*. **Copy the record**
+      and paste it: the timeline and notes, no citizen id without
+      `crimson.identity`. **As a player sees it** shows each party's card.
+      In Logs, a citizen id without `crimson.identity` finds only their rows
+      under their own name
 - [ ] Cancel a contract on an on-duty officer: officers and the MDT get
       *THREAT ADVISORY — CANCELLED*, the officer *The contract on you has been
       called off.*, and the earlier dispatch calls are gone

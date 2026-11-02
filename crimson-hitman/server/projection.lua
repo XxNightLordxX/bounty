@@ -15,6 +15,9 @@ local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant,
 local LocationTip
 --- Staff freezes (server/freeze.lua): whether a contract is on hold.
 local Freeze
+--- Staff records on a contract (server/staffcontract.lua): whether staff
+--- replaced its text, and who they barred from taking it again.
+local StaffContract
 
 function Projection.init(deps)
     Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify =
@@ -22,6 +25,7 @@ function Projection.init(deps)
         deps.comms, deps.informant, deps.notify
     LocationTip = deps.locationTip
     Freeze = deps.freeze
+    StaffContract = deps.staffContract
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -123,10 +127,16 @@ local function namedOperatives(contract, hitmen)
 end
 
 --- A single contract, projected for one viewer.
+---
+--- `opts.peek` is staff looking at it as this viewer would (the admin
+--- panel's player view): the same payload, but no headshot is asked of the
+--- target's game for it, so looking sends nothing to anybody.
 ---@param contract table
 ---@param viewerCid string
+---@param opts table|nil { peek = boolean }
 ---@return table|nil
-function Projection.contract(contract, viewerCid)
+function Projection.contract(contract, viewerCid, opts)
+    local peek = type(opts) == 'table' and opts.peek == true
     local role = roleOf(contract, viewerCid)
     local hitmen = Storage.readHitmen(contract.id)
     local heldSince = role ~= 'public' and Freeze and Freeze.heldSince(contract, hitmen) or nil
@@ -173,7 +183,7 @@ function Projection.contract(contract, viewerCid)
         -- wait exists to hide. A face already cached is still shown: reading
         -- it sends nothing.
         targetImageId = Mugshot and (function()
-            if Notify.shownToTarget(contract) then Mugshot.request(contract.target_cid) end
+            if not peek and Notify.shownToTarget(contract) then Mugshot.request(contract.target_cid) end
             return Mugshot.handleFor(contract.target_cid)
         end)() or nil,
         targetProtected = contract.target_protected or false,
@@ -216,6 +226,10 @@ function Projection.contract(contract, viewerCid)
         -- Always present, including zero: "no stake" and "not told" are
         -- different things and the page has to be able to tell them apart.
         penaltyAmount = contract.penalty_amount or 0,
+        -- Staff replaced what a player wrote on it (its reason), through
+        -- the same checks a player's text gets: true or absent, never who
+        -- or what it said before.
+        staffEdited   = StaffContract and StaffContract.edited(contract.id) or nil,
     }
 
     -- Why this viewer can never take it, where that is so. The board drew
@@ -233,6 +247,11 @@ function Projection.contract(contract, viewerCid)
                 out.barred = 'hold_released'
                 break
             end
+        end
+        -- Taken off it by staff and barred from it (server/staffcontract.lua).
+        if not out.barred and StaffContract
+            and StaffContract.barred(contract.id, viewerCid, account) then
+            out.barred = 'staff_removed'
         end
         if not out.barred and Config.AntiCollusion.BlockSameAccount and account then
             local target = Identity.byCitizenId(contract.target_cid)
@@ -1129,7 +1148,7 @@ Projection.ALLOWED_KEYS = {
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         hitmenActive = true, hitmenMax = true, targetName = true,
         targetProtected = true, targetProtectedAs = true, timeLeft = true,
-        role = true, onHold = true,
+        role = true, onHold = true, staffEdited = true,
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },

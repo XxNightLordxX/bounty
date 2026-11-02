@@ -48,6 +48,7 @@ function Memory.open()
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
         photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
         playtime = {}, locationTips = {}, placerInformants = {}, freezes = {},
+        contractStaff = {},
     }
     return true
 end
@@ -1340,6 +1341,9 @@ function Memory.prune()
     for id, row in pairs(db.locationTips) do
         if gone[row.contract_id] then db.locationTips[id] = nil end
     end
+    for id, row in pairs(db.contractStaff or {}) do
+        if gone[row.contract_id] then db.contractStaff[id] = nil end
+    end
     return true
 end
 
@@ -1648,6 +1652,72 @@ end
 function Memory.deleteFreeze(cid)
     if db.freezes then db.freezes[cid] = nil end
     return true
+end
+
+--------------------------------------------------------------------------
+-- Staff records on a contract
+--------------------------------------------------------------------------
+
+--- What staff wrote down or did on one contract from the admin panel
+--- (server/staffcontract.lua), by id: { id, contract_id, kind, author_cid,
+--- author_name, body, field, subject_cid, subject_account, stint,
+--- stake_returned, blocked, created_at }. `kind` is 'note' (a private note;
+--- body is its text), 'edit' (staff replaced a player's text; field is
+--- which, body the reason) or 'removal' (staff took an operative off it;
+--- subject_* is who, stint the accepted_at of the stint taken off, body the
+--- reason). Never shown to a player; removed with the contract it is on.
+local STAFF_FIELDS = { 'id', 'contract_id', 'kind', 'author_cid', 'author_name', 'body', 'field',
+                       'subject_cid', 'subject_account', 'stint', 'stake_returned', 'blocked',
+                       'created_at' }
+
+local function staffRowCopy(row)
+    local out = {}
+    for i = 1, #STAFF_FIELDS do out[STAFF_FIELDS[i]] = row[STAFF_FIELDS[i]] end
+    out.stake_returned = out.stake_returned == true
+    out.blocked = out.blocked == true
+    return out
+end
+
+local function byWhen(a, b)
+    if (a.created_at or 0) ~= (b.created_at or 0) then return (a.created_at or 0) < (b.created_at or 0) end
+    return tostring(a.id) < tostring(b.id)
+end
+
+---@param row table
+function Memory.addContractStaff(row)
+    db.contractStaff = db.contractStaff or {}
+    db.contractStaff[row.id] = staffRowCopy(row)
+    return true
+end
+
+---@param id string
+function Memory.deleteContractStaff(id)
+    if db.contractStaff then db.contractStaff[id] = nil end
+    return true
+end
+
+--- Every record on one contract, oldest first.
+---@param contractId string
+---@return table[]
+function Memory.readContractStaff(contractId)
+    local out = {}
+    for _, row in pairs(db.contractStaff or {}) do
+        if row.contract_id == contractId then out[#out + 1] = staffRowCopy(row) end
+    end
+    table.sort(out, byWhen)
+    return out
+end
+
+--- Every edit and removal on every contract, oldest first: read once at the
+--- start, for the marks players see and the bars on taking one back.
+---@return table[]
+function Memory.readContractStaffMarks()
+    local out = {}
+    for _, row in pairs(db.contractStaff or {}) do
+        if row.kind == 'edit' or row.kind == 'removal' then out[#out + 1] = staffRowCopy(row) end
+    end
+    table.sort(out, byWhen)
+    return out
 end
 
 --------------------------------------------------------------------------

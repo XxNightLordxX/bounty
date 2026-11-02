@@ -219,6 +219,15 @@ function serverStub() {
       // The Deadline card: the exact time left, quick picks, minutes, a
       // reason, Extend and Shorten.
       deadline: { left: 37230, stopped: true, adjustable: true, maxAdjust: 86400, minLeft: 300 },
+      // The staff tools: notes, removals and edits with the longest things
+      // they hold, and a reason that may be replaced.
+      staff: { noteMax: 300, removable: true,
+        notes: [{ id: 'cs1', at: NOW - 900, by: LONG, text: REASON + ' ' + 'x'.repeat(200) },
+          { id: 'cs2', at: NOW - 600, by: 'Staff', text: 'a_note_with_no_spaces_to_break_at_' + 'x'.repeat(200) }],
+        removals: [{ id: 'cs3', at: NOW - 300, who: 'operative Ghost of the Eastern Docks', by: LONG, reason: REASON,
+          stakeReturned: true, blocked: true }],
+        edits: [{ id: 'cs4', at: NOW - 200, field: 'reason', by: LONG, reason: REASON }],
+        text: { editable: true, mode: 'freetext', max: 120, edited: true } },
       timeline: (function () {
         const out = [];
         for (let i = 0; i < 20; i++) {
@@ -288,7 +297,16 @@ function serverStub() {
       return out;
     })() } },
     whois: { ok: true, data: { creator: { cid: 'CREATOR1', name: LONG, anonymous: true },
-      target: { cid: 'TARGET01', name: 'Dana Reyes' }, hitmen: [] } }
+      target: { cid: 'TARGET01', name: 'Dana Reyes' }, hitmen: [] } },
+    // A party's card, with the longest things it holds.
+    playerView: { ok: true, data: { role: 'hitman', shown: true, alias: 'Ghost of the Eastern Docks',
+      note: 'No longer on it (abandoned): this is the card the board would show them.',
+      viewer: { cid: 'HITMAN01', name: LONG },
+      view: { id: 'ct10000001', role: 'hitman', targetName: LONG, reason: REASON, staffEdited: true,
+        timeLeft: 'More than 2 hours left', reward: { baseline: 1250000, bonus: 625000,
+          sources: { bank: 1250000, cash: 0, dirty: 0 }, goods: { count: 3, labels: ['a_long_item_name_1'] } },
+        penaltyAmount: 25000, myAlias: 'Ghost of the Eastern Docks', creatorAnonymous: true,
+        locationTip: { left: 2, waitSeconds: 0, note: REASON } } } }
   };
   window.GetParentResourceName = function () { return 'crimson-hitman'; };
   window.__requests = [];
@@ -638,6 +656,41 @@ async function main() {
       truthy(/Extend: 11 h 50 min 30 s left after/.test(deadline.preview), deadline.preview);
       truthy(deadline.moved < 1 && /Click again to shorten/.test(deadline.label),
         'armed Shorten moved ' + deadline.moved + 'px, saying ' + deadline.label);
+    });
+
+    // The staff tools: every control inside the drawer, and a party's card
+    // drawn in it, its longest values wrapped, never past its edge.
+    await page.click('#drawer [data-act="ct-view"][data-value="hitman:hm1"]');
+    await page.waitForTimeout(150);
+    const tools = await page.evaluate(function () {
+      const d = document.getElementById('drawer').getBoundingClientRect();
+      const out = { outside: [], count: 0 };
+      document.querySelectorAll('#drawer .ct-notes *, #drawer .ct-remove *, #drawer .ct-text *, '
+        + '#drawer .ct-export *, #drawer .ct-view *').forEach(function (n) {
+        if (!(n.tagName === 'BUTTON' || n.tagName === 'INPUT' || n.tagName === 'DD' || n.tagName === 'PRE'
+          || n.tagName === 'LI')) return;
+        const r = n.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return;
+        out.count++;
+        if (r.left < d.left - 0.5 || r.right > d.right + 0.5) {
+          out.outside.push((n.getAttribute('data-act') || n.getAttribute('data-bind') || n.tagName) + ' '
+            + Math.round(r.left) + '..' + Math.round(r.right));
+        }
+      });
+      const view = document.querySelector('#drawer .ct-view-facts');
+      out.view = !!view;
+      out.sideways = document.getElementById('drawer').scrollWidth > document.getElementById('drawer').clientWidth + 1;
+      return out;
+    });
+    it(at + ': the staff tools and a party\'s card fit inside the drawer', function () {
+      truthy(tools.view, 'the card was not drawn');
+      truthy(tools.count > 20, tools.count + ' controls');
+      truthy(tools.outside.length === 0, tools.outside.join(', '));
+      truthy(!tools.sideways, 'the drawer scrolls sideways');
+    });
+    const inTools = await page.evaluate(measure, { tablesFit: size.tablesFit, scope: '#drawer' });
+    it(at + ': the drawer with a party\'s card open fits, nothing cut off or too small', function () {
+      none(inTools, 'drawer with the player view');
     });
 
     // An armed button keeps its size, so a second click lands on it.

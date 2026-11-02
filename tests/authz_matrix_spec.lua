@@ -890,7 +890,8 @@ describe('the admin panel requests', function()
     --- holds crimson.admin: the grid's own admin column.
     local OPS = { 'access', 'overview', 'contracts', 'contract', 'reviews', 'logs', 'player',
                   'settings', 'diag', 'void', 'settle', 'resolve', 'setSetting',
-                  'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois', 'adjustDeadline' }
+                  'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois', 'adjustDeadline',
+                  'addNote', 'removeHitman', 'editText', 'exportContract', 'playerView' }
 
     local function ask(src, op, data)
         Env.clientEvents = {}
@@ -943,6 +944,20 @@ describe('the admin panel requests', function()
                 who.cid .. ': no citizen id reaches staff without crimson.identity')
         end
         eq(reply.data.contract.client.name, 'Anonymous')
+        -- And the record as text, and the card each party sees: no citizen
+        -- id in either.
+        for _, asked in ipairs({ { 'exportContract', { id = w.held.id } },
+                                 { 'playerView', { id = w.held.id, role = 'placer' } },
+                                 { 'playerView', { id = w.held.id, role = 'target' } } }) do
+            local answer = ask(CAST.admin.source, asked[1], asked[2])
+            eq(answer.ok, true, asked[1] .. ': ' .. tostring(answer.message))
+            seen = {}
+            walk(answer.data)
+            local said = table.concat(seen, '\n')
+            for _, who in pairs(CAST) do
+                falsy(said:find(who.cid, 1, true), asked[1] .. ': ' .. who.cid .. ' reached staff without crimson.identity')
+            end
+        end
         eq(ask(CAST.admin.source, 'whois', { id = w.held.id }).err, 'identity_required')
         eq(ask(CAST.admin.source, 'void', { id = w.held.id, reason = 'x' }).ok, true,
             'crimson.admin itself writes')

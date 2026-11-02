@@ -1769,6 +1769,7 @@ function StartCrimsonHitman()
     local playtime   = CrimsonBoot.require('server.playtime')
     local locationTip = CrimsonBoot.require('server.locationtip')
     local freeze     = CrimsonBoot.require('server.freeze')
+    local staffContract = CrimsonBoot.require('server.staffcontract')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1810,9 +1811,13 @@ function StartCrimsonHitman()
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify,
-                      locationTip = locationTip, freeze = freeze })
+                      locationTip = locationTip, freeze = freeze, staffContract = staffContract })
     -- Staff freezes (server/freeze.lua): read from the store once, here.
     freeze.init({ storage = Storage, audit = audit, notify = notify, kidnap = kidnap })
+    -- Staff notes, removals and text edits on a contract
+    -- (server/staffcontract.lua): the edits and removals read once, here.
+    staffContract.init({ storage = Storage, audit = audit, notify = notify,
+                         contracts = contracts, identity = identity })
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
@@ -1847,6 +1852,9 @@ function StartCrimsonHitman()
         -- The players staff have put on hold, for the expiry pass and the
         -- admin panel.
         freeze = freeze,
+        -- Staff notes, removals and text edits on a contract, for the
+        -- admin panel.
+        staffContract = staffContract,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
