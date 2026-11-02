@@ -1372,9 +1372,13 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         return false, CH.ERR.BAD_STATE
     end
 
-    -- On hold by staff, or the hitman is: nothing is taken.
-    if Contracts.frozenPlayer(actor.cid) or Contracts.heldByStaff(contract) then
-        return false, CH.ERR.CONTRACT_FROZEN
+    -- On hold by staff, or the hitman is: nothing is taken. Somebody not on
+    -- it is told only "not right now": "on hold" to a stranger tapping Accept
+    -- said which contracts a frozen player was on, anonymous ones included.
+    if Contracts.frozenPlayer(actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Contracts.heldByStaff(contract) then
+        if Storage.readHitman(contract.id, actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
+        return false, CH.ERR.BAD_STATE
     end
 
     -- Past its deadline with the clock running, or past its lifetime, it is

@@ -221,7 +221,11 @@ describe('every action on a contract on hold is refused, with nothing charged', 
             falsy(ok, label .. ': went through on a contract on hold')
             eq(err, F, label .. ': refused as ' .. tostring(err))
         end
-        refused('a second hitman accepting', s.contracts.accept(f.hitman2, c.id))
+        -- A newcomer is not told the contract is on hold: that would say a
+        -- frozen player is on it.
+        local okNew, errNew = s.contracts.accept(f.hitman2, c.id)
+        falsy(okNew, 'a second hitman accepting: went through on a contract on hold')
+        eq(errNew, CH.ERR.BAD_STATE, 'a newcomer is told only not right now')
         refused('the frozen player taking a contract', s.contracts.accept(f.creator, c3.id))
         refused('the frozen player placing one', s.contracts.create(f.creator,
             { targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
