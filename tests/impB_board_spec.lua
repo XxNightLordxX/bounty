@@ -292,6 +292,50 @@ describe('the placer\'s record on a board card', function()
         eq(after.cancelled, 2)
     end)
 
+    -- Merge with round 3 (b037930): the prune no longer moves the board's
+    -- generation, so the named record is kept on contractGeneration, which
+    -- the prune does move, and for a minute at most as the days roll on.
+    it('is current at once when a contract it counts finishes', function()
+        local s, f, named = history()
+        Config.Improvements.PlacerRecord.Enabled = true
+        local more = place(s, f)
+        eq(boardCard(3, named.id).placerRecord.paidOut, 1, 'kept before')
+        truthy(s.contracts.accept(f.hitman, more.id, false))
+        truthy(s.contracts.claimSlot(more.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        local after = boardCard(3, named.id).placerRecord
+        eq(after.placed, 3)
+        eq(after.paidOut, 2, 'the completion is counted at once')
+    end)
+
+    it('is current at once when a contract it counts is pruned, with nothing else written', function()
+        local s, _, named = history()
+        Config.Improvements.PlacerRecord.Enabled = true
+        Env.advance(2 * 86400)
+        local before = boardCard(3, named.id).placerRecord
+        eq(before.placed, 2, 'both finished ones counted and kept')
+        local gen = s.projection.generation()
+        local contractGen = s.projection.contractGeneration()
+        Config.Audit.ContractRetentionDays = 1
+        s.storage.prune()
+        eq(s.projection.generation(), gen, 'the prune leaves the board generation (round 3)')
+        truthy(s.projection.contractGeneration() ~= contractGen, 'and moves the contract generation')
+        eq(#s.storage.contractsBy('CREATOR1'), 2, 'the finished named and anonymous ones are gone')
+        local after = boardCard(3, named.id).placerRecord
+        eq(after.placed, 0, 'the pruned contracts are no longer counted')
+        eq(after.paidOut, 0)
+        eq(after.cancelled, 0)
+    end)
+
+    it('lets a counted contract age out of LookbackDays with nothing written', function()
+        local _, _, named = history()
+        Config.Improvements.PlacerRecord.Enabled = true
+        Config.Improvements.PlacerRecord.LookbackDays = 1
+        eq(boardCard(3, named.id).placerRecord.placed, 2, 'kept')
+        Env.advance(2 * 86400)
+        local card = boardCard(3, named.id)
+        if card then eq(card.placerRecord.placed, 0, 'older than a day, not kept') end
+    end)
+
     it('counts only the last LookbackDays', function()
         local _, _, named = history()
         Config.Improvements.PlacerRecord.Enabled = true

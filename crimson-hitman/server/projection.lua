@@ -98,9 +98,18 @@ local MOVES_IF = {
     expireIfDue = function(moved) return moved == true end,
 }
 
+--- Writes that remove finished contracts (the prune). The board is never
+--- built from those (above), but a count over a placer's past contracts is
+--- (server/imp_placer_record.lua): Projection.contractGeneration moves on
+--- them too.
+local PRUNES = { prune = true, pruneContracts = true }
+
 --- Moved before and after every write: a board read while a write waits on
 --- the database (mysql) is never kept as current.
 local generation = 0
+
+--- Moved before and after every prune (PRUNES), which leaves `generation`.
+local pruned = 0
 
 --- What boardBase built, for the generation it was built at.
 local board = nil
@@ -116,7 +125,15 @@ function Projection.watchStore(storage)
     watched[storage] = true
     for name, fn in pairs(storage) do
         local movesIf = MOVES_IF[name]
-        if type(fn) == 'function' and movesIf then
+        if type(fn) == 'function' and PRUNES[name] then
+            storage[name] = function(...)
+                pruned = pruned + 1
+                local out = table.pack(pcall(fn, ...))
+                pruned = pruned + 1
+                if not out[1] then error(out[2], 0) end
+                return table.unpack(out, 2, out.n)
+            end
+        elseif type(fn) == 'function' and movesIf then
             -- Moved once, after, and only on a change: a board built while
             -- it waited is still thrown away, by the move after it.
             storage[name] = function(...)
@@ -307,6 +324,16 @@ end
 ---@return integer
 function Projection.generation()
     return generation
+end
+
+--- Which change to the contracts the store is at: `generation`, and moved
+--- by the prune as well, which removes finished contracts the board never
+--- shows but a count over a placer's past contracts includes. Since round 3
+--- the prune leaves `generation`, so a cache of such a count keyed on that
+--- alone kept counting a pruned contract until the next other write.
+---@return integer
+function Projection.contractGeneration()
+    return Projection.generation() + pruned
 end
 
 --- A viewer's own record (Progression.record), read once per request.

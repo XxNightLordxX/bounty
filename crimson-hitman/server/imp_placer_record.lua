@@ -20,15 +20,21 @@
 ---     again at once). A band that moved when another anonymous contract of
 ---     theirs completed would say both were theirs.
 --- A named placer's record is exact and current: worked out once per change
---- to the store (Projection.generation), as the board itself is, and kept
---- for every viewer until the next.
+--- to the contracts (Projection.contractGeneration: every write, and the
+--- prune that removes finished ones) and kept for every viewer until the
+--- next, or for at most NAMED_KEEP_SECONDS, as the days counted move on.
 
 local Record = {}
 
 local Storage, Projection, Board
 
---- [placer cid .. '|' .. days] = record, for one generation of the store.
-local named = { gen = nil, by = {} }
+--- [placer cid .. '|' .. days] = record, for one generation of the
+--- contracts, worked out at `at` (os.time).
+local named = { gen = nil, at = 0, by = {} }
+
+--- The longest a named record is kept with nothing written: a contract
+--- leaves the LookbackDays window as time passes, with no write to say so.
+local NAMED_KEEP_SECONDS = 60
 --- [contract id .. '|' .. days] = banded record, kept for the contract's life.
 local anon = {}
 
@@ -90,15 +96,17 @@ function Record.forCard(contract)
     end
     -- One read per placer per change, every named contract of theirs
     -- counted; this card's own taken off after.
-    local gen = Projection.generation()
-    if named.gen ~= gen then named = { gen = gen, by = {} } end
+    local gen = Projection.contractGeneration()
     local now = os.time()
+    if named.gen ~= gen or now - named.at >= NAMED_KEEP_SECONDS then
+        named = { gen = gen, at = now, by = {} }
+    end
     local key = contract.creator_cid .. '|' .. days
     local hit = named.by[key]
     if not hit then
         hit = Record.count(contract.creator_cid, false, nil, days, now)
         -- Kept only if nothing was written while it was read.
-        if Projection.generation() == gen and named.gen == gen then named.by[key] = hit end
+        if Projection.contractGeneration() == gen and named.gen == gen then named.by[key] = hit end
     end
     local out = { placed = hit.placed, paidOut = hit.paidOut, cancelled = hit.cancelled, days = days }
     if (tonumber(contract.created_at) or 0) >= now - days * 86400 then
@@ -122,7 +130,7 @@ end
 
 --- Test seam: forget everything kept.
 function Record.reset()
-    named, anon = { gen = nil, by = {} }, {}
+    named, anon = { gen = nil, at = 0, by = {} }, {}
 end
 
 function Record.init(deps, board)

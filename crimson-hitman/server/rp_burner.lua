@@ -44,6 +44,9 @@ Burner.ACTIONS = {
     setMeeting = true, clearMeeting = true, locationTip = true, placerInformant = true,
     sendMessage = true, requestCall = true,
     protectionAccept = true,
+    -- Handing over a proof item (Config.Improvements.ProofItems): a hitman
+    -- action like Verify kill, so it needs the burner too.
+    proofItem = true,
 }
 
 --- Whether this player carries a burner now: true, false, or nil where it

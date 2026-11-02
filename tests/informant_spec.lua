@@ -111,9 +111,12 @@ end
 --------------------------------------------------------------------------
 
 describe('the placer\'s informant', function()
+    -- Read from config.lua itself, not the live Config: the harness turns
+    -- the placer's informant on for the specs (tests/run.lua), and this
+    -- passed or failed by whether a stack had been opened before it.
     it('ships with the figures the owner asked for', function()
-        local p = Config.PlacerInformant
-        eq(p.Enabled, true)
+        local p = require('tests.harness.shipped').fromFile().PlacerInformant
+        eq(p.Enabled, false, 'off as shipped, the owner\'s request')
         eq(p.Cost, 25000)
         eq(p.Account, 'bank')
         eq(p.RevealChancePercent, 20)

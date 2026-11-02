@@ -66,6 +66,14 @@ function Proof.forPage()
              radius = tonumber(rules().HandoverRadius) or 3.0 }
 end
 
+--- A player's routing bucket, or nil when the server cannot say: nil is
+--- never anybody's bucket, so an unanswered read refuses (as the kidnap
+--- handover's does, server/completion/kidnap.lua).
+local function bucketOf(src)
+    local ok, bucket = pcall(GetPlayerRoutingBucket, src)
+    return ok and tonumber(bucket) or nil
+end
+
 local function coordsOf(src)
     local ok, coords = pcall(function()
         local ped = GetPlayerPed(src)
@@ -139,12 +147,16 @@ function Proof.handover(actor, rawId)
     if Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if Contracts.slotCoolingDown(hitman) then return false, CH.ERR.SLOT_COOLDOWN end
 
-    -- Beside the placer, by where the server sees both. An anonymous placer
-    -- away from the city reads as one too far away.
+    -- Beside the placer, by where the server sees both, in one routing
+    -- bucket: two players in two apartment shells stand at the same
+    -- coordinates and are nowhere near each other. An anonymous placer away
+    -- from the city, or in another instance, reads as one too far away.
     local radius = tonumber(rules().HandoverRadius) or 3.0
     local creator = deps.identity.byCitizenId(contract.creator_cid)
-    local here = coordsOf(actor.source)
-    local there = creator and coordsOf(creator.source)
+    local bucket = bucketOf(actor.source)
+    local together = creator ~= nil and bucket ~= nil and bucketOf(creator.source) == bucket
+    local here = together and coordsOf(actor.source)
+    local there = together and coordsOf(creator.source)
     if not here or not there or Util.dist2(here, there) > radius * radius then
         return false, CH.ERR.PROOF_TOO_FAR, { radius = radius }
     end

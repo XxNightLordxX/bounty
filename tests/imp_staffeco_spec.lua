@@ -183,6 +183,44 @@ describe('proof items', function()
         eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
     end)
 
+    -- The owner's call when the builds were merged: handing over proof is a
+    -- hitman action like Verify kill, so the burner phone gate covers it.
+    it('needs the burner phone while that is on, taking nothing without it', function()
+        local s, _, c = held()
+        on(s)
+        turn(s, 'Roleplay.BurnerPhone.Enabled', true)
+        truthy(s.rpBurner.ACTIONS.proofItem, 'listed among the burner\'s actions')
+        card(3, 'TARGET01')
+        local before, hitman = total(s), wealth(3)
+        eq(call('proofItem', 3, { id = c.id }).err, CH.ERR.NEED_BURNER)
+        eq(count(3, 'id_card', 'citizenid', 'TARGET01'), 1, 'the card is kept')
+        eq(wealth(3), hitman, 'nothing paid')
+        eq(total(s), before)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        table.insert(Env.players[3]._inventory, { name = 'burner_phone', count = 1, slot = 42 })
+        local reply = call('proofItem', 3, { id = c.id })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        eq(wealth(3), hitman + 40000, 'paid with the burner')
+        eq(count(3, 'id_card'), 0, 'the card is taken')
+    end)
+
+    -- Merged with round 3 (b037930), which made the kidnap handover check
+    -- routing buckets: a proof handover is a meeting with the placer too.
+    it('refuses a placer in another routing bucket as one too far away, taking nothing', function()
+        local s, _, c = held()
+        on(s)
+        card(3, 'TARGET01')
+        local before = total(s)
+        Env.players[1]._bucket = 7
+        local far = call('proofItem', 3, { id = c.id })
+        eq(far.err, CH.ERR.PROOF_TOO_FAR)
+        eq(count(3, 'id_card', 'citizenid', 'TARGET01'), 1, 'the card is kept')
+        eq(total(s), before)
+        Env.players[3]._bucket = 7
+        local reply = call('proofItem', 3, { id = c.id })
+        truthy(reply and reply.ok, 'together in one instance: ' .. tostring(reply and reply.err))
+    end)
+
     it('says an anonymous placer who is away exactly as one too far away', function()
         local s, _, c = held({ anonymous = true })
         on(s)
