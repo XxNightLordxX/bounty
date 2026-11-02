@@ -65,6 +65,10 @@ local ADDED = {
     ['InformantsEnabled'] = true,
     -- The ACE of the admin panel's Developer section.
     ['Admin.DeveloperAce'] = 'crimson.developer',
+    -- How far staff may move a contract's deadline from the admin panel,
+    -- and the least run time a shortening leaves.
+    ['Limits.StaffDeadlineMaxAdjustSeconds'] = 86400,
+    ['Limits.StaffDeadlineMinLeftSeconds'] = 300,
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -170,7 +174,11 @@ describe('the configuration as one short file', function()
         local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
         local off = {}
         for path, pair in pairs(differences(was, now)) do
-            if not (path == 'Admin.DeveloperAce' and pair[1] == nil and pair[2] == 'crimson.developer') then
+            -- And settings added since, each new and shipped as ADDED says.
+            local addedSince = pair[1] == nil and type(pair[2]) ~= 'table' and ADDED[path] == pair[2]
+                and path:match('^Limits%.StaffDeadline') ~= nil
+            if not (path == 'Admin.DeveloperAce' and pair[1] == nil and pair[2] == 'crimson.developer')
+                and not addedSince then
                 off[#off + 1] = ('%s: %s -> %s'):format(path, tostring(pair[1]), tostring(pair[2]))
             end
         end

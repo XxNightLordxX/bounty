@@ -564,6 +564,8 @@ How long things last. The deadline runs only while the placer, the target and on
 |---|---|---|
 | `Config.Limits.DefaultDeadlineSeconds` | `10800` | How long a contract runs before it expires, unless the client extends it. It counts down only while all three are in the city: the placer (named or anonymous), the target (out of prison) and at least one operative holding it (one is enough on a competitive contract). With nobody holding it yet, it does not run; it is moved on by every pause. Once it has gone with the clock running, nobody leaving stops it. Players never see it: every card shows a rough band of the run time left (*More than 2 hours left*, *1–2 hours left*, *Under 1 hour left*, *Under 15 minutes left*), which moves only while the clock runs; staff see the exact times in the admin panel. A kill made before it and still waiting to be verified, or a handover armed before it and still counting, holds the expiry off until it finishes, for at most two `PhotoTokenLifetimeSeconds`. |
 | `Config.Limits.ContractLifetimeSeconds` | `172800` | The absolute ceiling, pauses included, from the end of the five minutes a contract is placed in. Separate from the deadline above: it keeps running whoever is away, and is what ends a contract left on the board with nobody holding it. Reaching it while the deadline still has time on it hands the hitman's stake back. |
+| `Config.Limits.StaffDeadlineMaxAdjustSeconds` | `86400` | The most staff may extend or shorten one contract's deadline by at once, from the admin panel (**Extend** and **Shorten** on the contract's view). 60 to 2592000. |
+| `Config.Limits.StaffDeadlineMinLeftSeconds` | `300` | The least run time a staff shortening may leave, so a slip cannot expire a contract at once; the refusal says the most it can be shortened by. 0 to 86400. |
 | `Config.Restart.PauseBeforeSeconds` | `1800` | Every live contract is paused from the first txAdmin restart warning (`txAdmin:events:scheduledRestart`, sent 30, 15, 10, 5, 4, 3, 2 and 1 minutes before) with at most this many seconds to go: deadlines stop, and nothing expires (the lifetime included), no queued buyout pays out and no handover finishes or is armed until the server is back. Players get one notice, *Contracts are paused until the server restart.* The pause ends when the resource starts again; the time it lasted is added back to every deadline. `0` turns it off; 0 to 3600. |
 | `Config.Restart.MaxHoldMinutes` | `45` | The pause ends anyway when the restart has not come this long after it began, or at once when staff skip it in txAdmin (`txAdmin:events:scheduledRestartSkipped`, or the older `skippedNextScheduledRestart`). A pause never ends another: a contract on hold by staff, or with a party away, stays stopped. 1 to 240. |
 | `Config.Limits.TargetCooldownAfterResolveSeconds` | `1800` | How long nobody may place a contract on a person after one on them closes; not after one nobody took up that was withdrawn or ran out (that cost the target nothing). |
@@ -1945,7 +1947,7 @@ and tab you had open, in this game's browser storage only.
 | Section | Holds | For |
 |---|---|---|
 | **Live** | How it works, Overview, Contracts, Players, Frozen players, Needs review, Stuck escrow | Everybody on shift: what is happening now |
-| **Staff actions** | All staff actions (freeze and unfreeze, void, refund or pay, deadlines, tools, settings: each card opens the place it is done), Tools | Staff who change things. A deadline is extended by the contract's client in the app; staff stop its clock with a freeze, end it with a void, or on a test server bring every wait forward |
+| **Staff actions** | All staff actions (freeze and unfreeze, void, refund or pay, deadlines, tools, settings: each card opens the place it is done), Tools | Staff who change things. Staff extend or shorten a live contract's deadline from its view (**Extend** and **Shorten**), stop its clock with a freeze, end it with a void, or on a test server bring every wait forward |
 | **Rules** | Timers, Rewards & money (grouped as Rewards, Payouts, Buyouts, Informant prices, Anonymity fees and Escrow), Limits, Targeting | The owner: how the game is tuned |
 | **Features** | Every on/off switch, Anonymity first, then the informants, the advisory and the rest, each group with a line on what it controls | The owner: what is switched on |
 | **Logs & alerts** | Logs (with its search), Alerts & Discord | Whoever follows up |
@@ -2045,6 +2047,32 @@ and a contract on hold carries a **Frozen** badge in Contracts and on the
 player's lookup; without `crimson.identity`, a contract held only through an
 anonymous party carries none, so the badge never says that the player you
 froze is behind an anonymous client or operative.
+
+### Staff deadline changes
+
+Open a live contract (active or accepted) from **Contracts**. Its **Deadline**
+card shows the exact run time left, and **Extend** and **Shorten** move it:
+pick 15 min, 30 min, 1 h or 2 h, or type a number of minutes, type a reason,
+and click the button twice. The card shows the time left before and after.
+It is a *write* (`crimson.admin` itself), like **Void contract**, and is
+audited as `staff_deadline_adjust` (your citizen id, the seconds, the reason,
+and the old and new deadline), scrubbed for staff without `crimson.identity`
+as every contract's timeline is. No money moves.
+
+- At most `Config.Limits.StaffDeadlineMaxAdjustSeconds` either way.
+- Shortening never leaves less than `Config.Limits.StaffDeadlineMinLeftSeconds`
+  of run time; the refusal says the most you can shorten it by.
+- Extending past the contract's lifetime extends the lifetime by the same
+  amount, to at most `Config.Limits.ContractLifetimeSeconds` from now, and the
+  deadline no further than that; the answer says which it did.
+- It works with the clock running or stopped (a party away, the restart pause,
+  a staff freeze): the run time left moves by exactly the change, and so the
+  band players see moves by that and nothing else.
+
+Every party (the placer, each active operative, and the target once they are
+shown the contract) is told *Staff have extended this contract's time.* or
+*Staff have shortened this contract's time.*, never with a figure or a name;
+their cards, and a whitelisted-job target's view, refresh with the new band.
 
 **Using the page.** The panel is sized for a game window 1280 to 1920 pixels
 wide, and still works at 1024. It opens on the overview, with the open review
@@ -2230,8 +2258,9 @@ resource (`GetParentResourceName()`):
 | `access` | read | — | `{ canWrite, canIdentify, canDevelop, developerAce, developerByAce, developerHint?, permissions = [{ ace, name, held, unlocks, grant }], pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version }` (no command names: the page is buttons only; read-only metadata for the sections and the Permissions page) |
 | `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering; `leftForStaff` counts the lines something settles by hand, `total` every line listed)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, alerts = { open }, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
 | `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
-| `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid }` |
+| `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid, deadline = { left, stopped, adjustable, maxAdjust, minLeft } }` (`left` the exact run time left, in seconds) |
 | `void` | write | `{ id, reason? }` | — (`message` is `/ch-void`'s answer, in the panel's words) |
+| `adjustDeadline` | write | `{ id, seconds, reason }` (`seconds` a signed whole number, not 0, within `Config.Limits.StaffDeadlineMaxAdjustSeconds` either way) | `{ seconds, leftBefore, leftAfter, deadline, lifetime = 'unchanged'\|'extended'\|'capped'?, expires? }`; refused `min_left` (with the most it can be shortened by in `message`), `at_limit`, `bad_state`, `not_found` or `invalid_input`. Audited `staff_deadline_adjust` |
 | `settle` | write | `{ line, disposition = 'pay'\|'return'\|'delivered', amount?` (with `pay`)`, owner?` (with `return`, a citizen id) `}` | `{ detail }` (`message` is `/ch-settle`'s answer, in the panel's words) |
 | `stuck` | read | — | `{ recovery, reviews, lines = [stuck] }`: every line waiting for staff, as `/ch-stuck` lists them, and the review queue's open count; `lines` absent while recovering. Audited `admin_stuck`, as the command is |
 | `reviews` | read | `{ all? }` | `{ items = [{ id, kind, about, contract, parties = [{ role, who }], amount, account, items, known, now, state, created_at, resolution, resolved_by, resolved_at, unwritten }] }` |

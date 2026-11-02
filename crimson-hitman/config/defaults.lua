@@ -42,6 +42,8 @@ ConfigDefaults.Database = {
 ConfigDefaults.Limits = {
     DefaultDeadlineSeconds               = 10800,   -- run time; runs only with placer, target, operative in
     ContractLifetimeSeconds              = 172800,  -- hard ceiling, pauses included
+    StaffDeadlineMaxAdjustSeconds        = 86400,   -- most staff may extend or shorten a deadline by at once
+    StaffDeadlineMinLeftSeconds          = 300,     -- least run time a staff shortening may leave
     TargetCooldownAfterResolveSeconds    = 1800,    -- nobody may target a person again for this long
     SameCreatorSameTargetCooldownSeconds = 7200,    -- the same placer on the same target
     ExclusiveIdleReleaseSeconds          = 1800,    -- release an exclusive hitman never near them; 0 = off

@@ -1158,6 +1158,8 @@
     S.drawer = { id: String(id), data: null, answer: null, whois: null };
     // A reason typed for another contract is not this one's.
     S.forms['dr.reason'] = '';
+    S.forms['dr.dl.min'] = '';
+    S.forms['dr.dl.reason'] = '';
     drawDrawer();
     loadContract();
   }
@@ -1172,6 +1174,7 @@
         S.drawer.answer = { ok: false, text: words(reply) };
       } else {
         S.drawer.data = reply.data || {};
+        S.drawer.readAt = nowSeconds();
       }
       drawDrawer();
     });
@@ -1391,6 +1394,7 @@
     }
 
     var whois = S.drawer.whois ? card('Who is behind it', whoisBody(S.drawer.whois), '.is-identity') : null;
+    var deadlinePart = stub ? null : card('Deadline', deadlineBody(d.deadline));
 
     var terms = h('dl.facts.is-terms',
       h('dt', 'Mode'), h('dd', String(c.mode || '—')),
@@ -1418,6 +1422,7 @@
       actions,
       whois,
       stuckPart,
+      deadlinePart,
       stub ? null : card('Terms', terms),
       stub ? null : card('Payouts', slotSummary(escrow, c)),
       card('Escrow lines', escrow.length ? h('div.table-wrap', h('table.grid',
@@ -1456,6 +1461,81 @@
           h('b', String(row.action || '')), row.actor ? h('span.sub', ' ' + row.actor) : null,
           h('span.detail', detailText(row.detail)));
       })) : empty('The log keeps nothing for it.'))));
+  }
+
+  /* ---- a contract's deadline, moved by staff ----
+
+     The exact run time left (players see only its band), and Extend and
+     Shorten by a quick pick or a number of minutes, with a reason, each on
+     a two-click confirm. The server holds both to its limits and answers
+     with the time left before and after. */
+
+  var DEADLINE_PICKS = [15, 30, 60, 120];
+
+  /** Run time as staff read it, to the second: '1 h 05 min', '25 min 10 s'. */
+  function exactSpan(seconds) {
+    var t = Math.max(0, Math.floor(Number(seconds) || 0));
+    var hours = Math.floor(t / 3600), mins = Math.floor((t % 3600) / 60), secs = t % 60;
+    var out = [];
+    if (hours > 0) out.push(hours + ' h');
+    if (mins > 0 || (hours > 0 && secs > 0)) out.push((hours > 0 ? pad(mins) : String(mins)) + ' min');
+    if (secs > 0 || !out.length) out.push(secs + ' s');
+    return out.join(' ');
+  }
+
+  /** The run time left now: as read, less what has passed since while the
+      clock runs. */
+  function deadlineLeft(info) {
+    var left = Number(info.left) || 0;
+    if (!info.stopped && S.drawer.readAt) left -= Math.max(0, nowSeconds() - S.drawer.readAt);
+    return Math.max(0, left);
+  }
+
+  function deadlineMinutes() {
+    return wholeNumber(S.forms['dr.dl.min']);
+  }
+
+  /** What Extend and Shorten would leave, for the minutes chosen. */
+  function deadlinePreview() {
+    var info = (S.drawer.data || {}).deadline || {};
+    var left = deadlineLeft(info);
+    var minutes = deadlineMinutes();
+    if (!minutes) return h('span', 'Pick a time or type a number of minutes to see the time left after.');
+    var by = minutes * 60;
+    var max = Number(info.maxAdjust) || 0;
+    if (max && by > max) return h('span.is-warn', 'At most ' + exactSpan(max) + ' either way.');
+    var most = Math.max(0, left - (Number(info.minLeft) || 0));
+    return frag(h('span', 'Extend: ', h('b', exactSpan(left + by)), ' left after.'), ' ',
+      by > most
+        ? h('span', 'Shorten: not by this much; at least ' + exactSpan(info.minLeft) + ' must remain, so the most is '
+          + exactSpan(most) + '.')
+        : h('span', 'Shorten: ', h('b', exactSpan(left - by)), ' left after.'));
+  }
+
+  function deadlineBody(info) {
+    if (!info) return h('p.note', 'Not sent by this server.');
+    var left = deadlineLeft(info);
+    var now = h('p', 'Time left now: ', h('b', { id: 'dr-dl-left' }, exactSpan(left)),
+      info.stopped ? ' (its clock is stopped)' : '');
+    if (!info.adjustable) {
+      return frag(now, h('p.note', 'Only a live contract (active or accepted) has a deadline to move.'));
+    }
+    var open = writesOpen();
+    var current = deadlineMinutes();
+    return frag(now,
+      h('div.inline-form.is-wide.dl-picks',
+        segmented('dl-pick', DEADLINE_PICKS.map(function (m) {
+          return { value: m, label: m < 60 ? m + ' min' : (m / 60) + ' h', disabled: !open,
+                   title: open ? null : whyNoWrite() };
+        }), current == null ? '' : current),
+        field('dr.dl.min', { class: 'is-short', placeholder: 'Minutes', inputmode: 'numeric', maxlength: '5',
+          'data-live': 'dl-preview', disabled: !open, 'aria-label': 'Minutes to move the deadline by' })),
+      h('p.note', { id: 'dr-dl-preview', 'aria-live': 'polite' }, deadlinePreview()),
+      h('div.inline-form.is-wide',
+        field('dr.dl.reason', { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
+          maxlength: '120', disabled: !open, 'aria-label': 'Reason for moving the deadline' }),
+        writeBtn('', 'dl-extend', {}, 'Extend', 'Click again to extend', 'plus'),
+        writeBtn('', 'dl-shorten', {}, 'Shorten', 'Click again to shorten', 'minus')));
   }
 
   function whoisBody(who) {
@@ -2941,10 +3021,11 @@
       text: 'Needs review holds the contracts a player asked staff to look at: Refund, Pay or Dismiss each. '
         + 'Stuck escrow holds the money left for staff: Pay, Pay amount, Return or Delivered.',
       also: { view: 'stuck', go: 'Stuck escrow' } },
-    { title: 'Deadlines', icon: 'clock', view: 'tools', go: 'Open Tools',
-      text: 'A contract\'s deadline is extended by its client, from the app; the panel has no button that sets one. '
-        + 'Freezing a player stops its clock, and voiding ends it. On a test server, Bring timers forward under '
-        + 'Tools moves every wait and cooldown forward, and only ever moves a deadline later.' },
+    { title: 'Deadlines', icon: 'clock', view: 'contracts', go: 'Open Contracts',
+      text: 'Open the contract from Contracts, then Extend or Shorten under Deadline moves it: 15 min, 30 min, '
+        + '1 h, 2 h or a number of minutes, with a reason kept in the log. It shows the exact time left before '
+        + 'and after; players are told only that staff changed its time. Freezing a player stops its clock, and '
+        + 'voiding ends it.' },
     { title: 'Tools', icon: 'screwdriver-wrench', view: 'tools', go: 'Open Tools',
       text: 'Bring timers forward (test servers only), Flush the audit log, and Run the diagnosis for why the app '
         + 'is not showing something.' },
@@ -3217,6 +3298,56 @@
       loadContract();
     });
   };
+
+  ACTIONS['dl-pick'] = function (node) {
+    disarm();
+    S.forms['dr.dl.min'] = node.getAttribute('data-value') || '';
+    drawDrawer();
+  };
+
+  LIVE['dl-preview'] = function () {
+    setHtml(byId('dr-dl-preview'), deadlinePreview());
+  };
+
+  /** Extend (+1) or Shorten (-1) by the minutes chosen, with the reason. */
+  function adjustDeadline(sign, node) {
+    var id = S.drawer.id;
+    var info = (S.drawer.data || {}).deadline || {};
+    if (!id) return;
+    var minutes = deadlineMinutes();
+    var reason = trim(S.forms['dr.dl.reason']).slice(0, 120);
+    var problem = null;
+    if (!minutes) problem = 'Pick a time or type a whole number of minutes.';
+    else if (Number(info.maxAdjust) && minutes * 60 > Number(info.maxAdjust)) {
+      problem = 'At most ' + exactSpan(info.maxAdjust) + ' either way.';
+    } else if (!reason) problem = 'Give a reason: it goes on the record.';
+    if (problem) {
+      disarm();
+      S.drawer.answer = { ok: false, text: problem };
+      drawDrawer();
+      return;
+    }
+    if (!confirmed(node)) {
+      // Another number typed is not what the armed click named.
+      if (S.armed) S.armed.bind = 'dr.dl.min';
+      return;
+    }
+    write('adjustDeadline', { id: id, seconds: sign * minutes * 60, reason: reason }, 'deadline:' + id, node)
+      .then(function (reply) {
+        if (!reply || S.drawer.id !== id) return;
+        drawerAnswer(reply);
+        if (reply.ok) {
+          S.forms['dr.dl.min'] = '';
+          S.forms['dr.dl.reason'] = '';
+          if (S.section === 'contracts') loadContracts();
+        }
+        drawDrawer();
+        loadContract();
+      });
+  }
+
+  ACTIONS['dl-extend'] = function (node) { adjustDeadline(1, node); };
+  ACTIONS['dl-shorten'] = function (node) { adjustDeadline(-1, node); };
 
   ACTIONS.settle = function (node) {
     var line = node.getAttribute('data-line');

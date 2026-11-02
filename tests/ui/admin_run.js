@@ -3075,6 +3075,157 @@ async function main() {
     clean(app, 'never stored');
   })();
 
+  /* ---- a contract's deadline: Extend and Shorten on its view ---- */
+  await (async function () {
+    const deadline = { left: 5400, stopped: false, adjustable: true, maxAdjust: 86400, minLeft: 300 };
+    const server = standardServer({
+      contract: contractDetail({ deadline: deadline }),
+      adjustDeadline: function (data) {
+        return { ok: true, message: 'Extended by 1 h: 1 h 30 min left before, 2 h 30 min left now.',
+          data: { seconds: data.seconds, leftBefore: 5400, leftAfter: 5400 + data.seconds } };
+      },
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    const drawer = app.drawer();
+    it('the contract view shows the exact time left, with Extend, Shorten and the quick picks', function () {
+      has(app.text(drawer), 'Deadline');
+      has(app.text(app.byId('dr-dl-left')), '1 h 30 min');
+      ['15 min', '30 min', '1 h', '2 h', 'Extend', 'Shorten'].forEach(function (label) {
+        truthy(app.button(label, drawer), label);
+      });
+      truthy(drawer.querySelector('[data-bind="dr.dl.min"]'), 'a box for a number of minutes');
+      truthy(drawer.querySelector('[data-bind="dr.dl.reason"]'), 'a reason box');
+    });
+    app.click(app.button('Extend', app.drawer()));
+    await settled();
+    it('refuses with no time picked, sending nothing', function () {
+      eq(app.requests('adjustDeadline').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'Pick a time');
+    });
+    app.click(app.button('1 h', app.drawer()));
+    await settled();
+    it('a quick pick fills the minutes and shows the time left after either way', function () {
+      eq(app.drawer().querySelector('[data-bind="dr.dl.min"]').value, '60');
+      const preview = app.text(app.byId('dr-dl-preview'));
+      has(preview, 'Extend: 2 h 30 min left after');
+      has(preview, 'Shorten: 30 min left after');
+    });
+    app.click(app.button('Extend', app.drawer()));
+    await settled();
+    it('refuses with no reason, sending nothing', function () {
+      eq(app.requests('adjustDeadline').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'Give a reason');
+    });
+    app.type(app.drawer().querySelector('[data-bind="dr.dl.min"]'), '100');
+    it('a typed number of minutes updates the preview as it is typed', function () {
+      has(app.text(app.byId('dr-dl-preview')), 'Shorten: not by this much');
+      has(app.text(app.byId('dr-dl-preview')), 'the most is 1 h 25 min');
+      has(app.text(app.byId('dr-dl-preview')), 'Extend: 3 h 10 min left after');
+    });
+    app.type(app.drawer().querySelector('[data-bind="dr.dl.min"]'), '45');
+    app.type(app.drawer().querySelector('[data-bind="dr.dl.reason"]'), 'Server crash cost them time');
+    const extend = app.button('Extend', app.drawer());
+    app.click(extend);
+    await settled();
+    it('Extend takes two clicks: the first only arms it', function () {
+      eq(app.requests('adjustDeadline').length, 0);
+      truthy(extend.classList.contains('is-armed'));
+      has(app.text(extend), 'Click again to extend');
+    });
+    app.fire(3000);
+    it('and it disarms itself after three seconds', function () {
+      falsy(extend.classList.contains('is-armed'));
+    });
+    app.click(extend);
+    app.click(extend);
+    await settled();
+    it('the second click extends by the minutes, in seconds, with the reason', function () {
+      eq(app.requests('adjustDeadline').length, 1);
+      eq(app.last('adjustDeadline').data, { id: 'ct00000001', seconds: 2700, reason: 'Server crash cost them time' });
+      has(app.text(app.drawer().querySelector('.answer')), '2 h 30 min left now');
+      truthy(app.requests('contract').length >= 2, 'the contract is read again');
+    });
+    app.click(app.button('30 min', app.drawer()));
+    app.type(app.drawer().querySelector('[data-bind="dr.dl.reason"]'), 'Agreed in the ticket');
+    const shorten = app.button('Shorten', app.drawer());
+    app.click(shorten);
+    await settled();
+    it('Shorten takes two clicks too', function () {
+      eq(app.requests('adjustDeadline').length, 1);
+      has(app.text(shorten), 'Click again to shorten');
+    });
+    app.click(shorten);
+    await settled();
+    it('and sends a negative number of seconds', function () {
+      eq(app.requests('adjustDeadline').length, 2);
+      eq(app.last('adjustDeadline').data, { id: 'ct00000001', seconds: -1800, reason: 'Agreed in the ticket' });
+    });
+    server.adjustDeadline = { ok: false, err: 'min_left', message: 'Not shortened: it has 10 min left, and at least '
+      + '5 min must remain (Config.Limits.StaffDeadlineMinLeftSeconds). The most you can shorten it by is 5 min.' };
+    app.click(app.button('15 min', app.drawer()));
+    app.type(app.drawer().querySelector('[data-bind="dr.dl.reason"]'), 'x');
+    const again = app.button('Shorten', app.drawer());
+    app.click(again);
+    app.click(again);
+    await settled();
+    it('a refusal shows the server\'s words', function () {
+      const answer = app.drawer().querySelector('.answer');
+      truthy(answer.classList.contains('is-error'));
+      has(app.text(answer), 'The most you can shorten it by is 5 min.');
+    });
+    clean(app, 'deadline');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ contract: contractDetail({ deadline: { left: 900, stopped: true,
+      adjustable: true, maxAdjust: 86400, minLeft: 300 } }) }));
+    app.open(READER);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    it('a reader sees the time left, and Extend and Shorten disabled, sending nothing', function () {
+      has(app.text(app.byId('dr-dl-left')), '15 min');
+      has(app.text(app.drawer()), 'its clock is stopped');
+      ['Extend', 'Shorten', '1 h'].forEach(function (label) {
+        truthy(app.button(label, app.drawer()).disabled, label + ' disabled');
+      });
+      app.click(app.button('Extend', app.drawer()));
+      eq(app.requests('adjustDeadline').length, 0);
+    });
+    clean(app, 'deadline reader');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ contract: contractDetail({ deadline: { left: 0, adjustable: false } }) }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    it('a closed contract offers no Extend or Shorten', function () {
+      has(app.text(app.drawer()), 'Only a live contract');
+      eq(app.drawer().querySelectorAll('button').filter(function (b) {
+        return /^dl-/.test(b.getAttribute('data-act') || '');
+      }).length, 0);
+    });
+    app.nav('actions');
+    await settled();
+    it('Staff actions > Deadlines points to Extend and Shorten in Contracts', function () {
+      has(app.main(), 'Extend or Shorten under Deadline');
+      lacks(app.main(), 'the panel has no button that sets one');
+    });
+    clean(app, 'deadline closed');
+  })();
+
   /* ---- staff freeze: Freeze and Unfreeze under Players ---- */
   await (async function () {
     let frozen = null;

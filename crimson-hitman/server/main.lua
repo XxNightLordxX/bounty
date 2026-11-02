@@ -216,6 +216,10 @@ local DEFAULTS = {
         -- answer; checked below.
         MaxPayoutSlots = 1,
         JailZone = { x = 1693.3, y = 2569.5, radius = 300 },
+        -- The admin panel's Extend and Shorten on a contract's deadline:
+        -- read on every use, where a nil is a comparison that throws.
+        StaffDeadlineMaxAdjustSeconds = 86400,
+        StaffDeadlineMinLeftSeconds = 300,
     },
     --- Absent read as off, and an anonymous client calling a named operative
     --- on a phone that cannot mask was dialled from their own number.

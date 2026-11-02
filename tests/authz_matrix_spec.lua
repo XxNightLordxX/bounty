@@ -888,7 +888,7 @@ describe('the admin panel requests', function()
     --- holds crimson.admin: the grid's own admin column.
     local OPS = { 'access', 'overview', 'contracts', 'contract', 'reviews', 'logs', 'player',
                   'settings', 'diag', 'void', 'settle', 'resolve', 'setSetting',
-                  'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois' }
+                  'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois', 'adjustDeadline' }
 
     local function ask(src, op, data)
         Env.clientEvents = {}

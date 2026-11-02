@@ -45,6 +45,9 @@ local OPS = {
     -- releasing move no money and stop nothing for good, and are writes as
     -- void and settle are.
     frozen = READ, freeze = WRITE, unfreeze = WRITE,
+    -- A live contract's deadline moved later or sooner (Admin.adjustDeadline):
+    -- the same write as void, on the contract's view.
+    adjustDeadline = WRITE,
     whois = IDENTITY,
 }
 
@@ -82,7 +85,7 @@ Panel.OPS = OPS
 --- after a recovery that failed.
 local WAITS_FOR_RECOVERY = {
     void = true, settle = true, resolve = true, setSetting = true, resetSetting = true,
-    resetSettings = true, refresh = true, freeze = true, unfreeze = true,
+    resetSettings = true, refresh = true, freeze = true, unfreeze = true, adjustDeadline = true,
 }
 
 --- How long one overview is shared between requests. Each open panel asks
@@ -573,6 +576,13 @@ local function wholeNumber(value, min, max)
     n = math.tointeger(n)
     if not n or (min and n < min) or (max and n > max) then return nil end
     return n
+end
+
+--- How far staff may move a deadline either way, and the least run time a
+--- shortening must leave (Config.Limits).
+local function adjustLimits()
+    return math.max(60, math.floor(tonumber(Config.Limits.StaffDeadlineMaxAdjustSeconds) or 86400)),
+        math.max(0, math.floor(tonumber(Config.Limits.StaffDeadlineMinLeftSeconds) or 300))
 end
 
 local function shortText(value, max)
@@ -1070,9 +1080,109 @@ H.contract = function(src, data)
         escrow = escrow, hitmen = operatives, amendments = amendments,
         timeline = timeline, stuck = stuck,
         canVoid = not CH.TERMINAL[contract.state],
+        -- The exact run time left (staff see it; players see its band), and
+        -- whether Extend and Shorten apply: only while the deadline still
+        -- runs, active or accepted. The limits the server holds them to.
+        deadline = {
+            left = Util.runLeft(contract), stopped = contract.paused_since ~= nil,
+            adjustable = (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED)
+                and contract.deadline_at ~= nil,
+            maxAdjust = adjustLimits(),
+            minLeft = select(2, adjustLimits()),
+        },
         -- On hold by staff (server/freeze.lua), with which of its parties
         -- this staff member may be told.
         frozen = frozenShown(contract, hitmen, canIdentify),
+    }
+end
+
+--- Run time as staff read it, to the second: '1 h 05 min', '25 min 10 s'.
+local function exactSpan(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+    local h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
+    local out = {}
+    if h > 0 then out[#out + 1] = h .. ' h' end
+    if m > 0 or (h > 0 and s > 0) then out[#out + 1] = (h > 0 and ('%02d'):format(m) or tostring(m)) .. ' min' end
+    if s > 0 or #out == 0 then out[#out + 1] = s .. ' s' end
+    return table.concat(out, ' ')
+end
+
+--- Extend or shorten a live contract's deadline (Admin.adjustDeadline):
+--- the panel's Extend and Shorten, on the contract's view. `seconds` is
+--- signed, a whole number, not zero and within
+--- Config.Limits.StaffDeadlineMaxAdjustSeconds either way; a reason is
+--- required, and kept in the log (staff_deadline_adjust).
+H.adjustDeadline = function(src, data)
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    local maxAdjust = adjustLimits()
+    local seconds = wholeNumber(data.seconds, -maxAdjust, maxAdjust)
+    if not seconds or seconds == 0 then
+        return false, CH.ERR.INVALID_INPUT, ('Give a whole number of seconds, not zero, of at most %s '
+            .. 'either way (Config.Limits.StaffDeadlineMaxAdjustSeconds).'):format(exactSpan(maxAdjust))
+    end
+    local reason = shortText(data.reason, 120)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+
+    local ok, err, detail = deps.admin.adjustDeadline(src, id, seconds, reason)
+    if not ok then
+        if err == 'recovering' or err == 'recovery_failed' then return false, err, deps.admin.notRecovered() end
+        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
+        if err == CH.ERR.BAD_STATE then
+            return false, err, 'Only a live contract (active or accepted) has a deadline to move.'
+        end
+        if err == 'no_deadline' then return false, err, 'That contract has no deadline to move.' end
+        if err == 'min_left' then
+            if (detail.most or 0) <= 0 then
+                return false, err, ('Not shortened: it has %s left, and at least %s must remain '
+                    .. '(Config.Limits.StaffDeadlineMinLeftSeconds). It cannot be shortened now.')
+                    :format(exactSpan(detail.left), exactSpan(detail.minLeft))
+            end
+            return false, err, ('Not shortened: it has %s left, and at least %s must remain '
+                .. '(Config.Limits.StaffDeadlineMinLeftSeconds). The most you can shorten it by is %s.')
+                :format(exactSpan(detail.left), exactSpan(detail.minLeft), exactSpan(detail.most))
+        end
+        if err == 'at_limit' then
+            return false, err, ('Not extended: its lifetime is already %s from now '
+                .. '(Config.Limits.ContractLifetimeSeconds), and the deadline is at it.')
+                :format(exactSpan(Config.Limits.ContractLifetimeSeconds))
+        end
+        if err == 'bad_adjust' then
+            return false, CH.ERR.INVALID_INPUT, ('At most %s either way '
+                .. '(Config.Limits.StaffDeadlineMaxAdjustSeconds).'):format(exactSpan(maxAdjust))
+        end
+        if err == CH.ERR.LOCKED then
+            return false, err, 'The deadline was moving as you asked (a pause ending). Try again.'
+        end
+        return false, err, 'Not changed: the store did not take it. Try again in a moment.'
+    end
+
+    local moved = math.abs(detail.seconds)
+    local message
+    if detail.seconds > 0 then
+        message = ('Extended by %s: %s left before, %s left now.')
+            :format(exactSpan(moved), exactSpan(detail.left_before), exactSpan(detail.left_after))
+        if detail.lifetime == 'extended' then
+            message = message .. (' The new deadline passed its lifetime, so the lifetime was '
+                .. 'extended by %s too.'):format(exactSpan(moved))
+        elseif detail.lifetime == 'capped' then
+            message = message .. (' The new deadline passed its lifetime, so the lifetime was '
+                .. 'extended to its most, %s from now (Config.Limits.ContractLifetimeSeconds)%s.')
+                :format(exactSpan(Config.Limits.ContractLifetimeSeconds),
+                    moved < detail.requested and (', and the deadline only as far as it: %s of the %s asked')
+                        :format(exactSpan(moved), exactSpan(detail.requested)) or '')
+        end
+    else
+        message = ('Shortened by %s: %s left before, %s left now.')
+            :format(exactSpan(moved), exactSpan(detail.left_before), exactSpan(detail.left_after))
+    end
+    if detail.paused then
+        message = message .. ' Its clock is stopped now; it runs down from there once it runs again.'
+    end
+    message = message .. ' Every party was told its time changed, with no figures.'
+    return true, nil, message, {
+        seconds = detail.seconds, leftBefore = detail.left_before, leftAfter = detail.left_after,
+        deadline = detail.new_deadline, lifetime = detail.lifetime, expires = detail.new_expires,
     }
 end
 

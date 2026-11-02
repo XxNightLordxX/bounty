@@ -216,6 +216,9 @@ function serverStub() {
           accepted_at: NOW - 9000, left_at: NOW - 5000, claims: 0, stake: 0 }],
       amendments: [{ id: 'am1', kind: 'extend_deadline', proposer: 'the client', expires_at: NOW + 600,
         payload: { seconds: 3600, note: REASON } }],
+      // The Deadline card: the exact time left, quick picks, minutes, a
+      // reason, Extend and Shorten.
+      deadline: { left: 37230, stopped: true, adjustable: true, maxAdjust: 86400, minLeft: 300 },
       timeline: (function () {
         const out = [];
         for (let i = 0; i < 20; i++) {
@@ -596,6 +599,45 @@ async function main() {
     const inDrawer = await page.evaluate(measure, { tablesFit: size.tablesFit, scope: '#drawer' });
     it(at + ': the drawer fits, with nothing cut off, too small to hit or too small to read', function () {
       none(inDrawer, 'drawer');
+    });
+
+    // The Deadline card: every control inside the drawer, side by side or
+    // wrapped, never past its edge; Shorten armed stays where it was.
+    await page.fill('#drawer [data-bind="dr.dl.min"]', '90');
+    await page.fill('#drawer [data-bind="dr.dl.reason"]', 'A reason long enough to fill the box at a phone\'s width');
+    await page.waitForTimeout(50);
+    const deadline = await page.evaluate(function () {
+      const d = document.getElementById('drawer').getBoundingClientRect();
+      const acts = ['dl-pick', 'dl-extend', 'dl-shorten'];
+      const out = { outside: [], count: 0 };
+      document.querySelectorAll('#drawer button, #drawer [data-bind^="dr.dl"]').forEach(function (b) {
+        const act = b.getAttribute('data-act') || '';
+        if (acts.indexOf(act) === -1 && !(b.getAttribute('data-bind') || '').startsWith('dr.dl')) return;
+        out.count++;
+        const r = b.getBoundingClientRect();
+        if (r.left < d.left - 0.5 || r.right > d.right + 0.5) out.outside.push(act || b.getAttribute('data-bind'));
+        if (r.height < 28) out.outside.push((act || b.getAttribute('data-bind')) + ' is ' + r.height + 'px tall');
+      });
+      const preview = document.getElementById('dr-dl-preview');
+      out.preview = preview ? preview.textContent : '';
+      const p = preview.getBoundingClientRect();
+      out.previewInside = p.left >= d.left - 0.5 && p.right <= d.right + 0.5;
+      const b = document.querySelector('#drawer [data-act="dl-shorten"]');
+      const before = b.getBoundingClientRect();
+      b.click();
+      const after = b.getBoundingClientRect();
+      const cfm = b.querySelector('.cfm');
+      out.label = cfm && getComputedStyle(cfm).visibility === 'visible' ? cfm.textContent : '';
+      out.moved = Math.abs(after.left - before.left) + Math.abs(after.top - before.top);
+      return out;
+    });
+    it(at + ': the deadline card\'s picks, minutes, reason, Extend and Shorten fit inside the drawer', function () {
+      truthy(deadline.count === 8, deadline.count + ' controls');
+      truthy(deadline.outside.length === 0, deadline.outside.join(', '));
+      truthy(deadline.previewInside, 'the time left after spills out of the drawer');
+      truthy(/Extend: 11 h 50 min 30 s left after/.test(deadline.preview), deadline.preview);
+      truthy(deadline.moved < 1 && /Click again to shorten/.test(deadline.label),
+        'armed Shorten moved ' + deadline.moved + 'px, saying ' + deadline.label);
     });
 
     // An armed button keeps its size, so a second click lands on it.

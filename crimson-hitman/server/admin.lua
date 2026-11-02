@@ -1202,6 +1202,160 @@ function Admin.void(src, contractId, reason)
     return true
 end
 
+--- What every party of a contract staff moved the deadline of is told: that
+--- it moved and which way, never by how much, to when, by whom or why.
+Admin.DEADLINE_TEXT = {
+    title     = 'Contract time',
+    extended  = 'Staff have extended this contract\'s time.',
+    shortened = 'Staff have shortened this contract\'s time.',
+}
+
+--- The states whose deadline staff may move: the ones it still runs in.
+local DEADLINE_STATES = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true }
+
+--- Tell every party of a contract its deadline moved, in the same words
+--- whoever they are, and move their open app on: the placer and each active
+--- operative by the contract, the target (only once they are shown it) by a
+--- push that names none, as every push to a target does. That push is also
+--- what refreshes a whitelisted-job target's view.
+local function tellDeadlineMoved(contract, text)
+    local told = {}
+    local function tell(cid, named)
+        if not cid or told[cid] then return end
+        told[cid] = true
+        Notify.toCitizen(cid, Admin.DEADLINE_TEXT.title, text,
+            { bypassBudget = true, contractId = named and contract.id or nil })
+        Notify.push(cid, 'deadline', named and contract.id or nil)
+    end
+    tell(contract.creator_cid, true)
+    if Notify.shownToTarget(contract) then tell(contract.target_cid, false) end
+    for _, hitman in ipairs(Storage.readHitmen(contract.id) or {}) do
+        if hitman.state == 'active' then tell(hitman.hitman_cid, true) end
+    end
+end
+
+--- Staff move a live contract's deadline later or sooner by `seconds`
+--- (the admin panel's Extend and Shorten, on the contract's view).
+---
+--- The run time left is `deadline_at` less where the clock stands (now, or
+--- `paused_since` while it is stopped: Util.runLeft), and a pause is banked
+--- relative to the deadline as it then is (Storage.endPause). So moving
+--- `deadline_at` by `seconds` moves the run time left by exactly that,
+--- whether the clock is running, stopped by somebody's absence, the restart
+--- hold or a staff freeze: the band players see changes by the adjustment
+--- and nothing else. Through Contracts.moveDeadline, against a fresh read,
+--- as the client's own extension is.
+---
+--- Shortening never leaves less than Config.Limits.StaffDeadlineMinLeftSeconds
+--- of run time, so a slip cannot expire a contract at once. Extending is held
+--- to the lifetime (expires_at) as the client's extension is; past it, the
+--- lifetime is extended by the same amount, to at most
+--- Config.Limits.ContractLifetimeSeconds from now, and the deadline to no
+--- further than it then reaches. No money moves.
+---@param src number the staff member's source (0 for the console)
+---@param contractId string
+---@param seconds integer signed: later when positive, sooner when negative
+---@param reason string
+---@return boolean ok
+---@return string|nil err
+---@return table|nil detail what moved, or what the refusal needs said
+function Admin.adjustDeadline(src, contractId, seconds, reason)
+    local waiting = recovering()
+    if waiting then return false, waiting end
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    local maxAdjust = math.max(60, math.floor(tonumber(Config.Limits.StaffDeadlineMaxAdjustSeconds) or 86400))
+    local minLeft = math.max(0, math.floor(tonumber(Config.Limits.StaffDeadlineMinLeftSeconds) or 300))
+    seconds = math.tointeger(tonumber(seconds) or 0)
+    if not seconds or seconds == 0 or math.abs(seconds) > maxAdjust then
+        return false, 'bad_adjust', { max = maxAdjust }
+    end
+    local why = Util.sanitizeText(reason, 120)
+    if not why then return false, 'no_reason' end
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return false, CH.ERR.NOT_FOUND end
+    if not DEADLINE_STATES[contract.state] then return false, CH.ERR.BAD_STATE, { state = contract.state } end
+    if not contract.deadline_at then return false, 'no_deadline' end
+
+    local now = os.time()
+    local lifetimeCap = now + math.floor(tonumber(Config.Limits.ContractLifetimeSeconds) or 0)
+    -- What the write decided, against the row it was made over.
+    local plan
+    local moved, was = Contracts.moveDeadline(contractId, function(current)
+        plan = nil
+        local deadline = tonumber(current.deadline_at)
+        if not DEADLINE_STATES[current.state] or not deadline then
+            plan = { refused = 'gone' }
+            return current.deadline_at
+        end
+        -- Unclamped (Util.runLeft stops at 0): a deadline already gone
+        -- by the clock is that far behind, and an extension makes up that
+        -- much of it first.
+        local left = deadline - (tonumber(current.paused_since) or now)
+        local expires = tonumber(current.expires_at)
+        if seconds < 0 then
+            local most = math.max(0, left - minLeft)
+            if -seconds > most then
+                plan = { refused = 'min_left', most = most, left = math.max(0, left), minLeft = minLeft }
+                return deadline
+            end
+            plan = { left = left, expires = expires }
+            return deadline + seconds
+        end
+        local target = deadline + seconds
+        local newExpires, lifetime = expires, 'unchanged'
+        if expires and target > expires then
+            newExpires = math.max(expires, math.min(expires + seconds, lifetimeCap))
+            lifetime = newExpires >= expires + seconds and 'extended' or 'capped'
+            if target > newExpires then target = newExpires end
+        end
+        if target <= deadline then
+            plan = { refused = 'at_limit', left = math.max(0, left) }
+            return deadline
+        end
+        plan = { left = left, expires = expires, newExpires = newExpires, lifetime = lifetime }
+        return target
+    end)
+    if plan and plan.refused == 'gone' then return false, CH.ERR.BAD_STATE end
+    if plan and plan.refused then return false, plan.refused, plan end
+    if not moved or not plan or not was then return false, CH.ERR.LOCKED end
+
+    -- The lifetime after the deadline: the other way round, a deadline
+    -- refused as locked left a lifetime extended for nothing. Should the
+    -- lifetime not take, the deadline is put back by what this moved it.
+    if plan.newExpires and plan.expires and plan.newExpires > plan.expires then
+        local wrote, err = pcall(Storage.setContractFields, contractId, { expires_at = plan.newExpires })
+        if not wrote then
+            Log.always(('staff extending contract %s: its lifetime could not be written (%s); the '
+                .. 'deadline is put back'):format(contractId, Util.dbError(err)))
+            local by = moved - was
+            Contracts.moveDeadline(contractId, function(current)
+                return (current.deadline_at or moved) - by
+            end, 10)
+            return false, CH.ERR.SERVER_ERROR
+        end
+    end
+
+    local applied = moved - was
+    local detail = {
+        seconds = applied, requested = seconds, reason = why,
+        old_deadline = was, new_deadline = moved,
+        left_before = math.max(0, plan.left), left_after = math.max(0, plan.left + applied),
+        paused = contract.paused_since ~= nil or nil,
+        lifetime = applied > 0 and plan.lifetime or nil,
+        old_expires = plan.newExpires ~= plan.expires and plan.expires or nil,
+        new_expires = plan.newExpires ~= plan.expires and plan.newExpires or nil,
+    }
+    Audit.staff('staff_deadline_adjust', callerCid(src), contractId, detail)
+    logNow()
+
+    local fresh = Storage.readContract(contractId) or contract
+    tellDeadlineMoved(fresh, applied > 0 and Admin.DEADLINE_TEXT.extended or Admin.DEADLINE_TEXT.shortened)
+    if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
+    return true, nil, detail
+end
+
 --- Whom a line is owed to, as /ch-stuck names them to `src`: a role to
 --- staff who may not see who is behind an anonymous party.
 local function partyFor(src, contract, cid)
