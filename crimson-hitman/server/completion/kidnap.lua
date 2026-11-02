@@ -325,6 +325,9 @@ local REFUSED_WORDS = {
     [CH.ERR.NOT_PARTICIPANT] = 'You are no longer on this contract.',
     [CH.ERR.LOCKED] = 'Another payout on this contract was being settled at '
         .. 'the same moment, and it got there first.',
+    -- Staff put it on hold while the payout was being settled
+    -- (server/freeze.lua). Plain, and never which party it is about.
+    [CH.ERR.CONTRACT_FROZEN] = 'This contract is on hold by staff.',
 }
 
 --- The person who placed the contract, told a handover they were asked to
@@ -347,6 +350,11 @@ function Kidnap.cancel(contractId, hitmanCid, reason)
     if not active[k] then return false end
     active[k] = nil
     Audit.action('kidnap_cancelled', hitmanCid, contractId, { reason = reason })
+    -- Stopped by a staff freeze (Freeze.freeze): the hitman's page is told
+    -- it is on hold, not that the handover ended for no reason.
+    if reason == 'on_hold' then
+        remember(k, { outcome = 'refused', reason = CH.ERR.CONTRACT_FROZEN })
+    end
     return true
 end
 

@@ -230,9 +230,14 @@ describe('every action on a contract on hold is refused, with nothing charged', 
         refused('the frozen player placing one', s.contracts.create(f.creator,
             { targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
               reward = { baseline = { cash = 100 } } }))
-        refused('a contract placed on the frozen player', s.contracts.create(f.hitman2,
+        -- Placed on the frozen player: refused as a protected target is, so
+        -- a stranger is never told staff hold them.
+        local okOn, errOn = s.contracts.create(f.hitman2,
             { targetCid = 'CREATOR1', reason = 'x', mode = CH.MODE.COMPETITIVE,
-              reward = { baseline = { cash = 100 } } }))
+              reward = { baseline = { cash = 100 } } })
+        falsy(okOn, 'a contract placed on the frozen player: went through')
+        eq(errOn, CH.ERR.TARGET_PROTECTED, 'a contract placed on the frozen player: refused as '
+            .. tostring(errOn))
         refused('the payout', s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}))
         refused('arming a handover', s.kidnap.arm(c.id, 'HITMAN01'))
         refused('the buyout', s.bailout.buy(f.target, c.id))

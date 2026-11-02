@@ -107,7 +107,8 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 - **Paused before a restart** (`Config.Restart`): every live contract is
   paused for the last half hour before a scheduled txAdmin restart, with one
   notice, until the server is back (or the restart is skipped, or 45 minutes
-  pass).
+  pass). No hit goes through meanwhile: no kill is paid and no buyout closes
+  a contract; the placer can still withdraw one.
 - **Cancelled officer contracts** (`Config.Advisory.OnCancel`): law
   enforcement is told when a contract on one of them is called off.
 - **Staff freeze**: from **Players** in the admin panel, staff with
@@ -627,7 +628,7 @@ How long things last. The deadline runs only while the placer, the target and on
 | `Config.Limits.ContractLifetimeSeconds` | `172800` | The absolute ceiling, pauses included, from the end of the five minutes a contract is placed in. Separate from the deadline above: it keeps running whoever is away, and is what ends a contract left on the board with nobody holding it. Reaching it while the deadline still has time on it hands the hitman's stake back. |
 | `Config.Limits.StaffDeadlineMaxAdjustSeconds` | `86400` | The most staff may extend or shorten one contract's deadline by at once, from the admin panel (**Extend** and **Shorten** on the contract's view). 60 to 2592000. |
 | `Config.Limits.StaffDeadlineMinLeftSeconds` | `300` | The least run time a staff shortening may leave, so a slip cannot expire a contract at once; the refusal says the most it can be shortened by. 0 to 86400. |
-| `Config.Restart.PauseBeforeSeconds` | `1800` | Every live contract is paused from the first txAdmin restart warning (`txAdmin:events:scheduledRestart`, sent 30, 15, 10, 5, 4, 3, 2 and 1 minutes before) with at most this many seconds to go: deadlines stop, and nothing expires (the lifetime included), no queued buyout pays out and no handover finishes or is armed until the server is back. Players get one notice, *Contracts are paused until the server restart.* The pause ends when the resource starts again; the time it lasted is added back to every deadline. `0` turns it off; 0 to 3600. |
+| `Config.Restart.PauseBeforeSeconds` | `1800` | Every live contract is paused from the first txAdmin restart warning (`txAdmin:events:scheduledRestart`, sent 30, 15, 10, 5, 4, 3, 2 and 1 minutes before) with at most this many seconds to go: deadlines stop, and nothing expires (the lifetime included), no kill is claimed, no buyout closes a contract (an instant one is refused before anything is charged; one queued behind a hitman waits) and no handover finishes or is armed until the server is back. The placer's cancel and an agreed cancel still work: withdrawing a contract is not a hit. Players get one notice, *Contracts are paused until the server restart.* The pause ends when the resource starts again; the time it lasted is added back to every deadline. `0` turns it off; 0 to 3600. |
 | `Config.Restart.MaxHoldMinutes` | `45` | The pause ends anyway when the restart has not come this long after it began, or at once when staff skip it in txAdmin (`txAdmin:events:scheduledRestartSkipped`, or the older `skippedNextScheduledRestart`). A pause never ends another: a contract on hold by staff, or with a party away, stays stopped. 1 to 240. |
 | `Config.Limits.TargetCooldownAfterResolveSeconds` | `1800` | How long nobody may place a contract on a person after one on them closes; not after one nobody took up that was withdrawn or ran out (that cost the target nothing). |
 | `Config.Limits.SameCreatorSameTargetCooldownSeconds` | `7200` | How long the same placer, on any character, waits before placing on the same target again. |
@@ -2162,8 +2163,16 @@ target, the placer or an active operative of is **on hold**:
   informant, informant tip, amendment, cancel with refund or expiry. Each is
   refused as `contract_frozen`, *This contract is on hold by staff.*, and
   nothing is charged, refunded or moved. A buyout already paid waits until
-  the release. **Void contract** still works: it is your own decision;
+  the release; one paid in the moment the freeze landed is handed back, and
+  the target is told it is on hold and that their payment was returned. A
+  handover counting when the freeze lands is stopped, and its hitman told the
+  contract is on hold. A kill made while it is on hold opens nothing, so
+  there is nothing to claim once it is released. **Void contract** still
+  works: it is your own decision;
 - they cannot place or take a contract, and nobody can place one on them.
+  A frozen player placing one is told *This contract is on hold by staff.*;
+  somebody placing one on a frozen player is told only *That target cannot
+  be listed right now.*, as for a protected target.
 
 The frozen player's phone says *Staff have put your contracts on hold.* (and
 *Your contracts are no longer on hold.*); every other party of each contract

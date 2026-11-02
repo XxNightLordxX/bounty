@@ -753,7 +753,9 @@ end
 ---
 --- The proposer is named by role rather than by citizen id, and an
 --- anonymous hitman is named by their alias — a proposal is not a hole in
---- anonymity just because it carries a name field.
+--- anonymity just because it carries a name field. A party who chose to be
+--- seen is named where the projection names them: a named placer to every
+--- party, a named operative to the placer.
 ---@param actor table
 ---@param contractId string
 ---@return table[]|nil proposals
@@ -787,6 +789,13 @@ function Amendments.openFor(actor, contractId)
         else
             local hitman = Storage.readHitman(contractId, proposal.proposer)
             proposerName = hitman and hitman.alias or 'An operative'
+            -- One who took it under their name is named to the person who
+            -- placed it, as their roster names them (Projection); to anybody
+            -- else, and always for one who took it anonymously, the alias.
+            if hitman and hitman.anon ~= true and type(hitman.hitman_name) == 'string'
+                and actor.cid == contract.creator_cid then
+                proposerName = hitman.hitman_name
+            end
         end
 
         out[#out + 1] = {

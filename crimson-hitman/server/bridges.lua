@@ -1605,6 +1605,7 @@ local CLEANSE_REFUSALS = {
     [CH.ERR.BUSY] = 'that was busy for a moment. Try again.',
     [CH.ERR.CONTRACT_FROZEN] = 'this contract is on hold by staff.',
     [CH.ERR.APP_PAUSED] = 'contracts are paused by staff.',
+    [CH.ERR.RESTART_HOLD] = 'contracts are paused until the server restart.',
 }
 
 --- The sentence §14.40 has every buyout end on: this contract closing is
@@ -1778,6 +1779,11 @@ function Bridges.installBuyoutCommand(modules)
             if err == CH.ERR.INSUFFICIENT and type(third) == 'table' and tonumber(third.need) then
                 return answer(src, ('Could not buy it out: your bank or your cash has to cover the '
                     .. 'full %s on its own; it is never split.'):format(dollars(third.need)))
+            end
+            -- Put on hold by staff after the charge: the premium came back.
+            if err == CH.ERR.CONTRACT_FROZEN and type(third) == 'table' and third.refunded then
+                return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[err]
+                    .. ' Your payment was returned.')
             end
             return answer(src, 'Could not buy it out: ' .. (CLEANSE_REFUSALS[err] or tostring(err)))
         end

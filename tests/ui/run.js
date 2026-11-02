@@ -6400,6 +6400,15 @@ async function main() {
     });
     void heldPoll;
 
+    /* Stopped by a staff freeze (sweep 2, fix 3): on hold, and never that
+       it finished, which a countdown the freeze stopped had not. */
+    const frozenEnd = await endedWith({ outcome: 'refused', reason: 'contract_frozen' });
+    it('tells a hitman whose handover a freeze stopped that it is on hold', function () {
+      const said = frozenEnd.notice();
+      truthy(said.indexOf('This contract is on hold by staff.') !== -1, said);
+      falsy(said.indexOf('finished') !== -1, said);
+    });
+
     const tooSoon = await endedWith({ outcome: 'refused', reason: 'slot_cooldown' });
     it('names the wait between payouts when that is why', function () {
       truthy(tooSoon.notice().indexOf('very recently') !== -1, tooSoon.notice());
@@ -7044,6 +7053,25 @@ async function main() {
           'the words a target can act on are missing: ' + said);
       });
     }
+
+    /* Put on hold by staff after the premium was taken (sweep 2, fix 5):
+       the server hands it back and says so in the reply. */
+    const frozen = boot({
+      list: BOARD, ledger: LEDGER, mine: ON_ME,
+      bailout: { ok: false, err: 'contract_frozen', data: { refunded: true } }
+    });
+    await settle(); await settle();
+    tab(frozen, 'onme');
+    await settle(); await settle();
+    click(frozen, 'Buy out — $15,000');
+    await settle();
+    click(frozen, 'Pay $15,000');
+    await settle(); await settle();
+    const frozenSaid = frozen.notice();
+    it('says a buyout frozen after its charge is on hold and was returned', function () {
+      truthy(frozenSaid.indexOf('on hold by staff') !== -1, frozenSaid);
+      truthy(frozenSaid.indexOf('payment was returned') !== -1, frozenSaid);
+    });
   })();
 
   /* Two figures the server has always sent and the page never read. */

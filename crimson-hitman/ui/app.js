@@ -1758,6 +1758,13 @@
     // instead, with the server's own distance and hold.
     if (result.err === 'kill_not_allowed') { return aliveOnlyRefusal(); }
 
+    // A buyout charged, then put on hold by staff before it closed the
+    // contract: the premium came back, and is said.
+    if (result.err === 'contract_frozen' && result.data && result.data.refunded) {
+      return 'This contract is on hold by staff, so your buyout did not go through. '
+        + 'Your payment was returned.';
+    }
+
     // A fee or a price that moved while it was on screen: the figure now.
     if (result.err === 'terms_changed') {
       var moved = feeMovedText(result.data);
@@ -4177,6 +4184,11 @@
       return say('The contract closed before the handover finished.');
     }
     if (ended.outcome === 'refused') {
+      // Stopped by a staff freeze, mid-countdown or as it was being paid:
+      // "finished" was untrue of the first.
+      if (ended.reason === 'contract_frozen') {
+        return say('The handover was not paid. ' + ERRORS.contract_frozen);
+      }
       var refused = {
         bad_state: 'The contract closed before the handover finished.',
         locked: 'Another payout on this contract was being settled at the same '

@@ -13,6 +13,8 @@ local Log = CrimsonBoot.requireShared('log')
 local Death = {}
 
 local Storage, Identity, Audit, Timing
+-- Asked whether staff hold a contract (Contracts.heldByStaff).
+local Contracts
 
 --- Recent damage the server saw for itself: [victimCid] = { attackerCid, at, weapon, distance }
 local damage = {}
@@ -189,6 +191,7 @@ end
 function Death.init(deps)
     Storage, Identity, Audit =
         deps.storage, deps.identity, deps.audit
+    Contracts = deps.contracts
     -- Optional: times each sampler pass for /ch-diag (server/timing.lua).
     Timing = deps.timing
     damage, pending, hitBy = {}, {}, {}
@@ -1201,9 +1204,16 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
         -- only is left as it was: the target died, will respawn, and is
         -- still to be delivered. No kill is opened on it from the victim's
         -- report or from the server's own sighting, both of which end here.
-        if contract.target_cid == victim.cid and contract.state == CH.STATE.ACCEPTED
-            and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.EITHER then
-            local hitmen = Storage.readHitmen(contract.id)
+        local hitmen = contract.target_cid == victim.cid and contract.state == CH.STATE.ACCEPTED
+            and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.EITHER
+            and Storage.readHitmen(contract.id) or nil
+        -- Nor one staff hold (server/freeze.lua): a kill made while it is
+        -- frozen opens nothing, so nothing is claimable once it is released.
+        if hitmen and Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract, hitmen) then
+            Audit.action('death_while_frozen', nil, contract.id, { victim = victim.cid })
+            hitmen = nil
+        end
+        if hitmen then
             local active = {}
             for j = 1, #hitmen do
                 if hitmen[j].state == 'active' then active[hitmen[j].hitman_cid] = true end

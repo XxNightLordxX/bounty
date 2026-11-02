@@ -375,7 +375,11 @@ function Comms.threads(actor, contractId)
 
     local hitman = Storage.readHitman(contract.id, actor.cid)
     if hitman and hitman.state == 'active' then
-        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = PLACER_ALIAS,
+        -- A placer who chose to be seen by name, as their card names them to
+        -- the contract's parties (Projection); an anonymous one by role.
+        local placer = (contract.anon_creator ~= true and type(contract.creator_name) == 'string')
+            and contract.creator_name or PLACER_ALIAS
+        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = placer,
                    lastMessageAt = Comms.lastMessageAt(contract.id, actor.cid, actor.cid) } }
     end
 

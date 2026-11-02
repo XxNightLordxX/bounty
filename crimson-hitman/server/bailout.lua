@@ -317,6 +317,15 @@ buyUnlocked = function(actor, contractId)
         end
     end
 
+    -- An instant buyout ends the contract now, and nothing ends one on the
+    -- restart hold (Contracts.restartHeld): refused before the charge. One
+    -- queued behind a hitman is taken, and waits out the hold in the queue
+    -- (Bailout.processQueue).
+    if not (engaged and Config.Bailout.ProcessingDelaySeconds > 0)
+        and Contracts and Contracts.restartHeld and Contracts.restartHeld() then
+        return false, CH.ERR.RESTART_HOLD
+    end
+
     -- Debit first: the premium is taken before any state changes, so a
     -- failure here leaves the contract exactly as it was.
     -- Which account paid is remembered, so a refund goes back where it came
@@ -625,8 +634,13 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
         payOwed(contract, refundId, targetCid, amount, account, 'bailout_refund')
         Audit.financial('bailout_refunded', targetCid, contractId, { amount = amount, reason = err })
         Bailout.clearQueue(contractId, contract.bailout_queued_at)
-        tellRefunded(contractId, targetCid, amount, refundId)
-        return false, err
+        -- Put on hold by staff between the charge and here: it did not
+        -- close another way, it is on hold, and said so.
+        local frozen = err == CH.ERR.CONTRACT_FROZEN
+        tellRefunded(contractId, targetCid, amount, refundId,
+            frozen and 'Staff put the contract on hold before your buyout went through' or nil)
+        -- And the reply says the premium came back (failText).
+        return false, err, frozen and { refunded = true } or nil
     end
 
     -- The premium, once. It is written as an owed line under an id that

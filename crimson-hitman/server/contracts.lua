@@ -59,8 +59,12 @@ function Contracts.heldByStaff(contract, hitmen)
 end
 
 --- Whether every live contract is on the restart hold: the last half hour
---- before a scheduled restart (Freeze.scheduledRestart). Nothing ends,
---- pays out a queued buyout or finishes a handover meanwhile.
+--- before a scheduled restart (Freeze.scheduledRestart). Meanwhile no hit
+--- goes through: no kill is claimed (Contracts.claimSlot), no instant
+--- buyout is charged (Bailout.buy), no queued buyout pays out, no handover
+--- is armed or finishes, and no deadline, lifetime or idle clock runs, so
+--- nothing expires. The placer's cancel and an agreed cancel stay open:
+--- withdrawing a contract is not a hit.
 ---@return boolean
 function Contracts.restartHeld()
     return Freeze ~= nil and Freeze.restartHeld()
@@ -1080,10 +1084,11 @@ local function createUnlocked(actor, req, targetActor)
     if termsErr then return nil, termsErr, terms end
 
     -- Staff have put the placer, or the person named, on hold. Before
-    -- anything is charged.
-    if Contracts.frozenPlayer(actor.cid) or Contracts.frozenPlayer(req.targetCid) then
-        return nil, CH.ERR.CONTRACT_FROZEN
-    end
+    -- anything is charged. A frozen placer is told so: it is about them. A
+    -- frozen target is refused as a protected one is, so a stranger placing
+    -- on them is never told staff hold them.
+    if Contracts.frozenPlayer(actor.cid) then return nil, CH.ERR.CONTRACT_FROZEN end
+    if Contracts.frozenPlayer(req.targetCid) then return nil, CH.ERR.TARGET_PROTECTED end
     -- Suspended by staff (server/sanctions.lua): told until when and why.
     -- Before anything is charged.
     local suspension = Contracts.suspension(actor.cid)
@@ -2993,6 +2998,9 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
 
     -- On hold by staff: no completion and no payout.
     if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- Nor on the restart hold: no hit goes through in the last half hour
+    -- before a restart (Contracts.restartHeld).
+    if Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
 
     -- The same hitman may not collect two slots back to back; without this a
     -- multi-slot contract is a respawn-camping machine (§3.5).

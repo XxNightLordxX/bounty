@@ -658,7 +658,7 @@ local suites = {
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
-    'bug_sweep_spec', 'loops_spec', 'handlers_spec',
+    'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the
