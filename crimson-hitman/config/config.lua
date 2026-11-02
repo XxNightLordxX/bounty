@@ -419,6 +419,66 @@ Config.Staff = {
     AlertRefusalsPer10Min = 30,     -- alert past this many refusals to one player in 10 min; 0 = off
 }
 -- ============================================================================
+--                                 ROLEPLAY
+-- ============================================================================
+-- Optional roleplay features, each its own block and each off as shipped
+-- (README, Roleplay features). All of them are changed from the admin panel.
+
+Config.Roleplay = Config.Roleplay or {}  -- the roleplay features, one block each
+
+Config.Roleplay.WitnessHeat = {
+    Enabled          = false,  -- a completion seen by bystanders alerts the police
+    WitnessRadius    = 60.0,   -- metres a bystander sees it from
+    MinWitnesses     = 1,      -- bystanders it takes to raise an alert
+    AlwaysAlert      = false,  -- alert on every completion, seen or not
+    SendCoords       = true,   -- give dispatch a position, fuzzed below
+    FuzzMeters       = 120.0,  -- metres that position may be off by
+    DispatchPriority = 2,      -- sc-dispatch priority of the alert
+    Title            = 'Witness report',  -- the alert's title
+    Phrases          = { -- what a witness says; {direction} is where they went
+        'a person in dark clothing fled {direction}',
+        'someone in a hood was seen running {direction}',
+        'a masked figure left the scene heading {direction}',
+    },
+    Areas            = { -- 'Name@x,y': the nearest centre names the area
+        'Legion Square@195,-934', 'Mission Row@430,-980', 'Little Seoul@-700,-900',
+        'Vespucci Beach@-1300,-1400', 'Del Perro@-1550,-500', 'Rockford Hills@-800,-200',
+        'Vinewood@300,200', 'Mirror Park@1100,-550', 'La Mesa@800,-1100',
+        'Strawberry@200,-1400', 'Davis@100,-1700', 'the docks@600,-2800',
+        'the airport@-1050,-2700', 'Sandy Shores@1850,3700', 'Grapeseed@1700,4800',
+        'Paleto Bay@-250,6300', 'Harmony@550,2700', 'Chumash@-3150,1100',
+    },
+}
+
+Config.Roleplay.EmsRelisting = {
+    Enabled        = false,  -- after a kill, no new contract on them until treated
+    TreatedMinutes = 10,     -- minutes up (not dead, not downed) that count as treated
+    RequireEMS     = false,  -- a medic's defibrillator revive is needed instead
+    MaxHoldMinutes = 120,    -- the rule lets go this long after the kill, whatever
+}
+
+Config.Roleplay.CityNews = {
+    Enabled    = false,     -- post an anonymous news item after a completion
+    AllTargets = false,     -- every target; off: whitelisted-job targets only
+    NameTarget = false,     -- {name} is the target's name; off: 'a resident'
+    App        = 'birdy',   -- 'birdy' (lb-phone PostBirdy) | 'event'
+    Account    = 'LSNews',  -- the Birdy account it posts from (must exist)
+    Event      = 'crimson-hitman:cityNews',  -- 'event': the server event fired
+    Templates  = { -- one is picked; {job}, {zone}, {time} and {name}
+        'Police are appealing for witnesses after an attack on a {job} near {zone} at {time}.',
+        'Breaking: a {job} was targeted near {zone} around {time}. Police are on scene.',
+    },
+}
+
+Config.Roleplay.DirtyPayouts = {
+    Enabled  = false,          -- pay cash and bank rewards as a dirty money item
+    Item     = 'black_money',  -- the ox_inventory item paid
+    Mode     = 'count',        -- 'count': Rate items a dollar | 'worth': one item
+    WorthKey = 'worth',        -- 'worth': the metadata key holding its value
+    Rate     = 1,              -- 'count': items paid for each dollar (no loss)
+}
+
+-- ============================================================================
 --                          ADVANCED AND DEVELOPER
 -- ============================================================================
 -- Logging, diagnostics, rate limits, json tuning and the timings of the

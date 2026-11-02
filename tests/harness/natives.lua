@@ -169,6 +169,17 @@ function Natives.install()
         local p = Env.players[ped - 1000]
         return (p ~= nil and not p._invisible) and 1 or false
     end
+    -- Which way a ped faces (degrees, anticlockwise from north) and how it
+    -- is moving: what a witness report says of where the hitman went
+    -- (server/rp_consequences.lua). A fixture sets _heading and _velocity.
+    _G.GetEntityHeading = function(ped)
+        local p = Env.players[ped - 1000]
+        return p and p._heading or 0.0
+    end
+    _G.GetEntityVelocity = function(ped)
+        local p = Env.players[ped - 1000]
+        return p and p._velocity or { x = 0.0, y = 0.0, z = 0.0 }
+    end
     _G.GetEntityHealth = function(ped)
         local p = Env.players[ped - 1000]
         return p and p._health or 0
@@ -999,6 +1010,17 @@ function Natives.exportsProxy()
             return '555-' .. tostring(tonumber(who) or Env.byCitizen[who] or who)
         end,
         AddCustomApp = function() return true end,
+        -- lb-phone's documented server export (docs.lbscripts.com, Server
+        -- exports): (username, content, attachments, replyTo, hashtags,
+        -- source), answering success and the post's id. Recorded, so a
+        -- test reads what the city was shown. A test takes it away
+        -- (noBirdy) for a build without it.
+        PostBirdy = function(_, username, content)
+            if Natives.noBirdy then error('no such export') end
+            Natives.calls.birdy = Natives.calls.birdy or {}
+            table.insert(Natives.calls.birdy, { username = username, content = content })
+            return true, #Natives.calls.birdy
+        end,
         -- The photo host allowlist is derived from this. Without a stub the
         -- pcall around it always failed, so the half of the allowlist that
         -- comes from the phone was never once exercised by a test.

@@ -83,6 +83,36 @@ local ADDED = {
         AlertPlacedPerHour = 5, AlertTargetPerDay = 3, AlertRefusalsPer10Min = 30,
     },
     ['Cooldowns.report'] = { per = 600, burst = 3 },
+    -- The roleplay features, each its own block and each off as shipped.
+    ['Roleplay'] = {
+        WitnessHeat = {
+            Enabled = false, WitnessRadius = 60.0, MinWitnesses = 1, AlwaysAlert = false,
+            SendCoords = true, FuzzMeters = 120.0, DispatchPriority = 2, Title = 'Witness report',
+            Phrases = {
+                'a person in dark clothing fled {direction}',
+                'someone in a hood was seen running {direction}',
+                'a masked figure left the scene heading {direction}',
+            },
+            Areas = {
+                'Legion Square@195,-934', 'Mission Row@430,-980', 'Little Seoul@-700,-900',
+                'Vespucci Beach@-1300,-1400', 'Del Perro@-1550,-500', 'Rockford Hills@-800,-200',
+                'Vinewood@300,200', 'Mirror Park@1100,-550', 'La Mesa@800,-1100',
+                'Strawberry@200,-1400', 'Davis@100,-1700', 'the docks@600,-2800',
+                'the airport@-1050,-2700', 'Sandy Shores@1850,3700', 'Grapeseed@1700,4800',
+                'Paleto Bay@-250,6300', 'Harmony@550,2700', 'Chumash@-3150,1100',
+            },
+        },
+        EmsRelisting = { Enabled = false, TreatedMinutes = 10, RequireEMS = false, MaxHoldMinutes = 120 },
+        CityNews = {
+            Enabled = false, AllTargets = false, NameTarget = false, App = 'birdy', Account = 'LSNews',
+            Event = 'crimson-hitman:cityNews',
+            Templates = {
+                'Police are appealing for witnesses after an attack on a {job} near {zone} at {time}.',
+                'Breaking: a {job} was targeted near {zone} around {time}. Police are on scene.',
+            },
+        },
+        DirtyPayouts = { Enabled = false, Item = 'black_money', Mode = 'count', WorthKey = 'worth', Rate = 1 },
+    },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -193,7 +223,7 @@ describe('the configuration as one short file', function()
                 and (path:match('^Limits%.StaffDeadline') ~= nil or path == 'Admin.ModeratorAce')
             -- The Staff section and the report bucket, new and whole, as
             -- ADDED says.
-            if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report') then
+            if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report' or path == 'Roleplay') then
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
             end
@@ -239,13 +269,14 @@ describe('the configuration as one short file', function()
         local text = file('crimson-hitman/config/config.lua')
         local lines = select(2, text:gsub('\n', '')) + 1
         -- 500 before the Staff section (Config.Staff: the manual payment cap
-        -- and the staff tools) and the report bucket; no room beyond them.
-        truthy(lines < 508, 'config.lua is ' .. lines .. ' lines')
+        -- and the staff tools) and the report bucket, and 60 for the
+        -- roleplay section's four blocks (rp_consequences); no room beyond.
+        truthy(lines < 568, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',
             'FEATURES: ADVISORY', 'FEATURES: EVERYTHING ELSE', 'STAFF AND PERMISSIONS',
-            'ADVANCED AND DEVELOPER' }) do
+            'ROLEPLAY', 'ADVANCED AND DEVELOPER' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')
             at = found

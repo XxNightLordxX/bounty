@@ -465,6 +465,8 @@
     suspended: 'You are suspended from contracts.',
     // Staff paused the whole app (Config.Staff.AppPaused). Nothing was taken.
     app_paused: 'Contracts are paused by staff.',
+    // Killed on a contract and not yet treated (Config.Roleplay.EmsRelisting).
+    target_recovering: 'They are still recovering.',
     // The informant tip (server/locationtip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',

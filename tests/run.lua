@@ -415,6 +415,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.thresholds'] = nil
     package.loaded['crimson-hitman.server.announce'] = nil
     package.loaded['crimson-hitman.server.reports'] = nil
+    package.loaded['crimson-hitman.server.rp_consequences'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -455,6 +456,7 @@ function _G.newStack()
     local thresholds = require('crimson-hitman.server.thresholds')
     local announce   = require('crimson-hitman.server.announce')
     local reports    = require('crimson-hitman.server.reports')
+    local rpConsequences = require('crimson-hitman.server.rp_consequences')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -515,6 +517,8 @@ function _G.newStack()
     announce.init({ storage = storage, notify = notify, audit = audit, identity = identity })
     reports.init({ storage = storage, identity = identity, audit = audit, review = review,
                    comms = comms, notify = notify })
+    rpConsequences.init({ storage = storage, identity = identity, notify = notify, audit = audit,
+                          ledger = ledger, contracts = contracts, escrow = escrow })
     meeting.init({ storage = storage, notify = notify, audit = audit })
     playtime.init({ storage = storage, identity = identity })
 
@@ -551,6 +555,8 @@ function _G.newStack()
         sanctions = sanctions, payments = payments, history = history,
         -- The staff tools.
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
+        -- The roleplay consequences.
+        rpConsequences = rpConsequences,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -568,6 +574,7 @@ function _G.newStack()
         freeze = freeze, staffContract = staffContract,
         sanctions = sanctions, payments = payments, history = history,
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
+        rpConsequences = rpConsequences,
     }
 end
 
@@ -607,7 +614,7 @@ local suites = {
     'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec', 'admin_panel_spec', 'settings_spec', 'features_spec', 'console_spec', 'staff_output_spec', 'whitelisted_view_spec', 'alerts_spec', 'admin_console_spec', 'meeting_spec', 'speed_spec', 'handover_spec', 'config_layout_spec',
     'location_tip_spec', 'informant_spec', 'freeze_spec', 'clock_rule_spec', 'untaken_terms_spec',
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
-    'staff_tools_spec',
+    'staff_tools_spec', 'rp_consequences_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

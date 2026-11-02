@@ -1848,6 +1848,12 @@ function Escrow.parkInterrupted(line, stopped)
     return true
 end
 
+--- Set by server/rp_consequences.lua: for a cash or bank line, whether this
+--- give is a hitman's payout paid as an item instead (Escrow.deliver):
+--- { item, rate } (rate items a dollar) or { item, worth = metadata key }
+--- (one item holding the figure), or nil to pay it in its own account.
+Escrow.payoutAs = nil
+
 --- Hand a single escrow line to a player. Returns false when it cannot be
 --- delivered right now — never destroys the property to force success —
 --- and, then, whether that was because they are not in the city.
@@ -1867,7 +1873,18 @@ function Escrow.deliver(recipientCid, line)
     -- by any later give, a staff pay or return included.
     local already = math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
 
-    if line.source == 'cash' or line.source == 'bank' then
+    -- A hitman's payout paid as a dirty money item instead
+    -- (Config.Roleplay.DirtyPayouts, server/rp_consequences.lua): the line
+    -- stays the cash or bank it was taken as, and only this give converts
+    -- it, at a rate that loses nothing. Anything else, or a hook that
+    -- raised, is paid in its own account as always.
+    local asItem
+    if Escrow.payoutAs and (line.source == 'cash' or line.source == 'bank') then
+        local ran, spec = pcall(Escrow.payoutAs, recipientCid, line)
+        if ran and type(spec) == 'table' and type(spec.item) == 'string' then asItem = spec end
+    end
+
+    if (line.source == 'cash' or line.source == 'bank') and not asItem then
         local account, amount = line.source, line.amount
         if already > 0 then
             amount = (tonumber(amount) or 0) - already
@@ -1912,7 +1929,9 @@ function Escrow.deliver(recipientCid, line)
     -- for staff at once rather than tried again blind, with any part that
     -- did arrive kept on the line so only the rest is ever given (afterRaise).
     local name, count, metadata
-    if line.source == 'dirty' then
+    if asItem then
+        name, count = asItem.item, line.amount
+    elseif line.source == 'dirty' then
         name, count = dirtyItemOf(line), line.amount
     elseif line.source == CH.SOURCE.ITEM then
         -- The snapshot goes back exactly as it was taken. Without it a worn
@@ -1933,9 +1952,22 @@ function Escrow.deliver(recipientCid, line)
         if count <= 0 then return true end
     end
 
+    -- The dollars still owed, as the item: Rate of it a dollar, or one item
+    -- worth the figure. Every count below is of items; what arrived is told
+    -- back to the line in dollars (afterRaise), which is what it holds.
+    local dollars
+    if asItem then
+        dollars = math.floor(tonumber(count) or 0)
+        if asItem.worth then
+            count, metadata = 1, { [asItem.worth] = dollars }
+        else
+            count = dollars * math.max(1, math.floor(tonumber(asItem.rate) or 1))
+        end
+    end
+
     -- CanCarryItem answers nil for an item it does not know.
     local fits = guarded(function()
-        return exports.ox_inventory:CanCarryItem(src, name, count)
+        return exports.ox_inventory:CanCarryItem(src, name, count, metadata)
     end)
     if not fits then return false end
 
@@ -1948,10 +1980,26 @@ function Escrow.deliver(recipientCid, line)
     local gave, raised = guarded(function()
         return exports.ox_inventory:AddItem(src, name, count, metadata)
     end)
+    if asItem and not raised and gave then
+        Audit.financial('escrow_paid_as_item', recipientCid, line.contract_id, {
+            line = line.id, source = line.source, amount = dollars, item = name, count = count,
+        })
+    end
     if not raised then return gave end
 
     local after = holding(src, name, metadata, weapon)
-    return afterRaise(recipientCid, line, name, count, raised, before, after and after - before)
+    local arrived = after and after - before
+    if asItem then
+        -- In dollars, as the line counts: a whole item worth the figure, or
+        -- Rate items to each dollar.
+        if arrived and asItem.worth then
+            arrived = arrived >= 1 and dollars or 0
+        elseif arrived then
+            arrived = arrived // math.max(1, math.floor(tonumber(asItem.rate) or 1))
+        end
+        return afterRaise(recipientCid, line, name, dollars, raised, before, arrived)
+    end
+    return afterRaise(recipientCid, line, name, count, raised, before, arrived)
 end
 
 --- What a contract holds, split by money source.

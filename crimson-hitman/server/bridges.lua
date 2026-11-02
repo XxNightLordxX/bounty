@@ -320,7 +320,13 @@ function Bridges.install(modules)
         local src = source
         if not modules.app.floodOk(src, 'useDefib') then return end
         if not modules.death or not modules.death.noteDefib then return end
-        pcall(modules.death.noteDefib, src, targetId)
+        local ran, noted = pcall(modules.death.noteDefib, src, targetId)
+        -- The same checks passed: a medic's revive, for the rule that a
+        -- target killed on a contract is treated before a new one
+        -- (Config.Roleplay.EmsRelisting with RequireEMS).
+        if ran and noted and modules.rpConsequences then
+            pcall(modules.rpConsequences.noteMedicRevive, targetId)
+        end
     end)
 
     -- A medical resource starting again may be a version with the death-state

@@ -743,6 +743,17 @@ local function validateConfig(quiet)
         end
     end
 
+    -- The roleplay consequences (server/rp_consequences.lua), checked by
+    -- their own module: a block or a setting missing is filled from
+    -- defaults.lua, and one that breaks its rule is put back, and said.
+    local rpFilled = {}
+    CrimsonBoot.require('server.rp_consequences').checkConfig(warn, rpFilled)
+    if #rpFilled > 0 and not quiet then
+        table.sort(rpFilled)
+        Log.problem(('your config.lua does not set %d roleplay setting(s); the shipped defaults '
+            .. 'are being used for them: %s.'):format(#rpFilled, table.concat(rpFilled, ', ')), #rpFilled)
+    end
+
     local mode = Config.Database.Mode
     if mode ~= 'mysql' and mode ~= 'json' and mode ~= 'memory' then
         fatal[#fatal + 1] = ('Config.Database.Mode is "%s"; expected mysql, json or memory'):format(tostring(mode))
@@ -1840,6 +1851,10 @@ function StartCrimsonHitman()
     local thresholds = CrimsonBoot.require('server.thresholds')
     local announce   = CrimsonBoot.require('server.announce')
     local reports    = CrimsonBoot.require('server.reports')
+    -- The roleplay consequences of a completion (README, Roleplay
+    -- features): witness heat, EMS before re-listing, city news and dirty
+    -- money payouts, each off as shipped.
+    local rpConsequences = CrimsonBoot.require('server.rp_consequences')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1904,6 +1919,10 @@ function StartCrimsonHitman()
     announce.init({ storage = Storage, notify = notify, audit = audit, identity = identity })
     reports.init({ storage = Storage, identity = identity, audit = audit, review = review,
                    comms = comms, notify = notify })
+    -- After contracts and escrow: it hooks the claim, the placing check and
+    -- the payout (Contracts.afterClaim, Contracts.relistHold, Escrow.payoutAs).
+    rpConsequences.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
+                          ledger = ledger, contracts = contracts, escrow = escrow })
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
@@ -1947,6 +1966,9 @@ function StartCrimsonHitman()
         -- The staff tools: the daily summary, the alert thresholds, the
         -- notice to every hitman and players' reports.
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
+        -- The roleplay consequences: the tick's look at recovering targets,
+        -- and the medic's revive the bridge hears.
+        rpConsequences = rpConsequences,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2535,6 +2557,9 @@ function Tick()
     -- thresholds' counts aged out.
     if modules.summary then job('summary.tick', modules.summary.tick) end
     if modules.thresholds then job('thresholds.sweep', modules.thresholds.sweep) end
+    -- Targets recovering from a kill on a contract, looked at
+    -- (Config.Roleplay.EmsRelisting): nothing while it is off.
+    if modules.rpConsequences then job('rp.tick', modules.rpConsequences.tick) end
     job('escrow.retryWaiting', RetryWaiting)
     if modules.notify.deliverKept then job('notify.deliverKept', DeliverKept) end
     -- Kill photos switched off (Config.Completion.KillPhotos): nothing below

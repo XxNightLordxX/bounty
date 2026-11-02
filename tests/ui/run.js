@@ -11744,6 +11744,15 @@ async function main() {
       truthy(ruled.notice().indexOf('a kill completes one') !== -1, ruled.notice());
     });
 
+    // Killed on a contract and not yet treated (Config.Roleplay.EmsRelisting).
+    const recovering = await formWith({ create: { ok: false, err: 'target_recovering' } });
+    pick(recovering, 'slot-cash-1', 5000);
+    press(recovering, 'place-submit');
+    await settle(); await settle(); await settle();
+    it('says a target killed on a contract is still recovering', function () {
+      truthy(recovering.notice().indexOf('They are still recovering.') !== -1, recovering.notice());
+    });
+
     const placed = await formWith({ create: { ok: true, data: { fulfilment: 'either',
       penaltyAmount: 0, charged: { fee: 2500, account: 'cash' } } } });
     pick(placed, 'slot-cash-1', 5000);

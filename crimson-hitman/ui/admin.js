@@ -2584,7 +2584,8 @@
               h('span.lbl', 'Remove')));
         }) : h('li.st-none', '(none)')),
         h('div.st-edit',
-          field('stl.' + key, { class: 'is-grow', placeholder: 'Add a name', 'data-enter': 'st-list-add',
+          field('stl.' + key, { class: 'is-grow', placeholder: entry.whole ? 'Add a line' : 'Add a name',
+            'data-enter': 'st-list-add',
             'data-key': key, disabled: !open, 'aria-label': 'Add to ' + entry.label }),
           btn('.is-small', 'st-list-add', { 'data-key': key, disabled: !open || null }, 'Add', 'plus'),
           writeBtn('.is-small' + (changed ? '.is-primary' : ''), 'st-list-save',
@@ -3694,7 +3695,8 @@
     var typed = trim(S.forms['stl.' + key]);
     if (!typed) return;
     var names = listDraft(entry);
-    typed.split(/[\s,]+/).forEach(function (name) {
+    // A list of phrases, templates or areas takes the line as typed.
+    (entry.whole ? [typed] : typed.split(/[\s,]+/)).forEach(function (name) {
       if (name && names.indexOf(name) === -1) names.push(name);
     });
     S.settings.drafts[key] = names;
@@ -4983,4 +4985,48 @@
       drawTools();
     }
   });
+
+  /* ---------- roleplay consequences (server/rp_consequences.lua) ------- */
+
+  GROUP_INTRO['Roleplay: Witness heat'] = 'A completion seen by bystanders alerts the police, naming nobody.';
+  GROUP_INTRO['Roleplay: EMS before re-listing'] = 'A target killed on a contract is treated before a new one.';
+  GROUP_INTRO['Roleplay: City news'] = 'An anonymous news post after a completed contract.';
+  GROUP_INTRO['Roleplay: Dirty money payouts'] = 'A hitman\'s cash or bank payout handed over as a dirty money item.';
+
+  HELP.push(
+    { title: 'Witness heat', icon: 'eye',
+      text: 'When it is on, every completion, a kill or a handover, is checked on the server for players near '
+        + 'the hitman who are no party to the contract. With enough of them, or always if set, officers get a '
+        + 'vague witness report on their phones and in sc-dispatch: a phrase, the way the hitman went, and the '
+        + 'nearest named area. A position can be sent too, moved by up to the fuzz distance. It never names the '
+        + 'hitman or the placer.',
+      links: [{ key: 'Roleplay.WitnessHeat.Enabled', view: 'features', label: 'Witness heat on or off' },
+        { key: 'Roleplay.WitnessHeat.WitnessRadius', view: 'limits', label: 'Radius and witnesses' },
+        { key: 'Roleplay.WitnessHeat.Phrases', view: 'limits', label: 'What a witness says' },
+        { key: 'Roleplay.WitnessHeat.Areas', view: 'limits', label: 'Named areas' }] },
+    { title: 'EMS before re-listing', icon: 'kit-medical',
+      text: 'When it is on, a target killed on a contract cannot have a new one placed on them straight away. '
+        + 'They have to have been up, neither dead nor downed, for the treated minutes first; the placer is '
+        + 'told they are still recovering. With the medic switch on, an on-duty medic\'s defibrillator revive '
+        + 'is needed instead. The rule always lets go after the longest hold, and it adds to the usual '
+        + 'cooldowns.',
+      links: [{ key: 'Roleplay.EmsRelisting.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Roleplay.EmsRelisting.TreatedMinutes', view: 'timers', label: 'Minutes up' },
+        { key: 'Roleplay.EmsRelisting.RequireEMS', view: 'features', label: 'A medic\'s revive' }] },
+    { title: 'City news', icon: 'newspaper',
+      text: 'When it is on, a completed contract on a whitelisted-job target, or on any target if set, posts an '
+        + 'anonymous news item. It goes out on lb-phone\'s Birdy from the configured account, or as a server '
+        + 'event another resource posts. The words come from the templates, with the target\'s job, the area '
+        + 'and the time. The target is named only if staff turn that on, and the hitman and the placer never.',
+      links: [{ key: 'Roleplay.CityNews.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Roleplay.CityNews.App', view: 'limits', label: 'Where it is posted' },
+        { key: 'Roleplay.CityNews.Templates', view: 'limits', label: 'Templates' }] },
+    { title: 'Dirty money payouts', icon: 'sack-dollar',
+      text: 'When it is on, a hitman\'s cash or bank payout is handed over as a dirty money item instead, by '
+        + 'count or as one item worth the figure. Escrow keeps the money it took, and only the payout '
+        + 'converts it, so nothing is lost. A refund to the placer goes back as it was taken. A payout that '
+        + 'does not fit in their pockets is owed, and paid when they make room or next log in.',
+      links: [{ key: 'Roleplay.DirtyPayouts.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Roleplay.DirtyPayouts.Item', view: 'money', label: 'The item' },
+        { key: 'Roleplay.DirtyPayouts.Rate', view: 'money', label: 'The rate' }] });
 })();

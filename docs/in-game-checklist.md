@@ -1393,6 +1393,19 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       and in a thread: an item is in **Needs review** with the messages. Change
       a setting and **Undo** it in **Developer > Settings history**. With
       **Daily summary** on and a webhook set, one post arrives at the hour
+- [ ] Roleplay, witness heat: turn it on, have a third player stand near the
+      hitman at a completion: officers and the MDT get a *Witness report*
+      naming a direction and an area, and nobody's name
+- [ ] Roleplay, EMS before re-listing: turn it on, complete a contract by a
+      kill, and place a new one on the same target: *They are still
+      recovering.* until they have been up for the treated minutes (or, with
+      the medic switch, until a medic's defibrillator revives them)
+- [ ] Roleplay, city news: create the Birdy account (`LSNews`), turn it on,
+      complete a contract on an on-duty officer: one anonymous post appears
+      on Birdy with the job, the area and the time
+- [ ] Roleplay, dirty money payouts: turn it on and complete a cash
+      contract: the hitman receives `black_money` for the figure, not cash;
+      with full pockets it arrives once they make room
 
 ---
 

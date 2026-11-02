@@ -1271,6 +1271,124 @@ for _, bucket in ipairs(BUCKETS) do
     }
 end
 
+--- The roleplay consequences (server/rp_consequences.lua, README, Roleplay
+--- features): each switch under Features, the rest under the Rules view it
+--- belongs to. `whole` lists take each line as typed, spaces and commas
+--- included (a phrase, a template, an area), rather than as names.
+local RP_TEXT = 'letters, digits, spaces and punctuation, no < or >'
+for _, entry in ipairs({
+    -- Witness heat
+    { key = 'Roleplay.WitnessHeat.Enabled', category = 'features', group = 'Roleplay: Witness heat',
+      kind = 'switch', label = 'Witness heat',
+      about = 'A completion seen by bystanders (players near the hitman who are no party to the '
+          .. 'contract) sends the police a vague witness report on their phones and to sc-dispatch. '
+          .. 'It never names the hitman or the placer.',
+      inflight = 'At the next completion, with no restart.' },
+    { key = 'Roleplay.WitnessHeat.AlwaysAlert', category = 'features', group = 'Roleplay: Witness heat',
+      kind = 'switch', label = 'Witness heat: alert on every completion',
+      about = 'A report on every completion, whether anybody saw it or not.', inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.SendCoords', category = 'features', group = 'Roleplay: Witness heat',
+      kind = 'switch', label = 'Witness heat: give dispatch a position',
+      about = 'Off: only the area is named. On: a position, moved by up to the fuzz distance.',
+      inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.WitnessRadius', category = 'rules-limits', group = 'Roleplay: Witness heat',
+      kind = 'number', min = 1, max = 500, label = 'Metres a bystander sees a completion from',
+      about = 'Measured from the hitman, on the server.', inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.MinWitnesses', category = 'rules-limits', group = 'Roleplay: Witness heat',
+      kind = 'number', integer = true, min = 1, max = 50, label = 'Bystanders it takes to raise a report',
+      inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.FuzzMeters', category = 'rules-limits', group = 'Roleplay: Witness heat',
+      kind = 'number', min = 0, max = 1000, label = 'Metres the position may be off by',
+      inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.DispatchPriority', category = 'rules-limits', group = 'Roleplay: Witness heat',
+      kind = 'number', integer = true, min = 1, max = 5, label = 'sc-dispatch priority of a report',
+      inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.Title', category = 'rules-limits', group = 'Roleplay: Witness heat',
+      kind = 'text', pattern = '^[^%c<>]+$', maxLength = 60, says = RP_TEXT,
+      label = 'Title of a witness report', inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.Phrases', category = 'rules-limits', group = 'Roleplay: Witness heat',
+      kind = 'list', array = true, whole = true, names = 'phrase', label = 'What a witness says',
+      about = 'One is picked. {direction} is where they went (north, south-west, ...).',
+      inflight = AT_USE },
+    { key = 'Roleplay.WitnessHeat.Areas', category = 'rules-limits', group = 'Roleplay: Witness heat',
+      kind = 'list', array = true, whole = true, names = 'area', label = 'Areas, as Name@x,y',
+      about = 'The nearest centre names the area of a report and of a news post.', inflight = AT_USE },
+    -- EMS before re-listing
+    { key = 'Roleplay.EmsRelisting.Enabled', category = 'features', group = 'Roleplay: EMS before re-listing',
+      kind = 'switch', label = 'EMS before re-listing',
+      about = 'After a contract on somebody completes by a kill, a new contract on them is refused '
+          .. '("They are still recovering.") until they have been up, neither dead nor downed, for '
+          .. 'the minutes under Rules > Timers. On top of the usual cooldowns.',
+      inflight = 'At the next contract placed, with no restart.' },
+    { key = 'Roleplay.EmsRelisting.RequireEMS', category = 'features', group = 'Roleplay: EMS before re-listing',
+      kind = 'switch', label = 'EMS before re-listing: a medic\'s revive is needed',
+      about = 'Instead of the minutes up: an on-duty medic\'s defibrillator on them (sc-ambulance\'s '
+          .. 'own event, checked as the kill logic checks it). A kill from before a restart falls '
+          .. 'back to the minutes up.', inflight = AT_USE },
+    { key = 'Roleplay.EmsRelisting.TreatedMinutes', category = 'rules-timers', group = 'Roleplay: EMS before re-listing',
+      kind = 'number', integer = true, min = 0, max = 240, label = 'Minutes up that count as treated',
+      inflight = AT_USE },
+    { key = 'Roleplay.EmsRelisting.MaxHoldMinutes', category = 'rules-timers', group = 'Roleplay: EMS before re-listing',
+      kind = 'number', integer = true, min = 1, max = 1440, label = 'Longest the rule holds after a kill (min)',
+      about = 'Past it, the target may be listed again whatever was seen.', inflight = AT_USE },
+    -- City news
+    { key = 'Roleplay.CityNews.Enabled', category = 'features', group = 'Roleplay: City news',
+      kind = 'switch', label = 'City news',
+      about = 'A completed contract on a whitelisted-job target posts an anonymous news item, on '
+          .. 'lb-phone\'s Birdy or through a server event. It names the job, the area and the time, '
+          .. 'never the hitman or the placer.',
+      inflight = 'At the next completion, with no restart.' },
+    { key = 'Roleplay.CityNews.AllTargets', category = 'features', group = 'Roleplay: City news',
+      kind = 'switch', label = 'City news: on every target',
+      about = 'Off: whitelisted-job targets only.', inflight = AT_USE },
+    { key = 'Roleplay.CityNews.NameTarget', category = 'features', group = 'Roleplay: City news',
+      kind = 'switch', label = 'City news: name the target',
+      about = 'On, {name} in a template is the target\'s name; off, it is "a resident". Nothing '
+          .. 'else names anybody.', inflight = AT_USE },
+    { key = 'Roleplay.CityNews.App', category = 'rules-limits', group = 'Roleplay: City news',
+      kind = 'choice', choices = { 'birdy', 'event' }, label = 'Where news is posted',
+      about = '\'birdy\': lb-phone\'s PostBirdy export. \'event\': a server event another resource '
+          .. 'posts from (lb-phone\'s News app has no server export).', inflight = AT_USE },
+    { key = 'Roleplay.CityNews.Account', category = 'rules-limits', group = 'Roleplay: City news',
+      kind = 'text', pattern = '^[%w_%-%.]+$', maxLength = 32, label = 'Birdy account news is posted from',
+      about = 'It must exist in lb-phone.', inflight = AT_USE },
+    { key = 'Roleplay.CityNews.Event', category = 'rules-limits', group = 'Roleplay: City news',
+      kind = 'text', pattern = '^[%w_%-%.:]+$', maxLength = 64, says = 'an event name: letters, digits, - _ . and :',
+      label = 'Server event news is fired as (\'event\')',
+      about = 'Fired on the server only, with { account, text }.', inflight = AT_USE },
+    { key = 'Roleplay.CityNews.Templates', category = 'rules-limits', group = 'Roleplay: City news',
+      kind = 'list', array = true, whole = true, names = 'sentence', label = 'News templates',
+      about = 'One is picked: {job}, {zone}, {time} and {name}.', inflight = AT_USE },
+    -- Dirty money payouts
+    { key = 'Roleplay.DirtyPayouts.Enabled', category = 'features', group = 'Roleplay: Dirty money payouts',
+      kind = 'switch', label = 'Dirty money payouts',
+      about = 'A hitman\'s cash or bank payout is handed over as a dirty money item instead, at a '
+          .. 'rate that loses nothing. Escrow keeps the money it took; a refund goes back as it was '
+          .. 'taken; a payout that does not fit is owed, as any other.',
+      inflight = 'At the next payout, owed ones included, with no restart.' },
+    { key = 'Roleplay.DirtyPayouts.Item', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Item a payout is paid as',
+      about = 'An ox_inventory item: black_money, or markedbills with the \'worth\' mode.',
+      inflight = AT_USE },
+    { key = 'Roleplay.DirtyPayouts.Mode', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
+      kind = 'choice', choices = { 'count', 'worth' }, label = 'How the item holds the money',
+      about = '\'count\': items by the rate. \'worth\': one item, its value in its metadata.',
+      inflight = AT_USE },
+    { key = 'Roleplay.DirtyPayouts.WorthKey', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, label = 'Metadata key of its value (\'worth\')',
+      inflight = AT_USE },
+    { key = 'Roleplay.DirtyPayouts.Rate', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
+      kind = 'number', integer = true, min = 1, max = 100, label = 'Items paid for each dollar (\'count\')',
+      inflight = AT_USE },
+}) do
+    entry.section = entry.category == 'features' and 'features' or 'limits'
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+for _, key in ipairs({ 'Roleplay.DirtyPayouts.Item', 'Roleplay.DirtyPayouts.Mode',
+    'Roleplay.DirtyPayouts.WorthKey', 'Roleplay.DirtyPayouts.Rate' }) do
+    MONEY[key] = 'Payouts'
+end
+
 local byKey = {}
 for i = 1, #CATALOGUE do byKey[CATALOGUE[i].key] = CATALOGUE[i] end
 for key, group in pairs(MONEY) do
@@ -1388,6 +1506,11 @@ local NAMES = {
              says = 'host names such as fivemanage.com, up to 128 long' },
     phrase = { pattern = '^[^%c<>]+$', max = 60, says = 'short phrases, up to 60 characters, no < or >' },
 }
+-- The roleplay consequences' lists (server/rp_consequences.lua): a news
+-- template, and an area as its name and centre.
+NAMES.sentence = { pattern = '^[^%c<>]+$', max = 160, says = 'sentences, up to 160 characters, no < or >' }
+NAMES.area = { pattern = '^[^%c<>@]+@%-?%d+%.?%d*,%-?%d+%.?%d*$', max = 60,
+               says = 'areas as Name@x,y (such as Legion Square@195,-934), up to 60 characters' }
 
 --- The most a number key takes now: its own max, or less where another
 --- setting caps it (`ceiling`, a key read from the config in force).
@@ -1510,7 +1633,8 @@ local function normalise(entry, raw)
     if entry.kind == 'text' then
         if type(raw) ~= 'string' or #raw == 0 or #raw > (entry.maxLength or 64)
             or not raw:match(entry.pattern or '^[%w_%-]+$') then
-            return nil, ('has to be letters, digits, - and _ only, up to %d long'):format(entry.maxLength or 64)
+            return nil, ('has to be %s, up to %d long'):format(entry.says or 'letters, digits, - and _ only',
+                entry.maxLength or 64)
         end
         return raw
     end
@@ -2065,7 +2189,7 @@ function Settings.view()
             kind = entry.kind, choices = entry.choices, min = entry.min, max = Settings.maxOf(entry),
             integer = entry.integer or nil, live = entry.live ~= false,
             inflight = entry.inflight, readonly = entry.readonly, destroys = entry.destroys,
-            stricter = entry.stricter, strict = entry.strict,
+            stricter = entry.stricter, strict = entry.strict, whole = entry.whole or nil,
             value = current(entry), default = copyOf(defaults[entry.key]),
             source = override and 'panel' or 'config',
             by = override and override.by or nil, at = override and override.at or nil,

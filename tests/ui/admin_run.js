@@ -4040,6 +4040,53 @@ async function main() {
     clean(app, 'player report');
   })();
 
+  /* ---- The roleplay consequences (server/rp_consequences.lua) ---- */
+  await (async function () {
+    const view = settingsView();
+    view.data.features.push({ key: 'Roleplay.WitnessHeat.Enabled', category: 'features',
+      group: 'Roleplay: Witness heat', label: 'Witness heat', kind: 'switch', live: true,
+      inflight: 'At the next completion, with no restart.', value: false, default: false, source: 'config' });
+    view.data.limits.push({ key: 'Roleplay.WitnessHeat.Phrases', category: 'rules-limits',
+      group: 'Roleplay: Witness heat', label: 'What a witness says', kind: 'list', whole: true, live: true,
+      inflight: 'Read each time it is used.', value: ['a person in dark clothing fled {direction}'],
+      default: ['a person in dark clothing fled {direction}'], source: 'config' });
+    const server = standardServer({ settings: view });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('features');
+    await settled();
+    it('lists a roleplay switch under Features, in its Roleplay group, with what the group is', function () {
+      has(app.text(app.byId('st-row-Roleplay.WitnessHeat.Enabled')), 'Witness heat');
+      has(app.text(app.$('#panel')), 'naming nobody');
+    });
+    app.nav('limits');
+    await settled();
+    const row = function () { return app.byId('st-row-Roleplay.WitnessHeat.Phrases'); };
+    app.type(row().querySelector('input'), 'a tall man, in a cap, ran {direction}');
+    app.click(app.button('Add', row()));
+    await settled();
+    app.click(app.byId('st-save-Roleplay.WitnessHeat.Phrases'));
+    app.click(app.byId('st-save-Roleplay.WitnessHeat.Phrases'));
+    await settled();
+    it('a list of phrases takes the line as typed, spaces and commas kept, on two clicks', function () {
+      eq(app.last('setSetting').data, { key: 'Roleplay.WitnessHeat.Phrases',
+        value: ['a person in dark clothing fled {direction}', 'a tall man, in a cap, ran {direction}'] });
+    });
+    app.nav('help');
+    await settled();
+    it('How it works has a card for each roleplay feature, linking to its settings', function () {
+      const text = app.text(app.$('#panel'));
+      ['Witness heat', 'EMS before re-listing', 'City news', 'Dirty money payouts'].forEach(function (t) {
+        has(text, t);
+      });
+      truthy(app.$$('button[data-act="help-jump"]').some(function (b) {
+        return b.getAttribute('data-key') === 'Roleplay.DirtyPayouts.Item' && b.getAttribute('data-view') === 'money';
+      }), 'a link to the item, under Rewards & money');
+    });
+    clean(app, 'roleplay settings');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

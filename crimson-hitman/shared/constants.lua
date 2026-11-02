@@ -325,6 +325,11 @@ CH.ERR = {
     --- keeps its clocks stopped, until it is switched off again. To the
     --- player: "Contracts are paused by staff."
     APP_PAUSED           = 'app_paused',
+    --- The target was killed on a contract and has not been treated yet
+    --- (Config.Roleplay.EmsRelisting, server/rp_consequences.lua): no new
+    --- contract on them until they have been up long enough, or revived by
+    --- a medic. To the placer: "They are still recovering."
+    TARGET_RECOVERING    = 'target_recovering',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

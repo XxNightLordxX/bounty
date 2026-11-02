@@ -29,6 +29,14 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   events (`Config.Staff.AppPaused`), a **Settings history** with one-click
   **Undo**, and a **Report** button in the app on contract cards and message
   threads that puts a report in the review queue. See *Staff tools*.
+- **Roleplay consequences**, each off as shipped and changed from the admin
+  panel (`Config.Roleplay`): **witness heat** (a completion seen by
+  bystanders sends the police a vague witness report), **EMS before
+  re-listing** (a target killed on a contract is treated before a new one
+  is placed on them), **city news** (an anonymous Birdy post, or a server
+  event, after a completion) and **dirty money payouts** (a hitman's cash or
+  bank payout handed over as `black_money` or marked bills). See *Roleplay
+  features*.
 
 - **The staff panel is grouped by who uses it**: six sections (Live, Staff
   actions, Rules, Features, Logs & alerts, Developer), each with its views as
@@ -829,6 +837,17 @@ Staff tools: `/hitmanadmin` and the F8 commands (see *Staff commands* and *Admin
 The staff webhook for financial movements and rejected attempts is
 `set crimson_hitman_webhook "..."` in server.cfg. Never put either webhook in
 `config.lua`: every player's game downloads it.
+
+### Roleplay
+
+The roleplay features, each its own block of `Config.Roleplay` and each off as shipped (see *Roleplay features*). Every one is changeable from the panel: the switches under **Features**, the rest under **Rules**.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.Roleplay.WitnessHeat.Enabled` / `WitnessHeat.WitnessRadius` / `WitnessHeat.MinWitnesses` / `WitnessHeat.AlwaysAlert` / `WitnessHeat.SendCoords` / `WitnessHeat.FuzzMeters` / `WitnessHeat.DispatchPriority` / `WitnessHeat.Title` / `WitnessHeat.Phrases` / `WitnessHeat.Areas` | `false` / `60.0` / `1` / `false` / `true` / `120.0` / `2` / `'Witness report'` / three phrases / eighteen areas | Witness heat: a completion with at least `MinWitnesses` non-parties within `WitnessRadius` metres of the hitman (or every one, with `AlwaysAlert`) sends officers (`Config.Advisory.RecipientJob*`) and sc-dispatch a report titled `Title`: a phrase with `{direction}` filled in, and the nearest of `Areas` (`'Name@x,y'`). With `SendCoords`, dispatch gets a position moved by up to `FuzzMeters`. |
+| `Config.Roleplay.EmsRelisting.Enabled` / `EmsRelisting.TreatedMinutes` / `EmsRelisting.RequireEMS` / `EmsRelisting.MaxHoldMinutes` | `false` / `10` / `false` / `120` | EMS before re-listing: after a kill on a contract, a new contract on that target is refused (*They are still recovering.*) until they have been up, neither dead nor downed, for `TreatedMinutes`; with `RequireEMS`, until an on-duty medic's defibrillator has revived them instead. Never longer than `MaxHoldMinutes` after the kill. |
+| `Config.Roleplay.CityNews.Enabled` / `CityNews.AllTargets` / `CityNews.NameTarget` / `CityNews.App` / `CityNews.Account` / `CityNews.Event` / `CityNews.Templates` | `false` / `false` / `false` / `'birdy'` / `'LSNews'` / `'crimson-hitman:cityNews'` / two templates | City news: a completion on a whitelisted-job target (every target with `AllTargets`) posts one of `Templates` (`{job}`, `{zone}`, `{time}`, `{name}`) on Birdy from `Account` (`App = 'birdy'`), or fires the server event `Event` with `{ account, text }` (`App = 'event'`). `{name}` is *a resident* unless `NameTarget` is on. |
+| `Config.Roleplay.DirtyPayouts.Enabled` / `DirtyPayouts.Item` / `DirtyPayouts.Mode` / `DirtyPayouts.WorthKey` / `DirtyPayouts.Rate` | `false` / `'black_money'` / `'count'` / `'worth'` / `1` | Dirty money payouts: a hitman's cash or bank payout is handed over as `Item`, `Rate` items a dollar (`'count'`), or one item whose metadata `WorthKey` holds the figure (`'worth'`, for QBox marked bills). Escrow keeps the money; refunds go back as taken. |
 
 ### Advanced and developer
 
@@ -2434,6 +2453,84 @@ There is no single switch for the phone app as a whole:
 `Config.WhitelistedView.Enabled`, `Config.HideAppFromBlockedJobs` and the job
 lists decide who sees it and what it shows them, and the panel works whatever
 they say.
+
+---
+
+## Roleplay features
+
+Four consequences of a completed contract, in `server/rp_consequences.lua`.
+Each is off as shipped (`Config.Roleplay.<Feature>.Enabled = false`), and
+with all four off the resource behaves exactly as before. Each is changed
+live from the admin panel: its switches under **Features** (groups
+*Roleplay: ...*), the rest under **Rules > Limits**, **Rules > Timers** or
+**Rewards & money**, and each has a card in **How it works**. Nothing here
+ever names the hitman or the placer.
+
+### Witness heat
+
+On every completion (a kill or a handover), the server counts the players
+within `WitnessRadius` of the hitman, in the same routing bucket and
+visible, who are no party to the contract (not its placer, target or any of
+its hitmen), from its own positions. With at least `MinWitnesses`, or on
+every completion with `AlwaysAlert`, every online officer (the jobs in
+`Config.Advisory.RecipientJobNames` and `RecipientJobTypes`) who is no party
+to it gets a phone notice, and sc-dispatch an entry
+(`exports['sc-dispatch']:AddNotification`, caller *Witness*, the same job
+list), with the words of one of `Phrases`: *A person in dark clothing fled
+north-east near Vinewood.* The direction is where the hitman is moving, or
+facing when still. The server has no street names (those natives are the
+client's), so the area is the nearest centre in `Areas`, written
+`'Name@x,y'`; with `SendCoords` dispatch gets a position moved by up to
+`FuzzMeters`. Audited as `rp_witness_alert` with the count only.
+
+### EMS before re-listing
+
+After a contract on somebody completes by a kill, a new contract on them is
+refused with *They are still recovering.* until their QBox metadata
+`isdead` and `inlaststand` (read through `Config.Completion.DeathStateProviders`,
+sc-ambulance first) have both been false for `TreatedMinutes`, counted while
+they are in the city. With `RequireEMS`, an on-duty medic's defibrillator
+revive is needed instead: sc-ambulance's own `sc-ambulance:server:UseDefib`,
+which this resource already hears and checks (an on-duty medic of
+`Config.Completion.MedicJobs`, holding the `DefibItem`, within `DefibRange`
+of a dead patient). sc-ambulance ships escrowed, so that event is the only
+EMS revive it can be told from: a revive at a hospital bed or by a command is
+not told from getting up alone, and is counted by the timer. The rule adds to
+the usual target cooldowns and always lets go `MaxHoldMinutes` after the
+kill. The kill is read back from the target's Ledger row, which every
+storage mode keeps; what was seen of them since starts again at a restart,
+so a restart only ever makes the wait longer (never past `MaxHoldMinutes`),
+and with `RequireEMS` a kill from before it is decided by the timer.
+
+### City news
+
+A completed contract on a whitelisted-job target (every target with
+`AllTargets`) posts one of `Templates`, with `{job}` (the target's job, or
+*resident*), `{zone}` (the nearest of the witness `Areas` to the target, or
+to the hitman when the target is away), `{time}` (server time, HH:MM) and
+`{name}` (*a resident*, unless `NameTarget` is on). With `App = 'birdy'` it
+is posted with lb-phone's server export `PostBirdy(username, content,
+attachments, replyTo, hashtags, source)` (lb-phone docs, *Server exports*)
+from `Account`: **create that Birdy account in game first**, or nothing is
+posted and the console says so, at most once a minute. lb-phone's News app
+has no server export to post an article, so for it (or any other app) set
+`App = 'event'`: the server event `Event` is fired, server side only, with
+`{ account, text }`, for a resource of yours to post from. Audited as
+`rp_city_news`.
+
+### Dirty money payouts
+
+A hitman's payout from a cash or bank line (the baseline, and a handover's
+bonus) is handed over as the ox_inventory item `Item` instead: `Rate` items
+a dollar with `Mode = 'count'` (`black_money` as shipped), or one item whose
+metadata `WorthKey` holds the figure with `Mode = 'worth'` (QBox's
+`markedbills` with `worth`). The escrow keeps the cash or bank it took,
+and only the payout converts it, at a rate that loses nothing; a refund, a
+stake or an unearned bonus goes back as it was taken. A payout that does not
+fit (`CanCarryItem`) is owed through the usual owed path and handed over when
+they make room or next log in, still as the item. Each one is audited as
+`escrow_paid_as_item`. The item must exist in ox_inventory's `data/items.lua`: `black_money`
+ships there; add `markedbills` if your server has not got it.
 
 ---
 

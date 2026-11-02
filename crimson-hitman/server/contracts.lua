@@ -624,8 +624,26 @@ function Contracts.canCreate(actor, targetActor)
     local immune, why = Contracts.isImmune(targetActor)
     if immune then return false, why or CH.ERR.TARGET_PROTECTED end
 
+    -- Killed on a contract and not treated yet (Config.Roleplay.EmsRelisting,
+    -- server/rp_consequences.lua). On top of the cooldowns above, never
+    -- instead of them. A raise refuses nothing.
+    if Contracts.relistHold then
+        local ran, held = pcall(Contracts.relistHold, targetActor)
+        if ran and held then return false, CH.ERR.TARGET_RECOVERING end
+    end
+
     return true
 end
+
+--- Set by server/rp_consequences.lua: whether a new contract on this target
+--- waits for them to be treated. nil: no such rule.
+Contracts.relistHold = nil
+
+--- What runs after every claim that paid (Contracts.claimSlot), by name:
+--- the roleplay consequences (server/rp_consequences.lua). Each is called
+--- with (contractId, hitmanCid, fulfilment, result) inside pcall, after the
+--- money has moved, so none of them can change or undo a payout.
+Contracts.afterClaim = {}
 
 --- Playtime, session and post-respawn immunity (§14.19, §14.39).
 ---
@@ -3129,6 +3147,12 @@ function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
             stuckClaims[contractId] = { at = os.time(), hitman = hitmanCid, fulfilment = fulfilment }
         end
         error(out[2], 0)
+    end
+    if out[2] == true then
+        for name, fn in pairs(Contracts.afterClaim) do
+            local ran, err = pcall(fn, contractId, hitmanCid, fulfilment, out[4])
+            if not ran then Log.debug(('after a claim, %s raised: %s'):format(name, tostring(err))) end
+        end
     end
     return table.unpack(out, 2, out.n)
 end

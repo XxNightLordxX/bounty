@@ -1728,3 +1728,76 @@ describe('anonymity as shipped, and names shown to the target', function()
         end)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- The roleplay consequences' channels (server/rp_consequences.lua)
+--------------------------------------------------------------------------
+
+describe('the roleplay consequences\' channels', function()
+    it('name neither hidden party in a witness report, a phone notice, a news post or its event', function()
+        local s = newStack()
+        local f = fixture(s, { targetJob = { name = 'police', type = 'leo', onduty = true } })
+        Config.Limits.TargetCooldownAfterResolveSeconds = 0
+        for _, name in ipairs({ 'WitnessHeat', 'EmsRelisting', 'CityNews', 'DirtyPayouts' }) do
+            Config.Roleplay[name].Enabled = true
+        end
+        Config.Roleplay.WitnessHeat.AlwaysAlert = true
+        Config.Roleplay.CityNews.AllTargets = true
+        Config.Roleplay.CityNews.Templates = { '{name} {job} {zone} {time}' }
+        Env.players[1].PlayerData.charinfo.phone = '5550001111'
+        Env.players[3].PlayerData.charinfo.phone = '5550003333'
+        Env.addPlayer({ source = 4, citizenid = 'BYSTAND1', firstname = 'Bea', lastname = 'Stander',
+            coords = { x = 3.0, y = 0.0, z = 0.0 } })
+        Env.addPlayer({ source = 5, citizenid = 'OFFICER1', firstname = 'Otto', lastname = 'Beat',
+            job = { name = 'police', type = 'leo', onduty = true } })
+        local evented = {}
+        Env.events['local:crimson-hitman:cityNews'] = function(data) evented[#evented + 1] = data end
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', anonymous = true,
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c, 'placed anonymously')
+        truthy(s.contracts.accept(f.hitman, c.id, true), 'taken anonymously')
+        local from = #Env.clientEvents
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        Config.Roleplay.CityNews.App = 'event'
+        local c2 = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', anonymous = true,
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
+        })
+        if c2 then
+            s.contracts.accept(f.hitman, c2.id, true)
+            s.contracts.claimSlot(c2.id, 'HITMAN01', CH.FULFILMENT.KIDNAPPING)
+        end
+
+        local HIDDEN = { 'CREATOR1', 'Vic', 'Marlowe', 'license:aaa', '5550001111',
+                         'HITMAN01', 'Rook', 'Ash', 'license:ccc', '5550003333' }
+        local function leaks(value, out, where)
+            if type(value) == 'string' then
+                for _, needle in ipairs(HIDDEN) do
+                    if value:find(needle, 1, true) then out[#out + 1] = where .. ': ' .. needle end
+                end
+            elseif type(value) == 'table' then
+                for k, v in pairs(value) do leaks(k, out, where) leaks(v, out, where) end
+            end
+            return out
+        end
+        local problems = {}
+        local reports = 0
+        for _, sent in ipairs(Natives.calls.dispatch or {}) do
+            if sent.caller == 'Witness' then reports = reports + 1 end
+            leaks(sent, problems, 'sc-dispatch')
+        end
+        truthy(reports > 0, 'a witness report went out')
+        truthy(#(Natives.calls.birdy or {}) > 0, 'a news post went out')
+        leaks(Natives.calls.birdy, problems, 'birdy')
+        leaks(evented, problems, 'news event')
+        for i = from + 1, #Env.clientEvents do
+            local event = Env.clientEvents[i]
+            if event.target ~= 1 and event.target ~= 3 then
+                leaks(event.args, problems, event.name .. ' to ' .. tostring(event.target))
+            end
+        end
+        eq(#problems, 0, table.concat(problems, '\n'))
+    end)
+end)

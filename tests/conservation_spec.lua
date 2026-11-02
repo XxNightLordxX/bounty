@@ -313,3 +313,65 @@ describe('conservation across every settlement path', function()
         eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Dirty money payouts (Config.Roleplay.DirtyPayouts): a hitman's cash and
+-- bank payout handed over as the dirty money item. Each source is no longer
+-- conserved on its own, but the value is: every dollar out of cash or bank
+-- is one item (at Rate 1) in the hitman's pockets, never more or fewer.
+--------------------------------------------------------------------------
+
+describe('conservation with dirty money payouts', function()
+    local function value(t) return t.cash + t.bank + t.dirty end
+
+    it('keeps the value across a handover, an elimination and a cancel', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Roleplay.DirtyPayouts.Enabled = true
+        Config.Limits.TargetCooldownAfterResolveSeconds = 0
+        Config.Limits.SameCreatorSameTargetCooldownSeconds = 0
+        Config.Amendments.CancelCooldownSeconds = 0
+        local before = world(s)
+
+        local c = place(s, f, { baseline = ALL, bonus = { cash = 500, bank = 400, dirty = 300 } })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local hitman = purse(3)
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.KIDNAPPING))
+        eq(value(world(s)), value(before), 'handover: ' .. report('handover', before, world(s)))
+        local got = purse(3)
+        eq(got.cash, hitman.cash, 'no cash to the hitman')
+        eq(got.bank, hitman.bank, 'no bank to the hitman')
+        eq(got.dirty - hitman.dirty, 5500 + 3400 + 1300, 'all of it as the item')
+
+        local c2 = place(s, f, { baseline = { cash = 800 }, bonus = { bank = 200 } })
+        truthy(c2)
+        truthy(s.contracts.accept(f.hitman, c2.id, false))
+        local creator = purse(1)
+        truthy(s.contracts.claimSlot(c2.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+        eq(purse(1).bank - creator.bank, 200, 'the unearned bonus back as bank')
+        eq(value(world(s)), value(before), 'elimination')
+
+        local c3 = place(s, f, { baseline = { cash = 900 } })
+        truthy(c3)
+        local mid = world(s)
+        truthy(s.contracts.cancel(f.creator, c3.id))
+        conserved(s, mid, 'a cancel refunds by source')
+    end)
+
+    it('keeps the value of a payout that waits for room', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Roleplay.DirtyPayouts.Enabled = true
+        local before = world(s)
+        local c = place(s, f, { baseline = { cash = 1500, bank = 500 } })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._inventoryFull = true
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+        eq(value(world(s)), value(before), 'owed')
+        Env.players[3]._inventoryFull = nil
+        s.escrow.retryPending(f.hitman.cid)
+        eq(value(world(s)), value(before), 'delivered')
+        eq(heldEscrow(s).cash + heldEscrow(s).bank, 0, 'nothing left owed')
+    end)
+end)
