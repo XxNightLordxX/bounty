@@ -4,6 +4,10 @@
 --- nothing off; on, each does what it says, refuses before anything is
 --- taken, is a panel setting that applies at once, and names nobody.
 
+--- Every test here puts Config.Roleplay back as it found it (the features
+--- it turns on live), so no later spec sees them on, whatever the order.
+local it = require('tests.harness.roleplay').it
+
 --- Fire a net event as a client does, gate and rate limit and all, and
 --- return the reply the page would receive.
 local function call(name, src, payload)
@@ -87,8 +91,10 @@ end
 
 describe('the roleplay features of getting to a contract, as shipped', function()
     it('ship off', function()
+        -- Read from the file: another spec may have turned one on live.
+        local shipped = require('tests.harness.shipped').fromFile().Roleplay
         for _, name in ipairs({ 'Rumours', 'BurnerPhone', 'InformantNpc', 'ReasonQuality' }) do
-            eq(Config.Roleplay[name].Enabled, false, name)
+            eq(shipped[name].Enabled, false, name)
             eq(ConfigDefaults.Roleplay[name].Enabled, false, name .. ' in defaults.lua')
         end
     end)

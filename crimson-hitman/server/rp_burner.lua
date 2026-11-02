@@ -34,13 +34,16 @@ local function rules()
 end
 
 --- The app's requests that are contract actions: refused without the item.
---- Not the target's (their buyout, their informant), not the reads.
+--- Not the target's (their buyout, their informant, and hiring, cancelling
+--- or moving the pin of a bodyguard: server/rp_protection.lua), not the
+--- reads. Taking a bodyguard job is: the guard works for hire like a hitman.
 Burner.ACTIONS = {
     create = true, accept = true, abandon = true, cancel = true, revise = true,
     withdrawReward = true, addEscrow = true, improve = true, propose = true,
     respondAmendment = true, armKidnap = true, verifyKill = true, requestPhotoToken = true,
     setMeeting = true, clearMeeting = true, locationTip = true, placerInformant = true,
     sendMessage = true, requestCall = true,
+    protectionAccept = true,
 }
 
 --- Whether this player carries a burner now: true, false, or nil where it

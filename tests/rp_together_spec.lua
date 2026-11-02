@@ -11,7 +11,11 @@
 ---     from the server's positions, so a bystander close by both raises a
 ---     witness report and takes the witness-free bonus away, one between the
 ---     two radii raises the report and leaves the bonus, and nobody near
----     gives the bonus and no report.
+---     gives the bonus and no report;
+---   * the burner phone and bodyguards: hiring a bodyguard is the target's
+---     own act and is never gated, cancelling and moving the pin neither;
+---     taking a guard job is, as any hire is, refused without the item and
+---     with nothing changed.
 ---
 --- Every test puts Config.Roleplay back as it found it (RP.it).
 
@@ -246,5 +250,107 @@ describe('reputation with witness heat', function()
             falsy(text:find('HITMAN01', 1, true), text)
         end
         eq(audits(s, 'rp_witness_alert', c.id), 1, 'the alert on the record, by count')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- The burner phone with bodyguards
+--------------------------------------------------------------------------
+
+describe('the burner phone with bodyguard contracts', function()
+    --- Fire a net event as a client does, gate and rate limit and all.
+    local function call(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        truthy(fire, 'no handler registered for ' .. name)
+        local from = #Env.clientEvents
+        _G.source = src
+        fire(payload or {})
+        _G.source = nil
+        for i = from + 1, #Env.clientEvents do
+            local event = Env.clientEvents[i]
+            if event.name == 'crimson-hitman:result' and event.target == src then return event.args[1] end
+        end
+        return nil
+    end
+
+    local function scene()
+        local s, f = stack()
+        local c = place(s, f, { baseline = { cash = 5000 } })
+        Config.Roleplay.Protection.Enabled = true
+        Config.Roleplay.BurnerPhone.Enabled = true
+        Config.Roleplay.BurnerPhone.RequireToOpen = true
+        s.bridges.install(s)
+        Env.players[2].PlayerData.money.bank = 100000
+        Env.addPlayer({ source = 4, citizenid = 'GUARD001', license = 'license:ddd', cash = 0, bank = 0,
+            firstname = 'Gus', lastname = 'Ward' })
+        -- Nobody carries a burner.
+        for _, src in ipairs({ 1, 2, 3, 4 }) do Env.players[src]._inventory = {} end
+        return s, f, c
+    end
+
+    it('lets a target with no burner hire, move the pin and cancel: their own acts', function()
+        local s, _, c = scene()
+        local posted = call('protectionPost', 2, { id = c.id, amount = 2000,
+            account = Config.Roleplay.Protection.Account })
+        truthy(posted and posted.ok, tostring(posted and posted.err))
+        eq(Env.players[2].PlayerData.money.bank, 98000, 'the reward taken')
+        local pinned = call('protectionPin', 2, { job = posted.data.job })
+        truthy(pinned and pinned.ok, tostring(pinned and pinned.err))
+        local cancelled = call('protectionCancel', 2, { job = posted.data.job })
+        truthy(cancelled and cancelled.ok, tostring(cancelled and cancelled.err))
+        eq(Env.players[2].PlayerData.money.bank, 100000, 'refunded')
+        eq(audits(s, 'burner_missing'), 0, 'never refused for the burner')
+    end)
+
+    it('refuses a guard with no burner, changing nothing, and lets one with a burner take it', function()
+        local s, _, c = scene()
+        local posted = call('protectionPost', 2, { id = c.id, amount = 2000,
+            account = Config.Roleplay.Protection.Account })
+        truthy(posted and posted.ok, tostring(posted and posted.err))
+        local job = posted.data.job
+        local refused = call('protectionAccept', 4, { job = job, reward = 2000 })
+        eq(refused and refused.err, CH.ERR.NEED_BURNER, 'taking a guard job needs the burner')
+        eq(s.rpProtection.all()[1].state, 'open', 'the job still open')
+        eq(audits(s, 'burner_missing'), 1, 'the refusal on the record')
+        table.insert(Env.players[4]._inventory, { name = 'burner_phone', count = 1, slot = 40 })
+        local taken = call('protectionAccept', 4, { job = job, reward = 2000 })
+        truthy(taken and taken.ok, tostring(taken and taken.err))
+        eq(s.rpProtection.all()[1].state, 'taken', 'taken once they carry one')
+    end)
+
+    it('with the burner off, takes a guard job with no item at all', function()
+        local s, _, c = scene()
+        Config.Roleplay.BurnerPhone.Enabled = false
+        local posted = call('protectionPost', 2, { id = c.id, amount = 2000,
+            account = Config.Roleplay.Protection.Account })
+        local taken = call('protectionAccept', 4, { job = posted.data.job, reward = 2000 })
+        truthy(taken and taken.ok, tostring(taken and taken.err))
+        eq(audits(s, 'burner_missing'), 0)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- One area rule and one parser for both groups' area lists
+--------------------------------------------------------------------------
+
+describe('the area lists of witness heat and the rumours', function()
+    it('take either form from the panel, and both features read both', function()
+        local s = newStack()
+        local function turn(key, value)
+            local ok, err, why = s.settings.set(key, value, 'ADMIN001', 'ADMIN001')
+            truthy(ok, ('%s: %s %s'):format(key, tostring(err), tostring(why)))
+        end
+        turn('Roleplay.WitnessHeat.Areas', { 'Pier@-1600,-1000', '300, 200, Vinewood' })
+        turn('Roleplay.Rumours.Districts', { '0, 0, Downtown Core', 'Sandy Shores@1850,3700' })
+        local Places = require('server.rp_places')
+        for _, text in ipairs({ 'Pier@-1600,-1000', '300, 200, Vinewood', 'Sandy Shores@1850,3700' }) do
+            truthy(Places.parseArea(text), text .. ' reads')
+        end
+        eq(s.rpConsequences.areaOf({ x = 290.0, y = 210.0 }), 'Vinewood', 'witness heat reads x, y, name')
+        eq(s.rpConsequences.areaOf({ x = -1590.0, y = -990.0 }), 'Pier', 'and Name@x,y')
+        for _, bad in ipairs({ 'nowhere', '1, 2', '@1,2', 'Somewhere@x,y', '1, 2, <b>' }) do
+            falsy(s.settings.set('Roleplay.WitnessHeat.Areas', { bad }, 'ADMIN001', 'ADMIN001'), bad)
+            falsy(s.settings.set('Roleplay.Rumours.Districts', { bad }, 'ADMIN001', 'ADMIN001'), bad)
+        end
     end)
 end)

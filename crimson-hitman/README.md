@@ -2741,7 +2741,10 @@ whose burner was seized or stolen keeps their contract, and only its
 actions wait for a new phone. `ConsumeOnPlace` / `ConsumeOnAccept` use one
 up after the action went through (`RemoveItem`); an item that could not be
 taken is audited (`burner_not_taken`) and the action stands. With
-ox_inventory not started the feature does nothing.
+ox_inventory not started the feature does nothing. A target's own requests
+are never gated (their buyout, their informant, and hiring, cancelling or
+moving the pin of a bodyguard), but **taking** a bodyguard job is: the guard
+works for hire, as a hitman does.
 
 **The item.** This resource never edits ox_inventory or sc-blackmarket. Add
 the item to `ox_inventory/data/items.lua`:

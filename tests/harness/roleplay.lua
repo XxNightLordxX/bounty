@@ -39,7 +39,9 @@ function RP.snapshot()
 end
 
 ---@param saved table from RP.snapshot
-function RP.restore(saved)
+---@param original table|nil the Config.Roleplay table itself, put back if a test swapped it
+function RP.restore(saved, original)
+    if type(original) == 'table' then Config.Roleplay = original end
     if type(Config.Roleplay) ~= 'table' then Config.Roleplay = {} end
     restoreInto(Config.Roleplay, saved)
 end
@@ -49,9 +51,9 @@ end
 ---@return function
 function RP.guard(fn)
     return function(...)
-        local saved = RP.snapshot()
+        local original, saved = Config.Roleplay, RP.snapshot()
         local out = table.pack(pcall(fn, ...))
-        RP.restore(saved)
+        RP.restore(saved, original)
         if not out[1] then error(out[2], 0) end
         return table.unpack(out, 2, out.n)
     end
