@@ -1,0 +1,658 @@
+# Crimson Hitman System — developer guide
+
+What a developer needs to change this resource safely: how it is built, how
+it stores, how it is tested, and the rules it keeps. The owner's manual is
+[crimson-hitman/README.md](../crimson-hitman/README.md); what only a running
+server can prove is [in-game-checklist.md](in-game-checklist.md).
+
+This file replaces the original specification, the implementation plan, the
+build report and the oxmysql notes. Code comments cite the specification's
+rules by number (`§14.8`): [the rules, by number](#the-specifications-rules-by-number)
+lists every one, and comments citing oxmysql's behaviour (`oxmysql §6`) are
+answered under [oxmysql](#oxmysql-as-the-mysql-store-relies-on-it).
+
+## Architecture
+
+### The stack
+
+Qbox (`qbx_core`), `ox_inventory`, `oxmysql` and lb-phone, with
+`sc-ambulance` / `qbx_medical`, `sc-dispatch`, `sc-blackmarket` and
+`MugShotBase64` detected at runtime and skipped when absent. `fxmanifest.lua`
+lists only `qbx_core` and `ox_inventory` as dependencies: lb-phone may start
+after this resource, and the client adds the app whenever lb-phone starts.
+
+### Modules
+
+`server/boot.lua` waits for the dependencies and loads the modules through
+one loader (`CrimsonBoot.require`); `server/main.lua` wires them (each
+module's `init(deps)`), runs boot recovery, and owns the maintenance tick.
+Every server file's public functions take an actor already resolved by
+`identity.lua`; nothing but `identity.lua` and the handlers in `app.lua` /
+`panel.lua` reads `source`.
+
+| Area | Files |
+|---|---|
+| Boot, wiring, the tick | `server/boot.lua`, `server/main.lua`, `server/timing.lua` |
+| Network surface | `server/app.lua` (the phone), `server/panel.lua` (the admin panel), `server/admin.lua` (the commands), `server/bridges.lua` (framework and game events) |
+| Identity and access | `server/identity.lua`, `server/ratelimit.lua`, `server/playtime.lua` |
+| Contracts and money | `server/contracts.lua` (lifecycle, state machine, locks, limits), `server/escrow.lua` (the single source of truth for what a contract holds), `server/amendments.lua`, `server/bailout.lua`, `server/review.lua`, `server/payments.lua` |
+| Finishing | `server/completion/death.lua` (attribution, the condition sampler), `photo.lua` (capture tokens, hosts), `kidnap.lua` (the handover countdown), `server/meeting.lua`, `server/photos.lua` |
+| What players see | `server/projection.lua` (every payload, per recipient), `server/notify.lua`, `server/comms.lua` (the masked relay), `server/ledger.lua`, `server/mugshot.lua`, `server/progression.lua` |
+| Informants | `server/informant.lua` (target's and placer's), `server/locationtip.lua` (the tip) |
+| Staff | `server/settings.lua` (the panel's settings over config.lua), `server/freeze.lua`, `server/sanctions.lua`, `server/staffcontract.lua`, `server/history.lua`, `server/announce.lua`, `server/summary.lua`, `server/thresholds.lua`, `server/alerts.lua`, `server/reports.lua`, `server/audit.lua` |
+| Roleplay | `server/rp_places.lua` (shared helpers, the NPC places), `rp_consequences.lua` (witness heat, EMS, city news, dirty payouts), `rp_intent.lua`, `rp_reputation.lua`, `rp_protection.lua` (bodyguards, the hit on the hitman), `rp_rumours.lua`, `rp_burner.lua`, `rp_informant.lua`, `rp_reason.lua` |
+| Improvements | `server/imp_tips.lua` (informant fairness), `imp_board.lua` with `imp_placer_record.lua`, `imp_heat.lua`, `imp_tiers.lua`, `imp_decay.lua`, and `imp_staffeco.lua` with `imp_proof.lua`, `imp_scrub.lua`, `imp_weekly.lua` |
+| Storage | `server/storage/memory.lua` (the reference implementation of the interface), `json.lua`, `mysql.lua` |
+| Shared | `shared/constants.lua` (states, enums, `CH.ERR`), `shared/util.lua` (pure helpers, `Util.copy`, `Util.dollars`), `shared/log.lua` (the one way to the console) |
+| Client | `client/main.lua` (lb-phone registration, the NUI bridge, the death and mask watchers), `client/admin.lua` (the panel's page), `client/mugshot.lua`, `client/rp_npc.lua` |
+| Pages | `ui/index.html`, `ui/app.js`, `ui/app.css` (the phone app); `ui/admin.html`, `ui/admin.js`, `ui/admin.css` (the panel) |
+
+An optional feature is a module with an `init(deps)`, a block of
+`Config.Improvements` or `Config.Roleplay` held to its rules at start
+(`checkConfig` / `validate`, which the panel also runs against a copy with a
+change in it), hooks it registers on the modules it extends
+(`Projection.extenders`, `Contracts.afterClaim`, `Escrow.holdBack` and the
+like) and, if it has periodic work, one job on the tick that does nothing
+while it is off.
+
+### The event and handler order
+
+Every net event and callback handler, in `app.lua` and `panel.lua`, runs in
+this order: `local src = source` first and `src > 0`; permission (job from the
+config lists, rank, duty, ACE for staff); the per-source token bucket
+(`Config.Cooldowns`); type checks and clamps on every field; plausibility
+(fresh server-side position, the entity exists); then the change, on the
+server only. Permission and type failures are logged through the audit log;
+plausibility and timing failures are dropped silently. Writes run under the
+contract's lock (`Contracts.serialized`), re-read what they act on after
+every await, take money last and refund on failure.
+
+### The maintenance tick
+
+One thread, every `Config.Audit.FlushIntervalMs` (10 s). Each job runs inside
+`pcall` through `job(name, fn)` and is timed for `/ch-diag`; scheduled jobs
+(`SCHEDULE` in `main.lua`) come round every `every` seconds on a phase of
+their own so no two heavy jobs share a tick; self-gated jobs sleep until their
+next due time. Jobs that read what is running share one read per change
+(`Projection.liveSnapshot`). Per-pass batches are capped (25 releases, 25
+endings, 25 decay steps, 25 bodyguard settles). The README's loops table and
+`tests/loops_spec.lua` hold every job's cost.
+
+### Storage
+
+Three backends behind one interface (`server/main.lua` picks one by `Config.Database.Mode`);
+`memory.lua` is the reference, and the storage conformance suite runs every
+backend against the same tests. Same rows in all three:
+
+- `mysql`: tables made at start after `MySQL.ready` (utf8mb4, InnoDB), created or altered only where `information_schema` says something is missing; the same statements in `install/sql/crimson_hitman.sql`. Every statement races `Config.Database.QueryTimeoutSeconds`. Upserts use `ON DUPLICATE KEY UPDATE c = VALUES(c)`; SQL takes `?` parameters only and never holds `:` or `@`.
+- `json`: `data/store.json` is the index (sequence, contract files, audit days); `data/records.json` the records (ledger, pending payouts, stats, reveals, photo records, the review queue, panel settings), written only when one changes; `data/contracts/<id>.json` one contract each with its escrow, hitmen, amendments and messages; `data/heartbeat.json` when the server was last seen running, which a restart dates its downtime from; `audit-<day>.jsonl` the log. Written on change and at the flush, money writes synced at once (`SyncOnFinancialWrite`). `store.json.prev` and `records.json.prev` are the last start's copies: a missing or unreadable index or records file stops the start rather than lose what it held, and a file cut off by a crash is restored from its last whole copy. The folders ship with a README each because `SaveResourceFile` cannot create a folder.
+- `memory`: testing only; releases every open escrow at a stop.
+
+Database changes only add (new tables, `ADD COLUMN` inside `pcall`); nothing
+drops or renames a column that holds player data.
+
+## Testing
+
+No FiveM server runs in CI, so the real modules run against a stubbed
+runtime. Run everything from the repository root:
+
+```bash
+sh tests/all.sh                                  # every suite below
+lua5.4 tests/run.lua                             # the server suite
+CH_SUITES=journeys_spec,loops_spec lua5.4 tests/run.lua   # a few specs, in seconds
+lua5.4 tests/invariants.lua                      # the server suite under the store monitor
+lua5.4 tests/static_check.lua                    # source rules
+node tests/ui/run.js                             # the phone page
+node tests/ui/admin_run.js                       # the admin panel page
+node tests/layout/run.js                         # the phone page in a real browser (Playwright)
+node tests/layout/admin_run.js                   # the panel at 1280, 1920 and 1024 wide
+```
+
+And the linter, from `crimson-hitman/`:
+`qbx-lint client server shared config fxmanifest.lua --format compact --min-severity warning`.
+
+| Suite | What it proves | How |
+|---|---|---|
+| Server (`tests/run.lua`, `tests/*_spec.lua`) | Escrow arithmetic, the state machine, every payout and refund path, whole journeys, every action against every state, exploits, every panel request against every permission, feature switches, settings across restarts, conservation of value under random sequences | `tests/harness/natives.lua` stubs FiveM, `qbx_core`, `ox_inventory` and lb-phone; `newStack()` wires the real modules on a fresh store; `fixture(s)` adds a placer, a target and a hitman |
+| Storage conformance (`storage_spec`) | Every backend behaves the same | `mysql` runs on `tests/harness/mysql_exec.lua`, which executes the statement shapes this resource sends, refuses what MariaDB's strict mode refuses and answers as oxmysql does; `await_scheduler.lua` yields every await as oxmysql does |
+| Races (`races_spec`, `interleave_spec`) | Two requests landing before and after every database wait of each other | The await scheduler |
+| Store invariants (`tests/invariants.lua`) | Nothing in the store is ever inconsistent, whatever ran | The whole suite again, with a monitor after every write |
+| Loops and requests (`loops_spec`, `handlers_spec`, `perf_round3_spec`) | Each job's schedule, early exits, statement counts and a worst-pass budget on a 200-contract city | `CH_PERF=1` prints the measured figures |
+| Documents (`docs_spec`) | The README's config reference equals config.lua; every refusal has words; every panel op is in the README; every switch has a checklist line | `CH_PRINT_DOCS=1 CH_SUITES=docs_spec lua5.4 tests/run.lua` prints the reference to paste |
+| Static (`tests/static_check.lua`) | No SQL built by concatenation; no handler reading an identity from a payload; every module, event and config key consistent; the schema holds every field; one word for one thing (the glossary); cited documents exist | Reads the source |
+| Phone page (`tests/ui/run.js`) | The real `ui/app.js` against a scripted server: forms, refusals, taps, two-click confirms, escaping | `tests/ui/dom.js`, a minimal DOM |
+| Panel page (`tests/ui/admin_run.js`) | Every section and action of `ui/admin.js`, access levels, stale answers, player text staying text | The same DOM, reading `admin.html` (`tests/ui/markup.js`) |
+| Layout (`tests/layout/*.js`) | Tap targets, clipping, the tab bar and status bar on the phone; the panel without its icon font | Playwright; skipped where it is not installed |
+
+**Adding a spec.** Write `tests/<area>_spec.lua` with `describe` / `it` and the
+globals the runner gives (`eq`, `truthy`, `falsy`, `newStack`, `fixture`,
+`withConfig`, `resetConfig`, `Env` for time and players, `Natives` for calls
+made); add its name to the `suites` list in `tests/run.lua`. Every stack starts
+from the shipped config, so a test changes config through `withConfig` or the
+roleplay and improvements guards (`tests/harness/roleplay.lua`,
+`improvements.lua`) and never leaves it changed. A spec that builds a big city
+to measure cost goes in `MEASUREMENT_SPECS` so the invariant run skips it.
+
+**Changing a setting.** Add it to `config/config.lua` (with one short note)
+and `config/defaults.lua` in the same place, to the panel's catalogue
+(`server/settings.lua`) if staff may change it, read it where it is used, and
+paste the reference `docs_spec` prints over the README's. `config_layout_spec`,
+`config_drift_spec` and `docs_spec` fail until all of them agree.
+
+**What the suites cannot prove:** the real `ox_inventory`, lb-phone and
+`qbx_core` builds, the page on a real phone, a real MySQL's isolation and
+collation under concurrent writes, and performance under real load. That is
+[in-game-checklist.md](in-game-checklist.md).
+
+## Design rules still true
+
+**Security.** The server decides: money, items, positions and outcomes are
+never taken from a client (§9.6, §14.1, §14.14). Every handler runs the order
+above. Staff ACEs are checked on every panel request; anything that moves
+money takes `crimson.admin` itself. Secrets are `set` convars, never in
+`config.lua`. SQL uses `?` parameters only; player text is escaped in both
+pages.
+
+**Anonymity.** What a recipient may see is decided once, in
+`server/projection.lua`, by omission at the boundary (§14.4): an anonymous
+party's name, citizen id and licence never reach a player, and reach staff
+only with `crimson.identity`, each unmasking audited. Error text kept for
+staff is cut to the statement's start (oxmysql's message carries every
+parameter). Notices never date or place an anonymous party (§14.32, §14.40).
+
+**Money.** Escrow is the single source of truth (§9.1), released by one
+routine (§9.2), source-faithful (§14.10), never destroying property: a
+payout that cannot be given is owed, then left for staff, never dropped
+(§9.3, §14.12). Every movement is in the audit log (§9.8). Completion takes
+the contract's lock and happens once (§9.7, §14.34). Charges come last and are
+refunded on failure; a write the database did not confirm is settled by the
+server from its whole record (the review queue).
+
+**Load.** Nothing per frame while idle; loops sleep until due, share their
+reads and cap their passes; optional features cost nothing while off.
+
+## Integration: events and protocols
+
+**Exports.** None. Nothing here is meant to be called by another resource:
+contracts, escrow and payouts change only through the app and the staff
+commands.
+
+**Events.** It raises none for other resources. The `crimson-hitman:*` net
+events are this resource's own protocol between its client and its server.
+Every one resolves the player from the connection, never from the payload,
+answers to a per-source flood guard and checks its payload; they are not an
+API, and they may change between versions. What it listens to:
+
+| Event | Raised by | What it does here |
+|---|---|---|
+| `QBCore:Server:PlayerLoaded` (and `qbx_core:server:playerLoaded`) | `qbx_core`, local | A character loaded: their session starts, the app is shown or hidden, owed payouts are delivered |
+| `QBCore:Server:OnPlayerLoaded` | the client, net | The same, flood-guarded, and never the start of a watched session (any client can fire it) |
+| `QBCore:Server:OnPlayerUnload`, `qbx_core:server:playerLoggedOut` | `qbx_core`, local | Logout or character switch: cleans up on the first, and again on the second, after `qbx_core` has let the player go |
+| `playerDropped` | FXServer | Disconnect: the same cleanup |
+| `QBCore:Server:OnJobUpdate` (and `qbx_core:server:onSetJob`) | `qbx_core`, local | Re-checks whether the app is closed to the player's jobs, or shows them the whitelisted-job view, and moves an open page between the two at once |
+| `QBCore:Server:SetDuty` | `qbx_core`, local (`SetJobDuty`) | The same re-check on a duty change, which `Config.BlockOffDuty` reads; the maintenance tick repeats it for everybody every 30 seconds |
+| `qbx_core:server:onSetMetaData` | `qbx_core`, local | An `injail` sentence starting or ending pauses or resumes contract clocks |
+| `weaponDamageEvent` | FXServer | The damage log kills are attributed from |
+| `sc-ambulance:server:UseDefib` | sc-ambulance's client, net | A defibrillator used on a target, flood-guarded |
+| `lb-phone:deletedFromGallery`, `lb-phone:factoryReset` | `lb-phone`, local | Deletes the file behind a kill photo saved to Photos by link |
+| `onResourceStart` | FXServer | A medical resource or `lb-phone` that restarted is asked afresh what it supports |
+| `QBCore:Client:OnPlayerUnload`, `qbx_core:client:playerLoggedOut` | `qbx_core`, client | The client's death watcher forgets the last character |
+| `gameEventTriggered` (`CEventNetworkEntityDamage`) | the game, client | The blow that killed the player, so their death report can name who dealt it |
+| `onClientResourceStart` | FiveM, client | `lb-phone` starting again: the app is added to it again |
+| `qb-clothing:client:loadOutfit`, `illenium-appearance:client:reloadSkin`, `rcore_clothing:outfitChanged` | a clothing resource, client | The player's appearance changed: the server drops their cached headshot |
+
+
+**A command's answer to a player.** `crimson-hitman:commandOutput`, server to
+client, with a list of lines: the answer of one command run in F8 (or chat),
+batched in order under about 8 KB an event, FiveM's colour codes taken out.
+The client prints each line in F8 (`client/admin.lua`); the notice *Printed to
+your F8 console* goes through `crimson-hitman:notify`, as a popup never saved
+on the phone.
+
+**The admin panel's protocol.** Between `ui/admin.js`, `client/admin.lua` and
+`server/panel.lua`; not an API for other resources. The page posts to its own
+resource (`GetParentResourceName()`):
+
+- `adminRequest` with `{ op, data }`, answered `{ ok, err, message, data }`.
+  `message` is a sentence to show whenever there is one; for `void`, `settle`
+  and `resolve` it is what the command would have said, in the panel's words:
+  where the command's answer names a command, the panel's names the section
+  or button that does it.
+- `adminClose` with `{}`, answered `{ ok = true }`. The client gives the focus
+  back and answers every request still waiting with `err = 'closed'`.
+- The client answers without the server: `closed` (the panel is not open),
+  `invalid_input` (no `op`, or one over 32 characters), `timeout` (no answer in
+  15 s).
+- Messages to the page, keyed `type`: `{ type = 'open', access }` (the `access`
+  shape below), `{ type = 'close' }`, `{ type = 'push', kind = 'diag', line }`
+  (a diagnosis line that had to wait for an answer).
+- Every op can be refused with `not_allowed` (no ACE for it), `rate_limited`
+  (`data.retryAfter` seconds), `unknown_op`, `admin_off`, `server_error` and
+  `invalid_input`; every write also with `recovering` or `recovery_failed`;
+  `whois`, and `logs` with an `actor`, with `identity_required`.
+- A list arrives as `{}` when it is empty (it is a Lua table on the way), so
+  read every list through a helper that takes either.
+- People are shown as the staff member may see them (*Who may do what*): a
+  `cid` field is absent without `crimson.identity`, and every citizen id
+  elsewhere is a role.
+
+| op | Needs | `data` sent | `data` answered |
+|---|---|---|---|
+| `access` | read | — | `{ canWrite, canModerate, canIdentify, canDevelop, developerAce, developerByAce, developerHint?, permissions = [{ ace, name, held, unlocks, grant }], pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version }` (no command names: the page is buttons only; read-only metadata for the sections and the Permissions page) |
+| `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering; `leftForStaff` counts the lines something settles by hand, `total` every line listed)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, alerts = { open }, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
+| `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
+| `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid, deadline = { left, stopped, adjustable, maxAdjust, minLeft } }` (`left` the exact run time left, in seconds) |
+| `void` | moderate | `{ id, reason? }` | — (`message` is `/ch-void`'s answer, in the panel's words) |
+| `addNote` | write | `{ id, text }` (at most 300 characters) | `{ id }`; refused `too_many` (100 a contract), `not_found` or `invalid_input`. Audited `staff_note` |
+| `removeHitman` | write | `{ id, hitman, reason, returnStake?, block? }` (`hitman` the operative's row id from `contract`'s `hitmen`) | `{ stake, returned, forfeited, blocked, remaining }`; refused `bad_state`, `contract_frozen`, `no_operative`, `not_active`, `not_found` or `invalid_input`. Audited `staff_remove_hitman` |
+| `editText` | write | `{ id, field = 'reason', text, reason }` | `{ new }`; refused `reason_refused` (the rule in `message`), `unchanged`, `no_text`, `busy`, `not_found` or `invalid_input`. Audited `staff_text_edit` (old and new text) |
+| `exportContract` | read | `{ id }` | `{ text }`: the contract's record as plain text, scrubbed as `contract` is. Audited `admin_panel_export` |
+| `playerView` | read | `{ id, role = 'target'\|'placer'\|'hitman', hitman? }` | `{ role, shown, note?, view?, whitelisted?, alias?, viewer? }`: `view` is `Projection.contract` for that party (scrubbed without `crimson.identity`, which alone gets `viewer = { cid, name }`). Audited `admin_panel_player_view` |
+| `adjustDeadline` | moderate | `{ id, seconds, reason }` (`seconds` a signed whole number, not 0, within `Config.Limits.StaffDeadlineMaxAdjustSeconds` either way) | `{ seconds, leftBefore, leftAfter, deadline, lifetime = 'unchanged'\|'extended'\|'capped'?, expires? }`; refused `min_left` (with the most it can be shortened by in `message`), `at_limit`, `bad_state`, `not_found` or `invalid_input`. Audited `staff_deadline_adjust` |
+| `settle` | write | `{ line, disposition = 'pay'\|'return'\|'delivered', amount?` (with `pay`)`, owner?` (with `return`, a citizen id) `}` | `{ detail }` (`message` is `/ch-settle`'s answer, in the panel's words) |
+| `stuck` | read | — | `{ recovery, reviews, lines = [stuck] }`: every line waiting for staff, as `/ch-stuck` lists them, and the review queue's open count; `lines` absent while recovering. Audited `admin_stuck`, as the command is |
+| `reviews` | read | `{ all? }` | `{ items = [{ id, kind, about, contract, parties = [{ role, who }], amount, account, items, known, now, state, created_at, resolution, resolved_by, resolved_at, unwritten }] }` |
+| `resolve` | write | `{ id, action = 'refund'\|'pay'\|'dismiss'\|'finish', who?` (a role the item names, or a citizen id)`, amount?, account?, goods?, note? }` (`finish`, with no other field, finishes one left part-way as it was decided) | `{ detail = { action, settled, pending, parked, continued } }` (`message` is `/ch-review`'s answer, in the panel's words) |
+| `logs` | read | `{ kind?, action?, contract?, actor?, from?, to?, limit?, cursor? }` | `{ rows = [row], next }`: pass `next` back as `cursor` for the page after; absent on the last. `actor` without `crimson.identity` keeps only the rows that player acted in openly (audited `admin_panel_logs_player`) |
+| `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }` (with `crimson.identity` only)`, owed = [line + queued], pending, notices = { count, titles }, frozen?, suspended?, protected?, payMax }` (`suspended` and `protected` are `{ since, until?, reason, by? }`, `by` with `crimson.identity` only); `not_found` for a citizen id nobody in the city has and nothing shown names |
+| `whois` | identity | `{ id }` | `{ creator = { cid, name, anonymous }, target = { cid, name }, hitmen = [{ alias, cid, name, anonymous, state }] }` |
+| `settings` | read | — | each `setting` carries its `category` (`rules-timers`, `rules-rewards`, `rules-limits`, `rules-targeting`, `features`, `developer`), `money` (its Rewards & money group), and `shipped`/`hasShipped` (defaults.lua's value); developer rows only for staff with the developer ACE. `{ features = [setting], limits = [setting], readonly = [setting], overrides, keptPhotos? = { count, open, links, files, waiting } }` (`keptPhotos` only while kill photos are off and some are kept from before) |
+| `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, a word for a `text` key, a list of names, or `{ min, max }` for a `range` key; a key on `Settings.DENY` is refused `read_only`, and a developer-category key needs the developer ACE) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value`, `store_failed` or `busy` (another change is being saved), with why in `message` |
+| `resetSetting` | write | `{ key }` | `{ key, value, old, source }`; also `not_overridden` and `busy` |
+| `resetSettings` | write | — | `{ keys }` |
+| `refresh` | write | — | `{ lines }` |
+| `diag` | read | `{ subject? }` (a server id) | `{ lines }` |
+| `flush` | write | — | `{ written }` |
+| `alerts` | read | `{ state = 'open'\|'acknowledged' }` | `{ state, rows = [{ id, level = 'always'\|'problem', text, contract, count, first_at, last_at, acknowledged_by, acknowledged_at }]` (newest first, at most `limit`; without `crimson.identity`, `text` scrubbed and `acknowledged_by` is `'a staff member'` rather than their citizen id)`, open, acknowledged, limit, discord = { on, webhook = 'alert'\|'staff'\|nil, waiting, posting, posted, lastOkAt, lastFail = { at, tries, status, alerts, test } } }` (never a webhook's address) |
+| `ackAlerts` | write | `{ ids = [id] }` (at most 100) | `{ done, already, missing }`; audited `admin_alerts_acknowledged` when it acknowledged any |
+| `testAlert` | write | — | `{ seconds }`; refused `no_webhook` or `discord_off`. Audited `admin_alert_test` either way |
+| `console` | developer (`crimson.developer`, or `crimson.admin` itself; refused `developer_required` with the grant line) | — | `{ at, debug, count, problems = [text], boot = [{ text, kind = 'always'\|'debug' }], bootLeft, recent = [{ text, kind = 'always'\|'debug', at, times }]` (oldest first)`, bootKept, recentKept, alwaysKept }`: what `shared/log.lua` keeps (`Log.view`), every line without a webhook's address, a secret convar's value or a statement's values, and scrubbed without `crimson.identity` |
+| `removePhotos` | write | — | `{ removed, files, links, left, waiting }` (`left`: files that could not be deleted; `waiting`: open on a phone, removed when that view closes); refused `photos_on` while kill photos are on. Audited `admin_photos_removed`, with the count, every time |
+| `history` | read | `{ subject }` | `{ counts = { placed, taken, completed, cancelled, onThem, boughtOut }, recent = [{ id, state, roles, anonymous?, created_at, resolved_at, client?, target? }], buyouts = { paid, amount }, informants = { count, spent, informant, placerInformant, locationTip }, money = { in = [{ kind, amount }], out = [...] }, measures = [{ kind, from, until?, ended?, state, reason, by?, endedBy? }], anonymous?, identified, retentionDays }`. Names and `anonymous` only with `crimson.identity`; without it nothing anonymous is counted |
+| `suspend` | moderate | `{ subject, days (0 until lifted, at most 365), reason }` | `{ suspended = { since, until?, reason, by? } }`; also `already` |
+| `unsuspend` | moderate | `{ subject, reason? }` | —; also `not_active` |
+| `protect` | moderate | `{ subject, hours (0 for good, at most 8760), reason }` | `{ protected = { since, until?, reason, by? } }`; also `already` |
+| `unprotect` | moderate | `{ subject, reason? }` | —; also `not_active` |
+| `manualPay` | write | `{ subject, amount, account = 'cash'\|'bank', reason }` | `{ paid, owed }`; also `over_max`, `payments_off` |
+
+`line` (an escrow line) is `{ id, contract, slot, portion, source, amount?,
+item, quantity, state, owed_to, releasing_to, taken_from, staker, settled_to,
+settled_at, settled_by_staff, arrived, raised, parked, owes }`; `row` (an audit
+row) is `{ ts, kind, action, contract, actor, detail }`; `stuck` is a `/ch-stuck`
+entry, `{ line, contract, amount, source, item, quantity, portion, intended,
+why, at, raised, arrived, settles, orphan, unfinished, owed, actions }`, where
+`actions` lists what settles it: `pay`, `pay_amount`, `return`, `return_owner`
+(a `return` naming a citizen id) and `delivered`; never `return` for a line
+owed to somebody (portion `owed`), which nobody put up to take back, and only
+`pay` for one nothing of which was given (`why` `unqueued`, `stalled_claim`,
+or `never_given_release` with `owed`; `never_given_release` owed to nobody
+takes `return` alone). `why` `owed_to_nobody` (a line owed and queued to a
+citizen id no character has) takes `return_owner`, and `owed_to_unchecked`
+(qbx_core could not say) nothing. `setting` is `{ key, group,
+label, about, kind = 'switch'\|'choice'\|'number'\|'list'\|'text', choices?, min?,
+max?, integer?, live, inflight, readonly?, destroys?, value, default, source =
+'config'\|'panel', by?, at?, ignored? }`: `live = false` is *applies after
+restart*, `readonly` is why it cannot be changed, `destroys` (with `%s` for the
+new value) is what lowering it deletes for good, which the page asks a second
+click for, and `ignored` is why a value the store holds was not applied at start.
+
+**Convars.**
+
+| Convar | How | What |
+|---|---|---|
+| `crimson_hitman_webhook` | `set` in `server.cfg`, never `setr` | The staff Discord webhook (optional); the admin panel's alerts go there too when the alert webhook is not set |
+| `crimson_hitman_alert_webhook` | `set` in `server.cfg`, never `setr` | The Discord webhook the admin panel's alerts are posted to (optional) |
+| `crimson_hitman_new_store` | `set crimson_hitman_new_store 1` in the console, once | `json` mode: start an empty store on purpose (see *Updating*) |
+| `web_baseUrl` | read | The public address kill photos are served from when `Config.Completion.PhotoPublicUrl` is unset |
+| `inventory:accounts` | read (`ox_inventory`'s, default `["money"]`) | Items that are money and so are refused as goods |
+
+**lb-phone** (not a manifest dependency, so restarting it is safe; every call
+is guarded). Client: `AddCustomApp` with the identifier `crimson-hitman`, and
+`RemoveCustomApp` (or `DeleteCustomApp`, `UninstallApp`) for a player who
+loses access; `SendCustomAppMessage`; `SendNotification` for the popup;
+`SetCameraComponent` on `'host'` photo storage; `EnableWalkableCam` /
+`DisableWalkableCam` behind the `'server'` viewfinder; `SaveToGallery` where
+the page cannot save. Server: `GetEquippedPhoneNumber` and `SendNotification`
+for saved notices, `CreateCall`, `IsInCall` and `EndCall` for relay calls,
+`GetConfig` for upload hosts and caller masking, `ContainsBlacklistedWord` on
+reasons and messages, and the two gallery events above.
+
+**ox_inventory** (required). `GetInventoryItems`, `GetInventory`, `Search` and
+`GetItem` read what a player can put up; `RemoveItem` takes it into escrow;
+`CanCarryItem` then `AddItem` pay it out or hand it back, with the metadata it
+was taken with. Each call is made inside `pcall`, and a raise is a refusal,
+except an `AddItem` that raised after the item arrived: `GetItemCount` (or
+`Search` by serial, for a weapon) before and after the give tells which, and
+one that arrived is delivered (see *What stops it being abused*). It registers
+no ox_inventory hooks and ships no items.
+
+**sc-dispatch** (optional; `Config.Advisory.UseDispatch`, only while it is
+started). A threat advisory goes to the MDT through `AddNotification` with
+`caller = 'Criminal Intelligence'`, `priority = Config.Advisory.DispatchPriority`,
+`job_table` from `Config.Advisory.RecipientJobNames` and
+`unique_id = 'ch-<contract>-<stage>'` (`posted` or `accepted`); both are
+cleared with `ClearNotification` when a contract on an officer ends, whatever
+`Config.Advisory` says by then (clearing an id never filed does nothing).
+
+**Other optional hooks**, each skipped when the resource is not started:
+`sc-ambulance` (`IsDead`, `IsLaststand` through
+`Config.Completion.DeathStateProviders`; QBox metadata answers otherwise),
+`sc-blackmarket` (`AddTrust(citizenid, amount)` on a completed contract,
+`Config.Progression`), `MugShotBase64` (`GetMugShotBase64` on the client, for
+headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
+`Config.Immunity.PlaytimeProvider` (minutes played by citizen id; without it
+the playtime is counted here, see *New players and playtime*).
+
+
+## oxmysql, as the mysql store relies on it
+
+The reference the mysql store (`crimson-hitman/server/storage/mysql.lua`) and the
+test harness that stands in for oxmysql (`tests/harness/mysql_exec.lua`,
+`natives.lua`, `await_scheduler.lua`) cite as `oxmysql §N` (docs/developer.md). Each section says what
+oxmysql does, so a comment that leans on it can be checked here.
+
+### oxmysql §0. Version and how it was checked
+
+* **OX**: overextended/oxmysql, tag `v2.14.3` (commit `bae715c`). Paths below are in its source.
+* **M2**: mysql2 3.24.5, with oxmysql's `patches/mysql2@3.24.5.patch` applied.
+* **NP**: named-placeholders 1.1.6, with oxmysql's patch applied.
+* **SE**: sql-escaper 1.5.2, the version oxmysql's `bun.lock` pins (mysql2's query formatter).
+* **FX**: citizenfx/fivem `data/shared/citizen/scripting/lua/scheduler.lua` and `deferred.lua`
+  (the Lua scheduler and promises), and `.../v8/main.js` (the JS runtime).
+
+Behaviour marked **[run]** was observed by running the real oxmysql 2.14.3 source (bundled
+as its own build bundles it) under node 22 against MariaDB 10.11.14, through its exports,
+with the FiveM globals shimmed and Lua tables sent as FiveM's msgpack sends them. Marked
+**[src]**: read from the source only. To check a claim again, read the cited lines in that
+version, or run the same call against a scratch database.
+
+
+### oxmysql §1. The call path
+
+* `MySQL[method].await(sql, params)` calls the export
+  `oxmysql[method](nil, sql, params, function(result, error) ... end, resourceName, true)` and
+  then `Citizen.Await(p)` (OX `lib/MySQL.lua:15-27, 87-97`). The callback rejects the promise
+  when `error` is set, else resolves it with `result`.
+* A plain call `MySQL[method](sql, params, cb)` does not wait. It passes `isPromise` as the
+  resource's `mysql_option 'return_callback_errors'`, which is off unless the fxmanifest sets
+  it (OX `lib/MySQL.lua:6-13, 72-77`).
+* The exports return at once; the answer only ever comes through `cb` (OX `src/index.ts:20-102`).
+* A call made before oxmysql has a pool waits in `while (!pool) await sleep(0)`
+  (OX `src/database/connection.ts:71-72`).
+* Lua to JS: a Lua table whose keys are exactly 1..n is a JS array; a table with a nil hole
+  is a msgpack map and arrives as a JS object `{"1": a, "3": c}` (FX `scheduler.lua:30-34`,
+  lua-cmsgpack `set_array('without_hole')`). `{}` is `[]`.
+* JS to Lua: `null`/`undefined` become `nil`, so a NULL column is a key absent from the row;
+  an integer within int32 is a Lua integer, any other number a Lua float.
+
+### oxmysql §2. Placeholders
+
+On `query`, `single`, `scalar`, `update`, `insert` and `transaction` (OX
+`src/utils/parseArguments.ts:4-37`), formatted on the client by sql-escaper:
+
+| Case | Behaviour |
+|---|---|
+| `?` with an array | Positional. Fewer values than `?`: the rest are NULL. More values: raises `Expected N parameters, but received M.` before anything is sent, without yielding. [run] |
+| `?` with an object (a Lua table with a hole) | Each `?` takes `params[i + 1] ?? null`: the hole is NULL, extra keys are ignored. [run] |
+| `@name` / `:name` | Converted only when the parameters are an **object** and the SQL text holds `:` or `@` anywhere (OX `parseArguments.ts:7-10`). [run] |
+| An object and any `:` or `@` in the SQL, even in a `--` comment or a string literal | The named path numbers each `?` from 0 (NP `index.js:50`), so the first `?` gets NULL and every other one the value meant for the one before it. No error. An array with the same SQL is unaffected. [run] |
+| nil | NULL. |
+| boolean | `true` / `false`, stored as 1 / 0, never NULL (SE). |
+| a sequence table as one value | Expanded to `a, b, c`: right for `IN (?)` only. |
+
+This resource's SQL never holds `:` or `@` (a rule in `tests/static_check.lua`),
+because about twenty of its writes send tables with holes.
+
+### oxmysql §3. Return shapes
+
+`parseResponse` (OX `src/utils/parseResponse.ts:4-22`). [run]
+
+| Method | Returns |
+|---|---|
+| `query` SELECT | An array of rows (`{}` when none). |
+| `query` INSERT/UPDATE/DELETE | The result header `{ affectedRows, insertId, ... }`. |
+| `scalar` | The first column of the first row, or nil (`0` and `false` survive). |
+| `insert` | `insertId`; 0 on a table without AUTO_INCREMENT. |
+| `update` | `affectedRows`, **matched rows, not changed rows**: mysql2 connects with `FOUND_ROWS` by default (M2 `lib/connection_config.js:286-289`). `UPDATE t SET s = s` answers 1. A DELETE answers the rows deleted. |
+| `transaction` | `true` after COMMIT; **`false`** when any statement fails, after a ROLLBACK, with the error printed. It does **not** raise for an SQL error (OX `src/database/rawTransaction.ts:35-91`). It does raise for malformed input (not an array; more values than `?`). A statement matching no row does not fail it. [src] `false` also comes back when COMMIT was sent and its answer was lost, so false does not prove nothing landed. |
+
+### oxmysql §4. What a column comes back as
+
+Through `query` and the others (OX `src/utils/typeCast.ts:30-71`). [run]
+
+* `TINYINT(1)` / `BOOLEAN`: a boolean, `true` only for 1 (2 reads as false).
+* `INT`: a number. `BIGINT`: a number up to 2^53, else a string. `COUNT(*)`: a number.
+* `DECIMAL`, `SUM(int)`, `AVG()`: a **string**.
+* `DATETIME` / `TIMESTAMP`: milliseconds, read in the FXServer process's time zone.
+* `JSON` and `TEXT`: a string, not decoded.
+
+This store's schema uses `INT`, `VARCHAR`, `TEXT` and `TINYINT(1)` only, and reads `COUNT(*)`
+through `tonumber`, so none of the string or millisecond shapes reach it.
+
+### oxmysql §5. Errors
+
+| Situation | What happens |
+|---|---|
+| SQL error under `.await` (syntax, duplicate key, strict-mode `Data too long`, `Column 'x' cannot be null`, `Out of range value`) | The callback gets `(nil, message)`, the promise is rejected and `Citizen.Await` **raises** (FX `scheduler.lua:85-99`). oxmysql prints nothing itself. The message is `"<resource> was unable to execute a query!\nQuery: <sql>\n<params as JSON>\n<server message>"` (OX `src/logger/index.ts:35-37`): every parameter value is in it. [run] |
+| A parse error (too many `?` values) | Raised at once, without yielding. [run] |
+| SQL error on a plain call (no `return_callback_errors`) | Printed with `console.error`; **the callback is never called**. [run] |
+| SQL error in a transaction | Answers `false`, prints `"<resource> was unable to complete a transaction!..."`, rolls back. [run] |
+| Session `sql_mode` | MariaDB's default plus mysql2's `IGNORE_SPACE`: `STRICT_TRANS_TABLES` among them, so an overlong string, an INT past -2^31..2^31-1, a TEXT past 65,535 bytes and a NULL in a NOT NULL column are **refused**, never cut short or wrapped. [run] |
+
+### oxmysql §6. While the database is down
+
+**At start.** oxmysql tries once, prints `Unable to establish a connection to the database`,
+then retries every 30 s for good (OX `src/database/index.ts:5-12`, `pool.ts:28-44`). Every
+statement issued meanwhile **waits, with no error and no timeout**, and is answered at the
+retry that connects. [run]
+
+**Mid-run, once the pool exists: awaits are never answered.** `getConnection()` runs outside
+the `try` in `rawQuery.ts:29` (and in `rawExecute.ts:34`, `rawTransaction.ts:31`). When mysql2
+cannot open a connection the export's promise rejects, **`cb` is never called**, and FXServer
+prints only an unhandled rejection (FX `v8/main.js:443-470`). [run]
+
+| Scenario | `.await` outcome |
+|---|---|
+| MariaDB stopped; then `query`, `update`, `transaction` | Never answered. `isReady()` still says true. |
+| Issued while down, database back 1.5 s later | Still never answered: a lost call does not come back. |
+| A fresh call after the database is back | Answered: the pool recovers by itself. |
+| A statement in flight when MariaDB is killed | Raises `Connection lost: The server closed the connection.` It may or may not have committed. |
+| The network stops answering, an idle pooled connection reused | Never answered: oxmysql passes no query timeout and mysql2 has none. |
+
+In Lua a coroutine parked in `Citizen.Await` on a promise that never settles is never resumed:
+not an error, so a `pcall` around it never returns either (FX `scheduler.lua:85-99`). This is
+why the store races every statement against `Config.Database.QueryTimeoutSeconds`, and why a
+statement given up on may still land later.
+
+### oxmysql §7. Every await yields
+
+`Citizen.Await` yields when the promise is still pending, and a successful query's callback
+always arrives on a later JS tick, so **every** `.await` yields its coroutine, every time; only
+a parse error raises without yielding (FX `scheduler.lua:85-99`, `465-511`). [run]
+
+Meanwhile anything else in the resource may run to its own next yield: other net events (each
+its own thread), the `CreateThread` loops, timers, commands, exports called by other
+resources. Lua state read before an await can be stale after it.
+
+A plain `MySQL.insert(sql, params)` with no `.await` does not yield; the statement runs inside
+oxmysql whatever happens to the caller (OX `src/index.ts:60-68`).
+
+### oxmysql §8. Pool and concurrency
+
+* mysql2's pool: 10 connections, an unbounded queue (M2 `lib/pool_config.js:11-30`).
+* Two awaits run at once on different connections and finish in completion order, not call
+  order. [run]
+* One coroutine's awaits usually land on the same connection, by luck, not by guarantee: never
+  rely on session state (user variables, `LAST_INSERT_ID()`, `GET_LOCK`) across two awaits.
+  This store uses none.
+* Each `.await` is its own autocommit transaction; only `transaction` groups statements.
+
+### oxmysql §9. `mysql_connection_string`
+
+Every option value is a string, so `?multipleStatements=false` turns multiple statements ON
+(`"false"` is truthy) [run]. `connectTimeout` (oxmysql's default 60 s) covers opening a
+connection only; there is no query timeout anywhere. `flags=["-FOUND_ROWS"]` would make
+`update` answer changed rows instead of matched ones [src].
+
+### oxmysql §10. What oxmysql prints
+
+* A statement slower than `mysql_slow_query_warning` (200 ms by default) is printed **with its
+  full SQL and every parameter value** (OX `src/logger/index.ts:78-93`). [run]
+* A result of 1,000 rows or more: `executed a query with an oversized result set`
+  (OX `src/utils/validateResultSet.ts`). [run]
+
+### oxmysql §11. What this store relies on
+
+* Every `db.*` call yields (§7) and is bounded by `Config.Database.QueryTimeoutSeconds` (§6).
+* A failed statement raises (§5); a failed transaction answers false (§3).
+* `update` answers matched rows (§3): a compare-and-set `UPDATE ... WHERE id = ? AND state = ?`
+  answers 1 only when the row was in that state, and an `UPDATE` setting what is already there
+  answers 1 too.
+* NULL is a missing key and `TINYINT(1)` a boolean (§1, §4).
+
+### oxmysql §12. Assumptions that differ from oxmysql
+
+1. **"An await returns or raises."** Not during an outage (§6): a statement that needs a new
+   connection while MariaDB cannot be reached is never answered, and a `pcall` cannot catch it.
+   The store races each statement against a timeout and treats one given up on as one that may
+   still land.
+2. **A table with a hole plus a `:` or `@` in the SQL** shifts every value one column (§2), with
+   no error. Kept out by the static check.
+3. **A stand-in that raises on a failed transaction, keeps the statements before it, stores
+   values strict mode refuses, or never yields** is not oxmysql (§3, §5, §7). The harness
+   (`mysql_exec.lua`, `await_scheduler.lua`) is held to this file.
+4. **Matched rows** (§3): an `UPDATE` that changes nothing still answers 1.
+5. **A failed read answers nothing**: it raises (§5).
+6. **A plain call with no `.await`** (the audit's and the alerts' writes while the resource stops) is not waited for: a failure
+   is only printed by oxmysql and the row is lost; several run at once, so their order may not
+   be the call order (§5, §8).
+7. **Console exposure.** oxmysql's error message (§5) and its slow-query line (§10) carry every
+   parameter value: citizen ids, character names, reasons, message bodies. Anything this
+   resource prints or stores from an error is cut to the statement's start and the server's own
+   words, never its parameters.
+8. **A thousand rows** in one result prints oxmysql's oversized-result warning (§10).
+9. **Session state across awaits** is not guaranteed (§8).
+10. **Lua `false` as a parameter is 0, not NULL** (§2): bind `nil` for NULL.
+11. **A start with the database down** waits silently until oxmysql's next 30 s retry (§6).
+
+## The specification's rules, by number
+
+Code comments cite the original specification's rules by number. Its text is
+retired: what is still true is in this file, the README and the code each
+comment sits in. The titles, to read a citation by:
+
+| § | Rule |
+|---|---|
+| §1 | **Overview** |
+| §2 | **Job & Access Restrictions** |
+| §3 | **Contract Creation** |
+| §3.1 | Target Selection |
+| §3.2 | Contract Reason |
+| §3.3 | Assignment Mode |
+| §3.4 | "Dead or Alive" Reward Selection |
+| §3.5 | Payout Slots — multiple collections per contract |
+| §3.5 | Escrow Automation |
+| §3.6 | Failure Penalty Configuration |
+| §4 | **Privacy & Identity (Anonymous Mode)** |
+| §5 | **Target Interaction — "Contract Cleanse" (Self-Bailout)** |
+| §6 | **Additional Immersive Features** |
+| §6.1 | Counter-Intelligence — Purchasable Hitman Identity |
+| §6.2 | Blood Money Laundering — Crypto / Dirty Money Payouts |
+| §6.3 | Proof of Death Archive — The Hitman's Ledger |
+| §7 | **System Logic & Completion Tracking** |
+| §7.1 | Online Presence Dependency |
+| §7.2 | Real-Time Visuals |
+| §7.3 | Automated lb-phone Notifications |
+| §7.4 | Contract Acceptance & Payout Security |
+| §7.5 | Law Enforcement Threat Advisory |
+| §8 | **Configuration Surface (`config.lua`)** |
+| §9 | **Binding Implementation Rules** |
+| §9.1 | Escrow is the single source of truth |
+| §9.2 | One shared release routine |
+| §9.3 | Refunds never destroy property |
+| §9.4 | Weapons are snapshots |
+| §9.5 | Rate limiting |
+| §9.6 | Server authority |
+| §9.7 | Atomic completion |
+| §9.8 | Financial audit log |
+| §9.9 | Persistence footprint |
+| §9.10 | Contract state machine |
+| §10 | **Persistence Modes (`Config.Database.Mode`)** |
+| §10.1 | A correction worth stating plainly |
+| §10.2 | `json` mode requirements |
+| §10.3 | `memory` mode requirements |
+| §10.4 | Mode-independent guarantees |
+| §11 | **Contract Communications (Masked Relay)** |
+| §11.1 | Masked identities |
+| §11.2 | In-app contract thread |
+| §11.3 | Voice calls |
+| §11.4 | Abuse controls |
+| §12 | **Contract Amendments** |
+| §12.1 | Additive changes — immediate |
+| §12.2 | Material changes — mutual approval required |
+| §12.3 | What can never be amended |
+| §12.4 | Withdrawal and abandonment |
+| §12.5 | The hitman's final determination |
+| §13 | **Participation & Concurrency** |
+| §13.1 | Conflict rules (server-enforced, non-negotiable) |
+| §13.2 | Concurrency safety |
+| §14 | **Abuse Resistance** |
+| §14.1 | The acting player is the event source, never a payload field |
+| §14.2 | Death reports are victim-sourced and independently corroborated |
+| §14.3 | Escrow rows carry a settled state and every release is a guarded compare-and-set |
+| §14.4 | Anonymity and hiding are enforced by omission at the transmit boundary |
+| §14.5 | Contract limits are enforced per target, not only per actor |
+| §14.6 | Creator, target and hitman are three distinct parties |
+| §14.7 | Economic limits are keyed to the account, not the character |
+| §14.8 | Every contract has an absolute lifetime; the pause has a ceiling; hitmen can always get out |
+| §14.9 | Cancellation is defined, gated, locked and logged |
+| §14.10 | Release is source-faithful; currency conversion is a payout-only, lossy, explicit step |
+| §14.11 | The write debounce is not a durability window for money |
+| §14.12 | Pending releases are per-line, bounded, and dead-lettered |
+| §14.13 | One validator builds the escrow record from server-read data, over baseline and bonus together |
+| §14.14 | Every client-supplied number passes one coercion helper before any comparison |
+| §14.15 | Non-escrow transfers are debit-first, server-priced, and two-sided |
+| §14.16 | The bailout premium is server-clamped and rail-limited |
+| §14.17 | Bailout has a state gate, a processing delay, and never rug-pulls a hitman |
+| §14.18 | The failure penalty is staked at acceptance, capped, and disclosed before it can be agreed to |
+| §14.19 | Target eligibility is checked at creation, acceptance and every payout tick |
+| §14.20 | The verification photo is obtained from the camera flow, never from the payload |
+| §14.21 | Server-read positions are untrusted telemetry, sampled with continuity and one grace budget |
+| §14.22 | Tracking is defined, coarse, scoped and suppressed — it is not a player locator |
+| §14.23 | Kidnap countdowns run on one shared tick behind an arm gate |
+| §14.24 | Kidnapping requires observable coercion and a living, conscious target |
+| §14.25 | Kidnap delivery has a creator obligation clock and a maximum hold |
+| §14.26 | The mugshot is frozen or floor-debounced, and pushed only to subscribers |
+| §14.27 | Every net event passes one gate before its handler body runs |
+| §14.28 | Read handlers derive their result set from the requester, never from a submitted id |
+| §14.29 | Informant Data: authorised buyer, server-side selection, engaged pool, uniform response |
+| §14.30 | The contract reason is content-controlled and permanently attributed |
+| §14.31 | §9.8 becomes a conduct log, with reports and admin commands |
+| §14.32 | Listing visibility for anonymous contracts follows the target's presence only |
+| §14.33 | Target selection is a scoped server-side search, not a roster |
+| §14.34 | Acceptance is a conditional atomic write |
+| §14.35 | Capture tokens have provenance, one live token per hitman-contract, and single use |
+| §14.36 | Photo proximity binds to the recorded death scene, not the live ped |
+| §14.37 | Competitive contracts cap simultaneous hitmen per target |
+| §14.38 | Pair throttles and a minimum age before completion |
+| §14.39 | Post-death immunity and an attributed-death cap |
+| §14.40 | Notifications carry a per-recipient budget |
+| §14.41 | The engagement record is always computed; gating payout on it is the owner's choice |
+| §14.42 | Disconnecting inside an active engagement is recorded |
+| §14.43 | Ledger content, anonymity scope, and photo lifecycle |
+| §14.44 | The log's write path, distribution, retention and purge are bounded |
+| §14.45 | Weapon serials and unique item identifiers never leave the holder |
+| §14.46 | Fees fold into the atomic escrow debit and carry generic transaction memos |
+| §14.47 | Boot-time configuration validation |
+| §14.48 | json persistence is sharded per contract |
+| §14.49 | memory-mode disconnect cancel is scoped to unaccepted contracts |
+| §14.50 | A creation gate that is not a resource stop |
+| §14.51 | Contract Cleanse is discreet, not anonymous |
+| §15 | **Progression & Reputation** |
+| §16.1 | Criminal progression |
+| §16.2 | Hitman record |
+| §16.3 | What counts |
+| §16 | **Configuration Appendix** |
+| §17 | **Design Rationale** |
+
+§14.22 (coarse tracking) was never built; §9.9 and §14.48 describe `json` storage, no longer the shipped mode.

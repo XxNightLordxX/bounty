@@ -1,4 +1,4 @@
---- Roleplay consequences of a completed contract (README, Roleplay features).
+--- Roleplay consequences of a completed contract (README, Optional features).
 ---
 --- Four features, each off as shipped and each its own block of
 --- Config.Roleplay, all of them changed live from the admin panel:

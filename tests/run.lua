@@ -697,6 +697,7 @@ local suites = {
     'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec', 'perf_round3_spec',
     'workflow3_spec',
     'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec',
+    'docs_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

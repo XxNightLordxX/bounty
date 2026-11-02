@@ -2656,7 +2656,7 @@ end
 --
 -- The harness's and the store's claims about oxmysql cited OXMYSQL.md, a
 -- file that was never committed, so a maintainer could check none of them.
--- They cite docs/oxmysql.md now. Every `docs/<name>.md` named in the
+-- They cite docs/developer.md (oxmysql §N) now. Every `docs/<name>.md` named in the
 -- server, client, shared code and the tests (harness included) has to exist,
 -- and a bare OXMYSQL.md is not cited at all.
 
@@ -2685,7 +2685,7 @@ do
         end
         if src:find('OXMYSQL.md', 1, true) then
             failures[#failures + 1] = ('%s cites OXMYSQL.md, which is not in the repository; cite '
-                .. 'docs/oxmysql.md'):format(path)
+                .. 'docs/developer.md, oxmysql'):format(path)
         end
     end
 end

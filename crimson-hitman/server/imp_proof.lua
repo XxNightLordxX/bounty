@@ -1,5 +1,5 @@
---- Proof items (Config.Improvements.ProofItems, README "Optional
---- improvements"). Off as shipped, and off it changes nothing.
+--- Proof items (Config.Improvements.ProofItems, README, Optional
+--- features). Off as shipped, and off it changes nothing.
 ---
 --- On, a hitman may finish a contract a kill completes (Fulfilment 'either')
 --- by handing the person who placed it an item taken from the target: an

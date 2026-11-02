@@ -1,5 +1,5 @@
 --- Weapon serial scrubbing (Config.Improvements.SerialScrub, README
---- "Optional improvements"). Off as shipped, and off it changes nothing.
+--- Optional features). Off as shipped, and off it changes nothing.
 ---
 --- On, a weapon an anonymous placer put up reaches anybody but that placer
 --- (the hitman paid with it) with a new random serial in its ox_inventory

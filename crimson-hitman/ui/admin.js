@@ -4,7 +4,7 @@
    app. It holds no authority. Every request goes through nui() to
    client/admin.lua's adminRequest callback and on to server/panel.lua, which
    checks the ACE again on every one, rate-limits it, and answers
-   { ok, err, message, data } (README, Integration Guide, has every op and
+   { ok, err, message, data } (docs/developer.md, Integration, has every op and
    shape). The page draws what it is told and nothing more: who is behind an
    anonymous party arrives only for staff with crimson.identity, already
    redacted for everybody else, and the page never asks for whois without it.

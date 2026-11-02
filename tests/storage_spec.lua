@@ -1058,7 +1058,7 @@ describe('the mysql executor refuses a statement it cannot read', function()
     end)
 end)
 
---- MariaDB 10.11 runs oxmysql's connections in strict mode (docs/oxmysql.md
+--- MariaDB 10.11 runs oxmysql's connections in strict mode (docs/developer.md, oxmysql
 --- §5): a value its column cannot hold is refused, not cut or wrapped. The
 --- executor stored anything, so a paused_ms past INT, money past INT and
 --- item metadata past TEXT never failed a test, and three fixtures above
@@ -3863,7 +3863,7 @@ describe('the json audit log', function()
 end)
 
 --- S15, S16, S17: oxmysql never answers a statement it could not get a
---- connection for (docs/oxmysql.md §6), and a thread waiting on it was never
+--- connection for (docs/developer.md, oxmysql §6), and a thread waiting on it was never
 --- resumed. Every statement is raced against
 --- Config.Database.QueryTimeoutSeconds now, and a probe confirms an outage
 --- before the store stops sending (server/storage/mysql.lua).

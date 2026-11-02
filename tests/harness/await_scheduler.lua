@@ -1,6 +1,6 @@
 --- Two handlers interleaved at every database await, on mysql.
 ---
---- On a live server every oxmysql await yields its coroutine (docs/oxmysql.md
+--- On a live server every oxmysql await yields its coroutine (docs/developer.md, oxmysql
 --- §7), and anything else in the resource may run before it resumes: other
 --- net events, the tick, a command. The executor in mysql_exec.lua answers
 --- at once, so a suite never sees that. This boots the real server/main.lua

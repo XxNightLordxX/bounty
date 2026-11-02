@@ -1,5 +1,5 @@
 --- The staff and economy improvements' shared helpers (Config.Improvements,
---- README "Optional improvements"): each feature's block read at use, and
+--- README, Optional features): each feature's block read at use, and
 --- the start-up check of each block, the way server/rp_places.lua checks
 --- the roleplay blocks. Used by server/imp_proof.lua, imp_scrub.lua and
 --- imp_weekly.lua, and for Config.Limits.TargetCooldownAfterCompletionSeconds.

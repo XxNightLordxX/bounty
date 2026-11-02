@@ -1,5 +1,5 @@
---- Rumours and the broker (Config.Roleplay.Rumours, README "Roleplay
---- features"). Off as shipped, and off it changes nothing.
+--- Rumours and the broker (Config.Roleplay.Rumours, README, Optional
+--- features). Off as shipped, and off it changes nothing.
 ---
 --- On, the board shows a contract to a hitman who is not party to it only
 --- as a rumour: a rough area (the district the target was in when the

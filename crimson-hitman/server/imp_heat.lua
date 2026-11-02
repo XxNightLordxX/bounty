@@ -1,5 +1,5 @@
---- Hitman heat (Config.Improvements.HitmanHeat, README Optional
---- improvements). Off as shipped.
+--- Hitman heat (Config.Improvements.HitmanHeat, README, Optional
+--- features). Off as shipped.
 ---
 --- A hitman gathers heat from what the police hear of their work, each
 --- piece kept for DecayHours and then gone:

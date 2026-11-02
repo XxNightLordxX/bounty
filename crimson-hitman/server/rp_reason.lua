@@ -1,5 +1,5 @@
---- Reason quality (Config.Roleplay.ReasonQuality, README "Roleplay
---- features"). Off as shipped, and off it changes nothing.
+--- Reason quality (Config.Roleplay.ReasonQuality, README, Optional
+--- features). Off as shipped, and off it changes nothing.
 ---
 --- On, a free-text reason (Config.Reason.Mode 'freetext') must be at least
 --- MinLength characters and MinWords words, on top of every existing reason

@@ -1,7 +1,8 @@
 --- Three rules the specification states plainly and nothing measures.
 ---
---- Read against docs/hitman-app-spec.md. Each of these is a numbered
---- claim in that document, implemented in the resource, and never exercised:
+--- Read against the specification's rules (docs/developer.md, the rules by
+--- number). Each of these is a numbered claim of it, implemented in the
+--- resource, and never exercised:
 --- line coverage over the whole server suite shows the branch that enforces
 --- it never runs. A rule nothing runs is a rule the next refactor deletes.
 

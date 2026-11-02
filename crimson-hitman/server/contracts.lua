@@ -3101,7 +3101,7 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     end
     contract, hitman, slot = held, fresh, held.next_slot or 1
 
-    -- The roleplay features (README Roleplay features, both off as shipped),
+    -- The roleplay features (README, Optional features, both off as shipped),
     -- asked while the contract still carries its meeting point: whether this
     -- payout waits for proof of intent (server/rp_intent.lua, which gates
     -- the escrow's give, so nothing below changes), and how the trust it

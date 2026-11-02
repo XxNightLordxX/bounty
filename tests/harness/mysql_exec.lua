@@ -19,14 +19,14 @@
 ---   * every read returns a fresh copy, so a caller mutating what it read
 ---     does not reach into the store;
 ---   * a value is held to its column as MariaDB 10.11's strict mode holds
----     it (docs/oxmysql.md §5): an INT past -2^31..2^31-1, a VARCHAR(n) past n
+---     it (docs/developer.md, oxmysql §5): an INT past -2^31..2^31-1, a VARCHAR(n) past n
 ---     characters, a TEXT past 65,535 bytes, a NULL in a NOT NULL column
 ---     and a NOT NULL column left out with no DEFAULT are refused, with
 ---     the server's own words inside oxmysql's message, and a statement
 ---     refused writes none of itself. A column left out takes its DEFAULT,
 ---     so crimson_hitmen.stake_amount reads 0 as it does there;
 ---   * a transaction is all or nothing, and answers false where a
----     statement in it fails, as oxmysql's does (docs/oxmysql.md §3);
+---     statement in it fails, as oxmysql's does (docs/developer.md, oxmysql §3);
 ---   * an await can be left unanswered, the database gone (Exec.down), or
 ---     answered late, a write that lands after its caller stopped waiting
 ---     (Exec.lateNext, Exec.releaseLate). Both park the caller's coroutine
@@ -178,7 +178,7 @@ local function check(tableName, column, value, rowNumber)
 end
 
 --- What oxmysql's await raises for a statement the database refused
---- (docs/oxmysql.md §5): the statement, its parameters, the server's message.
+--- (docs/developer.md, oxmysql §5): the statement, its parameters, the server's message.
 local function oxmysqlText(sql, params, message)
     local ok, encoded = pcall(json.encode, params or {})
     return ('%s was unable to execute a query!\nQuery: %s\n%s\n%s'):format(
@@ -897,7 +897,7 @@ local function delete(sql, params)
         end)
     end
     -- How many it deleted, as oxmysql's `update` answers a DELETE (its
-    -- affectedRows, docs/oxmysql.md §3): a guarded delete reads it to know
+    -- affectedRows, docs/developer.md, oxmysql §3): a guarded delete reads it to know
     -- whether the row was still there in the state it was read in.
     local deleted = 0
     for i = 1, #doomed do
@@ -1226,7 +1226,7 @@ end
 ---
 --- `.await(sql, params)` answers at once, unless the database is down
 --- (Exec.down: it parks for good, as an await on a pool that cannot
---- connect does, docs/oxmysql.md §6) or the statement is one of the next
+--- connect does, docs/developer.md, oxmysql §6) or the statement is one of the next
 --- Exec.lateNext (held, unanswered, until Exec.releaseLate runs it).
 ---
 --- Called directly, `(sql, params, cb)`, it is handed over and not waited
@@ -1291,7 +1291,7 @@ end
 
 --- oxmysql's transaction: every statement on one connection, committed
 --- together or not at all. A statement the database refuses rolls back every
---- one before it and the answer is false, not a raise (docs/oxmysql.md §3); this
+--- one before it and the answer is false, not a raise (docs/developer.md, oxmysql §3); this
 --- used to keep the ones before it and raise. Anything else raised in it (a
 --- statement this executor cannot read, a Lua error, a test's own crash
 --- injected under Exec.run) is put back the same way and raised again: a

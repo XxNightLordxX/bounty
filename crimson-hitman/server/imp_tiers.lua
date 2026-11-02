@@ -1,5 +1,5 @@
---- The tiered board (Config.Improvements.Tiers, README Optional
---- improvements). Off as shipped, and off too while Config.Progression is.
+--- The tiered board (Config.Improvements.Tiers, README, Optional
+--- features). Off as shipped, and off too while Config.Progression is.
 ---
 --- Each tier is 'name, least reward, least level'. A contract's tier is the
 --- highest one whose least reward its current payout reaches, priced as the

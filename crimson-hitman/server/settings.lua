@@ -1285,7 +1285,7 @@ for _, bucket in ipairs(BUCKETS) do
     }
 end
 
---- The roleplay consequences (server/rp_consequences.lua, README, Roleplay
+--- The roleplay consequences (server/rp_consequences.lua, README, Optional
 --- features): each switch under Features, the rest under the Rules view it
 --- belongs to. `whole` lists take each line as typed, spaces and commas
 --- included (a phrase, a template, an area), rather than as names.
@@ -1403,7 +1403,7 @@ for _, key in ipairs({ 'Roleplay.DirtyPayouts.Item', 'Roleplay.DirtyPayouts.Mode
     MONEY[key] = 'Payouts'
 end
 
---- Roleplay (group rpC, README Roleplay features): proof of intent, earned
+--- Roleplay (group rpC, README, Optional features): proof of intent, earned
 --- reputation, bodyguards and the hit on the hitman. Each switch under
 --- Features, each figure under Rules; all read at use, with no restart.
 local RP_INTENT, RP_REPUTATION = 'Roleplay: Proof of intent', 'Roleplay: Reputation'
@@ -1685,7 +1685,7 @@ for _, entry in ipairs({
     CATALOGUE[#CATALOGUE + 1] = entry
 end
 --- The board and progression improvements (server/imp_board.lua, README
---- Optional improvements), each off as shipped. Each switch under Features
+--- Optional features), each off as shipped. Each switch under Features
 --- in its own group, the rest under the Rules view it belongs to; all read
 --- at use, with no restart.
 local IMP_RECORD, IMP_HEAT = 'Improvements: Placer record', 'Improvements: Hitman heat'

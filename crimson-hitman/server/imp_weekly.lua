@@ -1,5 +1,5 @@
 --- Weekly stats to Discord (Config.Improvements.WeeklyStats, README
---- "Optional improvements"). Off as shipped, and off it posts nothing.
+--- Optional features). Off as shipped, and off it posts nothing.
 ---
 --- On, once a week, on Day at Hour (server time), one post of the last
 --- seven days' totals: contracts placed, contracts completed, and the money

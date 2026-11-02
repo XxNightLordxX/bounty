@@ -1,5 +1,5 @@
---- Contract decay (Config.Improvements.ContractDecay, README Optional
---- improvements). Off as shipped.
+--- Contract decay (Config.Improvements.ContractDecay, README, Optional
+--- features). Off as shipped.
 ---
 --- A contract nobody has taken yet (state 'active') changes every Hours it
 --- waits, one step at a time, by Mode:

@@ -1,4 +1,4 @@
---- Proof of intent (Config.Roleplay.ProofOfIntent, README Roleplay features).
+--- Proof of intent (Config.Roleplay.ProofOfIntent, README, Optional features).
 ---
 --- With it on, a payout is held, never refused: the completion stands, and
 --- the money waits until the hitman has shown they worked the contract in

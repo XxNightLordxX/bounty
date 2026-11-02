@@ -4758,7 +4758,7 @@ describe('a payment\'s recording write that never went out, then a restart', fun
     end
 
     --- Nothing after the write runs at all here: the await never answers (a
-    --- database gone mid-run, docs/oxmysql.md §6) and staff restart the resource.
+    --- database gone mid-run, docs/developer.md, oxmysql §6) and staff restart the resource.
     --- Only the record kept before the write was sent says what was taken.
     it('mysql: a create whose escrow write never answers is settled by the next start', function()
         local _, s = boot('mysql')

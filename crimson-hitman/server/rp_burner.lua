@@ -1,5 +1,5 @@
---- The burner phone (Config.Roleplay.BurnerPhone, README "Roleplay
---- features"). Off as shipped, and off it changes nothing.
+--- The burner phone (Config.Roleplay.BurnerPhone, README, Optional
+--- features). Off as shipped, and off it changes nothing.
 ---
 --- On, every contract action in the app needs the item (Item, an
 --- ox_inventory item, 'burner_phone' as shipped) in the player's inventory,

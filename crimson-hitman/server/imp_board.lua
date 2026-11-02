@@ -1,4 +1,4 @@
---- Board and progression improvements (README, Optional improvements), group
+--- Board and progression improvements (README, Optional features), group
 --- impB. Four features, each its own block of Config.Improvements and each
 --- off as shipped; with all four off nothing here reads, writes or sends
 --- anything, and the resource behaves as it did before them:

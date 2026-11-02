@@ -1,5 +1,5 @@
---- The roleplay features' shared helpers (Config.Roleplay, README "Roleplay
---- features"): where the broker and the informant NPC stand now, whether a
+--- The roleplay features' shared helpers (Config.Roleplay, README, Optional
+--- features): where the broker and the informant NPC stand now, whether a
 --- player is beside one, and the start-up check of each feature's block.
 ---
 --- Where an NPC stands is worked out from the clock: its list of places

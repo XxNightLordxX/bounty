@@ -751,7 +751,7 @@ local function validateConfig(quiet)
     end
 
     -- The board and progression improvements (server/imp_board.lua, README
-    -- Optional improvements), checked the same way: filled, put back, said.
+    -- Optional features), checked the same way: filled, put back, said.
     local impFilled = {}
     CrimsonBoot.require('server.imp_board').checkConfig(warn, impFilled)
     if #impFilled > 0 and not quiet then
@@ -760,7 +760,7 @@ local function validateConfig(quiet)
             .. 'are being used for them: %s.'):format(#impFilled, table.concat(impFilled, ', ')), #impFilled)
     end
 
-    -- Roleplay (group rpC, README Roleplay features): proof of intent,
+    -- Roleplay (group rpC, README, Optional features): proof of intent,
     -- earned reputation, bodyguards and the hit on the hitman. A block this
     -- config does not have (one written before it) is the shipped one; each
     -- switch a switch, each figure in its range, corrected to the shipped
@@ -1736,7 +1736,7 @@ local function refuseModeSwitch()
         :format(tostring(mode), where, contracts), 0)
 end
 --------------------------------------------------------------------------
--- Integration report (§4.2 of the improvements document)
+-- Integration report: which optional resources answered (README, Install)
 --------------------------------------------------------------------------
 
 --- Every optional integration, where it is configured, and what stops
@@ -1934,25 +1934,25 @@ function StartCrimsonHitman()
     local thresholds = CrimsonBoot.require('server.thresholds')
     local announce   = CrimsonBoot.require('server.announce')
     local reports    = CrimsonBoot.require('server.reports')
-    -- The roleplay consequences of a completion (README, Roleplay
+    -- The roleplay consequences of a completion (README, Optional
     -- features): witness heat, EMS before re-listing, city news and dirty
     -- money payouts, each off as shipped.
     local rpConsequences = CrimsonBoot.require('server.rp_consequences')
-    -- Roleplay (README Roleplay features, each off as shipped): proof of
+    -- Roleplay (README, Optional features, each off as shipped): proof of
     -- intent, earned reputation, bodyguards and the hit on the hitman.
     local rpIntent     = CrimsonBoot.require('server.rp_intent')
     local rpReputation = CrimsonBoot.require('server.rp_reputation')
     local rpProtection = CrimsonBoot.require('server.rp_protection')
-    -- The roleplay features (README, Roleplay features), each off as shipped.
+    -- The roleplay features (README, Optional features), each off as shipped.
     local rpPlaces    = CrimsonBoot.require('server.rp_places')
     local rpRumours   = CrimsonBoot.require('server.rp_rumours')
     local rpBurner    = CrimsonBoot.require('server.rp_burner')
     local rpInformant = CrimsonBoot.require('server.rp_informant')
     local rpReason    = CrimsonBoot.require('server.rp_reason')
-    -- The improvements (README, Optional improvements), each off as shipped.
+    -- The improvements (README, Optional features), each off as shipped.
     local impTips     = CrimsonBoot.require('server.imp_tips')
     -- The board and progression improvements (README, Optional
-    -- improvements), each off as shipped: the placer's record, hitman heat,
+    -- features), each off as shipped: the placer's record, hitman heat,
     -- tiers and contract decay.
     local impBoard    = CrimsonBoot.require('server.imp_board')
     -- Proof items, serial scrubbing and the weekly stats, each off as shipped.

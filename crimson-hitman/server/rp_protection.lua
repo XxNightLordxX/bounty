@@ -1,4 +1,4 @@
---- Target counterplay (README Roleplay features): bodyguard contracts
+--- Target counterplay (README, Optional features): bodyguard contracts
 --- (Config.Roleplay.Protection) and the hit on the hitman
 --- (Config.Roleplay.HitOnHitman). Both off as shipped.
 ---

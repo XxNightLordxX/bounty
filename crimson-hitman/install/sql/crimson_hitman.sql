@@ -10,7 +10,17 @@
 -- without CREATE or ALTER. When a newer version needs a column it cannot add,
 -- the console names it and prints the ALTER TABLE to run as a user that may.
 --
--- In json mode (the default) nothing here is used.
+-- mysql is the shipped mode; in json mode nothing here is used.
+--
+-- The 24 tables: crimson_contracts, crimson_escrow, crimson_hitmen,
+-- crimson_amendments, crimson_messages, crimson_ledger, crimson_pending,
+-- crimson_stats, crimson_audit, crimson_reveals, crimson_placer_informants,
+-- crimson_mutes, crimson_photos, crimson_review, crimson_settings,
+-- crimson_alerts, crimson_view_alerts, crimson_playtime,
+-- crimson_location_tips, crimson_freezes, crimson_contract_staff,
+-- crimson_staff_records, crimson_meta and crimson_rp_rows (the roleplay and
+-- improvements features' rows: proof-of-intent holds, bodyguard jobs, heat,
+-- decay steps, tip warnings, going dark, EMS holds and the like).
 --
 -- These are the same statements as server/storage/mysql.lua runs, word for
 -- word: utf8mb4 with utf8mb4_unicode_ci, as qbx_core's own tables are, and

@@ -1,4 +1,4 @@
---- Informant fairness (README "Optional improvements"), six rules over the
+--- Informant fairness (README, Optional features), six rules over the
 --- informant tip (server/locationtip.lua) and the target's informant
 --- (server/informant.lua). Each is its own block in Config.Improvements and
 --- each ships off; off, it changes nothing and those modules behave as they

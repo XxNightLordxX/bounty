@@ -2,7 +2,7 @@
 ---
 --- The page (ui/admin.html) asks for everything through one net event,
 --- crimson-hitman:admin, with an `op` and its `data`, and is answered on
---- crimson-hitman:adminResult (README, Integration Guide, has every shape).
+--- crimson-hitman:adminResult (docs/developer.md, Integration, has every shape).
 --- Nothing the page sends is trusted, and nothing the client says about
 --- who is asking is either: every request runs, in this order,
 ---

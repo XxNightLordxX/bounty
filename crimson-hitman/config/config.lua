@@ -131,7 +131,7 @@ Config.Completion = {
     ProofWindowSeconds        = 60,        -- a kill still verifies this long after death
     PhotoTokenLifetimeSeconds = 120,       -- seconds a kill waits to be verified
     PhotoRadius               = 5.0,       -- metres from the body to verify a kill
-    PhotoOpenSeconds          = 600,       -- seconds the client may view a photo before it is deleted
+    PhotoOpenSeconds          = 600,       -- seconds the placer may view a photo before it is deleted
 }
 
 Config.Kidnap = {
@@ -171,7 +171,7 @@ Config.Listing = {
 Config.Ledger = {
     Depth              = 10,    -- ledger rows kept per player
     MaxDepthHardCap    = 25,    -- ceiling on Depth
-    StorePhotos        = true,  -- keep a kill photo for the client (KillPhotos only)
+    StorePhotos        = true,  -- keep a kill photo for the placer (KillPhotos only)
     PhotoRetentionDays = 7,     -- days an unopened photo is kept; 0 = with its row
 }
 
@@ -422,7 +422,7 @@ Config.Staff = {
 --                                 ROLEPLAY
 -- ============================================================================
 -- Optional roleplay features, each its own block and each off as shipped
--- (README, Roleplay features). All of them are changed from the admin panel.
+-- (README, Optional features). All of them are changed from the admin panel.
 -- Places (the broker's and the informant's) are 'x, y, z, heading'.
 
 Config.Roleplay = Config.Roleplay or {}  -- the roleplay features, one block each
@@ -481,14 +481,14 @@ Config.Roleplay.DirtyPayouts = {
 
 Config.Roleplay.ProofOfIntent = {
     Enabled        = false, -- hold a payout until the hitman shows intent
-    MinMessages    = 3,     -- messages to the client in the thread that count
+    MinMessages    = 3,     -- messages to the placer in the thread that count
     HoldMaxMinutes = 60,    -- released anyway after this long (min)
 }
 
 Config.Roleplay.Reputation = {
     Enabled          = false, -- trust for a completion scaled by how it was done
     BaseFactor       = 0.5,   -- a plain completion
-    ThreadBonus      = 0.2,   -- the hitman wrote to the client in the thread
+    ThreadBonus      = 0.2,   -- the hitman wrote to the placer in the thread
     MeetingBonus     = 0.2,   -- a meeting point was set
     HandoverBonus    = 0.3,   -- a live handover
     WitnessFreeBonus = 0.2,   -- nobody else within WitnessRadius
@@ -567,7 +567,7 @@ Config.Roleplay.ReasonQuality = {
 --                               IMPROVEMENTS
 -- ============================================================================
 -- Optional changes to existing features, each its own block and each off as
--- shipped (README, Optional improvements). All are changed from the panel.
+-- shipped (README, Optional features). All are changed from the panel.
 
 Config.Improvements = Config.Improvements or {}  -- the improvements, one block each
 

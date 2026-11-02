@@ -1,5 +1,5 @@
 --- The placer's record on a board card (Config.Improvements.PlacerRecord,
---- README Optional improvements). Off as shipped.
+--- README, Optional features). Off as shipped.
 ---
 --- With it on, a board card (to anybody who is not its placer or target)
 --- carries how many contracts its placer placed, had paid out (completed)
