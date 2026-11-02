@@ -12377,6 +12377,128 @@ async function main() {
     [app, lifted, plain].forEach(function (a) { drewCleanly(a); });
   })();
 
+  // Report, on a contract card and in a message thread (server/reports.lua):
+  // a dialog with an optional note, and the report sent with the contract
+  // and, from a thread, its handle.
+  await (async function reportToStaff() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'creator';
+    held.hitmen = [{ alias: 'Operative #2' }];
+    held.hitmenActive = 1;
+    const reports = [];
+    let refuse = null;
+    const app = boot({
+      list: BOARD,
+      mine: { ok: true, data: { created: [held], accepted: [], onMe: [] } },
+      ledger: LEDGER,
+      threads: { ok: true, data: [{ handle: 'th42', alias: 'Operative #2' }] },
+      readThread: { ok: true, data: { messages: [{ alias: 'Operative #2', body: 'Pay up', at: 1 }], muted: false } },
+      report: function (body) {
+        reports.push(body);
+        return refuse || { ok: true, data: { reported: true } };
+      }
+    });
+    await settle(); await settle();
+
+    it('every card on the board carries a Report', function () {
+      truthy(app.view.all().some(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Report'; }),
+        'no Report on the board');
+    });
+
+    tab(app, 'mine');
+    await settle(); await settle();
+    click(app, 'Report');
+    await settle();
+    it('Report on a card opens a dialog asking for an optional note, sending nothing yet', function () {
+      truthy(app.view.textContent.indexOf('Report this contract to staff?') !== -1, app.view.textContent);
+      truthy(app.view.textContent.indexOf('Nobody on the contract is told') !== -1, 'says who is told');
+      truthy(app.document.getElementById('dialog-note'), 'a note box');
+      eq(reports.length, 0);
+    });
+    const note = app.document.getElementById('dialog-note');
+    note.value = '  Threats in the reason  ';
+    note.oninput();
+    click(app, 'Send report');
+    await settle(); await settle();
+    it('Send report sends the contract and the note, trimmed, and says it went', function () {
+      eq(reports.length, 1);
+      eq(reports[0].id, held.id);
+      eq(reports[0].note, 'Threats in the reason');
+      eq(reports[0].thread, undefined, 'a card sends no thread');
+      truthy(app.notice().indexOf('Sent to staff') !== -1, 'the notice: ' + app.notice());
+    });
+
+    click(app, 'Report');
+    await settle();
+    click(app, 'Send report');
+    await settle(); await settle();
+    it('a note left empty is sent as no note at all', function () {
+      eq(reports.length, 2);
+      eq(reports[1].note, undefined);
+    });
+
+    click(app, 'Threads');
+    await settle(); await settle();
+    const pick = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Operative #2') !== -1;
+    })[0];
+    if (pick) { pick.onclick(); await settle(); await settle(); }
+    const report = app.document.getElementById('thread-report');
+    it('a thread has Report beside Mute', function () {
+      truthy(report, 'no Report in the thread');
+      eq(report && report.textContent, 'Report');
+    });
+    if (report) { report.onclick(); await settle(); }
+    it('which asks about the conversation and its last 20 messages', function () {
+      truthy(app.view.textContent.indexOf('Report this conversation to staff?') !== -1, app.view.textContent);
+      truthy(app.view.textContent.indexOf('last 20 messages') !== -1, 'says what staff read');
+    });
+    refuse = { ok: false, err: 'rate_limited', data: { retryAfter: 300 } };
+    click(app, 'Send report');
+    await settle(); await settle();
+    it('sends the thread\'s handle with it, and a refusal says to wait', function () {
+      eq(reports.length, 3);
+      eq(reports[2].thread, 'th42');
+      eq(reports[2].id, held.id);
+      truthy(app.notice().length > 0 && app.notice().indexOf('Sent to staff') === -1,
+        'the refusal was not said: ' + app.notice());
+    });
+    it('drew it all without a throw', function () { drewCleanly(app, 'reporting'); });
+  })();
+
+  // The whole app paused by staff (Config.Staff.AppPaused): the refusal is
+  // said in the words the server's notice uses.
+  await (async function appPaused() {
+    const app = boot({
+      list: BOARD, mine: MINE, ledger: LEDGER,
+      accept: { ok: false, err: 'app_paused' }
+    });
+    await settle(); await settle();
+    const source = fs.readFileSync(APP, 'utf8');
+    it('has words for the app paused by staff', function () {
+      truthy(/app_paused: 'Contracts are paused by staff\.'/.test(source), 'the page has words for it');
+    });
+    const accept = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+    })[0];
+    if (accept) { accept.onclick(); await settle(); await settle(); }
+    // Through whatever the dialog asks first (a warning, a name), as a player would.
+    for (let step = 0; step < 4 && !app.sent.some(function (x) { return x.name === 'accept'; }); step++) {
+      const buttons = app.view.all().filter(function (n) { return n.tagName === 'BUTTON' && !n.disabled; });
+      const next = buttons.filter(function (n) {
+        return n.textContent !== 'Accept contract' && n.textContent !== 'Cancel' && n.textContent !== 'Report'
+          && n.className.indexOf('primary') !== -1;
+      })[0];
+      if (!next) { break; }
+      next.onclick();
+      await settle(); await settle();
+    }
+    it('a refused accept says contracts are paused by staff', function () {
+      truthy(app.sent.some(function (s) { return s.name === 'accept'; }), 'no accept was sent');
+      truthy(app.notice().indexOf('Contracts are paused by staff.') !== -1, 'the notice: ' + app.notice());
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

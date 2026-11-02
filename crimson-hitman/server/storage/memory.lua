@@ -47,7 +47,7 @@ function Memory.open()
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
         photos = {}, reviews = {}, settings = {}, alerts = {}, viewAlerts = {}, seq = 0,
-        playtime = {}, locationTips = {}, placerInformants = {}, freezes = {},
+        playtime = {}, locationTips = {}, placerInformants = {}, freezes = {}, staffMeta = {},
         contractStaff = {},
         staffRecords = {},
     }
@@ -1756,6 +1756,29 @@ function Memory.writeStaffRecord(row)
         ended_at = row.ended_at, ended_by = row.ended_by, ended_why = row.ended_why,
         amount = row.amount, account = row.account,
     }
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Staff tools' own facts
+--------------------------------------------------------------------------
+
+--- Small whole numbers the staff tools keep across a restart, by name:
+--- 'staff_summary_day' (the day the daily summary was last posted, as
+--- yyyymmdd, server/summary.lua) and 'staff_pause_since' (when the app
+--- pause began, os.time(), server/freeze.lua). 0 or absent is none.
+---@return table [key] = integer
+function Memory.readStaffMeta()
+    local out = {}
+    for key, value in pairs(db.staffMeta or {}) do out[key] = value end
+    return out
+end
+
+---@param key string
+---@param value integer 0 for none
+function Memory.writeStaffMeta(key, value)
+    db.staffMeta = db.staffMeta or {}
+    db.staffMeta[key] = math.floor(tonumber(value) or 0)
     return true
 end
 

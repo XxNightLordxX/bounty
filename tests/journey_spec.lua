@@ -382,6 +382,8 @@ describe('what this suite really covered', function()
         locationTip     = 'location_tip_spec ("an informant tip, bought"), through the net event',
         locationTips    = 'location_tip_spec ("comes back on the buyer\'s map after a restart"), '
             .. 'through the net event',
+        -- A player's report to staff.
+        report          = 'staff_tools_spec ("a player\'s report to staff"), through the net event',
     }
 
     it('got an ok from every handler the server registers', function()

@@ -1219,6 +1219,20 @@ describe('every channel a player not entitled to it can read', function()
         end
         call('amendments', 1, { id = c.id })
         call('amendments', 3, { id = c.id })
+        -- The staff tools' channels: a report from each end of a thread and
+        -- from a bystander (the review queue, and the alert it raises), a
+        -- notice from staff to every hitman, the settings history after a
+        -- change, and a staff alert past a threshold naming a player.
+        call('report', 3, { id = c.id, note = 'They threatened me' })
+        call('report', 1, { id = c.id, thread = handle, note = 'Rude' })
+        call('report', 4, { id = c.id })
+        admin(6, 'announce', { text = 'Event tonight: stay clear of the pier.' })
+        admin(6, 'announce', { text = 'Server event at eight.', scope = 'online' })
+        admin(6, 'setSetting', { key = 'Relay.AllowMaskedCalls', value = true })
+        admin(6, 'settingsHistory', {})
+        Config.Staff.AlertRefusalsPer10Min = 1
+        call('accept', 3, { id = 'ct0000000000' })
+        call('accept', 3, { id = 'ct0000000000' })
         for _, op in ipairs({ 'overview', 'contracts', 'stuck', 'reviews', 'logs', 'alerts', 'console' }) do
             admin(6, op, {})
         end
@@ -1284,18 +1298,21 @@ describe('every channel a player not entitled to it can read', function()
         -- nobody. Never the board, another hitman, police, staff without
         -- IdentityAce, or Discord.
         local namedIds = { 'HITMAN02', 'license:ggg' }
+        -- Staff are never named to a player (a notice from staff is from
+        -- 'Staff'), on any channel.
+        local STAFF = { 'ADMIN001', 'Sam Steward', 'Steward', 'license:fff' }
         local forbidden = {
-            [1] = { needles = both(OPERATIVE, namedIds), sources = { 3 } },
-            [2] = { needles = both(both(CLIENT, OPERATIVE), namesShown and namedIds or NAMED),
-                    sources = { 1, 3 } },
-            [3] = { needles = both(CLIENT, NAMED), sources = { 1 } },
-            [4] = { needles = both(both(CLIENT, OPERATIVE), NAMED), sources = { 1, 3 } },
-            [5] = { needles = both(both(CLIENT, OPERATIVE), NAMED), sources = { 1, 3 } },
+            [1] = { needles = both(both(OPERATIVE, namedIds), STAFF), sources = { 3, 6 } },
+            [2] = { needles = both(both(both(CLIENT, OPERATIVE), namesShown and namedIds or NAMED), STAFF),
+                    sources = { 1, 3, 6 } },
+            [3] = { needles = both(both(CLIENT, NAMED), STAFF), sources = { 1, 6 } },
+            [4] = { needles = both(both(both(CLIENT, OPERATIVE), NAMED), STAFF), sources = { 1, 3, 6 } },
+            [5] = { needles = both(both(both(CLIENT, OPERATIVE), NAMED), STAFF), sources = { 1, 3, 6 } },
             -- Staff see a named operative as before; never the hidden ones.
             [6] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
-            [7] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+            [7] = { needles = both(both(CLIENT, OPERATIVE), STAFF), sources = { 1, 3, 6 } },
             -- A moderator: as staff without IdentityAce.
-            [8] = { needles = both(CLIENT, OPERATIVE), sources = { 1, 3 } },
+            [8] = { needles = both(both(CLIENT, OPERATIVE), STAFF), sources = { 1, 3, 6 } },
         }
         local reached, problems = {}, {}
         for _, event in ipairs(Env.clientEvents) do

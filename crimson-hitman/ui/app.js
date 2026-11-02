@@ -463,6 +463,8 @@
     // Staff suspended this player from contracts (server/sanctions.lua).
     // failText says until when and why where the server sends them.
     suspended: 'You are suspended from contracts.',
+    // Staff paused the whole app (Config.Staff.AppPaused). Nothing was taken.
+    app_paused: 'Contracts are paused by staff.',
     // The informant tip (server/locationtip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',
@@ -2668,7 +2670,8 @@
       var take = el('button', 'primary', 'Accept contract');
       take.onclick = function () { acceptContract(contract); };
       row.appendChild(take);
-      return row;
+      more.appendChild(reportButton(contract, null));
+      return withMore();
     }
 
     if (contract.role === 'hitman') {
@@ -2782,6 +2785,7 @@
         propose.onclick = function () { proposeChange(contract); };
         more.appendChild(propose);
       }
+      more.appendChild(reportButton(contract, null));
 
       // Live progress if the countdown is running, otherwise the snapshot
       // that came with the projection.
@@ -2864,6 +2868,7 @@
         scrap.onclick = function () { cancelContract(contract); };
         more.appendChild(scrap);
       }
+      more.appendChild(reportButton(contract, null));
       withMore();
 
       var creatorPanel = proposalPanel(contract);
@@ -2885,6 +2890,7 @@
       if (informantOffered(contract)) {
         more.appendChild(informantButton(contract));
       }
+      more.appendChild(reportButton(contract, null));
       return withMore();
     }
 
@@ -6590,6 +6596,10 @@
     mute.id = 'thread-mute';
     var tools = el('div', 'row thread-tools');
     tools.appendChild(mute);
+    // Reporting this conversation to staff, with its last messages.
+    var report = reportButton(t.contract, t.thread);
+    report.id = 'thread-report';
+    tools.appendChild(report);
     head.appendChild(tools);
 
     view.appendChild(head);
@@ -8566,6 +8576,50 @@
      still worked and no error anywhere. That is the shape all four of the
      shipped render crashes took. Now the failure is drawn, reported, and
      leaves a way out. */
+  /* ---------- reporting to staff ----------
+
+     Report, on a contract card and in a message thread: a short dialog
+     with an optional note, and the server puts the report in the staff
+     review queue with the contract, the reporter's place on it and, from a
+     thread, its last messages. Nobody on the contract is told anything. It
+     has an allowance of its own (Config.Cooldowns.report), so a refusal
+     says how long to wait. */
+  var REPORT_NOTE_MAX = 200;
+
+  function reportToStaff(contract, thread) {
+    var fromThread = !!thread || state.tab === 'thread';
+    askFields(fromThread ? 'Report this conversation to staff?' : 'Report this contract to staff?',
+      (fromThread ? 'Staff read your note and the last 20 messages here. '
+        : 'Staff read your note and look at this contract. ')
+        + 'Nobody on the contract is told it was reported, or by whom.',
+      [{ id: 'note', label: 'What happened (optional)', max: REPORT_NOTE_MAX, placeholder: 'Optional' }],
+      function (values) {
+        var payload = { id: contract.id };
+        if (thread && thread.handle) { payload.thread = thread.handle; }
+        var note = String(values.note || '').replace(/^\s+|\s+$/g, '');
+        if (note) { payload.note = Array.from(note).slice(0, REPORT_NOTE_MAX).join(''); }
+        once('report:' + contract.id, function () {
+          return post('report', payload).then(function (r) {
+            if (!r.ok) { return fail(r); }
+            say('Sent to staff. Thank you.', 'ok');
+          });
+        });
+      }, 'Send report');
+  }
+
+  /* The quiet Report button: among a card's other tools, or in a thread's
+     head beside Mute. */
+  function reportButton(contract, thread) {
+    var key = 'report:' + contract.id;
+    var button = el('button', 'ghost', isBusy(key) ? 'Sending…' : 'Report');
+    if (isBusy(key)) {
+      button.disabled = true;
+      return button;
+    }
+    button.onclick = function () { reportToStaff(contract, thread); };
+    return button;
+  }
+
   function render() {
     /* And the keyboard stays up. The screen is redrawn whole, and anything
        that redrew it while the player was typing - a reply landing, their

@@ -584,6 +584,8 @@ local UI_EVENTS = {
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',
     'threads', 'readThread', 'sendMessage', 'requestCall', 'endCall', 'muteThread',
+    -- Reporting a contract or a thread to staff (server/reports.lua).
+    'report',
     -- The client's one look at a kill photo, and what they did with it.
     'openPhoto', 'photoDecision',
     -- The page telling the server it broke. Through the same gate as

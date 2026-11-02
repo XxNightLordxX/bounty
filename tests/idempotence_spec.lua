@@ -1032,6 +1032,9 @@ describe('what this file leaves out', function()
             .. 'double tap", "over time")',
         -- The tips still showing, sent again: a read of the caller's own.
         locationTips = true,
+        -- Two reports are two items for staff, bounded by their own bucket
+        -- (staff_tools_spec, "is rate-limited by its own bucket").
+        report = 'two reports are two items in the review queue; the report allowance bounds them',
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

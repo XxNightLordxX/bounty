@@ -750,6 +750,19 @@ MATRIX.muteThread = {
     why = 'a thread is muted by one of its two ends, for themselves alone',
 }
 
+-- A player's report to staff (server/reports.lua). The target only once
+-- they are shown the contract, so the wait for that is run first.
+MATRIX.report = {
+    arrange = function()
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Env.runTimers()
+    end,
+    payload = function(w, role, contract) return { id = contract.id, note = 'Threats in the thread' } end,
+    expect = ANYONE,
+    why = 'anybody who can see a live contract (its parties, and anyone while the board lists it) '
+       .. 'may report it to staff; the reply says only that it was sent',
+}
+
 MATRIX.endCall = { payload = {}, expect = ANYONE,
     why = 'hangs up the caller own call and names no contract' }
 
@@ -893,7 +906,7 @@ describe('the admin panel requests', function()
                   'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois', 'adjustDeadline',
                   'addNote', 'removeHitman', 'editText', 'exportContract', 'playerView',
                   'frozen', 'freeze', 'unfreeze', 'history', 'suspend', 'unsuspend', 'protect',
-                  'unprotect', 'manualPay' }
+                  'unprotect', 'manualPay', 'announce', 'settingsHistory', 'undoSetting' }
 
     local function ask(src, op, data)
         Env.clientEvents = {}

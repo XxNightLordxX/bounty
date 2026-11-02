@@ -947,6 +947,54 @@ async function main() {
       mute: mute ? mute.textContent : null,
     };
   });
+  /* Report, beside Mute in the thread's head, and the dialog it opens: at
+     390px both inside the screen, thumb-sized, nothing sideways. */
+  const threadReport = await tp.evaluate(function () {
+    const report = document.getElementById('thread-report');
+    const mute = document.getElementById('thread-mute');
+    if (!report || !mute) { return null; }
+    const r = report.getBoundingClientRect(), m = mute.getBoundingClientRect();
+    return { text: report.textContent, left: r.left, right: r.right, height: r.height, width: r.width,
+             overlaps: r.left < m.right - 1 && m.left < r.right - 1 && r.top < m.bottom - 1 && m.top < r.bottom - 1,
+             W: window.innerWidth, pageScroll: document.documentElement.scrollWidth - window.innerWidth };
+  });
+  await tp.click('#thread-report');
+  await tp.waitForTimeout(150);
+  await tp.fill('#dialog-note', 'They threatened me in the thread and told me where they live, more than once.');
+  const reportDialog = await tp.evaluate(function () {
+    const dialog = document.querySelector('.card.dialog');
+    if (!dialog) { return null; }
+    const d = dialog.getBoundingClientRect();
+    const note = document.getElementById('dialog-note');
+    const n = note ? note.getBoundingClientRect() : null;
+    const send = Array.prototype.slice.call(dialog.querySelectorAll('button'))
+      .filter(function (b) { return b.textContent === 'Send report'; })[0];
+    const s = send ? send.getBoundingClientRect() : null;
+    return {
+      question: dialog.querySelector('.target') ? dialog.querySelector('.target').textContent : '',
+      inside: d.left >= -1 && d.right <= window.innerWidth + 1,
+      noteInside: !!n && n.left >= d.left - 1 && n.right <= d.right + 1 && n.height >= 28,
+      sendInside: !!s && s.left >= d.left - 1 && s.right <= d.right + 1 && s.height >= 28
+        && s.bottom <= window.innerHeight + 1,
+      pageScroll: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+  it('draws Report beside Mute in a thread at phone width, whole and tappable', function () {
+    truthy(threadReport, 'no Report in the thread');
+    truthy(threadReport.text === 'Report', threadReport.text);
+    truthy(threadReport.left >= 0 && threadReport.right <= threadReport.W, 'Report runs off the screen');
+    truthy(!threadReport.overlaps, 'Report lies over Mute');
+    atLeast(threadReport.height, 28, 'Report\'s height (px)');
+    truthy(threadReport.pageScroll <= 0, 'the page scrolls sideways by ' + threadReport.pageScroll + 'px');
+  });
+  it('opens the report dialog whole at phone width: its note and Send report on screen', function () {
+    truthy(reportDialog, 'the dialog did not open');
+    truthy(/Report this conversation to staff/.test(reportDialog.question), reportDialog.question);
+    truthy(reportDialog.inside, 'the dialog runs off the screen');
+    truthy(reportDialog.noteInside, 'the note box runs outside the dialog, or is too small to tap');
+    truthy(reportDialog.sendInside, 'Send report is outside the dialog, off the screen or too small');
+    truthy(reportDialog.pageScroll <= 0, 'the page scrolls sideways by ' + reportDialog.pageScroll + 'px');
+  });
   await tp.close();
 
   it('keeps which operative a thread is with readable beside Call and Mute', function () {

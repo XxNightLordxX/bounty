@@ -21,6 +21,15 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   suspend, protect, void and move a deadline; `crimson.admin` keeps
   everything. See *Suspensions and protections*, *Player history* and
   *Manual payments*.
+- **Staff tools**: a once-a-day **summary** to the staff Discord (counts
+  only, `Config.Staff.DailySummary`), **alert thresholds** for one player
+  placing too many contracts, one target getting too many, or one player
+  being refused again and again (`Config.Staff.Alert*`), an **Announce**
+  notice from *Staff* to every hitman, a **Pause the whole app** switch for
+  events (`Config.Staff.AppPaused`), a **Settings history** with one-click
+  **Undo**, and a **Report** button in the app on contract cards and message
+  threads that puts a report in the review queue. See *Staff tools*.
+
 - **The staff panel is grouped by who uses it**: six sections (Live, Staff
   actions, Rules, Features, Logs & alerts, Developer), each with its views as
   tabs, a search box on every settings page, each setting's shipped default
@@ -810,6 +819,12 @@ Staff tools: `/hitmanadmin` and the F8 commands (see *Staff commands* and *Admin
 | `Config.Admin.PanelRefreshSeconds` | `10` | How often the overview refreshes while open. |
 | `Config.Admin.TimelineRows` | `200` | Audit rows read for one contract's timeline. |
 | `Config.Staff.ManualPaymentMax` | `100000` | The most one manual staff payment may be, in dollars (**Players**, **Pay**; `crimson.admin` itself). `0` turns manual payments off. Changeable from the panel under **Rules > Limits**, group *Staff*. |
+| `Config.Staff.AppPaused` | `false` | Pauses the whole app for an event: no contract is placed or accepted (*Contracts are paused by staff.*), and every live contract keeps its deadline and lifetime stopped, as the restart pause stops them, until it is off again. A switch under **Features** (Staff tools); kept across a restart. See *Staff tools*. |
+| `Config.Staff.DailySummary` | `false` | Posts one summary a day to the alert webhook (`crimson_hitman_alert_webhook`, or else `crimson_hitman_webhook`): contracts placed, completed and refunded in the last day, money in escrow, open review items, frozen and suspended players. Counts only, never a name. At most once a day, a restart included. |
+| `Config.Staff.DailySummaryHour` | `6` | The hour of the day (server time, 0 to 23) the summary is posted; a start later that day posts it then. |
+| `Config.Staff.AlertPlacedPerHour` | `5` | A staff alert (the **Alerts** section, and Discord with `Config.Alerts.ToDiscord`) when one player places more than this many contracts in an hour. `0` turns it off. |
+| `Config.Staff.AlertTargetPerDay` | `3` | The same when one target has more than this many contracts placed on them in a day. `0` turns it off. |
+| `Config.Staff.AlertRefusalsPer10Min` | `30` | The same when one player is refused more than this many times in ten minutes (every request the app answered with a refusal, rate limits included). `0` turns it off. Each alert names the player by citizen id, which only staff with `crimson.identity` read; everybody else, and Discord, read *(a player)*. |
 
 The staff webhook for financial movements and rejected attempts is
 `set crimson_hitman_webhook "..."` in server.cfg. Never put either webhook in
@@ -830,7 +845,7 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 | `Config.Audit.ContractRetentionDays` | `30` | Days a finished contract and its rows are kept. Only removed once finished, past this age, holding no unsettled escrow, owing nobody anything on login, and named by no open review item. Ledger history is not touched. `0` keeps them forever. |
 | `Config.Audit.ContractsPrunedPerTick` | `200` | Finished contracts removed per tick, so a first prune of a long-lived store does not stall the server. |
 | `Config.RateLimit.Key` | `'license'` | What an action allowance is counted against: `'license'` per account, so switching character does not reset it; `'citizenid'` per character. |
-| `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, each informant (`informant`, `placerInformant`), informant tips (`locationTip`), messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
+| `Config.Cooldowns` | see the file | Per-player allowances, each `{ per = seconds a full one refills over, burst = how many it holds }`: placing, accepting, buyouts, each informant (`informant`, `placerInformant`), informant tips (`locationTip`), messages and calls (and **Notify me**), amendments, the app's own reads (`load`), name searches, the wallet, kill photos, death reports, headshots, the countdown poll (`progress`), reports to staff (`report`) and the admin panel (`admin`, `adminWrite`). A second request while the first is still running is refused as busy whatever these say. Changeable in the admin panel (Rate limits), where the ones the app cannot work without keep a floor: `load` at least 6 held and one every 5 seconds, `progress` one a second, `death` 2 held. |
 | `Config.Diagnostics.SlowJobMs` | `25` | Every maintenance job (the ten-second tick's, and the death sampler's pass) times itself; one slower than this many milliseconds prints one Debug line naming it, at most every five minutes per job. `/ch-diag` and the admin panel list every job's worst, average and last times either way. Only time on the server thread counts, never database waits. `0` turns the line off. |
 | `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `1280` / `600000` | `'server'` storage: the app shrinks each kill photo until its longest side is at most this many pixels (320 to 4096) and it weighs at most this many bytes (50000 to 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way; the server decodes and encodes it on its main thread, about 80 ms each at the default (estimates; measure yours with the in-game checklist). |
 | `Config.Completion.PhotoHostRefreshSeconds` | `300` | `'host'` storage: how often the image host allowlist is read again from lb-phone's upload config. |
@@ -2234,6 +2249,78 @@ anonymous), still shown by their place on the contract, never their citizen
 id. Rows about no contract are left out for them, so nothing about an
 anonymous role can be read from what a search keeps or leaves out. Such a
 search is on the record as `admin_panel_logs_player`.
+
+### Staff tools
+
+**Daily summary.** With `Config.Staff.DailySummary` on (a switch under
+**Features**, Staff tools), one post a day goes to the alert webhook through
+the same poster the alerts use, at `Config.Staff.DailySummaryHour` server
+time: the contracts placed, completed and refunded (cancelled, expired or
+voided) in the last 24 hours, the money in escrow (cash, bank and dirty, and
+how many goods lines), the open review items, and how many players are
+frozen and suspended (no suspension ships with this resource, so that line
+says *not tracked* unless one is wired in). Counts only: no name, citizen id
+or contract id. The day it was posted is kept by the store (`crimson_meta`
+on mysql, `records.json` on json), so it is posted at most once a day, a
+restart included; without a webhook nothing is posted, and setting one later
+that day still gets that day's post. Each post is audited as
+`daily_summary_posted`.
+
+**Alert thresholds.** `Config.Staff.AlertPlacedPerHour`,
+`AlertTargetPerDay` and `AlertRefusalsPer10Min` (under **Rules > Limits**,
+Staff alerts) raise a staff alert, in the **Alerts** section and on Discord
+where alerts go there, the moment one player places more than that many
+contracts in an hour, one target has more than that many placed on them in a
+day, or one player is refused more than that many times in ten minutes. Once
+per window per player. The alert names the player by citizen id: shown to
+staff with `crimson.identity`, and to everybody else, and Discord, as *(a
+player)*, by the same scrub every alert goes through.
+
+**Announce.** **Staff actions > Announce** sends one phone notice, at most
+200 characters, to every player in the city holding a contract (an active
+operative on a live one), or, chosen so, to every player online the app is
+open to. Players see it from *Staff*, never from you. It is held to the
+rules a reason is (`Config.Reason.PatternDenylist`: no links, invites or
+handles), takes two clicks, needs `crimson.admin` itself, and is audited as
+`staff_announce` with who sent it, to whom, how many it reached and the text.
+
+**Pause the whole app.** `Config.Staff.AppPaused` (**Features**, Staff tools)
+stops placing and accepting server-wide for an event: players are told
+*Contracts are paused by staff.* when they try, and every party of a live
+contract gets that once as a notice (and *Contracts are no longer paused.*
+when it ends). Every live contract is held by the same pause as the restart
+pause: its deadline stops and its lifetime is given back the time it was
+paused. It combines with the restart pause, a staff freeze and a party being
+away: ending one never starts a clock another still stops, and the lifetime
+is given back each span once, never twice for a span two of them covered.
+Payouts, handovers and buyouts already under way finish as they began. It is
+kept across a restart, and the time the server was down while it was on
+counts as paused.
+
+**Settings history.** **Developer > Settings history** lists every setting
+change, newest first: when, the setting, the value before and after, and who
+(their citizen id with `crimson.identity`, *a staff member* without it).
+Every staff member who may read the settings reads it; the Developer
+section's own settings only for staff who may open that section, as the
+settings pages show them. A secret is never shown. **Undo** on a row puts the
+setting back to the value before that change, through the same path as any
+change (checked the same way, with its own `admin_setting_changed` row) and
+an `admin_undo_setting` row saying it was an undo; it takes two clicks and
+`crimson.admin`. The history is read from the audit rows every change already
+writes, so it reaches back as far as `Config.Audit.RetentionDays`.
+
+**Player reports.** In the app, **Report** on a contract card and in a
+message thread sends a report to the review queue (**Live > Needs review**,
+kind *player report*): the contract id, the reporter's role on it (placer,
+target, hitman, or viewer of a contract on the board), their note if they
+wrote one (at most 200 characters), and for a thread its last 20 messages as
+stored, each with the alias it was sent under. The reporter is named as any
+party in the queue is (their citizen id with `crimson.identity`, their place
+on the contract without it), and so is the party they report, so an
+anonymous one stays anonymous to staff without it. The reported party is told
+nothing. Reports have their own allowance, `Config.Cooldowns.report` (three
+every ten minutes). Read it, deal with it in the city, and **Dismiss** it with
+a note.
 
 **Using the page.** The panel is sized for a game window 1280 to 1920 pixels
 wide, and still works at 1024. It opens on the overview, with the open review

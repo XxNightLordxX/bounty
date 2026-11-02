@@ -273,11 +273,11 @@
   var GROUPS = [
     { id: 'live', views: ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck'],
       first: 'overview' },
-    { id: 'actions', views: ['actions', 'tools'] },
+    { id: 'actions', views: ['actions', 'tools', 'announce'] },
     { id: 'rules', views: ['timers', 'money', 'limits', 'targeting'] },
     { id: 'features', views: ['features'] },
     { id: 'logs', views: ['logs', 'alerts'] },
-    { id: 'developer', views: ['devsettings', 'console', 'diagnostics', 'permissions'], developer: true }
+    { id: 'developer', views: ['devsettings', 'console', 'diagnostics', 'permissions', 'history'], developer: true }
   ];
   /** The views only the Developer section's staff see. */
   var DEV_VIEWS = { devsettings: true, console: true, diagnostics: true };
@@ -300,7 +300,7 @@
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
                    alerts: true, console: true, frozen: true, exportContract: true, playerView: true,
-                   history: true };
+                   history: true, settingsHistory: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -1799,7 +1799,8 @@
           h('dt', 'Involved'), h('dd', asList(item.parties).length ? asList(item.parties).map(function (p) {
             return h('span.party', h('b', String(p.role)), ' ' + String(p.who || '—'));
           }) : '—'),
-          h('dt', 'What was known'), h('dd', keyValues(item.known) || '—'),
+          isReport(item) ? h('dt', 'The report') : h('dt', 'What was known'),
+          h('dd', isReport(item) ? reportPart(item) : (keyValues(item.known) || '—')),
           h('dt', 'The store now'), h('dd',
             now.contract ? 'contract ' + now.contract : 'contract unknown',
             now.buyout ? ' · buyout ' + now.buyout : '',
@@ -1807,7 +1808,7 @@
           item.resolution && !resolving ? h('dt', 'Resolved') : null,
           item.resolution && !resolving ? h('dd', detailText(item.resolution) + ' · by ' + String(item.resolved_by || '—')
             + ' · ' + when(item.resolved_at)) : null),
-        open && canWrite() ? (resolving ? finishForm(item) : reviewForm(item)) : null,
+        open && canWrite() ? (resolving ? finishForm(item) : (isReport(item) ? reportForm(item) : reviewForm(item))) : null,
         answerBox(answer));
     }));
   }
@@ -2784,7 +2785,9 @@
     'The clock': 'When a contract\'s deadline stops.',
     'Anti-collusion': 'One account as two parties to a contract.',
     'Progression': 'Criminal trust for completed contracts.',
-    'Audit and debug': 'What the log keeps, and alerts to Discord.'
+    'Audit and debug': 'What the log keeps, and alerts to Discord.',
+    'Staff tools': 'Pausing the whole app for an event, and the daily summary to the staff Discord.',
+    'Staff alerts': 'When one player or one target goes past a threshold, one staff alert, and on Discord too.'
   };
 
   function settingsHead() {
@@ -3049,6 +3052,9 @@
         + '1 h, 2 h or a number of minutes, with a reason kept in the log. It shows the exact time left before '
         + 'and after; players are told only that staff changed its time. Freezing a player stops its clock, and '
         + 'voiding ends it.' },
+    { title: 'Announce', icon: 'bullhorn', view: 'announce', go: 'Open Announce',
+      text: 'One phone notice from Staff to every hitman holding a contract, or to everybody online with the app. '
+        + 'It never names you, takes two clicks and is on the record.' },
     { title: 'Tools', icon: 'screwdriver-wrench', view: 'tools', go: 'Open Tools',
       text: 'Bring timers forward (test servers only), Flush the audit log, and Run the diagnosis for why the app '
         + 'is not showing something.' },
@@ -3466,7 +3472,7 @@
     var id = node.getAttribute('data-id');
     var item = reviewItem(id);
     if (!item) return;
-    var action = S.reviews.action[id] || 'refund';
+    var action = isReport(item) ? 'dismiss' : (S.reviews.action[id] || 'refund');
     var data = { id: id, action: action };
     var problem = null;
     if (action === 'dismiss') {
@@ -3906,6 +3912,215 @@
       drawTools();
     });
   };
+
+  /* ---------- staff tools ----------------------------------------------
+
+     Staff actions > Announce: one phone notice, from 'Staff', to every
+     hitman holding a contract or to everybody online with the app.
+     Developer > Settings history: every setting change with who, when and
+     both values, each with Undo (the server keeps the value it puts back).
+     And the players' reports in Needs review: the role, the note and the
+     thread's last messages, dismissed like any item. */
+
+  var ANNOUNCE_MAX = 200;
+  var ST = {
+    announce: { scope: 'active', answer: null },
+    history: { data: null, error: null, answer: null, cursor: null, back: [] }
+  };
+
+  /** Characters, as the server counts them (code points, not UTF-16 units). */
+  function charCount(text) { return Array.from(String(text || '')).length; }
+
+  function announceCount() {
+    var n = charCount(S.forms['an.text']);
+    if (n > ANNOUNCE_MAX) return h('span.is-warn', n + ' / ' + ANNOUNCE_MAX + ' characters: too long to send.');
+    return h('span', n + ' / ' + ANNOUNCE_MAX + ' characters');
+  }
+
+  function announceBody() {
+    var a = ST.announce;
+    var open = writesOpen();
+    return card(frag(icon('bullhorn'), ' Announce to every hitman'), frag(
+      h('p.about', 'One phone notice, the same words to everybody. Players see it from Staff, never from you. '
+        + 'At most ' + ANNOUNCE_MAX + ' characters, and no links, invites or handles. It is on the record with '
+        + 'who sent it, to whom, how many it reached and what it said.'),
+      segmented('an-scope', [
+        { value: 'active', label: 'Hitmen on a contract', disabled: !open, title: open ? null : whyNoWrite() },
+        { value: 'online', label: 'Everyone online', disabled: !open, title: open ? null : whyNoWrite() }
+      ], a.scope),
+      h('div.inline-form.is-wide',
+        field('an.text', { id: 'an-text', class: 'is-grow', placeholder: 'The notice',
+          maxlength: String(ANNOUNCE_MAX * 2), 'data-live': 'an-count', disabled: !open,
+          'aria-label': 'The notice to send' }),
+        writeBtn('.is-primary', 'an-send', {}, 'Send', 'Click again to send', 'paper-plane')),
+      h('p.note', { id: 'an-count', 'aria-live': 'polite' }, announceCount()),
+      answerBox(a.answer)));
+  }
+
+  function drawAnnounce() { if (S.section === 'announce') setHtml(byId('an'), announceBody()); }
+
+  SHELL.announce = function () {
+    return h('section.view', h('div.stack', { id: 'an' }, announceBody()));
+  };
+  LOAD.announce = function () {};
+
+  LIVE['an-count'] = function () { setHtml(byId('an-count'), announceCount()); };
+
+  ACTIONS['an-scope'] = function (node) {
+    disarm();
+    ST.announce.scope = node.getAttribute('data-value') === 'online' ? 'online' : 'active';
+    drawAnnounce();
+  };
+
+  ACTIONS['an-send'] = function (node) {
+    var text = trim(S.forms['an.text']);
+    var problem = null;
+    if (!text) problem = 'Write the notice first.';
+    else if (charCount(text) > ANNOUNCE_MAX) problem = 'At most ' + ANNOUNCE_MAX + ' characters.';
+    if (problem) {
+      disarm();
+      ST.announce.answer = { ok: false, text: problem };
+      drawAnnounce();
+      return;
+    }
+    if (!confirmed(node)) {
+      // Another word typed is not what the armed click named.
+      if (S.armed) S.armed.bind = 'an.text';
+      return;
+    }
+    write('announce', { text: text, scope: ST.announce.scope }, 'announce', node).then(function (reply) {
+      if (!reply) return;
+      ST.announce.answer = { ok: reply.ok === true, text: words(reply) };
+      if (reply.ok) S.forms['an.text'] = '';
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      drawAnnounce();
+    });
+  };
+
+  /* ---- Developer > Settings history ---- */
+
+  /** A value as the history shows it; a secret never. */
+  function historyValue(value, secret) {
+    if (secret) return h('span.sub', '(hidden)');
+    if (value === null || value === undefined) return h('span.sub', '—');
+    if (typeof value === 'boolean') return value ? 'on' : 'off';
+    if (Array.isArray(value)) return value.map(String).join(', ') || '(none)';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+
+  function loadHistory() {
+    var hs = ST.history;
+    return ask('settingsHistory', hs.cursor != null ? { cursor: hs.cursor } : {}, 'history').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) hs.error = words(reply);
+      else { hs.error = null; hs.data = reply.data || {}; }
+      drawHistory();
+    });
+  }
+
+  function drawHistory() { if (S.section === 'history') setHtml(byId('hs'), historyBody()); }
+
+  function historyBody() {
+    var hs = ST.history;
+    if (hs.error && !hs.data) return answerBox({ ok: false, text: hs.error });
+    if (!hs.data) return loading('Reading the settings history…');
+    var rows = asList(hs.data.rows);
+    var hidden = Number(hs.data.hidden) || 0;
+    return frag(
+      answerBox(hs.answer),
+      rows.length ? h('div.table-wrap', h('table.grid.is-history',
+        h('thead', h('tr', h('th', 'When'), h('th', 'Setting'), h('th', 'Before'), h('th', 'After'),
+          h('th', 'Who'), h('th', ''))),
+        h('tbody', rows.map(function (r) {
+          return h('tr', { 'data-key': String(r.key || '') },
+            h('td.nowrap', { title: when(r.ts) }, ago(r.ts)),
+            h('td.wrap', h('b', String(r.label || r.key || '—')), h('div.mono.sub', String(r.key || '')),
+              r.reset ? h('span.chip', 'back to config.lua') : null),
+            h('td.wrap', historyValue(r.old, r.secret)),
+            h('td.wrap', historyValue(r['new'], r.secret)),
+            h('td.wrap', String(r.by || '—')),
+            h('td.nowrap', r.ref ? writeBtn('.is-small', 'hs-undo', { 'data-ref': String(r.ref) }, 'Undo',
+              'Click again to undo', 'arrow-rotate-left') : null));
+        })))) : empty('No setting has been changed from the panel within the log\'s retention.'),
+      hidden ? h('p.note', hidden + ' change(s) to the Developer section\'s own settings are left out: they are '
+        + 'for staff who may open it.') : null,
+      h('div.btn-row',
+        hs.back.length ? btn('.is-small.is-ghost', 'hs-newer', {}, 'Newer', 'arrow-left') : null,
+        hs.data.next != null ? btn('.is-small.is-ghost', 'hs-older', {}, 'Older', 'arrow-right') : null));
+  }
+
+  SHELL.history = function () {
+    return h('section.view',
+      h('div.toolbar', btn('.is-ghost', 'hs-refresh', {}, 'Refresh', 'rotate')),
+      h('p.hint', 'Every setting changed from the panel, newest first: when, the value before and after, and who. '
+        + 'Undo puts the value before that change back, checked as any change is; it takes two clicks and is on '
+        + 'the record. A secret is never shown.'),
+      h('div.stack', { id: 'hs' }, historyBody()));
+  };
+  LOAD.history = function () {
+    ST.history = { data: null, error: null, answer: null, cursor: null, back: [] };
+    loadHistory();
+  };
+
+  ACTIONS['hs-refresh'] = function () { ST.history.answer = null; loadHistory(); };
+  ACTIONS['hs-older'] = function () {
+    var hs = ST.history;
+    if (!hs.data || hs.data.next == null) return;
+    hs.back.push(hs.cursor);
+    hs.cursor = hs.data.next;
+    loadHistory();
+  };
+  ACTIONS['hs-newer'] = function () {
+    var hs = ST.history;
+    if (!hs.back.length) return;
+    hs.cursor = hs.back.pop();
+    loadHistory();
+  };
+  ACTIONS['hs-undo'] = function (node) {
+    var ref = node.getAttribute('data-ref');
+    if (!ref || !confirmed(node)) return;
+    write('undoSetting', { ref: ref }, 'undo:' + ref, node).then(function (reply) {
+      if (!reply) return;
+      ST.history.answer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      // The settings pages read afresh when next opened.
+      if (reply.ok) S.settings.data = null;
+      loadHistory();
+    });
+  };
+
+  /* ---- a player's report, in Needs review ---- */
+
+  var REPORT_ROLE = { placer: 'the placer', target: 'the target', hitman: 'a hitman on it',
+                      viewer: 'a player who saw it on the board' };
+
+  function isReport(item) { return !!item && item.kind === 'player_report'; }
+
+  /** What a report says: who sent it (as their role), their note, and the
+      thread's last messages, by alias. */
+  function reportPart(item) {
+    var known = item.known || {};
+    var excerpt = asList(known.excerpt);
+    return h('div.report',
+      h('p', 'Sent by ', h('b', REPORT_ROLE[known.role] || String(known.role || 'a player')),
+        known.note ? frag(': ', h('q', String(known.note))) : ', with no note.'),
+      excerpt.length ? h('ol.excerpt', excerpt.map(function (m) {
+        return h('li', h('span.mono.sub', clock(m.at)), ' ', h('b', String(m.alias || '?')), ': ',
+          h('span.wrap', String(m.body || '')));
+      })) : h('p.note', known.thread ? 'The thread was empty.' : 'No thread was sent with it.'));
+  }
+
+  /** A report moves no money: Dismiss, with what was done, is all it takes. */
+  function reportForm(item) {
+    var id = String(item.id);
+    return h('div.rv-form',
+      h('div.inline-form.is-wide',
+        field('rv.' + id + '.note', { class: 'is-grow', placeholder: 'What was done (a note is required)',
+          maxlength: '200', 'aria-label': 'Note' }),
+        writeBtn('', 'resolve', { 'data-id': id, 'data-report': 'yes' }, 'Dismiss it', 'Click again to dismiss',
+          'xmark')));
+  }
 
   function actorOf(node) {
     while (node && node !== document) {

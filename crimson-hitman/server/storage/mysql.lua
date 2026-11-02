@@ -3309,6 +3309,23 @@ local META_UPSERT = [[
     ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
 ]]
 
+--- See the memory backend. Rows of crimson_meta, as the playtime
+--- tracker's start is: no table of their own.
+function MySQLStore.readStaffMeta()
+    local rows = db.query([[
+        SELECT meta_key, meta_value FROM crimson_meta
+        WHERE meta_key IN ('staff_summary_day', 'staff_pause_since')
+    ]]) or {}
+    local out = {}
+    for i = 1, #rows do out[rows[i].meta_key] = tonumber(rows[i].meta_value) or 0 end
+    return out
+end
+
+function MySQLStore.writeStaffMeta(key, value)
+    db.query(META_UPSERT, { key, math.floor(tonumber(value) or 0) })
+    return true
+end
+
 function MySQLStore.writePlaytimeInstall(since, playersId)
     local queries = { { query = META_UPSERT, values = { 'playtime_since', since } } }
     if playersId then

@@ -3803,6 +3803,243 @@ async function main() {
     clean(app, 'identified history');
   })();
 
+  /* ---- staff tools: Announce ---- */
+  await (async function () {
+    const server = standardServer({
+      announce: function (data) {
+        return { ok: true, message: 'Sent to 3 hitman/hitmen holding a contract, from Staff.',
+          data: { sent: 3, scope: data.scope } };
+      }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.click(app.byId('grp-actions'));
+    await settled();
+    it('Staff actions has an Announce sub-tab, and a card pointing to it', function () {
+      eq(app.byId('nav-announce').hidden, false);
+      has(app.main(), 'Announce');
+    });
+    app.nav('announce');
+    await settled();
+    it('Announce says it comes from Staff, with both audiences and a count', function () {
+      has(app.main(), 'from Staff, never from you');
+      truthy(app.button('Hitmen on a contract'));
+      truthy(app.button('Everyone online'));
+      has(app.text(app.byId('an-count')), '0 / 200 characters');
+    });
+    app.click(app.button('Send'));
+    await settled();
+    it('refuses an empty notice, sending nothing', function () {
+      eq(app.requests('announce').length, 0);
+      has(app.main(), 'Write the notice first.');
+    });
+    app.type(app.byId('an-text'), 'x'.repeat(201));
+    it('counts as it is typed, and says when it is too long', function () {
+      has(app.text(app.byId('an-count')), '201 / 200 characters: too long to send.');
+    });
+    app.click(app.button('Send'));
+    await settled();
+    it('and refuses one too long, sending nothing', function () {
+      eq(app.requests('announce').length, 0);
+      has(app.main(), 'At most 200 characters.');
+    });
+    app.type(app.byId('an-text'), 'Event tonight at the pier.');
+    const send = app.button('Send');
+    app.click(send);
+    await settled();
+    it('Send takes two clicks: the first only arms it', function () {
+      eq(app.requests('announce').length, 0);
+      truthy(send.classList.contains('is-armed'));
+      has(app.text(send), 'Click again to send');
+    });
+    app.click(send);
+    await settled();
+    it('the second sends the text to every hitman holding a contract', function () {
+      eq(app.requests('announce').length, 1);
+      eq(app.last('announce').data, { text: 'Event tonight at the pier.', scope: 'active' });
+      has(app.main(), 'Sent to 3');
+      eq(app.byId('an-text').value, '', 'the box empties once sent');
+    });
+    app.click(app.button('Everyone online'));
+    await settled();
+    app.type(app.byId('an-text'), 'Server event at eight.');
+    const again = app.button('Send');
+    app.click(again);
+    app.click(again);
+    await settled();
+    it('or to everybody online with the app, when chosen', function () {
+      eq(app.last('announce').data, { text: 'Server event at eight.', scope: 'online' });
+    });
+    server.announce = { ok: false, err: 'text_refused', message: 'Not sent: no links, invites or handles in a notice to players.' };
+    app.type(app.byId('an-text'), 'discord.gg/abc');
+    const third = app.button('Send');
+    app.click(third);
+    app.click(third);
+    await settled();
+    it('a refusal shows the server\'s words', function () {
+      has(app.main(), 'no links, invites or handles');
+    });
+    clean(app, 'announce');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(READER);
+    await settled();
+    app.nav('announce');
+    await settled();
+    it('a reader sees Announce with Send disabled, and it sends nothing', function () {
+      const send = app.button('Send');
+      truthy(send.disabled, 'disabled for a reader');
+      app.click(send);
+      app.click(send);
+      eq(app.requests('announce').length, 0);
+    });
+    clean(app, 'announce reader');
+  })();
+
+  /* ---- staff tools: Developer > Settings history, with Undo ---- */
+  function historyRows(withRefs) {
+    return [
+      { ts: NOW - 60, key: 'Relay.Enabled', label: 'Anonymous messages', old: true, new: false, by: 'a staff member',
+        ref: withRefs ? 'h2' : undefined },
+      { ts: NOW - 120, key: 'Limits.MaxActiveContractsPerTarget', label: 'Most contracts on one target', old: 10,
+        new: 4, by: 'a staff member', reset: true, ref: withRefs ? 'h1' : undefined },
+      { ts: NOW - 180, key: 'convar:crimson_hitman_webhook', secret: true, by: 'a staff member' },
+      { ts: NOW - 240, key: 'Notes.Words', label: XSS, old: [XSS], new: [], by: XSS }
+    ];
+  }
+  await (async function () {
+    const server = standardServer({
+      settingsHistory: { ok: true, data: { rows: historyRows(true), next: 77 } },
+      undoSetting: function () {
+        return { ok: true, message: 'Undone: Relay.Enabled is on again (it was off).', data: { key: 'Relay.Enabled' } };
+      }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('history');
+    await settled();
+    it('Developer > Settings history lists each change: when, the setting, before, after and who', function () {
+      eq(app.byId('nav-history').getAttribute('aria-current'), 'page');
+      eq(app.requests('settingsHistory').length, 1);
+      const rows = app.$$('tr[data-key]');
+      eq(rows.length, 4);
+      has(app.text(rows[0]), 'Relay.Enabled');
+      has(app.text(rows[0]), 'on');
+      has(app.text(rows[0]), 'off');
+      has(app.text(rows[0]), 'a staff member');
+      has(app.text(rows[1]), 'back to config.lua');
+    });
+    it('never a secret\'s value, and nothing a player typed as markup', function () {
+      const rows = app.$$('tr[data-key]');
+      has(app.text(rows[2]), '(hidden)');
+      eq(rows[2].querySelectorAll('button').length, 0, 'an Undo on a secret');
+      eq(app.body.querySelectorAll('img').length, 0, 'markup from a row');
+    });
+    const undo = app.$$('tr[data-key]')[0].querySelector('button');
+    app.click(undo);
+    await settled();
+    it('Undo takes two clicks: the first only arms it', function () {
+      eq(app.requests('undoSetting').length, 0);
+      has(app.text(undo), 'Click again to undo');
+    });
+    app.click(undo);
+    await settled();
+    it('the second asks the server to undo that row, by its handle alone', function () {
+      eq(app.requests('undoSetting').length, 1);
+      eq(app.last('undoSetting').data, { ref: 'h2' });
+      has(app.main(), 'Undone: Relay.Enabled is on again');
+      eq(app.requests('settingsHistory').length, 2, 'the history is read again');
+    });
+    app.click(app.button('Older'));
+    await settled();
+    it('Older reads the next page from the cursor, and Newer goes back', function () {
+      eq(app.last('settingsHistory').data, { cursor: 77 });
+      app.click(app.button('Newer'));
+    });
+    await settled();
+    it('back at the first page', function () { eq(app.last('settingsHistory').data, {}); });
+    clean(app, 'settings history');
+  })();
+
+  await (async function () {
+    const server = standardServer({
+      settingsHistory: { ok: true, data: { rows: historyRows(false), hidden: 2 } }
+    });
+    const app = boot(server);
+    app.open(access({ canWrite: false, canIdentify: false, canDevelop: false }));
+    await settled();
+    app.click(app.byId('grp-developer'));
+    await settled();
+    it('staff without the Developer section still have Settings history beside Permissions', function () {
+      eq(app.byId('nav-permissions').getAttribute('aria-current'), 'page');
+      eq(app.byId('nav-history').hidden, false);
+    });
+    app.nav('history');
+    await settled();
+    it('a reader reads the history, with no Undo, told what is left out', function () {
+      eq(app.byId('nav-history').getAttribute('aria-current'), 'page');
+      eq(app.$$('tr[data-key]').length, 4);
+      eq(app.byId('main').querySelectorAll('button[data-act="hs-undo"]').length, 0);
+      has(app.main(), '2 change(s) to the Developer section');
+    });
+    clean(app, 'settings history reader');
+  })();
+
+  /* ---- staff tools: a player's report in Needs review ---- */
+  await (async function () {
+    const report = { id: 'rv00000009', kind: 'player_report', about: 'a player reported this contract',
+      contract: 'ct00000001', parties: [{ role: 'from', who: 'operative Ghost' }, { role: 'reported', who: 'the client' }],
+      items: [], known: { role: 'hitman', note: 'Threats ' + XSS, thread: true, excerpt: [
+        { alias: 'Ghost', body: 'On my way', at: NOW - 300 },
+        { alias: 'Placer', body: 'Do it or else ' + XSS, at: NOW - 200 }] },
+      now: { contract: 'accepted' }, state: 'open', created_at: NOW - 100 };
+    const server = standardServer({
+      reviews: { ok: true, data: { items: [report] } },
+      resolve: { ok: true, message: 'Review rv00000009 resolved: dismissed.', data: { detail: {} } }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('reviews');
+    await settled();
+    const item = app.byId('rv-rv00000009');
+    it('a report shows who sent it by role, the note and the thread\'s messages by alias', function () {
+      has(app.text(item), 'player report');
+      has(app.text(item), 'a hitman on it');
+      has(app.text(item), 'Threats');
+      has(app.text(item), 'Ghost');
+      has(app.text(item), 'Do it or else');
+      eq(item.querySelectorAll('li').length, 2);
+      eq(app.body.querySelectorAll('img').length, 0, 'markup from a report');
+    });
+    it('and offers Dismiss alone: a report holds no money', function () {
+      lacks(app.text(item), 'Refund it');
+      lacks(app.text(item), 'Pay it');
+      truthy(app.button('Dismiss it', item));
+    });
+    const dismiss = app.button('Dismiss it', item);
+    app.click(dismiss);
+    await settled();
+    it('Dismiss without a note is refused, sending nothing', function () {
+      eq(app.requests('resolve').length, 0);
+      has(app.text(app.byId('rv-rv00000009')), 'Say why in a note');
+    });
+    app.type(app.byId('rv-rv00000009').querySelector('[data-bind="rv.rv00000009.note"]'), 'Spoke to both');
+    const again = app.button('Dismiss it', app.byId('rv-rv00000009'));
+    app.click(again);
+    app.click(again);
+    await settled();
+    it('and with one dismisses it, in two clicks', function () {
+      eq(app.requests('resolve').length, 1);
+      eq(app.last('resolve').data, { id: 'rv00000009', action: 'dismiss', note: 'Spoke to both' });
+    });
+    clean(app, 'player report');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

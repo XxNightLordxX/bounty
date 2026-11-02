@@ -1590,6 +1590,7 @@ local CLEANSE_REFUSALS = {
     [CH.ERR.LOCKED] = 'someone got there first.',
     [CH.ERR.BUSY] = 'that was busy for a moment. Try again.',
     [CH.ERR.CONTRACT_FROZEN] = 'this contract is on hold by staff.',
+    [CH.ERR.APP_PAUSED] = 'contracts are paused by staff.',
 }
 
 --- The sentence §14.40 has every buyout end on: this contract closing is

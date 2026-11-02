@@ -409,8 +409,15 @@ Config.Admin = {
     TimelineRows        = 200,                  -- audit rows read for one timeline
 }
 
-Config.Staff = { ManualPaymentMax = 100000 }  -- most one manual staff payment may be ($); 0 = off
-
+Config.Staff = {
+    ManualPaymentMax      = 100000, -- most one manual staff payment may be ($); 0 = off
+    AppPaused             = false,  -- pause the whole app: no placing, no accepting, clocks held
+    DailySummary          = false,  -- post one count-only summary a day to the staff Discord
+    DailySummaryHour      = 6,      -- the hour it is posted, server time (0-23)
+    AlertPlacedPerHour    = 5,      -- alert past this many placed by one player an hour; 0 = off
+    AlertTargetPerDay     = 3,      -- alert past this many on one target a day; 0 = off
+    AlertRefusalsPer10Min = 30,     -- alert past this many refusals to one player in 10 min; 0 = off
+}
 -- ============================================================================
 --                          ADVANCED AND DEVELOPER
 -- ============================================================================
@@ -458,6 +465,7 @@ Config.Cooldowns = { -- per-player allowances: refill over `per` seconds, `burst
     image           = { per = 2,  burst = 20 },   -- fetching a headshot
     admin           = { per = 10, burst = 30 },   -- the admin panel, per staff member
     adminWrite      = { per = 10, burst = 6 },    -- what the admin panel writes
+    report          = { per = 600, burst = 3 },   -- reporting a contract or a thread to staff
 }
 
 Config.Database.Json.WarnContractCount      = 2000  -- json: warn above this many contracts

@@ -252,8 +252,36 @@ function serverStub() {
         contract: 'ct10000002', parties: [{ role: 'payer', who: 'the client' }, { role: 'creator', who: 'the client' }],
         amount: 25000, account: 'bank', items: [{ source: 'item', item: 'lockpick', quantity: 5 }],
         known: { error: 'MySQL server has gone away while writing crimson_contracts row', at: NOW },
-        now: { contract: 'none', lines: { held: 1, settled: 0, missing: 2 } }, state: 'open', created_at: NOW - 900 }
+        now: { contract: 'none', lines: { held: 1, settled: 0, missing: 2 } }, state: 'open', created_at: NOW - 900 },
+      // A player's report: the longest note, and a thread of twenty long
+      // messages with no spaces in some to break at.
+      { id: 'rv00000002', kind: 'player_report', about: 'a player reported this contract, or a message thread on it, '
+          + 'from the app: read their note and the messages, deal with it in the city, then dismiss with what was done',
+        contract: 'ct10000002', parties: [{ role: 'from', who: 'operative Ghost of the Eastern Docks' },
+          { role: 'reported', who: 'the client' }], items: [],
+        known: { role: 'hitman', note: REASON + ' ' + REASON, thread: true, excerpt: (function () {
+          const out = [];
+          for (let i = 0; i < 20; i++) {
+            out.push({ alias: i % 2 ? 'Placer' : 'Ghost of the Eastern Docks', at: NOW - (20 - i) * 60,
+              body: i % 3 ? REASON : 'https://averyveryverylongaddresswithnospacesinittobreakatanywhere.example/x' });
+          }
+          return out;
+        })() },
+        now: { contract: 'accepted' }, state: 'open', created_at: NOW - 300 }
     ] } },
+    // The settings history: long labels, long values, a list, a secret.
+    settingsHistory: { ok: true, data: { next: 99, rows: (function () {
+      const out = [];
+      for (let i = 0; i < 25; i++) {
+        out.push({ ts: NOW - i * 300, key: i % 5 === 0 ? 'Advisory.RecipientJobNames' : 'Limits.SameCreatorSameTargetCooldownSeconds',
+          label: 'What it does, in a sentence long enough to wrap across the row at the narrowest width',
+          old: i % 5 === 0 ? ['police', 'sheriff', 'bcso', 'fib', 'trooper', 'sasp', 'ranger', 'sast'] : 1800,
+          new: i % 5 === 0 ? ['police'] : 3600, by: i % 2 ? 'a staff member' : 'ADMIN00000001',
+          reset: i % 7 === 0 || undefined, ref: 'h' + i });
+      }
+      out.push({ ts: NOW - 9000, key: 'convar:crimson_hitman_webhook', secret: true, by: 'a staff member' });
+      return out;
+    })() } },
     logs: { ok: true, data: { rows: (function () {
       const out = [];
       for (let i = 0; i < 25; i++) {
@@ -454,7 +482,8 @@ function measure(opts) {
 const GROUP = { help: 'live', overview: 'live', contracts: 'live', players: 'live', frozen: 'live', reviews: 'live',
   stuck: 'live', actions: 'actions', tools: 'actions', timers: 'rules', money: 'rules', limits: 'rules',
   targeting: 'rules', features: 'features', logs: 'logs', alerts: 'logs', devsettings: 'developer',
-  console: 'developer', diagnostics: 'developer', permissions: 'developer' };
+  console: 'developer', diagnostics: 'developer', permissions: 'developer', announce: 'actions',
+  history: 'developer' };
 
 /* A view, as staff reach it: its section, then its sub-tab where it has a strip. */
 async function go(page, view) {
@@ -473,6 +502,9 @@ async function openAt(browser, width, height) {
   await page.waitForTimeout(200);
   return page;
 }
+
+const REASON_LONG = 'Event tonight at the pier: no contracts there until midnight, and every hitman '
+  + 'stays clear of the square while it runs.';
 
 async function main() {
   const browser = await chromium.launch();
@@ -507,7 +539,7 @@ async function main() {
   ];
   const sections = ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck', 'actions', 'tools',
     'timers', 'money', 'limits', 'targeting', 'features', 'logs', 'alerts', 'devsettings', 'console', 'diagnostics',
-    'permissions'];
+    'permissions', 'announce', 'history'];
 
   for (const size of sizes) {
     const page = await openAt(browser, size.w, size.h);
@@ -545,6 +577,17 @@ async function main() {
       if (section === 'alerts') {
         // Measured with Acknowledge all shown armed, its confirm showing.
         await page.click('button[data-act="al-ack-all"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'announce') {
+        // Measured with a long notice typed and Send armed, its confirm showing.
+        await page.fill('#an-text', REASON_LONG);
+        await page.click('button[data-act="an-send"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'history') {
+        // Measured with an Undo armed.
+        await page.click('button[data-act="hs-undo"]');
         await page.waitForTimeout(60);
       }
       if (section === 'features') {

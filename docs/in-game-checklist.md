@@ -1385,6 +1385,14 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Cancel a contract on an on-duty officer: officers and the MDT get
       *THREAT ADVISORY — CANCELLED*, the officer *The contract on you has been
       called off.*, and the earlier dispatch calls are gone
+- [ ] Staff tools: turn on **Pause the whole app** under Features: placing and
+      accepting say *Contracts are paused by staff.*, every party gets that
+      notice once, and the panel shows every deadline stopped; turn it off and
+      they run again with the same time left. **Staff actions > Announce** a
+      line to every hitman: it arrives from *Staff*. Tap **Report** on a card
+      and in a thread: an item is in **Needs review** with the messages. Change
+      a setting and **Undo** it in **Developer > Settings history**. With
+      **Daily summary** on and a webhook set, one post arrives at the hour
 
 ---
 

@@ -29,6 +29,7 @@ local EMPTY = {
     freezes = {},
     contractStaff = {},
     staffRecords = {},
+    staffMeta = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -58,7 +59,7 @@ local indexDirty = false
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
                   'alerts', 'viewAlerts', 'locationTips', 'placerInformants', 'freezes',
-                  'contractStaff', 'staffRecords' }
+                  'contractStaff', 'staffRecords', 'staffMeta' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -2374,6 +2375,25 @@ function JsonStore.writeStaffRecord(row)
         ended_at = row.ended_at, ended_by = row.ended_by, ended_why = row.ended_why,
         amount = row.amount, account = row.account,
     }
+    touch(true)
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Staff tools' own facts
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, written at once: the day the
+--- summary was posted is what keeps it to one a day across a crash.
+function JsonStore.readStaffMeta()
+    local out = {}
+    for key, value in pairs(db.staffMeta or {}) do out[key] = tonumber(value) or 0 end
+    return out
+end
+
+function JsonStore.writeStaffMeta(key, value)
+    db.staffMeta = db.staffMeta or {}
+    db.staffMeta[key] = math.floor(tonumber(value) or 0)
     touch(true)
     return true
 end

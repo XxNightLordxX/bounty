@@ -31,6 +31,15 @@
 --- start kept in the resource's KVP for that), never twice for a span a
 --- staff freeze also covered.
 ---
+--- The app pause lives here too (Config.Staff.AppPaused, a switch under
+--- Features): staff stop the whole app for an event. No contract is placed
+--- or accepted (Contracts.create and accept ask Freeze.appPaused), and every
+--- live contract is held as the restart hold holds it: its deadline stops
+--- (Storage.startPause) and its lifetime is given back the time paused,
+--- never twice for a span another hold also covers. Its start is kept by the
+--- store (Storage.writeStaffMeta 'staff_pause_since'), so a pause outlives a
+--- restart and its lifetime is still given back once it ends.
+---
 --- Anonymity: nothing here says which party is frozen. The frozen player is
 --- told their contracts are on hold; every other party of each contract is
 --- told that contract is, in the same words whoever caused it; a card says
@@ -88,14 +97,23 @@ local LIVE = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true }
 
 local REASON_MAX = 120
 
+--- The app pause now, or nil: { since }. Kept by the store, so it holds
+--- across a restart (Freeze.syncAppPause).
+local appPause = nil
+local PAUSE_META = 'staff_pause_since'
+
 ---@param deps table { storage, audit, notify, kidnap }
 local giveBackRestart
+local loadAppPause
 
 function Freeze.init(deps)
     Storage, Audit, Notify, Kidnap = deps.storage, deps.audit, deps.notify, deps.kidnap
     -- A restart hold ends with the restart: this start is it.
     restartHold = nil
     Freeze.reload()
+    -- An app pause from before the restart is still on: read before the
+    -- restart hold's lifetime is given back, which leaves out what it covers.
+    loadAppPause()
     -- And the lifetime the hold and the restart took is given back, once.
     local ok, since = pcall(GetResourceKvpInt, RESTART_KVP)
     since = ok and tonumber(since) or 0
@@ -106,6 +124,12 @@ function Freeze.init(deps)
             Log.always(('the lifetime the restart hold took could not be given back (%s)')
                 :format(Util.dbError(err)))
         end
+    end
+    -- And the switch as it is now (a config.lua edit while it was down).
+    local synced, syncErr = pcall(Freeze.syncAppPause)
+    if not synced then
+        Log.always(('the app pause could not be brought in line with its switch (%s)')
+            :format(Util.dbError(syncErr)))
     end
 end
 
@@ -349,6 +373,8 @@ unfreezeUnlocked = function(staffCid, cid, reason)
         -- gives back what it covers (giveBackRestart), and once is enough.
         local stop = others or now
         if restartHold then stop = math.min(stop, restartHold.since) end
+        -- Nor past the app pause's: its end gives that back.
+        if appPause then stop = math.min(stop, appPause.since) end
         local back = math.max(0, stop - row.frozen_at)
         if back > 0 and contract.expires_at then
             pcall(Storage.setContractFields, contract.id,
@@ -394,6 +420,8 @@ giveBackRestart = function(since, now)
         if LIVE[contract.state] and contract.expires_at then
             local from = math.max(since, tonumber(contract.created_at) or since)
             local stop = math.min(now, Freeze.heldSince(contract) or now)
+            -- Nor the part the app pause covers, which its end gives back.
+            if appPause then stop = math.min(stop, appPause.since) end
             local back = stop - from
             if back > 0 then
                 pcall(Storage.setContractFields, contract.id,
@@ -413,7 +441,7 @@ Freeze.TEXT.restart = 'Contracts are paused until the server restart.'
 ---@param contract table
 ---@return boolean
 function Freeze.clockMayRun(contract)
-    if Freeze.restartHeld() then return false end
+    if Freeze.restartHeld() or appPause ~= nil then return false end
     if type(ContractClockMayRun) ~= 'function' then return true end
     local ok, may = pcall(ContractClockMayRun, contract)
     return not ok or may ~= false
@@ -509,6 +537,147 @@ end
 --- Config.Restart.MaxHoldMinutes.
 function Freeze.restartTick()
     if restartHold and os.time() >= Freeze.restartHoldEnds() then Freeze.releaseRestart('max_hold') end
+end
+
+--------------------------------------------------------------------------
+-- The app pause (Config.Staff.AppPaused)
+--------------------------------------------------------------------------
+
+Freeze.TEXT.pausedTitle = 'Paused'
+Freeze.TEXT.paused = 'Contracts are paused by staff.'
+Freeze.TEXT.resumed = 'Contracts are no longer paused.'
+
+--- Whether staff have paused the whole app.
+---@return boolean
+function Freeze.appPaused() return appPause ~= nil end
+
+--- When the app pause began (os.time()), or nil.
+---@return integer|nil
+function Freeze.appPausedSince() return appPause and appPause.since or nil end
+
+--- Every party a live contract is shown to, once each: the placer, the
+--- target once shown it, and its active operatives. Never which party.
+---@return table [cid] = true
+local function everyLiveParty(live)
+    local told = {}
+    for i = 1, #live do
+        local contract = live[i]
+        if LIVE[contract.state] then
+            if contract.creator_cid then told[contract.creator_cid] = true end
+            if contract.target_cid and Notify.shownToTarget(contract) then told[contract.target_cid] = true end
+            for _, hitman in ipairs(Storage.readHitmen(contract.id) or {}) do
+                if hitman.state == 'active' then told[hitman.hitman_cid] = true end
+            end
+        end
+    end
+    return told
+end
+
+--- Give every live contract's lifetime back the time the app pause took,
+--- from its start (or the contract's placing, if later) to `now`: not the
+--- part a staff freeze or the restart hold still holding it covers, which
+--- their own ends give back.
+---@param since integer
+---@param now integer
+local function giveBackApp(since, now)
+    for _, contract in ipairs(Storage.liveContracts() or {}) do
+        if LIVE[contract.state] and contract.expires_at then
+            local from = math.max(since, tonumber(contract.created_at) or since)
+            local stop = math.min(now, Freeze.heldSince(contract) or now)
+            if restartHold then stop = math.min(stop, restartHold.since) end
+            local back = stop - from
+            if back > 0 then
+                pcall(Storage.setContractFields, contract.id,
+                    { expires_at = (tonumber(contract.expires_at) or now) + back })
+            end
+        end
+    end
+end
+
+--- What the store kept of a pause from before this start.
+loadAppPause = function()
+    appPause = nil
+    if not (Storage and Storage.readStaffMeta) then return end
+    local ok, meta = pcall(Storage.readStaffMeta)
+    if not ok then
+        Log.always(('the app pause could not be read from the store (%s)'):format(Util.dbError(meta)))
+        return
+    end
+    local since = tonumber(type(meta) == 'table' and meta[PAUSE_META]) or 0
+    if since > 0 then appPause = { since = since } end
+end
+
+--- Start the pause: every live contract's deadline stops now, and every
+--- party is told once.
+local function startAppPause()
+    local now = os.time()
+    local wrote, err = pcall(Storage.writeStaffMeta, PAUSE_META, now)
+    if not wrote then
+        Log.always(('the app pause could not be kept by the store (%s); it is on until the next '
+            .. 'start'):format(Util.dbError(err)))
+    end
+    appPause = { since = now }
+    local live = Storage.liveContracts() or {}
+    for i = 1, #live do
+        local contract = live[i]
+        if LIVE[contract.state] then
+            local overdue = not contract.paused_since and contract.deadline_at ~= nil
+                and now > contract.deadline_at
+            if not contract.paused_since and not overdue then
+                pcall(Storage.startPause, contract.id, now)
+            end
+        end
+    end
+    for cid in pairs(everyLiveParty(live)) do
+        Notify.toCitizen(cid, Freeze.TEXT.pausedTitle, Freeze.TEXT.paused, { bypassBudget = true })
+        Notify.push(cid, 'hold')
+    end
+    Log.always('staff paused the app: no contract is placed or accepted, and every live '
+        .. 'contract\'s clocks are held until it is switched off (Staff.AppPaused)')
+    if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
+end
+
+--- End the pause: the lifetime given back, and the next expiry pass lets
+--- each clock nothing else stops run again, banking the time paused.
+local function endAppPause()
+    local since = appPause.since
+    local now = os.time()
+    local wrote, err = pcall(Storage.writeStaffMeta, PAUSE_META, 0)
+    if not wrote then
+        Log.always(('the end of the app pause could not be kept by the store (%s)')
+            :format(Util.dbError(err)))
+    end
+    appPause = nil
+    local gave, giveErr = pcall(giveBackApp, since, now)
+    if not gave then
+        Log.always(('the lifetime the app pause took could not be given back (%s)')
+            :format(Util.dbError(giveErr)))
+    end
+    for cid in pairs(everyLiveParty(Storage.liveContracts() or {})) do
+        Notify.toCitizen(cid, Freeze.TEXT.pausedTitle, Freeze.TEXT.resumed, { bypassBudget = true })
+        Notify.push(cid, 'hold')
+    end
+    Log.always('staff ended the app pause: contracts run again where nothing else stops them')
+    if type(MarkPresenceChanged) == 'function' then MarkPresenceChanged() end
+    if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
+end
+
+--- Bring the pause in line with its switch (Config.Staff.AppPaused): run
+--- when the setting changes (Settings.watch), at the start, and on every
+--- maintenance tick for a change made any other way.
+---@return string|nil what 'paused' | 'resumed', or nil when nothing changed
+function Freeze.syncAppPause()
+    if not Storage then return nil end
+    local want = type(Config.Staff) == 'table' and Config.Staff.AppPaused == true
+    if want and not appPause then
+        startAppPause()
+        return 'paused'
+    end
+    if not want and appPause then
+        endAppPause()
+        return 'resumed'
+    end
+    return nil
 end
 
 return Freeze

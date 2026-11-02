@@ -49,6 +49,18 @@ local unknown = {}
 --- which knows who to tell (the access refresh, the photo host list).
 Settings.onChanged = nil
 
+--- Functions called after one key changes live, by key: what a switch
+--- starts or stops the moment it is turned (the app pause,
+--- Freeze.syncAppPause). Kept across Settings.init. [key] = fn
+local watchers = {}
+
+--- Call `fn` after `key` changes live (set, reset, reset all, an undo).
+---@param key string
+---@param fn function
+function Settings.watch(key, fn)
+    if type(key) == 'string' and type(fn) == 'function' then watchers[key] = fn end
+end
+
 --------------------------------------------------------------------------
 -- The catalogue
 --------------------------------------------------------------------------
@@ -543,6 +555,22 @@ local CATALOGUE = {
           .. 'section still lists every one.',
       inflight = 'Read at the next post, with no restart: turned off, alerts waiting to be posted '
           .. 'are dropped, and nothing said while it is off is posted later.' },
+    { key = 'Staff.AppPaused', section = 'features', category = 'features', group = 'Staff tools',
+      kind = 'switch', label = 'Pause the whole app',
+      about = 'For an event: no contract is placed or accepted anywhere, and every live contract '
+          .. 'keeps both its clocks stopped, as the restart hold stops them. Players are told '
+          .. '"Contracts are paused by staff." Off again, each clock runs where nothing else '
+          .. '(a freeze, the restart hold, somebody away) still stops it, and the lifetime is '
+          .. 'given back the time it was paused.',
+      inflight = 'At once, with no restart, and kept across one. Payouts, handovers and buyouts '
+          .. 'already under way finish as they began.' },
+    { key = 'Staff.DailySummary', section = 'features', category = 'features', group = 'Staff tools',
+      kind = 'switch', label = 'Daily summary to Discord',
+      about = 'Once a day, at the hour under Rules > Timers, a post to the alert webhook '
+          .. '(crimson_hitman_alert_webhook, or else crimson_hitman_webhook) with counts only: '
+          .. 'contracts placed, completed and refunded in the last day, money in escrow, open '
+          .. 'review items, frozen and suspended players. It never names anybody.',
+      inflight = 'Read at the hour. At most once a day, a restart included.' },
     { key = 'Debug', section = 'features', category = 'developer', group = 'Audit and debug', kind = 'switch',
       label = 'Debug output in the server console',
       about = 'Off: the server console prints only what needs you (refusing to start, money '
@@ -734,6 +762,23 @@ local CATALOGUE = {
       kind = 'number', integer = true, min = 1, max = 240,
       label = 'Longest the pause lasts with no restart (min)',
       inflight = 'A pause already on ends at the new length.' },
+
+    { key = 'Staff.DailySummaryHour', section = 'limits', category = 'rules-timers', group = 'Staff tools',
+      kind = 'number', integer = true, min = 0, max = 23,
+      label = 'Hour the daily summary is posted (server time, 0-23)',
+      inflight = 'Read every tick: a summary already posted today is not posted again.' },
+    { key = 'Staff.AlertPlacedPerHour', section = 'limits', category = 'rules-limits', group = 'Staff alerts',
+      kind = 'number', integer = true, min = 0, max = 1000,
+      label = 'Alert past this many contracts placed by one player in an hour (0 = off)',
+      inflight = AT_USE },
+    { key = 'Staff.AlertTargetPerDay', section = 'limits', category = 'rules-limits', group = 'Staff alerts',
+      kind = 'number', integer = true, min = 0, max = 1000,
+      label = 'Alert past this many contracts on one target in a day (0 = off)',
+      inflight = AT_USE },
+    { key = 'Staff.AlertRefusalsPer10Min', section = 'limits', category = 'rules-limits', group = 'Staff alerts',
+      kind = 'number', integer = true, min = 0, max = 10000,
+      label = 'Alert past this many refusals to one player in 10 minutes (0 = off)',
+      inflight = AT_USE },
 
     { key = 'Kidnap.CountdownSeconds', section = 'limits', group = 'Handovers', kind = 'number',
       category = 'rules-timers',
@@ -1128,7 +1173,7 @@ local BUCKETS = {
     'load', 'search', 'wallet', 'create', 'accept', 'amend', 'informant', 'placerInformant', 'locationTip',
     'bailout', 'photo',
     'photoSubmit', 'photoView', 'photoDecide', 'message', 'progress', 'death', 'mugshot',
-    'image', 'diagnostic', 'admin', 'adminWrite',
+    'image', 'diagnostic', 'admin', 'adminWrite', 'report',
 }
 
 --- What each bucket gates: the buttons and events a player is refused once
@@ -1165,6 +1210,8 @@ local BUCKET_ABOUT = {
     image = 'Fetching a headshot the board was given a reference to.',
     diagnostic = 'Fault reports players\' apps send. The log staff ask for with the diagnosis '
         .. 'never spends it.',
+    report = 'Reporting a contract or a message thread to staff (the Report button). Each one '
+        .. 'is an item in the review queue.',
 }
 
 --- The least the buckets the app cannot work without may be set to from
@@ -1630,6 +1677,14 @@ local function changed(entry)
         TriggerClientEvent('crimson-hitman:settings', -1, Settings.clientValues(true))
     end
     if Settings.onChanged then pcall(Settings.onChanged, entry.key, entry) end
+    local watcher = watchers[entry.key]
+    if watcher then
+        local ok, err = pcall(watcher, entry.key)
+        if not ok then
+            Log.always(('the change to %s is in force, but what follows it raised: %s')
+                :format(entry.key, tostring(err)))
+        end
+    end
 end
 
 --- Whether a write that raised landed after all, read back from the store
@@ -2106,6 +2161,73 @@ end
 ---@return table|nil
 function Settings.entry(key)
     return byKey[key]
+end
+
+--------------------------------------------------------------------------
+-- History (Developer > Settings history)
+--------------------------------------------------------------------------
+
+--- The audit rows every change writes (admin_setting_changed, its reset
+--- admin_setting_reset, and admin_settings_reset_all) each hold the key,
+--- the value before and after, who and when, so the history is read from
+--- them: one substring of the action matches all three.
+local HISTORY_ACTION = 'admin_setting'
+
+--- Whether a key's values are never shown: a secret on the deny list (a
+--- webhook), or a key whose name says it holds one. Neither is changeable
+--- from the panel, so neither should ever be in a row; this is the guard
+--- should one be.
+---@param key any
+---@return boolean
+function Settings.secretKey(key)
+    if type(key) ~= 'string' then return true end
+    local rule = DENY[key]
+    if rule and rule.secret then return true end
+    local lowered = key:lower()
+    return lowered:find('webhook', 1, true) ~= nil or lowered:find('secret', 1, true) ~= nil
+        or lowered:find('password', 1, true) ~= nil or lowered:find('token', 1, true) ~= nil
+end
+
+--- One page of the history, newest first: a row for each change of one
+--- key, and a reset of every setting one row for each key it changed.
+---@param cursor any where the page before stopped (opaque)
+---@param limit integer rows of the log read, at most
+---@return table[] rows { ts, action, key, old, new, actor, by, source, secret, category, undoable }
+---@return any next the cursor of the next page, nil on the last
+function Settings.history(cursor, limit)
+    pcall(Audit.flush)
+    local rows, next_ = Storage.queryAudit({ action = HISTORY_ACTION }, cursor, limit)
+    local out = {}
+    local function add(row, key, old, new, by, source)
+        local secret = Settings.secretKey(key)
+        local entry = byKey[key]
+        local shownOld, shownNew
+        if not secret then shownOld, shownNew = copyOf(old), copyOf(new) end
+        out[#out + 1] = {
+            ts = tonumber(row.ts), action = row.action, key = key,
+            old = shownOld, new = shownNew,
+            actor = row.actor_cid, by = by, source = source, secret = secret or nil,
+            category = entry and entry.category or 'developer',
+            undoable = (not secret and entry ~= nil and not entry.readonly and old ~= nil) or nil,
+        }
+    end
+    for _, row in ipairs(rows or {}) do
+        local detail = type(row.detail) == 'table' and row.detail or {}
+        if row.action == 'admin_settings_reset_all' then
+            local changes = type(detail.changes) == 'table' and detail.changes or {}
+            local keys = {}
+            for key in pairs(changes) do keys[#keys + 1] = key end
+            table.sort(keys)
+            for _, key in ipairs(keys) do
+                local change = changes[key]
+                if type(change) == 'table' then add(row, key, change.old, change.new, detail.by, 'config') end
+            end
+        elseif row.action == 'admin_setting_changed' or row.action == 'admin_setting_reset' then
+            add(row, detail.key, detail.old, detail.new, detail.by,
+                row.action == 'admin_setting_reset' and 'config' or detail.source)
+        end
+    end
+    return out, next_
 end
 
 return Settings

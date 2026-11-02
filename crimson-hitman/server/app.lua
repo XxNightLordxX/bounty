@@ -440,6 +440,8 @@ local function handler(name, action, fn, access, exempt)
             if shouldLogRatelimit(actor.cid, name) then
                 deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
             end
+            -- A refusal all the same, for the staff alert threshold.
+            if deps.thresholds then pcall(deps.thresholds.refused, actor.cid) end
             -- With the wait, because "slow down" on its own is not something
             -- a player can act on: they cannot tell two seconds from five
             -- minutes, so they tap again, read the same words, and decide
@@ -494,6 +496,9 @@ local function handler(name, action, fn, access, exempt)
         end
 
         local succeeded = result ~= false and result ~= nil
+        -- Every refusal counted towards the staff alert threshold
+        -- (Config.Staff.AlertRefusalsPer10Min, server/thresholds.lua).
+        if not succeeded and deps.thresholds then pcall(deps.thresholds.refused, actor.cid) end
         -- The allowance is for work done. A request the handler refused did
         -- none, and charging for it meant a player fixing a typo was told
         -- to slow down.
@@ -965,6 +970,8 @@ function App.register()
             shown         = type(payload.shown) == 'table' and payload.shown or {},
         })
         if not contract then return false, err, refusal end
+        -- Counted for the staff alert thresholds (server/thresholds.lua).
+        if deps.thresholds then pcall(deps.thresholds.placed, actor.cid, contract.target_cid) end
         local reply = deps.projection.contract(contract, actor.cid)
         -- On success the third is the anonymity fee taken, for the
         -- confirmation to name.
@@ -1464,6 +1471,16 @@ function App.register()
     --- payload came from a browser and is treated as such: truncated to
     --- lengths the audit detail can hold, and never interpolated into
     --- anything but a log line.
+    -- A player's report to staff (server/reports.lua): the Report button on
+    -- a contract card or a message thread. Its own bucket. Answered with
+    -- nothing but that it was sent.
+    handler('report', 'report', function(actor, payload)
+        if not deps.reports then return false, CH.ERR.SERVER_ERROR end
+        local ok, err, detail = deps.reports.file(actor, payload)
+        if not ok then return false, err end
+        return detail
+    end)
+
     handler('pageError', 'diagnostic', function(actor, payload)
         local what = Util.sanitizeText(payload.what, 300) or 'unspecified'
         local where = Util.sanitizeText(payload.where, 200)

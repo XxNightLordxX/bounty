@@ -320,6 +320,11 @@ CH.ERR = {
     --- it ends or is lifted. Sent with { untilAt = os.time() or nil for
     --- until lifted, reason }, their own suspension's, never who set it.
     SUSPENDED            = 'suspended',
+    --- Staff have paused the whole app (Config.Staff.AppPaused, under
+    --- Features): no contract is placed or accepted, and every live one
+    --- keeps its clocks stopped, until it is switched off again. To the
+    --- player: "Contracts are paused by staff."
+    APP_PAUSED           = 'app_paused',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

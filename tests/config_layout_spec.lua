@@ -72,10 +72,17 @@ local ADDED = {
     -- and the least run time a shortening leaves.
     ['Limits.StaffDeadlineMaxAdjustSeconds'] = 86400,
     ['Limits.StaffDeadlineMinLeftSeconds'] = 300,
-    -- The admin panel's moderator level, and the cap on a manual staff
-    -- payment (Staff and permissions).
+    -- The admin panel's moderator level (Staff and permissions).
     ['Admin.ModeratorAce'] = 'crimson.moderator',
-    ['Staff'] = { ManualPaymentMax = 100000 },
+    -- The Staff section: the cap on a manual staff payment, the app pause
+    -- and the daily summary (both off), the summary's hour and the alert
+    -- thresholds; and the report button's bucket.
+    ['Staff'] = {
+        ManualPaymentMax = 100000,
+        AppPaused = false, DailySummary = false, DailySummaryHour = 6,
+        AlertPlacedPerHour = 5, AlertTargetPerDay = 3, AlertRefusalsPer10Min = 30,
+    },
+    ['Cooldowns.report'] = { per = 600, burst = 3 },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -184,10 +191,11 @@ describe('the configuration as one short file', function()
             -- And settings added since, each new and shipped as ADDED says.
             local addedSince = pair[1] == nil and type(pair[2]) ~= 'table' and ADDED[path] == pair[2]
                 and (path:match('^Limits%.StaffDeadline') ~= nil or path == 'Admin.ModeratorAce')
-            -- The Staff section, new and shipped as ADDED says.
-            if pair[1] == nil and path == 'Staff' and type(pair[2]) == 'table'
-                and pair[2].ManualPaymentMax == ADDED.Staff.ManualPaymentMax then
-                addedSince = true
+            -- The Staff section and the report bucket, new and whole, as
+            -- ADDED says.
+            if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report') then
+                local off = differences(ADDED[path], pair[2])
+                addedSince = next(off) == nil
             end
             -- The board's placer switch, and its whitelisted-job counterpart,
             -- both new and shipped off.
@@ -230,7 +238,8 @@ describe('the configuration as one short file', function()
     it('is a short file in the sections an owner reads in order, with no secret in it', function()
         local text = file('crimson-hitman/config/config.lua')
         local lines = select(2, text:gsub('\n', '')) + 1
-        truthy(lines < 500, 'config.lua is ' .. lines .. ' lines')
+        -- 500 before the staff tools' section (Config.Staff) and their bucket.
+        truthy(lines < 520, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',

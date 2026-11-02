@@ -81,6 +81,9 @@ Review.KINDS = {
         .. 'the server, so refund only the anonymity fee it names, where the contract does not exist',
     escrow_settle_lost = 'a payout reached its recipient, and something else settled its line as '
         .. 'well: check nobody was paid it twice, then dismiss',
+    player_report = 'a player reported this contract, or a message thread on it, from the app '
+        .. '(server/reports.lua): read their note and the messages, deal with it in the city, '
+        .. 'then dismiss with what was done. No money is in it',
 }
 
 --- What settles an item that carries its whole record (`known.decide`), by

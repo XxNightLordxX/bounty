@@ -66,6 +66,13 @@ function Contracts.restartHeld()
     return Freeze ~= nil and Freeze.restartHeld()
 end
 
+--- Whether staff have paused the whole app (Config.Staff.AppPaused):
+--- nothing is placed or accepted meanwhile (server/freeze.lua).
+---@return boolean
+function Contracts.appPaused()
+    return Freeze ~= nil and Freeze.appPaused ~= nil and Freeze.appPaused()
+end
+
 --- Whether staff have frozen this player.
 ---@param cid string|nil
 ---@return boolean
@@ -1293,6 +1300,9 @@ end
 ---@return table|nil refusal what the page is told beyond the code; on
 --- success, the anonymity fee charged ({ fee, account }), or nil for none
 function Contracts.create(actor, req)
+    -- Staff have paused the app for an event: nothing is looked up, held
+    -- or charged.
+    if Contracts.appPaused() then return nil, CH.ERR.APP_PAUSED end
     local targetActor = Identity.byCitizenId(req.targetCid)
     local keys = { 'creator:' .. tostring(actor.account or actor.cid) }
     if targetActor then keys[#keys + 1] = 'target:' .. tostring(targetActor.cid) end
@@ -1916,6 +1926,9 @@ end
 function Contracts.accept(actor, contractId, anonymous, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
+    -- The same for every contract and everybody, so it says nothing about
+    -- this one.
+    if Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
     local out = table.pack(Contracts.serialized({ 'contract:' .. contractId, 'hitman:' .. tostring(actor.cid) },
         acceptUnlocked, actor, contractId, anonymous, opts))
     -- An operative on it may start its clock: with nobody holding it, it

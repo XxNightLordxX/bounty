@@ -753,3 +753,12 @@ ul, ol { padding: 0; list-style: none; }
 /* A sum of money on the history card: smaller, and wrapped rather than
    spilled past its tile. */
 .big.is-sum { font-size: var(--t-lg); overflow-wrap: anywhere; }
+
+/* Staff tools: a player's report in Needs review (its note and the thread's
+   last messages), and the settings history. */
+.report { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.report q { overflow-wrap: anywhere; }
+.excerpt { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.15rem;
+  font-size: var(--t-sm); max-height: 18rem; overflow-y: auto; }
+.excerpt li { overflow-wrap: anywhere; }
+.grid.is-history td .chip { margin-top: 0.2rem; }

@@ -98,6 +98,9 @@ local DEFAULTS = {
         -- allowance it was built against, as the three above do.
         photoView   = { per = 10, burst = 5 },
         photoDecide = { per = 5, burst = 5 },
+        -- A player's report to staff (server/reports.lua), which no config
+        -- before it names.
+        report = { per = 600, burst = 3 },
         -- The admin panel's, which no config before it names. Its overview
         -- refreshes itself while it is open, and the fallback rule of ten
         -- would refuse a staff member clicking through a few contracts.
@@ -139,9 +142,17 @@ local DEFAULTS = {
     },
     --- The cap on a manual staff payment (server/payments.lua), read on
     --- every payment: a config with a Staff section and no cap in it has the
-    --- shipped one, never none.
+    --- shipped one, never none. And the staff tools added to a config with
+    --- a Staff section that does not name them: the app pause and the daily
+    --- summary off, and the alert thresholds as shipped. Checked below.
     Staff = {
         ManualPaymentMax = 100000,
+        AppPaused = false,
+        DailySummary = false,
+        DailySummaryHour = 6,
+        AlertPlacedPerHour = 5,
+        AlertTargetPerDay = 3,
+        AlertRefusalsPer10Min = 30,
     },
     Immunity = {
         MinTargetPlaytimeHours = 5,
@@ -701,6 +712,34 @@ local function validateConfig(quiet)
             warn[#warn + 1] = ('Config.Restart.%s is %s; it has to be a whole number from %d to %d. '
                 .. 'Using %d.'):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
             block[bound[1]] = bound[4]
+        end
+    end
+
+    -- The staff tools (server/summary.lua, server/thresholds.lua): the
+    -- summary's hour of the day, and each alert threshold from 0 (off) up.
+    -- The two switches are switches. Corrected to the shipped value, and
+    -- said.
+    for _, bound in ipairs({
+        { 'DailySummaryHour', 0, 23, 6 },
+        { 'AlertPlacedPerHour', 0, 1000, 5 },
+        { 'AlertTargetPerDay', 0, 1000, 3 },
+        { 'AlertRefusalsPer10Min', 0, 10000, 30 },
+    }) do
+        local block = Config.Staff
+        local value = type(block) == 'table' and block[bound[1]] or nil
+        if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
+            or math.floor(value) ~= value or value < bound[2] or value > bound[3]) then
+            warn[#warn + 1] = ('Config.Staff.%s is %s; it has to be a whole number from %d to %d. '
+                .. 'Using %d.'):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
+            block[bound[1]] = bound[4]
+        end
+    end
+    for _, switch in ipairs({ 'AppPaused', 'DailySummary' }) do
+        local block = Config.Staff
+        if type(block) == 'table' and type(block[switch]) ~= 'boolean' then
+            warn[#warn + 1] = ('Config.Staff.%s is %s; it has to be true or false. Using false.')
+                :format(switch, tostring(block[switch]))
+            block[switch] = false
         end
     end
 
@@ -1795,6 +1834,12 @@ function StartCrimsonHitman()
     local sanctions  = CrimsonBoot.require('server.sanctions')
     local payments   = CrimsonBoot.require('server.payments')
     local history    = CrimsonBoot.require('server.history')
+    -- The staff tools (README, Staff tools): the daily summary, the alert
+    -- thresholds, the notice to every hitman, and players' reports.
+    local summary    = CrimsonBoot.require('server.summary')
+    local thresholds = CrimsonBoot.require('server.thresholds')
+    local announce   = CrimsonBoot.require('server.announce')
+    local reports    = CrimsonBoot.require('server.reports')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1850,6 +1895,14 @@ function StartCrimsonHitman()
     sanctions.init({ storage = Storage, audit = audit, notify = notify })
     payments.init({ storage = Storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
+    -- The app pause follows its switch the moment it changes.
+    settings.watch('Staff.AppPaused', freeze.syncAppPause)
+    summary.init({ storage = Storage, review = review, freeze = freeze, audit = audit,
+                   alerts = alerts })
+    thresholds.init({ audit = audit })
+    announce.init({ storage = Storage, notify = notify, audit = audit, identity = identity })
+    reports.init({ storage = Storage, identity = identity, audit = audit, review = review,
+                   comms = comms, notify = notify })
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
     meeting.init({ storage = Storage, notify = notify, audit = audit })
@@ -1890,6 +1943,9 @@ function StartCrimsonHitman()
         -- Suspensions and protections, manual payments and the player
         -- history card, for the admin panel, the app and the tick.
         sanctions = sanctions, payments = payments, history = history,
+        -- The staff tools: the daily summary, the alert thresholds, the
+        -- notice to every hitman and players' reports.
+        summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2472,6 +2528,12 @@ function Tick()
     if modules.freeze and modules.freeze.restartTick then job('freeze.restartTick', modules.freeze.restartTick) end
     -- Suspensions and protections whose time has passed, written down as ended.
     if modules.sanctions then job('sanctions.tick', modules.sanctions.tick) end
+    -- The app pause in line with its switch, however it was changed.
+    if modules.freeze and modules.freeze.syncAppPause then job('freeze.syncAppPause', modules.freeze.syncAppPause) end
+    -- The staff tools' own clocks: the once-a-day summary, and the alert
+    -- thresholds' counts aged out.
+    if modules.summary then job('summary.tick', modules.summary.tick) end
+    if modules.thresholds then job('thresholds.sweep', modules.thresholds.sweep) end
     job('escrow.retryWaiting', RetryWaiting)
     if modules.notify.deliverKept then job('notify.deliverKept', DeliverKept) end
     -- Kill photos switched off (Config.Completion.KillPhotos): nothing below
@@ -2709,7 +2771,8 @@ end
 ---@return boolean
 function ContractClockMayRun(contract)
     if not (modules and modules.identity and contract) then return true end
-    if modules.freeze and (modules.freeze.restartHeld() or modules.freeze.holds(contract)) then
+    if modules.freeze and (modules.freeze.restartHeld() or modules.freeze.holds(contract)
+        or (modules.freeze.appPaused and modules.freeze.appPaused())) then
         return false
     end
     local verdict = judge(contract, os.time(), { actors = {} }, true)
@@ -2742,8 +2805,11 @@ local function expireOne(contract, now, pass)
     -- Neither hold ends the other, nor a pause for somebody's absence: each
     -- only makes sure the clock is stopped, and it runs again only on a
     -- pass that finds nothing at all stopping it, below.
+    -- And the app pause (Config.Staff.AppPaused, Freeze.syncAppPause): every
+    -- live contract while staff have the whole app paused, the same way.
     if (modules.freeze and modules.freeze.holds(contract))
-        or (modules.freeze and modules.freeze.restartHeld()) then
+        or (modules.freeze and modules.freeze.restartHeld())
+        or (modules.freeze and modules.freeze.appPaused and modules.freeze.appPaused()) then
         if not contract.paused_since and not verdict.overdue
             and Storage.startPause(contract.id, now) then
             contract.paused_since = now

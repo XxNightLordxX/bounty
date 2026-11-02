@@ -369,6 +369,9 @@ describe('the grid covers the whole action surface', function()
         -- refused once it has ended and refunded if it ends mid-purchase
         -- (location_tip_spec); and the caller's own tips still showing.
         locationTip = true, locationTips = true,
+        -- A report to staff: on a live contract by anybody who sees it, on an
+        -- ended one only by its parties (staff_tools_spec).
+        report = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

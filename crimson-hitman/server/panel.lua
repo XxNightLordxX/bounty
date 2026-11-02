@@ -71,6 +71,10 @@ local OPS = {
     suspend = MOD, unsuspend = MOD, protect = MOD, unprotect = MOD,
     -- Paying a player by hand (server/payments.lua): money staff choose.
     manualPay = WRITE,
+    -- The staff tools: a notice to every hitman (a write, asked twice on
+    -- the page), the settings history every reader of the settings reads,
+    -- and an undo of one change through the normal set path.
+    announce = WRITE, settingsHistory = READ, undoSetting = WRITE,
 }
 
 --- Every staff command (Config.Admin.Commands, but the panel's own) and the
@@ -111,6 +115,7 @@ local WAITS_FOR_RECOVERY = {
     resetSettings = true, refresh = true, freeze = true, unfreeze = true, adjustDeadline = true,
     removeHitman = true, editText = true,
     suspend = true, unsuspend = true, protect = true, unprotect = true, manualPay = true,
+    undoSetting = true,
 }
 
 --- How long one overview is shared between requests. Each open panel asks
@@ -857,6 +862,8 @@ local function buildOverview()
     out.auditQueued = deps.audit.pending()
     -- Players staff have put on hold (server/freeze.lua): a count only.
     out.frozen = { players = deps.freeze and deps.freeze.count() or 0 }
+    -- The whole app paused by staff (Config.Staff.AppPaused), and since when.
+    out.appPaused = deps.freeze and deps.freeze.appPausedSince and deps.freeze.appPausedSince() or nil
     return out
 end
 
@@ -2622,6 +2629,114 @@ H.manualPay = function(src, data)
     end
     return true, nil, ('$%d in %s is owed to %s, handed over at their next login or once they have '
         .. 'room.'):format(amount, account, whom), { paid = false, owed = true }
+end
+
+--------------------------------------------------------------------------
+-- Staff tools: the notice to every hitman, and the settings history
+--------------------------------------------------------------------------
+
+--- Send one phone notice, from 'Staff', to every player holding a contract
+--- or every player online the app is open to (server/announce.lua). A
+--- write: the ACE itself and the write allowance; the page asks twice.
+--- On the record as staff_announce, by the module.
+H.announce = function(src, data)
+    if not deps.announce then return false, 'unavailable', 'Announcements are not running on this server.' end
+    if data.text ~= nil and type(data.text) ~= 'string' then
+        return false, CH.ERR.INVALID_INPUT, 'Write the notice.'
+    end
+    local scope = data.scope
+    if scope ~= nil and scope ~= 'active' and scope ~= 'online' then
+        return false, CH.ERR.INVALID_INPUT, 'Send it to every hitman, or to everybody online with the app.'
+    end
+    local ok, err, detail = deps.announce.send(staffOf(src), data.text, scope)
+    if not ok then
+        local rule = detail and detail.rule
+        if rule == 'length' then
+            return false, err, ('Not sent: at most %d characters.'):format(deps.announce.MAX)
+        elseif rule == 'pattern' then
+            return false, err, 'Not sent: no links, invites or handles in a notice to players.'
+        end
+        return false, err, 'Not sent: write the notice first.'
+    end
+    local who = detail.scope == 'online' and 'player(s) online with the app' or 'hitman/hitmen holding a contract'
+    if detail.sent == 0 then
+        return true, nil, ('Nobody to send it to: no %s right now. It is on the record all the same.')
+            :format(detail.scope == 'online' and 'player online with the app' or 'hitman holding a contract'),
+            detail
+    end
+    return true, nil, ('Sent to %d %s, from Staff.'):format(detail.sent, who), detail
+end
+
+--- The handles the history gives its rows, so Undo names a change without
+--- the page holding the value it puts back: [ref] = { key, value }. Kept
+--- for the life of the process, at most HISTORY_REFS_MAX.
+local historyRefs, historyRefSeq, historyRefCount = {}, 0, 0
+local HISTORY_REFS_MAX = 5000
+
+local function historyRef(key, value)
+    if historyRefCount >= HISTORY_REFS_MAX then historyRefs, historyRefCount = {}, 0 end
+    historyRefSeq = historyRefSeq + 1
+    historyRefCount = historyRefCount + 1
+    local ref = 'h' .. historyRefSeq
+    historyRefs[ref] = { key = key, value = value }
+    return ref
+end
+
+--- Every setting change, newest first, a page at a time: who, when, the
+--- key and its value before and after (Settings.history). Read by every
+--- staff member who may read the settings; the Developer section's own
+--- keys only by staff who may open it, as the settings list shows them. A
+--- secret's values are never shown. Who made a change is their citizen id
+--- with IdentityAce, and 'a staff member' without it.
+H.settingsHistory = function(src, data)
+    local canIdentify = identifies(src)
+    local isDeveloper = developer(src)
+    local limit = math.min(LOG_ROWS_MAX, wholeNumber(data.limit, 1, LOG_ROWS_MAX) or pageSize())
+    local cursor = wholeNumber(data.cursor, 0)
+    local rows, next_ = deps.settings.history(cursor, limit)
+    local canUndo = allowed(src, WRITE)
+    local out, hidden = {}, 0
+    for _, row in ipairs(rows or {}) do
+        if not isDeveloper and developerKey(row.key) then
+            hidden = hidden + 1
+        else
+            local entry = deps.settings.entry(row.key)
+            out[#out + 1] = {
+                ts = row.ts, key = row.key, label = entry and entry.label or nil,
+                old = row.old, new = row.new, secret = row.secret,
+                reset = row.source == 'config' or nil,
+                by = canIdentify and (row.actor or row.by) or 'a staff member',
+                ref = (row.undoable and canUndo) and historyRef(row.key, row.old) or nil,
+            }
+        end
+    end
+    return true, nil, nil, { rows = out, next = next_, hidden = hidden > 0 and hidden or nil }
+end
+
+--- Put a key back to the value it had before one change: through the
+--- normal set path (Settings.set, checked as any change is, and its own
+--- admin_setting_changed row), with a row of its own saying it was an
+--- undo. The page asks twice. The value is the server's, from the row's
+--- handle, never the page's.
+H.undoSetting = function(src, data)
+    local ref = type(data.ref) == 'string' and data.ref:sub(1, 16) or nil
+    local held = ref and historyRefs[ref] or nil
+    if not held then return false, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the history.' end
+    local key = held.key
+    if developerKey(key) and not developer(src) then
+        return false, 'developer_required', deps.admin.howToAuthorise(developerAce(), true)
+    end
+    local cid, who = staffOf(src)
+    local ok, err, detail = deps.settings.set(key, held.value, who, cid)
+    if not ok then return false, err, settingRefusal(key, err, detail) end
+    deps.audit.staff('admin_undo_setting', cid, nil,
+        { key = key, to = detail.value, from = detail.old, unchanged = detail.unchanged or nil })
+    if detail.unchanged then
+        return true, nil, ('%s is %s already; nothing changed.')
+            :format(key, deps.settings.describe(detail.value)), detail
+    end
+    return true, nil, ('Undone: %s is %s again (it was %s).'):format(key,
+        deps.settings.describe(detail.value), deps.settings.describe(detail.old)), detail
 end
 
 --------------------------------------------------------------------------

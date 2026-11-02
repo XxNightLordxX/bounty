@@ -600,6 +600,43 @@ function Alerts.sendTest()
     return true, nil, math.ceil(wait / 1000)
 end
 
+--- One post of its own to the alerts' webhook (the same convars: the
+--- alert webhook, or else the staff one), outside the alerts' own batches:
+--- the daily summary (server/summary.lua). Never a mention that pings
+--- anybody. Tried again after a wait when Discord refuses it, up to
+--- Alerts.TRIES tries, as an alerts post is. The caller says what it may
+--- contain: this sends it as it is.
+---@param content string
+---@return boolean queued
+---@return string|nil err 'no_webhook'
+function Alerts.post(content)
+    local url = webhook()
+    if not url then return false, 'no_webhook' end
+    local text = cut(tostring(content or ''), CONTENT_MAX):gsub('@', '@\226\128\139')
+    local body = json.encode({ content = text })
+    local function try(n)
+        local function answered(status, _, headers)
+            local code = tonumber(status) or 0
+            if code >= 200 and code < 300 then return end
+            if n >= Alerts.TRIES then
+                Log.debug(('a staff post could not be sent to Discord: given up after %d tries (HTTP %d)')
+                    :format(n, code))
+                return
+            end
+            local wait = Alerts.POST_EVERY_MS * 2 ^ (n - 1)
+            local after = type(headers) == 'table'
+                and tonumber(headers['Retry-After'] or headers['retry-after']) or nil
+            if after then wait = math.max(wait, after * 1000) end
+            SetTimeout(math.floor(wait), function() try(n + 1) end)
+        end
+        local ok = pcall(PerformHttpRequest, url, answered, 'POST', body,
+            { ['Content-Type'] = 'application/json' })
+        if not ok then answered(0, nil, nil) end
+    end
+    try(1)
+    return true
+end
+
 --------------------------------------------------------------------------
 -- Start
 --------------------------------------------------------------------------
