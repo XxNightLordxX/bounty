@@ -5181,6 +5181,53 @@
         { key: 'Improvements.GoDark.Cost', view: 'money', label: 'The price' },
         { key: 'Improvements.GoDark.Minutes', view: 'timers', label: 'How long' }] });
 
+  /* ---------- board and progression improvements (server/imp_*.lua) ---------- */
+
+  GROUP_INTRO['Improvements: Placer record'] = 'A placer\'s record on the board, never who they are.';
+  GROUP_INTRO['Improvements: Hitman heat'] = 'Police attention a hitman\'s work builds up, naming nobody.';
+  GROUP_INTRO['Improvements: Tiered board'] = 'Bigger rewards locked to higher progression levels.';
+  GROUP_INTRO['Improvements: Contract decay'] = 'An untaken contract\'s reward rises, or it ends sooner.';
+
+  HELP.push(
+    { title: 'Improvements: placer record', icon: 'briefcase',
+      text: 'Off as shipped. On, a board card shows how many contracts its placer placed, had paid out and '
+        + 'cancelled over the last days set, not counting this one, and never who they are. A named placer\'s '
+        + 'counts are exact. An anonymous placer shows nothing unless "anonymous placers too" is on, and then '
+        + 'only their anonymous contracts, in bands (0, 1-4, 5-9, 10+), fixed when the card is first drawn, so '
+        + 'two anonymous contracts cannot be tied to one person by their numbers.',
+      links: [{ key: 'Improvements.PlacerRecord.Enabled', view: 'features', label: 'Placer record' },
+        { key: 'Improvements.PlacerRecord.ShowForAnonymous', view: 'features', label: 'Anonymous placers' },
+        { key: 'Improvements.PlacerRecord.LookbackDays', view: 'limits', label: 'Days counted' }] },
+    { title: 'Improvements: hitman heat', icon: 'fire',
+      text: 'Off as shipped. On, a hitman gets heat for a completion on a whitelisted-job target, a witness '
+        + 'report on a completion, and a police bulletin about their acceptance or tip on a whitelisted-job '
+        + 'target. Heat fades after the hours set. At the threshold they are known: a contract they take warns '
+        + 'its target (the paranoid alert) at the chance set, and while they hold one, officers get a vague '
+        + 'bulletin at most every so many minutes. Nothing names the hitman, and players never see heat.',
+      links: [{ key: 'Improvements.HitmanHeat.Enabled', view: 'features', label: 'Hitman heat' },
+        { key: 'Improvements.HitmanHeat.Threshold', view: 'limits', label: 'Heat and threshold' },
+        { key: 'Improvements.HitmanHeat.DecayHours', view: 'timers', label: 'How long heat stays' },
+        { key: 'Improvements.HitmanHeat.BulletinText', view: 'limits', label: 'The bulletin' }] },
+    { title: 'Improvements: tiered board', icon: 'layer-group',
+      text: 'Off as shipped, and only with Criminal progression on. Each tier is a name, the least reward and '
+        + 'the least level. A hitman\'s level is 1, plus one for each so many contracts they completed. A card '
+        + 'in a tier above their level shows locked, with the level needed, and the server refuses Accept on '
+        + 'it before taking anything.',
+      links: [{ key: 'Improvements.Tiers.Enabled', view: 'features', label: 'Tiered board' },
+        { key: 'Improvements.Tiers.Tiers', view: 'limits', label: 'Tiers' },
+        { key: 'Improvements.Tiers.CompletionsPerLevel', view: 'limits', label: 'Completions per level' },
+        { key: 'Progression.Enabled', view: 'features', label: 'Criminal progression' }] },
+    { title: 'Improvements: contract decay', icon: 'hourglass-half',
+      text: 'Off as shipped. On, a contract nobody has taken changes every so many hours. "rise": its reward '
+        + 'goes up by the percent set, charged to its placer through their own add-to-reward path, up to the '
+        + 'most set in all; it waits while they are away, and stops for good if they cannot pay. "shorten": '
+        + 'its deadline comes in by the percent of the time left. The placer is told each time, and can turn '
+        + 'it off for their contract from its card.',
+      links: [{ key: 'Improvements.ContractDecay.Enabled', view: 'features', label: 'Contract decay' },
+        { key: 'Improvements.ContractDecay.Mode', view: 'limits', label: 'Rise or shorten' },
+        { key: 'Improvements.ContractDecay.Percent', view: 'money', label: 'Step, cap and account' },
+        { key: 'Improvements.ContractDecay.Hours', view: 'timers', label: 'Hours between steps' }] });
+
   /* Loaded to the end: admin.html's fallback, which gives the focus back
      when this file fails to load or throws while loading, stands down. */
   window.CH_ADMIN_READY = true;

@@ -754,6 +754,16 @@ local function validateConfig(quiet)
             .. 'are being used for them: %s.'):format(#rpFilled, table.concat(rpFilled, ', ')), #rpFilled)
     end
 
+    -- The board and progression improvements (server/imp_board.lua, README
+    -- Optional improvements), checked the same way: filled, put back, said.
+    local impFilled = {}
+    CrimsonBoot.require('server.imp_board').checkConfig(warn, impFilled)
+    if #impFilled > 0 and not quiet then
+        table.sort(impFilled)
+        Log.problem(('your config.lua does not set %d improvement setting(s); the shipped defaults '
+            .. 'are being used for them: %s.'):format(#impFilled, table.concat(impFilled, ', ')), #impFilled)
+    end
+
     -- Roleplay (group rpC, README Roleplay features): proof of intent,
     -- earned reputation, bodyguards and the hit on the hitman. A block this
     -- config does not have (one written before it) is the shipped one; each
@@ -1939,6 +1949,10 @@ function StartCrimsonHitman()
     local rpReason    = CrimsonBoot.require('server.rp_reason')
     -- The improvements (README, Optional improvements), each off as shipped.
     local impTips     = CrimsonBoot.require('server.imp_tips')
+    -- The board and progression improvements (README, Optional
+    -- improvements), each off as shipped: the placer's record, hitman heat,
+    -- tiers and contract decay.
+    local impBoard    = CrimsonBoot.require('server.imp_board')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -2037,6 +2051,12 @@ function StartCrimsonHitman()
     -- (server/imp_tips.lua).
     impTips.init({ storage = Storage, audit = audit, notify = notify, contracts = contracts,
                    locationTip = locationTip, informant = informant, projection = projection })
+    -- After projection, contracts and the roleplay consequences: it adds to
+    -- the cards, hooks the claim and the witness report, and steps on the tick.
+    impBoard.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
+                    escrow = escrow, contracts = contracts, amendments = amendments,
+                    projection = projection, progression = progression,
+                    rpConsequences = rpConsequences })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -2084,6 +2104,9 @@ function StartCrimsonHitman()
         rpInformant = rpInformant, rpReason = rpReason,
         -- The improvements, for the app's requests.
         impTips = impTips,
+        -- The board and progression improvements: the app's gate, its
+        -- after-steps and decayOff, and the tick.
+        impBoard = impBoard,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2713,6 +2736,9 @@ local SCHEDULE = {
     ['freeze.syncAppPause'] = { every = 60, phase = 40 },
     -- The alert thresholds' books aged out: windows of an hour and more.
     ['thresholds.sweep'] = { every = 60, phase = 10 },
+    -- The improvements' minute (server/imp_board.lua): heat cooled and the
+    -- police bulletin, contract decay's steps. Nothing while all are off.
+    ['imp_board.tick'] = { every = 60, phase = 50 },
     -- Not here, and on every tick: the restart hold's end
     -- (freeze.restartTick), released on the tick it reaches
     -- Config.Restart.MaxHoldMinutes; a suspension's end (sanctions.tick),
@@ -2832,6 +2858,8 @@ function Tick()
     -- Where the roleplay NPCs stand moves on the clock (server/rp_places.lua):
     -- here rather than on a thread of its own.
     if modules.rpPlaces then every('rp_places.announce', modules.rpPlaces.announce, now) end
+    -- The improvements' minute (server/imp_board.lua).
+    if modules.impBoard then every('imp_board.tick', modules.impBoard.tick, now) end
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
     -- An exclusive contract held by somebody who is not working it goes

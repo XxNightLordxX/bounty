@@ -12597,6 +12597,74 @@ async function main() {
      target's Hire protection and the hit on the hitman on their On me card,
      and a payout held for proof of intent on the hitman's card and Mine.
      Drawn only from what the server sends; nothing without it. */
+  /* Improvements, group impB: the placer's record and the tier lock on a
+     board card, and contract decay on the placer's own card under Mine,
+     turned off in two taps. Drawn only from what the server sends. */
+  await (async function improvementsImpB() {
+    const board = JSON.parse(JSON.stringify(BOARD));
+    const open = board.data.contracts[0];
+    open.placerRecord = { placed: 7, paidOut: 3, cancelled: 1, days: 30 };
+    const locked = JSON.parse(JSON.stringify(open));
+    locked.id = 'ct00000002';
+    locked.creatorName = null;
+    locked.creatorAnonymous = true;
+    locked.placerRecord = { placed: '5-9', paidOut: '1-4', cancelled: '0', days: 30, banded: true };
+    locked.tierLocked = { tier: 'Elite', level: 4, yours: 2 };
+    board.data.contracts.push(locked);
+    const own = {
+      id: 'ct00000003', reason: 'Debt', mode: 'competitive', state: 'active',
+      reward: { baseline: 11000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 0, hitmenMax: 5, targetName: 'Kim Lane', targetProtected: false,
+      creatorName: 'Vic', role: 'creator', hitmen: [],
+      decay: { mode: 'rise', percent: 10, hours: 1, maxPercent: 50, account: 'bank', added: 1000, steps: 1 }
+    };
+    let off = null;
+    const app = boot({
+      list: board, ledger: LEDGER, amendments: { ok: true, data: [] },
+      mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+      decayOff: function (body) {
+        off = body;
+        return { ok: true, data: { mode: 'rise', off: true } };
+      }
+    });
+    await settle(); await settle();
+    it('impB: a board card shows the placer\'s record, counts only', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Placer: placed 7, paid out 3, cancelled 1 (30 days)') !== -1, text);
+      truthy(text.indexOf('Placer: placed 5-9, paid out 1-4, cancelled 0 (30 days)') !== -1, 'banded');
+      drewCleanly(app, 'the board with records');
+    });
+    it('impB: a card above the player\'s tier says the level needed and offers no Accept for it', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Elite tier: you need level 4 (you are level 2).') !== -1, text);
+      const accepts = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+      });
+      eq(accepts.length, 1, 'Accept on the open card only');
+    });
+    tab(app, 'mine');
+    await settle(); await settle();
+    it('impB: the placer\'s card says what decay does and what it added', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('its reward rises 10% every 1 hour, up to 50%, taken from your bank.') !== -1, text);
+      truthy(text.indexOf('Added so far: $1,000.') !== -1, text);
+      drewCleanly(app, 'Mine with decay');
+    });
+    click(app, 'Stop the rise');
+    await settle();
+    it('impB: stopping it asks first and sends nothing on the first tap', function () {
+      eq(off, null, 'sent on one tap');
+      truthy(app.view.textContent.indexOf('Stop its reward rising?') !== -1, app.view.textContent);
+    });
+    click(app, 'Turn it off');
+    await settle(); await settle();
+    it('impB: the second tap turns it off for that contract', function () {
+      truthy(off, 'nothing sent');
+      eq(off.id, 'ct00000003');
+      drewCleanly(app, 'after turning decay off');
+    });
+  })();
+
   await (async function roleplayRpC() {
     // Off (no protection in the settings): no Contracts | Protection switch.
     const plain = boot({ list: BOARD, mine: MINE, ledger: LEDGER });

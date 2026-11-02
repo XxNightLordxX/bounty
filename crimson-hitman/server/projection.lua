@@ -298,6 +298,22 @@ local function recordOf(cid)
     return hit
 end
 
+--- Which change to the store the board is at: moved by every write
+--- (watchStore). For a module keeping something worked out from the store
+--- for every viewer (server/imp_placer_record.lua), kept only while this is
+--- what it was when it was worked out.
+---@return integer
+function Projection.generation()
+    return generation
+end
+
+--- A viewer's own record (Progression.record), read once per request.
+---@param cid string
+---@return table
+function Projection.recordFor(cid)
+    return recordOf(cid)
+end
+
 --- Run `fn` with escrow (Escrow.cached), rosters and records memoised for
 --- its length. Nested calls share the outer memo.
 ---@param fn function
@@ -1450,12 +1466,16 @@ Projection.ALLOWED_KEYS = {
     },
     creator = { bailoutAmount = true, hitmen = true, valueHeld = true, meetingSet = true,
                 placerInformantFound = true, placerInformantPicks = true,
-                placerInformantLeft = true, placerInformantWait = true },
+                placerInformantLeft = true, placerInformantWait = true,
+                -- What decay does to their untaken contract (server/imp_decay.lua).
+                decay = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
                 buyoutClosesIn = true, lastMessageAt = true, meetingSet = true,
                 locationTip = true,
                 -- A payout of theirs held for proof of intent (server/rp_intent.lua).
-                intentHold = true },
+                intentHold = true,
+                -- The placer's record, never who (server/imp_placer_record.lua).
+                placerRecord = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantFound = true,
                 informantLeft = true, informantPicks = true, tippedAt = true,
@@ -1463,7 +1483,10 @@ Projection.ALLOWED_KEYS = {
                 -- Their bodyguard job and the offer to post one, and the
                 -- operatives they may place a contract on (server/rp_protection.lua).
                 protection = true, protectionOffer = true, counterTargets = true },
-    public  = { barred = true },
+    public  = { barred = true,
+                -- The placer's record (server/imp_placer_record.lua), and the
+                -- tier this viewer is below (server/imp_tiers.lua).
+                placerRecord = true, tierLocked = true },
 }
 
 return Projection

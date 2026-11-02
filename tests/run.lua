@@ -431,6 +431,9 @@ function _G.newStack()
     package.loaded['server.rp_reason'] = nil
     package.loaded['crimson-hitman.server.imp_tips'] = nil
     package.loaded['server.imp_tips'] = nil
+    for _, name in ipairs({ 'imp_board', 'imp_placer_record', 'imp_heat', 'imp_tiers', 'imp_decay' }) do
+        package.loaded['server.' .. name] = nil
+    end
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -481,6 +484,7 @@ function _G.newStack()
     local rpInformant = require('server.rp_informant')
     local rpReason    = require('server.rp_reason')
     local impTips     = require('server.imp_tips')
+    local impBoard    = require('server.imp_board')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -561,6 +565,10 @@ function _G.newStack()
     rpReason.init({ storage = storage, review = review, contracts = contracts })
     impTips.init({ storage = storage, audit = audit, notify = notify, contracts = contracts,
                    locationTip = locationTip, informant = informant, projection = projection })
+    impBoard.init({ storage = storage, identity = identity, notify = notify, audit = audit,
+                    escrow = escrow, contracts = contracts, amendments = amendments,
+                    projection = projection, progression = progression,
+                    rpConsequences = rpConsequences })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was
@@ -604,6 +612,8 @@ function _G.newStack()
         rpInformant = rpInformant, rpReason = rpReason,
         -- The improvements.
         impTips = impTips,
+        -- The board and progression improvements.
+        impBoard = impBoard,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -626,6 +636,7 @@ function _G.newStack()
         rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
         rpInformant = rpInformant, rpReason = rpReason,
         impTips = impTips,
+        impBoard = impBoard,
     }
 end
 
@@ -668,7 +679,7 @@ local suites = {
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
     'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec',
-    'imp_tips_spec',
+    'imp_tips_spec', 'impB_board_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

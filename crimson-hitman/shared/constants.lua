@@ -542,6 +542,11 @@ CH.ERR = {
     NOT_TIPPED       = 'not_tipped',
     --- GoDark: the target is dark already.
     ALREADY_DARK     = 'already_dark',
+    -- Board improvements (server/imp_board.lua and its parts), each off as shipped.
+    --- Config.Improvements.Tiers: Accept on a contract in a tier above the
+    --- hitman's progression level. Sent with { tier, level, yours }.
+    --- Nothing was taken.
+    TIER_LOCKED      = 'tier_locked',
 }
 
 --- The most lines one staff command output event carries

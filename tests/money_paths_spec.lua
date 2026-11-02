@@ -316,6 +316,53 @@ describe('adding to a reward on a contract that closes during the add', function
     end)
 end)
 
+describe('a contract decay rise on a contract that closes or is taken during the step', function()
+    --- An untaken contract one step old, with decay rising on it
+    --- (Config.Improvements.ContractDecay, server/imp_decay.lua).
+    local function build()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Improvements.ContractDecay.Enabled = true
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 6000,
+        })
+        s.impBoard.tick()
+        Env.advance(3600)
+        return s, f, c
+    end
+
+    it('never strands a rise when the target buys out mid-step', function()
+        local broken, depth = everyInterleaving(build, function(s)
+            s.impBoard.tick()
+        end, function(s, f, c)
+            s.bailout.buy(f.target, c.id)
+        end)
+        truthy(depth > 3, 'the step has to have points to race')
+        eq(#broken, 0, 'the placer\'s rise was stranded:\n  ' .. table.concat(broken, '\n  '))
+    end)
+
+    it('never strands a rise when the placer withdraws it mid-step', function()
+        local broken = everyInterleaving(build, function(s)
+            s.impBoard.tick()
+        end, function(s, f, c)
+            s.contracts.cancel(f.creator, c.id)
+        end)
+        eq(#broken, 0, 'the placer\'s rise was stranded:\n  ' .. table.concat(broken, '\n  '))
+    end)
+
+    it('charges the placer the rise once, and pays it to the hitman who completes it', function()
+        local s, f, c = build()
+        local placer, hitman = worth(1), worth(3)
+        s.impBoard.tick()
+        eq(placer - worth(1), 500, 'one rise of 10%')
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        eq(worth(3) - hitman, 5500, 'the reward and the rise')
+        eq(placer - worth(1), 500, 'nothing more')
+    end)
+end)
+
 describe('giving the last collection back on the backend that ships by default', function()
     it('stops selling it on mysql, exactly as on memory', function()
         for _, which in ipairs({ 'memory', 'mysql' }) do

@@ -178,6 +178,14 @@ function serverStub() {
   // hitman card, measured at every width with the rest.
   taken[0].intentHold = { missing: '3 more messages to the client in the contract thread, a live '
     + 'handover, or a meeting point set', minutesLeft: 45 };
+  // Improvements (impB): the placer's record on board cards (counts, and an
+  // anonymous placer's bands), a card locked above the viewer's tier, and
+  // contract decay with its Stop button on a placer's untaken card.
+  contracts[0].placerRecord = { placed: 1234, paidOut: 567, cancelled: 89, days: 365 };
+  contracts[2].placerRecord = { placed: '10+', paidOut: '5-9', cancelled: '1-4', days: 30, banded: true };
+  contracts[2].tierLocked = { tier: 'Professional Underworld', level: 12, yours: 3 };
+  own[0].decay = { mode: 'rise', percent: 10, hours: 12, maxPercent: 500, account: 'bank',
+                   added: 1250000, steps: 4 };
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
@@ -478,6 +486,9 @@ async function main() {
         height: Math.round(card.getBoundingClientRect().height),
         content: card.scrollHeight,
         buttons: card.querySelectorAll('button').length,
+        // A card above the viewer's tier (impB) says why in place of Accept,
+        // as a card they can never take does.
+        locked: card.textContent.indexOf(' tier: you need level ') !== -1,
         shortestButton: Math.min.apply(Math, [Infinity].concat(
           Array.prototype.slice.call(card.querySelectorAll('button')).map(function (b) {
             return b.getBoundingClientRect().height;
@@ -501,7 +512,8 @@ async function main() {
   });
 
   it('leaves every card its action button, at a usable size', function () {
-    const withoutButtons = cards.filter(function (c) { return c.buttons === 0; });
+    const withoutButtons = cards.filter(function (c) { return c.buttons === 0 && !c.locked; });
+    truthy(cards.some(function (c) { return c.locked; }), 'the locked card is measured too');
     truthy(withoutButtons.length === 0,
       withoutButtons.length + ' cards have no button at all');
     const tiny = cards.filter(function (c) { return c.shortestButton < 36; });

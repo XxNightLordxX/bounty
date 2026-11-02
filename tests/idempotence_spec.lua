@@ -1003,6 +1003,8 @@ describe('what this file leaves out', function()
         -- Going dark (imp_tips_spec): a second while dark is already_dark
         -- and charges nothing twice.
         goDark = 'a second while dark is refused as already_dark, charged once',
+        -- Contract decay turned off twice is off (impB_board_spec).
+        decayOff = 'turning it off again leaves it off, and moves nothing',
         addEscrow = 'a creator may top up a reward as many times as they like; '
             .. 'each call adds what it says it adds',
         improve   = 'extending a deadline twice extends it twice, which is the '

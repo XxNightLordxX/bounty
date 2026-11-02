@@ -382,6 +382,9 @@ describe('the grid covers the whole action surface', function()
         -- taken only while it is live, settled by its end (rpC_roleplay_spec).
         protectionBoard = true, protectionPost = true, protectionCancel = true,
         protectionAccept = true, protectionPin = true, protectionWaypoint = true,
+        -- Contract decay turned off: on a live contract of the caller's,
+        -- refused once it has ended (impB_board_spec).
+        decayOff = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

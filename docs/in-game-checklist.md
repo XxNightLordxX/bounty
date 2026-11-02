@@ -1441,7 +1441,9 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Informant in person on, with the tip on: buying a tip away from the informant says *Find the informant first.* and the bank is unchanged; beside it the tip is sold.
 - [ ] Reason quality on: *idk* is refused, *Debt owed* is refused as too short; with `LowEffortAction = 'review'` an *rdm* reason is placed and shows in **Needs review** as a low-effort reason, dismissed with a note.
 
-## 15. Optional improvements: informant fairness (each off as shipped)
+## 15. Optional improvements (each off as shipped)
+
+### Informant fairness
 
 - [ ] With every `Config.Improvements` switch off, a tip and the target's informant cost, limit and warn as before.
 - [ ] Tip warning delay on (60..300 s): buy a tip; the target gets no notice at once, then one within 5 minutes; On me's *Tipped off* time is a round 5 minutes.
@@ -1453,6 +1455,15 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Safe zone around the hospital: with the target inside, a tip says *Your informant can't place them right now.* and nothing is taken; outside it is sold.
 - [ ] Go dark: the tipped-off target taps **Go dark** twice and pays; a tip bought on them then says the informant couldn't find them and the hitman's bank is back where it was; after `Minutes` tips work again.
 
+### Board and progression
+
+- [ ] With every `Config.Improvements` switch of this group off (placer record, hitman heat, tiered board, contract decay), the board, Accept and Mine look and behave as before, and nobody is charged on the minute.
+- [ ] Placer record on: a second character's board card reads *Placer: placed N, paid out N, cancelled N (30 days)* and never a name; place and withdraw another named contract: the count moves at once. An anonymous contract shows no record; with **anonymous placers too** on it shows bands (*1-4*), which do not move when another of that placer's anonymous contracts ends.
+- [ ] Hitman heat on (and the paranoid alert on, as shipped): complete a contract on an on-duty officer; with the threshold at its value or lower, take another contract: its target gets *You feel eyes on you* after the usual wait. While that hitman holds a contract, an officer gets the *Intelligence bulletin* on the phone and sc-dispatch an entry with no position, at most once in the set minutes; nothing names anybody.
+- [ ] Tiered board on (with **Criminal progression** on): a hitman with few completions sees the big contract with *Elite tier: you need level 4 (you are level 1).* and no Accept; their money is unchanged. Raise their completions (or the level setting down) and Accept appears.
+- [ ] Contract decay on (`rise`, Hours 1): leave a contract untaken an hour: the placer's bank drops by 10% of the reward, they get a *Contract reward* notice, the board shows the higher reward, and Mine says *Added so far*. **Stop the rise** (two taps) stops it; withdraw the contract: every dollar comes back. With an empty bank the next step is refused, nothing is taken, and the placer is told it stopped. With `shorten`, the time band on the card drops instead and nothing is charged.
+
+## If something fails
 
 The audit log records every financial movement and every rejected attempt.
 `/ch-timeline <contract>` shows one contract's state, escrow lines and audit

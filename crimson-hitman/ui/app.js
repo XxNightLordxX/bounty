@@ -467,6 +467,8 @@
     app_paused: 'Contracts are paused by staff.',
     // Killed on a contract and not yet treated (Config.Roleplay.EmsRelisting).
     target_recovering: 'They are still recovering.',
+    // The tiered board (Config.Improvements.Tiers). Nothing was taken.
+    tier_locked: 'This contract is in a tier above your level. Nothing was taken.',
     // The informant tip (server/locationtip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',
@@ -2267,6 +2269,10 @@
     if (flagged) {
       meta.appendChild(chip(protectedWords(contract.targetProtectedAs).chip, 'warn', 'i-shield'));
     }
+    // The placer's record (Config.Improvements.PlacerRecord): counts, never who.
+    if (contract.placerRecord) {
+      meta.appendChild(chip(placerRecordText(contract.placerRecord), null, 'i-briefcase'));
+    }
     node.appendChild(meta);
 
     // On hold by staff: plain, and nothing about which party or why.
@@ -2743,6 +2749,10 @@
     if (contract.barred === 'same_account') {
       return 'This one involves another of your own characters.';
     }
+    // Above this player's level (Config.Improvements.Tiers).
+    if (contract.tierLocked) {
+      return tierLockedText(contract.tierLocked);
+    }
     if (contract.role === 'hitman') {
       return 'You are already on this one \u2014 it is under Mine.';
     }
@@ -3011,6 +3021,9 @@
         more.appendChild(scrap);
       }
       more.appendChild(reportButton(contract, null));
+      // What contract decay does to it, and the way to stop it
+      // (Config.Improvements.ContractDecay).
+      appendDecay(row, more, contract);
       withMore();
 
       var creatorPanel = proposalPanel(contract);
@@ -7989,6 +8002,16 @@
         + ' unless you extend it. Its clock runs only while you, the target and an '
         + 'operative on it are all in the city.';
     }
+    // Contract decay (Config.Improvements.ContractDecay): told as it is placed.
+    var decay = settings().contractDecay;
+    if (decay && typeof decay === 'object') {
+      text += decay.mode === 'shorten'
+        ? ' While nobody takes it, it runs out ' + decay.percent + '% sooner every ' + decay.hours + ' h.'
+        : ' While nobody takes it, its reward rises ' + decay.percent + '% every ' + decay.hours
+          + ' h, up to ' + decay.maxPercent + '%, taken from your '
+          + (decay.account === 'cash' ? 'cash' : 'bank') + '.';
+      text += ' You can stop that from its card under Mine.';
+    }
     return text;
   }
 
@@ -9917,6 +9940,57 @@
       };
       more.appendChild(hit);
     });
+  }
+
+  /* ---------- improvements (server/imp_*.lua), each off as shipped ---------- */
+
+  /* The placer's record on a board card: three counts and the days they
+     cover, never who. An anonymous placer's come as bands ('1-4'). */
+  function placerRecordText(r) {
+    return 'Placer: placed ' + r.placed + ', paid out ' + r.paidOut + ', cancelled '
+      + r.cancelled + ' (' + (Number(r.days) || 0) + ' days)';
+  }
+
+  /* A card in a tier above this player's level. */
+  function tierLockedText(lock) {
+    return (lock.tier || 'Higher') + ' tier: you need level ' + (Number(lock.level) || 0)
+      + (Number(lock.yours) > 0 ? ' (you are level ' + Number(lock.yours) + ').' : '.');
+  }
+
+  /* What contract decay does to the placer's untaken contract, and a way to
+     turn it off for this one (two taps: the button, then the dialog). */
+  function appendDecay(row, more, contract) {
+    var d = contract.decay;
+    if (!d) { return; }
+    var what;
+    if (d.mode === 'shorten') {
+      what = 'While nobody takes it, it runs out ' + d.percent + '% sooner every '
+        + d.hours + (d.hours === 1 ? ' hour.' : ' hours.');
+    } else {
+      what = 'While nobody takes it, its reward rises ' + d.percent + '% every '
+        + d.hours + (d.hours === 1 ? ' hour' : ' hours') + ', up to ' + d.maxPercent
+        + '%, taken from your ' + (d.account === 'cash' ? 'cash' : 'bank') + '.';
+      if (Number(d.added) > 0) { what += ' Added so far: ' + money(d.added) + '.'; }
+    }
+    if (d.off) { what = 'You turned off the change for this contract.'; }
+    else if (d.stopped) { what += ' It has stopped for this contract.'; }
+    else if (d.taken) { what = 'Somebody took it, so it no longer changes.'; }
+    row.appendChild(el('div', 'notice decay-notice', what));
+    if (d.off || d.stopped || d.taken) { return; }
+    var stop = el('button', 'ghost ico i-xcircle decay-off',
+      d.mode === 'shorten' ? 'Stop the countdown' : 'Stop the rise');
+    stop.onclick = function () {
+      ask(d.mode === 'shorten' ? 'Stop bringing its deadline in?' : 'Stop its reward rising?',
+        'Only for this contract. It cannot be turned back on.', function () {
+          return once('decayOff:' + contract.id, function () {
+            return post('decayOff', { id: contract.id }).then(function (r) {
+              if (r.ok) { say('Turned off for this contract.', 'ok'); refresh(); }
+              else { fail(r); }
+            });
+          });
+        }, { yes: 'Turn it off', no: 'Keep it' });
+    };
+    more.appendChild(stop);
   }
 
   // Installed before the first render: a throw in that render is exactly

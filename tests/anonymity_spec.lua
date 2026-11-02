@@ -1362,6 +1362,35 @@ describe('every channel a player not entitled to it can read', function()
         for _, src in ipairs({ 1, 2, 3, 4, 5 }) do call('mine', src, {}) end
         imp.TipWarningDelay.Enabled, imp.TipLimits.Enabled, imp.TipHoldFirst.Enabled = false, false, false
         imp.InformantSecondTry.Enabled, imp.GoDark.Enabled = false, false
+        -- The board improvements' channels (server/imp_*.lua), all on: the
+        -- placer's record (an anonymous placer's in bands) and the tier lock
+        -- on every board, contract decay on the anonymous placer's untaken
+        -- contract (its step, its notice, its card, turning it off), and
+        -- heat's warning and police bulletin. Off again after.
+        imp.PlacerRecord.Enabled, imp.PlacerRecord.ShowForAnonymous = true, true
+        imp.HitmanHeat.Enabled, imp.HitmanHeat.WarnTargetChancePercent = true, 100
+        imp.Tiers.Enabled, imp.Tiers.Tiers = true, { 'Low, 1000, 2' }
+        imp.ContractDecay.Enabled = true
+        s.impBoard.heat.add('HITMAN01', 50, 'scan')
+        s.impBoard.tick()
+        Env.advance(3601)
+        s.impBoard.tick()
+        local bulletin = false
+        for _, sent in ipairs(Natives.calls.dispatch or {}) do
+            if tostring(sent.unique_id):find('^ch%-heat%-') then bulletin = true end
+        end
+        truthy(bulletin, 'the heat bulletin went')
+        local stepped = false
+        for _, row in ipairs(s.storage.readRpRows('imp_decay')) do
+            if (row.steps or 0) > 0 then stepped = true end
+        end
+        truthy(stepped, 'decay stepped the untaken anonymous contract')
+        for _, src in ipairs({ 2, 3, 4, 5, 7 }) do call('list', src, { page = 1 }) end
+        call('mine', 1, {})
+        truthy(call('decayOff', 1, { id = lazy and lazy.id }).ok, 'turned off by its placer')
+        call('mine', 1, {})
+        imp.PlacerRecord.Enabled, imp.HitmanHeat.Enabled = false, false
+        imp.Tiers.Enabled, imp.ContractDecay.Enabled = false, false
         call('abandon', 3, { id = c.id })
         call('cancel', 1, { id = c.id })
         -- The bodyguard job settled with the contract: the guard's notice.

@@ -623,6 +623,9 @@ local UI_EVENTS = {
     'rumourBrief', 'brokerNearby', 'brokerBrief',
     -- Improvements (Config.Improvements): a tipped-off target going dark.
     'goDark',
+    -- Improvements (Config.Improvements): the placer turning contract decay
+    -- off for one contract of theirs.
+    'decayOff',
 }
 
 --------------------------------------------------------------------------

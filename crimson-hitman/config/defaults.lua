@@ -459,6 +459,44 @@ ConfigDefaults.Improvements.GoDark = {
     Account = 'bank',  -- 'cash' | 'bank'
     Minutes = 30,      -- tips bought on them this long find nothing
 }
+
+ConfigDefaults.Improvements.PlacerRecord = {
+    Enabled          = false,  -- hitmen see the placer's record on a board card
+    LookbackDays     = 30,     -- days of contracts the record counts
+    ShowForAnonymous = false,  -- an anonymous placer's record too, in rough bands
+}
+
+ConfigDefaults.Improvements.HitmanHeat = {
+    Enabled                 = false,  -- hitmen gather heat the city can feel
+    ProtectedCompletionHeat = 3,      -- heat for a completion on a whitelisted-job target
+    WitnessHeat             = 2,      -- heat for a witness report on their completion
+    AdvisoryHeat            = 1,      -- heat for a police bulletin on their acceptance
+    DecayHours              = 24,     -- hours each heat stays
+    Threshold               = 5,      -- heat at which a hitman counts as known
+    WarnTargetChancePercent = 50,     -- chance their next target is warned, 0-100
+    BulletinEveryMinutes    = 60,     -- least minutes between police bulletins; 0 = none
+    BulletinTitle           = 'Intelligence bulletin',  -- the bulletin's title
+    BulletinText            = 'A known contract killer is believed active in the city.',  -- its words
+}
+
+ConfigDefaults.Improvements.Tiers = {
+    Enabled             = false,  -- big rewards need a progression level
+    CompletionsPerLevel = 5,      -- completed contracts per level above 1
+    Tiers               = { -- 'name, least reward, least level'
+        'Professional, 50000, 2',
+        'Elite, 150000, 4',
+    },
+}
+
+ConfigDefaults.Improvements.ContractDecay = {
+    Enabled            = false,   -- an untaken contract changes as it waits
+    Mode               = 'rise',  -- 'rise': its reward goes up; 'shorten': it ends sooner
+    Percent            = 10,      -- how much each step changes it
+    Hours              = 1,       -- hours between steps
+    MaxIncreasePercent = 50,      -- most a reward rises in all ('rise')
+    Account            = 'bank',  -- where a rise is charged from: 'cash' or 'bank'
+}
+
 -- ============================================================================
 --                                 ROLEPLAY
 -- ============================================================================

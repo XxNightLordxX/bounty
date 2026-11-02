@@ -4327,6 +4327,67 @@ async function main() {
     clean(app, 'informant fairness settings');
   })();
 
+  /* ---- Improvements (group impB): help cards, the switches, the tier list ---- */
+  await (async function () {
+    const view = settingsView();
+    view.data.features.push({ key: 'Improvements.ContractDecay.Enabled', category: 'features',
+      group: 'Improvements: Contract decay', label: 'Contract decay',
+      about: 'An untaken contract\'s reward rises each step, charged to its placer.',
+      kind: 'switch', live: true, inflight: 'At the next tick, with no restart.', value: false,
+      default: false, shipped: false, hasShipped: true, source: 'config' });
+    const tiers = { key: 'Improvements.Tiers.Tiers', category: 'rules-limits', group: 'Improvements: Tiered board',
+      label: 'Tiers, as name, least reward, level', kind: 'list', whole: true, live: true,
+      inflight: 'Read each time it is used.', value: ['Professional, 50000, 2'], default: [], source: 'config' };
+    view.data.limits.push(tiers);
+    const app = boot(standardServer({ settings: view }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('features');
+    await settled();
+    it('the contract decay switch is under Features, in its Improvements group', function () {
+      has(app.main(), 'Improvements: Contract decay');
+      truthy(app.byId('st-row-Improvements.ContractDecay.Enabled'), 'its row');
+    });
+    app.nav('limits');
+    await settled();
+    const row = function () { return app.byId('st-row-Improvements.Tiers.Tiers'); };
+    app.type(row().querySelector('input'), 'Elite, 150000, 4');
+    app.click(app.button('Add', row()));
+    await settled();
+    app.click(app.byId('st-save-Improvements.Tiers.Tiers'));
+    app.click(app.byId('st-save-Improvements.Tiers.Tiers'));
+    await settled();
+    it('a tier is added whole, its commas and spaces kept', function () {
+      eq(app.last('setSetting').data, { key: 'Improvements.Tiers.Tiers',
+        value: ['Professional, 50000, 2', 'Elite, 150000, 4'] });
+    });
+    app.nav('help');
+    await settled();
+    const help = app.window.CH_ADMIN_HELP;
+    it('How it works has a card for each board improvement, linking to its settings', function () {
+      ['placer record', 'hitman heat', 'tiered board', 'contract decay'].forEach(function (w) {
+        const found = help.filter(function (c) { return c.title.toLowerCase() === 'improvements: ' + w; });
+        eq(found.length, 1, 'a card on ' + w);
+        truthy(found[0].links.length >= 2, w + ' links to its settings');
+        truthy(/off as shipped/i.test(found[0].text), w + ' says it ships off');
+        found[0].links.forEach(function (l) {
+          truthy(['features', 'limits', 'timers', 'money', 'targeting'].indexOf(l.view) !== -1, l.key + ' view');
+        });
+      });
+    });
+    const link = app.$$('button[data-act="help-jump"]').filter(function (b) {
+      return b.getAttribute('data-key') === 'Improvements.ContractDecay.Enabled';
+    })[0];
+    truthy(link, 'the decay switch link');
+    app.click(link);
+    await settled();
+    it('an improvement help link lands on its switch under Features', function () {
+      eq(app.byId('nav-features').getAttribute('aria-current'), 'page');
+      truthy(app.byId('st-row-Improvements.ContractDecay.Enabled').classList.contains('is-focus'));
+    });
+    clean(app, 'improvements impB');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

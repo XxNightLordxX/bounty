@@ -915,6 +915,16 @@ MATRIX.brokerBrief = {
     why = 'only a player on a broker job briefs, and only somebody standing with them',
 }
 
+-- Improvements (server/imp_*.lua) ----------------------------------------
+
+-- Contract decay turned off for one contract: its placer's, and nobody else's.
+MATRIX.decayOff = {
+    arrange = function() Config.Improvements.ContractDecay.Enabled = true end,
+    payload = function(w, role, contract) return { id = contract.id } end,
+    expect = CREATOR_ONLY,
+    why = 'only the person who placed a contract decides whether its reward rises at their cost',
+}
+
 MATRIX.rpPlaces = { payload = {}, expect = ANYONE,
     why = 'where the NPCs stand is the same for every player and names nobody' }
 

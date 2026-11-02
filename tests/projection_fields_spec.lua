@@ -135,6 +135,13 @@ local CONDITIONAL = {
     -- and the price of the target's next look-up (imp_tips_spec).
     goDark           = 'target-only, while going dark is on and they were told of a tip',
     informantCost    = 'target-only, while the second-try price is on and differs',
+    -- Improvements (server/imp_*.lua), all off as shipped (impB_board_spec):
+    -- the placer's record on a card the viewer may take or holds; the tier
+    -- above the viewer's level on a stranger's card; and what contract decay
+    -- does to the placer's own untaken contract.
+    placerRecord     = 'public and hitman cards, while the placer record is on',
+    tierLocked       = 'public cards only, while tiers are on and the viewer is below the tier',
+    decay            = 'creator-only, while contract decay is on',
 }
 
 --- Which roles see a contract at all, and through which projection call.

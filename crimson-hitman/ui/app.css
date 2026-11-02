@@ -1831,3 +1831,8 @@ html.is-whitelisted-view main {
 .rumour-band { font-weight: 700; margin: 0.35rem 0; overflow-wrap: anywhere; }
 .broker-panel { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .broker-panel > .tip-state, .broker-panel > .hint { flex-basis: 100%; }
+
+/* Contract decay on the placer's untaken card (Config.Improvements.ContractDecay):
+   what it does, on a line of its own, and its Stop button among the tiles. */
+.notice.decay-notice { margin-bottom: 0.6rem; overflow-wrap: anywhere; }
+.decay-off { white-space: normal; }

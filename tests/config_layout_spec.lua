@@ -169,6 +169,21 @@ local ADDED = {
     ['Improvements.InformantSecondTry'] = { Enabled = false, SecondTryCostPercent = 50 },
     ['Improvements.TipSafeZones'] = { Enabled = false, Zones = {} },
     ['Improvements.GoDark'] = { Enabled = false, Cost = 50000, Account = 'bank', Minutes = 30 },
+    -- Group impB (Optional improvements): the placer's record, hitman heat,
+    -- the tiered board and contract decay, each its own block, each off.
+    ['Improvements.PlacerRecord'] = { Enabled = false, LookbackDays = 30, ShowForAnonymous = false },
+    ['Improvements.HitmanHeat'] = {
+        Enabled = false, ProtectedCompletionHeat = 3, WitnessHeat = 2, AdvisoryHeat = 1,
+        DecayHours = 24, Threshold = 5, WarnTargetChancePercent = 50, BulletinEveryMinutes = 60,
+        BulletinTitle = 'Intelligence bulletin',
+        BulletinText = 'A known contract killer is believed active in the city.',
+    },
+    ['Improvements.Tiers'] = {
+        Enabled = false, CompletionsPerLevel = 5, Tiers = { 'Professional, 50000, 2', 'Elite, 150000, 4' },
+    },
+    ['Improvements.ContractDecay'] = {
+        Enabled = false, Mode = 'rise', Percent = 10, Hours = 1, MaxIncreasePercent = 50, Account = 'bank',
+    },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -345,9 +360,10 @@ describe('the configuration as one short file', function()
         -- EMS before re-listing, city news, dirty payouts), rpC's four (proof
         -- of intent, reputation, protection, the hit on the hitman) and rpA's
         -- four (rumours, burner phone, informant in person, reason quality).
-        -- And the Improvements section: one header and impA's six blocks
-        -- (informant fairness).
-        truthy(lines < 695, 'config.lua is ' .. lines .. ' lines')
+        -- And the Improvements section: one header, impA's six blocks
+        -- (informant fairness) and impB's four (placer record, hitman heat,
+        -- tiers, contract decay).
+        truthy(lines < 733, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',

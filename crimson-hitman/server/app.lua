@@ -393,6 +393,8 @@ local function roleplayGate(name, actor, payload)
         { 'burner', deps.rpBurner and deps.rpBurner.gate },
         { 'rumours', deps.rpRumours and deps.rpRumours.gate },
         { 'informant', deps.rpInformant and deps.rpInformant.gate },
+        -- The tiered board (server/imp_tiers.lua): Accept below the level.
+        { 'tiers', deps.impBoard and deps.impBoard.tiers.gate },
     }
     for _, gate in ipairs(gates) do
         local ok, err, data = roleplayCall(gate[1], gate[2], name, actor, payload)
@@ -420,6 +422,9 @@ end
 local function roleplayAfter(name, actor, payload, result)
     roleplayCall('burner', deps.rpBurner and deps.rpBurner.after, name, actor, payload, result)
     roleplayCall('reason', deps.rpReason and deps.rpReason.after, name, actor, payload, result)
+    -- A police bulletin about an acceptance or a tip is heat, and a known
+    -- hitman's acceptance may warn the target (server/imp_heat.lua).
+    roleplayCall('heat', deps.impBoard and deps.impBoard.heat.after, name, actor, payload, result)
 end
 
 ---@param access string|nil who the gate lets through: nil for everyone the
@@ -1854,6 +1859,15 @@ function App.register()
         if not deps.impTips then return false, CH.ERR.FEATURE_OFF end
         return deps.impTips.goDark(actor, payload.id,
             type(payload.shown) == 'table' and payload.shown or {})
+    end)
+
+    -- The placer turns contract decay off for one untaken contract of
+    -- theirs (Config.Improvements.ContractDecay). Theirs only; nothing moves.
+    handler('decayOff', 'accept', function(actor, payload)
+        if not deps.impBoard then return false, CH.ERR.FEATURE_OFF end
+        local ok, err, card = deps.impBoard.decay.turnOff(actor, payload.id)
+        if not ok then return false, err end
+        return card or { off = true }
     end)
 end
 

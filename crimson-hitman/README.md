@@ -18,6 +18,17 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   dearer second look-up for the target's informant (`InformantSecondTry`),
   safe zones where no tip is sold (`TipSafeZones`), and going dark for a
   tipped-off target (`GoDark`). See *Optional improvements*.
+- **Improvements: the placer's record, hitman heat, a tiered board and
+  contract decay** (all off as shipped, all changeable from the admin
+  panel): a board card can show how many contracts its placer placed, had
+  paid out and cancelled, never who they are, and an anonymous placer's
+  only in bands (`Config.Improvements.PlacerRecord`); a hitman's work on
+  whitelisted-job targets and the police alerts about it give them heat that
+  warns their targets and sends police a vague bulletin
+  (`Config.Improvements.HitmanHeat`); the bigger rewards can be locked to
+  hitmen below a progression level (`Config.Improvements.Tiers`); and an
+  untaken contract's reward can rise, charged to its placer, or it can end
+  sooner (`Config.Improvements.ContractDecay`). See *Optional improvements*.
 - **Roleplay: proof of intent, earned reputation, bodyguards and the hit on
   the hitman** (all off as shipped, all changeable from the admin panel): a
   payout can wait until the hitman has worked the contract in character
@@ -890,6 +901,11 @@ Optional changes to existing features, each its own block of `Config.Improvement
 | `Config.Improvements.GoDark.Cost` | `50000` | Its price; `0` = free. |
 | `Config.Improvements.GoDark.Account` | `'bank'` | `'cash'` or `'bank'`. |
 | `Config.Improvements.GoDark.Minutes` | `30` | How long tips bought on them find nothing (and are given back). |
+| `Config.Improvements.PlacerRecord.Enabled` / `PlacerRecord.LookbackDays` / `PlacerRecord.ShowForAnonymous` | `false` / `30` / `false` | The placer's record on a board card: how many contracts they placed, had paid out and cancelled over the last `LookbackDays`, not counting this one. Never who they are. An anonymous placer's only with `ShowForAnonymous`, in bands, fixed when first drawn. |
+| `Config.Improvements.HitmanHeat.Enabled` / `HitmanHeat.ProtectedCompletionHeat` / `HitmanHeat.WitnessHeat` / `HitmanHeat.AdvisoryHeat` / `HitmanHeat.DecayHours` / `HitmanHeat.Threshold` | `false` / `3` / `2` / `1` / `24` / `5` | Hitman heat: a completion on a whitelisted-job target, a witness report on a completion, and a police bulletin about an acceptance or a tip on a whitelisted-job target each give the hitman heat, kept `DecayHours`. At `Threshold` they are known. |
+| `Config.Improvements.HitmanHeat.WarnTargetChancePercent` / `HitmanHeat.BulletinEveryMinutes` / `HitmanHeat.BulletinTitle` / `HitmanHeat.BulletinText` | `50` / `60` / `'Intelligence bulletin'` / *A known contract killer is believed active in the city.* | A known hitman's acceptance sends the target the paranoid alert at this chance (100 = always). While a known hitman holds a live contract, officers and sc-dispatch get `BulletinText` at most every `BulletinEveryMinutes` (`0` = never). It names nobody. |
+| `Config.Improvements.Tiers.Enabled` / `Tiers.CompletionsPerLevel` / `Tiers.Tiers` | `false` / `5` / two tiers | The tiered board, while `Config.Progression.Enabled` is on: each tier `'name, least reward, level'`; a contract whose current payout reaches a tier's reward is locked to hitmen below its level (1 plus one per `CompletionsPerLevel` completed contracts), and Accept is refused on the server. |
+| `Config.Improvements.ContractDecay.Enabled` / `ContractDecay.Mode` / `ContractDecay.Percent` / `ContractDecay.Hours` / `ContractDecay.MaxIncreasePercent` / `ContractDecay.Account` | `false` / `'rise'` / `10` / `1` / `50` / `'bank'` | Contract decay: every `Hours` a contract waits untaken, `'rise'` adds `Percent` of its reward, charged to its placer from `Account`, up to `MaxIncreasePercent` in all; `'shorten'` brings its deadline in by `Percent` of the time left. The placer is told and can turn it off for their contract. |
 
 ### Roleplay
 
@@ -2566,6 +2582,175 @@ they say.
 
 ---
 
+## Optional improvements
+
+Changes to existing features that an owner may want, each **off as shipped**
+(`Config.Improvements.<Feature>.Enabled = false`): with it off the resource
+behaves exactly as before. Every setting is in the admin panel (the switches
+under **Features**, in groups *Improvements: ...*; the rest under **Rules >
+Limits**, **Timers**, **Rewards & money** or **Targeting**), is checked as `config.lua`
+is at start, is kept across restarts and applies at once. **Live > How it
+works** has a card for each.
+
+### Informant fairness
+
+Six rules over the informant tip (`Config.LocationTip`) and the target's
+informant (`Config.Informant`), in `server/imp_tips.lua`. Every price is
+read on the server, quoted on the card and checked against the page's echo
+before anything is charged (a price that moved is refused with the price
+now, nothing taken); every charge is last, after every check; and nothing
+here names the hitman, the placer or the target to anybody new.
+
+**Tip warning delay** (`TipWarningDelay`). The target's *someone knows your
+rough area* notice is sent a random `MinSeconds`..`MaxSeconds` after the tip
+instead of at once, so the hitman has a head start. The wait is kept in the
+store (`crimson_rp_rows`, kind `imp_tipwarn`, all three storage modes): after
+a restart a warning still waiting is sent when it falls due, or at once if it
+is past due; it is never lost and never sent twice. A contract that ended
+while the warning waited drops it. Until it is sent, the target's card shows
+nothing; after, its *Tipped off* time is rounded down to 5 minutes, so it
+does not give the delay away.
+
+**Tip limits** (`TipLimits`). On top of `MaxPurchasesPerContract` and
+`CooldownMinutes`: with `OnePerHitman`, each hitman buys one tip per
+contract (refused as *You have had your one informant tip on this
+contract.*); with `PriceDoubling`, each tip on a contract costs twice the one
+before (the first at `Config.LocationTip.Cost`), capped at `MaxCost`. The
+hitman's card quotes the real next price.
+
+**Hold before a tip** (`TipHoldFirst`). A hitman buys a tip only once they
+have held the contract for `MinHeldMinutes`, counted from when they accepted
+it. Before that the card says from when, and a purchase is refused with the
+time; nothing is charged.
+
+**Informant second try** (`InformantSecondTry`). The target's look-ups after
+their first on a contract cost `SecondTryCostPercent` of
+`Config.Informant.Cost`, whole dollars rounded down (`100` is today's price).
+The chance stays `Config.Informant.RevealChancePercent`, which the owner sets
+in the panel. The target's card quotes the next price.
+
+**Tip safe zones** (`TipSafeZones`). No tip is sold while the server sees the
+target inside one of `Zones` (`'x, y, radius, name'`). The hitman is told
+only *Your informant can't place them right now.*, never why or where, and
+nothing is charged. The refusal is audited (`location_tip_safe_zone`) without
+the zone.
+
+**Go dark** (`GoDark`). A target who was told of a tip on a contract on them
+gets a **Go dark** button on that card (two taps, price echoed). Paying
+`Cost` from `Account` (to nobody, as a tip's price is) makes every tip bought
+on them, on any contract, for `Minutes` come back *Your informant couldn't
+find them.*: the hitman's price is charged and given back in full at once
+(audited as `location_tip_refunded`, reason `gone_dark`; a refund that cannot
+be paid goes to **Needs review**), and nothing is kept or counted against the
+tip limits. Going dark is kept in the store (`crimson_rp_rows`, kind
+`imp_dark`) and holds across a restart, and to its end even if staff switch
+the feature off. A second purchase while dark is refused, nothing charged.
+It is offered on On me, not on the whitelisted-job view.
+
+No third-party resource is called by any of these.
+
+### Board and progression
+
+Four rules over the board and progression, in `server/imp_board.lua`
+(their settings, start-up checks and tick) with one file each:
+`server/imp_placer_record.lua`, `server/imp_heat.lua`, `server/imp_tiers.lua`
+and `server/imp_decay.lua`.
+
+#### The placer's record
+
+A board card (to anybody but its placer and its target) shows *Placer:
+placed 7, paid out 3, cancelled 1 (30 days)*: how many contracts its placer
+placed, had completed and cancelled over the last `LookbackDays`, not
+counting this one. It never says who they are. A named placer's counts are
+their named contracts only, exact and current (worked out once per change
+to the store, like the board itself).
+
+An anonymous placer is the hard case: exact counts are a fingerprint, and
+two anonymous contracts showing the same unusual numbers are almost
+certainly one person. So with `ShowForAnonymous` off (as shipped) an
+anonymous contract shows no record at all. With it on:
+
+- only their **anonymous** contracts are counted, and a named placer's
+  record only their named ones, so neither moves when the other changes (a
+  record that ticked up the moment a named contract completed would say the
+  anonymous one was theirs);
+- the counts are shown in bands (`0`, `1-4`, `5-9`, `10+`) that many players
+  share;
+- the bands are worked out the first time the card is drawn and then kept
+  for the contract's life, so a band never moves because another anonymous
+  contract of theirs ended. A restart works them all out again at once,
+  which ties nothing to anybody.
+
+Even so, a band is a little information: turn `ShowForAnonymous` on only if
+the server accepts that two anonymous contracts in the same rare band (say
+`10+` cancelled) may be guessed to be one person's.
+
+#### Hitman heat
+
+Heat is what the police have heard of a hitman's work. Each of these gives
+them heat, kept for `DecayHours` and then gone (in the store, so a restart
+cools nobody):
+
+- `ProtectedCompletionHeat` for a completion (kill or handover) on a
+  whitelisted-job target;
+- `WitnessHeat` for a witness report on their completion (needs
+  *Roleplay: Witness heat* on to send any);
+- `AdvisoryHeat` for a police bulletin about their work: taking a contract on
+  a whitelisted-job target while acceptance bulletins go
+  (`Config.Advisory.OnAccept`), or buying an informant tip on one while tip
+  bulletins go (`Config.Advisory.OnLocationTip`).
+
+At `Threshold` they are *known*. A contract a known hitman takes sends its
+target the paranoid alert (*You feel eyes on you*) at
+`WarnTargetChancePercent` (`100` = always), with its usual wait and
+cooldown, and never before the target may be shown the contract. It is the
+same alert, so it needs `Config.Notifications.ParanoidAlert` on (as
+shipped). And while a
+known hitman holds a live contract, every officer online
+(`Config.Advisory.RecipientJob*`, but no known hitman) gets `BulletinText`
+on their phone, and sc-dispatch an entry with no position (caller *Criminal
+Intelligence*), at most every `BulletinEveryMinutes`. Nothing names the
+hitman, a contract or a place; a player never sees their own heat. Staff
+see it in the log (`imp_heat_added`, `imp_heat_warned`,
+`imp_heat_bulletin`).
+
+#### Tiered board
+
+`Tiers` lists tiers as `'name, least reward, least level'`. A contract's
+tier is the highest one whose least reward its current payout reaches
+(priced as the board orders it). A hitman's level is 1 plus one for every
+`CompletionsPerLevel` contracts they completed (their own record, as the app
+shows it). Below a card's tier level they see it locked: *Elite tier: you
+need level 4 (you are level 2).*, with no Accept, and an acceptance sent
+anyway is refused on the server (`tier_locked`) before anything is taken.
+It needs `Config.Progression.Enabled` on; with that off no card is locked.
+The level is this resource's own count: sc-blackmarket's trust is not read
+(it has no documented export for it).
+
+#### Contract decay
+
+A contract nobody has taken yet changes every `Hours` it waits:
+
+- `Mode = 'rise'`: its reward goes up by `Percent` of the money it held at
+  the first step, never past `MaxIncreasePercent` of that in all. Each step
+  is charged to the placer from `Account` through the placer's own
+  add-to-reward path, with the same checks and the same escrow, charged
+  last and audited (`imp_decay_rose`): nothing is made or lost, and a
+  cancelled or expired contract hands it all back as any top-up. A step
+  waits while the placer is out of the city; one they cannot pay stops the
+  rise on that contract for good, and they are told.
+- `Mode = 'shorten'`: its deadline is brought in by `Percent` of the time it
+  has left, never closer than the clock allows. Nothing is charged.
+
+The placer gets a phone notice at each step; their card under Mine says
+what decay does and what it has added, with **Stop the rise** (two taps)
+to turn it off for that contract. A contract already older than a step when
+decay first sees it (placed before it was turned on) starts counting then.
+What each contract has had is kept in the store (`crimson_rp_rows`, kind
+`imp_decay`), so a restart neither repeats a step nor forgets an opt-out.
+
+---
+
 ## Roleplay features
 
 Twelve optional roleplay features. Four are consequences of a completed
@@ -2842,75 +3027,6 @@ refused (`LowEffortAction = 'refuse'`), or placed and put in **Needs
 review** as a *low-effort reason* with its contract (`'review'`), where
 staff read it and dismiss it with a note. The item names the placer by
 role to staff without `crimson.identity`. Refusals charge nothing.
-
----
-
-## Optional improvements
-
-Changes to existing features that an owner may want, each **off as shipped**
-(`Config.Improvements.<Feature>.Enabled = false`): with it off the resource
-behaves exactly as before. Every setting is in the admin panel (the switches
-under **Features**, in groups *Improvements: ...*; the rest under **Rules >
-Timers**, **Rewards & money** or **Targeting**), is checked as `config.lua`
-is at start, is kept across restarts and applies at once. **Live > How it
-works** has a card for each.
-
-### Informant fairness
-
-Six rules over the informant tip (`Config.LocationTip`) and the target's
-informant (`Config.Informant`), in `server/imp_tips.lua`. Every price is
-read on the server, quoted on the card and checked against the page's echo
-before anything is charged (a price that moved is refused with the price
-now, nothing taken); every charge is last, after every check; and nothing
-here names the hitman, the placer or the target to anybody new.
-
-**Tip warning delay** (`TipWarningDelay`). The target's *someone knows your
-rough area* notice is sent a random `MinSeconds`..`MaxSeconds` after the tip
-instead of at once, so the hitman has a head start. The wait is kept in the
-store (`crimson_rp_rows`, kind `imp_tipwarn`, all three storage modes): after
-a restart a warning still waiting is sent when it falls due, or at once if it
-is past due; it is never lost and never sent twice. A contract that ended
-while the warning waited drops it. Until it is sent, the target's card shows
-nothing; after, its *Tipped off* time is rounded down to 5 minutes, so it
-does not give the delay away.
-
-**Tip limits** (`TipLimits`). On top of `MaxPurchasesPerContract` and
-`CooldownMinutes`: with `OnePerHitman`, each hitman buys one tip per
-contract (refused as *You have had your one informant tip on this
-contract.*); with `PriceDoubling`, each tip on a contract costs twice the one
-before (the first at `Config.LocationTip.Cost`), capped at `MaxCost`. The
-hitman's card quotes the real next price.
-
-**Hold before a tip** (`TipHoldFirst`). A hitman buys a tip only once they
-have held the contract for `MinHeldMinutes`, counted from when they accepted
-it. Before that the card says from when, and a purchase is refused with the
-time; nothing is charged.
-
-**Informant second try** (`InformantSecondTry`). The target's look-ups after
-their first on a contract cost `SecondTryCostPercent` of
-`Config.Informant.Cost`, whole dollars rounded down (`100` is today's price).
-The chance stays `Config.Informant.RevealChancePercent`, which the owner sets
-in the panel. The target's card quotes the next price.
-
-**Tip safe zones** (`TipSafeZones`). No tip is sold while the server sees the
-target inside one of `Zones` (`'x, y, radius, name'`). The hitman is told
-only *Your informant can't place them right now.*, never why or where, and
-nothing is charged. The refusal is audited (`location_tip_safe_zone`) without
-the zone.
-
-**Go dark** (`GoDark`). A target who was told of a tip on a contract on them
-gets a **Go dark** button on that card (two taps, price echoed). Paying
-`Cost` from `Account` (to nobody, as a tip's price is) makes every tip bought
-on them, on any contract, for `Minutes` come back *Your informant couldn't
-find them.*: the hitman's price is charged and given back in full at once
-(audited as `location_tip_refunded`, reason `gone_dark`; a refund that cannot
-be paid goes to **Needs review**), and nothing is kept or counted against the
-tip limits. Going dark is kept in the store (`crimson_rp_rows`, kind
-`imp_dark`) and holds across a restart, and to its end even if staff switch
-the feature off. A second purchase while dark is refused, nothing charged.
-It is offered on On me, not on the whitelisted-job view.
-
-No third-party resource is called by any of these.
 
 ---
 

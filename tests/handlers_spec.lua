@@ -389,6 +389,91 @@ describe('the board on a busy server', function()
             end
         end)
     end
+
+    --- The same with the board improvements on (server/imp_*.lua): the
+    --- placer's record (kept per change for named placers, fixed per
+    --- contract for anonymous ones), the tier lock (per viewer, from their
+    --- own record) and contract decay (the placer's own card). What one
+    --- viewer is shown is never another's, and a change shows at once.
+    local function improvementsOn()
+        local imp = Config.Improvements
+        imp.PlacerRecord.Enabled, imp.PlacerRecord.ShowForAnonymous = true, true
+        imp.Tiers.Enabled, imp.Tiers.Tiers = true, { 'Mid, 2150, 2', 'Top, 2190, 3' }
+        imp.ContractDecay.Enabled, imp.HitmanHeat.Enabled = true, true
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(('answers every viewer exactly as a fresh read does with the board improvements on, on %s')
+            :format(mode), function()
+            local main, s = boot(mode, improvementsOn)
+            unlimited()
+            local w = city(s)
+            main.tick()
+            -- A few operatives with a record, so the tier lock differs by viewer.
+            s.storage.bumpStat('OPR00001', 'completed', 10)
+            s.storage.bumpStat('OPR00002', 'completed', 5)
+            local viewers = { 101, 102, 201, 202, 301, 302, 324, 401 }
+            local function answers(cold)
+                local out = {}
+                local function ask(name, src, payload)
+                    if cold then s.storage.clearBailout('ct0', -1) end
+                    out[#out + 1] = encode(call(name, src, payload))
+                end
+                for _, src in ipairs(viewers) do
+                    ask('list', src, { page = 1 })
+                    ask('list', src, { page = 2 })
+                    ask('mine', src, {})
+                end
+                return out
+            end
+            local cold, warm = answers(true), answers(false)
+            eq(#cold, #warm)
+            for i = 1, #cold do
+                eq(warm[i], cold[i], 'answer ' .. i .. ' differs read from the kept board')
+            end
+            -- Every card carries what it should, and only to its viewer.
+            local rows = call('list', 324, { page = 1 }).data.contracts
+            local records, locked = 0, 0
+            for _, row in ipairs(rows) do
+                if row.placerRecord then records = records + 1 end
+                if row.tierLocked then locked = locked + 1 end
+                if row.creatorAnonymous and row.placerRecord then
+                    truthy(row.placerRecord.banded, 'an anonymous placer only in bands')
+                end
+            end
+            truthy(records > 0, 'records on the board')
+            truthy(locked > 0, 'locked cards for a level-1 operative')
+            local senior = call('list', 301, { page = 1 }).data.contracts
+            for _, row in ipairs(senior) do
+                eq(row.tierLocked, nil, 'nothing locked for a level-3 operative')
+            end
+            -- Nothing changed: a second look reads no placer's contracts again.
+            local again = storeCalls(s, function() truthy(call('list', 302, { page = 1 }).ok) end)
+            eq(again.contractsBy, nil, 'the named placers\' records kept while nothing changed')
+            -- A change shows at once: a named placer's contract withdrawn.
+            local before = call('list', 302, { page = 1 }).data.contracts[1]
+            local named
+            for _, row in ipairs(call('list', 302, { page = 1 }).data.contracts) do
+                if not row.creatorAnonymous and row.placerRecord then named = row break end
+            end
+            truthy(named, 'a named placer on the first page')
+            local c = s.storage.readContract(named.id)
+            local placer
+            for i = 1, #w.creators do if w.creators[i].cid == c.creator_cid then placer = w.creators[i] end end
+            local extra = s.contracts.create(placer, { targetCid = w.targets[20].cid, reason = 'one more',
+                reward = { baseline = { cash = 1500 } } })
+            truthy(extra, 'placed')
+            truthy(s.contracts.cancel(placer, extra.id), 'and withdrawn')
+            local after
+            for _, row in ipairs(call('list', 302, { page = 1 }).data.contracts) do
+                if row.id == named.id then after = row end
+            end
+            truthy(after, 'still listed')
+            eq(after.placerRecord.placed, named.placerRecord.placed + 1, 'one more placed, seen at once')
+            eq(after.placerRecord.cancelled, named.placerRecord.cancelled + 1, 'and cancelled')
+            truthy(before)
+        end)
+    end
 end)
 
 describe('a player\'s own tabs on mysql', function()

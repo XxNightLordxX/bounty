@@ -1670,6 +1670,105 @@ for _, entry in ipairs({
 }) do
     CATALOGUE[#CATALOGUE + 1] = entry
 end
+--- The board and progression improvements (server/imp_board.lua, README
+--- Optional improvements), each off as shipped. Each switch under Features
+--- in its own group, the rest under the Rules view it belongs to; all read
+--- at use, with no restart.
+local IMP_RECORD, IMP_HEAT = 'Improvements: Placer record', 'Improvements: Hitman heat'
+local IMP_TIERS, IMP_DECAY = 'Improvements: Tiered board', 'Improvements: Contract decay'
+for _, entry in ipairs({
+    { key = 'Improvements.PlacerRecord.Enabled', category = 'features', group = IMP_RECORD,
+      kind = 'switch', label = 'Placer record on the board',
+      about = 'A board card shows how many contracts its placer placed, had paid out and cancelled lately. '
+          .. 'Never who they are.',
+      inflight = 'At the next board read, with no restart.' },
+    { key = 'Improvements.PlacerRecord.ShowForAnonymous', category = 'features', group = IMP_RECORD,
+      kind = 'switch', label = 'Placer record: anonymous placers too',
+      about = 'Off: no record on an anonymous contract. On: their anonymous contracts only, in rough '
+          .. 'bands (0, 1-4, 5-9, 10+), fixed when the card is first drawn, so two anonymous contracts '
+          .. 'cannot be tied together.', inflight = AT_USE },
+    { key = 'Improvements.PlacerRecord.LookbackDays', category = 'rules-limits', group = IMP_RECORD,
+      kind = 'number', integer = true, min = 1, max = 365, label = 'Days the placer record counts',
+      inflight = AT_USE },
+
+    { key = 'Improvements.HitmanHeat.Enabled', category = 'features', group = IMP_HEAT,
+      kind = 'switch', label = 'Hitman heat',
+      about = 'Completions on whitelisted-job targets and police alerts about a hitman\'s work give them '
+          .. 'heat for a while. At the threshold their targets are warned more often and police get a '
+          .. 'vague bulletin. Never a name.',
+      inflight = 'At the next completion, acceptance or tick, with no restart.' },
+    { key = 'Improvements.HitmanHeat.ProtectedCompletionHeat', category = 'rules-limits', group = IMP_HEAT,
+      kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a whitelisted-job completion',
+      inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.WitnessHeat', category = 'rules-limits', group = IMP_HEAT,
+      kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a witness report',
+      about = 'Needs Witness heat (Roleplay) on to send reports.', inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.AdvisoryHeat', category = 'rules-limits', group = IMP_HEAT,
+      kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a police bulletin on them',
+      about = 'An acceptance or an informant tip on a whitelisted-job target, while those bulletins go.',
+      inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.Threshold', category = 'rules-limits', group = IMP_HEAT,
+      kind = 'number', integer = true, min = 1, max = 1000, label = 'Heat at which a hitman is known',
+      inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.WarnTargetChancePercent', category = 'rules-limits', group = IMP_HEAT,
+      kind = 'number', integer = true, min = 0, max = 100, label = 'Chance a known hitman\'s target is warned (%)',
+      about = '100: the paranoid alert always goes when a known hitman takes a contract. Needs the '
+          .. 'paranoid alert on.', inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.DecayHours', category = 'rules-timers', group = IMP_HEAT,
+      kind = 'number', integer = true, min = 1, max = 720, label = 'Hours heat stays',
+      inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.BulletinEveryMinutes', category = 'rules-timers', group = IMP_HEAT,
+      kind = 'number', integer = true, min = 0, max = 1440, label = 'Least minutes between police bulletins',
+      about = '0: no bulletin.', inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.BulletinTitle', category = 'rules-limits', group = IMP_HEAT,
+      kind = 'text', pattern = '^[^%c<>]+$', maxLength = 60, says = RP_TEXT,
+      label = 'Title of the police bulletin', inflight = AT_USE },
+    { key = 'Improvements.HitmanHeat.BulletinText', category = 'rules-limits', group = IMP_HEAT,
+      kind = 'text', pattern = '^[^%c<>]+$', maxLength = 160, says = RP_TEXT,
+      label = 'What the police bulletin says', about = 'Keep it vague: it must name nobody.',
+      inflight = AT_USE },
+
+    { key = 'Improvements.Tiers.Enabled', category = 'features', group = IMP_TIERS,
+      kind = 'switch', label = 'Tiered board',
+      about = 'Contracts paying more are locked to hitmen below the tier\'s progression level. Needs '
+          .. 'Criminal progression on.', inflight = 'At the next board read and acceptance, with no restart.' },
+    { key = 'Improvements.Tiers.CompletionsPerLevel', category = 'rules-limits', group = IMP_TIERS,
+      kind = 'number', integer = true, min = 1, max = 1000, label = 'Completed contracts per level',
+      about = 'A hitman is level 1, plus one for each this many contracts they completed.',
+      inflight = AT_USE },
+    { key = 'Improvements.Tiers.Tiers', category = 'rules-limits', group = IMP_TIERS,
+      kind = 'list', array = true, whole = true, names = 'tier', label = 'Tiers, as name, least reward, level',
+      about = 'Such as Elite, 150000, 4. The highest tier a payout reaches decides.', inflight = AT_USE },
+
+    { key = 'Improvements.ContractDecay.Enabled', category = 'features', group = IMP_DECAY,
+      kind = 'switch', label = 'Contract decay',
+      about = 'An untaken contract\'s reward rises each step, charged to its placer, or it ends sooner. '
+          .. 'The placer is told and can turn it off for their contract.',
+      inflight = 'At the next tick, with no restart.' },
+    { key = 'Improvements.ContractDecay.Mode', category = 'rules-limits', group = IMP_DECAY,
+      kind = 'choice', choices = { 'rise', 'shorten' }, label = 'What decay does',
+      about = '\'rise\': the reward goes up. \'shorten\': the deadline comes in.', inflight = AT_USE },
+    { key = 'Improvements.ContractDecay.Hours', category = 'rules-timers', group = IMP_DECAY,
+      kind = 'number', integer = true, min = 1, max = 168, label = 'Hours between decay steps',
+      inflight = AT_USE },
+    { key = 'Improvements.ContractDecay.Percent', category = 'rules-rewards', group = IMP_DECAY,
+      kind = 'number', integer = true, min = 1, max = 100, label = 'Decay step (%)',
+      about = 'Of the reward at the first step (\'rise\'), or of the time left (\'shorten\').',
+      inflight = AT_USE },
+    { key = 'Improvements.ContractDecay.MaxIncreasePercent', category = 'rules-rewards', group = IMP_DECAY,
+      kind = 'number', integer = true, min = 0, max = 1000, label = 'Most a reward rises in all (%)',
+      inflight = AT_USE },
+    { key = 'Improvements.ContractDecay.Account', category = 'rules-rewards', group = IMP_DECAY,
+      kind = 'choice', choices = { 'cash', 'bank' }, label = 'Where a rise is charged from',
+      inflight = AT_USE },
+}) do
+    entry.section = entry.category == 'features' and 'features' or 'limits'
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+for _, key in ipairs({ 'Improvements.ContractDecay.Percent', 'Improvements.ContractDecay.MaxIncreasePercent',
+    'Improvements.ContractDecay.Account' }) do
+    MONEY[key] = 'Rewards'
+end
 
 local byKey = {}
 for i = 1, #CATALOGUE do byKey[CATALOGUE[i].key] = CATALOGUE[i] end
@@ -1818,11 +1917,13 @@ local NAMES = {
     area = { patterns = { '^[^%c<>@]+@%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*$',
                           '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,[^%c<>@]+$' }, max = 60,
              says = 'areas as Name@x,y or x, y, name (such as Legion Square@195,-934), up to 60 characters' },
+    -- The tiered board (server/imp_tiers.lua): 'name, least reward, level'.
+    tier = { pattern = '^[^%c<>,]+,%s*%d+%s*,%s*%d+$', max = 60,
+             says = 'tiers as name, least reward, level (such as Elite, 150000, 4), up to 60 characters' },
+    -- A tip safe zone (server/imp_tips.lua, Imp.parseZone): 'x, y, radius, name'.
+    zone = { pattern = '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,%s*%d+%.?%d*%s*,[^%c<>]+$', max = 80,
+             says = 'zones as x, y, radius, name (such as 300, -590, 80, Pillbox), up to 80 characters' },
 }
---- The improvements' lists: a tip safe zone, 'x, y, radius, name'
---- (server/imp_tips.lua, Imp.parseZone).
-NAMES.zone = { pattern = '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,%s*%d+%.?%d*%s*,[^%c<>]+$', max = 80,
-               says = 'zones as x, y, radius, name (such as 300, -590, 80, Pillbox), up to 80 characters' }
 
 --- Whether one typed name keeps its list's rule: its pattern, or any one of
 --- its patterns.
