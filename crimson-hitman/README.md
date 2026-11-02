@@ -2576,10 +2576,13 @@ of a dead patient). sc-ambulance ships escrowed, so that event is the only
 EMS revive it can be told from: a revive at a hospital bed or by a command is
 not told from getting up alone, and is counted by the timer. The rule adds to
 the usual target cooldowns and always lets go `MaxHoldMinutes` after the
-kill. The kill is read back from the target's Ledger row, which every
-storage mode keeps; what was seen of them since starts again at a restart,
-so a restart only ever makes the wait longer (never past `MaxHoldMinutes`),
-and with `RequireEMS` a kill from before it is decided by the timer.
+kill. What was seen of them (the kill, since when they have been up, a
+medic's revive) is kept in `crimson_rp_rows` (kind `ems`), written only when it
+changes, so a restart does not start the count again: a target up when the
+server stopped is still counted up from then once they are seen up again. The
+kill is also read back from the target's Ledger row, which every storage mode
+keeps; for a kill from before anything was kept, the timer decides even with
+`RequireEMS`.
 
 ### City news
 
@@ -2661,7 +2664,12 @@ taken from their `Account` at once, and a meeting pin where they stand
 (**Move the pin here** moves it). Other players see the job on the board's
 **Protection** tab by its reward alone. One of them may take it: not the
 target, not the placer, and nobody who holds or ever held the contract; at
-most `MaxJobsPerGuard` at once. The guard is given the target's name and the
+most `MaxJobsPerGuard` at once, under their name or, where an operative may
+take that contract anonymously, anonymously (never named to the target then).
+A guard may not take a contract on the person they guard, and one who holds or
+held the contract is paid nothing of the job. Nothing is posted, taken or
+cancelled on a contract staff put on hold, and nothing posted or taken while
+staff pause the app. The guard is given the target's name and the
 pin (**Set GPS to the pin**), and **never** the contract, who placed it or who
 is on it. The target is told the job was taken, and sees the guard's name only
 where operatives who put their name to a contract are shown to targets
@@ -2682,14 +2690,19 @@ the contract's escrow lines, which are the reward the board shows, the
 placer's to withdraw and swept back to the placer at its end. It moves by the
 escrow's rules: charged last, after every check (the balance read first); the
 row written before the charge and dropped if the charge fails, so a refusal
-costs nothing; a payout claimed on the row before it moves; owed and tried
-again on the maintenance tick while the player is away or their account
-refuses it; and left for staff, never paid twice, when a payment raised and
-cannot be checked. Audited as `protection_taken`, `protection_accepted`,
+costs nothing; a payout claimed on the row, and that claim written, before it
+moves; owed and tried again on the maintenance tick while the player is away
+or their account refuses it; a row the store would not take written again on
+the tick, and a charge whose row could not be written handed back. Money whose
+fate is not known (a payment that raised and cannot be checked, a share being
+paid or a charge under way when the server stopped) is never paid twice: it
+is an item in the review queue (`/ch-stuck`, the panel's Review:
+`protection_payout_unconfirmed`, `protection_charge_unknown`), settled with the
+item's own **Refund**, **Pay** or **Dismiss**. Audited as `protection_taken`, `protection_accepted`,
 `protection_cancelled`, `protection_settled`, `protection_paid`,
 `protection_refunded`, `protection_owed`, `protection_payout_unconfirmed` and
-`protection_charge_unknown` (a charge a stop interrupted, said in the console
-at the next start for staff to check). Turned off, no job is posted or taken;
+`protection_charge_unknown` (a charge a stop interrupted, left for staff in the
+review queue at the next start). Turned off, no job is posted or taken;
 jobs already posted are paid or refunded as their contract ends.
 
 ### Hit on the hitman

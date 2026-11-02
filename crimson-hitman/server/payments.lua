@@ -46,9 +46,9 @@ end
 
 local function cleanReason(reason)
     if type(reason) ~= 'string' then return nil end
-    reason = reason:gsub('[%c]', ' '):gsub('^%s+', ''):gsub('%s+$', '')
-    if reason == '' then return nil end
-    return reason:sub(1, REASON_MAX)
+    -- By characters, never through one: a cut UTF-8 character is refused
+    -- by utf8mb4 (error 1366), and the whole write with it.
+    return Util.sanitizeText(reason, REASON_MAX)
 end
 
 local payUnlocked

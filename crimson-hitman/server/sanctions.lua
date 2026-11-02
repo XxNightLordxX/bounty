@@ -167,9 +167,9 @@ end
 
 local function cleanReason(reason)
     if type(reason) ~= 'string' then return nil end
-    reason = reason:gsub('[%c]', ' '):gsub('^%s+', ''):gsub('%s+$', '')
-    if reason == '' then return nil end
-    return reason:sub(1, REASON_MAX)
+    -- By characters, never through one: a cut UTF-8 character is refused
+    -- by utf8mb4 (error 1366), and the whole write with it.
+    return Util.sanitizeText(reason, REASON_MAX)
 end
 
 --- One change of one kind on one player at a time: another while one is in
@@ -259,7 +259,7 @@ placeUnlocked = function(kind, staffCid, cid, seconds, reason, name)
     local id = newId()
     if not id then return false, CH.ERR.SERVER_ERROR end
     local row = {
-        id = id, kind = kind, cid = cid, name = type(name) == 'string' and name:sub(1, 128) or nil,
+        id = id, kind = kind, cid = cid, name = Util.sanitizeText(name, 128),
         reason = reason, by_cid = staffCid, created_at = now,
         until_at = seconds and (now + seconds) or nil,
     }
@@ -351,7 +351,7 @@ function Sanctions.note(fields)
     if not id then return nil end
     local row = {
         id = id, kind = fields.kind, cid = fields.cid,
-        name = type(fields.name) == 'string' and fields.name:sub(1, 128) or nil,
+        name = Util.sanitizeText(fields.name, 128),
         reason = cleanReason(fields.reason), by_cid = fields.by_cid, created_at = os.time(),
         amount = fields.amount, account = fields.account,
     }

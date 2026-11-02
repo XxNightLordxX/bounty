@@ -87,6 +87,15 @@ Review.KINDS = {
     low_effort_reason = 'a contract was placed or edited with a low-effort reason (Roleplay: '
         .. 'Reason quality, server/rp_reason.lua): read the reason on the contract, deal with it '
         .. 'in the city, then dismiss with what was done. No money is in it',
+    protection_charge_unknown = 'a bodyguard job\'s reward was being taken from the target when the '
+        .. 'server stopped, and whether it was is not known (server/rp_protection.lua): check the '
+        .. 'target\'s account; if it was taken, refund the target, if not, dismiss with a note. The '
+        .. 'job is off the board either way, and nothing else pays it',
+    protection_payout_unconfirmed = 'a bodyguard job\'s share (the guard\'s pay, or what goes back '
+        .. 'to the target) was being paid when the server stopped, or its payment raised, so '
+        .. 'whether it arrived is not known: check their account; Pay gives what the item records '
+        .. 'less what is known to have arrived, Refund with an amount gives part of it, and dismiss '
+        .. 'with a note if it arrived. Nothing else pays it',
 }
 
 --- What settles an item that carries its whole record (`known.decide`), by

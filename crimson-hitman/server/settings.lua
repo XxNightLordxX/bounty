@@ -1682,9 +1682,31 @@ local function shippedOf(entry)
     return shown(entry, value)
 end
 
+--- Keys read once at start (inflight RESTART: the command names) changed
+--- from the panel since this start: kept in the store and shown, and put
+--- into Config only by the next start (Settings.init's apply). Written into
+--- Config at once, every message quoted a command that was not registered
+--- until then. [key] = the value as the panel shows it.
+local nextStart = {}
+
 --- What the panel would show for a key now.
 local function current(entry)
+    if nextStart[entry.key] ~= nil then return copyOf(nextStart[entry.key]) end
     return shown(entry, read(Config, entry.key))
+end
+
+--- Put a changed value in force: into Config, or, for a key read once at
+--- start, kept for the next one (nextStart).
+local function putInForce(entry, key, value)
+    if entry and entry.inflight == RESTART then
+        if same(value, shown(entry, read(Config, key))) then
+            nextStart[key] = nil
+        else
+            nextStart[key] = copyOf(value)
+        end
+        return
+    end
+    write(Config, key, stored(entry, value))
 end
 
 --------------------------------------------------------------------------
@@ -1975,7 +1997,7 @@ end
 
 function Settings.init(deps)
     Storage, Audit, Check = deps.storage, deps.audit, deps.check
-    overrides, ignored, unknown = {}, {}, {}
+    overrides, ignored, unknown, nextStart = {}, {}, {}, {}
     saving = false
     -- What config.lua says, as the start-up checks left it. Taken here so a
     -- stack that never boots still knows what a reset puts back.
@@ -2110,7 +2132,7 @@ local function setKey(key, raw, staff, actorCid)
             .. 'applied'):format(key, Util.dbError(writeErr)))
     end
 
-    write(Config, key, stored(entry, value))
+    putInForce(entry, key, value)
     if backToConfig then
         overrides[key] = nil
     else
@@ -2175,7 +2197,7 @@ local function resetKey(key, staff, actorCid)
     end
 
     local old = entry and current(entry) or copyOf((ignored[key] or {}).value)
-    if entry then write(Config, key, stored(entry, defaults[key])) end
+    if entry then putInForce(entry, key, defaults[key]) end
     local had = overrides[key] ~= nil
     overrides[key], ignored[key], unknown[key] = nil, nil, nil
     committed(had and entry or nil, 'admin_setting_reset', actorCid,
@@ -2225,7 +2247,7 @@ local function resetEvery(staff, actorCid)
             local entry = byKey[key]
             if entry and overrides[key] then
                 changes[key] = { old = current(entry), new = copyOf(defaults[key]) }
-                write(Config, key, stored(entry, defaults[key]))
+                putInForce(entry, key, defaults[key])
                 touched[#touched + 1] = entry
             end
             overrides[key], ignored[key], unknown[key] = nil, nil, nil

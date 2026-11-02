@@ -2010,7 +2010,8 @@ function StartCrimsonHitman()
                     contracts = contracts, projection = projection })
     rpReputation.init({ storage = Storage, identity = identity, contracts = contracts })
     rpProtection.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
-                        app = app, informant = informant, projection = projection })
+                        app = app, informant = informant, projection = projection,
+                        review = review, contracts = contracts })
     rpProtection.boot()
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.

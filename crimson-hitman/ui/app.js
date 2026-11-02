@@ -727,6 +727,7 @@
     protection_taken: 'Somebody else took that protection job first.',
     protection_limit: 'You are guarding as many people as you can at once.',
     protection_party: 'You are part of the contract on them, so you cannot guard them.',
+    protection_guarding: 'You are guarding them, so you cannot take a contract on them.',
     timeout: 'No answer. Try again.',
     unreachable: 'No answer. Try again.',
     // The roleplay features (Config.Roleplay). Nothing was taken for any.
@@ -9544,19 +9545,37 @@
         + 'Take it and you get their name and where to meet them; you are paid if the contract '
         + 'on them ends without being carried out.'));
       var take = el('button', 'primary ico i-shield', 'Take the job');
+      function takeJob(anonymous) {
+        return once('protection:take:' + job.job, function () {
+          return post('protectionAccept', { job: job.job, reward: job.reward,
+            anonymous: anonymous === true }).then(function (r) {
+            if (!r.ok) { fail(r); return readProtection(); }
+            state.protection.data = r.data;
+            say('You took the job. Their name and the pin are under People you guard.', 'ok');
+            redraw();
+          });
+        });
+      }
       take.onclick = function () {
-        ask('Take this protection job for ' + money(job.reward) + '?',
-          'You get their name and a meeting pin. You never learn who wants them dead.',
-          function () {
-            return once('protection:take:' + job.job, function () {
-              return post('protectionAccept', { job: job.job, reward: job.reward }).then(function (r) {
-                if (!r.ok) { fail(r); return readProtection(); }
-                state.protection.data = r.data;
-                say('You took the job. Their name and the pin are under People you guard.', 'ok');
-                redraw();
-              });
-            });
-          }, { yes: 'Take it', no: 'Not now' });
+        var question = 'Take this protection job for ' + money(job.reward) + '?';
+        var detail = 'You get their name and a meeting pin. You never learn who wants them dead.';
+        /* Taking it anonymously, as an operative takes a contract: offered
+           only where the server allows it whatever job the person has (the
+           board does not say whether they work a whitelisted one, and a
+           choice drawn for one and not the other would say so). */
+        if (anonymityOffered('hitman', false) && anonymityOffered('hitman', true)) {
+          state.dialog = {
+            kind: 'choice', question: question,
+            detail: detail + ' Anonymously, the person you guard is never told your name.',
+            options: [
+              { label: 'Anonymously', primary: true, run: function () { takeJob(true); } },
+              { label: 'Under my name', run: function () { takeJob(false); } }
+            ]
+          };
+          render();
+          return;
+        }
+        ask(question, detail, function () { return takeJob(false); }, { yes: 'Take it', no: 'Not now' });
       };
       c.appendChild(take);
       view.appendChild(c);

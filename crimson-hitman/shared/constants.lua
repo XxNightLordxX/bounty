@@ -499,12 +499,14 @@ CH.ERR = {
     -- Bodyguard contracts (server/rp_protection.lua): a reward outside
     -- Config.Roleplay.Protection's bounds; a job already posted on that
     -- contract; a job somebody else took first; as many jobs as one guard
-    -- may hold; and a guard who is a party to the contract.
+    -- may hold; and a guard who is a party to the contract. And a guard
+    -- taking a contract on the person they guard.
     PROTECTION_AMOUNT = 'protection_amount',
     PROTECTION_EXISTS = 'protection_exists',
     PROTECTION_TAKEN  = 'protection_taken',
     PROTECTION_LIMIT  = 'protection_limit',
     PROTECTION_PARTY  = 'protection_party',
+    PROTECTION_GUARDING = 'protection_guarding',
 
     -- Roleplay features (server/rp_*.lua), each off as shipped.
     --- Config.Roleplay.BurnerPhone: a contract action without the burner

@@ -25,12 +25,23 @@
 --- It moves by the escrow's rules all the same: the reward is charged last,
 --- after every check, through Util.charge (which reads the balance first);
 --- the row is written before the charge and dropped if the charge fails, so
---- a refusal costs nothing; a payout claims its share before it moves
---- (paying), is paid through Util.credit, and one that cannot be given
---- (the player away, or their account refused) stays owed on the row and is
---- tried again on the tick while they are in the city. A give that raised
---- with nothing arriving is tried again; one that cannot be told apart from
---- a payment is left for staff, never paid twice. Every step is audited.
+--- a refusal costs nothing; a payout claims its share on the row, and that
+--- claim is written (paying) before anything moves, so a restart part-way
+--- finds it and leaves it for staff rather than paying it again; it is paid
+--- through Util.credit, and one that cannot be given (the player away, or
+--- their account refused) stays owed on the row and is tried again on the
+--- tick while they are in the city. A give that raised with nothing arriving
+--- is tried again; one that cannot be told apart from a payment is left for
+--- staff, never paid twice. Whatever is left for staff is an item in the
+--- review queue (server/review.lua: /ch-stuck, the panel's Review), settled
+--- by its own Refund, Pay or Dismiss. A row the store would not take is
+--- written again on the tick. Every step is audited.
+---
+--- Nothing is posted, taken or cancelled on a contract staff put on hold
+--- (Contracts.heldByStaff), and nothing posted or taken while staff pause
+--- the app (Contracts.appPaused). A guard may not take a contract on the
+--- person they guard (Contracts.guardsTarget), and one who holds or held
+--- the contract is paid no share of the job.
 ---
 --- The hit on the hitman. A target whose informant found out who an
 --- operative is (server/informant.lua) is offered, on that card, to place a
@@ -43,7 +54,7 @@ local Log = CrimsonBoot.requireShared('log')
 
 local Protection = {}
 
-local Storage, Identity, Audit, Notify, App, Informant
+local Storage, Identity, Audit, Notify, App, Informant, Review, Contracts
 
 local KIND = 'protection'
 
@@ -74,7 +85,11 @@ end
 function Protection.init(deps)
     Storage, Identity, Audit, Notify = deps.storage, deps.identity, deps.audit, deps.notify
     App, Informant = deps.app, deps.informant
+    Review, Contracts = deps.review, deps.contracts
     jobs, busy, loaded = {}, {}, false
+    -- Asked by Contracts' acceptance: a guard may not take a contract on
+    -- the person they guard.
+    if Contracts then Contracts.guardsTarget = Protection.guardsTarget end
     -- The target's card, and the board's settings (Projection.extenders).
     if deps.projection and deps.projection.extenders then
         deps.projection.extenders.protection = Protection.extend
@@ -94,14 +109,61 @@ local function load()
 end
 Protection.load = load
 
+--- Write a job's row. One the store would not take is marked (unsaved) and
+--- written again by the tick (Protection.sweep), so what this process knows
+--- reaches the store once it answers.
 local function save(job)
+    local again = job.unsaved == true
+    job.unsaved = nil
     local ok, err = pcall(Storage.writeRpRow, job)
     if not ok then
-        Audit.rejected('protection_not_written', job.target_cid, job.contract_id,
-            { job = job.id, error = tostring(err) })
+        job.unsaved = true
+        if not again then
+            Audit.rejected('protection_not_written', job.target_cid, job.contract_id,
+                { job = job.id, error = tostring(err) })
+        end
         return false
     end
     return true
+end
+
+--- Whether staff put this contract on hold, or paused the app.
+local function heldByStaff(contract)
+    return Contracts ~= nil and Contracts.heldByStaff ~= nil and Contracts.heldByStaff(contract) == true
+end
+
+local function appPaused()
+    return Contracts ~= nil and Contracts.appPaused ~= nil and Contracts.appPaused() == true
+end
+
+--- Leave a job's money for staff: an item in the review queue, settled by
+--- its own Refund, Pay or Dismiss (Review.resolve). Its id comes from the
+--- job and the share, and one already opened is never opened again: a
+--- second item for the same money is a second chance to pay it.
+---@param job table
+---@param part string 'charge' | 'guard' | 'target'
+---@param kind string 'protection_charge_unknown' | 'protection_payout_unconfirmed'
+---@param amount integer
+---@param known table|nil what could be told (arrived, error)
+---@return string|nil id
+local function leaveForStaff(job, part, kind, amount, known)
+    if not Review or not Review.open then return nil end
+    local id = 'rv' .. tostring(job.id) .. '-' .. part
+    if Review.stateOf and Review.stateOf(id) ~= nil then return id end
+    local cid = part == 'guard' and job.guard_cid or job.target_cid
+    local detail = { job = job.id, share = part ~= 'charge' and part or nil }
+    for k, v in pairs(known or {}) do detail[k] = v end
+    local ok, opened = pcall(Review.open, {
+        prepared = true, id = id, kind = kind, contract_id = job.contract_id,
+        cids = { [part == 'guard' and 'guard' or 'target'] = cid },
+        amount = amount, account = job.account, known = detail,
+    })
+    if not ok then
+        Log.always(('protection job %s: the review item for its %s could not be opened (%s)')
+            :format(tostring(job.id), part, tostring(opened)))
+        return nil
+    end
+    return opened
 end
 
 --- Whether a job's money is still held by it: posted and not yet settled.
@@ -124,6 +186,22 @@ local function guarding(cid)
         if job.guard_cid == cid and job.state == 'taken' then n = n + 1 end
     end
     return n
+end
+
+--- Whether this player guards the person a contract is on, on any job
+--- (Contracts.guardsTarget): they may not take that contract.
+---@param contract table
+---@param cid string
+---@return boolean
+function Protection.guardsTarget(contract, cid)
+    if type(contract) ~= 'table' or not cid then return false end
+    load()
+    for _, job in pairs(jobs) do
+        if job.state == 'taken' and job.guard_cid == cid and job.target_cid == contract.target_cid then
+            return true
+        end
+    end
+    return false
 end
 
 --- Where the server sees a player stand: x, y, z, or nil.
@@ -156,20 +234,34 @@ end
 ---@return boolean paid
 local function payShare(job, who)
     local dueKey, paidKey, stuckKey = who .. '_due', who .. '_paid', who .. '_stuck'
+    local payingKey = who .. '_paying'
     local amount = math.floor(tonumber(job[dueKey]) or 0)
-    if amount <= 0 or job[paidKey] or job[stuckKey] or job[who .. '_paying'] then
+    if amount <= 0 or job[paidKey] or job[stuckKey] or job[payingKey] then
         return job[paidKey] == true or amount <= 0
     end
     local cid = who == 'guard' and job.guard_cid or job.target_cid
     local actor = Identity.byCitizenId(cid)
     if not actor or not actor.player then return false end
 
-    job[who .. '_paying'] = true
+    -- The claim is written before anything moves: a restart between the
+    -- give and the write that records it finds the claim (Protection.boot)
+    -- and leaves the share for staff, never pays it again. A store that
+    -- will not take the claim moves nothing; tried again on the tick.
+    job[payingKey] = true
+    if not save(job) then
+        job[payingKey] = nil
+        return false
+    end
     local credited, raised, arrived = Util.credit(actor.player, job.account, amount)
-    job[who .. '_paying'] = nil
+    job[payingKey] = nil
     if credited then
         job[paidKey] = true
-        save(job)
+        if not save(job) then
+            Log.always(('protection job %s: %s %d was paid and the row could not be written; it '
+                .. 'is written again on the tick, and a restart before then leaves it for staff '
+                .. '(review protection_payout_unconfirmed), never paid again.')
+                :format(tostring(job.id), job.account, amount))
+        end
         Audit.financial(who == 'guard' and 'protection_paid' or 'protection_refunded', cid, job.contract_id,
             { job = job.id, amount = amount, account = job.account })
         return true
@@ -177,20 +269,23 @@ local function payShare(job, who)
     if raised and not (arrived == 0) then
         -- Part of it, or no way to tell: never given again blind.
         job[stuckKey] = true
+        job[who .. '_review'] = leaveForStaff(job, who, 'protection_payout_unconfirmed', amount,
+            { arrived = tonumber(arrived), error = tostring(raised) })
         save(job)
         Audit.financial('protection_payout_unconfirmed', cid, job.contract_id,
             { job = job.id, amount = amount, account = job.account, arrived = arrived, error = raised })
         Log.always(('protection job %s: paying %s %d raised and could not be checked; left for '
-            .. 'staff to settle by hand (audit protection_payout_unconfirmed).')
+            .. 'staff in the review queue (audit protection_payout_unconfirmed).')
             :format(tostring(job.id), job.account, amount))
         return false
     end
+    -- Nothing moved: the claim is taken back on the row too.
     if not job[who .. '_owed_said'] then
         job[who .. '_owed_said'] = true
-        save(job)
         Audit.financial('protection_owed', cid, job.contract_id,
             { job = job.id, amount = amount, account = job.account })
     end
+    save(job)
     return false
 end
 
@@ -200,8 +295,9 @@ local function payOut(job)
     if busy[job.id] then return end
     busy[job.id] = true
     local ok, err = pcall(function()
-        local guardDone = payShare(job, 'guard')
-        local targetDone = payShare(job, 'target')
+        -- A share left for staff (stuck) is the review queue's now.
+        local guardDone = payShare(job, 'guard') or job.guard_stuck == true
+        local targetDone = payShare(job, 'target') or job.target_stuck == true
         if guardDone and targetDone then
             job.state = 'settled'
             job.settled_at = os.time()
@@ -220,9 +316,17 @@ end
 ---@param outcome string 'completed' | 'survived' | 'refund'
 local function settle(job, outcome, why)
     if not live(job) then return end
+    -- A guard who holds or held the contract is paid nothing of it
+    -- (Contracts.guardsTarget refuses the taking; this is the backstop).
+    local guardOnIt = false
+    if job.state == 'taken' and job.guard_cid then
+        local ok, row = pcall(Storage.readHitman, job.contract_id, job.guard_cid)
+        guardOnIt = ok and row ~= nil
+        if not live(job) then return end
+    end
     local amount = math.floor(tonumber(job.amount) or 0)
     local guardDue = 0
-    if job.state == 'taken' and job.guard_cid then
+    if job.state == 'taken' and job.guard_cid and not guardOnIt then
         if outcome == 'survived' then
             guardDue = amount
         elseif outcome == 'completed' then
@@ -233,6 +337,7 @@ local function settle(job, outcome, why)
     end
     job.guard_due = guardDue
     job.target_due = amount - guardDue
+    job.guard_on_contract = guardOnIt or nil
     job.outcome = outcome
     job.ended_why = why
     job.state = 'settling'
@@ -249,7 +354,7 @@ local function settle(job, outcome, why)
                 :format(guardDue)
         elseif outcome == 'completed' then
             words = 'The job is over: the contract on them was carried out. It paid you nothing.'
-        elseif outcome == 'survived' then
+        elseif outcome == 'survived' and guardDue > 0 then
             words = ('The job is over: they made it. You were paid $%d.'):format(guardDue)
         end
         pcall(Notify.tellOrKeep, job.guard_cid, 'Protection job', words, { bypassBudget = true })
@@ -289,6 +394,8 @@ function Protection.sweep()
     table.sort(ids)
     for i = 1, #ids do
         local job = jobs[ids[i]]
+        -- A row the store would not take, written again first.
+        if job and job.unsaved and not busy[job.id] then save(job) end
         if job and live(job) and not busy[job.id] then
             local outcome, why = outcomeOf(Storage.readContract(job.contract_id))
             if outcome then
@@ -312,8 +419,13 @@ function Protection.held()
         if live(job) or job.state == 'charging' then
             total = total + (math.floor(tonumber(job.amount) or 0))
         elseif job.state == 'settling' then
-            if not job.guard_paid then total = total + math.floor(tonumber(job.guard_due) or 0) end
-            if not job.target_paid then total = total + math.floor(tonumber(job.target_due) or 0) end
+            -- A share left for staff is the review queue's, not held here.
+            if not job.guard_paid and not job.guard_stuck then
+                total = total + math.floor(tonumber(job.guard_due) or 0)
+            end
+            if not job.target_paid and not job.target_stuck then
+                total = total + math.floor(tonumber(job.target_due) or 0)
+            end
         end
     end
     return total
@@ -331,6 +443,8 @@ end
 ---@return table|nil refusal
 function Protection.post(actor, payload)
     if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
+    -- The same for every contract and everybody: a job is a new engagement.
+    if appPaused() then return false, CH.ERR.APP_PAUSED end
     load()
     if not loaded then return false, CH.ERR.BUSY end
     local contractId = Util.toId(payload.id)
@@ -354,6 +468,8 @@ function Protection.post(actor, payload)
         return false, CH.ERR.ALREADY_SETTLED
     end
     if Notify.shownToTarget and not Notify.shownToTarget(contract) then return false, CH.ERR.NOT_FOUND end
+    -- On hold by staff: no money moves on it. Told to its own target only.
+    if heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if jobOn(contractId) then return false, CH.ERR.PROTECTION_EXISTS end
     local pin = standing(actor.source)
     if not pin then return false, CH.ERR.BUSY end
@@ -376,6 +492,22 @@ function Protection.post(actor, payload)
             jobs[id] = nil
             return false, CH.ERR.BUSY
         end
+        -- Asked again after the awaits above, right before the charge: a
+        -- freeze, an app pause or an ending landing in them is refused.
+        local fresh = Storage.readContract(contractId)
+        local late
+        if not fresh or CH.TERMINAL[fresh.state] or fresh.state == CH.STATE.COMPLETING then
+            late = CH.ERR.ALREADY_SETTLED
+        elseif heldByStaff(fresh) then
+            late = CH.ERR.CONTRACT_FROZEN
+        elseif appPaused() then
+            late = CH.ERR.APP_PAUSED
+        end
+        if late then
+            jobs[id] = nil
+            pcall(Storage.deleteRpRow, id)
+            return false, late
+        end
         -- Charged last, after every check (Util.charge reads the balance first).
         if not Util.charge(actor.player, account, amount) then
             jobs[id] = nil
@@ -384,13 +516,18 @@ function Protection.post(actor, payload)
             return false, CH.ERR.INSUFFICIENT, { account = account, need = amount }
         end
         job.state = 'open'
-        if not save(job) then
-            -- Charged, and the row still says charging: the start leaves it
-            -- for staff. Said now, in full.
-            Log.always(('protection job %s: %s %d was taken and the row could not be written; '
-                .. 'left for staff (audit protection_taken).'):format(id, account, amount))
-        end
         Audit.financial('protection_taken', actor.cid, contractId, { job = id, amount = amount, account = account })
+        if not save(job) and not save(job) then
+            -- Charged, and the store still says charging. Known here, so
+            -- handed back through the settling every refund takes: owed
+            -- on the row, given once its claim can be written. A restart
+            -- first finds the row charging and leaves it for staff in the
+            -- review queue (Protection.boot), never refunded twice.
+            Log.always(('protection job %s: %s %d was taken and the row could not be written; '
+                .. 'it is handed back to the target.'):format(id, account, amount))
+            settle(job, 'refund', 'not_recorded')
+            return false, CH.ERR.BUSY
+        end
         return Protection.targetView(contract, actor.cid)
     end)
     busy[key] = nil
@@ -406,8 +543,12 @@ function Protection.cancel(actor, payload)
     if not job or job.target_cid ~= actor.cid then return false, CH.ERR.NOT_FOUND end
     if job.state == 'taken' then return false, CH.ERR.CONTRACT_TAKEN end
     if job.state ~= 'open' or busy[job.id] then return false, CH.ERR.ALREADY_SETTLED end
+    -- On hold by staff: no money moves on it. Told to its own target only.
+    local contract = Storage.readContract(job.contract_id)
+    if contract and heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if job.state ~= 'open' or busy[job.id] then return false, CH.ERR.ALREADY_SETTLED end
     -- Through the same settling as an ending, so the refund is owed if it
-    -- cannot be given now. Nothing yields between the check and here.
+    -- cannot be given now. Nothing yields between the check above and here.
     Audit.action('protection_cancelled', actor.cid, job.contract_id, { job = job.id })
     settle(job, 'refund', 'cancelled_by_target')
     return { cancelled = true }
@@ -516,8 +657,7 @@ function Protection.board(actor)
 end
 
 --- Take a job. One guard to a job, never a party to the contract.
-function Protection.accept(actor, payload)
-    if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
+local function acceptUnlocked(actor, payload)
     load()
     local job = type(payload.job) == 'string' and jobs[payload.job] or nil
     if not job or job.target_cid == actor.cid then return false, CH.ERR.NOT_FOUND end
@@ -529,6 +669,9 @@ function Protection.accept(actor, payload)
     local contract = Storage.readContract(job.contract_id)
     if not contract or CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
     if partyTo(contract, actor.cid) then return false, CH.ERR.PROTECTION_PARTY end
+    -- On hold by staff: nothing is taken on. Not right now, to somebody who
+    -- is no party to the contract (as Contracts.accept says it).
+    if heldByStaff(contract) then return false, CH.ERR.BAD_STATE end
     -- Anonymously only where an operative may take a contract anonymously.
     local anonymous = payload.anonymous == true
     if anonymous and not Util.anonymityAllowed('hitman', contract.target_protected == true) then
@@ -545,6 +688,20 @@ function Protection.accept(actor, payload)
     return Protection.board(actor)
 end
 
+--- One acceptance per guard at a time, so two taken in one another's awaits
+--- cannot both pass MaxJobsPerGuard.
+function Protection.accept(actor, payload)
+    if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
+    if appPaused() then return false, CH.ERR.APP_PAUSED end
+    local key = 'guard:' .. tostring(actor.cid)
+    if busy[key] then return false, CH.ERR.BUSY end
+    busy[key] = true
+    local ok, result, err, refusal = pcall(acceptUnlocked, actor, payload)
+    busy[key] = nil
+    if not ok then error(result, 0) end
+    return result, err, refusal
+end
+
 --- Where the meeting pin is, to the guard alone, for their map.
 function Protection.waypoint(actor, payload)
     load()
@@ -559,16 +716,50 @@ end
 -- Start and the settings payload
 --------------------------------------------------------------------------
 
---- The start: read every job, and say of each one a crash left mid-charge.
+--- The start: read every job, and leave for staff, in the review queue,
+--- the money a crash left unknown: a charge under way (charging), and a
+--- share being paid (paying) or one that raised (stuck) with no item yet.
+--- The job leaves the books here (state 'review', or its share stuck), so
+--- nothing here pays it, it blocks no new job, and staff settle it with the
+--- item's own Refund, Pay or Dismiss.
 function Protection.boot()
     load()
-    for _, job in pairs(jobs) do
+    local ids = {}
+    for id in pairs(jobs) do ids[#ids + 1] = id end
+    table.sort(ids)
+    for i = 1, #ids do
+        local job = jobs[ids[i]]
         if job.state == 'charging' then
+            local amount = math.floor(tonumber(job.amount) or 0)
+            job.review = leaveForStaff(job, 'charge', 'protection_charge_unknown', amount)
+            if job.review then job.state = 'review' end
+            save(job)
             Audit.financial('protection_charge_unknown', job.target_cid, job.contract_id,
-                { job = job.id, amount = job.amount, account = job.account })
+                { job = job.id, amount = job.amount, account = job.account, review = job.review })
             Log.always(('protection job %s: a charge of %s %s was under way when the server stopped; '
-                .. 'check whether it was taken and settle it by hand.')
-                :format(tostring(job.id), tostring(job.account), tostring(job.amount)))
+                .. 'left for staff in the review queue: refund the target if it was taken, dismiss '
+                .. 'if not.'):format(tostring(job.id), tostring(job.account), tostring(job.amount)))
+        elseif job.state == 'settling' or job.state == 'settled' then
+            for _, who in ipairs({ 'guard', 'target' }) do
+                local amount = math.floor(tonumber(job[who .. '_due']) or 0)
+                if job[who .. '_paying'] and not job[who .. '_paid'] then
+                    job[who .. '_paying'] = nil
+                    job[who .. '_stuck'] = true
+                    job[who .. '_review'] = leaveForStaff(job, who, 'protection_payout_unconfirmed',
+                        amount, { restarted = true })
+                    save(job)
+                    Audit.financial('protection_payout_unconfirmed', who == 'guard' and job.guard_cid
+                        or job.target_cid, job.contract_id,
+                        { job = job.id, amount = amount, account = job.account, restarted = true })
+                    Log.always(('protection job %s: paying %s %d was under way when the server '
+                        .. 'stopped; left for staff in the review queue, never paid again.')
+                        :format(tostring(job.id), tostring(job.account), amount))
+                elseif job[who .. '_stuck'] and not job[who .. '_review'] and amount > 0 then
+                    job[who .. '_review'] = leaveForStaff(job, who, 'protection_payout_unconfirmed',
+                        amount)
+                    if job[who .. '_review'] then save(job) end
+                end
+            end
         end
     end
 end

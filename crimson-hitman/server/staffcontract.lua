@@ -152,7 +152,7 @@ local function newRow(contractId, kind, staff, fields)
     if not id then return nil end
     local row = {
         id = id, contract_id = contractId, kind = kind,
-        author_cid = staff.cid, author_name = staff.name and tostring(staff.name):sub(1, 128) or nil,
+        author_cid = staff.cid, author_name = staff.name and Util.sanitizeText(tostring(staff.name), 128) or nil,
         created_at = os.time(), stake_returned = false, blocked = false,
     }
     for k, v in pairs(fields or {}) do row[k] = v end
@@ -223,13 +223,17 @@ function StaffContract.removeHitman(staff, contractId, hitmanId, reason, opts)
     if CH.TERMINAL[contract.state] or contract.state == CH.STATE.COMPLETING then
         return false, CH.ERR.BAD_STATE, { state = contract.state }
     end
-    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    local hitmen = Storage.readHitmen(contractId) or {}
     local hitman
-    for _, row in ipairs(Storage.readHitmen(contractId) or {}) do
+    for _, row in ipairs(hitmen) do
         if row.id == hitmanId then hitman = row end
     end
+    -- The operative first, then the hold: asked the other way round, a
+    -- removal of an operative id that does not exist answered "on hold" on
+    -- exactly the contracts a frozen player is on, anonymous ones too.
     if not hitman then return false, 'no_operative' end
     if hitman.state ~= 'active' then return false, 'not_active', { state = hitman.state } end
+    if Contracts.heldByStaff(contract, hitmen) then return false, CH.ERR.CONTRACT_FROZEN end
 
     local row = newRow(contractId, 'removal', staff, {
         body = reason, subject_cid = hitman.hitman_cid, subject_account = hitman.hitman_account,

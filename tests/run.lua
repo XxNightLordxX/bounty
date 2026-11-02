@@ -545,7 +545,8 @@ function _G.newStack()
                     contracts = contracts, projection = projection })
     rpReputation.init({ storage = storage, identity = identity, contracts = contracts })
     rpProtection.init({ storage = storage, identity = identity, audit = audit, notify = notify,
-                        app = app, informant = informant, projection = projection })
+                        app = app, informant = informant, projection = projection,
+                        review = review, contracts = contracts })
     meeting.init({ storage = storage, notify = notify, audit = audit })
     playtime.init({ storage = storage, identity = identity })
     rpPlaces.init({ settings = settings })
@@ -657,6 +658,7 @@ local suites = {
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
+    'bug_sweep_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

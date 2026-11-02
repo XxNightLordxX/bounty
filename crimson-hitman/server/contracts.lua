@@ -639,6 +639,10 @@ end
 --- waits for them to be treated. nil: no such rule.
 Contracts.relistHold = nil
 
+--- Set by server/rp_protection.lua: whether this player guards the person a
+--- contract is on (contract, cid) -> boolean. nil: no bodyguards.
+Contracts.guardsTarget = nil
+
 --- What runs after every claim that paid (Contracts.claimSlot), by name:
 --- the roleplay consequences (server/rp_consequences.lua). Each is called
 --- with (contractId, hitmanCid, fulfilment, result) inside pcall, after the
@@ -1488,6 +1492,11 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- created by another of their own characters (§13.1).
     if contract.target_cid == actor.cid then return false, CH.ERR.SELF_TARGET end
     if contract.creator_cid == actor.cid then return false, CH.ERR.SELF_ACCEPT end
+    -- Nor one on the person they are paid to guard (server/rp_protection.lua).
+    if Contracts.guardsTarget then
+        local ran, guards = pcall(Contracts.guardsTarget, contract, actor.cid)
+        if ran and guards then return false, CH.ERR.PROTECTION_GUARDING end
+    end
     if Config.AntiCollusion.BlockSameAccount then
         if Identity.sameAccount(contract.creator_account, actor.account) then
             return false, CH.ERR.SAME_ACCOUNT
@@ -2488,9 +2497,11 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     if not contract or contract.state ~= CH.STATE.ACCEPTED then return false end
     local current = Storage.readHitman(contractId, hitman.hitman_cid)
     if not current or current.state ~= 'active' then return false end
-    -- On hold by staff, or for the restart: nobody is released and no
-    -- stake moves.
-    if Contracts.heldByStaff(contract) or Contracts.restartHeld() then return false end
+    -- On hold by staff, for the restart, or the whole app paused: nobody
+    -- is released and no stake moves.
+    if Contracts.heldByStaff(contract) or Contracts.restartHeld() or Contracts.appPaused() then
+        return false
+    end
 
     -- Read before anything moves, so the notices can name the figure.
     local stake = heldStakes(contractId)[current.hitman_cid] or 0
@@ -2702,8 +2713,13 @@ function Contracts.releaseIdleHolds()
             -- deadline: the hold's idle clock ran on through the sentence,
             -- and the hitman was taken off for not going near a target
             -- locked in Bolingbroke.
+            -- And no clock runs while staff hold it, the restart hold is on or
+            -- the app is paused: nothing could be worked meanwhile, and the
+            -- release would forfeit a stake for time nobody could use.
+            local held = #hitmen > 0 and (Contracts.heldByStaff(c, hitmen) or Contracts.restartHeld()
+                or Contracts.appPaused())
             local bothHere = false
-            if #hitmen > 0 then
+            if #hitmen > 0 and not held then
                 local targetActor = Identity.byCitizenId(c.target_cid)
                 local targetHere = targetActor ~= nil
                     and not (Config.Limits.PauseWhileTargetJailed and Identity.isJailed(targetActor))
@@ -2740,7 +2756,9 @@ function Contracts.releaseIdleHolds()
                     end
 
                     local why
-                    if window > 0 and (idleFor[k] or 0) >= window then
+                    if held then
+                        why = nil
+                    elseif window > 0 and (idleFor[k] or 0) >= window then
                         why = 'idle'
                     elseif attemptWindow > 0 and (unattemptedFor[k] or 0) >= attemptWindow then
                         why = 'no_attempt'

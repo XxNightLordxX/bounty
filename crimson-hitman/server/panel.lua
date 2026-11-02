@@ -2240,6 +2240,13 @@ H.removeHitman = function(src, data)
             return false, err, 'Only a live contract (active or accepted) has operatives to remove.'
         end
         if err == CH.ERR.CONTRACT_FROZEN then
+            -- Said as on hold only where this staff member's view of it says
+            -- so (frozenShown): held through an anonymous party they may not
+            -- see, the refusal says no more than the view does.
+            local contract = deps.storage.readContract(id)
+            if not contract or not frozenShown(contract, nil, identifies(src)) then
+                return false, 'not_removed', 'Not removed: try again in a moment.'
+            end
             return false, err, 'It is on hold by staff, and nothing on it moves: unfreeze first.'
         end
         if err == 'no_operative' then return false, err, 'No operative on this contract has that id.' end
@@ -2750,7 +2757,7 @@ local function noteDenied(src, op, why)
     if last and now - last < DENIED_LOG_MS then return end
     deniedLogged[src] = now
     deps.audit.rejected('admin_panel_' .. why, nil, nil,
-        { source = src, op = type(op) == 'string' and op:sub(1, 32) or nil })
+        { source = src, op = type(op) == 'string' and Util.toValidUtf8(op:sub(1, 32)) or nil })
 end
 
 --- Answer one request from the page, in the house order: the source, the
@@ -2764,7 +2771,7 @@ function Panel.handle(src, payload)
     if src <= 0 then return nil end
     local rid = type(payload) == 'table' and wholeNumber(payload.__rid, 0) or nil
     local op = type(payload) == 'table' and type(payload.op) == 'string'
-        and payload.op:sub(1, 32) or nil
+        and Util.toValidUtf8(payload.op:sub(1, 32)) or nil
     local function answer(ok, err, message, data)
         return { rid = rid, op = op, ok = ok == true, err = err, message = message, data = data }
     end

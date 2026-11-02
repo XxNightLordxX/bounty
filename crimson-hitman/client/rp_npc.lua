@@ -60,6 +60,14 @@ end
 local function spawn(npc, p)
     local hash = loaded(p.model)
     if not hash then return end
+    -- The model load waits: the server may have moved or taken this NPC
+    -- away meanwhile (apply), or it may have been drawn already. Made only
+    -- for the place it is still drawn at, so no ped is left unowned.
+    local d = drawn[npc]
+    if not d or d.ped or d.key ~= keyOf(p) then
+        SetModelAsNoLongerNeeded(hash)
+        return
+    end
     local ped = CreatePed(4, hash, p.x, p.y, p.z - 1.0, p.h, false, false)
     SetModelAsNoLongerNeeded(hash)
     if not ped or ped == 0 then return end
@@ -68,7 +76,7 @@ local function spawn(npc, p)
     SetBlockingOfNonTemporaryEvents(ped, true)
     SetPedCanRagdoll(ped, false)
     if p.scenario ~= '' then TaskStartScenarioInPlace(ped, p.scenario, 0, true) end
-    drawn[npc].ped = ped
+    d.ped = ped
 end
 
 local function blipFor(npc, p)
@@ -137,16 +145,21 @@ CreateThread(function()
         if next(places) == nil then
             Wait(2000)
         else
-            local me = GetEntityCoords(PlayerPedId())
-            for npc, p in pairs(places) do
-                local d = drawn[npc]
-                local metres = #(me - vector3(p.x, p.y, p.z))
-                if d and not d.ped and metres < DRAW_METRES then
-                    spawn(npc, p)
-                elseif d and d.ped and metres > REMOVE_METRES then
-                    removePed(npc)
+            -- One pass in a pcall: a native or a model that raises costs this
+            -- pass, never the loop (and with it every NPC for the session).
+            local ok, err = pcall(function()
+                local me = GetEntityCoords(PlayerPedId())
+                for npc, p in pairs(places) do
+                    local d = drawn[npc]
+                    local metres = #(me - vector3(p.x, p.y, p.z))
+                    if d and not d.ped and metres < DRAW_METRES then
+                        spawn(npc, p)
+                    elseif d and d.ped and metres > REMOVE_METRES then
+                        removePed(npc)
+                    end
                 end
-            end
+            end)
+            if not ok and CrimsonLog then CrimsonLog.debug(('roleplay NPCs: %s'):format(tostring(err))) end
             Wait(1000)
         end
     end

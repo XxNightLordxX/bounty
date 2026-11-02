@@ -259,6 +259,23 @@ describe('rumours and the broker', function()
         truthy(took and took.ok, tostring(took and took.err))
     end)
 
+    it('never briefs the person the contract is on, and tells the broker nothing of it', function()
+        local s, _, c = placed()
+        on(s)
+        turn(s, 'Roleplay.Rumours.BrokerJobs', { 'broker' })
+        Env.addPlayer({ source = 4, citizenid = 'BROKER01', license = 'license:ddd',
+            firstname = 'Bo', lastname = 'Ker', job = { name = 'broker', type = 'none' } })
+        Env.players[4]._coords = ELSEWHERE
+        Env.players[2]._coords = { x = ELSEWHERE.x + 2, y = ELSEWHERE.y, z = ELSEWHERE.z }
+        Env.players[1]._coords = { x = 9000, y = 9000, z = 0 }
+        Env.players[3]._coords = { x = 9100, y = 9000, z = 0 }
+        local near = call('brokerNearby', 4, {})
+        eq(#near.data.people, 1, 'the target stands with them')
+        local briefed = call('brokerBrief', 4, { id = c.id, who = near.data.people[1].handle })
+        truthy(briefed.ok, 'answered as any briefing')
+        falsy(s.rpRumours.isBriefed(c.id, 'TARGET01'), 'the target was not briefed')
+    end)
+
     it('never names an anonymous placer, and staff see the briefings without names', function()
         local s = newStack()
         local f = fixture(s)

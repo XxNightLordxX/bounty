@@ -19,11 +19,14 @@
 ---     loses nothing. Escrow keeps the money it took; a payout that does not
 ---     fit is owed through the existing owed path.
 ---
---- Nothing here keeps state of its own across a restart. The kill a target
---- recovers from is read back from the Ledger (every backend keeps it), and
---- what was seen of them since (how long they have been up, a medic's
---- revive) starts again at a restart: the rule only ever waits longer then,
---- and never past MaxHoldMinutes after the kill.
+--- What EMS before re-listing has seen of a recovering target (the kill,
+--- since when they have been up, a medic's revive) is kept in the store
+--- (crimson_rp_rows, kind 'ems'), written when it changes, so a restart
+--- does not start the count again: a target up when the server stopped is
+--- still up from then once they are seen up again. The kill is also read
+--- back from the Ledger (every backend keeps it), so one from before this
+--- was kept still holds; for that one the timer decides, and never past
+--- MaxHoldMinutes after the kill.
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
@@ -41,6 +44,15 @@ local killedAt = {}
 local upSince = {}
 --- When a medic's defibrillator was last heard on them: [cid] = os.time().
 local medicAt = {}
+--- Targets whose up-count was read back from the store at this start and
+--- who have not been seen since: their absence is the restart, not a break
+--- of theirs. [cid] = true
+local carried = {}
+--- The kill each target's kept row was written for: [cid] = os.time(). A
+--- medic's revive is asked for only where what was heard since is known.
+local tracked = {}
+
+local EMS_KIND = 'ems'
 --- When this process started, os.time(): a kill from before it has lost what
 --- was seen of the target since (a medic's revive), so the timer decides.
 local startedAt = 0
@@ -240,8 +252,9 @@ end
 
 --- Text for a phone or a post: one line, no markup, at most `max` long.
 local function clean(text, max)
-    text = tostring(text):gsub('[%c<>]', ' '):gsub('%s+', ' '):gsub('^%s+', ''):gsub('%s+$', '')
-    return text:sub(1, max)
+    text = tostring(text):gsub('[%c<>]', ' ')
+    -- Cut by characters, never through one (Util.sanitizeText).
+    return Util.sanitizeText(text, max) or ''
 end
 
 --------------------------------------------------------------------------
@@ -331,7 +344,7 @@ local function witnessAlert(contract, hitmanCid, slot)
         end
         dispatched = pcall(function()
             exports['sc-dispatch']:AddNotification({
-                title = title, message = said, coords = coords, street = area:sub(1, 100),
+                title = title, message = said, coords = coords, street = clean(area, 100),
                 caller = 'Witness', priority = math.floor(tonumber(cfg.DispatchPriority) or 2),
                 job_table = policeJobs(),
                 unique_id = ('ch-wit-%s-%s'):format(tostring(contract.id), tostring(slot or 1)):sub(1, 60),
@@ -364,13 +377,46 @@ local function lastKill(cid)
     return at
 end
 
+--- Keep what is known of one recovering target in the store, or take it
+--- away once nothing is. Only when it changed: never on every tick.
+local function keep(cid)
+    if not Storage or not Storage.writeRpRow then return end
+    local id = EMS_KIND .. ':' .. tostring(cid)
+    if not killedAt[cid] then
+        tracked[cid], carried[cid] = nil, nil
+        pcall(Storage.deleteRpRow, id)
+        return
+    end
+    tracked[cid] = killedAt[cid]
+    pcall(Storage.writeRpRow, { id = id, kind = EMS_KIND, cid = cid, killed_at = killedAt[cid],
+                                up_since = upSince[cid], medic_at = medicAt[cid] })
+end
+
+--- Forget a target who has recovered, here and in the store.
+local function forget(cid)
+    local had = killedAt[cid] ~= nil or tracked[cid] ~= nil
+    killedAt[cid], upSince[cid], medicAt[cid] = nil, nil, nil
+    if had then keep(cid) end
+end
+
 --- Look at one recovering target now: up, or not, since when.
 local function observe(cid, now)
+    local before = upSince[cid]
     local actor = Identity.byCitizenId(cid)
-    if not actor then upSince[cid] = nil return end
-    local dead, downed, known = Identity.deathState(actor.source)
-    if not known or dead or downed then upSince[cid] = nil return end
-    upSince[cid] = upSince[cid] or now
+    if not actor then
+        -- Away since the restart: the count kept from before it waits for
+        -- them to be seen again.
+        if not carried[cid] then upSince[cid] = nil end
+    else
+        carried[cid] = nil
+        local dead, downed, known = Identity.deathState(actor.source)
+        if not known or dead or downed then
+            upSince[cid] = nil
+        else
+            upSince[cid] = upSince[cid] or now
+        end
+    end
+    if upSince[cid] ~= before then keep(cid) end
 end
 
 --- Whether a new contract on this target waits for them to be treated
@@ -385,17 +431,23 @@ function RpConsequences.relistHold(targetActor)
     if not kill then return false end
     local now = os.time()
     if now - kill >= (tonumber(cfg.MaxHoldMinutes) or 120) * 60 then
-        killedAt[cid], upSince[cid], medicAt[cid] = nil, nil, nil
+        forget(cid)
         return false
     end
-    killedAt[cid] = kill
+    if killedAt[cid] ~= kill then
+        -- A kill not seen here before (the Ledger's, or a newer one): what
+        -- was seen of them belonged to the last one.
+        if killedAt[cid] and killedAt[cid] < kill then upSince[cid], medicAt[cid] = nil, nil end
+        killedAt[cid] = kill
+        keep(cid)
+    end
     observe(cid, now)
     local up = upSince[cid]
     if not up then return true end
-    -- A medic's revive, where one is asked for and this process saw the
-    -- kill: from before this start, nothing it heard could count, and the
-    -- timer decides.
-    if cfg.RequireEMS == true and kill >= startedAt then
+    -- A medic's revive, where one is asked for and what was heard since the
+    -- kill is known: seen by this process, or kept in the store for this
+    -- kill. One from before either, and the timer decides.
+    if cfg.RequireEMS == true and (kill >= startedAt or tracked[cid] == kill) then
         return not (medicAt[cid] and medicAt[cid] >= kill)
     end
     return (now - math.max(up, kill)) < (tonumber(cfg.TreatedMinutes) or 10) * 60
@@ -406,7 +458,10 @@ end
 ---@param targetSource any
 function RpConsequences.noteMedicRevive(targetSource)
     local actor = Identity.resolve(tonumber(targetSource))
-    if actor then medicAt[actor.cid] = os.time() end
+    if actor then
+        medicAt[actor.cid] = os.time()
+        if killedAt[actor.cid] then keep(actor.cid) end
+    end
 end
 
 --- From the maintenance tick: each target still recovering looked at, so
@@ -414,14 +469,21 @@ end
 function RpConsequences.tick()
     local cfg = on('EmsRelisting')
     if not cfg then
-        if next(killedAt) then killedAt, upSince, medicAt = {}, {}, {} end
+        if next(killedAt) then
+            local cids = {}
+            for cid in pairs(killedAt) do cids[#cids + 1] = cid end
+            for i = 1, #cids do forget(cids[i]) end
+        end
         return
     end
     local now = os.time()
     local hold = (tonumber(cfg.MaxHoldMinutes) or 120) * 60
-    for cid, kill in pairs(killedAt) do
-        if now - kill >= hold then
-            killedAt[cid], upSince[cid], medicAt[cid] = nil, nil, nil
+    local cids = {}
+    for cid in pairs(killedAt) do cids[#cids + 1] = cid end
+    for i = 1, #cids do
+        local cid = cids[i]
+        if now - killedAt[cid] >= hold then
+            forget(cid)
         else
             observe(cid, now)
         end
@@ -441,9 +503,10 @@ function RpConsequences.newsText(contract, hitmanCid)
     if not whitelisted and cfg.AllTargets ~= true then return nil end
     local job = whitelisted and (shown or contract.target_job) or contract.target_job
     if type(job) ~= 'string' or job == '' or job == 'unemployed' then job = 'resident' end
+    -- Where the target is, never where the hitman is: the post would say
+    -- where the hitman went next. Nobody in the city: 'the city'.
     local target = Identity.byCitizenId(contract.target_cid)
-    local hitman = Identity.byCitizenId(hitmanCid)
-    local at = (target and coordsOf(target.source)) or (hitman and coordsOf(hitman.source))
+    local at = target and coordsOf(target.source) or nil
     local name = cfg.NameTarget == true and contract.target_name or 'a resident'
     local text = pick(cfg.Templates)
     if not text then return nil end
@@ -516,7 +579,9 @@ function RpConsequences.onClaimed(contractId, hitmanCid, fulfilment, result)
     if not contract then return end
     if fulfilment == CH.FULFILMENT.ELIMINATION and on('EmsRelisting') then
         killedAt[contract.target_cid] = os.time()
-        upSince[contract.target_cid] = nil
+        upSince[contract.target_cid], medicAt[contract.target_cid] = nil, nil
+        carried[contract.target_cid] = nil
+        keep(contract.target_cid)
     end
     pcall(witnessAlert, contract, hitmanCid, result and result.slot)
     pcall(postNews, contract, hitmanCid)
@@ -526,8 +591,22 @@ end
 function RpConsequences.init(deps)
     Storage, Identity, Notify = deps.storage, deps.identity, deps.notify
     Audit, Ledger = deps.audit, deps.ledger
-    killedAt, upSince, medicAt = {}, {}, {}
+    killedAt, upSince, medicAt, carried, tracked = {}, {}, {}, {}, {}
     startedAt = os.time()
+    -- What the last run kept of each recovering target, so the tick goes
+    -- on counting from where it was.
+    if Storage and Storage.readRpRows then
+        local ok, rows = pcall(Storage.readRpRows, EMS_KIND)
+        for _, row in ipairs(ok and type(rows) == 'table' and rows or {}) do
+            local cid, kill = row.cid, tonumber(row.killed_at)
+            if type(cid) == 'string' and kill then
+                killedAt[cid], tracked[cid] = kill, kill
+                upSince[cid] = tonumber(row.up_since)
+                medicAt[cid] = tonumber(row.medic_at)
+                carried[cid] = upSince[cid] ~= nil or nil
+            end
+        end
+    end
     if deps.contracts then
         deps.contracts.afterClaim.rpConsequences = RpConsequences.onClaimed
         deps.contracts.relistHold = RpConsequences.relistHold

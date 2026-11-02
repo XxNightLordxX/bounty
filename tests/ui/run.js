@@ -12566,13 +12566,68 @@ async function main() {
 
     click(app, 'Take the job');
     await settle();
-    click(app, 'Take it');
+    click(app, 'Under my name');
     await settle(); await settle();
     it('taking a job asks first and echoes the reward shown', function () {
       truthy(accepted, 'nothing sent');
       eq(accepted.job, 'prot00000001');
       eq(accepted.reward, 2500);
+      falsy(accepted.anonymous, 'under their name: no anonymity sent');
     });
+
+    /* Taking a job anonymously, as an operative takes a contract (bug sweep
+       S3: the choice was never offered, and the server dropped it). Offered
+       only where the server allows it whatever job the person guarded has. */
+    await (async function protectionAnonymity() {
+      async function taking(anonymity) {
+        const b = JSON.parse(JSON.stringify(BOARD));
+        b.data.settings.protection = true;
+        if (anonymity) { b.data.settings.anonymity = anonymity; }
+        let sent = null;
+        const a = boot({ list: b, mine: MINE, ledger: LEDGER,
+          protectionBoard: { ok: true, data: { enabled: true, maxJobs: 2,
+            open: [{ job: 'prot00000007', reward: 1500 }], mine: [] } },
+          protectionAccept: function (body) {
+            sent = body;
+            return { ok: true, data: { enabled: true, open: [], mine: [] } };
+          } });
+        await settle(); await settle();
+        click(a, 'Protection');
+        await settle(); await settle();
+        click(a, 'Take the job');
+        await settle();
+        return { app: a, sent: function () { return sent; } };
+      }
+      const anon = await taking(null);
+      click(anon.app, 'Anonymously');
+      await settle(); await settle();
+      it('S3: a guard may take a job anonymously, and the choice is sent', function () {
+        truthy(anon.sent(), 'nothing sent');
+        eq(anon.sent().anonymous, true);
+        eq(anon.sent().job, 'prot00000007');
+      });
+      const off = await taking({ placer: true, hitman: false,
+        whitelisted: { placer: true, hitman: false } });
+      it('S3: with anonymous acceptance off, no such choice is drawn', function () {
+        const labels = off.app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        falsy(labels.indexOf('Anonymously') !== -1, labels.join(' | '));
+      });
+      click(off.app, 'Take it');
+      await settle(); await settle();
+      it('S3: and the job is taken under their name', function () {
+        truthy(off.sent(), 'nothing sent');
+        falsy(off.sent().anonymous, 'no anonymity sent');
+      });
+      const halfOff = await taking({ placer: true, hitman: true,
+        whitelisted: { placer: true, hitman: false } });
+      it('S3: off for a whitelisted-job target only, no choice either (the board never says which)', function () {
+        const labels = halfOff.app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        falsy(labels.indexOf('Anonymously') !== -1, labels.join(' | '));
+        truthy(labels.indexOf('Take it') !== -1, labels.join(' | '));
+      });
+    })();
 
     tab(app, 'mine');
     await settle();

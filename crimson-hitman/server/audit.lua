@@ -255,7 +255,7 @@ local function mirrorBatch(rows)
     if #lines == 0 then return false end
 
     local content = table.concat(lines, '\n')
-    if #content > MAX_CHARS then content = content:sub(1, MAX_CHARS) end
+    if #content > MAX_CHARS then content = Util.toValidUtf8(content:sub(1, MAX_CHARS)) end
 
     PerformHttpRequest(url, function(status, _, headers)
         if tonumber(status) == 429 then

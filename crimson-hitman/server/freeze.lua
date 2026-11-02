@@ -263,9 +263,9 @@ end
 
 local function cleanReason(reason)
     if type(reason) ~= 'string' then return nil end
-    reason = reason:gsub('[%c]', ' '):gsub('^%s+', ''):gsub('%s+$', '')
-    if reason == '' then return nil end
-    return reason:sub(1, REASON_MAX)
+    -- By characters, never through one: a cut UTF-8 character is refused
+    -- by utf8mb4 (error 1366), and the whole write with it.
+    return Util.sanitizeText(reason, REASON_MAX)
 end
 
 --- Freeze a player. Every live contract they are party to goes on hold now.
@@ -292,7 +292,7 @@ freezeUnlocked = function(staffCid, cid, reason, name)
     local already = {}
     for i = 1, #contracts do already[contracts[i].id] = Freeze.holds(contracts[i]) end
 
-    local row = { cid = cid, name = type(name) == 'string' and name:sub(1, 128) or nil,
+    local row = { cid = cid, name = Util.sanitizeText(name, 128),
                   reason = reason, by_cid = staffCid, frozen_at = now }
     local wrote, err = pcall(Storage.writeFreeze, row)
     if not wrote then
@@ -477,6 +477,10 @@ function Freeze.scheduledRestart(data)
     local within = tonumber(Config.Restart and Config.Restart.PauseBeforeSeconds) or 0
     if within <= 0 or seconds > within then return false end
     if Freeze.restartHeld() then return false end
+    -- A hold past Config.Restart.MaxHoldMinutes that the tick has not
+    -- released yet is released first, giving back the time it took: the
+    -- new one taking its place lost that span.
+    if restartHold then Freeze.releaseRestart('max_hold') end
 
     local now = os.time()
     restartHold = { since = now }
@@ -611,12 +615,14 @@ end
 --- party is told once.
 local function startAppPause()
     local now = os.time()
+    -- Taken in this process before the first await: a second sync landing
+    -- in the write (the panel's watcher and the tick) finds it on.
+    appPause = { since = now }
     local wrote, err = pcall(Storage.writeStaffMeta, PAUSE_META, now)
     if not wrote then
         Log.always(('the app pause could not be kept by the store (%s); it is on until the next '
             .. 'start'):format(Util.dbError(err)))
     end
-    appPause = { since = now }
     local live = Storage.liveContracts() or {}
     for i = 1, #live do
         local contract = live[i]
@@ -642,12 +648,14 @@ end
 local function endAppPause()
     local since = appPause.since
     local now = os.time()
+    -- Taken in this process before the first await: a second sync landing
+    -- in the write finds it off, and gives nothing back a second time.
+    appPause = nil
     local wrote, err = pcall(Storage.writeStaffMeta, PAUSE_META, 0)
     if not wrote then
         Log.always(('the end of the app pause could not be kept by the store (%s)')
             :format(Util.dbError(err)))
     end
-    appPause = nil
     local gave, giveErr = pcall(giveBackApp, since, now)
     if not gave then
         Log.always(('the lifetime the app pause took could not be given back (%s)')

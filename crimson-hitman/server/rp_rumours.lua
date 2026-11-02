@@ -290,6 +290,10 @@ function Rumours.brokerBrief(actor, contractId, who)
     if not theirs or not mine or Util.dist2(mine, theirs) > radius * radius then
         return false, CH.ERR.BROKER_TOO_FAR
     end
+    -- Never the person the contract is on: briefed, they learnt of it before
+    -- their own alert (and On me) would tell them. Answered as any other
+    -- briefing, so the broker learns nothing of who they picked.
+    if picked.cid == contract.target_cid then return { briefed = true } end
     record(contract.id, picked.cid)
     deps.audit.action('rumour_briefed', picked.cid, contract.id, { via = 'broker', broker = actor.cid })
     pcall(deps.notify.toCitizen, picked.cid, 'Crimson-Hitman',

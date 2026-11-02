@@ -1800,7 +1800,10 @@ function App.register()
     end)
     handler('protectionAccept', 'accept', function(actor, payload)
         if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
-        return deps.rpProtection.accept(actor, { job = payload.job, reward = payload.reward })
+        -- Anonymously only where the guard chose it, and only where an
+        -- operative may take that contract anonymously (Protection.accept).
+        return deps.rpProtection.accept(actor, { job = payload.job, reward = payload.reward,
+                                                 anonymous = payload.anonymous == true })
     end)
     handler('protectionPin', 'accept', function(actor, payload)
         if not deps.rpProtection then return false, CH.ERR.FEATURE_OFF end
