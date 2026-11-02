@@ -99,18 +99,23 @@ local MOVES_IF = {
     expireIfDue = function(moved) return moved == true end,
 }
 
---- Writes that remove finished contracts (the prune). The board is never
---- built from those (above), but a count over a placer's past contracts is
---- (server/imp_placer_record.lua): Projection.contractGeneration moves on
---- them too.
+--- Writes that remove finished contracts (the retention prune). The board
+--- is never built from those (above), but a cache of every contract kept is
+--- (the admin panel's list, a placer's record: server/imp_placer_record.lua),
+--- so each counts as a prune for Projection.keptVersion, however it was
+--- called.
 local PRUNES = { prune = true, pruneContracts = true }
 
 --- Moved before and after every write: a board read while a write waits on
 --- the database (mysql) is never kept as current.
 local generation = 0
 
---- Moved before and after every prune (PRUNES), which leaves `generation`.
-local pruned = 0
+--- How many retention prunes have run: moved before and after every prune
+--- through the store (PRUNES), and by Projection.notePruned. A prune removes
+--- only finished contracts, which nothing the board or the live snapshot
+--- reads, so it need not move `generation`; a cache of every contract kept
+--- keys on this as well (Projection.keptVersion).
+local prunes = 0
 
 --- What boardBase built, for the generation it was built at.
 local board = nil
@@ -128,9 +133,9 @@ function Projection.watchStore(storage)
         local movesIf = MOVES_IF[name]
         if type(fn) == 'function' and PRUNES[name] then
             storage[name] = function(...)
-                pruned = pruned + 1
+                prunes = prunes + 1
                 local out = table.pack(pcall(fn, ...))
-                pruned = pruned + 1
+                prunes = prunes + 1
                 if not out[1] then error(out[2], 0) end
                 return table.unpack(out, 2, out.n)
             end
@@ -157,27 +162,26 @@ end
 
 --- How many times the store has been written through since the start: two
 --- equal answers mean nothing the board, a snapshot or a cache keyed on it
---- reads has changed in between (the admin panel's contract list).
+--- reads has changed in between. Moved by every write (watchStore), not by
+--- the prune.
 ---@return integer
 function Projection.generation()
     return generation
 end
 
---- How many retention prunes have run (Projection.notePruned). A prune
---- removes only finished contracts, which nothing the board or the live
---- snapshot reads, so it need not move `generation`; a cache of every
---- contract kept (the admin panel's list) keys on this as well.
-local prunes = 0
-
+--- A retention prune ran (main.lua's PruneStore). One through the store is
+--- counted already (PRUNES); this one is for a store that could not be
+--- watched, and a second count is harmless.
 function Projection.notePruned()
     prunes = prunes + 1
 end
 
 --- What a cache of every contract kept is current as of: the writes and
---- the prunes, as one comparable string.
+--- the prunes, as one comparable string (the admin panel's contract list,
+--- the placer's record).
 ---@return string
 function Projection.keptVersion()
-    return generation .. ':' .. prunes
+    return Projection.generation() .. ':' .. prunes
 end
 
 --- A value written out the same way every time: keys sorted, each value
@@ -403,25 +407,6 @@ local function recordOf(cid)
         memo.records[cid] = hit
     end
     return hit
-end
-
---- Which change to the store the board is at: moved by every write
---- (watchStore). For a module keeping something worked out from the store
---- for every viewer (server/imp_placer_record.lua), kept only while this is
---- what it was when it was worked out.
----@return integer
-function Projection.generation()
-    return generation
-end
-
---- Which change to the contracts the store is at: `generation`, and moved
---- by the prune as well, which removes finished contracts the board never
---- shows but a count over a placer's past contracts includes. Since round 3
---- the prune leaves `generation`, so a cache of such a count keyed on that
---- alone kept counting a pruned contract until the next other write.
----@return integer
-function Projection.contractGeneration()
-    return Projection.generation() + pruned
 end
 
 --- A viewer's own record (Progression.record), read once per request.

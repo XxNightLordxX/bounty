@@ -333,8 +333,13 @@ describe('the panel\'s contract list', function()
         -- does (a prune need not move the board's), so the list knows.
         local version = s.projection.keptVersion()
         truthy(main.prune(), 'pruned')
-        eq(tonumber(s.projection.keptVersion():match(':(%d+)$')), tonumber(version:match(':(%d+)$')) + 1,
+        -- Moved by the prune through the store as well as by notePruned
+        -- (merged with impB's placer record, which keys on it too), so by at
+        -- least one rather than exactly one.
+        truthy(tonumber(s.projection.keptVersion():match(':(%d+)$')) > tonumber(version:match(':(%d+)$')),
             'the prune moved what the list keys on, by itself')
+        eq(s.projection.keptVersion():match('^(%d+):'), version:match('^(%d+):'),
+            'and not the board\'s generation (round 3)')
         local counts = watching(s.storage, function() admin(402, 'contracts', { page = 1 }) end)
         eq(counts.allContracts, 1, 'read again')
         local _ = w

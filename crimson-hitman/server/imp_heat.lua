@@ -171,7 +171,7 @@ end
 
 --- Whether this hitman holds a live contract now.
 local function working(cid)
-    for _, c in ipairs(Storage.contractsInvolving(cid) or {}) do
+    for _, c in ipairs(Storage.contractsInvolving(cid, true) or {}) do
         if (c.state == CH.STATE.ACCEPTED or c.state == CH.STATE.COMPLETING) and c.creator_cid ~= cid
             and c.target_cid ~= cid then
             local row = Storage.readHitman(c.id, cid)

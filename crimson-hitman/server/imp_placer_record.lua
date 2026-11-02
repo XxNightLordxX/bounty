@@ -20,9 +20,10 @@
 ---     again at once). A band that moved when another anonymous contract of
 ---     theirs completed would say both were theirs.
 --- A named placer's record is exact and current: worked out once per change
---- to the contracts (Projection.contractGeneration: every write, and the
---- prune that removes finished ones) and kept for every viewer until the
---- next, or for at most NAMED_KEEP_SECONDS, as the days counted move on.
+--- to the contracts (Projection.keptVersion: every write, and the prune that
+--- removes finished ones, which the board's generation leaves) and kept for
+--- every viewer until the next, or for at most NAMED_KEEP_SECONDS, as the
+--- days counted move on.
 
 local Record = {}
 
@@ -96,7 +97,7 @@ function Record.forCard(contract)
     end
     -- One read per placer per change, every named contract of theirs
     -- counted; this card's own taken off after.
-    local gen = Projection.contractGeneration()
+    local gen = Projection.keptVersion()
     local now = os.time()
     if named.gen ~= gen or now - named.at >= NAMED_KEEP_SECONDS then
         named = { gen = gen, at = now, by = {} }
@@ -106,7 +107,7 @@ function Record.forCard(contract)
     if not hit then
         hit = Record.count(contract.creator_cid, false, nil, days, now)
         -- Kept only if nothing was written while it was read.
-        if Projection.contractGeneration() == gen and named.gen == gen then named.by[key] = hit end
+        if Projection.keptVersion() == gen and named.gen == gen then named.by[key] = hit end
     end
     local out = { placed = hit.placed, paidOut = hit.paidOut, cancelled = hit.cancelled, days = days }
     if (tonumber(contract.created_at) or 0) >= now - days * 86400 then

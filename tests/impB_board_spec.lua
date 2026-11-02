@@ -293,8 +293,8 @@ describe('the placer\'s record on a board card', function()
     end)
 
     -- Merge with round 3 (b037930): the prune no longer moves the board's
-    -- generation, so the named record is kept on contractGeneration, which
-    -- the prune does move, and for a minute at most as the days roll on.
+    -- generation, so the named record is kept on keptVersion, which the
+    -- prune does move, and for a minute at most as the days roll on.
     it('is current at once when a contract it counts finishes', function()
         local s, f, named = history()
         Config.Improvements.PlacerRecord.Enabled = true
@@ -314,11 +314,11 @@ describe('the placer\'s record on a board card', function()
         local before = boardCard(3, named.id).placerRecord
         eq(before.placed, 2, 'both finished ones counted and kept')
         local gen = s.projection.generation()
-        local contractGen = s.projection.contractGeneration()
+        local kept = s.projection.keptVersion()
         Config.Audit.ContractRetentionDays = 1
         s.storage.prune()
         eq(s.projection.generation(), gen, 'the prune leaves the board generation (round 3)')
-        truthy(s.projection.contractGeneration() ~= contractGen, 'and moves the contract generation')
+        truthy(s.projection.keptVersion() ~= kept, 'and moves the kept version')
         eq(#s.storage.contractsBy('CREATOR1'), 2, 'the finished named and anonymous ones are gone')
         local after = boardCard(3, named.id).placerRecord
         eq(after.placed, 0, 'the pruned contracts are no longer counted')
