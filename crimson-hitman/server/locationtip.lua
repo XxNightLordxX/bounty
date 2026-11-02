@@ -4,7 +4,7 @@
 --- Not Config.Informant, which sells a target the name of a hitman. This one
 --- is the other way round, and reuses its rules: the price the page showed
 --- is the price charged (TERMS_CHANGED otherwise), one purchase at a time
---- per contract and buyer (Contracts.serialized), the charge last, after
+--- per contract (Contracts.serialized), the charge last, after
 --- every check, and the money goes to nobody. Unlike the informant's, a tip
 --- that cannot be delivered is given back.
 ---
@@ -143,6 +143,17 @@ local function boughtBy(contractId, cid, now)
     return count, newest, showing
 end
 
+--- Every tip on the contract, whoever bought it: how many, and the newest.
+--- The most per contract and the wait between two are the contract's, not
+--- each hitman's (Config.LocationTip.MaxPurchasesPerContract,
+--- CooldownMinutes): five hitmen on one contract share the three.
+---@return integer count
+---@return table|nil newest
+local function boughtOn(contractId)
+    local rows = rowsFor(contractId)
+    return #rows, rows[#rows]
+end
+
 local function forget(row)
     local rows = byContract[row.contract_id]
     if not rows then return end
@@ -234,9 +245,10 @@ end
 
 local buyUnlocked
 
---- Buy an informant tip on a contract, one purchase at a time per contract
---- and buyer: a second tap while one runs is refused as busy, before
---- anything is read or charged.
+--- Buy an informant tip on a contract, one purchase at a time per contract,
+--- whichever hitman buys it (the limit and the wait are the contract's): a
+--- second tap while one runs is refused as busy, before anything is read or
+--- charged.
 ---@param actor table the buyer
 ---@param contractId any
 ---@param shown table|nil the page's echo of the price it quoted, { cost,
@@ -249,7 +261,7 @@ function LocationTip.buy(actor, contractId, shown)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if not LocationTip.enabled() then return false, CH.ERR.FEATURE_OFF end
     if not Contracts then return buyUnlocked(actor, contractId, shown) end
-    return Contracts.serialized({ 'locationTip:' .. contractId .. ':' .. tostring(actor.cid) },
+    return Contracts.serialized({ 'locationTip:' .. contractId },
         buyUnlocked, actor, contractId, shown)
 end
 
@@ -263,10 +275,10 @@ buyUnlocked = function(actor, contractId, shown)
     local show = math.max(1, setting('ShowMinutes', 10)) * 60
 
     -- Who may: a hitman holding the contract, and nobody else. Not found and
-    -- not theirs are the same answer, so an id cannot be tried for whether
-    -- it exists.
+    -- not theirs are the same answer (not_participant), so an id cannot be
+    -- tried for whether it exists.
     local contract = Storage.readContract(contractId)
-    if not contract or contract.target_cid == actor.cid then return false, CH.ERR.NOT_FOUND end
+    if not contract then return false, CH.ERR.NOT_PARTICIPANT end
     local mine = Storage.readHitman(contractId, actor.cid)
     if not mine or mine.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
@@ -281,7 +293,7 @@ buyUnlocked = function(actor, contractId, shown)
     end
 
     local now = os.time()
-    local count, newest = boughtBy(contractId, actor.cid, now)
+    local count, newest = boughtOn(contractId)
     if count >= most then return false, CH.ERR.LIMIT_REACHED, { most = most } end
     local untilAt = newest and ((tonumber(newest.bought_at) or 0) + wait) or 0
     if untilAt > now then
@@ -397,8 +409,9 @@ function LocationTip.reshow(actor)
 end
 
 --- What a hitman's own card says about tips on a contract they hold: how
---- many they have left, when the next may be bought, the one showing now,
---- and whether the target is in the city to be found. Their own rows only.
+--- many are left on it, when the next may be bought (both the contract's,
+--- the same on every hitman's card), the one of their own showing now, and
+--- whether the target is in the city to be found. Never another's area.
 --- nil where the server sells none and none is showing.
 ---@param contract table
 ---@param cid string
@@ -406,7 +419,8 @@ end
 function LocationTip.cardFor(contract, cid)
     if CH.TERMINAL[contract.state] then return nil end
     local now = os.time()
-    local count, newest, showing = boughtBy(contract.id, cid, now)
+    local _, _, showing = boughtBy(contract.id, cid, now)
+    local count, newest = boughtOn(contract.id)
     local on = LocationTip.enabled(contract)
     -- Off for this contract while the server sells them elsewhere: said, so
     -- the card draws no button.

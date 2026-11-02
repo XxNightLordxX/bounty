@@ -451,6 +451,19 @@ function Util.operativeNamesShown(protected)
     return rules ~= nil and rules.ShowOperativeNames == true
 end
 
+--- Whether a placer who put their name to a contract is named on the board,
+--- to every viewer, not only to its parties (Config.Anonymity.ShowPlacerOnBoard,
+--- or Config.Anonymity.WhitelistedTargets.ShowPlacerOnBoard on a contract
+--- whose target is on a whitelisted job). Read per contract at every view;
+--- anything but true is off, and only the placer, the operatives on it and
+--- its target see the name.
+---@param protected boolean|nil the target is on a whitelisted job
+---@return boolean
+function Util.placerShownOnBoard(protected)
+    local rules = anonymityRules(protected)
+    return rules ~= nil and rules.ShowPlacerOnBoard == true
+end
+
 --- Count digits, used to blunt phone numbers and addresses in free text (§14.30).
 function Util.digitCount(text)
     local n = 0

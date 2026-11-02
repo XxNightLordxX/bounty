@@ -402,8 +402,15 @@ local CATALOGUE = {
           .. 'hitmen, law enforcement or Discord.',
       inflight = 'Read at every view, with no restart. Operatives who accepted anonymously keep '
           .. 'their alias either way.' },
+    { key = 'Anonymity.ShowPlacerOnBoard', section = 'features', category = 'features', group = 'Anonymity',
+      kind = 'switch', label = 'Placer names shown on the board',
+      about = 'A placer who put their name to a contract is named to everybody browsing the '
+          .. 'board. Off, only the contract\'s parties see the name: the placer, the operatives '
+          .. 'on it and its target.',
+      inflight = 'Read at every view, with no restart. Contracts placed anonymously are never '
+          .. 'named either way.' },
 
-    -- The same three, in place of those above, on a contract whose target is
+    -- The same four, in place of those above, on a contract whose target is
     -- on a whitelisted job (as the contract records it, like the advisory).
     { key = 'Anonymity.WhitelistedTargets.AllowAnonymousPlacer', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
@@ -427,6 +434,14 @@ local CATALOGUE = {
           .. 'it. Applies there in place of the general switch. Never to anybody else.',
       inflight = 'Read at every view, with no restart. Operatives who accepted anonymously keep '
           .. 'their alias either way.' },
+    { key = 'Anonymity.WhitelistedTargets.ShowPlacerOnBoard', section = 'features', category = 'features',
+      group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
+      label = 'Placer names shown on the board',
+      about = 'A placer who put their name to a contract on a member of a whitelisted job is '
+          .. 'named to everybody browsing the board. Applies there in place of the general '
+          .. 'switch; off, only the contract\'s parties see the name.',
+      inflight = 'Read at every view, with no restart. Contracts placed anonymously are never '
+          .. 'named either way.' },
 
     { key = 'Amendments.Enabled', section = 'features', category = 'features', group = 'Proposals', kind = 'switch',
       label = 'Proposals', about = 'Changes to a contract that need the other side\'s agreement.',
@@ -700,7 +715,7 @@ local CATALOGUE = {
     { key = 'LocationTip.MaxPurchasesPerContract', section = 'limits', group = 'Informant tip',
       category = 'rules-limits',
       kind = 'number', integer = true, min = 1, max = 50,
-      label = 'Tips per hitman per contract', inflight = AT_USE },
+      label = 'Tips per contract, all its hitmen together', inflight = AT_USE },
 
     { key = 'Restart.PauseBeforeSeconds', section = 'limits', category = 'rules-timers', group = 'Server restart',
       kind = 'number', integer = true, min = 0, max = 3600,

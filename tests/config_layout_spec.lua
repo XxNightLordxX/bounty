@@ -54,10 +54,13 @@ local ADDED = {
     -- feature off at once. Anonymity ships off (the owner's request), and
     -- a named operative is shown to the target by name.
     ['Anonymity.ShowOperativeNames'] = true,
+    -- A named placer shown on the board to every viewer: off, parties only.
+    ['Anonymity.ShowPlacerOnBoard'] = false,
     -- The same three where the target is on a whitelisted job, and the
     -- three informant features there.
     ['Anonymity.WhitelistedTargets'] = {
         AllowAnonymousPlacer = false, AllowAnonymousHitman = false, ShowOperativeNames = true,
+        ShowPlacerOnBoard = false,
     },
     ['InformantsWhitelistedTargets'] = {
         Informant = false, PlacerInformant = false, LocationTip = false,
@@ -136,7 +139,7 @@ describe('the configuration as one short file', function()
         local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
         local seen = {}
         for path, pair in pairs(differences(was, now)) do
-            if ADDED[path] then
+            if ADDED[path] ~= nil then
                 eq(pair[1], nil, 'Config.' .. path .. ' is new since the rewrite')
                 local off = {}
                 for key in pairs(differences(ADDED[path], pair[2])) do off[#off + 1] = key end
@@ -177,6 +180,12 @@ describe('the configuration as one short file', function()
             -- And settings added since, each new and shipped as ADDED says.
             local addedSince = pair[1] == nil and type(pair[2]) ~= 'table' and ADDED[path] == pair[2]
                 and path:match('^Limits%.StaffDeadline') ~= nil
+            -- The board's placer switch, and its whitelisted-job counterpart,
+            -- both new and shipped off.
+            if pair[1] == nil and pair[2] == false and (path == 'Anonymity.ShowPlacerOnBoard'
+                or path == 'Anonymity.WhitelistedTargets.ShowPlacerOnBoard') then
+                addedSince = true
+            end
             if not (path == 'Admin.DeveloperAce' and pair[1] == nil and pair[2] == 'crimson.developer')
                 and not addedSince then
                 off[#off + 1] = ('%s: %s -> %s'):format(path, tostring(pair[1]), tostring(pair[2]))

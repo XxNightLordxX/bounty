@@ -2247,6 +2247,39 @@ async function main() {
     });
   })();
 
+  /* ---- The developer ACE without the staff ACE: its own section's settings ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(access({ canWrite: false, canIdentify: false, canDevelop: true }));
+    await settled();
+    app.nav('devsettings');
+    await settled();
+    it('the developer ACE alone can change a Developer setting', function () {
+      app.$$('.seg-btn').filter(function (b) {
+        return b.getAttribute('data-act') === 'st-choice' && b.getAttribute('data-key') === 'Completion.PhotoStorage';
+      }).forEach(function (b) { eq(!!b.disabled, false, 'choice ' + b.getAttribute('data-value')); });
+      eq(!!app.byId('st-save-Cooldowns.create').disabled, false);
+      eq(app.byId('st-row-convar:crimson_hitman_webhook').querySelectorAll('input').length, 0,
+        'never a denied one');
+    });
+    app.type(app.byId('st-map-create').querySelectorAll('input')[1], '1');
+    const sets = app.requests('setSetting').length;
+    app.click(app.byId('st-save-Cooldowns.create'));
+    await settled();
+    app.click(app.byId('st-save-Cooldowns.create'));
+    await settled();
+    it('and sends it', function () {
+      eq(app.requests('setSetting').length, sets + 1);
+      eq(app.last('setSetting').data, { key: 'Cooldowns.create.burst', value: 1 });
+    });
+    app.nav('features');
+    await settled();
+    it('but no setting of any other section', function () {
+      app.$$('.switch').forEach(function (b) { eq(b.disabled, true, 'switch ' + b.getAttribute('data-key')); });
+    });
+    clean(app, 'developer ACE alone');
+  })();
+
   /* ---- Developer, and Permissions ---- */
   await (async function () {
     const server = standardServer();

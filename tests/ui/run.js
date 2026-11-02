@@ -11013,7 +11013,7 @@ async function main() {
         'drawn where it is on');
     });
     it('hitman: says why it cannot be bought: the most, the target away', function () {
-      [[most, 'You have bought the most informant tips allowed on this contract (3).'],
+      [[most, 'The most informant tips allowed on this contract, by all its hitmen, have been bought (3).'],
        [away, 'The target is not in the city right now, so there is nobody to place.']]
         .forEach(function (pair) {
           const offer = button(pair[0], 'Buy informant tip');

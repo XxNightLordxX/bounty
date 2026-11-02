@@ -1528,6 +1528,9 @@ H.freeze = function(src, data)
     local ok, err = deps.freeze.freeze(staffOf(src), cid, reason, name)
     if not ok then
         if err == 'already_frozen' then return false, err, 'They are already frozen.' end
+        if err == CH.ERR.BUSY then
+            return false, err, 'A freeze or release of them is still being saved. Try again in a moment.'
+        end
         return false, err, 'Not frozen: the store did not take it. Try again in a moment.'
     end
     return true, nil, ('%s is frozen. Every live contract they are party to is on hold until you '
@@ -1549,6 +1552,9 @@ H.unfreeze = function(src, data)
     local ok, err = deps.freeze.unfreeze(staffOf(src), cid, shortText(data.reason, 120))
     if not ok then
         if err == 'not_frozen' then return false, err, 'They are not frozen.' end
+        if err == CH.ERR.BUSY then
+            return false, err, 'A freeze or release of them is still being saved. Try again in a moment.'
+        end
         return false, err, 'Not unfrozen: the store did not take it. Try again in a moment.'
     end
     return true, nil, 'Unfrozen. Their contracts run again, with the time on hold given back.'
@@ -1638,6 +1644,18 @@ local function developerKey(key)
     if deps.settings.DENY and deps.settings.DENY[key] then return true end
     local entry = deps.settings.entry(key)
     return entry ~= nil and entry.category == 'developer'
+end
+
+--- Whether this request is a change to one setting of the Developer section
+--- by name (setSetting, resetSetting) from somebody who may open it: what
+--- Config.Admin.DeveloperAce writes without Config.Admin.Ace. Never a key
+--- on the deny list, which nobody writes from the panel, and nothing else.
+local function developerWrite(src, op, data)
+    if op ~= 'setSetting' and op ~= 'resetSetting' then return false end
+    local key = type(data) == 'table' and data.key or nil
+    if type(key) ~= 'string' or (deps.settings.DENY and deps.settings.DENY[key]) then return false end
+    local entry = deps.settings.entry(key)
+    return entry ~= nil and entry.category == 'developer' and developer(src)
 end
 
 H.settings = function(src)
@@ -1998,7 +2016,10 @@ function Panel.handle(src, payload)
     -- nobody knows is checked as a read, so it answers the same as any
     -- other to somebody who may not read.
     local level = (op and OPS[op]) or READ
-    if not allowed(src, (level == IDENTITY or level == DEVELOPER) and READ or level) then
+    local byDeveloper = level == WRITE and type(payload) == 'table' and not allowed(src, WRITE)
+        and developerWrite(src, op, payload.data)
+    if not byDeveloper
+        and not allowed(src, (level == IDENTITY or level == DEVELOPER) and READ or level) then
         noteDenied(src, op, 'denied')
         return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace, true)
             .. (level == WRITE

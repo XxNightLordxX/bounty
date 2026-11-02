@@ -213,9 +213,12 @@ describe('an informant tip refused, nothing charged', function()
         local banks = { [1] = bank(1), [2] = bank(2), [4] = bank(4) }
         Env.players[2].PlayerData.money.bank = 100000
         banks[2] = 100000
-        refused(s, c, 2, buy(2, c), CH.ERR.NOT_FOUND)
+        refused(s, c, 2, buy(2, c), CH.ERR.NOT_PARTICIPANT)
         refused(s, c, 1, buy(1, c), CH.ERR.NOT_PARTICIPANT)
         refused(s, c, 4, buy(4, c), CH.ERR.NOT_PARTICIPANT)
+        -- A stranger asking about an id that is no contract is answered as
+        -- about one that is: whether it exists is not told.
+        eq(call('locationTip', 4, { id = 'ctnosuchid0', shown = PRICE }).err, CH.ERR.NOT_PARTICIPANT)
         for src, was in pairs(banks) do eq(bank(src), was, 'source ' .. src .. ' charged nothing') end
     end)
 
@@ -408,6 +411,40 @@ describe('informant tips over time', function()
         local _ = f
     end)
 
+    it('counts the most and the wait across every hitman on the contract', function()
+        local s, f, c = taken()
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            bank = 100000, firstname = 'Kit', lastname = 'Vane' })
+        local h2 = s.identity.resolve(4)
+        truthy(s.contracts.accept(h2, c.id, false), 'a second hitman on it')
+        truthy(buy(3, c).ok, 'the first hitman\'s')
+        local before = bank(4)
+        local r = buy(4, c)
+        eq(r.err, CH.ERR.TIP_COOLDOWN, 'the wait is the contract\'s, not each hitman\'s')
+        eq(bank(4), before, 'nothing charged')
+        -- Both cards say the same left and wait; only the buyer's shows the area.
+        local row = s.storage.readContract(c.id)
+        local one = s.projection.contract(row, 'HITMAN01').locationTip
+        local two = s.projection.contract(row, 'HITMAN02').locationTip
+        eq(one.left, 2); eq(two.left, 2)
+        eq(one.cooldownUntil, two.cooldownUntil)
+        truthy(two.cooldownSeconds and two.cooldownSeconds > 0, 'the other hitman\'s card says the wait')
+        truthy(one.secondsLeft, 'the buyer sees theirs')
+        falsy(two.secondsLeft, 'the other hitman is not shown one they did not buy')
+        Env.advance(601)
+        truthy(buy(4, c).ok, 'the second, by the other hitman')
+        Env.advance(601)
+        truthy(buy(3, c).ok, 'the third')
+        Env.advance(601)
+        before = bank(4)
+        eq(buy(4, c).err, CH.ERR.LIMIT_REACHED, 'three on the contract, not three each')
+        eq(bank(4), before)
+        row = s.storage.readContract(c.id)
+        eq(s.projection.contract(row, 'HITMAN01').locationTip.left, 0)
+        eq(s.projection.contract(row, 'HITMAN02').locationTip.left, 0)
+        local _ = f
+    end)
+
     it('does not reset the wait or the count when the hitman leaves and comes back', function()
         local s, f, c = taken()
         truthy(buy(3, c).ok)
@@ -530,7 +567,7 @@ describe('who is sent an informant tip\'s area', function()
         local other = s.projection.accepted('HITMAN02')[1]
         clean(other, 'the other hitman')
         falsy(other.locationTip and other.locationTip.secondsLeft, 'the other hitman has none showing')
-        eq(other.locationTip.left, 3, 'and counts only their own')
+        eq(other.locationTip.left, 2, 'the count is the contract\'s, the same on every card')
         clean(s.projection.onMe('TARGET01'), 'the target')
         local mine = s.projection.accepted('HITMAN01')[1]
         clean(mine, 'the buyer\'s own card')

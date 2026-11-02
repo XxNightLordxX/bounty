@@ -2382,7 +2382,7 @@
   function tipBlocked(rules, own, contract) {
     if (rules.enabled !== true) { return 'Informant tips are turned off on this server.'; }
     if (own && Number(own.left) <= 0) {
-      return 'You have bought the most informant tips allowed on this contract ('
+      return 'The most informant tips allowed on this contract, by all its hitmen, have been bought ('
         + (Number(rules.maxPerContract) || 0) + ').';
     }
     if (own && Number(own.cooldownSeconds) > 0) {
@@ -2487,12 +2487,12 @@
         + '. Nothing was taken. Tap it twice again if that is fine.';
     }
     if (r.err === 'tip_cooldown' && Number(d.retryAfter) > 0) {
-      return 'You bought a tip on this contract a moment ago. The next one is sold at '
+      return 'A tip on this contract was bought a moment ago. The next one is sold at '
         + clockAt(d.retryAfter) + '. Nothing was taken.';
     }
     if (r.err === 'limit_reached') {
-      return 'You have bought the most informant tips allowed on this contract. '
-        + 'Nothing was taken.';
+      return 'The most informant tips allowed on this contract, by all its hitmen, have been '
+        + 'bought. Nothing was taken.';
     }
     if (r.err === 'insufficient_funds' && typeof d.cost === 'number') {
       return 'You cannot afford the tip: it costs ' + money(d.cost) + ' from '

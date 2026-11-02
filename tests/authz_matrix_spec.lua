@@ -652,7 +652,9 @@ MATRIX.locationTip = {
         return { id = contract.id,
                  shown = { cost = Config.LocationTip.Cost, account = Config.LocationTip.Account } }
     end,
-    expect = { creator = NOT_PARTY, target = CH.ERR.NOT_FOUND, hitman = ALLOW,
+    -- One answer for the target, a stranger and an id that is no contract:
+    -- whether an id exists is not told.
+    expect = { creator = NOT_PARTY, target = NOT_PARTY, hitman = ALLOW,
                otherHitman = NOT_PARTY, stranger = NOT_PARTY, admin = NOT_PARTY },
     why = 'the target\'s rough area is sold to a hitman holding the contract, and to nobody '
        .. 'else: not the person it names, not the placer',

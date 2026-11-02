@@ -272,12 +272,14 @@ local DEFAULTS = {
         AllowAnonymousPlacer = false,
         AllowAnonymousHitman = false,
         ShowOperativeNames = true,
+        ShowPlacerOnBoard = false,
         --- Their counterparts for a target on a whitelisted job, shipped
         --- the same.
         WhitelistedTargets = {
             AllowAnonymousPlacer = false,
             AllowAnonymousHitman = false,
             ShowOperativeNames = true,
+            ShowPlacerOnBoard = false,
         },
     },
     --- Read inside the purchase. A missing price is not a free informant;
@@ -876,6 +878,10 @@ local function validateConfig(quiet)
         -- is an alias to them, as before the switch.
         { section = 'Anonymity', key = 'ShowOperativeNames',
           off = 'the target sees every operative by alias only, named or not' },
+        -- Off is the side that names a placer to nobody but the contract's
+        -- own parties.
+        { section = 'Anonymity', key = 'ShowPlacerOnBoard',
+          off = 'a named placer is named to the contract\'s parties only, never on the board' },
         -- The same three where the target is on a whitelisted job.
         { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'AllowAnonymousPlacer',
           off = 'no contract on a whitelisted job can be placed anonymously' },
@@ -883,6 +889,8 @@ local function validateConfig(quiet)
           off = 'no contract on a whitelisted job can be accepted anonymously' },
         { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'ShowOperativeNames',
           off = 'a target on a whitelisted job sees every operative by alias only' },
+        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'ShowPlacerOnBoard',
+          off = 'a named placer of a contract on a whitelisted job is named on the board to nobody' },
         -- The three informant features where the target is on a whitelisted
         -- job: off sells nothing there, as each general one does.
         { section = 'InformantsWhitelistedTargets', key = 'Informant',

@@ -50,10 +50,29 @@ describe('projection', function()
         eq(s.storage.readContract(c.id).creator_cid, 'CREATOR1')
     end)
 
-    it('shows the creator name when they chose to be seen', function()
+    it('shows a named creator to the contract\'s parties, not to the board', function()
         local s, f, c = seeded()
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
-        eq(row.creatorName, 'Vic Marlowe')
+        -- A stranger browsing the board: no name, no key carrying it.
+        local stranger = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
+        falsy(stranger.creatorName, 'a stranger is not told who placed it')
+        falsy(stranger.creatorAnonymous, 'nor that it was anonymous: it was not')
+        Env.addPlayer({ source = 9, citizenid = 'PUBLIC01', license = 'license:p' })
+        for _, row in ipairs(s.projection.listing('PUBLIC01').contracts) do
+            falsy(row.creatorName, 'no name on any board row')
+        end
+        -- The operative on it and the placer themself see it.
+        s.contracts.accept(f.hitman, c.id, false)
+        eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').creatorName, 'Vic Marlowe')
+        eq(s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').creatorName, 'Vic Marlowe')
+        -- The owner's switch puts it back on the board, read per contract.
+        Config.Anonymity.ShowPlacerOnBoard = true
+        eq(s.projection.contract(s.storage.readContract(c.id), 'PUBLIC01').creatorName, 'Vic Marlowe')
+        local protected = s.storage.readContract(c.id)
+        protected.target_protected = true
+        falsy(s.projection.contract(protected, 'PUBLIC01').creatorName,
+            'a whitelisted-job target reads its own switch, off')
+        Config.Anonymity.WhitelistedTargets.ShowPlacerOnBoard = true
+        eq(s.projection.contract(protected, 'PUBLIC01').creatorName, 'Vic Marlowe')
     end)
 
     it('never sends the hitman roster to a public viewer', function()
@@ -78,14 +97,22 @@ describe('projection', function()
         eq(row.hitmen[1].name, 'Rook Ash')
     end)
 
-    it('never shows a target the creator or the hitmen', function()
+    it('shows a target a named placer, never an anonymous one or the hitmen', function()
         local s, f, c = seeded({ accept = true, bailout = 15000 })
+        -- Nothing at all before the alert's wait is over (Notify.shownToTarget).
+        eq(#s.projection.onMe('TARGET01'), 0, 'not shown before the alert')
         -- Shown to the target once the alert's wait is over (anonymity_spec).
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         local rows = s.projection.onMe('TARGET01')
         eq(#rows, 1)
-        falsy(rows[1].creatorName, 'the target does not learn who wants them dead')
+        eq(rows[1].creatorName, 'Vic Marlowe', 'a placer who put their name to it is known')
+        falsy(rows[1].creatorAnonymous)
         falsy(rows[1].hitmen, 'nor who is coming')
+        local s2 = seeded({ accept = true, anonCreator = true })
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        local anon = s2.projection.onMe('TARGET01')[1]
+        falsy(anon.creatorName, 'an anonymous placer is not named')
+        truthy(anon.creatorAnonymous)
         eq(rows[1].bailoutAmount, 15000, 'but does learn the price of freedom')
     end)
 

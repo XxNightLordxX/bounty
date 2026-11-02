@@ -278,6 +278,9 @@ describe('the placer\'s informant', function()
             refused(s, f.hitman, c, pick, CH.ERR.NOT_PARTICIPANT)
             Env.addPlayer({ source = 9, citizenid = 'NOSEY001', license = 'license:n', bank = 99999 })
             refused(s, s.identity.resolve(9), c, pick, CH.ERR.NOT_PARTICIPANT)
+            -- An id that is no contract answers the same.
+            eq(select(2, s.informant.placerBuy(s.identity.resolve(9), 'ctnosuchid0', nil, pick)),
+                CH.ERR.NOT_PARTICIPANT, 'whether an id exists is not told')
         end)
 
         it('a placer now on a barred job', function()
@@ -630,7 +633,8 @@ describe('the target\'s informant', function()
         eq(data.label, 'The person who placed it')
         local onMe = s.projection.onMe('TARGET01')[1]
         eq(onMe.informantFound[1].text, 'Vic Marlowe')
-        eq(onMe.creatorName, nil, 'the card itself still names nobody')
+        eq(onMe.creatorName, nil, 'the card itself still names nobody: the placer was anonymous')
+        truthy(onMe.creatorAnonymous)
     end)
 
     it('does not sell a named placer, who is known already', function()
@@ -643,6 +647,8 @@ describe('the target\'s informant', function()
         local placer = view(s, c, 'TARGET01').informantPicks[2]
         eq(placer.pick, 'placer')
         eq(placer.known, true, 'the card says so')
+        -- And the card names them, as the dialog says the target knows.
+        eq(s.projection.onMe('TARGET01')[1].creatorName, 'Vic Marlowe')
         eq(placer.named, true)
     end)
 
@@ -726,6 +732,9 @@ describe('the target\'s informant', function()
                 CH.ERR.NOT_PARTICIPANT, 'the placer has their own informant')
             eq(select(2, s.informant.buy(f.hitman, c.id, targetShown(), pick)),
                 CH.ERR.NOT_PARTICIPANT)
+            -- An id that is no contract answers as one that is not theirs.
+            eq(select(2, s.informant.buy(f.hitman, 'ctnosuchid0', targetShown(), pick)),
+                CH.ERR.NOT_PARTICIPANT, 'whether an id exists is not told')
             eq(select(2, s.informant.buy(f.target, c.id, targetShown(), nil)), CH.ERR.INVALID_INPUT)
             truthy(s.contracts.abandon(f.hitman, c.id))
             eq(select(2, s.informant.buy(f.target, c.id, targetShown(), pick)),

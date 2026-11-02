@@ -229,19 +229,21 @@ ConfigDefaults.Mugshot = {
 --                            FEATURES: ANONYMITY
 -- ============================================================================
 -- Whether a contract may be placed or accepted anonymously, what that costs,
--- and the same three switches where the target is on a whitelisted job.
+-- and the same four switches where the target is on a whitelisted job.
 
 ConfigDefaults.Anonymity = {
     AllowAnonymousPlacer = false,   -- a contract may be placed anonymously
     AllowAnonymousHitman = false,   -- a contract may be accepted anonymously
     ShowOperativeNames   = true,    -- the target sees a named operative's name
+    ShowPlacerOnBoard    = false,   -- the board names a named placer; off: parties only
     CreatorFee           = 0,       -- fee to place anonymously; 0 = free
     HitmanFee            = 0,       -- fee to accept anonymously; 0 = free
     FeeAccount           = 'bank',  -- 'cash' | 'bank'
-    WhitelistedTargets   = { -- the same three, where the target is on a whitelisted job
+    WhitelistedTargets   = { -- the same four, where the target is on a whitelisted job
         AllowAnonymousPlacer = false,  -- such a contract may be placed anonymously
         AllowAnonymousHitman = false,  -- such a contract may be accepted anonymously
         ShowOperativeNames   = true,   -- such a target sees a named operative's name
+        ShowPlacerOnBoard    = false,  -- the same, on such a contract
     },
 }
 
@@ -281,8 +283,8 @@ ConfigDefaults.LocationTip = {
     Account                 = 'bank',  -- 'cash' | 'bank'
     RadiusMeters            = 350,     -- metres; the area shown is twice this across
     ShowMinutes             = 10,      -- minutes the area stays on the hitman's map
-    CooldownMinutes         = 10,      -- minutes between two tips on one contract
-    MaxPurchasesPerContract = 3,       -- tips per hitman per contract
+    CooldownMinutes         = 10,      -- minutes between two tips on one contract, by anybody
+    MaxPurchasesPerContract = 3,       -- tips per contract, all its hitmen together
     NotifyTarget            = true,    -- tell the target someone knows their rough area
 }
 

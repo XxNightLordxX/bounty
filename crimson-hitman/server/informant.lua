@@ -304,8 +304,10 @@ targetBuy = function(actor, contractId, shown, pick)
     local cost = math.floor(tonumber(Config.Informant.Cost) or 0)
     local account = Config.Informant.Account
 
+    -- Not found and not theirs are the same answer (not_participant), so an
+    -- id cannot be tried for whether it exists.
     local contract = Storage.readContract(contractId)
-    if not contract then return false, CH.ERR.NOT_FOUND end
+    if not contract then return false, CH.ERR.NOT_PARTICIPANT end
     -- The target's, and only the target's: the placer has an informant of
     -- their own (Informant.placerBuy).
     if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
@@ -568,8 +570,9 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
     local cost = math.floor(tonumber(rules.Cost) or 0)
     local account = rules.Account
 
+    -- Not found and not theirs are the same answer, as the target's.
     local contract = Storage.readContract(contractId)
-    if not contract then return false, CH.ERR.NOT_FOUND end
+    if not contract then return false, CH.ERR.NOT_PARTICIPANT end
     -- The placer's, named or anonymous, and nobody else's: never a hitman
     -- on it or its target.
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end

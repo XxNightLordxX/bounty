@@ -344,6 +344,25 @@ describe('the Developer section', function()
         truthy(any, 'the developer ACE reads them')
     end)
 
+    it('lets the developer ACE alone change and reset its own section\'s settings, and nothing else', function()
+        panelStack()
+        local set = ask(9, 'setSetting', { key = 'Debug', value = true })
+        eq(set.ok, true, tostring(set.message))
+        eq(Config.Debug, true)
+        local reset = ask(9, 'resetSetting', { key = 'Debug' })
+        eq(reset.ok, true, tostring(reset.message))
+        -- Every other write stays the staff ACE's: another section's key, a
+        -- deny-listed one, and any other write.
+        eq(ask(9, 'setSetting', { key = 'Anonymity.ShowPlacerOnBoard', value = true }).err, 'not_allowed')
+        eq(ask(9, 'resetSetting', { key = 'Anonymity.ShowPlacerOnBoard' }).err, 'not_allowed')
+        eq(ask(9, 'setSetting', { key = 'Admin.Ace', value = 'x' }).err, 'not_allowed')
+        eq(ask(9, 'resetSettings', {}).err, 'not_allowed')
+        eq(ask(9, 'freeze', { subject = 2, reason = 'x' }).err, 'not_allowed')
+        -- And an extra ACE alone writes none of it.
+        eq(ask(7, 'setSetting', { key = 'Debug', value = true }).err, 'not_allowed')
+        eq(Config.Debug, false)
+    end)
+
     it('refuses the console to staff without it, saying how to grant it', function()
         panelStack()
         local reply = ask(7, 'console', {})

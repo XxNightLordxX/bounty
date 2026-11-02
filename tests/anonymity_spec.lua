@@ -1642,7 +1642,7 @@ describe('anonymity as shipped, and names shown to the target', function()
             end
         end)
 
-        it('is a second panel group of three switches that apply at once and are kept', function()
+        it('is a second panel group of four switches that apply at once and are kept', function()
             local s = newStack()
             local found = 0
             for _, e in ipairs(s.settings.CATALOGUE) do
@@ -1651,8 +1651,9 @@ describe('anonymity as shipped, and names shown to the target', function()
                     eq(e.section, 'features'); eq(e.kind, 'switch')
                 end
             end
-            eq(found, 3)
-            for _, key in ipairs({ 'AllowAnonymousPlacer', 'AllowAnonymousHitman', 'ShowOperativeNames' }) do
+            eq(found, 4)
+            for _, key in ipairs({ 'AllowAnonymousPlacer', 'AllowAnonymousHitman', 'ShowOperativeNames',
+                                   'ShowPlacerOnBoard' }) do
                 local path = 'Anonymity.WhitelistedTargets.' .. key
                 local want = Config.Anonymity.WhitelistedTargets[key] ~= true
                 turn(s, path, want)

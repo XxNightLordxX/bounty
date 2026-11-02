@@ -335,6 +335,14 @@
   function canIdentify() { return S.access.canIdentify === true; }
   /** Writes wait for boot recovery, as the commands do; flushing the log does not. */
   function writesOpen() { return canWrite() && S.recovery === 'ready'; }
+  /** Whether a setting's controls are open: to the staff ACE, and a setting
+      of the Developer section to the developer ACE too (never a denied one),
+      as the server allows its setSetting and resetSetting. */
+  function settingOpen(entry) {
+    if (writesOpen()) return true;
+    return !!entry && entry.category === 'developer' && !entry.denied && canDevelop()
+      && S.recovery === 'ready';
+  }
 
   function whyNoWrite() {
     if (!canWrite()) {
@@ -488,11 +496,11 @@
   /** A button that changes something: disabled, saying why, for staff who
       may only read, and while recovery holds writes back. A second label is
       the confirm it shows when armed. */
-  function writeBtn(cls, act, attrs, label, confirmLabel, iconName, always) {
+  function writeBtn(cls, act, attrs, label, confirmLabel, iconName, always, open) {
     var a = attrs || {};
     a.type = 'button';
     a['data-act'] = act;
-    var allowed = always ? canWrite() : writesOpen();
+    var allowed = open !== undefined ? open : (always ? canWrite() : writesOpen());
     if (!allowed) { a.disabled = true; a.title = whyNoWrite(); }
     if (confirmLabel) a['data-confirm'] = 'yes';
     return h('button.btn' + (cls || ''), a, iconName ? icon(iconName) : null, h('span.lbl', label),
@@ -2536,7 +2544,7 @@
   function settingControl(entry) {
     var key = entry.key;
     if (entry.readonly) return h('span.st-value', entry.secret ? String(entry.value) : describe(entry, entry.value));
-    var open = writesOpen();
+    var open = settingOpen(entry);
     var busy = !!S.busy['set:' + key];
     if (entry.kind === 'switch') {
       var on = entry.value === true;
@@ -2565,7 +2573,7 @@
             'data-key': key, disabled: !open, 'aria-label': 'Add to ' + entry.label }),
           btn('.is-small', 'st-list-add', { 'data-key': key, disabled: !open || null }, 'Add', 'plus'),
           writeBtn('.is-small' + (changed ? '.is-primary' : ''), 'st-list-save',
-            { 'data-key': key, id: 'st-save-' + key }, 'Save list', 'Click again to save', 'check')));
+            { 'data-key': key, id: 'st-save-' + key }, 'Save list', 'Click again to save', 'check', false, open)));
     }
     if (entry.kind === 'range') {
       var pair = entry.value && typeof entry.value === 'object' ? entry.value : {};
@@ -2576,7 +2584,7 @@
         field('st.' + key + '.max', { value: String(typedOr('st.' + key + '.max', pair.max)), class: 'is-short',
           inputmode: 'decimal', disabled: !open, 'aria-label': entry.label + ': to' }),
         writeBtn('.is-small', 'st-range-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
-          'Click again to save', 'check'),
+          'Click again to save', 'check', false, open),
         h('span.st-range', num(entry.min) + ' to ' + num(entry.max) + (entry.integer ? ', whole' : '')));
     }
     var bind = 'st.' + key;
@@ -2589,7 +2597,7 @@
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
         disabled: !open, 'aria-label': entry.label }),
       writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
-        entry.destroys || entry.stricter ? 'Click again to save' : null, 'check'),
+        entry.destroys || entry.stricter ? 'Click again to save' : null, 'check', false, open),
       h('span.st-range', range));
   }
 
@@ -2659,9 +2667,10 @@
       h('div.st-control', settingControl(entry),
         entry.ignored || entry.unknown || (overridden && !entry.readonly)
           ? writeBtn('.is-small.is-ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
-            'Click again to reset', 'arrow-rotate-left') : null,
+            'Click again to reset', 'arrow-rotate-left', false, settingOpen(entry)) : null,
         offDefault ? writeBtn('.is-small.is-ghost', 'st-default', { 'data-key': key }, 'Reset to default',
-          'Click again: back to ' + describe(entry, entry.shipped), 'rotate-left') : null));
+          'Click again: back to ' + describe(entry, entry.shipped), 'rotate-left', false,
+          settingOpen(entry)) : null));
   }
 
   /** Under Kill photos, while they are off and some are kept from before
@@ -2784,7 +2793,7 @@
     var per = settingEntry('Cooldowns.' + bucket + '.per');
     var burst = settingEntry('Cooldowns.' + bucket + '.burst');
     if (!per || !burst) return frag();
-    var open = writesOpen();
+    var open = settingOpen(per) && settingOpen(burst);
     var answer = S.settings.answers['Cooldowns.' + bucket];
     return frag(
       h('div.st-main',
@@ -2804,7 +2813,7 @@
           field('st.Cooldowns.' + bucket + '.burst', { value: String(typedOr('st.Cooldowns.' + bucket + '.burst', burst.value)),
             class: 'is-short', inputmode: 'numeric', disabled: !open, 'aria-label': bucket + ': requests held' })),
         writeBtn('.is-small', 'st-map-save', { 'data-bucket': bucket, id: 'st-save-Cooldowns.' + bucket }, 'Save',
-          'Click again to save', 'check'))));
+          'Click again to save', 'check', false, open))));
   }
 
   /** The buckets whose two rows are both editable here. */
@@ -3777,7 +3786,7 @@
   ACTIONS['st-save'] = function (node) {
     var key = node.getAttribute('data-key');
     var entry = settingEntry(key);
-    if (!entry || entry.readonly || !writesOpen()) return;
+    if (!entry || entry.readonly || !settingOpen(entry)) return;
     var typed = S.forms['st.' + key];
     if (typed === undefined) typed = entry.kind === 'list' ? asList(entry.value).join(', ') : String(entry.value);
     var parsed = parseSetting(entry, typed);

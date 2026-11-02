@@ -129,7 +129,7 @@ end
 function Projection.contract(contract, viewerCid)
     local role = roleOf(contract, viewerCid)
     local hitmen = Storage.readHitmen(contract.id)
-    local heldSince = Freeze and Freeze.heldSince(contract, hitmen) or nil
+    local heldSince = role ~= 'public' and Freeze and Freeze.heldSince(contract, hitmen) or nil
 
     local activeHitmen = 0
     for i = 1, #hitmen do
@@ -195,7 +195,9 @@ function Projection.contract(contract, viewerCid)
         -- times (server/panel.lua).
         timeLeft      = Util.timeBand(Util.runLeft(contract)),
         -- Staff have put it on hold (server/freeze.lua). The same one word
-        -- to every viewer, never which party or why: true or absent.
+        -- to each of its parties, never which of them or why: true or
+        -- absent. Never to a stranger on the board, where it told them
+        -- which anonymous contracts belonged to the player staff froze.
         onHold        = heldSince ~= nil or nil,
         role          = role,
         -- What accepting costs, to everyone who can see the contract.
@@ -241,12 +243,16 @@ function Projection.contract(contract, viewerCid)
         end
     end
 
-    -- The creator's identity is present only when they chose to be seen.
-    -- When anonymous, no key carrying it exists on the payload.
-    if not contract.anon_creator then
-        out.creatorName = contract.creator_name
-    else
+    -- The creator's identity is present only when they chose to be seen,
+    -- and then only to the contract's parties (the placer, an operative on
+    -- it, its target): a stranger browsing the board is not told who placed
+    -- it unless Config.Anonymity.ShowPlacerOnBoard (or its WhitelistedTargets
+    -- counterpart) says so, and no key carrying it is on their payload.
+    -- When anonymous, no key carrying it exists on anybody's.
+    if contract.anon_creator then
         out.creatorAnonymous = true
+    elseif role ~= 'public' or Util.placerShownOnBoard(contract.target_protected == true) then
+        out.creatorName = contract.creator_name
     end
 
     if role == 'creator' then
@@ -787,11 +793,11 @@ local function buildOnMe(viewerCid)
         -- at once, the tab dated the placement for a target who looked.
         if not CH.TERMINAL[c.state] and Notify.shownToTarget(c) then
             local row = Projection.contract(c, viewerCid)
-            -- A target learns a price exists on them and what freedom costs.
-            -- They do not learn who placed it, and never the hitman roster.
-            -- The target learns there is a client, never which one.
-            row.creatorName = nil
-            row.creatorAnonymous = true
+            -- A target learns a price exists on them and what freedom costs,
+            -- and, as their whitelisted-job view says it, a placer who put
+            -- their name to it (creatorName, from Projection.contract): the
+            -- informant will not sell a named placer, as already known. An
+            -- anonymous one stays creatorAnonymous. Never the hitman roster.
             row.hitmen = nil
             out[#out + 1] = row
         end

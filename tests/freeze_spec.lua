@@ -379,6 +379,37 @@ describe('nobody is told which party is frozen', function()
         end
     end)
 
+    it('a stranger\'s board row is byte-identical before and after freezing an anonymous placer', function()
+        local _, s = boot('memory')
+        local f = people(s)
+        local c = place(s, f.creator, 'TARGET01', { anonymous = true })
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken')
+        -- Every key and value, in a fixed order.
+        local function canon(v)
+            if type(v) ~= 'table' then return type(v) .. ':' .. tostring(v) end
+            local keys = {}
+            for k in pairs(v) do keys[#keys + 1] = k end
+            table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+            local out = {}
+            for _, k in ipairs(keys) do out[#out + 1] = tostring(k) .. '=' .. canon(v[k]) end
+            return '{' .. table.concat(out, ',') .. '}'
+        end
+        local function strangerRow()
+            local rows = s.projection.listing('HITMAN02').contracts
+            for _, row in ipairs(rows) do
+                if row.id == c.id then return canon(row) end
+            end
+            return nil
+        end
+        local before = strangerRow()
+        truthy(before, 'listed to the stranger')
+        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'dispute'), 'the anonymous placer frozen')
+        eq(strangerRow(), before, 'the stranger\'s row changed at the freeze')
+        eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').onHold, true,
+            'the operative\'s card still says On hold')
+        eq(s.projection.mine('CREATOR1')[1].onHold, true, 'the placer\'s card still says On hold')
+    end)
+
     it('staff without the identity ACE are not shown that an anonymous party is the frozen one', function()
         local _, s = boot('memory')
         local f = people(s)
@@ -460,5 +491,97 @@ describe('the record', function()
         eq(releasedRows[1].actor_cid, 'ADMIN001')
         eq(releasedRows[1].detail.subject, 'TARGET01')
         eq(releasedRows[1].detail.reason, 'resolved')
+    end)
+end)
+
+describe('a freeze and a release of one player, interleaved at the store', function()
+    -- As races_spec does: the second call lands in the gap the first one's
+    -- store await leaves.
+    local function consistent(s)
+        eq(s.freeze.count(), #s.freeze.list(), 'the count is not what is frozen')
+    end
+
+    it('two releases at once: one runs, the lifetime is given back once', function()
+        local _, s = boot('memory')
+        local f = people(s)
+        local c = place(s, f.creator, 'TARGET01')
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken')
+        local lifetimeLeft = s.storage.readContract(c.id).expires_at - os.time()
+        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'a'), 'frozen')
+        Env.advance(300)
+        local real, second, secondErr = s.storage.deleteFreeze, nil, nil
+        s.storage.deleteFreeze = function(...)
+            if second == nil then second, secondErr = s.freeze.unfreeze('ADMIN001', 'TARGET01') end
+            return real(...)
+        end
+        local first = s.freeze.unfreeze('ADMIN001', 'TARGET01')
+        s.storage.deleteFreeze = real
+        truthy(first, 'the first release')
+        falsy(second, 'the second ran alongside it')
+        eq(secondErr, CH.ERR.BUSY)
+        consistent(s)
+        eq(s.freeze.count(), 0)
+        eq(s.storage.readContract(c.id).expires_at - os.time(), lifetimeLeft,
+            'the lifetime was given back twice')
+        -- A later freeze still holds.
+        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'b'), 'frozen again')
+        truthy(s.freeze.of('TARGET01'), 'a later freeze is in force')
+        truthy(s.freeze.holds(s.storage.readContract(c.id)), 'and holds the contract')
+    end)
+
+    it('two freezes at once: one runs, and one release ends it', function()
+        local _, s = boot('memory')
+        local f = people(s)
+        local c = place(s, f.creator, 'TARGET01')
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken')
+        local real, second, secondErr = s.storage.writeFreeze, nil, nil
+        s.storage.writeFreeze = function(...)
+            if second == nil then second, secondErr = s.freeze.freeze('ADMIN001', 'TARGET01', 'b') end
+            return real(...)
+        end
+        local first = s.freeze.freeze('ADMIN001', 'TARGET01', 'a')
+        s.storage.writeFreeze = real
+        truthy(first, 'the first freeze')
+        falsy(second, 'the second ran alongside it')
+        eq(secondErr, CH.ERR.BUSY)
+        consistent(s)
+        eq(s.freeze.count(), 1)
+        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'released')
+        consistent(s)
+        eq(s.freeze.count(), 0)
+        falsy(s.freeze.holds(s.storage.readContract(c.id)), 'still on hold after the release')
+        -- And a later freeze still holds.
+        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'c'), 'frozen again')
+        truthy(s.freeze.holds(s.storage.readContract(c.id)), 'a later freeze holds')
+    end)
+
+    it('a freeze inside a release, and a release inside a freeze, are refused as busy', function()
+        local _, s = boot('memory')
+        local f = people(s)
+        local c = place(s, f.creator, 'TARGET01')
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken')
+
+        local realWrite, unfreezeOk, unfreezeErr = s.storage.writeFreeze, nil, nil
+        s.storage.writeFreeze = function(...)
+            if unfreezeOk == nil then unfreezeOk, unfreezeErr = s.freeze.unfreeze('ADMIN001', 'TARGET01') end
+            return realWrite(...)
+        end
+        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'a'), 'frozen')
+        s.storage.writeFreeze = realWrite
+        falsy(unfreezeOk); eq(unfreezeErr, CH.ERR.BUSY)
+        consistent(s)
+        truthy(s.freeze.holds(s.storage.readContract(c.id)), 'the freeze stands')
+
+        local realDelete, freezeOk, freezeErr = s.storage.deleteFreeze, nil, nil
+        s.storage.deleteFreeze = function(...)
+            if freezeOk == nil then freezeOk, freezeErr = s.freeze.freeze('ADMIN001', 'TARGET01', 'b') end
+            return realDelete(...)
+        end
+        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'released')
+        s.storage.deleteFreeze = realDelete
+        falsy(freezeOk); eq(freezeErr, CH.ERR.BUSY)
+        consistent(s)
+        eq(s.freeze.count(), 0)
+        falsy(s.freeze.holds(s.storage.readContract(c.id)), 'the release stands')
     end)
 end)

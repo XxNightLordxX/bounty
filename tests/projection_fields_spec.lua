@@ -65,7 +65,7 @@ local CONDITIONAL = {
     everTaken = 'creator-only',
     -- Only on a contract staff have put on hold (server/freeze.lua): its
     -- absence is a contract running as usual.
-    onHold = 'only while staff hold the contract',
+    onHold = 'only while staff hold the contract, and only to its parties',
     -- Only on a contract the viewer is the target of. Its absence elsewhere
     -- is the rule, not a gap.
     bailoutAvailable = 'target-only',
@@ -93,7 +93,8 @@ local CONDITIONAL = {
     -- Exactly one of these two, never both: when the creator chose anonymity
     -- no key carrying their name exists on the payload at all.
     creatorAnonymous = 'present only when the creator chose anonymity',
-    creatorName      = 'present only when they did not',
+    creatorName      = 'present only when they did not, and to a stranger on the board only '
+        .. 'with Config.Anonymity.ShowPlacerOnBoard',
     -- The creator learns how many operatives are on it and, where a hitman
     -- chose to be seen, who. Nobody else gets the list.
     hitmen          = 'creator-only',
@@ -247,6 +248,9 @@ describe('the fields whose presence is a rule', function()
     it('names the creator, or says they are anonymous, never both or neither', function()
         for _, anonymous in ipairs({ false, true }) do
             local s = newStack()
+            -- Named on the board (to this stranger) only with the switch on;
+            -- off, see projection_spec.
+            Config.Anonymity.ShowPlacerOnBoard = true
             local f = fixture(s)
             Env.players[1].PlayerData.money.bank = 400000
             truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01',
