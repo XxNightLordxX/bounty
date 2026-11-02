@@ -54,7 +54,7 @@ local Log = CrimsonBoot.requireShared('log')
 
 local Protection = {}
 
-local Storage, Identity, Audit, Notify, App, Informant, Review, Contracts
+local Storage, Identity, Audit, Notify, App, Informant, Review, Contracts, Projection
 
 local KIND = 'protection'
 
@@ -91,6 +91,7 @@ function Protection.init(deps)
     Storage, Identity, Audit, Notify = deps.storage, deps.identity, deps.audit, deps.notify
     App, Informant = deps.app, deps.informant
     Review, Contracts = deps.review, deps.contracts
+    Projection = deps.projection
     jobs, busy, loaded = {}, {}, false
     prunedAt = 0
     -- Asked by Contracts' acceptance: a guard may not take a contract on
@@ -442,14 +443,22 @@ function Protection.prune()
     return removed
 end
 
+--- The most jobs one pass settles: each is a payout or a refund. The rest
+--- wait for the next tick.
+Protection.SETTLES_PER_PASS = 25
+
 --- The tick: settle every job whose contract has ended, and pay what is
 --- still owed to anybody in the city. Runs whether the switch is on or off,
---- so turning it off strands nothing. Every PRUNE_EVERY seconds, the rows
---- of settled jobs on pruned contracts go too (Protection.prune).
+--- so turning it off strands nothing; with no job kept it reads nothing.
+--- Whether a job's contract is still running comes from the snapshot the
+--- other loops share (Projection.liveSnapshot): its contract is read only
+--- once it has left that list (it was a read a job, every tick). Every
+--- PRUNE_EVERY seconds, the rows of settled jobs on pruned contracts go too
+--- (Protection.prune).
 ---@return integer settled
 function Protection.sweep()
     load()
-    if not loaded then return 0 end
+    if not loaded or next(jobs) == nil then return 0 end
     local now = os.time()
     if now - prunedAt >= PRUNE_EVERY then
         prunedAt = now
@@ -459,15 +468,30 @@ function Protection.sweep()
     local ids = {}
     for id in pairs(jobs) do ids[#ids + 1] = id end
     table.sort(ids)
+    local running
     for i = 1, #ids do
         local job = jobs[ids[i]]
         -- A row the store would not take, written again first.
         if job and job.unsaved and not busy[job.id] then save(job) end
-        if job and live(job) and not busy[job.id] then
-            local outcome, why = outcomeOf(Storage.readContract(job.contract_id))
-            if outcome then
-                settle(job, outcome, why)
-                settled = settled + 1
+        if job and live(job) and not busy[job.id] and settled < Protection.SETTLES_PER_PASS then
+            if running == nil then
+                running = false
+                if Projection and Projection.liveSnapshot then
+                    local ok, list = pcall(Projection.liveSnapshot)
+                    if ok and type(list) == 'table' then
+                        running = {}
+                        for _, c in ipairs(list) do
+                            if not CH.TERMINAL[c.state] then running[c.id] = true end
+                        end
+                    end
+                end
+            end
+            if not (running and running[job.contract_id]) then
+                local outcome, why = outcomeOf(Storage.readContract(job.contract_id))
+                if outcome then
+                    settle(job, outcome, why)
+                    settled = settled + 1
+                end
             end
         elseif job and job.state == 'settling' then
             payOut(job)

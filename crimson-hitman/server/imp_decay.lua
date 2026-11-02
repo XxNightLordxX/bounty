@@ -26,9 +26,23 @@ local Util = CrimsonBoot.requireShared('util')
 
 local Decay = {}
 
-local Storage, Identity, Notify, Audit, Escrow, Contracts, Amendments, Board
+local Storage, Identity, Notify, Audit, Escrow, Contracts, Amendments, Board, Projection
 
 local KIND = 'imp_decay'
+
+--- The most steps one pass takes. Every untaken contract placed in the same
+--- hour falls due on the same pass, and each 'rise' step is a charge with
+--- its escrow, ledger and notice: a hundred of them were 1,951 statements
+--- and a second of one frame on mysql in the harness. The rest wait for the
+--- passes after, a minute apart; a step is counted in hours.
+Decay.STEPS_PER_PASS = 25
+
+--- When the next pass has anything to do, os.time(): the soonest step due,
+--- and never later than one step from the last pass, so a contract placed
+--- while it sleeps is seen before its first step can fall due. 0: now.
+local nextAt = 0
+--- The Hours that nextAt was worked out with: a change wakes the next pass.
+local nextHours = nil
 
 --- [contractId] = row { id, kind, contract_id, steps, added, base, last_at, off, stopped }
 local rows = {}
@@ -157,25 +171,62 @@ local function shorten(cfg, row, contract, now)
     Audit.action('imp_decay_shortened', contract.creator_cid, contract.id, { step = row.steps })
 end
 
---- The tick (once a minute): one step on each untaken contract that is due
---- one, and the rows of contracts that ended forgotten.
+--- The tick (once a minute, on a tick of its own): one step on each
+--- untaken contract that is due one, at most STEPS_PER_PASS a pass, and the
+--- rows of contracts that ended forgotten. The steps sleep until the
+--- soonest is due; what is running comes from the snapshot the other loops
+--- share (Projection.liveSnapshot), so a pass with no step due and no row
+--- kept reads nothing, and one with rows kept reads nothing new while
+--- nothing was written.
+---@return integer stepped
 function Decay.tick()
     local cfg = rules()
-    if not cfg then return end
+    if not cfg then
+        nextAt = 0
+        return 0
+    end
     local now = os.time()
     local hours = math.max(1, num(cfg.Hours, 1))
+    if hours ~= nextHours then nextAt, nextHours = 0, hours end
+    local stepping = now >= nextAt
+    if not stepping and next(rows) == nil then return 0 end
+    local every = hours * 3600
+    local soonest, stepped, more = now + every, 0, false
+    local list
+    if Projection and Projection.liveSnapshot then
+        list = Projection.liveSnapshot()
+    else
+        list = Storage.liveContracts()
+    end
     local live = {}
-    for _, contract in ipairs(Storage.liveContracts() or {}) do
+    for _, contract in ipairs(list or {}) do
         live[contract.id] = true
-        if contract.state == CH.STATE.ACTIVE
-            and not (Contracts.heldByStaff and Contracts.heldByStaff(contract))
-            and not (Contracts.appPaused and Contracts.appPaused()) then
-            local row = rowFor(contract, now, hours)
-            if not row.off and not row.stopped and now - num(row.last_at, now) >= hours * 3600 then
-                if cfg.Mode == 'shorten' then
-                    shorten(cfg, row, contract, now)
-                else
-                    rise(cfg, row, contract, now)
+        if stepping and contract.state == CH.STATE.ACTIVE then
+            if (Contracts.heldByStaff and Contracts.heldByStaff(contract))
+                or (Contracts.appPaused and Contracts.appPaused()) then
+                -- Held: no step, and looked at again on the next pass.
+                soonest = now
+            else
+                local row = rowFor(contract, now, hours)
+                if not row.off and not row.stopped then
+                    local dueAt = num(row.last_at, now) + every
+                    if now < dueAt then
+                        soonest = math.min(soonest, dueAt)
+                    elseif stepped >= Decay.STEPS_PER_PASS then
+                        more = true
+                    else
+                        stepped = stepped + 1
+                        if cfg.Mode == 'shorten' then
+                            shorten(cfg, row, contract, now)
+                        else
+                            rise(cfg, row, contract, now)
+                        end
+                        -- One that waited (its placer away) is due again on
+                        -- the next pass; one taken, a step from now.
+                        if not row.stopped then
+                            soonest = math.min(soonest, num(row.last_at, now) + every)
+                        end
+                    end
                 end
             end
         end
@@ -183,6 +234,8 @@ function Decay.tick()
     for id in pairs(rows) do
         if not live[id] then forget(id) end
     end
+    if stepping then nextAt = more and 0 or soonest end
+    return stepped
 end
 
 --- What the placer's card says of it, or nil.
@@ -230,7 +283,8 @@ end
 function Decay.init(deps, board)
     Storage, Identity, Notify, Audit = deps.storage, deps.identity, deps.notify, deps.audit
     Escrow, Contracts, Amendments, Board = deps.escrow, deps.contracts, deps.amendments, board
-    rows = {}
+    Projection = deps.projection
+    rows, nextAt, nextHours = {}, 0, nil
     if Storage and Storage.readRpRows then
         local ok, kept = pcall(Storage.readRpRows, KIND)
         for _, row in ipairs(ok and type(kept) == 'table' and kept or {}) do

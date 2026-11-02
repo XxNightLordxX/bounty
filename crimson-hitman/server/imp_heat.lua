@@ -27,7 +27,7 @@ local Util = CrimsonBoot.requireShared('util')
 
 local Heat = {}
 
-local Storage, Identity, Notify, Audit, Board
+local Storage, Identity, Notify, Audit, Board, Projection
 
 local KIND = 'imp_heat'
 
@@ -35,6 +35,9 @@ local KIND = 'imp_heat'
 local events = {}
 --- When the last bulletin went, os.time().
 local lastBulletin = -math.huge
+--- When the oldest heat kept cools, os.time(): the tick prunes nothing
+--- before then. math.huge: none kept.
+local coolsAt = math.huge
 
 --- Drawn for the target's warning. A test may replace it.
 Heat.random = math.random
@@ -113,6 +116,7 @@ function Heat.add(cid, points, why)
     local list = events[cid] or {}
     list[#list + 1] = { at = now, points = points }
     events[cid] = list
+    coolsAt = math.min(coolsAt, now + num((rules() or {}).DecayHours, 24) * 3600)
     keep(cid)
     Audit.action('imp_heat_added', cid, nil, { points = points, why = why, heat = Heat.of(cid) })
 end
@@ -169,13 +173,29 @@ local function policeJobs()
     return jobs
 end
 
---- Whether this hitman holds a live contract now.
+--- Whether this hitman holds a live contract now, from the snapshot of
+--- what is running the other loops share (Projection.liveSnapshot): no
+--- read of its own while nothing was written.
 local function working(cid)
-    for _, c in ipairs(Storage.contractsInvolving(cid, true) or {}) do
+    local contracts, rosters
+    if Projection and Projection.liveSnapshot then contracts, rosters = Projection.liveSnapshot() end
+    if not contracts then
+        for _, c in ipairs(Storage.contractsInvolving(cid, true) or {}) do
+            if (c.state == CH.STATE.ACCEPTED or c.state == CH.STATE.COMPLETING) and c.creator_cid ~= cid
+                and c.target_cid ~= cid then
+                local row = Storage.readHitman(c.id, cid)
+                if row and row.state == 'active' then return true end
+            end
+        end
+        return false
+    end
+    for _, c in ipairs(contracts) do
         if (c.state == CH.STATE.ACCEPTED or c.state == CH.STATE.COMPLETING) and c.creator_cid ~= cid
             and c.target_cid ~= cid then
-            local row = Storage.readHitman(c.id, cid)
-            if row and row.state == 'active' then return true end
+            local roster = rosters and rosters[c.id] or Storage.readHitmen(c.id) or {}
+            for _, row in ipairs(roster) do
+                if row.hitman_cid == cid and row.state == 'active' then return true end
+            end
         end
     end
     return false
@@ -223,23 +243,30 @@ function Heat.bulletin(now)
     return true
 end
 
---- The tick: heat that cooled dropped (and its row), then the bulletin.
+--- The tick: heat that cooled dropped (and its row), once the oldest kept
+--- has cooled and not before, then the bulletin (its own wait).
 function Heat.tick()
     if not rules() then return end
     local now = os.time()
-    for cid in pairs(events) do
-        if prune(cid, now) then keep(cid) end
+    if now >= coolsAt then
+        local decay = num(rules().DecayHours, 24) * 3600
+        coolsAt = math.huge
+        for cid in pairs(events) do
+            if prune(cid, now) then keep(cid) end
+            for _, e in ipairs(events[cid] or {}) do coolsAt = math.min(coolsAt, e.at + decay) end
+        end
     end
     Heat.bulletin(now)
 end
 
 --- Test seam.
 function Heat.reset()
-    events, lastBulletin = {}, -math.huge
+    events, lastBulletin, coolsAt = {}, -math.huge, math.huge
 end
 
 function Heat.init(deps, board)
     Storage, Identity, Notify, Audit, Board = deps.storage, deps.identity, deps.notify, deps.audit, board
+    Projection = deps.projection
     Heat.reset()
     if Storage and Storage.readRpRows then
         local ok, rows = pcall(Storage.readRpRows, KIND)
@@ -251,6 +278,8 @@ function Heat.init(deps, board)
                     if at and points then list[#list + 1] = { at = at, points = points } end
                 end
                 if #list > 0 then events[row.cid] = list end
+                -- Cooled while the server was down: dropped on the first tick.
+                if #list > 0 then coolsAt = math.min(coolsAt, list[1].at) end
             end
         end
     end

@@ -27,6 +27,9 @@ local Weekly = {}
 
 local deps
 local lastDay = nil
+--- Asleep until the next post falls due: { untilAt, why, key }, key being
+--- the Day and Hour it was worked out for (a change wakes it). nil: awake.
+local asleep = nil
 Weekly.META = 'imp_weekly_day'
 Weekly.CONVAR = 'crimson_hitman_stats_webhook'
 local WEEK = 7 * 86400
@@ -45,7 +48,7 @@ end
 ---@param d table { storage, audit, alerts }
 function Weekly.init(d)
     deps = d
-    lastDay = nil
+    lastDay, asleep = nil, nil
     if deps.storage and deps.storage.readStaffMeta then
         local ok, meta = pcall(deps.storage.readStaffMeta)
         if ok and type(meta) == 'table' then lastDay = tonumber(meta[Weekly.META]) end
@@ -167,12 +170,27 @@ end
 ---@return boolean posted
 ---@return string|nil why 'off' | 'early' | 'done' | 'no_webhook' | 'unavailable'
 function Weekly.tick()
-    if not Imp.on('WeeklyStats') then return false, 'off' end
+    if not Imp.on('WeeklyStats') then
+        asleep = nil
+        return false, 'off'
+    end
     local now = os.time()
+    -- It knows when the next post falls due, and sleeps until then: a
+    -- comparison a tick, not the calendar worked out again.
+    local rules = Imp.block('WeeklyStats')
+    local key = tostring(rules.Day) .. '@' .. tostring(rules.Hour)
+    if asleep and asleep.key == key and now < asleep.untilAt then return false, asleep.why end
+    asleep = nil
     local due = Weekly.lastDue(now)
-    if now - due >= 86400 then return false, 'early' end
+    if now - due >= 86400 then
+        asleep = { untilAt = due + WEEK, why = 'early', key = key }
+        return false, 'early'
+    end
     local day = dayNumber(due)
-    if lastDay == day then return false, 'done' end
+    if lastDay == day then
+        asleep = { untilAt = due + WEEK, why = 'done', key = key }
+        return false, 'done'
+    end
     local queued, err = send(Weekly.text(Weekly.totals(now), day))
     if not queued then return false, err end
     lastDay = day

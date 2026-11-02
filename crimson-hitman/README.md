@@ -3354,38 +3354,51 @@ statements (142 ms), the rest on the ticks after (`tests/loops_spec.lua`
 pins both).
 
 **Server: the maintenance tick** (every `Config.Audit.FlushIntervalMs`, 10 s as
-shipped). A job not listed here runs every tick and costs under 0.06 ms a pass
-with nothing to do, and sends the database nothing (the retries of stuck
-joins, claims and creates, the sweeps of rate limits and handles, the photo
-sweep, the review queue, the bodyguard and intent sweeps, the restart hold,
-suspensions and the summary). On a busy `mysql` server with nothing to do, a
-tick sends two statements at most: the heartbeat, and every third tick the
-endings check; it sent seven or eight, and the condition sampler two more
-every second (`tests/loops_spec.lua` pins it job by job).
+shipped). Every job runs inside `pcall` (a job that raises is logged and the
+others go on) and stops with the resource. On a busy `mysql` server with
+nothing to do, a tick sends two statements at most: the heartbeat, and every
+third tick the endings check (`tests/loops_spec.lua` pins it job by job).
 
-| Job | Interval | Why that often | Cost a pass (`mysql` / `json`) |
+The last column says why each job cannot reasonably cost less: its interval
+is bound by what it guards, and what is left is the least it must read. Where
+a trade-off is left on purpose, it says which and why.
+
+| Job | Interval | Cost a pass (`mysql` / `json`) | Why it cannot reasonably go lower |
 |---|---|---|---|
-| `contracts.releaseIdleHolds` | 10 s | The idle and attempt clocks advance by the time since the last pass; a hold is released within one tick of its window. No clock runs, and nothing is released, while staff hold the contract, the restart hold is on or the app is paused. Reads the running contracts and their rosters from the snapshot it shares with the sampler and the expiry pass, read again only after a write (was 2 statements every pass), and asks `qbx_core` once a pass for each person. **At most 25 releases a pass** (`Contracts.IDLE_RELEASES_PER_PASS`): the clocks are kept in memory, so every hold falls due on the same pass half an hour after a start, and that pass released all two hundred in one frame (2,002 statements, 705 ms in the harness); the rest go on the passes after, their clocks standing | 1.9 / 1.0 with nothing due, 0 statements; 75 ms and 252 statements for a pass releasing 25 (`mysql`, harness) |
-| `expireContracts` | 10 s, skipped until the next deadline, a presence change or a contract change | Its own next-wake logic decides: a pass with nothing that could have changed reads nothing, and the list comes from the shared snapshot. **At most 25 endings a pass**, and the pass comes back on the next tick while any are left: after a long outage every deadline in it was due at once, two hundred endings in one frame (5,602 statements, 1.9 s in the harness; about a second on `json`) | 0.11 (3.2) / 0.07 (2.0); 317 ms and 726 statements for a pass ending 25 (`mysql`, harness), 120 ms on `json` |
-| `audit.flush` | 10 s | Audit rows written in batches; its time is what `/ch-diag`'s *maintenance tick* line reads | 0.28 (8.3) / 0.88 (26, the pass after 200 contracts were placed) |
-| `storage.flush` | 10 s | `json`: the changed files only, so a crash loses at most ten seconds. `mysql`: nothing | 0.00 / 0.33 (5.2) |
-| `storage.heartbeat` | `json` 60 s, `mysql` 10 s | When the server was last alive, which a restart's downtime is dated from (never charged to a deadline) | 0.00 / 0.01; one file write (34 ms seen on Windows), on a tick of its own |
-| `playtime.pass` | 60 s, first tick of each minute | Everybody's time in the city, in one batch. The first pass after a start reads every character's row in one statement and their numbers in `qbx_core`'s table in one more (was one of each per character: 129 statements with 64 here); when the tracker started is read once | 0.21 (2.3) / 0.16 (1.2); a transaction of a row per player |
-| `storage.prune` | **600 s**, and every tick while a pass removes a full batch | Retention is counted in days. Every tick it walked every contract kept on `json` (3 ms with thirty days of them) and sent two statements on `mysql`; a backlog was ten DELETEs a contract, two hundred contracts a tick (2,000 statements). On `mysql` a pass now removes at most 25 contracts, whatever `Config.Audit.ContractsPrunedPerTick` allows | 1.1 / 0.1 |
-| `bailout.processQueue` | 10 s | Buyouts waiting out their delay. `json` keeps an index of them rather than walking every contract kept each tick; `mysql` remembers the queue was empty and sends nothing until something queues one (was a statement every tick) | 0.01; 0 statements while none is queued |
-| `photos.expire`, `photos.forgetKept` | 10 s, only while kill photos are in use | A photo left open past `Config.Completion.PhotoOpenSeconds`, and one kept past `Config.Completion.KeptPhotoDays`. The expiry reads what is open once after a start and then keeps it as photos are opened, asking the store only when one is due (was a statement every tick) | 0.01; 0 statements with no view open |
-| `amendments.expire`, `rp.tick`, `death.sweep`, `contracts.retryStuckJoins` / `retryStuckClaims` / `retryStuckCreates`, `review.retryUnwritten` / `review.decide` | 10 s | Proposals past their time, from an index of the contracts with one open; targets recovering from a kill (nothing while `Config.Roleplay.EmsRelisting` is off); the sampler's own bookkeeping; work a throw left part-way, from in-memory lists of it; staff items the store would not take | under 0.02 each; 0 statements with nothing to do |
-| `bridges.refreshAccess` | **30 s** (was 10 s) | Who may have the app. A login, a job change, a duty change and a setting that moves it tell the player at once; this is the backstop | 0.32 (0.38) / 0.29 (0.47); 7 ms seen live |
-| `notify.deliverKept` | 10 s (was 60 s), nothing read while nothing is kept | Notices kept past a player's per-minute budget go on the first tick after that minute opens, rather than up to a minute later | 0.00 with nothing kept |
-| `rp_places.announce` | **60 s on the tick** (was a thread of its own) | NPC positions rotate by the hour; a change from the admin panel is announced at once | 0.01 |
-| `freeze.syncAppPause` | **60 s** (was 10 s) | The pause follows its switch at once when changed (set, reset, undo); this is for any other way | 0.00 |
-| `thresholds.sweep` | **60 s** (was 10 s) | Alert windows of an hour or more | 0.00 |
-| `freeze.restartTick`, `sanctions.tick`, `summary.tick` | 10 s | A restart hold ends on the tick it reaches `Config.Restart.MaxHoldMinutes`; a suspension's end tells the player; the daily summary goes on the tick its hour comes. One comparison each with nothing to do | 0.00 |
-| `contracts.finishEndings`, `ledger.forgetOldPhotos`, `photo.loadAllowedHosts`, `escrow.retryWaiting` | 30 s, 600 s, `Config.Completion.PhotoHostRefreshSeconds`, 30 s per player | Gated inside: endings that raised settle within a minute; photo retention counts days; owed money is retried every 30 s while the player is online, and at their login | under 0.15 |
+| `contracts.releaseIdleHolds` | 10 s | 1.9 / 1.0 ms, 0 statements with nothing due; 75 ms and 252 statements releasing its cap of 25 | A hold is released within one tick of its window. It reads the shared snapshot (`Projection.liveSnapshot`, re-read only after a write) and asks `qbx_core` once per person; **at most 25 releases a pass** |
+| `expireContracts` | 10 s, skipped until the next deadline, a presence change or a contract change | 0.11 / 0.07 ms; 317 ms and 726 statements ending its cap of 25 | Sleeps until the soonest deadline; reads the snapshot. **At most 25 endings a pass.** Trade-off: each ending re-reads its contract under its lock, kept because it moves money |
+| `audit.flush`, `storage.flush` | 10 s | 0.28 / 0.88 ms; 0 / 0.33 ms | A crash loses at most ten seconds of log rows and (`json`) changed files; only what changed is written |
+| `storage.heartbeat` | `json` 60 s, `mysql` 10 s | 0.01 ms; one statement or file | A restart's downtime is dated from it; on a tick of its own |
+| `playtime.pass` | 60 s | 0.21 / 0.16 ms; one transaction of a row per player | Playtime is counted in minutes; one batch for everybody |
+| `storage.prune` | 600 s, every tick while a batch is full | 1.1 / 0.1 ms | Retention counts days; at most 25 contracts a pass on `mysql` |
+| `bailout.processQueue`, `photos.expire`, `photos.forgetKept`, `amendments.expire`, `death.sweep`, the stuck-work retries, `review.retryUnwritten` / `review.decide` | 10 s (photos only while kill photos are in use) | under 0.02 ms each, 0 statements with nothing to do | Each reads an index or list in memory, and the store only when something in it is due |
+| `bridges.refreshAccess` | 30 s | 0.32 / 0.29 ms (7 ms seen live) | The backstop for every event that tells a player at once (login, job, duty, setting); one job read a player is the least it can check |
+| `notify.deliverKept` | 10 s | 0.00 ms with nothing kept | A kept notice goes on the first tick its minute opens |
+| `rp_places.announce` | 60 s | 0.02 ms off, 0.14 ms on | NPC places rotate by the hour; a change from the panel is announced at once |
+| `freeze.syncAppPause`, `thresholds.sweep` | 60 s | 0.00 ms | Each is a comparison or two; the pause follows its switch at once anyway |
+| `freeze.restartTick`, `sanctions.tick`, `summary.tick` | 10 s | 0.00 ms | One comparison each; the end they guard happens on the tick it falls due |
+| `contracts.finishEndings`, `ledger.forgetOldPhotos`, `photo.loadAllowedHosts`, `escrow.retryWaiting` | 30 s, 600 s, `PhotoHostRefreshSeconds`, 30 s per player | under 0.15 ms | Gated inside; each runs when what it guards can have changed |
+| `imp_board.tick` (heat and the police bulletin, placer records) | 60 s | 0.01 ms, 0 statements, off **and** on | Off: one switch read. On: heat is kept in memory and pruned only once the oldest heat has cooled; the bulletin waits its own `BulletinEveryMinutes`, and finds a working hitman in the shared snapshot (was two reads per known hitman) |
+| `imp_decay.tick` (contract decay) | 60 s, on a tick of its own | off 0.01 ms; on, nothing due 0.08 ms and 0 statements; due, 91 / 136 ms and about 300 statements for its cap of **25 steps** | Sleeps until its soonest step is due and reads the snapshot. Trade-off: each `rise` step is a charge that re-reads its contract and goes through the placer's own add-to-reward path, kept because it moves money; 100 contracts due together take four passes (was all in one: 1,951 statements, 0.7 to 1.1 s) |
+| `imp_weekly.tick` (weekly stats) | 10 s, asleep until the post is due | 0.01 ms off and on | Works out the calendar once, then one comparison a tick; the week's totals are read only when it posts |
+| `rp.tick` (EMS before re-listing) | 10 s | 0.01 ms off, 0.01 ms on with nobody recovering | Looks only at targets killed on a contract, in memory; nothing while nobody is |
+| `rp_intent.sweep` (proof of intent) | 10 s | 0.01 ms, 0 statements with no hold | Reads only the contracts that have a hold. Trade-off: a held payout re-reads its proof at most every 5 s, kept because the hold gates money |
+| `rp_protection.sweep` (bodyguards) | 10 s | 0.01 ms, 0 statements with no job | Nothing while no job is kept; a job's contract is read only once it has left the snapshot of what is running (was a read a job a tick); **at most 25 settles a pass** |
+| `informant.retryUnsaved` | 10 s | 0.00 ms | In memory until a write the store refused is waiting |
+
+With every optional feature **off**, each of the optional jobs above
+(`imp_*`, `rp*`, `informant.retryUnsaved`) sends no statement and reads
+nothing from the store; with them all **on** and nothing due, none sends a
+statement either (`tests/loops_spec.lua`, *the optional features' jobs*). A
+whole tick with every job due stays under 100 ms with the features off and
+under 300 / 450 ms (`json` / `mysql`, harness) with them on, the worst being
+the hour an untaken board's decay steps fall due. Informant tip warnings
+(`Config.Improvements.TipWarningDelay`) are one timer per waiting warning, not
+a loop; going dark ends when it is next looked at.
 
 The scheduled jobs never share a tick with the playtime pass or the `json`
-heartbeat, and the access check and the NPC positions never share one with
-each other: one tick's jobs run in the same server frame, so
+heartbeat, and the access check, the NPC places and contract decay never
+share one with each other: one tick's jobs run in the same server frame, so
 what shares a tick shares a hitch.
 
 **Server: its own clocks**

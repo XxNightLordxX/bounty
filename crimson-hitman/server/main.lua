@@ -2811,11 +2811,13 @@ end
 --- comes round every `every` seconds, moved on once by `phase`. On the
 --- ten-second tick a minute is six ticks: the json heartbeat has the sixth
 --- (a minute from the start), the playtime pass the first; the phases put
---- the NPC positions on the fourth and the access check every third tick
---- from the second, so none of the jobs that write or send shares a tick
---- with another. The app pause and the thresholds, a comparison or two
---- each, ride along on the access check's. One tick's jobs all run in the
---- same server frame, so what shares a tick shares a hitch.
+--- the NPC positions on the fourth, contract decay on the third (the only
+--- tick nothing else heavy has) and the access check every third tick from
+--- the second, so none of the jobs that write or send shares a tick with
+--- another. The app pause and the thresholds, a comparison or two each,
+--- ride along on the access check's, and the board's minute (in memory)
+--- on the heartbeat's. One tick's jobs all run in the same server frame,
+--- so what shares a tick shares a hitch.
 local SCHEDULE = {
     -- Who may have the app. Told at once on a login, a job change
     -- (QBCore:Server:OnJobUpdate), a duty change (QBCore:Server:SetDuty) and
@@ -2833,8 +2835,13 @@ local SCHEDULE = {
     -- The alert thresholds' books aged out: windows of an hour and more.
     ['thresholds.sweep'] = { every = 60, phase = 10 },
     -- The improvements' minute (server/imp_board.lua): heat cooled and the
-    -- police bulletin, contract decay's steps. Nothing while all are off.
+    -- police bulletin, the placer records forgotten. Nothing while all are
+    -- off; in memory only while on.
     ['imp_board.tick'] = { every = 60, phase = 50 },
+    -- Contract decay's steps (server/imp_decay.lua), the one of them that
+    -- charges and writes, on a tick of its own. It sleeps until its soonest
+    -- step is due, and takes at most Decay.STEPS_PER_PASS a pass.
+    ['imp_decay.tick'] = { every = 60, phase = 20 },
     -- Not here, and on every tick: the restart hold's end
     -- (freeze.restartTick), released on the tick it reaches
     -- Config.Restart.MaxHoldMinutes; a suspension's end (sanctions.tick),
@@ -2956,8 +2963,11 @@ function Tick()
     -- Where the roleplay NPCs stand moves on the clock (server/rp_places.lua):
     -- here rather than on a thread of its own.
     if modules.rpPlaces then every('rp_places.announce', modules.rpPlaces.announce, now) end
-    -- The improvements' minute (server/imp_board.lua).
-    if modules.impBoard then every('imp_board.tick', modules.impBoard.tick, now) end
+    -- The improvements' minute (server/imp_board.lua), and contract decay.
+    if modules.impBoard then
+        every('imp_board.tick', modules.impBoard.tickBoard, now)
+        every('imp_decay.tick', modules.impBoard.tickDecay, now)
+    end
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
     -- An exclusive contract held by somebody who is not working it goes

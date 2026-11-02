@@ -123,7 +123,10 @@ end
 function Record.sweep()
     if next(anon) == nil then return end
     local live = {}
-    for _, c in ipairs(Storage.liveContracts() or {}) do live[tostring(c.id)] = true end
+    -- The snapshot the other loops share (Projection.liveSnapshot).
+    local list = Projection and Projection.liveSnapshot and Projection.liveSnapshot()
+        or Storage.liveContracts()
+    for _, c in ipairs(list or {}) do live[tostring(c.id)] = true end
     for key in pairs(anon) do
         if not live[key:match('^(.-)|') or key] then anon[key] = nil end
     end

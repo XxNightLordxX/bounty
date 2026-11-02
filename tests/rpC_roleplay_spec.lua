@@ -382,6 +382,25 @@ describe('bodyguard contracts', function()
         eq(audits(s, 'protection_taken'), 1)
     end)
 
+    it('reads no contract on the tick while the job\'s contract is still running (the shared snapshot)', function()
+        local s, _, c = setup()
+        on(s)
+        truthy(post(2, c).ok)
+        local reads = 0
+        local real = s.storage.readContract
+        s.storage.readContract = function(...)
+            reads = reads + 1
+            return real(...)
+        end
+        local ok, err = pcall(function()
+            for _ = 1, 5 do s.rpProtection.sweep() end
+        end)
+        s.storage.readContract = real
+        truthy(ok, tostring(err))
+        -- (Its settling once the contract ends is the tests below.)
+        eq(reads, 0, 'its contract is in what is running: not read again')
+    end)
+
     it('refuses, charging nothing: out of bounds, a changed account, short, not theirs, twice', function()
         local s, f, c = setup()
         on(s)

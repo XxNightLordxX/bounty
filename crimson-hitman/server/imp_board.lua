@@ -160,14 +160,25 @@ function ImpBoard.init(deps)
     Decay.init(deps, board)
 end
 
---- The maintenance tick's one job for all four (once a minute): heat aged
---- out and the police bulletin, the untaken contracts' steps, and the
---- anonymous records of contracts that ended forgotten. Each does nothing
---- while its feature is off.
-function ImpBoard.tick()
+--- The maintenance tick's minute job for the board (imp_board.tick): heat
+--- aged out and the police bulletin, and the anonymous records of contracts
+--- that ended forgotten. Each does nothing while its feature is off.
+function ImpBoard.tickBoard()
     Heat.tick()
-    Decay.tick()
     Record.sweep()
+end
+
+--- And contract decay's steps (imp_decay.tick), on a tick of their own:
+--- the one of the four that charges and writes (Decay.tick).
+---@return integer stepped
+function ImpBoard.tickDecay()
+    return Decay.tick()
+end
+
+--- Both, as one call (the tests, and anything that wants every step now).
+function ImpBoard.tick()
+    ImpBoard.tickBoard()
+    ImpBoard.tickDecay()
 end
 
 return ImpBoard

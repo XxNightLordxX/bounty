@@ -139,6 +139,7 @@ end
 local SCHEDULED = {
     ['bridges.refreshAccess'] = 3, ['rp_places.announce'] = 6,
     ['freeze.syncAppPause'] = 6, ['thresholds.sweep'] = 6,
+    ['imp_board.tick'] = 6, ['imp_decay.tick'] = 6,
 }
 
 --- And jobs that stay on every tick: money, expiry, the holds, the flush.
@@ -227,14 +228,15 @@ describe('the maintenance tick\'s schedule', function()
         for t in pairs(setOf(heartbeat)) do heavy[t] = true end
         local seen = {}
         for _, name in ipairs({ 'rp_places.announce', 'bridges.refreshAccess',
-            'thresholds.sweep', 'freeze.syncAppPause' }) do
+            'thresholds.sweep', 'freeze.syncAppPause', 'imp_decay.tick' }) do
             for _, t in ipairs(at[name] or {}) do
                 if t > 1 then
                     falsy(heavy[t], ('%s shares tick %d with the playtime pass or the heartbeat')
                         :format(name, t))
                     -- And the two that send or read from each other (the
                     -- other two are a comparison or two each).
-                    if name == 'rp_places.announce' or name == 'bridges.refreshAccess' then
+                    if name == 'rp_places.announce' or name == 'bridges.refreshAccess'
+                        or name == 'imp_decay.tick' then
                         falsy(seen[t], ('%s shares tick %d with %s'):format(name, t, tostring(seen[t])))
                         seen[t] = name
                     end
@@ -500,6 +502,192 @@ describe('the rest of the loops', function()
 end)
 
 --------------------------------------------------------------------------
+-- The optional features' jobs (Config.Improvements, Config.Roleplay)
+--------------------------------------------------------------------------
+
+--- Every block of Config.Improvements and Config.Roleplay switched on (or
+--- off). Put back by resetConfig in the next boot.
+local function features(on)
+    for _, root in ipairs({ Config.Improvements, Config.Roleplay }) do
+        for _, block in pairs(root) do
+            if type(block) == 'table' and block.Enabled ~= nil then block.Enabled = on end
+        end
+    end
+end
+
+--- `n` more contracts nobody has taken, on the city's players: what
+--- contract decay steps.
+local function untaken(s, n)
+    for i = 1, n do
+        local c = (i - 1) % 20
+        local row, err = s.contracts.create(s.identity.resolve(101 + c), { targetCid = ('TGT%05d'):format((c + 11 + (i - 1) // 20) % 20 + 1),
+            reason = 'scale', reward = { baseline = { cash = 1000, bank = 1000 } } })
+        truthy(row, 'placed: ' .. tostring(err))
+    end
+end
+
+--- The jobs that exist for an optional feature, each on the tick.
+local OPTIONAL_JOBS = { 'imp_board.tick', 'imp_decay.tick', 'imp_weekly.tick', 'rp.tick',
+    'rp_intent.sweep', 'rp_protection.sweep', 'informant.retryUnsaved', 'rp_places.announce' }
+
+--- What each of `jobs` cost over `count` ticks of `step` seconds:
+--- [job] = { runs, statements (most in one pass), reads (store reads, all
+--- passes) }.
+local function costs(main, s, count, step, jobs)
+    local Timing = require('server.timing')
+    local run = Timing.run
+    local want = setOf(jobs)
+    local by, current = {}, nil
+    local reads = {}
+    for _, name in ipairs(READS) do
+        reads[name] = s.storage[name]
+        s.storage[name] = function(...)
+            if current then by[current].reads = by[current].reads + 1 end
+            return reads[name](...)
+        end
+    end
+    Timing.run = function(name, fn, ...)
+        if not want[name] then return run(name, fn, ...) end
+        by[name] = by[name] or { runs = 0, statements = 0, reads = 0 }
+        local from = Exec.statements and #Exec.statements or 0
+        current = name
+        local out = table.pack(run(name, fn, ...))
+        current = nil
+        local n = (Exec.statements and #Exec.statements or 0) - from
+        by[name].runs = by[name].runs + 1
+        if n > by[name].statements then by[name].statements = n end
+        return table.unpack(out, 1, out.n)
+    end
+    local ok, err = pcall(function()
+        for _ = 1, count do
+            Env.time = Env.time + step
+            Env.gameTimer = Env.gameTimer + step * 1000
+            main.tick()
+        end
+    end)
+    Timing.run = run
+    for name, f in pairs(reads) do s.storage[name] = f end
+    if not ok then error(err, 0) end
+    return by
+end
+
+describe('the optional features\' jobs', function()
+    it('cost nothing with every feature off: no statement and no store read, on a busy mysql server', function()
+        local main, s = boot('mysql')
+        city(s)
+        main.tick()
+        local by = costs(main, s, 60, 10, OPTIONAL_JOBS)
+        for _, name in ipairs(OPTIONAL_JOBS) do
+            truthy(by[name] and by[name].runs > 0, name .. ' ran')
+            eq(by[name].statements, 0, name .. ': statements in a pass, features off')
+            eq(by[name].reads, 0, name .. ': store reads in ten minutes, features off')
+        end
+    end)
+
+    it('read nothing of their own with every feature on and nothing due: the shared snapshot only', function()
+        local main, s = boot('mysql')
+        city(s)
+        untaken(s, 100)
+        features(true)
+        main.tick()
+        local by = costs(main, s, 60, 10, OPTIONAL_JOBS)
+        for _, name in ipairs(OPTIONAL_JOBS) do
+            truthy(by[name] and by[name].runs > 0, name .. ' ran')
+            eq(by[name].statements, 0, name .. ': statements in a pass, features on, nothing due')
+        end
+        -- Contract decay and the board's minute read what is running from
+        -- the snapshot the other loops share, never on their own.
+        eq(by['imp_decay.tick'].reads, 0, 'contract decay read the store itself')
+        eq(by['imp_board.tick'].reads, 0, 'the board\'s minute read the store itself')
+    end)
+
+    it('takes at most its share of decay steps a pass, then sleeps until the next is due', function()
+        local main, s = boot('mysql')
+        city(s)
+        untaken(s, 100)
+        features(true)
+        main.tick()
+        local Decay = require('server.imp_decay')
+        eq(Decay.STEPS_PER_PASS, 25, 'twenty-five a pass')
+        -- An hour on: every untaken contract (100 of the 200) due at once.
+        Env.time = Env.time + 3600
+        local from = #Exec.statements
+        local first = Decay.tick()
+        eq(first, 25, 'one pass steps its share and no more')
+        truthy(#Exec.statements - from < 400, ('%d statements in the pass (1,951 before the cap)')
+            :format(#Exec.statements - from))
+        local total, passes = first, 1
+        while passes < 10 do
+            Env.time = Env.time + 60
+            local n = Decay.tick()
+            if n == 0 then break end
+            truthy(n <= 25, 'never more than the share')
+            total, passes = total + n, passes + 1
+        end
+        eq(total, 100, 'every untaken contract stepped once')
+        eq(passes, 4, 'in as few passes as the share allows')
+        -- Then asleep: no step is due for an hour, and a pass reads nothing.
+        local counts = storeReads(s.storage, function()
+            for _ = 1, 30 do
+                Env.time = Env.time + 60
+                eq(Decay.tick(), 0, 'nothing due')
+            end
+        end, READS)
+        eq(next(counts), nil, 'asleep: no store read')
+        -- The first share was stepped 34 minutes ago (four passes and
+        -- thirty minutes): its next step is due in 26.
+        Env.time = Env.time + 1560
+        truthy(Decay.tick() > 0, 'and awake again when the next step is due')
+    end)
+
+    it('works the weekly stats\' calendar out once, then sleeps until the post is due', function()
+        local main, s = boot('memory')
+        fixture(s)
+        Config.Improvements.WeeklyStats.Enabled = true
+        local Weekly = require('server.imp_weekly')
+        local real, asked = Weekly.lastDue, 0
+        Weekly.lastDue = function(...)
+            asked = asked + 1
+            return real(...)
+        end
+        local ok, err = pcall(function()
+            for _ = 1, 30 do tick(main) end
+        end)
+        Weekly.lastDue = real
+        truthy(ok, tostring(err))
+        truthy(asked <= 1, ('the calendar worked out %d times in five minutes'):format(asked))
+    end)
+
+    it('keeps heat in memory: the board\'s minute prunes nothing before the oldest heat cools', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        Config.Improvements.HitmanHeat.Enabled = true
+        local Heat = require('server.imp_heat')
+        local writes = 0
+        local real = s.storage.writeRpRow
+        s.storage.writeRpRow = function(...)
+            writes = writes + 1
+            return real(...)
+        end
+        local ok, err = pcall(function()
+            Heat.add(f.hitman.cid, 1, 'test')
+            writes = 0
+            for _ = 1, 10 do
+                Env.time = Env.time + 60
+                Heat.tick()
+            end
+            eq(writes, 0, 'nothing cooled, nothing written')
+            Env.time = Env.time + 25 * 3600
+            Heat.tick()
+            eq(writes, 0, 'cooled: its row taken away, not written')
+            eq(Heat.of(f.hitman.cid), 0, 'and it has none')
+        end)
+        s.storage.writeRpRow = real
+        truthy(ok, tostring(err))
+    end)
+end)
+
+--------------------------------------------------------------------------
 -- The client's NPC loop
 --------------------------------------------------------------------------
 
@@ -655,6 +843,12 @@ local BUDGET_MS = 100
 --- Measured at about 100 ms on json and 400 ms on mysql (the harness's
 --- Lua database again: a real one does that work off the server thread).
 local MASS_BUDGET_MS = { json = 300, mysql = 1000 }
+--- With every optional feature on, the worst pass is the one an hour on,
+--- where the untaken contracts' decay steps fall due: a share of 25 'rise'
+--- steps, each a charge with its escrow and notice. Measured at about 100
+--- ms on json and 150 ms on mysql (harness), with the rest of the tick; the
+--- passes with nothing due at 5 to 17 ms and 19 to 28 ms, as with them off.
+local BUDGET_ON_MS = { json = 300, mysql = 450 }
 
 describe('a whole maintenance pass on a busy server', function()
     for _, mode in ipairs({ 'json', 'mysql' }) do
@@ -683,6 +877,36 @@ describe('a whole maintenance pass on a busy server', function()
                 local worst = passes[#passes]
                 truthy(worst < BUDGET_MS, ('the worst pass took %.1f ms on %s (budget %d ms)')
                     :format(worst, mode, BUDGET_MS))
+            end)
+
+        it(('stays inside %d ms on %s at its worst with every optional feature on'):format(BUDGET_ON_MS[mode], mode),
+            function()
+                local main, s = boot(mode)
+                city(s)
+                untaken(s, 100)
+                features(true)
+                main.tick()
+                local death = require('server.completion.death')
+                local passes = {}
+                -- Ten minutes a pass for an hour and more: every scheduled
+                -- job due, and on the sixth an hour's decay steps (their
+                -- share, Decay.STEPS_PER_PASS).
+                for i = 1, 7 do
+                    Env.time = Env.time + 600
+                    Env.gameTimer = Env.gameTimer + 600000
+                    local started = os.clock()
+                    main.tick()
+                    death.watchTargets(s.storage.liveContracts(), s.storage.liveHitmen())
+                    passes[i] = (os.clock() - started) * 1000
+                end
+                if os.getenv('CH_PERF') then
+                    local shown = {}
+                    for i = 1, #passes do shown[i] = ('%.1f'):format(passes[i]) end
+                    io.write(('\n  passes on %s, features on: %s ms\n'):format(mode, table.concat(shown, ', ')))
+                end
+                table.sort(passes)
+                truthy(passes[#passes] < BUDGET_ON_MS[mode], ('the worst pass took %.1f ms on %s with every '
+                    .. 'feature on (budget %d ms)'):format(passes[#passes], mode, BUDGET_ON_MS[mode]))
             end)
 
         it(('ends at most its share on %s when everything falls due at once'):format(mode), function()
