@@ -1677,6 +1677,65 @@ async function main() {
       unique.length + ' fault(s): ' + unique.slice(0, 6).join(' | '));
   });
 
+  /* ---- rumours and the broker (Config.Roleplay.Rumours) ----
+   *
+   * A rumour card and a broker player's panel at 390px: everything inside
+   * its card, no sideways scroll, every button thumb-sized. */
+  function rumourStub() {
+    const rumour = { id: 'ct00000301', mode: 'competitive', state: 'active', role: 'public',
+      slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 0, hitmenMax: 5,
+      timeLeft: 'More than 2 hours', rumour: { area: 'Vinewood Hills', low: 130000, high: 220000, goods: true } };
+    const answers = {
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [rumour, Object.assign({}, rumour, { id: 'ct00000302' })],
+        rumours: { npc: true, broker: true, minutes: 30 }, settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      brokerNearby: { ok: true, data: { people: [{ handle: 'bp1', metres: 2 }, { handle: 'bp2', metres: 4 }] } },
+    };
+    window.fetch = function (url) {
+      const name = url.split('/crimson:')[1];
+      return Promise.resolve({ json: function () {
+        return Promise.resolve(answers[name] || { ok: true });
+      } });
+    };
+  }
+  const rp = await browser.newPage({ viewport: { width: 390, height: 720 } });
+  await rp.addInitScript(rumourStub);
+  await rp.goto('file://' + UI);
+  await rp.waitForTimeout(250);
+  await rp.evaluate(function () {
+    const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+      .filter(function (n) { return n.textContent === 'Who is near me?'; })[0];
+    if (b) { b.click(); }
+  });
+  await rp.waitForTimeout(200);
+  await rp.evaluate(function () {
+    const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+      .filter(function (n) { return n.textContent.indexOf('Person 1') === 0; })[0];
+    if (b) { b.click(); }
+  });
+  await rp.waitForTimeout(200);
+  const rumourEscapees = await escapedFrom(rp);
+  const rumourShape = await rp.evaluate(function () {
+    const small = [];
+    Array.prototype.slice.call(document.querySelectorAll('#view button')).forEach(function (b) {
+      const r = b.getBoundingClientRect();
+      if (r.width > 0 && (r.height < 32 || r.right > window.innerWidth + 1)) {
+        small.push(b.textContent + ' ' + Math.round(r.height) + 'px');
+      }
+    });
+    return { cards: document.querySelectorAll('.card.is-rumour').length,
+      brief: Array.prototype.slice.call(document.querySelectorAll('button'))
+        .filter(function (n) { return n.textContent === 'Brief them'; }).length,
+      small: small, scroll: document.documentElement.scrollWidth - window.innerWidth };
+  });
+  it('fits a rumour and the broker panel on a phone', function () {
+    truthy(rumourShape.cards === 2, 'drew ' + rumourShape.cards + ' rumour cards');
+    truthy(rumourShape.brief === 2, 'a Brief them on each once somebody is picked');
+    truthy(rumourEscapees.length === 0, rumourEscapees.slice(0, 4).join(' | '));
+    truthy(rumourShape.small.length === 0, 'small or off-screen: ' + rumourShape.small.join(', '));
+    truthy(rumourShape.scroll <= 0, 'scrolls sideways by ' + rumourShape.scroll + 'px');
+  });
+
   await browser.close();
 
   console.log('');

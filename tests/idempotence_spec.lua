@@ -994,6 +994,12 @@ describe('what this file leaves out', function()
 
     --- Repeating these is a legitimate thing to do, not a double effect.
     local BY_DESIGN = {
+        -- The roleplay features (roleplay_access_spec): asking again is a
+        -- read, or renews a briefing to the same length.
+        rumourBrief = 'a second briefing on one contract renews it, nothing more',
+        brokerNearby = 'a read: each asks afresh and mints new handles',
+        brokerBrief = 'a second briefing on one contract renews it, nothing more',
+        rpPlaces = 'a read of where the NPCs stand',
         addEscrow = 'a creator may top up a reward as many times as they like; '
             .. 'each call adds what it says it adds',
         improve   = 'extending a deadline twice extends it twice, which is the '

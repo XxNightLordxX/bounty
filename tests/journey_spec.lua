@@ -350,6 +350,11 @@ describe('what this suite really covered', function()
     --- App.handlers now, and anything not driven to a successful reply here
     --- has to be named below with the file that drives it instead.
     local ELSEWHERE = {
+        -- The roleplay features, each answered ok through the net event.
+        rumourBrief  = 'roleplay_access_spec ("briefs a hitman beside the broker NPC")',
+        brokerNearby = 'roleplay_access_spec ("lets a broker player brief somebody")',
+        brokerBrief  = 'roleplay_access_spec ("lets a broker player brief somebody")',
+        rpPlaces     = 'roleplay_access_spec ("moves the broker between its places")',
         -- Read paths, exercised to an ok in their own specs.
         list           = 'projection_spec and the ui suite',
         mine           = 'projection_spec and the ui suite',

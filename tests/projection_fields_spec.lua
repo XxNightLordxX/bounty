@@ -43,6 +43,9 @@ end
 --- what turns "the field is missing" into "the field is absent when it should
 --- be".
 local CONDITIONAL = {
+    -- A rumour (Config.Roleplay.Rumours, off as shipped): only on a board
+    -- row the viewer is no party to and not briefed on, in place of the card.
+    rumour = 'only on a rumour, with Config.Roleplay.Rumours on',
     -- Written by the page from its own kidnapProgress polling.
     kidnapProgress = 'the page fills this in, not the projection',
     -- Stamped by the page as the reply lands, to count the clock down from.

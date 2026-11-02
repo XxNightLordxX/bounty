@@ -419,6 +419,16 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.rp_intent'] = nil
     package.loaded['crimson-hitman.server.rp_reputation'] = nil
     package.loaded['crimson-hitman.server.rp_protection'] = nil
+    package.loaded['crimson-hitman.server.rp_places'] = nil
+    package.loaded['crimson-hitman.server.rp_rumours'] = nil
+    package.loaded['crimson-hitman.server.rp_burner'] = nil
+    package.loaded['crimson-hitman.server.rp_informant'] = nil
+    package.loaded['crimson-hitman.server.rp_reason'] = nil
+    package.loaded['server.rp_places'] = nil
+    package.loaded['server.rp_rumours'] = nil
+    package.loaded['server.rp_burner'] = nil
+    package.loaded['server.rp_informant'] = nil
+    package.loaded['server.rp_reason'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -463,6 +473,11 @@ function _G.newStack()
     local rpIntent     = require('crimson-hitman.server.rp_intent')
     local rpReputation = require('crimson-hitman.server.rp_reputation')
     local rpProtection = require('crimson-hitman.server.rp_protection')
+    local rpPlaces    = require('server.rp_places')
+    local rpRumours   = require('server.rp_rumours')
+    local rpBurner    = require('server.rp_burner')
+    local rpInformant = require('server.rp_informant')
+    local rpReason    = require('server.rp_reason')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -533,6 +548,12 @@ function _G.newStack()
                         app = app, informant = informant, projection = projection })
     meeting.init({ storage = storage, notify = notify, audit = audit })
     playtime.init({ storage = storage, identity = identity })
+    rpPlaces.init({ settings = settings })
+    rpRumours.init({ storage = storage, identity = identity, audit = audit, notify = notify,
+                     projection = projection })
+    rpBurner.init({ audit = audit })
+    rpInformant.init({ audit = audit })
+    rpReason.init({ storage = storage, review = review, contracts = contracts })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was
@@ -571,6 +592,9 @@ function _G.newStack()
         rpConsequences = rpConsequences,
         -- Roleplay.
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
+        -- The roleplay features.
+        rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
+        rpInformant = rpInformant, rpReason = rpReason,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -590,6 +614,8 @@ function _G.newStack()
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         rpConsequences = rpConsequences,
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
+        rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
+        rpInformant = rpInformant, rpReason = rpReason,
     }
 end
 
@@ -630,7 +656,7 @@ local suites = {
     'location_tip_spec', 'informant_spec', 'freeze_spec', 'clock_rule_spec', 'untaken_terms_spec',
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
-    'rpC_roleplay_spec', 'rp_together_spec',
+    'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

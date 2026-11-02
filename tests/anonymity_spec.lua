@@ -1299,6 +1299,46 @@ describe('every channel a player not entitled to it can read', function()
         call('list', 4, { page = 1 })
         admin(8, 'history', { subject = 'BYSTAND1' })
         admin(8, 'unsuspend', { subject = 'BYSTAND1' })
+        -- The roleplay features' channels (server/rp_*.lua), all on: the
+        -- board as rumours, the broker NPC and a broker player (the
+        -- bystander), the NPCs' places, the burner phone and the informant
+        -- refusing, and a low-effort reason on an anonymous contract in the
+        -- staff queue. Off again after, for what follows.
+        local rp = Config.Roleplay
+        rp.Rumours.Enabled, rp.Rumours.BrokerJobs = true, { broker = true }
+        rp.BurnerPhone.Enabled, rp.InformantNpc.Enabled = true, true
+        rp.ReasonQuality.Enabled, rp.ReasonQuality.LowEffortAction = true, 'review'
+        Env.players[4].PlayerData.job = { name = 'broker', type = 'none', onduty = true }
+        local brokerAt = s.rpPlaces.current('broker')
+        Env.players[4]._coords = { x = brokerAt.x, y = brokerAt.y, z = brokerAt.z }
+        Env.players[7]._coords = { x = brokerAt.x + 1, y = brokerAt.y, z = brokerAt.z }
+        for _, src in ipairs({ 2, 3, 4, 5, 7 }) do
+            call('list', src, { page = 1 })
+            call('rpPlaces', src, {})
+        end
+        call('rumourBrief', 4, { id = c.id })
+        local near = call('brokerNearby', 4, {})
+        local person = near and near.data and near.data.people and near.data.people[1]
+        truthy(person, 'the broker sees somebody beside them')
+        call('brokerBrief', 4, { id = c.id, who = person and person.handle })
+        call('accept', 4, { id = c.id, penaltyAmount = 0 })
+        call('informant', 2, { id = c.id, shown = {} })
+        call('locationTip', 3, { id = c.id, shown = {} })
+        local lazy = s.contracts.create(f.creator, { targetCid = 'OFFICER1', anonymous = true,
+            reason = 'rdm because they owe the crew', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } } })
+        truthy(lazy, 'a low-effort reason, placed for review')
+        -- What the app's create does once it went through (App's roleplay steps).
+        s.rpReason.after('create', f.creator, {}, { id = lazy and lazy.id })
+        local queued = false
+        for _, item in ipairs(s.review.list(true, 50)) do
+            if item.kind == 'low_effort_reason' then queued = true end
+        end
+        truthy(queued, 'the low-effort reason is in the staff queue')
+        admin(6, 'reviews', {})
+        admin(8, 'reviews', {})
+        rp.Rumours.Enabled, rp.BurnerPhone.Enabled, rp.InformantNpc.Enabled = false, false, false
+        rp.ReasonQuality.Enabled = false
         call('abandon', 3, { id = c.id })
         call('cancel', 1, { id = c.id })
         -- The bodyguard job settled with the contract: the guard's notice.

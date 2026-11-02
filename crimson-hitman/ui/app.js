@@ -728,7 +728,14 @@
     protection_limit: 'You are guarding as many people as you can at once.',
     protection_party: 'You are part of the contract on them, so you cannot guard them.',
     timeout: 'No answer. Try again.',
-    unreachable: 'No answer. Try again.'
+    unreachable: 'No answer. Try again.',
+    // The roleplay features (Config.Roleplay). Nothing was taken for any.
+    need_burner: 'You need a burner phone.',
+    not_briefed: 'You only know the rumour. See the broker about this one first.',
+    find_broker: 'Find the broker first.',
+    not_broker: 'Only a broker can do that.',
+    broker_too_far: 'They are no longer with you. Brief someone standing beside you.',
+    find_informant: 'Find the informant first.'
   };
 
   /* The requests that can move money, each a handler in server/app.lua
@@ -761,6 +768,16 @@
     }
     if (rule === 'phone') {
       return 'A word in that reason is not allowed here. Word it differently.';
+    }
+    // The roleplay reason rules (Config.Roleplay.ReasonQuality).
+    if (rule === 'short') {
+      return 'Give a real reason: at least ' + (Number(data.min) || 0) + ' characters.';
+    }
+    if (rule === 'words') {
+      return 'Give a real reason: at least ' + (Number(data.min) || 0) + ' words.';
+    }
+    if (rule === 'low_effort') {
+      return 'That reads as no reason at all. Say what they did.';
     }
     return ERRORS.reason_refused;
   }
@@ -6146,12 +6163,22 @@
     if (data && data.suspended) {
       view.appendChild(el('div', 'suspended-note', suspendedText(data.suspended)));
     }
+    // No burner phone on a server that needs one (Config.Roleplay.BurnerPhone):
+    // the server sent no contracts, and this says why.
+    if (data && data.burnerMissing) {
+      view.appendChild(el('div', 'empty is-refusal', ERRORS.need_burner));
+      return;
+    }
+    // A broker player's tools (Config.Roleplay.Rumours), above the board.
+    if (data && data.rumours && data.rumours.broker) { view.appendChild(brokerPanel()); }
     var contracts = asList(data && data.contracts);
     if (!data || contracts.length === 0) {
       view.appendChild(el('div', 'empty', 'No contracts on the board.'));
       return;
     }
-    contracts.forEach(function (c) { view.appendChild(card(c, 'board')); });
+    contracts.forEach(function (c) {
+      view.appendChild(c && c.rumour ? rumourCard(c, data.rumours || {}) : card(c, 'board'));
+    });
 
     // The board is sent a page at a time. With no pager, every contract past
     // the first page could never be seen or taken from the phone.
@@ -6172,6 +6199,97 @@
     }
   }
 
+  /* ---------- rumours and the broker (Config.Roleplay.Rumours) ----------
+
+     A contract this player is not briefed on comes as a rumour: a rough
+     area and a reward band, no name, no face, no Accept. Ask the broker
+     sends the question from where the player stands; the server checks they
+     are beside the broker NPC. A player on a broker job gets a panel to
+     brief somebody standing with them. */
+  var broker = { people: null, picked: null, asking: false };
+
+  function rumourBand(r) {
+    if (r.goods && !(Number(r.high) > 0)) { return 'Pays in goods'; }
+    if (!(Number(r.high) > 0)) { return 'Pay unknown'; }
+    return money(r.low) + ' \u2013 ' + money(r.high) + (r.goods ? ' and goods' : '');
+  }
+
+  function rumourCard(contract, rules) {
+    var r = contract.rumour || {};
+    var node = el('div', 'card is-rumour');
+    var head = el('div', 'card-head');
+    var who = el('div', 'identity');
+    who.appendChild(el('div', 'target', 'A rumour'));
+    who.appendChild(el('div', 'reason', 'Word is somebody wants a job done around '
+      + (r.area || 'the city') + '.'));
+    head.appendChild(who);
+    node.appendChild(head);
+    // On a line of its own: a band is two figures, too wide for the stamp.
+    node.appendChild(el('div', 'rumour-band', 'Pays about ' + rumourBand(r)));
+    if (contract.timeLeft) { node.appendChild(el('div', 'hint', contract.timeLeft + ' left')); }
+    var row = el('div', 'row');
+    if (rules.npc) {
+      var ask = el('button', 'ghost ico i-eye', 'Ask the broker');
+      ask.onclick = function () {
+        once('rumour:' + contract.id, function () {
+          return post('rumourBrief', { id: contract.id }).then(function (res) {
+            if (!res.ok) { say(failText(res)); return; }
+            say('The broker filled you in. You have ' + (Number(res.data && res.data.minutes) || 0)
+              + ' minutes to act on it.', 'ok');
+            refresh();
+          });
+        });
+      };
+      row.appendChild(ask);
+    }
+    if (rules.broker && broker.picked) {
+      var brief = el('button', 'ghost ico i-usercheck', 'Brief them');
+      brief.onclick = function () {
+        once('brief:' + contract.id, function () {
+          return post('brokerBrief', { id: contract.id, who: broker.picked }).then(function (res) {
+            if (!res.ok) { say(failText(res)); return; }
+            say('Briefed. They can see this one on their board now.', 'ok');
+          });
+        });
+      };
+      row.appendChild(brief);
+    }
+    if (row.children.length) { node.appendChild(row); }
+    node.appendChild(el('div', 'hint', rules.npc
+      ? 'Find the broker and ask about it to see who it is on and take it.'
+      : 'A broker can tell you who it is on, and then you can take it.'));
+    return node;
+  }
+
+  function brokerPanel() {
+    var box = el('div', 'notice broker-panel');
+    box.appendChild(el('div', 'tip-state ico i-usercheck', 'You are a broker. Pick somebody '
+      + 'standing with you, then Brief them on a rumour below.'));
+    var people = asList(broker.people);
+    if (broker.people && !people.length) {
+      box.appendChild(el('div', 'hint', 'Nobody is standing close enough.'));
+    }
+    people.forEach(function (p, i) {
+      var pick = el('button', broker.picked === p.handle ? 'primary' : 'ghost',
+        'Person ' + (i + 1) + ', ' + (Number(p.metres) || 0) + ' m away');
+      pick.onclick = function () { broker.picked = p.handle; render(); };
+      box.appendChild(pick);
+    });
+    var look = el('button', 'ghost ico i-eye', 'Who is near me?');
+    look.onclick = function () {
+      once('brokerNearby', function () {
+        return post('brokerNearby', {}).then(function (res) {
+          if (!res.ok) { say(failText(res)); return; }
+          broker.people = asList(res.data && res.data.people);
+          broker.picked = null;
+          render();
+        });
+      });
+    };
+    box.appendChild(look);
+    return box;
+  }
+
   function viewMine(view) {
     if (drewFailure(view, 'mine')) { return; }
     if (drewPending(view, 'mine')) { return; }
@@ -6180,6 +6298,11 @@
 
     var accepted = asList(data.accepted);
     var created = asList(data.created);
+    // No burner phone (Config.Roleplay.BurnerPhone): On me is still there.
+    if (data.burnerMissing) {
+      view.appendChild(el('div', 'empty is-refusal', ERRORS.need_burner));
+      return;
+    }
 
     // Payouts held for proof of intent, the contract finished or not.
     asList(data.intentHeld).forEach(function (h) {

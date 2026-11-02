@@ -1808,7 +1808,7 @@
           item.resolution && !resolving ? h('dt', 'Resolved') : null,
           item.resolution && !resolving ? h('dd', detailText(item.resolution) + ' · by ' + String(item.resolved_by || '—')
             + ' · ' + when(item.resolved_at)) : null),
-        open && canWrite() ? (resolving ? finishForm(item) : (isReport(item) ? reportForm(item) : reviewForm(item))) : null,
+        open && canWrite() ? (resolving ? finishForm(item) : (dismissOnly(item) ? reportForm(item) : reviewForm(item))) : null,
         answerBox(answer));
     }));
   }
@@ -3473,7 +3473,7 @@
     var id = node.getAttribute('data-id');
     var item = reviewItem(id);
     if (!item) return;
-    var action = isReport(item) ? 'dismiss' : (S.reviews.action[id] || 'refund');
+    var action = dismissOnly(item) ? 'dismiss' : (S.reviews.action[id] || 'refund');
     var data = { id: id, action: action };
     var problem = null;
     if (action === 'dismiss') {
@@ -3695,7 +3695,8 @@
     var typed = trim(S.forms['stl.' + key]);
     if (!typed) return;
     var names = listDraft(entry);
-    // A list of phrases, templates or areas takes the line as typed.
+    // A list of phrases, templates, areas or places (`whole`) takes the line
+    // as typed: one entry, spaces and commas kept.
     (entry.whole ? [typed] : typed.split(/[\s,]+/)).forEach(function (name) {
       if (name && names.indexOf(name) === -1) names.push(name);
     });
@@ -4098,6 +4099,9 @@
                       viewer: 'a player who saw it on the board' };
 
   function isReport(item) { return !!item && item.kind === 'player_report'; }
+  /** An item with no money in it, only ever dismissed with a note: a report,
+      or a low-effort reason (Config.Roleplay.ReasonQuality). */
+  function dismissOnly(item) { return isReport(item) || (!!item && item.kind === 'low_effort_reason'); }
 
   /** What a report says: who sent it (as their role), their note, and the
       thread's last messages, by alias. */
@@ -5067,4 +5071,37 @@
       links: [{ key: 'Roleplay.DirtyPayouts.Enabled', view: 'features', label: 'On or off' },
         { key: 'Roleplay.DirtyPayouts.Item', view: 'money', label: 'The item' },
         { key: 'Roleplay.DirtyPayouts.Rate', view: 'money', label: 'The rate' }] });
+
+  /* ---------- the roleplay features (Config.Roleplay) ---------- */
+
+  HELP.push(
+    { title: 'Rumours and the broker', icon: 'user-secret',
+      text: 'Off as shipped. On, a hitman sees a new contract only as a rumour: a rough area and a reward '
+        + 'band, with no name, face or Accept. Asking the broker NPC about it, standing beside it, or '
+        + 'being briefed by a player on a broker job, shows the whole card and Accept for a while. The '
+        + 'NPC moves between its places on a timer. Distances are checked on the server.',
+      links: [{ key: 'Roleplay.Rumours.Enabled', view: 'features', label: 'Rumours on or off' },
+        { key: 'Roleplay.Rumours.Locations', view: 'limits', label: 'Broker places' },
+        { key: 'Roleplay.Rumours.BriefValidMinutes', view: 'timers', label: 'How long a briefing lasts' },
+        { key: 'Roleplay.Rumours.BrokerJobs', view: 'targeting', label: 'Broker jobs' }] },
+    { title: 'Burner phone', icon: 'mobile-screen',
+      text: 'Off as shipped. On, placing, accepting and every contract action need the burner phone item '
+        + 'in the inventory, counted on the server. Without one a player is told "You need a burner '
+        + 'phone." and, as shipped, sees no contracts at all. Live contracts stay; a burner can be used '
+        + 'up on placing or accepting. Sell it through sc-blackmarket (README).',
+      links: [{ key: 'Roleplay.BurnerPhone.Enabled', view: 'features', label: 'Burner phone on or off' },
+        { key: 'Roleplay.BurnerPhone.Item', view: 'limits', label: 'The item' }] },
+    { title: 'The informant in person', icon: 'user-secret',
+      text: 'Off as shipped. On, every informant purchase (the target\'s, the placer\'s and the tip) is '
+        + 'sold only to a buyer standing beside the informant NPC, which moves between its own places. '
+        + 'Anywhere else it is refused with "Find the informant first." and nothing is charged.',
+      links: [{ key: 'Roleplay.InformantNpc.Enabled', view: 'features', label: 'Informant in person' },
+        { key: 'Roleplay.InformantNpc.Locations', view: 'limits', label: 'Informant places' }] },
+    { title: 'Reason quality', icon: 'pen',
+      text: 'Off as shipped. On, a typed reason needs a least length and number of words, on top of the '
+        + 'other reason rules. A reason with a low-effort phrase (rdm, idk, test) is refused, or placed '
+        + 'and put in Needs review as a low-effort reason, as set.',
+      links: [{ key: 'Roleplay.ReasonQuality.Enabled', view: 'features', label: 'Reason quality on or off' },
+        { key: 'Roleplay.ReasonQuality.LowEffort', view: 'limits', label: 'Low-effort phrases' },
+        { key: 'Roleplay.ReasonQuality.LowEffortAction', view: 'limits', label: 'Refuse or review' }] });
 })();

@@ -505,6 +505,23 @@ CH.ERR = {
     PROTECTION_TAKEN  = 'protection_taken',
     PROTECTION_LIMIT  = 'protection_limit',
     PROTECTION_PARTY  = 'protection_party',
+
+    -- Roleplay features (server/rp_*.lua), each off as shipped.
+    --- Config.Roleplay.BurnerPhone: a contract action without the burner
+    --- phone item in the inventory. Nothing was taken or changed.
+    NEED_BURNER      = 'need_burner',
+    --- Config.Roleplay.Rumours: Accept on a contract this hitman has not
+    --- been briefed on by the broker (or the briefing ran out).
+    NOT_BRIEFED      = 'not_briefed',
+    --- Asked the broker about a rumour away from the broker NPC.
+    FIND_BROKER      = 'find_broker',
+    --- The broker's own requests from a player not on a broker job.
+    NOT_BROKER       = 'not_broker',
+    --- The person a broker player picked is no longer within the radius.
+    BROKER_TOO_FAR   = 'broker_too_far',
+    --- Config.Roleplay.InformantNpc: an informant purchase away from the
+    --- informant NPC. Nothing was charged.
+    FIND_INFORMANT   = 'find_informant',
 }
 
 --- The most lines one staff command output event carries

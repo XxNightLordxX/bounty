@@ -84,6 +84,9 @@ Review.KINDS = {
     player_report = 'a player reported this contract, or a message thread on it, from the app '
         .. '(server/reports.lua): read their note and the messages, deal with it in the city, '
         .. 'then dismiss with what was done. No money is in it',
+    low_effort_reason = 'a contract was placed or edited with a low-effort reason (Roleplay: '
+        .. 'Reason quality, server/rp_reason.lua): read the reason on the contract, deal with it '
+        .. 'in the city, then dismiss with what was done. No money is in it',
 }
 
 --- What settles an item that carries its whole record (`known.decide`), by

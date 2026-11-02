@@ -32,6 +32,8 @@ client_scripts {
     'client/mugshot.lua',
     -- The admin panel's page: opening it, closing it, its requests.
     'client/admin.lua',
+    -- The roleplay NPCs, the broker and the informant (Config.Roleplay).
+    'client/rp_npc.lua',
 }
 
 server_scripts {

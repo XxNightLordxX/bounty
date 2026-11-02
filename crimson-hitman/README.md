@@ -20,6 +20,17 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   contract ends without a completion (`Config.Roleplay.Protection`); and a
   target whose informant named an operative can place a contract on them
   (`Config.Roleplay.HitOnHitman`). See *Roleplay features*.
+- **Roleplay: rumours and a broker** (off as shipped): the board shows a new
+  contract only as a rumour, an area and a reward band, until the broker
+  NPC (or a player on a broker job) briefs the hitman. See *Roleplay
+  features*.
+- **Roleplay: burner phone** (off as shipped): placing, accepting and every
+  contract action need a `burner_phone` item, counted on the server.
+- **Roleplay: the informant in person** (off as shipped): every informant
+  purchase needs the buyer beside a rotating informant NPC.
+- **Roleplay: reason quality** (off as shipped): a least length and word
+  count for a typed reason, and low-effort phrases refused or sent to
+  *Needs review*.
 - **Suspend, protect, a player's history, manual payments and moderators**:
   under **Players** in the admin panel, staff suspend a player from placing
   or accepting contracts (for some days or until lifted, with a reason they
@@ -876,6 +887,36 @@ The roleplay features, each its own block of `Config.Roleplay` and each off as s
 | `Config.Roleplay.Protection.PayOnCompletionPercent` | `25` | The guard's share when the contract is carried out anyway; the rest goes back to the target. |
 | `Config.Roleplay.Protection.MaxJobsPerGuard` | `2` | Protection jobs one guard may hold at once. |
 | `Config.Roleplay.HitOnHitman.Enabled` | `false` | A target whose informant found out an operative's name may place a contract on them from that card, through the normal Place form. |
+| `Config.Roleplay.Rumours.Enabled` | `false` | The board shows a contract to a hitman who is no party to it as a rumour until they are briefed. |
+| `Config.Roleplay.Rumours.AreaMode` | `'district'` | `'district'`: the rumour names the nearest of `Districts` to where the target stood when it was first told. `'zones'`: a name from `Zones`, the same one every time for a contract. |
+| `Config.Roleplay.Rumours.Zones` | five vague names | Area names for `'zones'`, and the fallback when the target's place cannot be read. |
+| `Config.Roleplay.Rumours.Districts` | twelve areas | `'x, y, name'` entries (or `'Name@x,y'`, as witness heat's `Areas`: one parser reads both); the nearest names the area. |
+| `Config.Roleplay.Rumours.BandPercent` | `25` | The reward is shown as a range this many percent either side, rounded. |
+| `Config.Roleplay.Rumours.Radius` | `5.0` | Metres from the broker NPC, or from a broker player, that count. Read on the server from the peds. |
+| `Config.Roleplay.Rumours.BriefValidMinutes` | `30` | How long a briefing unlocks the full card and Accept for that hitman. Kept in memory: a restart forgets briefings. |
+| `Config.Roleplay.Rumours.Locations` | three places | Where the broker NPC stands, one at a time. |
+| `Config.Roleplay.Rumours.RotateHours` | `4` | The broker moves to its next place this often (worked out from the clock, so a restart does not move it). |
+| `Config.Roleplay.Rumours.Model` | `'g_m_m_armboss_01'` | The broker NPC's ped model. |
+| `Config.Roleplay.Rumours.Scenario` | `'WORLD_HUMAN_SMOKING'` | What the broker NPC does while standing. |
+| `Config.Roleplay.Rumours.Blip` | `false` | A map blip where the broker stands. |
+| `Config.Roleplay.Rumours.BrokerJobs` | `{}` | Jobs whose players brief a hitman standing near them from their own app (`{ broker = true }`). Empty: nobody. |
+| `Config.Roleplay.BurnerPhone.Enabled` | `false` | Placing, accepting and every contract action need the item in the inventory. |
+| `Config.Roleplay.BurnerPhone.Item` | `'burner_phone'` | The ox_inventory item counted. |
+| `Config.Roleplay.BurnerPhone.ConsumeOnPlace` | `false` | Use one up when a contract is placed (after it is placed). |
+| `Config.Roleplay.BurnerPhone.ConsumeOnAccept` | `false` | Use one up when a contract is accepted (after it is accepted). |
+| `Config.Roleplay.BurnerPhone.RequireToOpen` | `true` | Without one, the Board and the placer's and hitman's halves of Mine are not even sent; On me always is. |
+| `Config.Roleplay.InformantNpc.Enabled` | `false` | Every informant purchase needs the buyer beside the informant NPC. |
+| `Config.Roleplay.InformantNpc.Radius` | `5.0` | Metres from the informant NPC that count. |
+| `Config.Roleplay.InformantNpc.Locations` | three places | Where the informant stands, one at a time. |
+| `Config.Roleplay.InformantNpc.RotateHours` | `3` | The informant moves to its next place this often. |
+| `Config.Roleplay.InformantNpc.Model` | `'a_m_y_hipster_01'` | The informant NPC's ped model. |
+| `Config.Roleplay.InformantNpc.Scenario` | `'WORLD_HUMAN_LEANING'` | What the informant NPC does while standing. |
+| `Config.Roleplay.InformantNpc.Blip` | `false` | A map blip where the informant stands. |
+| `Config.Roleplay.ReasonQuality.Enabled` | `false` | Holds a typed reason (`Config.Reason.Mode = 'freetext'`) to the rules below, after the other reason rules. |
+| `Config.Roleplay.ReasonQuality.MinLength` | `15` | Least characters in a reason; never above `Config.Reason.MaxLength`. |
+| `Config.Roleplay.ReasonQuality.MinWords` | `3` | Least words (runs of letters and digits). |
+| `Config.Roleplay.ReasonQuality.LowEffort` | `rdm`, `idk`, `cuz`, `no reason`, `test`, `because` | Phrases matched as whole words, in any case. |
+| `Config.Roleplay.ReasonQuality.LowEffortAction` | `'refuse'` | `'refuse'`: refused. `'review'`: placed, and put in **Needs review** as a *low-effort reason* with its contract. |
 
 ### Advanced and developer
 
@@ -2486,16 +2527,20 @@ they say.
 
 ## Roleplay features
 
-Eight optional roleplay features. Four are consequences of a completed
+Twelve optional roleplay features. Four are consequences of a completed
 contract, in `server/rp_consequences.lua` (witness heat, EMS before
 re-listing, city news, dirty money payouts); four reward playing a contract in
 character and give a target ways to fight back, in `server/rp_intent.lua`,
 `server/rp_reputation.lua` and `server/rp_protection.lua` (proof of intent,
-reputation, bodyguards, the hit on the hitman). Each is **off as shipped**
+reputation, bodyguards, the hit on the hitman); and four make getting to a
+contract something played in the city, in `server/rp_rumours.lua`,
+`server/rp_burner.lua`, `server/rp_informant.lua` and `server/rp_reason.lua`,
+with the NPCs' places in `server/rp_places.lua` (rumours and a broker, the
+burner phone, the informant in person, reason quality). Each is **off as shipped**
 (`Config.Roleplay.<Feature>.Enabled = false`), and with its switch off the
 resource behaves exactly as before. Every setting is in the admin panel (the
 switches under **Features**, in groups *Roleplay: ...*; the rest under
-**Rules > Limits**, **Rules > Timers** or **Rewards & money**), is checked as
+**Rules > Limits**, **Timers**, **Targeting** or **Rewards & money**), is checked as
 `config.lua` is at start, is kept across restarts and applies at once.
 **Live > How it works** has a card for each. Nothing here ever names the
 hitman or the placer to anyone who could not already see them.
@@ -2656,6 +2701,90 @@ the same kind of target handle the form's own list uses, and everything after
 is the normal place flow with all its rules (reward, cooldowns, limits,
 anonymity). There is no special path. Nothing is offered for an operative the
 informant found only by description, or for the placer.
+
+### Rumours and a broker
+
+With `Config.Roleplay.Rumours.Enabled` on, a hitman who is not party to a
+contract sees it on the board as a **rumour**: a rough area (the district
+the target stood in when it was first told, or a zone name) and a reward
+band. No target name, no headshot, no reason, no exact figure and no
+Accept. The placer still sees their own card whole.
+
+To get the card and Accept, the hitman is **briefed**:
+
+- by the **broker NPC**, which every game draws at one of
+  `Rumours.Locations`, moving every `RotateHours`: standing within `Radius`
+  of it, the hitman taps **Ask the broker** on the rumour. The server reads
+  where their ped is (`GetEntityCoords`), never the game's word; anywhere
+  else: *Find the broker first.*
+- or by a player on one of `Rumours.BrokerJobs`: their board shows **Who is
+  near me?**, which lists the people within `Radius` of them as *Person 1,
+  2 m away* (never a name or an id), and **Brief them** on a rumour. The
+  server checks the distance again at the brief.
+
+A briefing lasts `BriefValidMinutes` per hitman per contract, in memory
+(a restart forgets it). Accept without one is refused before anything is
+taken (*You only know the rumour...*). The NPC is a local, non-networked
+ped drawn only within 80 m; police and other barred jobs, who are refused
+the app, are not told where it stands.
+
+### Burner phone required
+
+With `Config.Roleplay.BurnerPhone.Enabled` on, placing, accepting and every
+contract action (abandon, cancel, edit, proposals, the handover, Verify
+kill, the meeting point, messages and the placer's informant) need the
+`Item` (`burner_phone`), counted with ox_inventory's `GetItemCount` on the
+server. Without one the player is told *You need a burner phone.* and,
+with `RequireToOpen` (as shipped), the Board and the contract half of Mine
+are not sent at all; On me is. Live contracts stay as they are: a hitman
+whose burner was seized or stolen keeps their contract, and only its
+actions wait for a new phone. `ConsumeOnPlace` / `ConsumeOnAccept` use one
+up after the action went through (`RemoveItem`); an item that could not be
+taken is audited (`burner_not_taken`) and the action stands. With
+ox_inventory not started the feature does nothing.
+
+**The item.** This resource never edits ox_inventory or sc-blackmarket. Add
+the item to `ox_inventory/data/items.lua`:
+
+```lua
+['burner_phone'] = {
+    label = 'Burner phone',
+    weight = 150,
+    stack = true,
+    close = true,
+    description = 'A cheap phone nobody can trace.',
+},
+```
+
+and an image `burner_phone.png` to `ox_inventory/web/images/`. To sell it
+through **sc-blackmarket**, add an entry for the item name `burner_phone`
+to the shop items in sc-blackmarket's own config, with the price and stock
+you want, following the shape of the entries already there. sc-blackmarket
+is a paid resource whose config could not be read here, so its exact keys
+are not given; if an entry by item name does not work, ask its author. Any
+other shop that hands out ox_inventory items works too.
+
+### The informant as a person
+
+With `Config.Roleplay.InformantNpc.Enabled` on, every informant purchase,
+the target's look-up, the placer's look-up and the hitman's location tip,
+is sold only to a buyer standing within `Radius` of the informant NPC. It
+stands at one of its own `Locations`, moving every `RotateHours`, with its
+own model and scenario, through the same rotation as the broker. Anywhere
+else the purchase is refused with *Find the informant first.* before the
+purchase is looked at: nothing is charged and no look-up is spent. A
+purchase whose own feature is off is refused by that feature as before.
+
+### Reason quality
+
+With `Config.Roleplay.ReasonQuality.Enabled` on, a typed reason must be at
+least `MinLength` characters and `MinWords` words, on top of the other
+reason rules, wherever it is set: placing, Edit, and an agreed change of
+reason. A reason holding one of `LowEffort` (as whole words, any case) is
+refused (`LowEffortAction = 'refuse'`), or placed and put in **Needs
+review** as a *low-effort reason* with its contract (`'review'`), where
+staff read it and dismiss it with a note. The item names the placer by
+role to staff without `crimson.identity`. Refusals charge nothing.
 
 ---
 

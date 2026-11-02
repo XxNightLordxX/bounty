@@ -1467,6 +1467,127 @@ MONEY['Roleplay.Protection.MinReward'] = 'Payouts'
 MONEY['Roleplay.Protection.MaxReward'] = 'Payouts'
 MONEY['Roleplay.Protection.PayOnCompletionPercent'] = 'Payouts'
 
+--- The roleplay features (server/rp_*.lua, Config.Roleplay), each off as
+--- shipped: the switch under Features, the rest under the rules they are.
+--- `whole` on a list: what is typed is one entry, spaces and commas kept
+--- (a place, a phrase), not names split at each.
+local RP_RUMOURS, RP_BURNER = 'Roleplay: Rumours and broker', 'Roleplay: Burner phone'
+local RP_INFORMANT, RP_REASON = 'Roleplay: Informant in person', 'Roleplay: Reason quality'
+local PLACES = 'Each place is x, y, z, heading. The NPC stands at one at a time.'
+local NPC_MOVES = 'Every game is told at once, and draws the NPC in its new place.'
+for _, entry in ipairs({
+    { key = 'Roleplay.Rumours.Enabled', section = 'features', category = 'features', group = RP_RUMOURS,
+      kind = 'switch', label = 'Rumours and the broker',
+      about = 'The board shows a new contract only as a rumour (an area and a reward band) until '
+          .. 'the broker briefs the hitman.',
+      inflight = 'Read at every board read and Accept: on, hitmen not yet briefed see rumours at '
+          .. 'once; contracts already held are untouched.' },
+    { key = 'Roleplay.Rumours.AreaMode', section = 'limits', category = 'rules-targeting', group = RP_RUMOURS,
+      kind = 'choice', choices = { 'district', 'zones' }, label = 'What area a rumour names',
+      about = '"district": the nearest of Districts to where the target was. "zones": a name '
+          .. 'from Zones.', inflight = 'Rumours already told keep the area they named.' },
+    { key = 'Roleplay.Rumours.Zones', section = 'limits', category = 'rules-targeting', group = RP_RUMOURS,
+      kind = 'list', array = true, whole = true, names = 'phrase', label = 'Zone names',
+      about = 'Vague area names a rumour picks from.', inflight = AT_USE },
+    { key = 'Roleplay.Rumours.Districts', section = 'limits', category = 'rules-targeting',
+      group = RP_RUMOURS, kind = 'list', array = true, whole = true, names = 'area',
+      label = 'Districts (x, y, name)', about = 'The nearest one to the target names the area.',
+      inflight = 'Rumours already told keep the area they named.' },
+    { key = 'Roleplay.Rumours.BandPercent', section = 'limits', category = 'rules-limits', group = RP_RUMOURS,
+      kind = 'number', integer = true, min = 0, max = 100, label = 'Reward band either side (%)',
+      about = 'A rumour gives the reward as a range this many percent either side.', inflight = AT_USE },
+    { key = 'Roleplay.Rumours.Radius', section = 'limits', category = 'rules-limits', group = RP_RUMOURS,
+      kind = 'number', min = 1, max = 100, label = 'Distance to the broker (m)',
+      about = 'How close the hitman stands to the broker NPC, or to a broker player.', inflight = AT_USE },
+    { key = 'Roleplay.Rumours.BriefValidMinutes', section = 'limits', category = 'rules-timers',
+      group = RP_RUMOURS, kind = 'number', integer = true, min = 1, max = 1440,
+      label = 'A briefing lasts (min)', about = 'How long a briefing unlocks a contract for.',
+      inflight = 'Briefings already given keep their time.' },
+    { key = 'Roleplay.Rumours.Locations', section = 'limits', category = 'rules-limits', group = RP_RUMOURS,
+      kind = 'list', array = true, whole = true, names = 'point', label = 'Broker NPC places',
+      about = PLACES, inflight = NPC_MOVES },
+    { key = 'Roleplay.Rumours.RotateHours', section = 'limits', category = 'rules-timers', group = RP_RUMOURS,
+      kind = 'number', integer = true, min = 1, max = 168, label = 'Broker moves every (h)',
+      about = 'The broker NPC moves to its next place this often.', inflight = NPC_MOVES },
+    { key = 'Roleplay.Rumours.Model', section = 'limits', category = 'rules-limits', group = RP_RUMOURS,
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Broker NPC model',
+      about = 'A GTA ped model name.', inflight = NPC_MOVES },
+    { key = 'Roleplay.Rumours.Scenario', section = 'limits', category = 'rules-limits', group = RP_RUMOURS,
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Broker NPC scenario',
+      about = 'What the NPC does while it stands there.', inflight = NPC_MOVES },
+    { key = 'Roleplay.Rumours.Blip', section = 'features', category = 'features', group = RP_RUMOURS,
+      kind = 'switch', label = 'Broker on the map', about = 'A map blip where the broker NPC stands.',
+      inflight = NPC_MOVES },
+    { key = 'Roleplay.Rumours.BrokerJobs', section = 'limits', category = 'rules-targeting',
+      group = RP_RUMOURS, kind = 'list', label = 'Broker jobs',
+      about = 'Players on these jobs brief a hitman standing near them from their own app.',
+      inflight = AT_USE },
+
+    { key = 'Roleplay.BurnerPhone.Enabled', section = 'features', category = 'features', group = RP_BURNER,
+      kind = 'switch', label = 'Burner phone required',
+      about = 'Placing, accepting and every contract action need the burner phone item.',
+      inflight = 'Checked at every action: live contracts stay as they are; only the next action '
+          .. 'needs the item.' },
+    { key = 'Roleplay.BurnerPhone.ConsumeOnPlace', section = 'features', category = 'features',
+      group = RP_BURNER, kind = 'switch', label = 'Use one up on placing',
+      about = 'One burner is used up when a contract is placed.', inflight = AT_USE },
+    { key = 'Roleplay.BurnerPhone.ConsumeOnAccept', section = 'features', category = 'features',
+      group = RP_BURNER, kind = 'switch', label = 'Use one up on accepting',
+      about = 'One burner is used up when a contract is accepted.', inflight = AT_USE },
+    { key = 'Roleplay.BurnerPhone.RequireToOpen', section = 'features', category = 'features',
+      group = RP_BURNER, kind = 'switch', label = 'No burner, no contract tabs',
+      about = 'Without one the Board and the contract half of Mine show nothing.', inflight = AT_USE },
+    { key = 'Roleplay.BurnerPhone.Item', section = 'limits', category = 'rules-limits', group = RP_BURNER,
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Burner phone item',
+      about = 'The ox_inventory item name.', inflight = AT_USE },
+
+    { key = 'Roleplay.InformantNpc.Enabled', section = 'features', category = 'features', group = RP_INFORMANT,
+      kind = 'switch', label = 'Informant in person',
+      about = 'Every informant purchase needs the buyer beside the informant NPC.',
+      inflight = 'Checked at every purchase; nothing already bought changes.' },
+    { key = 'Roleplay.InformantNpc.Radius', section = 'limits', category = 'rules-limits', group = RP_INFORMANT,
+      kind = 'number', min = 1, max = 100, label = 'Distance to the informant (m)',
+      about = 'How close the buyer stands to the informant NPC.', inflight = AT_USE },
+    { key = 'Roleplay.InformantNpc.Locations', section = 'limits', category = 'rules-limits',
+      group = RP_INFORMANT, kind = 'list', array = true, whole = true, names = 'point',
+      label = 'Informant NPC places', about = PLACES, inflight = NPC_MOVES },
+    { key = 'Roleplay.InformantNpc.RotateHours', section = 'limits', category = 'rules-timers',
+      group = RP_INFORMANT, kind = 'number', integer = true, min = 1, max = 168,
+      label = 'Informant moves every (h)', about = 'The informant NPC moves to its next place this often.',
+      inflight = NPC_MOVES },
+    { key = 'Roleplay.InformantNpc.Model', section = 'limits', category = 'rules-limits', group = RP_INFORMANT,
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Informant NPC model',
+      about = 'A GTA ped model name.', inflight = NPC_MOVES },
+    { key = 'Roleplay.InformantNpc.Scenario', section = 'limits', category = 'rules-limits',
+      group = RP_INFORMANT, kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64,
+      label = 'Informant NPC scenario', about = 'What the NPC does while it stands there.',
+      inflight = NPC_MOVES },
+    { key = 'Roleplay.InformantNpc.Blip', section = 'features', category = 'features', group = RP_INFORMANT,
+      kind = 'switch', label = 'Informant on the map', about = 'A map blip where the informant NPC stands.',
+      inflight = NPC_MOVES },
+
+    { key = 'Roleplay.ReasonQuality.Enabled', section = 'features', category = 'features', group = RP_REASON,
+      kind = 'switch', label = 'Reason quality',
+      about = 'A typed reason needs a least length and word count, and low-effort ones are caught.',
+      inflight = 'Read at every placing and edit: contracts keep the reason they were placed with.' },
+    { key = 'Roleplay.ReasonQuality.MinLength', section = 'limits', category = 'rules-limits',
+      group = RP_REASON, kind = 'number', integer = true, min = 0, max = 255,
+      label = 'Shortest reason (characters)', about = 'At most Reason.MaxLength.', inflight = AT_USE },
+    { key = 'Roleplay.ReasonQuality.MinWords', section = 'limits', category = 'rules-limits',
+      group = RP_REASON, kind = 'number', integer = true, min = 0, max = 50,
+      label = 'Fewest words in a reason', about = 'Words are runs of letters and digits.', inflight = AT_USE },
+    { key = 'Roleplay.ReasonQuality.LowEffort', section = 'limits', category = 'rules-limits',
+      group = RP_REASON, kind = 'list', array = true, whole = true, names = 'phrase',
+      label = 'Low-effort phrases', about = 'Matched as whole words, in any case.', inflight = AT_USE },
+    { key = 'Roleplay.ReasonQuality.LowEffortAction', section = 'limits', category = 'rules-limits',
+      group = RP_REASON, kind = 'choice', choices = { 'refuse', 'review' },
+      label = 'A low-effort reason is',
+      about = '"refuse": refused. "review": placed, and put in Needs review for staff.',
+      inflight = AT_USE },
+}) do
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+
 local byKey = {}
 for i = 1, #CATALOGUE do byKey[CATALOGUE[i].key] = CATALOGUE[i] end
 for key, group in pairs(MONEY) do
@@ -1583,12 +1704,26 @@ local NAMES = {
     host = { pattern = '^[%w%-]+%.[%w%-%.]+$', max = 128, lower = true,
              says = 'host names such as fivemanage.com, up to 128 long' },
     phrase = { pattern = '^[^%c<>]+$', max = 60, says = 'short phrases, up to 60 characters, no < or >' },
+    -- The roleplay lists (server/rp_places.lua, rp_consequences.lua): an NPC's
+    -- place; a news template; and a named area, in either form both lists
+    -- read (Places.parseArea): 'Name@x,y' (witness heat and city news) or
+    -- 'x, y, name' (the rumours' districts).
+    point = { pattern = '^[%d%s%.,%-]+$', max = 60, says = 'places as x, y, z, heading' },
+    sentence = { pattern = '^[^%c<>]+$', max = 160, says = 'sentences, up to 160 characters, no < or >' },
+    area = { patterns = { '^[^%c<>@]+@%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*$',
+                          '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,[^%c<>@]+$' }, max = 60,
+             says = 'areas as Name@x,y or x, y, name (such as Legion Square@195,-934), up to 60 characters' },
 }
--- The roleplay consequences' lists (server/rp_consequences.lua): a news
--- template, and an area as its name and centre.
-NAMES.sentence = { pattern = '^[^%c<>]+$', max = 160, says = 'sentences, up to 160 characters, no < or >' }
-NAMES.area = { pattern = '^[^%c<>@]+@%-?%d+%.?%d*,%-?%d+%.?%d*$', max = 60,
-               says = 'areas as Name@x,y (such as Legion Square@195,-934), up to 60 characters' }
+
+--- Whether one typed name keeps its list's rule: its pattern, or any one of
+--- its patterns.
+local function nameFits(rule, name)
+    if rule.pattern and name:match(rule.pattern) then return true end
+    for _, pattern in ipairs(rule.patterns or {}) do
+        if name:match(pattern) then return true end
+    end
+    return false
+end
 
 --- The most a number key takes now: its own max, or less where another
 --- setting caps it (`ceiling`, a key read from the config in force).
@@ -1696,7 +1831,7 @@ local function normalise(entry, raw)
         for i = 1, #raw do
             local name = raw[i]
             if type(name) == 'string' then name = name:gsub('^%s+', ''):gsub('%s+$', '') end
-            if type(name) ~= 'string' or #name == 0 or #name > rule.max or not name:match(rule.pattern) then
+            if type(name) ~= 'string' or #name == 0 or #name > rule.max or not nameFits(rule, name) then
                 return nil, rule.says
             end
             if rule.lower then name = name:lower() end

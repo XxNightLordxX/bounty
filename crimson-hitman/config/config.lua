@@ -423,6 +423,7 @@ Config.Staff = {
 -- ============================================================================
 -- Optional roleplay features, each its own block and each off as shipped
 -- (README, Roleplay features). All of them are changed from the admin panel.
+-- Places (the broker's and the informant's) are 'x, y, z, heading'.
 
 Config.Roleplay = Config.Roleplay or {}  -- the roleplay features, one block each
 
@@ -506,6 +507,61 @@ Config.Roleplay.Protection = {
 
 Config.Roleplay.HitOnHitman = {
     Enabled = false, -- a target may place a contract on an operative revealed
+}
+
+Config.Roleplay.Rumours = {
+    Enabled           = false,       -- the board shows new contracts as rumours only
+    AreaMode          = 'district',  -- 'district' (target's area) | 'zones' (from Zones)
+    Zones             = { -- area names when AreaMode = 'zones'
+        'the city', 'the south side', 'the docks', 'the hills', 'the county',
+    },
+    Districts         = { -- 'x, y, name': the nearest names the target's area
+        '200, -900, Legion Square', '-1300, -1400, Vespucci', '-1500, -450, Del Perro',
+        '-800, -150, Rockford Hills', '1100, -600, Mirror Park', '100, -1750, Davis',
+        '800, -1200, La Mesa', '1000, -3000, the port', '0, 800, Vinewood Hills',
+        '1850, 3700, Sandy Shores', '2000, 4900, Grapeseed', '-150, 6350, Paleto Bay',
+    },
+    BandPercent       = 25,          -- reward shown as a band this many % either side
+    Radius            = 5.0,         -- metres from the broker (NPC or player) that count
+    BriefValidMinutes = 30,          -- a briefing unlocks a contract for this long
+    Locations         = { -- where the broker NPC stands, one at a time
+        '-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0',
+        '-56.5, -1752.4, 29.4, 50.0',
+    },
+    RotateHours       = 4,           -- the NPC moves to the next place this often
+    Model             = 'g_m_m_armboss_01',     -- the broker NPC's ped model
+    Scenario          = 'WORLD_HUMAN_SMOKING',  -- what the NPC does while standing
+    Blip              = false,       -- show the broker on the map
+    BrokerJobs        = {},          -- jobs whose players brief from the app: { broker = true }
+}
+
+Config.Roleplay.BurnerPhone = {
+    Enabled         = false,           -- placing and accepting need the item
+    Item            = 'burner_phone',  -- the ox_inventory item
+    ConsumeOnPlace  = false,           -- use one up when a contract is placed
+    ConsumeOnAccept = false,           -- use one up when a contract is accepted
+    RequireToOpen   = true,            -- no item, no contract tabs at all
+}
+
+Config.Roleplay.InformantNpc = {
+    Enabled     = false,  -- informant purchases only beside the informant NPC
+    Radius      = 5.0,    -- metres from the informant that count
+    Locations   = { -- where the informant stands, one at a time
+        '374.2, -827.4, 29.3, 180.0', '-1394.0, -592.0, 30.3, 120.0',
+        '1984.0, 3054.0, 47.2, 240.0',
+    },
+    RotateHours = 3,                      -- the NPC moves to the next place this often
+    Model       = 'a_m_y_hipster_01',     -- the informant NPC's ped model
+    Scenario    = 'WORLD_HUMAN_LEANING',  -- what the NPC does while standing
+    Blip        = false,                  -- show the informant on the map
+}
+
+Config.Roleplay.ReasonQuality = {
+    Enabled         = false,     -- hold free-text reasons to the rules below
+    MinLength       = 15,        -- least characters in a reason
+    MinWords        = 3,         -- least words in a reason
+    LowEffort       = { 'rdm', 'idk', 'cuz', 'no reason', 'test', 'because' }, -- words to catch
+    LowEffortAction = 'refuse',  -- 'refuse' | 'review' (placed, and queued for staff)
 }
 -- ============================================================================
 --                          ADVANCED AND DEVELOPER

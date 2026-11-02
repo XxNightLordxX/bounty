@@ -342,6 +342,9 @@ describe('the grid covers the whole action surface', function()
     --- A handler that gains a state rule and no row here is a handler whose
     --- state rule nothing checks.
     local COVERED_ELSEWHERE = {
+        -- The roleplay features: a briefing only on a contract on the board
+        -- (live, not the asker's own as its target), roleplay_access_spec.
+        rumourBrief = true, brokerNearby = true, brokerBrief = true, rpPlaces = true,
         list = true, mine = true, ledger = true, searchTargets = true,
         browseTargets = true, mugshotImage = true, rewardOptions = true,
         create = true, pageError = true,

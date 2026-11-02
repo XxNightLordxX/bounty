@@ -125,6 +125,38 @@ local ADDED = {
         PayOnCompletionPercent = 25, MaxJobsPerGuard = 2,
     },
     ['Roleplay.HitOnHitman'] = { Enabled = false },
+    -- Group rpA: rumours and the broker, the burner phone, the informant in
+    -- person and reason quality.
+    ['Roleplay.Rumours'] = {
+        Enabled = false, AreaMode = 'district',
+        Zones = { 'the city', 'the south side', 'the docks', 'the hills', 'the county' },
+        Districts = {
+            '200, -900, Legion Square', '-1300, -1400, Vespucci', '-1500, -450, Del Perro',
+            '-800, -150, Rockford Hills', '1100, -600, Mirror Park', '100, -1750, Davis',
+            '800, -1200, La Mesa', '1000, -3000, the port', '0, 800, Vinewood Hills',
+            '1850, 3700, Sandy Shores', '2000, 4900, Grapeseed', '-150, 6350, Paleto Bay',
+        },
+        BandPercent = 25, Radius = 5.0, BriefValidMinutes = 30,
+        Locations = { '-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0',
+            '-56.5, -1752.4, 29.4, 50.0' },
+        RotateHours = 4, Model = 'g_m_m_armboss_01', Scenario = 'WORLD_HUMAN_SMOKING',
+        Blip = false, BrokerJobs = {},
+    },
+    ['Roleplay.BurnerPhone'] = {
+        Enabled = false, Item = 'burner_phone', ConsumeOnPlace = false, ConsumeOnAccept = false,
+        RequireToOpen = true,
+    },
+    ['Roleplay.InformantNpc'] = {
+        Enabled = false, Radius = 5.0,
+        Locations = { '374.2, -827.4, 29.3, 180.0', '-1394.0, -592.0, 30.3, 120.0',
+            '1984.0, 3054.0, 47.2, 240.0' },
+        RotateHours = 3, Model = 'a_m_y_hipster_01', Scenario = 'WORLD_HUMAN_LEANING', Blip = false,
+    },
+    ['Roleplay.ReasonQuality'] = {
+        Enabled = false, MinLength = 15, MinWords = 3,
+        LowEffort = { 'rdm', 'idk', 'cuz', 'no reason', 'test', 'because' },
+        LowEffortAction = 'refuse',
+    },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -292,9 +324,10 @@ describe('the configuration as one short file', function()
         -- 500 before the Staff section (Config.Staff: the manual payment cap
         -- and the staff tools) and the report bucket; no room beyond them.
         -- And the Roleplay section: one header, rpB's four blocks (witness heat,
-        -- EMS before re-listing, city news, dirty payouts) and rpC's four
-        -- (proof of intent, reputation, protection, the hit on the hitman).
-        truthy(lines < 597, 'config.lua is ' .. lines .. ' lines')
+        -- EMS before re-listing, city news, dirty payouts), rpC's four (proof
+        -- of intent, reputation, protection, the hit on the hitman) and rpA's
+        -- four (rumours, burner phone, informant in person, reason quality).
+        truthy(lines < 653, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: ANONYMITY', 'FEATURES: INFORMANTS',

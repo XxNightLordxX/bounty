@@ -874,6 +874,50 @@ MATRIX.meetingWaypoint = {
        .. 'the placer included, is told where',
 }
 
+-- The roleplay features (server/rp_*.lua), each switched on for its row,
+-- with the broker NPC where everybody stands and the stranger on a broker
+-- job. Off, as shipped, each of the three answers feature_off to everyone.
+
+local function rumoursOn()
+    allAtScene()
+    Config.Roleplay.Rumours.Enabled = true
+    Config.Roleplay.Rumours.Locations = { ('%.1f, %.1f, %.1f, 0'):format(SCENE.x, SCENE.y, SCENE.z) }
+    Config.Roleplay.Rumours.BrokerJobs = { broker = true }
+    Env.players[CAST.stranger.source].PlayerData.job = { name = 'broker', type = 'none', onduty = true }
+end
+
+-- Anybody the board shows the contract to may ask the broker about it; its
+-- target is not shown it, and is answered as for no contract at all.
+MATRIX.rumourBrief = {
+    arrange = rumoursOn,
+    payload = function(w, role, contract) return { id = contract.id } end,
+    expect = { creator = ALLOW, target = CH.ERR.NOT_FOUND, hitman = ALLOW, otherHitman = ALLOW,
+               stranger = ALLOW, admin = ALLOW },
+    why = 'a rumour is on the board for everyone but its target, and the broker tells anyone '
+       .. 'who finds him',
+}
+
+MATRIX.brokerNearby = {
+    arrange = rumoursOn,
+    payload = {},
+    expect = only('stranger', CH.ERR.NOT_BROKER),
+    why = 'who stands near is told to a player on a broker job, and only as handles',
+}
+
+MATRIX.brokerBrief = {
+    arrange = rumoursOn,
+    payload = function(w, role, contract)
+        local near = w.s.rpRumours.brokerNearby(w.s.identity.resolve(CAST.stranger.source))
+        local first = type(near) == 'table' and near.people and near.people[1]
+        return { id = contract.id, who = first and first.handle or 'bp-none' }
+    end,
+    expect = only('stranger', CH.ERR.NOT_BROKER),
+    why = 'only a player on a broker job briefs, and only somebody standing with them',
+}
+
+MATRIX.rpPlaces = { payload = {}, expect = ANYONE,
+    why = 'where the NPCs stand is the same for every player and names nobody' }
+
 -- The two events the victim's own client fires --------------------------
 --
 -- These reply to nobody, so they have no permit/refuse cell. What they do

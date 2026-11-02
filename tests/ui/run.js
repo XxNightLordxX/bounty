@@ -12620,6 +12620,89 @@ async function main() {
     });
   })();
 
+  /* The roleplay features (Config.Roleplay): a rumour on the board in place
+     of a card, asking the broker about it, a broker player's panel, and the
+     burner phone's refusal in place of the contract tabs. */
+  await (async function () {
+    const RUMOUR = { id: 'ct00000301', mode: 'competitive', state: 'active', role: 'public',
+      fulfilment: 'alive', slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 0, hitmenMax: 5,
+      timeLeft: band(3 * 3600), rumour: { area: 'Legion Square', low: 30000, high: 50000 } };
+    function rumourBoard(rules) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [RUMOUR], rumours: rules,
+        settings: { relay: true, amendments: true } } };
+    }
+    function buttons(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; });
+    }
+    function button(app, text) {
+      return buttons(app).filter(function (n) { return n.textContent.indexOf(text) === 0; })[0];
+    }
+    let asked = null;
+    const app = boot({ list: rumourBoard({ npc: true, minutes: 30 }), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      rumourBrief: function (body) { asked = body; return { ok: true, data: { briefed: true, minutes: 30 } }; } });
+    await settle(); await settle(); await settle();
+    it('rumours: a rumour says the area and the band, and nothing of who', function () {
+      drewCleanly(app);
+      const text = app.view.textContent;
+      truthy(text.indexOf('A rumour') !== -1, text);
+      truthy(text.indexOf('Legion Square') !== -1, text);
+      truthy(text.indexOf('$30,000 – $50,000') !== -1, text);
+      falsy(button(app, 'Accept'), 'no Accept on a rumour');
+    });
+    button(app, 'Ask the broker').onclick();
+    await settle(); await settle();
+    it('rumours: Ask the broker sends the contract and says what it got', function () {
+      eq(asked && asked.id, 'ct00000301');
+      truthy(app.notice().indexOf('The broker filled you in') !== -1, app.notice());
+    });
+
+    const far = boot({ list: rumourBoard({ npc: true }), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      rumourBrief: { ok: false, err: 'find_broker' } });
+    await settle(); await settle(); await settle();
+    button(far, 'Ask the broker').onclick();
+    await settle(); await settle();
+    it('rumours: away from the broker it says to find him', function () {
+      truthy(far.notice().indexOf('Find the broker first.') !== -1, far.notice());
+    });
+
+    let briefed = null;
+    const broker = boot({ list: rumourBoard({ npc: false, broker: true }), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      brokerNearby: { ok: true, data: { people: [{ handle: 'bpAAAA', metres: 2 }], radius: 5 } },
+      brokerBrief: function (body) { briefed = body; return { ok: true, data: { briefed: true } }; } });
+    await settle(); await settle(); await settle();
+    button(broker, 'Who is near me?').onclick();
+    await settle(); await settle();
+    it('broker: lists who is near by distance alone', function () {
+      truthy(button(broker, 'Person 1, 2 m away'), broker.view.textContent);
+    });
+    button(broker, 'Person 1').onclick();
+    await settle();
+    button(broker, 'Brief them').onclick();
+    await settle(); await settle();
+    it('broker: briefs the one picked on the rumour', function () {
+      eq(briefed && briefed.who, 'bpAAAA');
+      eq(briefed && briefed.id, 'ct00000301');
+      drewCleanly(broker);
+    });
+
+    const burner = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [], burnerMissing: true,
+      settings: {} } }, ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [], burnerMissing: true } } });
+    await settle(); await settle(); await settle();
+    it('burner phone: the board says it is needed', function () {
+      truthy(burner.view.textContent.indexOf('You need a burner phone.') !== -1, burner.view.textContent);
+    });
+    tab(burner, 'mine');
+    await settle(); await settle();
+    it('burner phone: so does Mine', function () {
+      truthy(burner.view.textContent.indexOf('You need a burner phone.') !== -1, burner.view.textContent);
+      drewCleanly(burner);
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

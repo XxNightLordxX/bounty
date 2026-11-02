@@ -1414,6 +1414,13 @@ local function validateConfig(quiet)
         commands.refresh = 'ch-refresh'
     end
 
+    -- The roleplay features (server/rp_*.lua, Config.Roleplay): each fills
+    -- its block where config.lua has none, and holds every field to its rule.
+    CrimsonBoot.require('server.rp_rumours').validate(warn)
+    CrimsonBoot.require('server.rp_burner').validate(warn)
+    CrimsonBoot.require('server.rp_informant').validate(warn)
+    CrimsonBoot.require('server.rp_reason').validate(warn)
+
     if quiet then return #fatal == 0, fatal, warn end
 
     -- Configuration problems (shared/log.lua): each in full with
@@ -1922,6 +1929,12 @@ function StartCrimsonHitman()
     local rpIntent     = CrimsonBoot.require('server.rp_intent')
     local rpReputation = CrimsonBoot.require('server.rp_reputation')
     local rpProtection = CrimsonBoot.require('server.rp_protection')
+    -- The roleplay features (README, Roleplay features), each off as shipped.
+    local rpPlaces    = CrimsonBoot.require('server.rp_places')
+    local rpRumours   = CrimsonBoot.require('server.rp_rumours')
+    local rpBurner    = CrimsonBoot.require('server.rp_burner')
+    local rpInformant = CrimsonBoot.require('server.rp_informant')
+    local rpReason    = CrimsonBoot.require('server.rp_reason')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -2005,6 +2018,15 @@ function StartCrimsonHitman()
     -- The built-in playtime tracker, the new-player rule's last answer
     -- (Identity.playtimeHours). Nothing is read until the tick's first pass.
     playtime.init({ storage = Storage, identity = identity })
+    -- The roleplay features: where the broker and informant NPCs stand, the
+    -- rumours and briefings, the burner phone, the informant in person and
+    -- the reason rules (server/rp_*.lua).
+    rpPlaces.init({ settings = settings })
+    rpRumours.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
+                     projection = projection })
+    rpBurner.init({ audit = audit })
+    rpInformant.init({ audit = audit })
+    rpReason.init({ storage = Storage, review = review, contracts = contracts })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -2047,6 +2069,9 @@ function StartCrimsonHitman()
         rpConsequences = rpConsequences,
         -- Roleplay: proof of intent, reputation and bodyguards.
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
+        -- The roleplay features, for the app's gate and its requests.
+        rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
+        rpInformant = rpInformant, rpReason = rpReason,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2104,6 +2129,8 @@ function StartCrimsonHitman()
         -- the restart (Death.noteStarted).
         death.noteStarted()
         death.startSampler()
+        -- Where the roleplay NPCs stand moves on the clock (server/rp_places.lua).
+        rpPlaces.startWatch()
     end)
     if not wired then return recoveryFailed(wireErr) end
 

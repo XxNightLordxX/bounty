@@ -597,6 +597,9 @@ local UI_EVENTS = {
     -- the server where it sees this player stand). Set GPS is answered here
     -- (crimson:protectionGps), below.
     'protectionBoard', 'protectionPost', 'protectionCancel', 'protectionAccept', 'protectionPin',
+    -- Roleplay (Config.Roleplay): asking the broker NPC about a rumour, and
+    -- a broker player's who-is-near and brief.
+    'rumourBrief', 'brokerNearby', 'brokerBrief',
 }
 
 --------------------------------------------------------------------------

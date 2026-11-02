@@ -1006,6 +1006,13 @@ local function reasonFor(actor, req)
     if phoneRefuses(actor.source, reason) then
         return nil, CH.ERR.REASON_REFUSED, { rule = 'phone' }
     end
+    -- And the roleplay rules on top, when on (server/rp_reason.lua,
+    -- Config.Roleplay.ReasonQuality): a least length, a least number of
+    -- words, and the low-effort phrases.
+    if Contracts.reasonQuality then
+        local refused, rule = Contracts.reasonQuality(reason)
+        if refused then return nil, refused, rule end
+    end
     return reason
 end
 

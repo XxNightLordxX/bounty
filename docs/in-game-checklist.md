@@ -1426,6 +1426,21 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 
 ---
 
+## 14. Roleplay features (each off as shipped)
+
+- [ ] With every `Config.Roleplay` switch off, the board, Accept, informants and reasons behave as before.
+- [ ] Rumours on: a second character sees a new contract as *A rumour* with an area and a band, no name or face, and no Accept.
+- [ ] Walk to the broker NPC (set `Rumours.Blip` on to find it): the ped stands there doing its scenario; **Ask the broker** from 20 m says *Find the broker first.*, from beside it shows the full card and Accept.
+- [ ] After `BriefValidMinutes` the card is a rumour again.
+- [ ] Give a character a job in `Rumours.BrokerJobs`: **Who is near me?** lists the hitman beside them by distance only; **Brief them** unlocks the card on the hitman's board, and the hitman gets a notice.
+- [ ] Change `Rumours.Locations` in the panel: the NPC moves for every player within a few seconds.
+- [ ] Burner phone on, no item: Board and Mine say *You need a burner phone.*; On me still shows a contract on you; placing is refused with nothing taken.
+- [ ] Give `burner_phone` (ox_inventory): everything works again; with `ConsumeOnPlace` one is used up per contract placed.
+- [ ] Take the item off a hitman holding a contract: the contract stays, Abandon says *You need a burner phone.*
+- [ ] Buy the item from sc-blackmarket after adding it there.
+- [ ] Informant in person on, with the tip on: buying a tip away from the informant says *Find the informant first.* and the bank is unchanged; beside it the tip is sold.
+- [ ] Reason quality on: *idk* is refused, *Debt owed* is refused as too short; with `LowEffortAction = 'review'` an *rdm* reason is placed and shows in **Needs review** as a low-effort reason, dismissed with a note.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

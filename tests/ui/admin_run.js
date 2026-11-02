@@ -4131,6 +4131,54 @@ async function main() {
     clean(app, 'roleplay rpC');
   })();
 
+  /* ---- the roleplay features (Config.Roleplay) ---- */
+  await (async function () {
+    const places = { key: 'Roleplay.Rumours.Locations', category: 'rules-limits', group: 'Roleplay: Rumours and broker',
+      label: 'Broker NPC places', kind: 'list', whole: true, live: true, inflight: 'Every game is told at once.',
+      value: ['-1171.0, -1572.5, 4.66, 125.0'], default: [], source: 'config' };
+    const lazy = { id: 'rv00000010', kind: 'low_effort_reason', about: 'a contract was placed or edited with a low-effort reason',
+      contract: 'ct00000001', parties: [{ role: 'creator', who: 'the client' }], items: [],
+      known: { matched: 'rdm', request: 'create' }, state: 'open', created_at: NOW - 100 };
+    const server = standardServer({
+      settings: settingsView({ limits: [places] }),
+      reviews: { ok: true, data: { items: [lazy] } },
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('limits');
+    await settled();
+    const row = function () { return app.byId('st-row-Roleplay.Rumours.Locations'); };
+    app.type(row().querySelector('input'), '1240.6, -3179.2, 7.1, 270.0');
+    app.click(app.button('Add', row()));
+    await settled();
+    app.click(app.byId('st-save-Roleplay.Rumours.Locations'));
+    app.click(app.byId('st-save-Roleplay.Rumours.Locations'));
+    await settled();
+    it('a place is added whole, commas and spaces kept', function () {
+      eq(app.last('setSetting').data, { key: 'Roleplay.Rumours.Locations',
+        value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'] });
+    });
+    app.nav('reviews');
+    await settled();
+    const item = app.byId('rv-rv00000010');
+    it('a low-effort reason in Needs review offers Dismiss alone: it holds no money', function () {
+      has(app.text(item), 'low-effort reason');
+      has(app.text(item), 'rdm');
+      lacks(app.text(item), 'Refund it');
+      lacks(app.text(item), 'Pay it');
+      truthy(app.button('Dismiss it', item));
+    });
+    app.nav('help');
+    await settled();
+    it('How it works has a card for each roleplay feature', function () {
+      ['Rumours and the broker', 'Burner phone', 'The informant in person', 'Reason quality'].forEach(function (t) {
+        has(app.main(), t);
+      });
+    });
+    clean(app, 'roleplay settings and review');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

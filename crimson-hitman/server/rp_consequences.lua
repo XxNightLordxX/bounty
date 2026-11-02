@@ -27,6 +27,8 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+--- The named-area parser both roleplay area lists share.
+local Places = CrimsonBoot.require('server.rp_places')
 
 local RpConsequences = {}
 
@@ -70,7 +72,7 @@ local RULES = {
         FuzzMeters = { 'number', 0, 1000 }, DispatchPriority = { 'integer', 1, 5 },
         Title = { 'text', '^[^%c<>]+$', 60 },
         Phrases = { 'list', '^[^%c<>]+$', 60 },
-        Areas = { 'list', '^[^%c<>@]+@%-?%d+%.?%d*,%-?%d+%.?%d*$', 60 },
+        Areas = { 'areas' },  -- each read by Places.parseArea (server/rp_places.lua)
     },
     EmsRelisting = {
         Enabled = { 'switch' }, RequireEMS = { 'switch' },
@@ -106,14 +108,16 @@ local function fits(rule, value)
         return type(value) == 'string' and #value > 0 and #value <= rule[3] and value:match(rule[2]) ~= nil
     end
     if kind == 'choice' then return type(value) == 'string' and rule[2][value] == true end
-    if kind == 'list' then
+    if kind == 'list' or kind == 'areas' then
         if type(value) ~= 'table' or #value > 50 then return false end
         for k in pairs(value) do
             if math.type(k) ~= 'integer' or k < 1 or k > #value then return false end
         end
         for i = 1, #value do
             local item = value[i]
-            if type(item) ~= 'string' or #item == 0 or #item > rule[3] or not item:match(rule[2]) then
+            if kind == 'areas' then
+                if not Places.parseArea(item) then return false end
+            elseif type(item) ~= 'string' or #item == 0 or #item > rule[3] or not item:match(rule[2]) then
                 return false
             end
         end
@@ -205,10 +209,8 @@ local function areas()
     if list ~= parsedFrom then
         parsedFrom, parsed = list, {}
         for _, entry in ipairs(type(list) == 'table' and list or {}) do
-            local name, x, y = tostring(entry):match('^([^@]+)@(%-?[%d%.]+),(%-?[%d%.]+)$')
-            if name and tonumber(x) and tonumber(y) then
-                parsed[#parsed + 1] = { name = name, x = tonumber(x), y = tonumber(y) }
-            end
+            local spot = Places.parseArea(entry)
+            if spot then parsed[#parsed + 1] = spot end
         end
     end
     return parsed
