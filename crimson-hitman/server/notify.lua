@@ -957,10 +957,12 @@ function Notify.contractAccepted(contract, hitmanRecord, activeHitmen, returning
 
     -- The creator's own card now shows one more operative, and the hitman's
     -- Mine tab has a contract in it that was not there a moment ago. The
-    -- target is deliberately not pushed: they are not told a contract exists
-    -- unless the paranoid alert or an advisory tells them.
+    -- target's On me card changes too (taken, a named operative), once they
+    -- are shown the contract at all (Notify.shownToTarget), and as
+    -- pushParties pushes them: naming no contract.
     Notify.push(contract.creator_cid, 'accepted', contract.id)
     Notify.push(hitmanRecord.hitman_cid, 'accepted', contract.id)
+    if Notify.shownToTarget(contract) then Notify.push(contract.target_cid, 'accepted') end
 end
 
 --- Tell the creator their contract was fulfilled.
@@ -1298,7 +1300,12 @@ function Notify.hitmanReceipt(contract, delivered, result)
     -- matter of room, so said as what it is, with what is missing and when
     -- it comes anyway.
     local held = type(result.intentHold) == 'table' and result.intentHold or nil
-    if held then
+    if held and (held.closed or not held.missing) then
+        -- Nothing can be done on it now: this payout closed the contract, so
+        -- its thread and its meeting point went with it. Only the wait.
+        body = body .. (' Payout held: released within %d minutes.')
+            :format(math.floor(tonumber(held.minutes) or 0))
+    elseif held then
         body = body .. (' Your payout is held until you show intent: %s. It is released anyway '
             .. 'within %d minutes.'):format(tostring(held.missing or 'proof of intent'),
             math.floor(tonumber(held.minutes) or 0))

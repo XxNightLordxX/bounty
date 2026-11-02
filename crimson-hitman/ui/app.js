@@ -882,6 +882,19 @@
     render();
   }
 
+  /* Arm a pick dialog's pay button for PICK_CONFIRM_MS; it disarms itself
+     if not tapped again by then. */
+  function armPick(d) {
+    d.armed = true;
+    var armedAt = d.armedAt = Date.now();
+    setTimeout(function () {
+      if (state.dialog === d && d.armed && d.armedAt === armedAt) {
+        d.armed = false;
+        render();
+      }
+    }, PICK_CONFIRM_MS);
+  }
+
   function renderPick(view) {
     var d = state.dialog;
     var panel = el('div', 'card dialog');
@@ -896,9 +909,13 @@
       if (option.disabled) {
         button.disabled = true;
       } else {
+        // Picking one is the first of the two taps: the pay button arms
+        // with it ("Tap again to pay $25,000"), and the second pays. A pick
+        // and then a pay that armed and then a pay again was a third tap
+        // for no more safety.
         button.onclick = function () {
           d.chosen = option.pick;
-          d.armed = false;
+          armPick(d);
           render();
         };
       }
@@ -915,13 +932,7 @@
     pay.onclick = function () {
       if (!d.chosen) { return; }
       if (!d.armed) {
-        d.armed = true;
-        setTimeout(function () {
-          if (state.dialog === d && d.armed) {
-            d.armed = false;
-            render();
-          }
-        }, PICK_CONFIRM_MS);
+        armPick(d);
         render();
         return;
       }
@@ -1706,6 +1717,9 @@
     // Suspended by staff: until when, and the reason they gave.
     if (result.err === 'suspended') { return suspendedText(result.data); }
 
+    // No burner phone, naming the item this server takes for one.
+    if (result.err === 'need_burner') { return burnerText(result.data && result.data.item); }
+
     // A reward source staff switched off while the form was open, by name.
     if (result.err === 'source_disabled' && result.data && SOURCE_WORDS[result.data.source]) {
       return 'This server no longer takes ' + SOURCE_WORDS[result.data.source]
@@ -2192,9 +2206,11 @@
     var clock = clockChip(contract);
     if (clock) { meta.appendChild(clock); }
 
-    // Staff have put it on hold. One word, the same for every party, never
-    // which of them or why; the note says what it means for them.
-    if (contract.onHold) {
+    // Staff have put it on hold. Said once: the clock chip reads "On hold ·
+    // <band>", or, on a card with no clock, a chip of its own; the note
+    // under the card says what it means for them. The same for every party,
+    // never which of them or why. Chip, clock and note said it three times.
+    if (contract.onHold && !clock) {
       meta.appendChild(chip('On hold', 'warn', 'i-lock'));
     }
 
@@ -2240,10 +2256,14 @@
       // .forEach then threw. That is a contract nobody has taken yet: the
       // state every contract is in the moment it is placed, and it took the
       // whole Mine tab down with it.
+      // An operative who took it under their name is named, as the target
+      // chip names them: "Operative #1: Rook Ash". The alias alone left the
+      // client to guess which of their named operatives was which.
       asList(contract.hitmen).forEach(function (h) {
-        if (h.record) {
-          meta.appendChild(chip(h.alias + ' · ' + h.record.standing, null, 'i-user'));
-        }
+        if (!h || (!h.record && !h.name)) { return; }
+        var label = (h.alias || 'An operative') + (h.name ? ': ' + h.name : '');
+        meta.appendChild(chip(h.record ? label + ' · ' + h.record.standing : label,
+          null, 'i-user'));
       });
     } else if (contract.role === 'target') {
       // The operatives on it who took it under their name, where the server
@@ -2292,15 +2312,23 @@
     }
     node.appendChild(meta);
 
-    // On hold by staff: plain, and nothing about which party or why.
+    // On hold by staff: plain, and nothing about which party or why. What
+    // still works is said, and only that is drawn (actionsFor).
     if (contract.onHold) {
-      node.appendChild(el('div', 'notice hold', 'This contract is on hold by staff.'));
+      node.appendChild(el('div', 'notice hold', 'This contract is on hold by staff.'
+        + (context === 'board' ? '' : ' You can still message and report; the rest waits.')));
     }
 
     // A payout of theirs held for proof of intent: what is still missing.
     if (contract.intentHold) {
       node.appendChild(el('div', 'notice gold intent-hold',
         intentHoldText(contract.intentHold, 'Your payout here is held.')));
+    } else if (contract.intentRule && Number(contract.intentRule.messages) > 0) {
+      // The rule while it can still be met, before a payout is held by it.
+      var times = Number(contract.intentRule.messages);
+      node.appendChild(el('div', 'hint intent-rule ico i-message',
+        'Payouts here are held unless you message the client ' + times
+        + (times === 1 ? ' time' : ' times') + ', do a live handover, or a meeting point is set.'));
     }
 
     // What this player's informant found out, kept by the server with the
@@ -2325,6 +2353,13 @@
     if (mine && context !== 'board' && aliveOnly(contract)
         && Number(contract.hitmenActive) > 0) {
       node.appendChild(el('div', 'notice ok', placerTakenText()));
+    }
+
+    // A handover running on it: the placer has to stand still for it, and
+    // the hitman's countdown was the only one drawn (Projection:
+    // handoverLeft, roughly how long, never who).
+    if (mine && context !== 'board' && Number(contract.handoverLeft) > 0) {
+      node.appendChild(placerHandover(contract));
     }
 
     // Where to meet for the handover, on the same card. The server sends
@@ -2823,8 +2858,26 @@
          one of them drew Accept. Said instead, with where to look. */
       var why = boardHint(contract);
       if (why) {
-        row.appendChild(el('div', 'hint', why));
+        // Theirs, or one they already hold: a tap takes them to it under
+        // Mine, open, rather than a line telling them to go and look.
+        if (contract.role === 'creator' || contract.role === 'hitman') {
+          var go = el('button', 'ghost ico ico-end i-right board-mine', why);
+          go.onclick = function () { openUnderMine(contract.id); };
+          row.appendChild(go);
+        } else {
+          row.appendChild(el('div', 'hint', why));
+        }
         return row;
+      }
+      // Staff paused contracts, or this player is suspended from them: the
+      // server refuses every acceptance, so Accept is drawn and not live,
+      // and the banner at the top says why and until when.
+      if (takingPaused()) {
+        var paused = el('button', 'primary', 'Accept contract');
+        paused.disabled = true;
+        row.appendChild(paused);
+        more.appendChild(reportButton(contract, null));
+        return withMore();
       }
       // Disabled while the acceptance is in flight. The button opens a
       // dialog rather than doing the work, so it is not an actionButton; the
@@ -2864,14 +2917,14 @@
       // a way to finish. Delivering is the one way, and the card's primary.
       var killPays = !aliveOnly(contract);
       if (killPays) {
-        row.appendChild(actionButton('primary', 'Verify kill',
+        row.appendChild(restartWaits(actionButton('primary', 'Verify kill',
           'photo:' + contract.id, 'Verifying\u2026',
-          function () { return verifyKill(contract); }));
+          function () { return verifyKill(contract); })));
       }
 
-      row.appendChild(actionButton(killPays ? null : 'primary', 'Deliver alive',
+      row.appendChild(restartWaits(actionButton(killPays ? null : 'primary', 'Deliver alive',
         'kidnap:' + contract.id, 'Starting handover\u2026',
-        function () { return armKidnap(contract); }));
+        function () { return armKidnap(contract); })));
 
       // Proof items (Config.Improvements.ProofItems, off as shipped): where
       // a kill pays, handing the placer an item taken from the target.
@@ -2930,6 +2983,7 @@
         // A dot for a message newer than this phone last read.
         message.classList.toggle('has-unread',
           unreadIn(threadKey(contract, null), contract.lastMessageAt));
+        message.classList.toggle('keeps-on-hold', true);
         more.appendChild(message);
       }
 
@@ -2987,7 +3041,7 @@
         pollCountdown(contract.id);
       }
       if (panel) { row.appendChild(panel); }
-      return withMore();
+      return onHoldOnly(contract, withMore());
     }
 
     if (contract.role === 'creator') {
@@ -2997,8 +3051,15 @@
       // this offers both, and says which of them this contract allows.
       // Money, and the thing a creator comes back to this card to do, so it
       // is the card's one crimson button.
-      var top = el('button', 'primary', 'Change reward');
-      top.onclick = function () { editReward(contract); };
+      // Before anybody takes it, one Edit sheet changes everything at once
+      // (editSheet): reason, reward, stake, deadline and mode. Five buttons
+      // and five dialogs did it a piece at a time. Once taken, changes are
+      // proposed, and the reward can still be raised.
+      var untaken = !contract.hitmenActive;
+      var top = el('button', 'primary', untaken ? 'Edit' : 'Change reward');
+      top.onclick = function () {
+        if (untaken) { editSheet(contract); } else { editReward(contract); }
+      };
       row.appendChild(top);
 
       // The placer's informant (Config.PlacerInformant): only where the
@@ -3018,29 +3079,26 @@
         threadsButton.classList.toggle('has-unread', asList(contract.hitmen).some(function (h) {
           return h && unreadIn(threadKey(contract, { alias: h.alias }), h.lastMessageAt);
         }));
+        threadsButton.classList.toggle('keeps-on-hold', true);
         more.appendChild(threadsButton);
       }
 
-      var extend = el('button', 'ghost ico i-clock', 'Extend deadline');
-      extend.onclick = function () { improveContract(contract); };
-      more.appendChild(extend);
+      if (!untaken) {
+        var extend = el('button', 'ghost ico i-clock', 'Extend deadline');
+        extend.onclick = function () { improveContract(contract); };
+        more.appendChild(extend);
 
-      // Not on a server with amendments switched off, where every proposal
-      // is refused.
-      if (settings().amendments !== false) {
-        var change = el('button', 'ghost ico i-swap', 'Propose change');
-        change.onclick = function () { proposeChange(contract); };
-        more.appendChild(change);
-      }
-
-      // Only while nobody is holding it. Once a hitman has accepted they
-      // accepted it as written, and the server refuses both of these — so
-      // offering them would be offering a guaranteed refusal.
-      if (!contract.hitmenActive) {
-        var edit = el('button', 'ghost ico i-pencil', 'Edit');
-        edit.onclick = function () { editContract(contract); };
-        more.appendChild(edit);
-
+        // Not on a server with amendments switched off, where every proposal
+        // is refused.
+        if (settings().amendments !== false) {
+          var change = el('button', 'ghost ico i-swap', 'Propose change');
+          change.onclick = function () { proposeChange(contract); };
+          more.appendChild(change);
+        }
+      } else {
+        // Only while nobody is holding it. Once a hitman has accepted they
+        // accepted it as written, and the server refuses it — so offering it
+        // would be offering a guaranteed refusal.
         var scrap = el('button', 'danger ico i-xcircle', 'Withdraw');
         scrap.onclick = function () { cancelContract(contract); };
         more.appendChild(scrap);
@@ -3050,6 +3108,7 @@
       // (Config.Improvements.ContractDecay).
       appendDecay(row, more, contract);
       withMore();
+      onHoldOnly(contract, row);
 
       var creatorPanel = proposalPanel(contract);
       if (creatorPanel) {
@@ -3076,10 +3135,128 @@
         more.appendChild(informantButton(contract));
       }
       more.appendChild(reportButton(contract, null));
-      return withMore();
+      return onHoldOnly(contract, withMore());
     }
 
     return row;
+  }
+
+  /* A card on hold by staff keeps what still works there — Message,
+     Threads and Report — and loses everything the server refuses while it
+     is held. Drawn and refused, each read as broken. */
+  function onHoldOnly(contract, row) {
+    if (!contract.onHold) { return row; }
+    function prune(parent) {
+      Array.prototype.slice.call(parent.children).forEach(function (child) {
+        if (child.classList && child.classList.contains('more')) {
+          prune(child);
+          if (!child.children.length) { parent.removeChild(child); }
+          return;
+        }
+        var label = child.textContent;
+        var keeps = (child.classList && child.classList.contains('keeps-on-hold'))
+          || (child.tagName === 'BUTTON' && (label === 'Report' || label === 'Sending\u2026'));
+        if (!keeps) { parent.removeChild(child); }
+      });
+    }
+    prune(row);
+    return row;
+  }
+
+  /* A way to finish, or a buyout, while the restart hold is on: the server
+     refuses it until the restart (or until the hold runs out), so it is
+     drawn and not live. The banner says why. */
+  function restartWaits(button) {
+    if (holdsNow().restartHold) {
+      button.disabled = true;
+      button.onclick = null;
+      button.classList.toggle('is-held', true);
+    }
+    return button;
+  }
+
+  /* What refuses writes right now, from the board's reply (server: the
+     'list' handler's `holds`): staff paused the app, the restart hold, or
+     this player suspended. */
+  function holdsNow() {
+    return (state.board && state.board.holds) || {};
+  }
+
+  /* Placing and accepting, which the app pause and a suspension refuse. */
+  function takingPaused() {
+    var h = holdsNow();
+    return !!(h.appPaused || (h.suspendedUntil !== undefined && h.suspendedUntil !== null)
+      || (state.board && state.board.suspended));
+  }
+
+  /* The banner at the top of Board, Mine, Place and On me while anything
+     refuses writes, with until when where that is known. Message and Report
+     still work, and it says so. */
+  function holdBanner() {
+    var h = holdsNow();
+    var lines = [];
+    if (h.appPaused) {
+      lines.push('Contracts are paused by staff: nothing can be placed or taken until they '
+        + 'switch it back on.');
+    }
+    if (h.restartHold) {
+      var ends = Number(h.restartHold.endsIn) || 0;
+      lines.push('Contracts are paused for the server restart'
+        + (ends > 0 ? ', for at most ' + durationText(Math.max(1, Math.ceil(ends / 60))) + ' more'
+          : '') + ': kills, handovers and buyouts wait, and every clock is stopped.');
+    }
+    if (state.board && state.board.suspended) {
+      lines.push(suspendedText(state.board.suspended) + '.');
+    }
+    if (!lines.length) { return null; }
+    var box = el('div', 'notice hold hold-banner'
+      + (state.board && state.board.suspended ? ' suspended-note' : ''));
+    lines.forEach(function (line) { box.appendChild(el('div', null, line)); });
+    box.appendChild(el('div', 'hint', 'You can still message and report.'));
+    return box;
+  }
+
+  /* To a contract of theirs under Mine, its card first and marked. From the
+     board's "you are already on this one", and after accepting. */
+  function openUnderMine(id) {
+    navigated();
+    state.focus = id;
+    state.tab = 'mine';
+    render();
+  }
+
+  /* The placer's half of a running handover: hold still, and roughly how
+     long for, counted down here from the server's reading every few
+     seconds while it is on screen. */
+  var handoverNodes = {};
+  var handoverTimer = null;
+  function handoverText(contract) {
+    var left = secondsLeftOf({ secondsLeft: contract.handoverLeft,
+      clockReadAt: contract.clockReadAt });
+    left = left > 0 ? Math.ceil(left / 5) * 5 : 0;
+    return left > 0 ? 'Hold still \u2014 handover running (' + left + 's)'
+      : 'Hold still \u2014 handover finishing';
+  }
+  function placerHandover(contract) {
+    var node = el('div', 'notice ok handover-live ico i-usercheck', handoverText(contract));
+    handoverNodes[contract.id] = { node: node, contract: contract };
+    armHandoverTick();
+    return node;
+  }
+  function armHandoverTick() {
+    if (handoverTimer) { return; }
+    handoverTimer = setTimeout(function () {
+      handoverTimer = null;
+      var any = false;
+      Object.keys(handoverNodes).forEach(function (id) {
+        var shown = handoverNodes[id];
+        if (shown.node.parentNode) {
+          shown.node.textContent = handoverText(shown.contract);
+          any = true;
+        }
+      });
+      if (any && pageShown()) { armHandoverTick(); }
+    }, 5000);
   }
 
   /* The buyout on a contract on this player, into a card's action row: On
@@ -3105,7 +3282,7 @@
       } else {
         var out = el('button', 'primary danger', buyoutLabel);
         out.onclick = function () { bailout(contract); };
-        row.appendChild(out);
+        row.appendChild(restartWaits(out));
       }
     } else if (settings().buyouts === false) {
       // Not the client's doing. Saying "no buyout was offered" here blamed
@@ -3286,17 +3463,14 @@
       }, { yes: 'Withdraw it', no: 'Keep it' });
   }
 
-  /* Change a contract nobody has taken. What it pays is not edited here —
-     moving escrow is money in and out of a pocket, and that has its own
-     screen behind "Change reward", which can both add and take back. */
   /* The same reason control the Place form draws, for the same reason.
 
      The Edit dialog asked for free text whatever the server took, and
      always sent it. On a preset server that was refused as invalid_input;
      on a server storing no reason at all it made the whole edit fail, so
      the deadline it came with could never be changed either. The rules are
-     the operator's and apply to every way in: Edit, and proposing a new
-     reason once somebody holds the contract. */
+     the operator's and apply to every way in: the Edit sheet, and
+     proposing a new reason once somebody holds the contract. */
   function reasonFields(contract) {
     var mode = settings().reasonMode || 'freetext';
     var presets = asList(settings().reasonPresets);
@@ -3323,67 +3497,295 @@
     return fields;
   }
 
-  function editContract(contract) {
-    var fields = reasonFields(contract);
+  /* One sheet for everything about a contract nobody has taken: its reason,
+     what it pays (more, and what can be taken back), the stake, the
+     deadline (more or less, in hours) and the mode. Save shows what will
+     change; Confirm makes the changes, through the server's own requests
+     for each (revise, addEscrow, improve, propose), one after another, and
+     says what was done. It took five buttons and as many dialogs, a change
+     at a time. Once somebody holds it, changes are proposed instead. */
+  function editSheet(contract) {
+    state.dialog = { kind: 'sheet', contract: contract, values: {}, changes: null, error: null };
+    render();
+  }
 
-    /* The deadline as it stands, not a fixed three hours.
+  /* The most a stake can be, as Contracts.clampPenalty holds it. */
+  function stakeMostOf(contract) {
+    var ceiling = settings().stakeCeiling || {};
+    var most = Number(ceiling.amount) || 0;
+    if (ceiling.fraction) {
+      most = Math.min(most, Math.floor((Number(contract.valueHeld) || 0) * Number(ceiling.fraction)));
+    }
+    return most;
+  }
 
-       The box always opened on 3 and Save always sent it, so a creator who
-       opened Edit to fix a word in the reason also moved the deadline to
-       three hours from now — cutting a contract with a day left down to
-       three hours, with nothing on screen saying the deadline had been
-       touched.
+  /* What the sheet would change, from what is in it, or a reason it cannot
+     be saved as it stands. */
+  function sheetChanges(d) {
+    var contract = d.contract;
+    var v = d.values;
+    var changes = [];
+    var whole = function (raw) {
+      var text = String(raw === undefined || raw === null ? '' : raw).trim();
+      if (text === '') { return 0; }
+      return /^[-+]?\d+$/.test(text) ? parseInt(text, 10) : NaN;
+    };
 
-       Empty while a deadline is running, saying what empty keeps. It
-       opened on the time left rounded up to whole hours and sent it only if
-       touched, so nine minutes left read "1", a creator took that for "an
-       hour from now", saved, and the contract lapsed nine minutes later
-       under "Contract updated.". The box no longer shows a figure Save
-       ignores: whatever is in it is sent. */
-    var band = bandOf(contract);
-    // With no deadline there is nothing to keep: the figure in the box is
-    // only a suggestion, and Save means it.
-    var suggested = band === null;
-    fields.push({
-      id: 'hours',
-      label: suggested ? 'Hours from now to the deadline'
-                       : 'New deadline, in hours from now (optional)',
-      type: 'number', value: suggested ? 3 : '', min: 1, max: 48,
-      placeholder: suggested ? '' : 'Leave empty to keep it (' + band.text.toLowerCase() + ')'
+    // The reason through revise, as the Edit dialog sent it: text or a
+    // preset's index, whichever this server takes. The deadline is moved by
+    // hours below (improve, propose), never set here, so revise is sent no
+    // deadline: undefined does not survive being encoded.
+    var preset = parseInt(v.reasonPreset, 10) || 0;
+    var presets = asList(settings().reasonPresets);
+    var newText = v.reason !== undefined && v.reason !== (contract.reason || '') ? v.reason : undefined;
+    var newPreset = preset > 0 && presets[preset - 1] !== contract.reason ? preset : undefined;
+    if (newText !== undefined || newPreset !== undefined) {
+      changes.push({ what: 'reason',
+        text: 'Reason: "' + (newText !== undefined ? newText : presets[preset - 1]) + '"',
+        send: function () {
+          return post('revise', { id: contract.id, reason: newText, reasonPreset: newPreset,
+                                  deadlineSeconds: undefined });
+        } });
+    }
+
+    var mode = v.mode || contract.mode;
+    if (mode !== contract.mode) {
+      changes.push({ what: 'mode', text: mode === 'exclusive' ? 'One hitman at a time'
+        : 'Open to several hitmen at once',
+        send: function () {
+          return post('propose', { id: contract.id, kind: 'change_mode', payload: { mode: mode } });
+        } });
+    }
+
+    var stakeNow = Number(contract.penaltyAmount) || 0;
+    var stake = v.stake === undefined ? stakeNow : whole(v.stake);
+    if (isNaN(stake) || stake < 0) { return { error: 'The stake is a whole number of dollars, 0 for none.' }; }
+    if (stake > stakeNow) {
+      var stakeMost = stakeMostOf(contract);
+      if (stake > stakeMost) {
+        return { error: 'The stake can be at most ' + money(stakeMost) + ' on this contract.' };
+      }
+      changes.push({ what: 'stake', text: 'Stake: ' + money(stake),
+        send: function () {
+          return post('propose', { id: contract.id, kind: 'raise_penalty', payload: { amount: stake } });
+        } });
+    } else if (stake < stakeNow) {
+      changes.push({ what: 'stake', text: stake > 0 ? 'Stake: ' + money(stake) : 'No stake',
+        send: function () {
+          return post('improve', { id: contract.id, kind: 'lower_penalty', payload: { amount: stake } });
+        } });
+    }
+
+    var hours = whole(v.hours);
+    if (isNaN(hours)) { return { error: 'Move the deadline by whole hours: 2 for more, -1 for less.' }; }
+    if (hours > 0) {
+      var ceiling = Number(settings().deadlineMaxMinutes) || 0;
+      if (ceiling > 0 && hours * 60 > ceiling) {
+        return { error: 'The deadline moves by at most ' + durationText(ceiling) + ' at a time.' };
+      }
+      changes.push({ what: 'deadline', text: 'Deadline: ' + hours + 'h more',
+        send: function () {
+          return post('improve', { id: contract.id, kind: 'extend_deadline',
+                                   payload: { seconds: hours * 3600 } });
+        } });
+    } else if (hours < 0) {
+      var keep = Number(settings().deadlineMinLeftMinutes) || 5;
+      var left = minutesLeft(contract);
+      if (left === null || -hours * 60 > left - keep) {
+        return { error: 'There is not that much deadline to take off: it has '
+          + (bandOf(contract) ? bandOf(contract).text.toLowerCase() : 'no deadline') + '.' };
+      }
+      changes.push({ what: 'deadline', text: 'Deadline: ' + (-hours) + 'h less',
+        send: function () {
+          return post('propose', { id: contract.id, kind: 'shorten_deadline',
+                                   payload: { seconds: -hours * 3600 } });
+        } });
+    }
+
+    var add = whole(v.add);
+    if (isNaN(add) || add < 0) { return { error: 'Add a whole number of dollars to the reward, or 0.' }; }
+    if (add > 0) {
+      var source = v.source === 'bank' ? 'bank' : 'cash';
+      changes.push({ what: 'reward', text: 'Reward: ' + money(add) + ' more, from your ' + source,
+        send: function () {
+          var reward = { baseline: {} };
+          reward.baseline[source] = add;
+          return post('addEscrow', { id: contract.id, reward: reward });
+        } });
+    }
+    return { changes: changes };
+  }
+
+  /* Make the changes one after another, stopping at the first refused, and
+     say which went in. */
+  function applySheet(contract, changes) {
+    var done = [];
+    var i = 0;
+    function next() {
+      if (i >= changes.length) {
+        say('Saved: ' + done.join(', ') + '.', 'ok');
+        return refresh();
+      }
+      var change = changes[i++];
+      return change.send().then(function (r) {
+        var failed = !r.ok || (r.data && r.data.outcome === 'failed');
+        if (failed) {
+          var why = !r.ok ? (failText(r) || 'Not right now.')
+            : (ERRORS[r.data.err] || 'That change no longer fits this contract.');
+          say((done.length ? 'Saved: ' + done.join(', ') + '. ' : '')
+            + 'Not saved — ' + change.what + ': ' + why);
+          return refresh();
+        }
+        done.push(change.what);
+        return next();
+      });
+    }
+    return once('sheet:' + contract.id, next);
+  }
+
+  function renderSheet(view) {
+    var d = state.dialog;
+    var contract = d.contract;
+    var sheet = el('div', 'card dialog edit-sheet');
+    sheet.appendChild(el('div', 'target', 'Edit this contract'));
+    sheet.appendChild(el('div', 'reason', 'Nobody has taken it, so changes apply as soon as you '
+      + 'confirm. ' + (bandOf(contract) ? 'It has ' + bandOf(contract).text.toLowerCase() + '.' : '')));
+    // The fields scroll on a short screen; Save and Cancel stay put under
+    // them, as the reward editor's lines do.
+    var panel = el('div', 'sheet-body');
+    sheet.appendChild(panel);
+
+    function remember(id, node) {
+      node.oninput = node.onchange = function () {
+        d.values[id] = node.value;
+        if (d.changes) { d.changes = null; d.error = null; render(); }
+      };
+    }
+    function current(id, fallback) {
+      return d.values[id] !== undefined ? String(d.values[id]) : String(fallback);
+    }
+
+    // The reason, as the server takes one (reasonFields).
+    reasonFields(contract).forEach(function (spec) {
+      var node;
+      if (spec.type === 'select') {
+        node = document.createElement('select');
+        (spec.options || []).forEach(function (option) {
+          var o = document.createElement('option');
+          o.value = String(option.value);
+          o.textContent = option.label;
+          node.appendChild(o);
+        });
+        node.value = current('reasonPreset', spec.value === undefined ? '' : spec.value);
+        remember('reasonPreset', node);
+      } else {
+        node = document.createElement('input');
+        node.type = 'text';
+        node.maxLength = spec.max;
+        node.value = current('reason', spec.value || '');
+        remember('reason', node);
+      }
+      node.id = 'sheet-' + spec.id;
+      panel.appendChild(labelled('Reason', node));
     });
 
-    askFields('Edit this contract',
-      // Where everything else about it is changed, since this is where a
-      // creator looks first.
-      'Only while nobody has taken it. To change what it pays or lower the '
-        + 'stake, use Change reward.'
-        + (settings().amendments !== false
-          ? ' To raise the stake or change how many hitmen can take it, use '
-            + 'Propose change.' : ''),
-      fields,
-      function (values) {
-        var seconds = values.hours > 0 ? values.hours * 3600 : 0;
-        // A picker left on no choice is no change, not the first preset.
-        var preset = parseInt(values.reasonPreset, 10) || 0;
-        if (!seconds && values.reason === undefined && !preset) {
-          return say('Nothing was changed.');
-        }
-        // Only whichever field this server actually reads. The dialog draws
-        // one or the other or neither, so the rest are undefined and do not
-        // survive being encoded — sending the wrong one is how the deadline
-        // became unchangeable. Written inline so the payload-shape check can
-        // read what this site sends.
-        post('revise', {
-          id: contract.id,
-          deadlineSeconds: seconds > 0 ? seconds : undefined,
-          reason: values.reason,
-          reasonPreset: preset > 0 ? preset : undefined
-        }).then(function (r) {
-          if (!r.ok) { return takenOr(r); }
-          say('Contract updated.', 'ok');
-          refresh();
-        });
-      });
+    // The reward: more from cash or bank here; taking back, and goods, the
+    // kidnapping bonus and dirty money, in the reward editor.
+    var add = document.createElement('input');
+    add.type = 'number';
+    add.inputMode = 'numeric';
+    add.min = 0;
+    add.id = 'sheet-add';
+    add.placeholder = '0';
+    add.value = current('add', '');
+    remember('add', add);
+    panel.appendChild(labelled('Add to the reward ($), now ' + money((contract.reward || {}).baseline),
+      add));
+    var sources = el('div', 'row target-modes sheet-source');
+    [['cash', 'From cash'], ['bank', 'From bank']].forEach(function (pair) {
+      var on = (d.values.source || 'cash') === pair[0];
+      var b = el('button', on ? 'primary is-chosen' : 'ghost', pair[1]);
+      b.onclick = function () { d.values.source = pair[0]; d.changes = null; render(); };
+      sources.appendChild(b);
+    });
+    panel.appendChild(sources);
+    var more = el('button', 'ghost ico i-coin sheet-reward', 'Change reward');
+    more.onclick = function () { editReward(contract); };
+    panel.appendChild(more);
+    // The rest of what can be changed (giving back a later payout among
+    // them), each applied at once on a contract nobody holds.
+    var rarer = el('button', 'ghost ico i-swap sheet-reward', 'More changes');
+    rarer.onclick = function () { proposeChange(contract); };
+
+    // The stake, as a figure: lower applies at once, higher up to the most
+    // this contract can ask.
+    var stake = document.createElement('input');
+    stake.type = 'number';
+    stake.inputMode = 'numeric';
+    stake.min = 0;
+    stake.id = 'sheet-stake';
+    stake.value = current('stake', Number(contract.penaltyAmount) || 0);
+    remember('stake', stake);
+    panel.appendChild(labelled("Hitman's stake ($, 0 for none, at most "
+      + money(Math.max(stakeMostOf(contract), Number(contract.penaltyAmount) || 0)) + ')', stake));
+
+    // The deadline, moved by whole hours either way.
+    var hours = document.createElement('input');
+    hours.type = 'number';
+    hours.inputMode = 'numeric';
+    hours.id = 'sheet-hours';
+    hours.placeholder = '0';
+    hours.value = current('hours', '');
+    remember('hours', hours);
+    panel.appendChild(labelled('Move the deadline by (hours: 2 for more, -1 for less)', hours));
+
+    // How many may take it.
+    var modes = el('div', 'row target-modes sheet-mode');
+    [['exclusive', 'One hitman'], ['competitive', 'Several at once']].forEach(function (pair) {
+      var on = (d.values.mode || contract.mode) === pair[0];
+      var b = el('button', on ? 'primary is-chosen' : 'ghost', pair[1]);
+      b.onclick = function () { d.values.mode = pair[0]; d.changes = null; render(); };
+      modes.appendChild(b);
+    });
+    panel.appendChild(labelled('Who can take it', modes));
+
+    // Save, then Confirm: the first shows what will change, the second
+    // makes it so.
+    if (settings().amendments !== false) { panel.appendChild(rarer); }
+    // What Save found, under the fields and over the buttons, never
+    // scrolled out of sight.
+    panel = sheet;
+    if (d.error) { panel.appendChild(el('div', 'hint is-refusal', d.error)); }
+    if (d.changes && d.changes.length) {
+      var list = el('div', 'sheet-changes');
+      d.changes.forEach(function (c) { list.appendChild(el('div', 'hint ico i-pencil', c.text)); });
+      panel.appendChild(list);
+    }
+    var row = el('div', 'row');
+    var confirming = !!(d.changes && d.changes.length);
+    var save = el('button', confirming ? 'danger' : 'primary', confirming
+      ? 'Confirm — ' + d.changes.length + (d.changes.length === 1 ? ' change' : ' changes')
+      : 'Save');
+    save.onclick = function () {
+      if (confirming) {
+        var changes = d.changes;
+        state.dialog = null;
+        render();
+        return applySheet(contract, changes);
+      }
+      var worked = sheetChanges(d);
+      if (worked.error) { d.error = worked.error; d.changes = null; return render(); }
+      if (!worked.changes.length) { d.error = 'Nothing is changed yet.'; return render(); }
+      d.error = null;
+      d.changes = worked.changes;
+      render();
+    };
+    var no = el('button', 'ghost', 'Cancel');
+    no.onclick = closeDialog;
+    row.appendChild(save);
+    row.appendChild(no);
+    panel.appendChild(row);
+    view.appendChild(panel);
   }
 
   /* The rule that takes a hold back, said before it is taken. A hitman
@@ -3545,6 +3947,10 @@
           : anonymous ? 'Contract accepted under your name: the person who placed it '
             + 'already knows you on this one.'
           : 'Contract accepted.', 'ok');
+        // Straight to it under Mine, first and marked: the next thing a
+        // hitman does is work it, and the board only said it was taken.
+        state.focus = contract.id;
+        if (state.tab === 'board') { navigated(); state.tab = 'mine'; }
         // Held until the refresh lands, not just the reply: the board still
         // has the card as it was, and Accept came back live on it for one
         // round trip, under the notice saying it was taken.
@@ -3553,6 +3959,11 @@
       });
     }
 
+    /* The officer warning, where the server asks for one, is the head of
+       the same dialog rather than a dialog of its own before it: one tap
+       less, and the warning is on screen as the choice is made. */
+    var warned = contract.targetProtected && settings().warnHitman !== false;
+
     function chooseAnonymity() {
       feeAccount = anonymityAccount();
       // Where the server does not allow accepting anonymously, the dialog
@@ -3560,10 +3971,19 @@
       // hitman's name.
       var offered = anonymityOffered('hitman', contract.targetProtected === true);
       shownFee = offered ? anonymityFee('hitman') : 0;
+      // Only what accepting does, under the switches now. "Law enforcement
+      // has already been advised" read today's switch, not whether a
+      // bulletin went for this contract.
+      var warning = warned
+        ? 'This contract is on ' + protectedWords(contract.targetProtectedAs).noun + '.'
+          + (advised('accepted')
+            ? ' Accepting alerts every officer in the city that someone is coming.' : '') + ' '
+        : '';
       state.dialog = {
         kind: 'choice',
-        question: offered ? 'Take this one anonymously?' : 'Take this contract?',
-        detail: (offered ? 'The person who placed it will see an operative, not your name.'
+        question: warned ? 'Take it anyway' + (offered ? ', anonymously?' : '?')
+          : offered ? 'Take this one anonymously?' : 'Take this contract?',
+        detail: warning + (offered ? 'The person who placed it will see an operative, not your name.'
           : 'The person who placed it will see your name.')
           // And the target too, where the server shows named operatives to
           // them (Config.Anonymity.ShowOperativeNames).
@@ -3607,17 +4027,6 @@
       render();
     }
 
-    if (contract.targetProtected && settings().warnHitman !== false) {
-      // Only what accepting does, under the switches now. "Law enforcement
-      // has already been advised" read today's switch, not whether a
-      // bulletin went for this contract.
-      var told = [];
-      if (advised('accepted')) { told.push('Accepting alerts every officer in the city that someone is coming.'); }
-      told.push('Accept anyway?');
-      ask('This contract is on ' + protectedWords(contract.targetProtectedAs).noun + '.',
-          told.join(' '), chooseAnonymity);
-      return;
-    }
     chooseAnonymity();
   }
 
@@ -4608,12 +5017,13 @@
     var picks = asList(contract.placerInformantPicks);
     var left = contract.placerInformantLeft;
     var wait = Number(contract.placerInformantWait) || 0;
+    // Nothing left to sell, nothing drawn: every look-up used, or every
+    // operative on it already known. A disabled button there was a dead end.
+    if ((left !== undefined && left !== null && Number(left) <= 0) || picks.length === 0) {
+      return null;
+    }
     var why = null;
-    if (left !== undefined && left !== null && Number(left) <= 0) {
-      why = 'You have used every look-up the informant sells on this contract.';
-    } else if (picks.length === 0) {
-      why = 'You already know who every operative on it is.';
-    } else if (wait > 0) {
+    if (wait > 0) {
       why = 'Your informant can ask again ' + retryIn(wait) + '.';
     }
     var button;
@@ -6381,14 +6791,12 @@
     if (drewFailure(view, 'board')) { return; }
     if (drewPending(view, 'board')) { return; }
     var data = state.board;
-    // Suspended by staff: said at the top of the board, the app's home.
-    if (data && data.suspended) {
-      view.appendChild(el('div', 'suspended-note', suspendedText(data.suspended)));
-    }
+    // Suspended by staff: said by the banner at the top of every tab
+    // (holdBanner), with the app pause and the restart hold.
     // No burner phone on a server that needs one (Config.Roleplay.BurnerPhone):
     // the server sent no contracts, and this says why.
     if (data && data.burnerMissing) {
-      view.appendChild(el('div', 'empty is-refusal', ERRORS.need_burner));
+      view.appendChild(el('div', 'empty is-refusal', burnerText(data.burnerItem)));
       return;
     }
     // A broker player's tools (Config.Roleplay.Rumours), above the board.
@@ -6448,9 +6856,11 @@
     node.appendChild(head);
     // On a line of its own: a band is two figures, too wide for the stamp.
     node.appendChild(el('div', 'rumour-band', 'Pays about ' + rumourBand(r)));
-    if (contract.timeLeft) { node.appendChild(el('div', 'hint', contract.timeLeft + ' left')); }
+    // The band already says "left" ("Under 1 hour left").
+    if (contract.timeLeft) { node.appendChild(el('div', 'hint', contract.timeLeft)); }
     var row = el('div', 'row');
-    if (rules.npc) {
+    // A broker briefs; they do not go looking for one.
+    if (rules.npc && !rules.broker) {
       var ask = el('button', 'ghost ico i-eye', 'Ask the broker');
       ask.onclick = function () {
         once('rumour:' + contract.id, function () {
@@ -6464,9 +6874,13 @@
       };
       row.appendChild(ask);
     }
-    if (rules.broker && broker.picked) {
-      var brief = el('button', 'ghost ico i-usercheck', 'Brief them');
+    if (rules.broker) {
+      var brief = el('button', broker.picked ? 'primary ico i-usercheck' : 'ghost ico i-usercheck',
+        'Brief them');
       brief.onclick = function () {
+        if (!broker.picked) {
+          return say('Pick who is standing with you first: Who is near me?, above.');
+        }
         once('brief:' + contract.id, function () {
           return post('brokerBrief', { id: contract.id, who: broker.picked }).then(function (res) {
             if (!res.ok) { say(failText(res)); return; }
@@ -6477,10 +6891,32 @@
       row.appendChild(brief);
     }
     if (row.children.length) { node.appendChild(row); }
-    node.appendChild(el('div', 'hint', rules.npc
-      ? 'Find the broker and ask about it to see who it is on and take it.'
-      : 'A broker can tell you who it is on, and then you can take it.'));
+    node.appendChild(el('div', 'hint', rumourHint(rules)));
     return node;
+  }
+
+  /* What a rumour card tells this player to do. A broker briefs: "Find the
+     broker" told the broker to look for themselves. Where the NPC is not
+     on the map, the district it stands in (the server's, by name only). */
+  function rumourHint(rules) {
+    if (rules.broker) {
+      return 'Pick somebody standing with you above, then Brief them on this one.';
+    }
+    if (rules.npc) {
+      if (rules.brokerArea) {
+        return 'Find the broker \u2014 ask around ' + rules.brokerArea
+          + '. Ask them about it to see who it is on and take it.';
+      }
+      return rules.blip
+        ? 'Find the broker (marked on your map) and ask about it to see who it is on and take it.'
+        : 'Find the broker and ask about it to see who it is on and take it.';
+    }
+    return 'A broker can tell you who it is on, and then you can take it.';
+  }
+
+  /* No burner phone, with the item it takes on this server. */
+  function burnerText(item) {
+    return 'You need a burner phone' + (item ? ' (item: ' + item + ')' : '') + '.';
   }
 
   function brokerPanel() {
@@ -6522,7 +6958,7 @@
     var created = asList(data.created);
     // No burner phone (Config.Roleplay.BurnerPhone): On me is still there.
     if (data.burnerMissing) {
-      view.appendChild(el('div', 'empty is-refusal', ERRORS.need_burner));
+      view.appendChild(el('div', 'empty is-refusal', burnerText(data.burnerItem)));
       return;
     }
 
@@ -6533,15 +6969,29 @@
         + intentHoldText(h, 'A payout of yours is held.')));
     });
 
+    // The one they came here for (just accepted, or tapped on the board)
+    // first in its list, and marked: it was somewhere in a list of cards
+    // on a tab they had to find for themselves.
+    function focusFirst(list) {
+      if (!state.focus) { return list; }
+      return list.filter(function (c) { return c && c.id === state.focus; })
+        .concat(list.filter(function (c) { return !c || c.id !== state.focus; }));
+    }
+    function mineCard(c) {
+      var node = card(c, 'mine');
+      if (c && state.focus && c.id === state.focus) { node.classList.toggle('is-focus', true); }
+      view.appendChild(node);
+    }
+
     if (accepted.length) {
       any = true;
       view.appendChild(el('h3', 'section', 'Contracts you took'));
-      accepted.forEach(function (c) { view.appendChild(card(c, 'mine')); });
+      focusFirst(accepted).forEach(mineCard);
     }
     if (created.length) {
       any = true;
       view.appendChild(el('h3', 'section', 'Contracts you placed'));
-      created.forEach(function (c) { view.appendChild(card(c, 'mine')); });
+      focusFirst(created).forEach(mineCard);
     }
     if (!any) view.appendChild(el('div', 'empty', 'Nothing active.'));
     else view.appendChild(refHint());
@@ -6805,9 +7255,15 @@
       head.appendChild(who);
       node.appendChild(head);
       var meta = el('div', 'meta');
-      meta.appendChild(chip(row.role, 'role', ROLE_ICONS[row.role] || 'i-user'));
-      meta.appendChild(chip(row.fulfilment === 'kidnapping' ? 'Delivered alive' : 'Eliminated',
-        'hot', row.fulfilment === 'kidnapping' ? 'i-usercheck' : 'i-crosshair'));
+      // The part they played, in words: "creator" and "hitman" were the
+      // server's field values, read off the row as they were stored.
+      meta.appendChild(chip(ROLE_WORDS[row.role] || 'You were on it', 'role',
+        ROLE_ICONS[row.role] || 'i-user'));
+      var outcome = ledgerOutcome(row);
+      meta.appendChild(chip(outcome.text, 'hot', outcome.icon));
+      // What it moved in money, said from their side of it.
+      var moved = ledgerAmount(row);
+      if (moved) { meta.appendChild(chip(moved, 'plain', 'i-coin')); }
       // When it closed. Entries on the same target read alike without it.
       var closedAgo = agoText(row.resolved_at);
       if (closedAgo) { meta.appendChild(chip(closedAgo, 'plain', 'i-clock')); }
@@ -6860,6 +7316,37 @@
 
   // The icon beside the part a player played in a closed contract.
   var ROLE_ICONS = { hitman: 'i-user', creator: 'i-briefcase', target: 'i-eye' };
+  // And the part itself, as they would say it.
+  var ROLE_WORDS = { creator: 'You placed it', hitman: 'You took it', target: 'It was on you' };
+
+  /* How a closed contract ended, from the row's kind (the server's Ledger:
+     'paid', 'withdrawn', 'refunded', 'buyout'; a row from before there were
+     kinds is a payout). */
+  function ledgerOutcome(row) {
+    var kind = row.kind || 'paid';
+    if (kind === 'withdrawn') { return { text: 'Withdrawn', icon: 'i-xcircle' }; }
+    if (kind === 'refunded') { return { text: 'Ran out \u2014 refunded', icon: 'i-clock' }; }
+    if (kind === 'buyout') { return { text: 'Bought out', icon: 'i-exit' }; }
+    return row.fulfilment === 'kidnapping'
+      ? { text: 'Delivered alive', icon: 'i-usercheck' }
+      : { text: 'Eliminated', icon: 'i-crosshair' };
+  }
+
+  /* The money a row moved, from this player's side: what they were paid,
+     what a payout cost them, what came back, what a buyout cost. Null where
+     nothing of theirs moved, or the row predates the figure. */
+  function ledgerAmount(row) {
+    var amount = Number(row.amount) || 0;
+    if (!(amount > 0)) { return null; }
+    var kind = row.kind || 'paid';
+    if (kind === 'withdrawn' || kind === 'refunded') { return money(amount) + ' back to you'; }
+    if (kind === 'buyout') {
+      return row.role === 'target' ? 'You paid ' + money(amount) : money(amount) + ' to you';
+    }
+    if (row.role === 'hitman') { return 'Paid you ' + money(amount); }
+    if (row.role === 'creator') { return 'Cost you ' + money(amount); }
+    return null;
+  }
 
   /* Which copy of this page the player is actually running.
 
@@ -7248,10 +7735,10 @@
     if (!bonusOffered) {
       delete state.draft.bonus;
     } else {
-      // Opens at 50 or the ceiling, whichever is lower: a max attribute
-      // does not hold a value set from script, so under a lower ceiling it
-      // opened at 50 beside "(up to 25)" and was charged at 50.
-      var bonusOpen = String(bonusCap ? Math.min(50, bonusCap) : 50);
+      // Opens at 0: a bonus is money taken now on top of the reward, and
+      // one the creator never typed was one they never chose. It opened at
+      // 50%, so $40,000 typed into Cash took $60,000.
+      var bonusOpen = '0';
       var bonusField = drafted(numberInput('bonus', bonusOpen), 'bonus', bonusOpen);
       if (bonusCap) { bonusField.max = bonusCap; }
       terms.appendChild(labelled(
@@ -7301,14 +7788,17 @@
     // away, an anonymous one's follows the target alone (§14.32), so it
     // follows the checkbox. The lifetime runs through every stop, and no
     // extension goes past it.
+    // The rule as the server keeps it (clock_rule_spec): the clock runs only
+    // while the placer (named or anonymous), the target and an operative
+    // holding it are all in the city, and not at all before somebody takes
+    // it. It said the target alone, or the two of them, and nothing of the
+    // wait for a taker.
     function clockHint() {
       var ceiling = Number(settings().deadlineMaxMinutes) || 0;
       return 'It runs for ' + durationText(Number(settings().defaultDeadlineMinutes) || 180)
-        + (state.draft.anon === true
-          ? ' while the target is in the city'
-          : ' while you and the target are both in the city')
-        + ', then lapses and what you put up comes back. Extend it from Mine '
-        + '\u2192 Extend deadline'
+        + ', counted only while you, the target and a hitman on it are all in the city. '
+        + 'It does not start until someone accepts. Then it lapses and what you put up '
+        + 'comes back. Extend it from Mine'
         + (ceiling > 0 ? ', up to ' + durationText(ceiling) + ' after you place it.' : '.');
     }
     var clock = el('div', 'hint', clockHint());
@@ -7368,9 +7858,20 @@
     // changed for the whole round trip and the button stayed live, so a
     // second tap placed a second contract and took a second escrow — the
     // most expensive tap in the app, and the one most likely to be made.
-    var submit = el('button', 'primary',
-      isBusy('create') ? 'Placing\u2026' : 'Place contract');
+    // Armed by the first tap (submitContract), naming what it takes; the
+    // second places it. Placing was the one charge in the app on one tap.
+    var armed = state.placeArmed && !isBusy('create');
+    var submit = el('button', armed ? 'danger' : 'primary',
+      isBusy('create') ? 'Placing\u2026'
+        : armed ? state.placeArmed.label : 'Place contract');
     submit.id = 'place-submit';
+    placeSubmit = submit;
+    // Paused by staff, or suspended: placing is refused, so not live. The
+    // banner at the top says why.
+    if (takingPaused() && !isBusy('create')) {
+      submit.disabled = true;
+      submit.textContent = 'Place contract';
+    }
     if (isBusy('create')) {
       submit.disabled = true;
       submit.classList.toggle('is-busy', true);
@@ -8041,7 +8542,9 @@
       if (asked.bailout > 0 && asked.bailout !== placed.bailoutAmount) { moved.push('buyout'); }
     }
     if (typeof placed.penaltyAmount === 'number' && placed.penaltyAmount > 0) {
-      terms.push('stake ' + money(placed.penaltyAmount));
+      // Whose it is, said: "stake $1,000" beside the buyout read as a
+      // second sum taken from the client.
+      terms.push("Hitman's stake: " + money(placed.penaltyAmount) + ' (they put it up, not you)');
       if (asked.penalty > 0 && asked.penalty !== placed.penaltyAmount) { moved.push('stake'); }
     }
     if (terms.length) { text += ' ' + terms.join('; ') + '.'; }
@@ -8087,6 +8590,17 @@
       text += ' You can stop that from its card under Mine.';
     }
     return text;
+  }
+
+  /* The Place button, armed or not, repainted where it is: a whole form
+     redrawn under a player's thumb to change one label is a form that can
+     lose what they were typing. */
+  var placeSubmit = null;
+  function paintPlaceSubmit() {
+    if (!placeSubmit || !placeSubmit.parentNode || isBusy('create')) { return; }
+    var armed = state.placeArmed;
+    placeSubmit.textContent = armed ? armed.label : 'Place contract';
+    placeSubmit.className = armed ? 'danger' : 'primary';
   }
 
   function submitContract() {
@@ -8246,6 +8760,27 @@
           { yes: 'Place it', no: 'Cancel' });
       return;
     }
+    // Two taps, the second naming the total it takes, kidnapping bonus and
+    // anonymity fee included. Where the officer warning was just agreed to,
+    // that dialog's Place it was the second tap.
+    var totalTaken = worth + creatorFee;
+    var armKey = JSON.stringify([target, slots, bonusPct, creatorFee, num('bailout'),
+      num('penalty'), state.draft.mode || 'exclusive', state.draft.anon === true]);
+    if (!(protectedTarget && state.leoConfirmed === true)
+        && !(state.placeArmed && state.placeArmed.key === armKey)) {
+      var armedAt = Date.now();
+      state.placeArmed = { key: armKey, at: armedAt,
+        label: 'Tap again to place' + (totalTaken > 0 ? ' \u2014 ' + money(totalTaken) : '') };
+      setTimeout(function () {
+        if (state.placeArmed && state.placeArmed.at === armedAt) {
+          state.placeArmed = null;
+          paintPlaceSubmit();
+        }
+      }, PICK_CONFIRM_MS);
+      return paintPlaceSubmit();
+    }
+    state.placeArmed = null;
+
     // Agreed to (or never asked, where the server warns nobody): sent with
     // the contract, and a target who took a protected job after being
     // picked is refused until the warning has been seen.
@@ -9085,6 +9620,7 @@
     var view = document.getElementById('view');
     view.innerHTML = '';
     countdownBars = {};
+    handoverNodes = {};
 
     // A dialog is drawn alone, as a sheet at the foot of the view; the view
     // carries the seal behind it while one is open.
@@ -9097,6 +9633,8 @@
         renderFields(view);
       } else if (state.dialog.kind === 'reward') {
         renderRewardEditor(view);
+      } else if (state.dialog.kind === 'sheet') {
+        renderSheet(view);
       } else if (state.dialog.kind === 'proof') {
         renderProof(view);
       } else if (state.dialog.kind === 'pick') {
@@ -9112,6 +9650,14 @@
     // that closed mid-call took its thread away, and the only Hang up with
     // it: the caller stayed on the line until the other side hung up.
     if (state.call && state.tab !== 'thread') { view.appendChild(callBar()); }
+
+    // What refuses writes right now, said once at the top of every tab it
+    // touches, with until when (holdBanner).
+    if (state.tab === 'board' || state.tab === 'mine' || state.tab === 'place'
+        || state.tab === 'onme') {
+      var banner = holdBanner();
+      if (banner) { view.appendChild(banner); }
+    }
 
     ({
       board: viewBoard, mine: viewMine, place: viewPlace,
@@ -9544,6 +10090,7 @@
       navigated();
       state.tab = tab.dataset.tab;
       state.dialog = null;
+      state.focus = null;
 
       // Opening the Place form is a player asking to try again. One refused
       // wallet used to leave an error card where both pickers should be for
@@ -9851,6 +10398,13 @@
 
   function intentHoldText(hold, lead) {
     var minutes = Number(hold.minutesLeft !== undefined ? hold.minutesLeft : hold.minutes) || 0;
+    // Nothing left to do on it: the payout closed the contract, and with it
+    // its thread and its meeting point. Listing them as ways to release it
+    // offered what the server would refuse. Only the wait is said.
+    if (hold.closed || !hold.missing) {
+      return lead + ' Payout held: released within '
+        + (minutes > 0 ? durationText(minutes) : 'a moment') + '.';
+    }
     return lead + ' Your payout is held until you show intent: '
       + (hold.missing || 'proof of intent') + '.'
       + (minutes > 0 ? ' It is released anyway within ' + durationText(minutes) + '.' : '');

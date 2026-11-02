@@ -4498,6 +4498,86 @@ async function main() {
     clean(app, 'settings schema sent once');
   })();
 
+  /* ---- workflow round 3: S8 and S13 ---- */
+  await (async function () {
+    const named = contractDetail({
+      contract: Object.assign({}, contractDetail(null, false).data.contract, { anonymous: false,
+        mode: 'exclusive', client: { name: 'Vic Marlowe' } }),
+      hitmen: [{ id: 'hm1', alias: 'Ghost', anonymous: false, name: 'Kai Holt', state: 'active',
+        accepted_at: NOW - 1800, claims: 0, stake: 0 },
+               { id: 'hm2', alias: 'Shade', anonymous: true, name: 'Anonymous', state: 'active',
+        accepted_at: NOW - 1800, claims: 0, stake: 0 }]
+    }, false);
+    const settings = settingsView();
+    settings.data.limits.push({ key: 'Limits.ExclusiveIdleReleaseSeconds', category: 'rules-timers',
+      group: 'Contract limits', label: 'Idle release', kind: 'number', integer: true, min: 0, max: 86400,
+      live: true, value: 10800, default: 10800, source: 'config' });
+    const app = boot(standardServer({ contract: named, settings: settings,
+      overview: overview({ overrides: 0 }) }));
+    app.open(FULL);
+    await settled();
+    it('S13: the overview\'s settings link says what it opens, not a bare 0', function () {
+      const link = app.$$('button').filter(function (b) {
+        return b.getAttribute('data-section') === 'settings' && b.className.indexOf('link') !== -1;
+      })[0];
+      truthy(link, 'the link');
+      eq(link.textContent.trim(), 'None changed — open Settings');
+    });
+    app.nav('contracts');
+    await settled();
+    app.click(app.$$('[data-act="contract"]')[0]);
+    await settled();
+    const drawerText = app.text(app.drawer());
+    it('S13: says the mode with a capital, as every other term', function () {
+      has(drawerText, 'ModeExclusive');
+    });
+    const parties = app.drawer().querySelectorAll('button').filter(function (b) {
+      return b.getAttribute('data-act') === 'party-lookup';
+    });
+    it('S8: offers Look up / Freeze beside every party, by role (IdentityAce: anonymous ones too)', function () {
+      eq(parties.map(function (b) { return b.getAttribute('data-subject'); }),
+        ['contract:ct00000001:client', 'contract:ct00000001:target', 'contract:ct00000001:op:hm1',
+         'contract:ct00000001:op:hm2']);
+      has(app.text(parties[0]), 'Look up / Freeze');
+    });
+    app.click(parties[1]);
+    await settled();
+    it('S8: which opens Players on them, asked by the contract and the role, no citizen id', function () {
+      eq(app.last('player').data.subject, 'contract:ct00000001:target');
+      has(app.main(), 'Freeze');
+    });
+    app.type(app.byId('pl-q'), 'Dana Reyes');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('S8: Players takes a name, as Contracts does', function () {
+      eq(app.last('player').data.subject, 'Dana Reyes');
+      eq(app.byId('pl-q').getAttribute('placeholder'), 'Player id, citizen id or name');
+    });
+    app.nav('timers');
+    await settled();
+    it('S13: a duration in seconds says it in hours too', function () {
+      has(app.main(), '10,800 s = 3 h');
+    });
+    clean(app, 'workflow round 3');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$$('[data-act="contract"]')[0]);
+    await settled();
+    it('S8: offers nobody anonymous to staff without IdentityAce: the client and an anonymous operative', function () {
+      const subjects = app.drawer().querySelectorAll('button').filter(function (b) {
+        return b.getAttribute('data-act') === 'party-lookup';
+      }).map(function (b) { return b.getAttribute('data-subject'); });
+      eq(subjects, ['contract:ct00000001:target']);
+    });
+    clean(app, 'anonymous parties');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

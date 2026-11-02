@@ -1472,12 +1472,101 @@ H.logs = function(src, data)
     return true, nil, nil, { rows = out, next = next_ }
 end
 
---- Who a lookup names: a player id (somebody in the city) or a citizen id
---- typed (anybody). nil, the error and what to say, for neither.
+--- The party a contract names by its role, for Look up / Freeze in the
+--- contract view: 'contract:<id>:client', 'contract:<id>:target' or
+--- 'contract:<id>:op:<operative row id>'. Resolved here, so the citizen id
+--- never has to reach a staff member without IdentityAce; and refused for a
+--- party who is anonymous on it to one without it, whom the view does not
+--- name either.
+---@return table|nil who { cid, actor, viaContract = true }
+---@return string|nil err
+---@return string|nil message
+local function contractParty(subject, canIdentify)
+    local id, role, rest = subject:match('^contract:([%w_%-]+):(%a+):?(.*)$')
+    id = id and Util.toId(id)
+    if not id then return nil, CH.ERR.INVALID_INPUT, 'That is not a party to a contract.' end
+    local contract = deps.storage.readContract(id)
+    if not contract then return nil, CH.ERR.NOT_FOUND, 'No contract has that id.' end
+    local cid
+    if role == 'target' then
+        cid = contract.target_cid
+    elseif role == 'client' then
+        if contract.anon_creator == true and not canIdentify then
+            return nil, CH.ERR.NOT_PARTICIPANT, 'The client placed it anonymously: only staff with '
+                .. 'the identity permission may look them up.'
+        end
+        cid = contract.creator_cid
+    elseif role == 'op' and rest ~= '' then
+        for _, hitman in ipairs(deps.storage.readHitmen(id) or {}) do
+            if tostring(hitman.id) == rest then
+                if hitman.anon == true and not canIdentify then
+                    return nil, CH.ERR.NOT_PARTICIPANT, 'That operative took it anonymously: only '
+                        .. 'staff with the identity permission may look them up.'
+                end
+                cid = hitman.hitman_cid
+                break
+            end
+        end
+    end
+    if not cid then return nil, CH.ERR.NOT_FOUND, 'Nobody on that contract matches.' end
+    return { cid = cid, actor = deps.identity.byCitizenId(cid), viaContract = true }
+end
+
+--- A lookup by name, as Contracts searches: anybody in the city whose name
+--- holds it, and failing that a target, or a client who placed openly (any
+--- client, with IdentityAce), whose name on a contract is exactly it. One
+--- person, or nil and what to say.
+---@return table|nil who { cid, actor, byName = true }
+---@return string|nil err
+---@return string|nil message
+local function byName(text, canIdentify)
+    -- A name has letters in it; anything else is not one.
+    if not text:find('%a') then
+        return nil, CH.ERR.INVALID_INPUT, 'Give a player id, a citizen id or a name.'
+    end
+    local needle = text:lower()
+    local order, seen = {}, {}
+    local function add(cid, actor)
+        if cid and not seen[cid] then
+            seen[cid] = actor or false
+            order[#order + 1] = cid
+        end
+    end
+    for _, actor in ipairs(deps.identity.online() or {}) do
+        if type(actor.name) == 'string' and actor.name:lower():find(needle, 1, true) then
+            add(actor.cid, actor)
+        end
+    end
+    if #order == 0 then
+        for _, contract in ipairs(everyContract()) do
+            if tostring(contract.target_name or ''):lower() == needle then add(contract.target_cid) end
+            if (canIdentify or contract.anon_creator ~= true)
+                and tostring(contract.creator_name or ''):lower() == needle then
+                add(contract.creator_cid)
+            end
+        end
+    end
+    if #order == 0 then
+        return nil, CH.ERR.NOT_FOUND, 'Nobody by that name is in the city or on a contract you may see.'
+    end
+    if #order > 1 then
+        return nil, CH.ERR.INVALID_INPUT, ('%d people match that name: give more of it, or their '
+            .. 'player id.'):format(#order)
+    end
+    local cid = order[1]
+    return { cid = cid, actor = seen[cid] or deps.identity.byCitizenId(cid), byName = true }
+end
+
+--- Who a lookup names: a player id (somebody in the city), a citizen id
+--- typed (anybody), a name (as Contracts takes one), or a party to a
+--- contract by its role (contractParty). nil, the error and what to say,
+--- for none of them.
+---@param subject any
+---@param src integer|nil the staff member asking, for what they may be shown
 ---@return table|nil who { cid, actor, typed }
 ---@return string|nil err
 ---@return string|nil message
-local function playerSubject(subject)
+local function playerSubject(subject, src)
     local serverId = (type(subject) == 'number' or (type(subject) == 'string'
         and subject:match('^%d+$') and #subject <= 6)) and wholeNumber(subject, 1, 65535) or nil
     if serverId then
@@ -1487,9 +1576,26 @@ local function playerSubject(subject)
         end
         return { cid = actor.cid, actor = actor }
     end
-    local cid = typedCitizenId(subject)
-    if not cid then return nil, CH.ERR.INVALID_INPUT, 'Give a player id or a citizen id.' end
-    return { cid = cid, actor = deps.identity.byCitizenId(cid), typed = true }
+    if type(subject) ~= 'string' then
+        return nil, CH.ERR.INVALID_INPUT, 'Give a player id, a citizen id or a name.'
+    end
+    local canIdentify = src ~= nil and identifies(src)
+    if subject:sub(1, 9) == 'contract:' then return contractParty(subject:sub(1, 96), canIdentify) end
+    local text = shortText(subject, 64)
+    if not text then return nil, CH.ERR.INVALID_INPUT, 'Give a player id, a citizen id or a name.' end
+    local cid = typedCitizenId(text)
+    if cid then
+        local actor = deps.identity.byCitizenId(cid)
+        -- A word that names no character and nothing here is read as a name.
+        if actor or deps.identity.characterExists(cid) ~= false
+            or #(deps.storage.contractsInvolving(cid) or {}) > 0 then
+            return { cid = cid, actor = actor, typed = true }
+        end
+        local named = byName(text, canIdentify)
+        if named then return named end
+        return { cid = cid, actor = nil, typed = true }
+    end
+    return byName(text, canIdentify)
 end
 
 --- A character's playtime as the panel shows it: what the built-in tracker
@@ -1530,7 +1636,7 @@ end
 H.player = function(src, data)
     local Storage = deps.storage
     local canIdentify = identifies(src)
-    local who, whoErr, whoMessage = playerSubject(data.subject)
+    local who, whoErr, whoMessage = playerSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local cid, actor, typedCid = who.cid, who.actor, who.typed
 
@@ -1661,7 +1767,7 @@ H.freeze = function(src, data)
     if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
     local reason = shortText(data.reason, 120)
     if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
-    local who, whoErr, whoMessage = playerSubject(data.subject)
+    local who, whoErr, whoMessage = playerSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local cid, actor = who.cid, who.actor
     if not actor and deps.identity.characterExists(cid) == false
@@ -1694,7 +1800,7 @@ H.unfreeze = function(src, data)
         cid = type(data.ref) == 'string' and freezeRefs[data.ref:sub(1, 16)] or nil
         if not cid then return false, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
     else
-        local who, whoErr, whoMessage = playerSubject(data.subject)
+        local who, whoErr, whoMessage = playerSubject(data.subject, src)
         if not who then return false, whoErr, whoMessage end
         cid = who.cid
     end
@@ -1730,7 +1836,7 @@ H.setPlaytime = function(src, data)
     if not hours or hours ~= hours or hours < 0 or hours > 100000 then
         return false, CH.ERR.INVALID_INPUT, 'Hours are a number from 0 to 100000.'
     end
-    local who, whoErr, whoMessage = playerSubject(data.subject)
+    local who, whoErr, whoMessage = playerSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local cid, actor = who.cid, who.actor
     -- A citizen id typed that no character has: refused, not a row made for
@@ -2572,8 +2678,8 @@ end
 --- The player a staff action names, as the freeze takes one: a player id or
 --- a citizen id, and refused for a citizen id no character has and nothing
 --- here names. nil, the error and what to say otherwise.
-local function actionSubject(subject)
-    local who, whoErr, whoMessage = playerSubject(subject)
+local function actionSubject(subject, src)
+    local who, whoErr, whoMessage = playerSubject(subject, src)
     if not who then return nil, whoErr, whoMessage end
     if not who.actor and deps.identity.characterExists(who.cid) == false
         and #(deps.storage.contractsInvolving(who.cid) or {}) == 0 then
@@ -2610,7 +2716,7 @@ end
 H.history = function(src, data)
     if not deps.history then return false, 'unavailable', 'The history card is not available here.' end
     local canIdentify = identifies(src)
-    local who, whoErr, whoMessage = playerSubject(data.subject)
+    local who, whoErr, whoMessage = playerSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     -- The queue first, so the newest purchases are there to read.
     deps.audit.flush()
@@ -2634,7 +2740,7 @@ H.suspend = function(src, data)
         return false, CH.ERR.INVALID_INPUT, ('Days are a whole number from 1 to %d, or 0 for until you '
             .. 'lift it.'):format(Sanctions.MAX_SUSPEND_DAYS)
     end
-    local who, whoErr, whoMessage = actionSubject(data.subject)
+    local who, whoErr, whoMessage = actionSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.place('suspend', staffOf(src), who.cid, days > 0 and days * 86400 or nil,
         reason, who.name)
@@ -2650,7 +2756,7 @@ end
 H.unsuspend = function(src, data)
     local Sanctions = deps.sanctions
     if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
-    local who, whoErr, whoMessage = playerSubject(data.subject)
+    local who, whoErr, whoMessage = playerSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.lift('suspend', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not suspended.') end
@@ -2669,7 +2775,7 @@ H.protect = function(src, data)
         return false, CH.ERR.INVALID_INPUT, ('Hours are a whole number from 1 to %d, or 0 for good.')
             :format(Sanctions.MAX_PROTECT_HOURS)
     end
-    local who, whoErr, whoMessage = actionSubject(data.subject)
+    local who, whoErr, whoMessage = actionSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.place('protect', staffOf(src), who.cid, hours > 0 and hours * 3600 or nil,
         reason, who.name)
@@ -2685,7 +2791,7 @@ end
 H.unprotect = function(src, data)
     local Sanctions = deps.sanctions
     if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
-    local who, whoErr, whoMessage = playerSubject(data.subject)
+    local who, whoErr, whoMessage = playerSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.lift('protect', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not protected.') end
@@ -2712,7 +2818,7 @@ H.manualPay = function(src, data)
         return false, 'over_max', ('Not paid: $%d is over the most one payment may be, $%d '
             .. '(Config.Staff.ManualPaymentMax).'):format(amount, max)
     end
-    local who, whoErr, whoMessage = actionSubject(data.subject)
+    local who, whoErr, whoMessage = actionSubject(data.subject, src)
     if not who then return false, whoErr, whoMessage end
     local ok, result = Payments.pay(staffOf(src), who.cid, amount, account, reason, who.name)
     if not ok then

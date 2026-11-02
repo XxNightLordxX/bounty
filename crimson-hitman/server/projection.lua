@@ -733,6 +733,9 @@ function Projection.contract(contract, viewerCid, opts)
                 }
             end
         end
+        -- A handover running on it, which the placer has to stand still
+        -- for: roughly how long is left (Kidnap.placerLeft), never who.
+        out.handoverLeft = Kidnap and Kidnap.placerLeft and Kidnap.placerLeft(contract.id) or nil
         -- The handover's meeting point (server/meeting.lua): whether one is
         -- set, for the controls on an alive-only contract a hitman holds,
         -- while Config.Kidnap.MeetingPoint is on. Absent, no controls. Never

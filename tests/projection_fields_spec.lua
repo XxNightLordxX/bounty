@@ -48,6 +48,12 @@ local CONDITIONAL = {
     rumour = 'only on a rumour, with Config.Roleplay.Rumours on',
     -- Written by the page from its own kidnapProgress polling.
     kidnapProgress = 'the page fills this in, not the projection',
+    -- A handover running on it, on the placer's card alone, roughly how
+    -- long they still hold still for (Kidnap.placerLeft); never who.
+    handoverLeft = 'creator-only, and only while a handover runs on it',
+    -- The proof-of-intent rule on a hitman's card while it can be met
+    -- (Config.Roleplay.ProofOfIntent, off as shipped).
+    intentRule = 'hitman-only, with proof of intent on, while the contract is live',
     -- Stamped by the page as the reply lands, to count the clock down from.
     clockReadAt = 'the page fills this in, not the projection',
     -- How long is left, as a rough band: absent only on a contract with no

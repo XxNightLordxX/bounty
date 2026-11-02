@@ -719,6 +719,22 @@ async function main() {
     it(at + ': the drawer fits, with nothing cut off, too small to hit or too small to read', function () {
       none(inDrawer, 'drawer');
     });
+    // Look up / Freeze beside each party (S8): every one inside the drawer,
+    // tall enough to hit, its label whole, beside the longest names there are.
+    const parties = await page.evaluate(function () {
+      const d = document.getElementById('drawer').getBoundingClientRect();
+      return Array.prototype.slice.call(document.querySelectorAll('#drawer [data-act="party-lookup"]'))
+        .map(function (b) {
+          const r = b.getBoundingClientRect();
+          return { subject: b.getAttribute('data-subject'), inside: r.left >= d.left - 0.5 && r.right <= d.right + 0.5,
+            tall: r.height >= 24, whole: b.scrollWidth <= b.clientWidth + 1 };
+        });
+    });
+    it(at + ': Look up / Freeze sits beside each party, inside the drawer and whole', function () {
+      truthy(parties.length >= 3, 'beside the client, the target and the operatives: ' + JSON.stringify(parties));
+      none(parties.filter(function (p) { return !p.inside || !p.tall || !p.whole; })
+        .map(function (p) { return JSON.stringify(p); }), 'party buttons');
+    });
 
     // The Deadline card: every control inside the drawer, side by side or
     // wrapped, never past its edge; Shorten armed stays where it was.

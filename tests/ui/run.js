@@ -311,6 +311,36 @@ function click(app, label) {
   return match[0];
 }
 
+/** The Place form's second tap: the first arms it, naming the total
+    ("Tap again to place — $7,500"), and this places it. A no-op where the
+    first tap was refused before anything was armed. */
+function confirmPlace(app) {
+  const armed = app.view.all().filter(function (n) {
+    return n.tagName === 'BUTTON' && n.textContent.indexOf('Tap again to place') === 0;
+  });
+  if (armed.length) { armed[0].onclick(); }
+}
+
+/** The reward editor on a creator's card: behind Change reward once the
+    contract is taken, and inside the Edit sheet before (S3). */
+function openReward(app) {
+  const has = app.view.all().some(function (n) {
+    return n.tagName === 'BUTTON' && n.textContent === 'Change reward';
+  });
+  if (!has) { click(app, 'Edit'); }
+  return click(app, 'Change reward');
+}
+
+/** Propose change on a card: on the card once the contract is taken, and
+    behind the Edit sheet's More changes before (S3). */
+function openPropose(app) {
+  const has = app.view.all().some(function (n) {
+    return n.tagName === 'BUTTON' && n.textContent === 'Propose change';
+  });
+  if (!has) { click(app, 'Edit'); return click(app, 'More changes'); }
+  return click(app, 'Propose change');
+}
+
 /** Every throw the app took while drawing, as one message. */
 function threw(app) {
   return app.thrown.map(function (e) { return e.message; }).join(' | ');
@@ -427,7 +457,7 @@ async function main() {
       return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
     });
     it('has a submit button', function () { eq(buttons.length, 1); });
-    buttons[0].onclick();
+    buttons[0].onclick(); confirmPlace(app);
     await settle(); await settle();
 
     it('submits a contract the server would accept', function () {
@@ -1305,17 +1335,22 @@ async function main() {
         'the warning must be rendered in the page: ' + app.view.textContent);
     });
 
-    click(app, 'Cancel');
+    // The warning heads the accept dialog itself (S6): one dialog, so
+    // Close is the way out and the choice is the way on.
+    click(app, 'Close');
     await settle();
     it('does not accept when the player cancels the warning', function () {
       falsy(accepted, 'cancelling must stop the acceptance');
     });
 
     take.onclick();
-    click(app, 'Yes');
-    it('then asks how they want to be named', function () {
+    it('asks how they want to be named in the same dialog as the warning', function () {
       truthy(app.view.textContent.indexOf('anonymously') !== -1,
-        'the anonymity choice should follow: ' + app.view.textContent);
+        'the anonymity choice should be there: ' + app.view.textContent);
+      truthy(app.view.textContent.indexOf('sworn officer') !== -1,
+        'with the warning: ' + app.view.textContent);
+      falsy(app.view.all().some(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Yes'; }),
+        'no separate Yes before the choice');
     });
 
     click(app, 'Anonymously');
@@ -2538,6 +2573,10 @@ async function main() {
     const node = app.document.getElementById(id);
     truthy(node, 'missing button: ' + id);
     node.onclick();
+    // Place takes two taps, the first arming it with the total.
+    if (id === 'place-submit' && String(node.textContent).indexOf('Tap again to place') === 0) {
+      node.onclick();
+    }
   }
 
   // The wallet is a snapshot, so a staged weapon's slot can be stale by the
@@ -2624,6 +2663,13 @@ async function main() {
     });
 
     pick(app, 'slot-cash-1', 40000);
+    // S6: the kidnapping bonus opens at 0%, so nothing is taken on top that
+    // the creator did not type.
+    it('opens the kidnapping bonus at 0%, taking nothing on top', function () {
+      eq(pick(app, 'bonus').value, '0');
+      eq(total(), 'Taken from you now: $40,000 cash.');
+    });
+    pick(app, 'bonus', 50);
     it('counts the bonus on top in the total', function () {
       eq(total(), 'Taken from you now: $60,000 cash ($40,000 + $20,000 kidnapping bonus). '
         + 'The bonus comes back to you if the target is killed rather than delivered.');
@@ -3787,7 +3833,7 @@ async function main() {
       app.document.querySelectorAll('.tab')
         .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
       await settle(); await settle();
-      click(app, 'Change reward');
+      openReward(app);
       await settle(); await settle();
       return app;
     }
@@ -3969,7 +4015,7 @@ async function main() {
     twice.document.querySelectorAll('.tab')
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
     await settle(); await settle();
-    click(twice, 'Change reward');
+    openReward(twice);
     await settle(); await settle();
     const tb = twice.view.all().filter(function (n) {
       return n.tagName === 'INPUT' && n.type === 'checkbox';
@@ -4006,7 +4052,7 @@ async function main() {
     queued.document.querySelectorAll('.tab')
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
     await settle(); await settle();
-    click(queued, 'Change reward');
+    openReward(queued);
     await settle(); await settle();
     const qb = queued.view.all().filter(function (n) {
       return n.tagName === 'INPUT' && n.type === 'checkbox';
@@ -4086,10 +4132,10 @@ async function main() {
         return n.tagName === 'BUTTON' && n.textContent === label;
       })[0];
     }
-    /* Pick (where a label is given), then pay, confirmed twice. */
+    /* Two taps (S6): picking one arms the pay button, or Pay does where
+       the only one is picked already; the second pays. */
     function payFor(app, label) {
-      if (label) { click(app, label); }
-      click(app, 'Pay $25,000');
+      if (label) { click(app, label); } else { click(app, 'Pay $25,000'); }
       click(app, 'Tap again to pay $25,000');
     }
 
@@ -4169,7 +4215,13 @@ async function main() {
       truthy(buttonNamed(two, 'Pay $25,000').disabled, 'Pay is disabled until one is picked');
       truthy(two.view.textContent.indexOf('Pick who to ask about first.') !== -1);
     });
-    payFor(two, 'Operative #2');
+    click(two, 'Operative #2');
+    it('arms Pay with the pick itself: nothing sent yet, the next tap pays (S6)', function () {
+      eq(two.sent.filter(function (x) { return x.name === 'placerInformant'; }).length, 0);
+      truthy(buttonNamed(two, 'Tap again to pay $25,000'), two.view.textContent);
+      falsy(buttonNamed(two, 'Pay $25,000'), 'no unarmed Pay left to tap first');
+    });
+    click(two, 'Tap again to pay $25,000');
     await settle(); await settle();
     it('sends the one picked', function () {
       eq(two.sent.filter(function (x) { return x.name === 'placerInformant'; })[0].body.pick, OP2);
@@ -4184,18 +4236,14 @@ async function main() {
       truthy(kept.view.textContent.indexOf('Informant: Operative #1 is Rook Ash') !== -1,
         kept.view.textContent);
     });
-    it('and says why it cannot ask again when every operative is known', function () {
-      const button = buttonNamed(kept, PLACER_BUTTON);
-      truthy(button && button.disabled, 'drawn, disabled');
-      truthy(kept.view.textContent.indexOf('You already know who every operative on it is.') !== -1,
-        kept.view.textContent);
+    // Nothing left to sell: no button at all (a disabled one was a dead end).
+    it('hides the button once every operative is known', function () {
+      falsy(buttonNamed(kept, PLACER_BUTTON), kept.view.textContent);
     });
 
     const spent = await onMine({}, null, { placerInformantLeft: 0 });
-    it('says when every look-up on the contract is used', function () {
-      truthy(buttonNamed(spent, PLACER_BUTTON).disabled);
-      truthy(spent.view.textContent.indexOf('You have used every look-up the informant sells '
-        + 'on this contract.') !== -1, spent.view.textContent);
+    it('hides the button once every look-up on the contract is used', function () {
+      falsy(buttonNamed(spent, PLACER_BUTTON), spent.view.textContent);
     });
 
     const waiting = await onMine({}, null, { placerInformantWait: 600 });
@@ -4452,7 +4500,8 @@ async function main() {
     it('offers the creator their actions', function () {
       const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
-      truthy(labels.indexOf('Change reward') !== -1,
+      // Untaken, its one Edit sheet (S3).
+      truthy(labels.indexOf('Edit') !== -1,
         'the whole card threw before it got to the buttons: ' + labels.join(' | '));
     });
   })();
@@ -4571,7 +4620,7 @@ async function main() {
     own.document.querySelectorAll('.tab')
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
     await settle(); await settle();
-    click(own, 'Change reward');
+    openReward(own);
     await settle(); await settle();
     click(own, 'Add to it');
     await settle();
@@ -4623,7 +4672,7 @@ async function main() {
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
     await settle(); await settle();
 
-    click(app, 'Propose change');
+    openPropose(app);
 
     it('says what each proposal would do before one is chosen', function () {
       const text = app.view.textContent;
@@ -4669,7 +4718,7 @@ async function main() {
     multi.document.querySelectorAll('.tab')
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
     await settle(); await settle();
-    click(multi, 'Propose change');
+    openPropose(multi);
     click(multi, 'Give back the last payout');
 
     /* The last collection is the only one the server will take back: the
@@ -4761,7 +4810,7 @@ async function main() {
       app.document.getElementById('slot-cash-1').value = '5000';
       app.view.all().filter(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
-      })[0].onclick();
+      })[0].onclick(); confirmPlace(app);
       await settle(); await settle();
       return app.sent.filter(function (x) { return x.name === 'create'; });
     }
@@ -4905,9 +4954,11 @@ async function main() {
       eq(String(live(buyouts, 'bonus').max), '200');
     });
     const lowCap = await place({}, { bonusPercent: 25 });
-    it('opens the bonus at a ceiling under 50, not over it', function () {
-      eq(String(live(lowCap, 'bonus').value), '25',
+    // At 0 whatever the ceiling (S6): a bonus nobody typed is not chosen.
+    it('opens the bonus at 0 under a ceiling, never over it', function () {
+      eq(String(live(lowCap, 'bonus').value), '0',
         'opened at 50 beside "(up to 25)", and the totals took 50');
+      eq(String(live(lowCap, 'bonus').max), '25');
     });
 
     const feeFree = await place({});
@@ -5101,7 +5152,8 @@ async function main() {
     it('nor in the hitman\'s warning', function () {
       falsy(/advised/.test(onPost.view.textContent), onPost.view.textContent);
       falsy(/Accepting alerts/.test(onPost.view.textContent), onPost.view.textContent);
-      truthy(/Accept anyway\?/.test(onPost.view.textContent), onPost.view.textContent);
+      // Asked in the accept dialog itself (S6): "Take it anyway, …?"
+      truthy(/Take it anyway/.test(onPost.view.textContent), onPost.view.textContent);
     });
 
     const advisedBoard = await onOfficer({ advisory: { posted: true, accepted: true } });
@@ -5542,13 +5594,13 @@ async function main() {
       Object.keys(opts.fields).forEach(function (id) { set(id, opts.fields[id]); });
       app.view.all().filter(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
-      })[0].onclick();
+      })[0].onclick(); confirmPlace(app);
       await settle(); await settle();
       return app;
     }
     function created(app) { return app.sent.filter(function (x) { return x.name === 'create'; }).length; }
 
-    const exact = await place({ cash: 10000, fields: { 'slot-cash-1': 10000 } });
+    const exact = await place({ cash: 10000, fields: { 'slot-cash-1': 10000, bonus: 50 } });
     it('counts the bonus taken on top against what the creator holds', function () {
       eq(created(exact), 0, 'sent for a refusal the page could have seen');
       truthy(exact.notice().indexOf('15,000') !== -1 && exact.notice().indexOf('bonus') !== -1,
@@ -5561,7 +5613,7 @@ async function main() {
     });
 
     const tooBig = await place({ cash: 2000000, bank: 2000000, maxValue: 1000000,
-      fields: { 'slot-cash-1': 200000, 'slot-bank-1': 500000 } });
+      fields: { 'slot-cash-1': 200000, 'slot-bank-1': 500000, bonus: 50 } });
     it('names the value ceiling rather than calling the reward wrong', function () {
       eq(created(tooBig), 0);
       truthy(tooBig.notice().indexOf('1,050,000') !== -1
@@ -5671,7 +5723,7 @@ async function main() {
 
       app.view.all().filter(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
-      })[0].onclick();
+      })[0].onclick(); confirmPlace(app);
       await settle(); await settle();
       return app;
     }
@@ -5686,11 +5738,11 @@ async function main() {
         + 'anyway, for a refusal that blames the amounts');
     });
 
-    // Twelve baselines and, at the form's opening 50% bonus, a derived
-    // bonus beside each: twenty-four, which is what the server counts.
+    // Twelve baselines, the bonus opening at 0% (a bonus typed would add a
+    // derived line beside each, as the server counts them).
     it('says how many there are and how many are allowed', function () {
       const shown = over.notice();
-      truthy(shown.indexOf('24') !== -1 && shown.indexOf('5') !== -1,
+      truthy(shown.indexOf('12') !== -1 && shown.indexOf('5') !== -1,
         'a creator cannot act on this without both numbers: '
         + JSON.stringify(shown));
     });
@@ -5735,16 +5787,19 @@ async function main() {
     });
   })();
 
-  /* The Edit dialog, on each server the reason rules can describe.
+  /* The Edit sheet (S3), on each server the reason rules can describe.
    *
-   * It asked for free text whatever the server took, and always sent it. On
-   * a preset server that was refused as invalid_input; on a server storing
-   * no reason at all it made the whole edit fail, so the deadline it came
-   * with could never be changed through the app either. */
+   * The Edit dialog asked for free text whatever the server took, and always
+   * sent it. On a preset server that was refused as invalid_input; on a
+   * server storing no reason at all it made the whole edit fail, so the
+   * deadline it came with could never be changed through the app either.
+   * The sheet draws the reason control the server takes, sends only what
+   * changed, and moves the deadline by hours either way. */
   await (async function editDialogReason() {
     const MINE_ONE = { ok: true, data: {
       created: [{ id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
                   state: 'active', role: 'creator', mode: 'exclusive',
+                  timeLeft: 'More than 2 hours left',
                   reward: { total: 5000 }, hitmen: [] }],
       accepted: [], onMe: []
     } };
@@ -5755,7 +5810,8 @@ async function main() {
           page: 1, pages: 1, contracts: [], settings: reasonPolicy } },
         mine: MINE_ONE,
         ledger: LEDGER,
-        revise: { ok: true, data: true }
+        revise: { ok: true, data: true },
+        improve: { ok: true, data: true }
       });
       await settle(); await settle();
       app.document.querySelectorAll('.tab')
@@ -5772,15 +5828,24 @@ async function main() {
     }
 
     function inDialog(app, id) {
-      return app.view.all().filter(function (n) { return n._id === 'dialog-' + id; })[0] || null;
+      return app.view.all().filter(function (n) { return n._id === 'sheet-' + id; })[0] || null;
+    }
+    function type(app, id, value) {
+      const node = inDialog(app, id);
+      node.value = String(value);
+      (node.oninput || node.onchange)();
     }
 
-    async function save(app) {
-      app.view.all().filter(function (n) {
-        return n.tagName === 'BUTTON' && n.textContent === 'Save';
-      })[0].onclick();
-      await settle(); await settle();
-      return app.sent.filter(function (x) { return x.name === 'revise'; });
+    /* Save, then Confirm: the two taps that make the changes. */
+    async function save(app, name) {
+      click(app, 'Save');
+      const confirm = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Confirm') === 0;
+      })[0];
+      truthy(confirm, 'Save shows what will change and arms Confirm: ' + app.view.textContent);
+      confirm.onclick();
+      await settle(); await settle(); await settle();
+      return app.sent.filter(function (x) { return x.name === (name || 'revise'); });
     }
 
     const preset = await openEdit({
@@ -5795,11 +5860,12 @@ async function main() {
       falsy(inDialog(preset, 'reason'), 'and must not also ask for text');
     });
 
+    type(preset, 'reasonPreset', 2);
     const presetSent = await save(preset);
 
     it('sends an index, not text, on a preset server', function () {
       eq(presetSent.length, 1, 'one revise');
-      eq(presetSent[0].body.reasonPreset, 1);
+      eq(presetSent[0].body.reasonPreset, 2);
       falsy(presetSent[0].body.reason,
         'text alongside an index is the field the server will refuse: '
         + JSON.stringify(presetSent[0].body));
@@ -5813,14 +5879,15 @@ async function main() {
       truthy(inDialog(off, 'hours'), 'the deadline is still editable');
     });
 
-    const offSent = await save(off);
+    type(off, 'hours', 2);
+    const offSent = await save(off, 'improve');
 
     it('still changes the deadline where the server stores no reason', function () {
-      eq(offSent.length, 1, 'one revise');
-      truthy(offSent[0].body.deadlineSeconds > 0, 'the deadline has to be in it');
-      falsy(offSent[0].body.reason,
-        'a reason field the server ignores used to arrive anyway and take '
-        + 'the whole edit down with it: ' + JSON.stringify(offSent[0].body));
+      eq(offSent.length, 1, 'one extension');
+      eq(offSent[0].body.kind, 'extend_deadline');
+      eq(offSent[0].body.payload.seconds, 7200, 'two hours, as typed');
+      eq(off.sent.filter(function (x) { return x.name === 'revise'; }).length, 0,
+        'no reason sent where the server stores none');
     });
 
     const free = await openEdit({ reasonMode: 'freetext', reasonMaxLength: 90 });
@@ -5833,11 +5900,12 @@ async function main() {
       eq(box.value, 'Unpaid debt', 'and it starts from what the contract says');
     });
 
+    type(free, 'reason', 'Owes the family money');
     const freeSent = await save(free);
 
     it('sends the text on a freetext server', function () {
       eq(freeSent.length, 1, 'one revise');
-      eq(freeSent[0].body.reason, 'Unpaid debt');
+      eq(freeSent[0].body.reason, 'Owes the family money');
       falsy(freeSent[0].body.reasonPreset);
     });
   })();
@@ -7142,7 +7210,7 @@ async function main() {
       const button = namedCard.view.all().filter(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Informant on an operative \u2014 $25,000';
       })[0];
-      truthy(button && button.disabled, 'drawn disabled, with why: ' + namedCard.view.textContent);
+      falsy(button, 'not drawn when there is nothing to sell: ' + namedCard.view.textContent);
     });
 
     it('says how many times one contract can be asked', function () {
@@ -7747,7 +7815,7 @@ async function main() {
     await settle();
 
     const input = app.view.all().filter(function (n) {
-      return n.tagName === 'INPUT' && String(n.id).indexOf('dialog-') === 0;
+      return n.tagName === 'INPUT' && String(n.id).indexOf('sheet-reason') === 0;
     })[0];
 
     it('opens a dialog with a field to type into', function () {
@@ -7767,7 +7835,7 @@ async function main() {
 
     it('still holds what the player typed after a reply lands', function () {
       const again = app.view.all().filter(function (n) {
-        return n.tagName === 'INPUT' && String(n.id).indexOf('dialog-') === 0;
+        return n.tagName === 'INPUT' && String(n.id).indexOf('sheet-reason') === 0;
       })[0];
       truthy(again, 'the dialog closed under them, which is its own fault');
       eq(again.value, 'He took the car as well',
@@ -7952,7 +8020,7 @@ async function main() {
       await settle(); await settle();
       tab(app, 'mine');
       await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
       click(app, 'Call it off');
       click(app, 'Propose it');
       await settle(); await settle();
@@ -8103,7 +8171,7 @@ async function main() {
       await settle(); await settle();
       tab(app, 'mine');
       await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
       await settle();
       it('does not say a contract with no deadline runs out in one', function () {
         const shown = app.view.textContent;
@@ -8131,7 +8199,7 @@ async function main() {
       await settle(); await settle();
       tab(app, 'mine');
       await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
       await settle();
       click(app, 'Shorten the deadline');
       await settle();
@@ -8149,7 +8217,7 @@ async function main() {
       await settle(); await settle();
       tab(tight, 'mine');
       await settle(); await settle();
-      click(tight, 'Propose change');
+      openPropose(tight);
       await settle();
       it('does not offer to shorten a deadline with no time to spare', function () {
         const labels = tight.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
@@ -8285,7 +8353,7 @@ async function main() {
       await settle(); await settle();
       tab(app, 'mine');
       await settle();
-      click(app, 'Change reward');
+      openReward(app);
       await settle(); await settle();
 
       // Tick the only line and send it.
@@ -8841,75 +8909,93 @@ async function main() {
       });
     })();
 
+    /* Save then Confirm in the Edit sheet (S3). */
+    function confirmSheet(app) {
+      click(app, 'Save');
+      const confirm = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Confirm') === 0;
+      })[0];
+      truthy(confirm, 'Save arms Confirm: ' + app.view.textContent);
+      confirm.onclick();
+    }
+
     /* The Edit dialog, opened to fix a word in the reason. It opened on a
        fixed three hours and always sent it, so saving a reason cut a
-       contract with most of a day left down to three hours. */
+       contract with most of a day left down to three hours. The sheet moves
+       the deadline only by what is typed in it. */
     await (async function editLeavesTheDeadlineAlone() {
       let revised = null;
+      const moved = [];
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
         timeLeft: band(20 * 3600 )});
       const app = boot({
         list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
         amendments: { ok: true, data: [] },
-        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; }
+        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; },
+        improve: function (body) { moved.push(body); return { ok: true, data: true }; },
+        propose: function (body) { moved.push(body); return { ok: true, data: { outcome: 'applied' } }; }
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
       click(app, 'Edit');
 
-      it('opens the deadline empty, saying empty keeps what is left', function () {
-        const box = app.document.getElementById('dialog-hours');
+      it('opens the deadline change empty, and says how long is left', function () {
+        const box = app.document.getElementById('sheet-hours');
         eq(box.value, '');
-        truthy(/keep it \(more than 2 hours left\)/.test(box.placeholder), box.placeholder);
+        truthy(app.view.textContent.indexOf('It has more than 2 hours left.') !== -1,
+          app.view.textContent);
       });
 
-      const reason = app.document.getElementById('dialog-reason');
+      const reason = app.document.getElementById('sheet-reason');
       reason.value = 'Owes money, and lied about it'; reason.oninput();
-      click(app, 'Save'); await settle();
+      confirmSheet(app); await settle(); await settle();
 
       it('sends the reason and leaves the deadline where it was', function () {
         truthy(revised, 'nothing was sent');
         eq(revised.reason, 'Owes money, and lied about it');
         falsy('deadlineSeconds' in revised && revised.deadlineSeconds !== undefined,
           'a reason edit moved the deadline: ' + JSON.stringify(revised));
+        eq(moved.length, 0, 'nothing else changed: ' + JSON.stringify(moved));
       });
     })();
 
     /* Ten minutes left opened the box on 1 — rounded up — and Save sent it
        only if touched, so a creator who read "1" as an hour from now saved,
        was told "Contract updated." and the deadline stayed at ten minutes.
-       The box opens empty now, and whatever is typed in it is sent. */
+       The sheet opens empty and moves the deadline by what is typed. */
     await (async function editSetsTheRoundedFigure() {
-      let revised = null;
+      let extended = null;
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
         timeLeft: band(10 * 60 )});
       const app = boot({
         list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
         amendments: { ok: true, data: [] },
-        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; }
+        improve: function (body) { extended = body; return { ok: true, data: true }; }
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
       click(app, 'Edit');
-      const hours = app.document.getElementById('dialog-hours');
+      const hours = app.document.getElementById('sheet-hours');
       it('shows no figure Save would ignore, and says exactly how long is left', function () {
         eq(hours.value, '');
-        truthy(/under 15 minutes left/.test(hours.placeholder), hours.placeholder);
+        truthy(/under 15 minutes left/.test(app.view.textContent), app.view.textContent);
       });
       hours.value = '1'; hours.oninput();
-      click(app, 'Save'); await settle();
-      it('sends the deadline the creator typed, even the figure it opened on', function () {
-        truthy(revised, 'nothing was sent');
-        eq(revised.deadlineSeconds, 3600, JSON.stringify(revised));
+      confirmSheet(app); await settle(); await settle();
+      it('moves the deadline by what the creator typed', function () {
+        truthy(extended, 'nothing was sent');
+        eq(extended.kind, 'extend_deadline');
+        eq(extended.payload.seconds, 3600, JSON.stringify(extended));
       });
     })();
 
-    // The same dialog on a preset server: moving the deadline replaced the
+    // The same sheet on a preset server: moving the deadline replaced the
     // reason with the first preset, because the picker opened on nothing.
     await (async function editKeepsThePresetReason() {
       let revised = null;
+      let extended = null;
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
         reason: 'Snitching', timeLeft: band(2 * 3600 )});
       const app = boot({
@@ -8918,19 +9004,23 @@ async function main() {
         ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
         amendments: { ok: true, data: [] },
-        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; }
+        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; },
+        improve: function (body) { extended = body; return { ok: true, data: true }; }
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
       click(app, 'Edit');
-      const hours = app.document.getElementById('dialog-hours');
+      it('opens the picker on the preset the contract already gives', function () {
+        eq(app.document.getElementById('sheet-reasonPreset').value, '2');
+      });
+      const hours = app.document.getElementById('sheet-hours');
       hours.value = '6'; hours.oninput();
-      click(app, 'Save'); await settle();
+      confirmSheet(app); await settle(); await settle();
 
       it('keeps the preset the contract already gives', function () {
-        truthy(revised, 'nothing was sent');
-        eq(revised.reasonPreset, 2, 'the reason was replaced with the first preset');
-        eq(revised.deadlineSeconds, 6 * 3600);
+        eq(revised, null, 'the reason was sent, and replaced: ' + JSON.stringify(revised));
+        truthy(extended, 'the deadline was not moved');
+        eq(extended.payload.seconds, 6 * 3600);
       });
     })();
 
@@ -8955,7 +9045,7 @@ async function main() {
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
 
       it('does not tell a creator of an untaken contract to wait for an operative', function () {
         falsy(app.view.textContent.indexOf('until the operative agrees') !== -1,
@@ -8993,7 +9083,7 @@ async function main() {
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
       click(app, 'Cancel the contract');
       await settle();
       it('asks first, as Withdraw does, and sends nothing yet', function () {
@@ -9027,7 +9117,7 @@ async function main() {
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
       click(app, 'Cancel the contract');
       await settle();
       it('asks the client first, with the waits an agreed cancel starts', function () {
@@ -9056,7 +9146,7 @@ async function main() {
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
       click(app, 'Call it off');
       await settle();
       it('tells a hitman their stake comes back, before anything is sent', function () {
@@ -9181,7 +9271,7 @@ async function main() {
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
-      click(app, 'Propose change');
+      openPropose(app);
       it('offers the mode switch and a new reason, but no stake raise under a hitman', function () {
         const labels = buttonLabels(app);
         truthy(labels.indexOf('Open it to other hitmen') !== -1, labels.join(' | '));
@@ -9216,7 +9306,7 @@ async function main() {
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
-      click(app, 'Change reward'); await settle(); await settle();
+      openReward(app); await settle(); await settle();
       click(app, 'Lower the stake');
       click(app, 'Remove it');
       await settle(); await settle();
@@ -9225,7 +9315,7 @@ async function main() {
         eq(improved[0].kind, 'lower_penalty');
         eq(improved[0].payload.amount, 0);
       });
-      click(app, 'Change reward'); await settle(); await settle();
+      openReward(app); await settle(); await settle();
       click(app, 'Add to it'); await settle(); await settle();
       // The bonus is the one thing this wallet can add, so it opens on it.
       click(app, 'Raise'); await settle(); await settle();
@@ -9358,7 +9448,7 @@ async function main() {
       person().onclick();
       const cash = app.document.getElementById('slot-cash-1');
       cash.value = '5000'; cash.oninput();
-      click(app, 'Place contract'); await settle(); await settle(); await settle();
+      click(app, 'Place contract'); confirmPlace(app); await settle(); await settle(); await settle();
 
       it('says the person cannot be picked any more, not to check the form', function () {
         falsy(app.notice().indexOf('Check what you entered') !== -1, app.notice());
@@ -9367,7 +9457,7 @@ async function main() {
       it('reads the list again for fresh picks', function () { eq(reads, 2); });
 
       person().onclick();
-      click(app, 'Place contract'); await settle(); await settle();
+      click(app, 'Place contract'); confirmPlace(app); await settle(); await settle();
       it('and the next pick is a live one', function () {
         eq(JSON.stringify(creates), JSON.stringify(['tg00000001', 'tg00000002']));
       });
@@ -10133,6 +10223,8 @@ async function main() {
     click(held, 'Accept contract');
     click(held, 'Under my name');
     await settle(); await settle(); await settle();
+    // Accepting goes straight to Mine (S7); the board behind it is as it was.
+    tab(held, 'board');
     it('keeps Accept disabled until the refresh after it lands', function () {
       truthy(held.notice().indexOf('Contract accepted') !== -1, held.notice());
       const busy = held.view.all().filter(function (n) {
@@ -10370,7 +10462,7 @@ async function main() {
       eq(aliveWork.sent.filter(function (s) { return s.name === 'armKidnap'; }).length, 1);
     });
     const aliveTerms = await working('alive', 'alive');
-    click(aliveTerms, 'Propose change');
+    openPropose(aliveTerms);
     it('alive: a proposal states what it pays for, not a bonus "if alive"', function () {
       const text = aliveTerms.view.textContent;
       truthy(text.indexOf('Pays $5,000 for a live delivery') !== -1, text);
@@ -10392,7 +10484,7 @@ async function main() {
         eitherWork.view.textContent);
     });
     const eitherTerms = await working('either', 'either');
-    click(eitherTerms, 'Propose change');
+    openPropose(eitherTerms);
     it('either: a proposal states the bonus "if alive", as it did', function () {
       truthy(eitherTerms.view.textContent.indexOf('Pays $5,000 (+$2,500 if alive)') !== -1,
         eitherTerms.view.textContent);
@@ -10438,7 +10530,7 @@ async function main() {
     it('alive: the client\'s card under Mine says it is alive only', function () {
       truthy(chips(aliveOwn).indexOf('Alive only') !== -1, chips(aliveOwn).join(' | '));
     });
-    click(aliveOwn, 'Change reward'); await settle(); await settle();
+    openReward(aliveOwn); await settle(); await settle();
     click(aliveOwn, 'Add to it'); await settle(); await settle();
     it('alive: adding to it offers money, and no kidnapping bonus to raise', function () {
       const shown = labels(aliveOwn);
@@ -10446,7 +10538,7 @@ async function main() {
       falsy(shown.indexOf('Kidnapping bonus') !== -1, 'the server refuses one: ' + shown.join(' | '));
     });
     const eitherOwn = await placed('either');
-    click(eitherOwn, 'Change reward'); await settle(); await settle();
+    openReward(eitherOwn); await settle(); await settle();
     click(eitherOwn, 'Add to it'); await settle(); await settle();
     it('either: adding to it still offers the kidnapping bonus', function () {
       truthy(labels(eitherOwn).indexOf('Kidnapping bonus') !== -1, labels(eitherOwn).join(' | '));
@@ -10535,6 +10627,8 @@ async function main() {
         eitherPlace.view.textContent);
     });
     pick(eitherPlace, 'slot-cash-1', 40000);
+    // It opens at 0% (S6); the creator types it.
+    pick(eitherPlace, 'bonus', 50);
     press(eitherPlace, 'place-submit');
     await settle(); await settle();
     it('either: and places the bonus it shows', function () {
@@ -10591,6 +10685,7 @@ async function main() {
     // Neither read saying: the confirmation follows what the server placed.
     const unsaid = await placing(undefined, BOARD_FAILED, { created: { bonusPercent: 0 } });
     pick(unsaid, 'slot-cash-1', 40000);
+    pick(unsaid, 'bonus', 50);
     press(unsaid, 'place-submit');
     await settle(); await settle();
     it('placed with no bonus whatever was sent: the confirmation says only the reward was held', function () {
@@ -10602,6 +10697,7 @@ async function main() {
     // And one the server placed as sent is confirmed as it was.
     const asSent = await placing(undefined, BOARD_FAILED, { created: { bonusPercent: 50 } });
     pick(asSent, 'slot-cash-1', 40000);
+    pick(asSent, 'bonus', 50);
     press(asSent, 'place-submit');
     await settle(); await settle();
     it('placed with the bonus sent: the confirmation names it', function () {
@@ -11346,7 +11442,6 @@ async function main() {
     });
     click(app, 'Buy informant data');
     click(app, 'Operative #2');
-    click(app, 'Pay $25,000');
     click(app, 'Tap again to pay $25,000');
     await settle(); await settle();
     it('buys it through the same request as On me', function () {
@@ -12156,7 +12251,7 @@ async function main() {
       const box = app.document.getElementById('reason');
       if (box) { box.value = reason; }
       app.document.getElementById('slot-cash-1').value = '5000';
-      click(app, 'Place contract');
+      click(app, 'Place contract'); confirmPlace(app);
       await settle(); await settle(); await settle();
       return app.sent.filter(function (x) { return x.name === 'create'; });
     }
@@ -12521,13 +12616,17 @@ async function main() {
       falsy(app.view.innerHTML && app.view.innerHTML.indexOf('<b>Contract') !== -1 && !/&lt;b&gt;/.test(app.view.innerHTML),
         'the reason is never markup');
     });
-    click(app, 'Accept contract');
-    await settle();
-    click(app, 'Under my name');
-    await settle(); await settle();
-    it('answers Accept with until when and why', function () {
-      const said = app.notice();
-      truthy(said.indexOf('You are suspended from contracts until ' + date + ': Contract spam') !== -1, said);
+    // S1: Accept is drawn and not live while they are suspended, rather
+    // than drawn, tapped and refused; the banner says until when and why,
+    // and that Message and Report still work.
+    it('draws Accept unavailable while suspended, and says what still works', function () {
+      const accept = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+      })[0];
+      truthy(accept && accept.disabled, 'Accept is still live');
+      truthy(app.view.textContent.indexOf('You can still message and report.') !== -1,
+        app.view.textContent);
+      eq(app.sent.filter(function (x) { return x.name === 'accept'; }).length, 0);
     });
 
     const forever = JSON.parse(JSON.stringify(BOARD));
@@ -13286,6 +13385,314 @@ async function main() {
       truthy(app.view.textContent.length > 0, 'the board drawn');
     });
     drewCleanly(app, 'proposals with Mine, settings by hash');
+  })();
+
+  /* ================================================================
+     Workflow round 3: each item, on the page it changed.
+     ================================================================ */
+  await (async function workflowRound3() {
+    function labels(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    function buttonOf(app, label) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === label;
+      })[0];
+    }
+    function base(extra) {
+      return Object.assign({
+        id: 'ct00000031', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
+        reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+        timeLeft: band(5400), penaltyAmount: 0
+      }, extra || {});
+    }
+    function emptyBoard(extra) {
+      return { ok: true, data: Object.assign({ page: 1, pages: 1, contracts: [],
+        settings: { minQueryLength: 3, relay: true, amendments: true,
+                    defaultDeadlineMinutes: 180, deadlineMaxMinutes: 1440 } }, extra || {}) };
+    }
+    async function onMine(created, accepted, onMe, board, more) {
+      const app = boot(Object.assign({ list: board || emptyBoard(),
+        mine: { ok: true, data: { created: created || [], accepted: accepted || [], onMe: onMe || [] } },
+        ledger: LEDGER, amendments: { ok: true, data: [] } }, more || {}));
+      await settle(); await settle();
+      tab(app, onMe && onMe.length && !(created || []).length && !(accepted || []).length ? 'onme' : 'mine');
+      await settle(); await settle();
+      return app;
+    }
+
+    // W1: a named operative on the placer's card, as the target chip names them.
+    const named = await onMine([base({ role: 'creator', hitmen: [
+      { alias: 'Operative #1', name: 'Rook Ash', record: { standing: 'Unproven' } },
+      { alias: 'Operative #2', record: { standing: 'Proven' } }] })]);
+    it('W1: names a named operative on the placer\'s card, the alias first', function () {
+      const text = named.view.textContent;
+      truthy(text.indexOf('Operative #1: Rook Ash · Unproven') !== -1, text);
+      truthy(text.indexOf('Operative #2 · Proven') !== -1, 'an anonymous one stays an alias: ' + text);
+    });
+
+    // W2: closed, only the wait; live, the rule.
+    const closedHold = await onMine([], [base({ role: 'hitman', myAlias: 'Operative #1',
+      intentHold: { closed: true, minutesLeft: 30 } })]);
+    it('W2: a hold on a closed contract says only when it is released', function () {
+      const text = closedHold.view.textContent;
+      truthy(text.indexOf('Payout held: released within 30 minutes.') !== -1, text);
+      falsy(/message the client|meeting point/.test(text), text);
+    });
+    const rule = await onMine([], [base({ role: 'hitman', myAlias: 'Operative #1',
+      intentRule: { messages: 3 } })]);
+    it('W2: states the proof-of-intent rule on the hitman\'s card while it is live', function () {
+      truthy(rule.view.textContent.indexOf('Payouts here are held unless you message the client 3 '
+        + 'times, do a live handover, or a meeting point is set.') !== -1, rule.view.textContent);
+    });
+
+    // W3: the clock rule, with the server's figures.
+    const form = boot({ list: emptyBoard(), mine: MINE, ledger: LEDGER,
+      rewardOptions: { ok: true, data: { cash: 100000, bank: 0, dirty: 0, items: [], weapons: [],
+        inventoryRead: true, caps: { slots: 1, cashEnabled: true } } } });
+    await settle(); await settle();
+    tab(form, 'place');
+    await settle(); await settle();
+    it('W3: says the clock rule as the server keeps it, with its figures', function () {
+      const text = form.view.textContent;
+      truthy(text.indexOf('It runs for 3h, counted only while you, the target and a hitman on it '
+        + 'are all in the city. It does not start until someone accepts.') !== -1, text);
+      falsy(text.indexOf('while the target is in the city') !== -1, text);
+    });
+
+    // W5: the rumour's band, once.
+    const rumours = boot({ list: { ok: true, data: { page: 1, pages: 1, settings: {},
+      contracts: [{ id: 'ct00000032', role: 'public', timeLeft: band(1800),
+        rumour: { area: 'Davis', low: 4000, high: 6000 } }],
+      rumours: { npc: true, brokerArea: 'Vespucci' } } }, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('W5: says "Under 1 hour left" once, not "left left"', function () {
+      const text = rumours.view.textContent;
+      truthy(text.indexOf('Under 1 hour left') !== -1, text);
+      falsy(text.indexOf('left left') !== -1, text);
+    });
+    // S11: where to ask around, the area alone.
+    it('S11: tells a hitman to ask around the broker\'s district where the map does not mark them', function () {
+      truthy(rumours.view.textContent.indexOf('Find the broker — ask around Vespucci.') !== -1,
+        rumours.view.textContent);
+    });
+    const brokerBoard = boot({ list: { ok: true, data: { page: 1, pages: 1, settings: {},
+      contracts: [{ id: 'ct00000032', role: 'public', timeLeft: band(1800),
+        rumour: { area: 'Davis', low: 4000, high: 6000 } }],
+      rumours: { npc: true, broker: true, brokerArea: 'Vespucci' } } }, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('S11: a broker is offered Brief them, never told to find the broker', function () {
+      const text = brokerBoard.view.textContent;
+      truthy(labels(brokerBoard).indexOf('Brief them') !== -1, labels(brokerBoard).join(' | '));
+      falsy(text.indexOf('Find the broker') !== -1, text);
+      eq(labels(brokerBoard).indexOf('Ask the broker'), -1);
+    });
+    const burner = boot({ list: { ok: true, data: { page: 1, pages: 1, settings: {}, contracts: [],
+      burnerMissing: true, burnerItem: 'burner_phone' } }, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('S11: names the burner phone item', function () {
+      truthy(burner.view.textContent.indexOf('You need a burner phone (item: burner_phone).') !== -1,
+        burner.view.textContent);
+    });
+
+    // W7: the Ledger in words, with what moved.
+    const ledger = boot({ list: emptyBoard(), mine: MINE, ledger: { ok: true, data: {
+      record: { completed: 1, placed: 2, survived: 0, standing: 'Unproven' },
+      entries: [
+        { contract_id: 'ct00000041', target_name: 'Dana Reyes', role: 'hitman', kind: 'paid',
+          fulfilment: 'elimination', amount: 5000, resolved_at: Math.floor(Date.now() / 1000) - 60 },
+        { contract_id: 'ct00000042', target_name: 'Sam Hale', role: 'creator', kind: 'withdrawn',
+          fulfilment: 'withdrawn', amount: 7000, resolved_at: Math.floor(Date.now() / 1000) - 120 },
+        { contract_id: 'ct00000043', target_name: 'You', role: 'target', kind: 'buyout',
+          fulfilment: 'buyout', amount: 15000, resolved_at: Math.floor(Date.now() / 1000) - 180 },
+        { contract_id: 'ct00000044', target_name: 'Ann Ryder', role: 'creator', kind: 'refunded',
+          fulfilment: 'refunded', amount: 3000, resolved_at: Math.floor(Date.now() / 1000) - 240 }
+      ] } } });
+    await settle(); await settle();
+    tab(ledger, 'ledger');
+    await settle();
+    it('W7: says the part played in words, with the figure, for every kind of ending', function () {
+      const text = ledger.view.textContent;
+      ['You took it', 'Eliminated', 'Paid you $5,000',
+       'You placed it', 'Withdrawn', '$7,000 back to you',
+       'It was on you', 'Bought out', 'You paid $15,000',
+       'Ran out — refunded', '$3,000 back to you'].forEach(function (words) {
+        truthy(text.indexOf(words) !== -1, words + ' missing: ' + text);
+      });
+      falsy(/\bhitman\b|\bcreator\b/.test(text.replace(/hitman on it/g, '')), 'a field value on screen: ' + text);
+    });
+
+    // S1: the app paused, the restart hold, on hold.
+    const paused = boot({ list: { ok: true, data: Object.assign({}, BOARD.data,
+      { holds: { appPaused: true } }) }, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('S1: says staff paused contracts at the top, and draws Accept not live', function () {
+      truthy(paused.view.textContent.indexOf('Contracts are paused by staff') !== -1, paused.view.textContent);
+      truthy(paused.view.textContent.indexOf('You can still message and report.') !== -1);
+      truthy(buttonOf(paused, 'Accept contract').disabled, 'Accept is live');
+    });
+    tab(paused, 'place');
+    await settle(); await settle();
+    it('S1: and Place not live, under the same banner', function () {
+      truthy(paused.view.textContent.indexOf('Contracts are paused by staff') !== -1);
+      truthy(paused.document.getElementById('place-submit').disabled, 'Place is live');
+    });
+    const restart = await onMine([], [base({ role: 'hitman', myAlias: 'Operative #1' })], [],
+      { ok: true, data: Object.assign({}, emptyBoard().data, { holds: { restartHold: { endsIn: 1800 } } }) });
+    it('S1: under the restart hold, says how long at most and holds the ways to finish', function () {
+      truthy(restart.view.textContent.indexOf('paused for the server restart, for at most 30 minutes more')
+        !== -1, restart.view.textContent);
+      truthy(buttonOf(restart, 'Verify kill').disabled, 'Verify kill is live');
+      truthy(buttonOf(restart, 'Deliver alive').disabled, 'Deliver alive is live');
+      falsy(buttonOf(restart, 'Message').disabled, 'Message is not held');
+    });
+    const frozen = await onMine([], [base({ role: 'hitman', myAlias: 'Operative #1', onHold: true })]);
+    it('S1: an on-hold card says On hold once and keeps only Message and Report', function () {
+      const text = frozen.view.textContent;
+      eq(text.split('On hold').length - 1, 1, 'On hold said more than once: ' + text);
+      eq(labels(frozen).join(' | '), 'Message | Report');
+    });
+
+    // S3: one Edit sheet before anybody takes it.
+    const proposals = [];
+    const sheet = await onMine([base({ role: 'creator', state: 'active', hitmenActive: 0, hitmen: [],
+      mode: 'exclusive', penaltyAmount: 1000, valueHeld: 50000 })],
+      [], [], { ok: true, data: Object.assign({}, emptyBoard().data, { settings: Object.assign({},
+        emptyBoard().data.settings, { reasonMode: 'freetext', stakeCeiling: { amount: 20000 } }) }) },
+      { revise: function (b) { proposals.push(['revise', b]); return { ok: true, data: {} }; },
+        propose: function (b) { proposals.push(['propose', b]); return { ok: true, data: { outcome: 'applied' } }; },
+        improve: function (b) { proposals.push(['improve', b]); return { ok: true, data: true }; },
+        addEscrow: function (b) { proposals.push(['addEscrow', b]); return { ok: true, data: true }; } });
+    it('S3: an untaken card offers one Edit, not five ways to change it', function () {
+      const all = labels(sheet);
+      truthy(all.indexOf('Edit') !== -1, all.join(' | '));
+      ['Change reward', 'Extend deadline', 'Propose change'].forEach(function (gone) {
+        eq(all.indexOf(gone), -1, gone + ' still on the card: ' + all.join(' | '));
+      });
+    });
+    click(sheet, 'Edit');
+    function type(id, value) {
+      const node = sheet.view.all().filter(function (n) { return n._id === id; })[0];
+      node.value = String(value);
+      (node.oninput || node.onchange)();
+    }
+    type('sheet-reason', 'Owes the family');
+    type('sheet-add', 2500);
+    type('sheet-stake', 3000);
+    type('sheet-hours', 2);
+    click(sheet, 'Several at once');
+    click(sheet, 'Save');
+    it('S3: Save says what will change and sends nothing', function () {
+      eq(proposals.length, 0);
+      truthy(buttonOf(sheet, 'Confirm — 5 changes'), labels(sheet).join(' | '));
+      truthy(sheet.view.textContent.indexOf('Stake: $3,000') !== -1, sheet.view.textContent);
+    });
+    click(sheet, 'Confirm — 5 changes');
+    for (let i = 0; i < 8; i++) { await settle(); }
+    it('S3: Confirm makes every change through the server\'s own requests', function () {
+      const kinds = proposals.map(function (p) {
+        return p[0] + (p[1].kind ? ':' + p[1].kind : '');
+      });
+      eq(kinds.join(','), 'revise,propose:change_mode,propose:raise_penalty,improve:extend_deadline,addEscrow');
+      eq(proposals[0][1].reason, 'Owes the family');
+      eq(proposals[2][1].payload.amount, 3000);
+      eq(proposals[3][1].payload.seconds, 7200);
+      eq(proposals[4][1].reward.baseline.cash, 2500);
+      truthy(sheet.notice().indexOf('Saved: reason, mode, stake, deadline, reward.') !== -1, sheet.notice());
+    });
+    const taken = await onMine([base({ role: 'creator', hitmen: [{ alias: 'Operative #1' }] })]);
+    it('S3: once taken, Propose change stays', function () {
+      const all = labels(taken);
+      truthy(all.indexOf('Propose change') !== -1, all.join(' | '));
+      eq(all.indexOf('Edit'), -1);
+    });
+
+    // S4: the placer's half of a running handover.
+    const handover = await onMine([base({ role: 'creator', hitmen: [{ alias: 'Operative #1' }],
+      handoverLeft: 25 })]);
+    it('S4: tells the placer to hold still, with roughly how long', function () {
+      truthy(handover.view.textContent.indexOf('Hold still — handover running (25s)') !== -1,
+        handover.view.textContent);
+      falsy(handover.view.textContent.indexOf('Operative #1: ') !== -1, 'names nobody');
+    });
+
+    // S6: Place takes two taps, the second naming the total.
+    let placed = null;
+    const twice = boot({ list: emptyBoard(), mine: MINE, ledger: LEDGER,
+      searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Dana Reyes', protected: false }] },
+      rewardOptions: { ok: true, data: { cash: 100000, bank: 0, dirty: 0, items: [], weapons: [],
+        inventoryRead: true, caps: { slots: 1, cashEnabled: true, bonusPercent: 100 } } },
+      create: function (b) { placed = b; return { ok: true, data: { id: 'ct00000051', penaltyAmount: 1000 } }; } });
+    await settle(); await settle();
+    tab(twice, 'place');
+    await settle(); await settle();
+    twice.document.getElementById('target-handle').value = 'tg00000001';
+    twice.document.getElementById('reason').value = 'Unpaid debt';
+    const cash = twice.document.getElementById('slot-cash-1');
+    cash.value = '5000'; cash.oninput();
+    const bonus = twice.document.getElementById('bonus');
+    bonus.value = '50'; bonus.oninput();
+    const stake = twice.document.getElementById('penalty');
+    stake.value = '1000'; stake.oninput();
+    twice.document.getElementById('place-submit').onclick();
+    await settle();
+    it('S6: the first tap on Place sends nothing and names the total, bonus included', function () {
+      eq(placed, null, 'placed on one tap');
+      eq(twice.document.getElementById('place-submit').textContent, 'Tap again to place — $7,500');
+    });
+    twice.document.getElementById('place-submit').onclick();
+    await settle(); await settle();
+    it('S6: the second tap places it', function () { truthy(placed, 'nothing placed'); });
+    it('W6: the confirmation says whose the stake is', function () {
+      truthy(twice.notice().indexOf("Hitman's stake: $1,000 (they put it up, not you).") !== -1,
+        twice.notice());
+    });
+
+    // S7: after Accept, straight to the card under Mine.
+    const acceptedCard = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    acceptedCard.role = 'hitman';
+    acceptedCard.myAlias = 'Operative #1';
+    const other = base({ id: 'ct00000099', role: 'hitman', myAlias: 'Operative #2', targetName: 'Sam Hale' });
+    let acceptedYet = false;
+    const go = boot({ list: BOARD, ledger: LEDGER,
+      mine: function () { return { ok: true, data: { created: [], onMe: [],
+        accepted: acceptedYet ? [other, acceptedCard] : [other] } }; },
+      accept: function () { acceptedYet = true; return { ok: true, data: { myAnonymous: true } }; } });
+    await settle(); await settle();
+    click(go, 'Accept contract');
+    click(go, 'Anonymously');
+    for (let i = 0; i < 5; i++) { await settle(); }
+    it('S7: goes straight to Mine, the card just taken first and marked', function () {
+      const mineTab = go.document.querySelectorAll('.tab').filter(function (t) { return t.dataset.tab === 'mine'; })[0];
+      truthy(mineTab.classList.contains('is-active'), 'still on the board');
+      const cards = go.view.all().filter(function (n) { return /\bcard\b/.test(n.className || ''); });
+      truthy(cards.length >= 2, go.view.textContent);
+      truthy(/is-focus/.test(cards[0].className), 'not marked: ' + cards[0].className);
+      truthy(cards[0].textContent.indexOf('Dana Reyes') !== -1, 'not first: ' + cards[0].textContent);
+    });
+
+    // Also: "already on this one" opens it under Mine.
+    const already = JSON.parse(JSON.stringify(BOARD));
+    already.data.contracts[0].role = 'hitman';
+    const dead = boot({ list: already, ledger: LEDGER,
+      mine: { ok: true, data: { created: [], onMe: [], accepted: [acceptedCard] } } });
+    await settle(); await settle();
+    const way = dead.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('You are already on this one') === 0;
+    })[0];
+    it('Also: "You are already on this one" is a tap to it, not a dead end', function () {
+      truthy(way, 'no way to it: ' + dead.view.textContent);
+    });
+    if (way) { way.onclick(); }
+    await settle();
+    it('Also: which opens it under Mine', function () {
+      const card0 = dead.view.all().filter(function (n) { return /\bcard\b/.test(n.className || ''); })[0];
+      truthy(card0 && /is-focus/.test(card0.className), dead.view.textContent);
+    });
+    drewCleanly(go, 'workflow round 3');
+    drewCleanly(sheet, 'the Edit sheet');
   })();
 
   console.log('');

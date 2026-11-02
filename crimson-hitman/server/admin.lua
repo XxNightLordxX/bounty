@@ -1232,13 +1232,13 @@ function Admin.void(src, contractId, reason)
     if Contracts.owedTo then owed, parked = Contracts.owedTo(contractId, contract.creator_cid) end
     local voidBody = 'Staff closed your contract. '
     if owed > 0 or parked > 0 then
-        voidBody = voidBody .. 'Most of your escrow is back.'
+        voidBody = voidBody .. 'Most of what you put up is back.'
             .. (owed > 0 and (' %d thing(s) could not be handed over yet and arrive as soon as '
                 .. 'you can take them.'):format(owed) or '')
             .. (parked > 0 and (' %d thing(s) could not be confirmed as handed back; staff have '
                 .. 'been asked to check.'):format(parked) or '')
     else
-        voidBody = voidBody .. 'Your escrow has been returned.'
+        voidBody = voidBody .. 'Everything you put up has been returned.'
     end
     Notify.tellOrKeep(contract.creator_cid, 'Contract voided', voidBody, { bypassBudget = true },
         contractId)

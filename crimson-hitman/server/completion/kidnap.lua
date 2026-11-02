@@ -280,6 +280,8 @@ function Kidnap.arm(contractId, hitmanCid)
         ('A hitman has brought your target to you for the handover. Stay where you '
             .. 'are, within %s m of them both, for %d seconds.')
             :format(metres(radius), tonumber(Config.Kidnap.CountdownSeconds) or 0))
+    -- And their card, which counts it down (Projection: handoverLeft).
+    Notify.push(contract.creator_cid, 'handover', contractId)
 
     Audit.action('kidnap_armed', hitmanCid, contractId, {})
     -- An attempt on the target, which is what keeps an exclusive hold.
@@ -694,6 +696,26 @@ function Kidnap.progress(contractId, hitmanCid)
         -- the contract has to be when that is what is slipping.
         radius    = state.radius,
     }
+end
+
+--- What the person who placed it is shown of a handover running on their
+--- contract: roughly how long they still have to hold still, in seconds,
+--- rounded up to the next five, or nil with none running. The longest one
+--- left if several are. Never which operative, how far anybody is, or the
+--- grace: they stand there, and this is only how long.
+---@param contractId string
+---@return integer|nil secondsLeft
+function Kidnap.placerLeft(contractId)
+    local required = tonumber(Config.Kidnap.CountdownSeconds) or 0
+    local most
+    for _, state in pairs(active) do
+        if state.contractId == contractId then
+            local left = math.max(0, required - math.floor(state.elapsedMs / 1000))
+            if not most or left > most then most = left end
+        end
+    end
+    if not most then return nil end
+    return math.ceil(most / 5) * 5
 end
 
 --- When this hitman's running countdown on this contract was armed, on

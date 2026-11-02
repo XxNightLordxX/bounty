@@ -75,7 +75,15 @@ end
 function Burner.gate(name, actor)
     if not Burner.ACTIONS[name] or not missing(actor) then return nil end
     deps.audit.rejected('burner_missing', actor.cid, nil, { request = name })
-    return CH.ERR.NEED_BURNER
+    -- With the item it takes, so the page can name what to get.
+    return CH.ERR.NEED_BURNER, { item = Burner.itemName() }
+end
+
+--- The ox_inventory item a burner phone is, as configured.
+---@return string|nil
+function Burner.itemName()
+    local item = rules().Item
+    return type(item) == 'string' and item ~= '' and item or nil
 end
 
 --- The Board and Mine, without the contracts, for a player with no burner
@@ -90,6 +98,7 @@ function Burner.shape(name, actor, result)
         result.created, result.accepted = {}, {}
     end
     result.burnerMissing = true
+    result.burnerItem = Burner.itemName()
     return result
 end
 

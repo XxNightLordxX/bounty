@@ -285,6 +285,14 @@ local function payShare(job, who)
         end
         Audit.financial(who == 'guard' and 'protection_paid' or 'protection_refunded', cid, job.contract_id,
             { job = job.id, amount = amount, account = job.account })
+        -- The guard's money arriving, on their phone, when it does: the
+        -- settle said what the job paid, and a guard who was away is paid
+        -- later, on the tick.
+        if who == 'guard' then
+            pcall(Notify.tellOrKeep, cid, 'Protection job paid',
+                ('$%d from the protection job is in your %s.'):format(amount,
+                    job.account == 'cash' and 'cash' or 'bank'), { bypassBudget = true })
+        end
         return true
     end
     if raised and not (arrived == 0) then
@@ -368,15 +376,15 @@ local function settle(job, outcome, why)
         { job = job.id, outcome = outcome, why = why, guard_due = guardDue, target_due = amount - guardDue })
 
     if job.guard_cid then
-        local words = guardDue > 0 and ('The job is over. You were paid $%d.'):format(guardDue)
+        local words = guardDue > 0 and ('The job is over. It pays you $%d.'):format(guardDue)
             or 'The job is over. It paid you nothing.'
         if outcome == 'completed' and guardDue > 0 then
-            words = ('The job is over: the contract on them was carried out. You were paid $%d of it.')
+            words = ('The job is over: the contract on them was carried out. It pays you $%d of it.')
                 :format(guardDue)
         elseif outcome == 'completed' then
             words = 'The job is over: the contract on them was carried out. It paid you nothing.'
         elseif outcome == 'survived' and guardDue > 0 then
-            words = ('The job is over: they made it. You were paid $%d.'):format(guardDue)
+            words = ('The job is over: they made it. It pays you $%d.'):format(guardDue)
         end
         pcall(Notify.tellOrKeep, job.guard_cid, 'Protection job', words, { bypassBudget = true })
     end
@@ -662,33 +670,47 @@ local function offerFor(contract)
              max = math.floor(tonumber(rules.MaxReward) or 0) }
 end
 
---- The operatives this target's informant found out on this contract, each
---- with a handle the Place form takes (App.mintTargetHandle). Never the
---- placer: that is not who this is about. Only while the server offers it.
-local function counterTargets(contract, viewerCid)
-    if not Protection.hitOnHitmanEnabled() or not Informant or not Informant.revealedOperatives then
+--- The operatives this target may place a contract on, each with a handle
+--- the Place form takes (App.mintTargetHandle): the ones their informant
+--- found out on this contract, and the ones on it under their own name where
+--- the server shows those names to the target (the anonymity switches; the
+--- card already names them, Projection's `operatives`). Never the placer:
+--- that is not who this is about. Never one on it anonymously whom no
+--- look-up found. Only while the server offers it.
+local function counterTargets(contract, viewerCid, hitmen)
+    if not Protection.hitOnHitmanEnabled() or not App or not App.mintTargetHandle then
         return nil
     end
-    if not App or not App.mintTargetHandle then return nil end
-    local found = Informant.revealedOperatives(contract.id, viewerCid)
-    if #found == 0 then return nil end
-    local out = {}
-    for i = 1, #found do
-        out[#out + 1] = { label = found[i].label, name = found[i].name,
-                          handle = App.mintTargetHandle(viewerCid, found[i].cid) }
+    local out, seen = {}, {}
+    local function add(cid, label, name)
+        if seen[cid] then return end
+        seen[cid] = true
+        out[#out + 1] = { label = label, name = name, handle = App.mintTargetHandle(viewerCid, cid) }
     end
-    return out
+    local found = Informant and Informant.revealedOperatives
+        and Informant.revealedOperatives(contract.id, viewerCid) or {}
+    for i = 1, #found do add(found[i].cid, found[i].label, found[i].name) end
+    if type(hitmen) == 'table' and Util.operativeNamesShown(contract.target_protected == true) then
+        for i = 1, #hitmen do
+            local h = hitmen[i]
+            if h.state == 'active' and h.anon ~= true and type(h.hitman_name) == 'string'
+                and h.hitman_cid ~= viewerCid then
+                add(h.hitman_cid, h.alias or 'An operative', h.hitman_name)
+            end
+        end
+    end
+    return #out > 0 and out or nil
 end
 
 --- Add to a target's card (Projection.contract): their job, the offer, and
 --- the operatives they may place a contract on. Nothing for anybody else.
-function Protection.extend(out, contract, viewerCid, role)
+function Protection.extend(out, contract, viewerCid, role, hitmen)
     if role ~= 'target' then return end
     if Protection.enabled() or jobOn(contract.id) then
         out.protection = Protection.targetView(contract, viewerCid)
         if not CH.TERMINAL[contract.state] then out.protectionOffer = offerFor(contract) end
     end
-    out.counterTargets = counterTargets(contract, viewerCid)
+    out.counterTargets = counterTargets(contract, viewerCid, hitmen)
 end
 
 --------------------------------------------------------------------------
@@ -748,6 +770,12 @@ local function acceptUnlocked(actor, payload)
     pcall(Notify.tellOrKeep, job.target_cid, 'Protection', 'Somebody took your protection job. '
         .. 'They have your name and your meeting pin.', { bypassBudget = true })
     pcall(Notify.push, job.target_cid, 'protection')
+    -- And the guard, on their phone: hired, by whom, for how much and how it
+    -- pays. The board said so for as long as it was open, and nothing after.
+    pcall(Notify.tellOrKeep, actor.cid, 'Protection job', ('You are hired to guard %s for $%d. '
+        .. 'You are paid if the contract on them ends without being carried out. Set GPS on the '
+        .. 'Protection tab takes you to their pin.'):format(tostring(job.target_name or 'them'),
+        math.floor(tonumber(job.amount) or 0)), { bypassBudget = true })
     return Protection.board(actor)
 end
 

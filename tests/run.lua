@@ -506,7 +506,9 @@ function _G.newStack()
     contracts.init({
         storage = storage, escrow = escrow, identity = identity,
         audit = audit, notify = notify, progression = progression, death = death,
-        review = review, freeze = freeze, sanctions = sanctions,
+        -- With the ledger, as main.lua wires it: an ending without a payout
+        -- writes its rows there (Ledger.ended), and a recovered claim its.
+        review = review, ledger = ledger, freeze = freeze, sanctions = sanctions,
     })
 
     photos.init({ storage = storage, audit = audit })
@@ -693,6 +695,7 @@ local suites = {
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
     'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec', 'perf_round3_spec',
+    'workflow3_spec',
     'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec',
 }
 

@@ -1836,3 +1836,29 @@ html.is-whitelisted-view main {
    what it does, on a line of its own, and its Stop button among the tiles. */
 .notice.decay-notice { margin-bottom: 0.6rem; overflow-wrap: anywhere; }
 .decay-off { white-space: normal; }
+/* What refuses writes right now (holdBanner): the app paused by staff, the
+   restart hold, a suspension. One block at the top of the tab, its lines
+   stacked, with what still works under them. */
+.notice.hold-banner { display: block; margin: 0 0 0.75rem; overflow-wrap: anywhere; }
+.notice.hold-banner::before { float: left; margin-right: 0.6rem; }
+.notice.hold-banner > div + div { margin-top: 0.3rem; }
+/* A way to finish or a buyout that the restart hold makes wait. */
+button.is-held { opacity: 0.55; }
+/* The contract a player came to Mine for (accepted, or tapped on the board). */
+.card.is-focus { border-color: var(--crimson-bright); }
+/* The board's "yours" and "already on it": a tap to it under Mine. */
+.row.actions > button.board-mine {
+  flex: 1 1 100%; white-space: normal; overflow-wrap: anywhere; text-align: left;
+}
+/* The placer's half of a running handover. */
+.card > .notice.handover-live { font-weight: 700; }
+/* The proof-of-intent rule on a hitman's card while it can still be met. */
+.card > .hint.intent-rule { margin-top: 0.6rem; overflow-wrap: anywhere; }
+/* The Edit sheet: everything about an untaken contract on one screen. */
+.edit-sheet > .sheet-body { flex: 1 1 auto; min-height: 5rem; overflow-y: auto; }
+.edit-sheet > .sheet-body > .field { margin: 0.8rem 0 0; }
+.edit-sheet .row.sheet-source, .edit-sheet .row.sheet-mode { margin: 0.25rem 0 0.5rem; }
+.edit-sheet button.sheet-reward { width: 100%; margin: 0.5rem 0 0; }
+.edit-sheet > .sheet-changes { flex: none; max-height: 6.5rem; overflow-y: auto; margin: 0.4rem 0 0; }
+.edit-sheet > .hint { flex: none; }
+.edit-sheet .hint.is-refusal { color: var(--crimson-bright); }

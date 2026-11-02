@@ -458,6 +458,11 @@ local SCHEMA = {
         slot INT DEFAULT 1,
         photo_ref VARCHAR(512),
         resolved_at INT NOT NULL,
+        -- What kind of row ('paid', 'withdrawn', 'refunded', 'buyout') and
+        -- the money it moved (Ledger.ended). Added to existing databases by
+        -- MySQLStore.migrate.
+        kind VARCHAR(16),
+        amount BIGINT NOT NULL DEFAULT 0,
         INDEX idx_cid (cid, resolved_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_pending (
@@ -2478,11 +2483,13 @@ end
 function MySQLStore.writeLedger(entry)
     db.query([[
         INSERT INTO crimson_ledger
-            (cid, contract_id, role, target_name, reason, fulfilment, slot, photo_ref, resolved_at)
-        VALUES (?,?,?,?,?,?,?,?,?)
+            (cid, contract_id, role, target_name, reason, fulfilment, slot, photo_ref, resolved_at,
+             kind, amount)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
     ]], {
         entry.cid, entry.contract_id, entry.role, entry.target_name, entry.reason,
         entry.fulfilment, entry.slot or 1, entry.photo_ref, entry.resolved_at,
+        entry.kind, math.floor(tonumber(entry.amount) or 0),
     })
     -- Keep the footprint small: prune anything past the configured depth.
     db.query([[

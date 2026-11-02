@@ -210,6 +210,7 @@
                      'cancelled', 'voided'];
   var LIVE_STATES = { active: true, accepted: true, completing: true };
   var RULE_LABEL = { alive: 'Alive only', either: 'Kill or alive' };
+  var MODE_LABEL = { exclusive: 'Exclusive', competitive: 'Competitive' };
   var SOURCE_LABEL = { cash: 'cash', bank: 'bank', dirty: 'dirty money', item: 'item', weapon: 'weapon' };
   var MONEY = { cash: true, bank: true, dirty: true };
 
@@ -1032,7 +1033,8 @@
           h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'Finished'
             : o.recovery === 'recovering' ? 'Still running' : 'FAILED'),
           h('dt', 'Settings changed here'), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
-            'data-section': 'settings' }, num(o.overrides)),
+            'data-section': 'settings' }, (Number(o.overrides) > 0 ? num(o.overrides) + ' changed'
+              : 'None changed') + ' \u2014 open Settings'),
             Number(o.notApplied) > 0 ? h('span.chip.is-error', num(o.notApplied) + ' not applied') : null),
           h('dt', 'Log rows queued'), h('dd', num(o.auditQueued))))),
       h('div.cols',
@@ -1438,12 +1440,23 @@
     var whois = S.drawer.whois ? card('Who is behind it', whoisBody(S.drawer.whois), '.is-identity') : null;
     var deadlinePart = stub ? null : card('Deadline', deadlineBody(d.deadline));
 
+    /* Look up / Freeze beside each party it names: the Players view on
+       them, where Freeze is. Named by the contract and the role, which the
+       server resolves (playerSubject), so no citizen id is needed here. Not
+       for a party who is anonymous on it to staff without IdentityAce. */
+    function partyButton(role, opId) {
+      return btn('.is-small.is-ghost', 'party-lookup', { 'data-subject': 'contract:' + id + ':' + role
+        + (opId ? ':' + opId : '') }, 'Look up / Freeze', 'magnifying-glass');
+    }
+    var clientHidden = c.anonymous && !canIdentify();
     var terms = h('dl.facts.is-terms',
-      h('dt', 'Mode'), h('dd', String(c.mode || '—')),
+      h('dt', 'Mode'), h('dd', MODE_LABEL[c.mode] || String(c.mode || '—')),
       h('dt', 'Completes by'), h('dd', RULE_LABEL[c.rule] || String(c.rule || '—')),
       h('dt', 'Reason'), h('dd.text', String(c.reason || '—')),
-      h('dt', 'Client'), h('dd', personCell(c.client), c.anonymous ? h('span.chip.is-anon', 'anonymous') : null),
-      h('dt', 'Target'), h('dd', personCell(c.target), c.target_protected ? h('span.chip.is-warn', 'law enforcement') : null),
+      h('dt', 'Client'), h('dd', personCell(c.client), c.anonymous ? h('span.chip.is-anon', 'anonymous') : null,
+        clientHidden ? null : partyButton('client')),
+      h('dt', 'Target'), h('dd', personCell(c.target), c.target_protected ? h('span.chip.is-warn', 'law enforcement') : null,
+        partyButton('target')),
       h('dt', 'Placed'), h('dd', when(c.created_at)),
       h('dt', 'Deadline'), h('dd', c.deadline_at ? when(c.deadline_at) + ' (' + ago(c.deadline_at) + ')' : '—'),
       h('dt', 'Expires'), h('dd', when(c.expires_at)),
@@ -1487,9 +1500,12 @@
         h('thead', h('tr', h('th', 'Alias'), h('th', 'Name'), canIdentify() ? h('th', 'Citizen id') : null,
           h('th', 'State'), h('th', 'Accepted'), h('th', 'Left'), h('th.num', 'Claims'), h('th.num', 'Stake'))),
         h('tbody', hitmen.map(function (m) {
+          // Look up / Freeze under the name, where the name may be shown.
           return h('tr', h('td', String(m.alias || '—')),
             h('td.name', m.anonymous && !m.cid ? h('span.anon', icon('mask'), ' ', String(m.name || 'Anonymous'))
-              : String(m.name || '—')),
+              : String(m.name || '—'),
+              (m.anonymous && !canIdentify()) || m.id == null ? null
+                : h('div.party', partyButton('op', String(m.id)))),
             canIdentify() ? h('td.mono', String(m.cid || '—')) : null,
             h('td', String(m.state || '—')), h('td', when(m.accepted_at)), h('td', when(m.left_at)),
             h('td.num', num(m.claims)), h('td.num', money(m.stake)));
@@ -2293,7 +2309,7 @@
 
   function loadPlayer() {
     var subject = trim(S.forms['pl.q']);
-    if (!subject) { toast('Give a player id or a citizen id.', 'error'); return Promise.resolve(); }
+    if (!subject) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
     S.players.whois = {};
     S.players.playtime = null;
     S.players.freeze = null;
@@ -2393,7 +2409,8 @@
 
   function playerBody() {
     var d = S.players.data;
-    if (!d) return empty('Look somebody up by their player id (in the city) or their citizen id (anybody).');
+    if (!d) return empty('Look somebody up by their player id (in the city), their citizen id (anybody) '
+      + 'or their name, as Contracts searches.');
     if (d.error) return empty(d.error);
     var p = d.player || {};
     var stats = d.stats;
@@ -2461,8 +2478,8 @@
     return h('section.view',
       h('div.toolbar',
         h('label.search', icon('magnifying-glass'),
-          field('pl.q', { id: 'pl-q', placeholder: 'Player id or citizen id', 'data-enter': 'pl-lookup',
-            'aria-label': 'Player id or citizen id' })),
+          field('pl.q', { id: 'pl-q', placeholder: 'Player id, citizen id or name', 'data-enter': 'pl-lookup',
+            'aria-label': 'Player id, citizen id or name' })),
         btn('.is-primary', 'pl-lookup', {}, 'Look up', 'arrow-right')),
       h('p.hint', canIdentify()
         ? 'You see every contract they were party to, anonymous ones included. Each lookup is on the record.'
@@ -2529,8 +2546,26 @@
       return value && typeof value === 'object' ? num(value.min) + ' to ' + num(value.max) : '(not set)';
     }
     if (value === null || value === undefined) return '(not set)';
-    if (typeof value === 'number') return num(value);
+    if (typeof value === 'number') return num(value) + spanOf(entry, value);
     return String(value);
+  }
+
+  /** A duration setting's figure in hours and minutes too: '10800 s = 3 h',
+      '90 min = 1 h 30 min'. Nothing for anything else, or under a minute. */
+  function spanOf(entry, value) {
+    var key = String((entry && entry.key) || '');
+    var seconds = /Seconds$/.test(key) ? value : /Minutes$/.test(key) ? value * 60 : null;
+    if (seconds === null || !(seconds >= 60) || seconds !== Math.floor(seconds)) return '';
+    var unit = /Seconds$/.test(key) ? ' s' : ' min';
+    var d = Math.floor(seconds / 86400), hr = Math.floor((seconds % 86400) / 3600);
+    var mi = Math.floor((seconds % 3600) / 60), se = seconds % 60;
+    var parts = [];
+    if (d) parts.push(d + ' d');
+    if (hr) parts.push(hr + ' h');
+    if (mi) parts.push(mi + ' min');
+    if (se) parts.push(se + ' s');
+    if (parts.length === 1 && unit === ' min' && mi && !hr && !d) return '';
+    return unit + ' = ' + parts.join(' ');
   }
 
   /** Two values the same, as the panel shows them (lists, pairs). */
@@ -3318,6 +3353,14 @@
 
   ACTIONS.close = function () { close(); };
   ACTIONS.section = function (node) { show(node.getAttribute('data-section')); };
+  /** Look up / Freeze in the contract view: Players, on that party. */
+  ACTIONS['party-lookup'] = function (node) {
+    var subject = node.getAttribute('data-subject');
+    if (!subject) return;
+    S.forms['pl.q'] = subject;
+    show('players');
+    loadPlayer();
+  };
   ACTIONS.group = function (node) { openGroup(node.getAttribute('data-group')); };
   /** A help link: the setting's view, the search cleared, and its row marked. */
   ACTIONS['help-jump'] = function (node) {

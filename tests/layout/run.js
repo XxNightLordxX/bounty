@@ -157,12 +157,24 @@ function serverStub() {
   // button that buys one. Measured at phone width with the rest.
   taken[0].locationTip = { left: 2, secondsLeft: 600, cooldownSeconds: 600 };
   taken[1].locationTip = { left: 3 };
-  // On hold by staff (server/freeze.lua): the chip, the clock's words and
-  // the notice under the meta, on the most crowded hitman card there is.
-  taken[0].onHold = true;
+  // On hold by staff (server/freeze.lua): the clock's words and the notice
+  // under the meta, on a hitman card of its own (an on-hold card keeps only
+  // Message and Report, so the crowded one stays crowded).
+  const held = JSON.parse(JSON.stringify(taken[0]));
+  held.id = 'ct00000030';
+  held.onHold = true;
+  delete held.locationTip;
   // A band, with the on-hold words in front of it (the longest band is
   // measured on the placer's own cards).
+  held.timeLeft = 'Under 15 minutes left';
+  taken.push(held);
   taken[0].timeLeft = 'Under 15 minutes left';
+  // Workflow round 3: the proof-of-intent rule on a hitman's card while it
+  // can still be met, and the placer's half of a running handover.
+  taken[1].intentRule = { messages: 3 };
+  own[2].handoverLeft = 25;
+  // And one the viewer already holds on the board: a tap to it under Mine.
+  contracts[4].role = 'hitman';
   // The placer's informant on that card, with an operative to ask about;
   // and on another, drawn disabled with why under it (every operative there
   // took it under their name), so both are measured at every width.
@@ -171,7 +183,10 @@ function serverStub() {
   own[2].placerInformantWait = 0;
   own[1].hitmenActive = 1;
   own[1].hitmen = [{ alias: 'Operative #1', name: 'Rook Ash' }];
-  own[1].placerInformantPicks = [];
+  // Drawn disabled while the informant waits between look-ups, with why
+  // (one with nothing left to sell is not drawn at all).
+  own[1].placerInformantPicks = [{ pick: 'op_dddddddddddd', label: 'Operative #2' }];
+  own[1].placerInformantWait = 600;
   own[1].placerInformantLeft = 2;
   own[1].placerInformantFound = [{ label: 'Operative #2', text: 'Nel Vey' }];
   // Roleplay (rpC): a payout held for proof of intent on the most crowded
@@ -240,8 +255,16 @@ function serverStub() {
       // the client's row ever carries one.
       contract_id: 'ct00000001',
       target_name: 'Dana Reyes', reason: 'Unpaid debt', role: 'creator',
-      fulfilment: 'elimination', resolved_at: 1700000000,
+      fulfilment: 'elimination', resolved_at: 1700000000, kind: 'paid', amount: 1250000,
       photo: { handle: 'ph00000000aa', state: 'pending' }
+    }, {
+      // A withdrawn one and a buyout, with their figures (W7).
+      contract_id: 'ct00000002', target_name: 'Maximilian Featherstonehaugh-Cholmondeley',
+      reason: 'Unpaid debt', role: 'creator', kind: 'withdrawn', fulfilment: 'withdrawn',
+      amount: 1250000, resolved_at: 1700000100
+    }, {
+      contract_id: 'ct00000003', target_name: 'You', reason: 'Unpaid debt', role: 'target',
+      kind: 'buyout', fulfilment: 'buyout', amount: 90000, resolved_at: 1700000200
     }],
       // A photo kept for the client in the app whose row has gone: listed
       // on its own under the history.
@@ -327,6 +350,9 @@ function serverStub() {
     }
     return value;
   }
+
+  // What refuses writes, where a test set it before the page loaded (S1).
+  if (window.__holds) { answers.list.data.holds = window.__holds; }
 
   window.fetch = function (url) {
     const name = url.split('/crimson:')[1];
@@ -647,10 +673,12 @@ async function main() {
     if (!notice) return null;
     const card = notice.closest('.card');
     const n = notice.getBoundingClientRect(), c = card.getBoundingClientRect();
-    const chip = Array.prototype.slice.call(card.querySelectorAll('.chip')).filter(function (el) {
+    // Said once (S1): the clock's words carry it; no chip of its own.
+    const chips = Array.prototype.slice.call(card.querySelectorAll('.chip')).filter(function (el) {
       return el.textContent === 'On hold';
-    })[0];
-    const k = chip ? chip.getBoundingClientRect() : null;
+    }).length;
+    const buttons = Array.prototype.slice.call(card.querySelectorAll('button'))
+      .map(function (el) { return el.textContent; });
     const clock = Array.prototype.slice.call(card.querySelectorAll('.chip')).filter(function (el) {
       return el.textContent === 'On hold \u00b7 Under 15 minutes left';
     })[0];
@@ -658,16 +686,17 @@ async function main() {
     return {
       bandInside: !!b && b.left >= c.left - 1 && b.right <= c.right + 1,
       inside: n.left >= c.left - 1 && n.right <= c.right + 1,
-      chipInside: !!k && k.left >= c.left - 1 && k.right <= c.right + 1,
+      chips: chips, buttons: buttons,
       height: n.height,
       pageScroll: document.documentElement.scrollWidth - window.innerWidth,
     };
   });
 
-  it('draws an on-hold card whole at phone width: its notice and chip inside it, no sideways scroll', function () {
+  it('draws an on-hold card whole at phone width: On hold once, Message and Report, no sideways scroll', function () {
     truthy(onHold, 'no on-hold notice drawn on the card');
     truthy(onHold.inside, 'the on-hold notice runs outside its card');
-    truthy(onHold.chipInside, 'the On hold chip runs outside its card');
+    truthy(onHold.chips === 0, 'On hold said again in a chip of its own');
+    truthy(onHold.buttons.join(' | ') === 'Message | Report', 'what is left on it: ' + onHold.buttons.join(' | '));
     truthy(onHold.bandInside, 'the time-left band is missing or runs outside its card');
     truthy(onHold.height >= 16, 'the on-hold notice is ' + onHold.height + 'px tall');
     truthy(onHold.pageScroll <= 0, 'the page scrolls sideways by ' + onHold.pageScroll + 'px');
@@ -1141,7 +1170,17 @@ async function main() {
         const panel = document.querySelector('.dialog');
         if (panel) {
           Array.prototype.slice.call(panel.querySelectorAll('button')).forEach(function (b) {
-            const r = b.getBoundingClientRect();
+            // A button in a part of the dialog that scrolls (the Edit
+            // sheet's fields) is reached by scrolling that part, which has
+            // to be on screen itself; the dialog's own actions never scroll.
+            let scroller = b.parentNode;
+            while (scroller && scroller !== panel) {
+              const st = getComputedStyle(scroller);
+              if ((st.overflowY === 'auto' || st.overflowY === 'scroll')
+                  && scroller.scrollHeight > scroller.clientHeight + 1) { break; }
+              scroller = scroller.parentNode;
+            }
+            const r = (scroller && scroller !== panel ? scroller : b).getBoundingClientRect();
             if (r.bottom > navRect.top + 1) {
               out.push('dialog button "' + b.textContent + '" is behind the tab bar');
             }
@@ -1234,7 +1273,7 @@ async function main() {
     it('draws the placer\'s informant and its two-tap dialog at ' + w + 'px', function () {
       truthy(onCard.live && onCard.liveFits, 'the button fits its card: ' + JSON.stringify(onCard));
       truthy(onCard.off && onCard.offFits, 'and so does the disabled one: ' + JSON.stringify(onCard));
-      truthy(onCard.why === 'You already know who every operative on it is.' && onCard.whyFits,
+      truthy(onCard.why === 'Your informant can ask again in about 10 minutes.' && onCard.whyFits,
         'with why under it: ' + JSON.stringify(onCard));
       truthy(inDialog && inDialog.text.indexOf('20% chance') !== -1,
         'the dialog says the chance: ' + JSON.stringify(inDialog));
@@ -1774,6 +1813,110 @@ async function main() {
     truthy(rumourShape.small.length === 0, 'small or off-screen: ' + rumourShape.small.join(', '));
     truthy(rumourShape.scroll <= 0, 'scrolls sideways by ' + rumourShape.scroll + 'px');
   });
+
+  /* Workflow round 3, at phone width: the banner for what refuses writes
+     (S1), the placer's handover line (S4), the proof-of-intent rule (W2),
+     the board's tap to a contract already held (Also), the Ledger in words
+     (W7), and the Edit sheet (S3) with Save turned into Confirm. Each inside
+     its card or the screen, nothing sideways, the sheet's own buttons clear
+     of the tab bar. */
+  for (const [w, h] of [[280, 560], [390, 720]]) {
+    const wp = await browser.newPage({ viewport: { width: w, height: h } });
+    await wp.addInitScript(function () {
+      window.__holds = { appPaused: true, restartHold: { endsIn: 2700 } };
+    });
+    await wp.addInitScript(serverStub);
+    await wp.goto('file://' + UI);
+    await wp.waitForTimeout(300);
+    function shapeOf(selector) {
+      return wp.evaluate(function (sel) {
+        return Array.prototype.slice.call(document.querySelectorAll(sel)).map(function (n) {
+          const r = n.getBoundingClientRect();
+          const box = (n.closest('.card') || document.getElementById('view')).getBoundingClientRect();
+          return { inside: r.left >= box.left - 1 && r.right <= box.right + 1 && r.width > 0,
+                   clipped: n.scrollWidth > n.clientWidth + 1, height: r.height, text: n.textContent };
+        });
+      }, selector);
+    }
+    function sideways() {
+      return wp.evaluate(function () { return document.documentElement.scrollWidth - window.innerWidth; });
+    }
+    const banner = await shapeOf('.hold-banner');
+    const boardMine = await shapeOf('button.board-mine');
+    const boardScroll = await sideways();
+    await wp.click('[data-tab="mine"]');
+    await wp.waitForTimeout(250);
+    const handover = await shapeOf('.notice.handover-live');
+    const rule = await shapeOf('.hint.intent-rule');
+    const mineScroll = await sideways();
+    await wp.click('[data-tab="ledger"]');
+    await wp.waitForTimeout(250);
+    const ledgerChips = await shapeOf('.card .chip');
+    const ledgerScroll = await sideways();
+    await wp.click('[data-tab="mine"]');
+    await wp.waitForTimeout(250);
+    await wp.evaluate(function () {
+      const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+        .filter(function (n) { return n.textContent === 'Edit'; })[0];
+      if (b) { b.click(); }
+    });
+    await wp.waitForTimeout(200);
+    await wp.evaluate(function () {
+      const stake = document.getElementById('sheet-stake');
+      if (stake) { stake.value = '0'; stake.dispatchEvent(new Event('input')); }
+      const hours = document.getElementById('sheet-hours');
+      if (hours) { hours.value = '2'; hours.dispatchEvent(new Event('input')); }
+      const save = Array.prototype.slice.call(document.querySelectorAll('.dialog button'))
+        .filter(function (n) { return n.textContent === 'Save'; })[0];
+      if (save) { save.click(); }
+    });
+    await wp.waitForTimeout(200);
+    const sheet = await wp.evaluate(function () {
+      const panel = document.querySelector('.dialog.edit-sheet');
+      if (!panel) { return null; }
+      const nav = document.querySelector('.tabs').getBoundingClientRect();
+      const box = panel.getBoundingClientRect();
+      const own = Array.prototype.slice.call(panel.querySelectorAll(':scope > .row > button'));
+      const body = panel.querySelector('.sheet-body').getBoundingClientRect();
+      return {
+        confirm: own.map(function (b) { return b.textContent; }),
+        buried: own.filter(function (b) { return b.getBoundingClientRect().bottom > nav.top + 1; })
+          .map(function (b) { return b.textContent; }),
+        bodyVisible: body.height > 30 && body.bottom <= nav.top + 1,
+        outside: Array.prototype.slice.call(panel.querySelectorAll('button, input')).filter(function (n) {
+          const r = n.getBoundingClientRect();
+          return r.left < box.left - 0.5 || r.right > box.right + 0.5;
+        }).map(function (n) { return n.textContent || n.id; }),
+        scroll: document.documentElement.scrollWidth - window.innerWidth
+      };
+    });
+    await wp.close();
+    it('workflow round 3 at ' + w + 'px: the banner, the handover line, the intent rule and the board\'s way to Mine fit', function () {
+      truthy(banner.length === 1 && banner[0].inside && !banner[0].clipped, 'the banner: ' + JSON.stringify(banner));
+      truthy(banner[0].text.indexOf('paused by staff') !== -1 && banner[0].text.indexOf('server restart') !== -1,
+        'what it says: ' + banner[0].text);
+      truthy(boardMine.length === 1 && boardMine[0].inside && !boardMine[0].clipped && boardMine[0].height >= 30,
+        'the tap to Mine: ' + JSON.stringify(boardMine));
+      truthy(handover.length === 1 && handover[0].inside && !handover[0].clipped,
+        'the handover line: ' + JSON.stringify(handover));
+      truthy(rule.length === 1 && rule[0].inside && !rule[0].clipped, 'the rule: ' + JSON.stringify(rule));
+      truthy(boardScroll <= 0 && mineScroll <= 0 && ledgerScroll <= 0, 'sideways: '
+        + [boardScroll, mineScroll, ledgerScroll].join(', '));
+    });
+    it('workflow round 3 at ' + w + 'px: the Ledger\'s words and figures stay inside their cards', function () {
+      const out = ledgerChips.filter(function (c) { return !c.inside || c.clipped; });
+      truthy(ledgerChips.some(function (c) { return c.text === 'You placed it'; }), 'the words are drawn');
+      truthy(out.length === 0, 'outside or cut off: ' + JSON.stringify(out));
+    });
+    it('workflow round 3 at ' + w + 'px: the Edit sheet keeps Confirm and Cancel above the tab bar', function () {
+      truthy(sheet, 'no Edit sheet opened');
+      truthy(sheet.confirm[0] === 'Confirm — 1 change', 'Save turned into Confirm: ' + sheet.confirm.join(' | '));
+      truthy(sheet.buried.length === 0, 'behind the tab bar: ' + sheet.buried.join(', '));
+      truthy(sheet.bodyVisible, 'its fields are on screen to scroll');
+      truthy(sheet.outside.length === 0, 'outside the sheet: ' + sheet.outside.join(', '));
+      truthy(sheet.scroll <= 0, 'sideways by ' + sheet.scroll);
+    });
+  }
 
   await browser.close();
 

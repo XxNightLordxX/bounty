@@ -112,6 +112,21 @@ local function zoneFor(contract)
     return tostring(zones[(hashOf(tostring(contract.id)) % #zones) + 1])
 end
 
+--- The name in Districts nearest a point, or nil with none listed.
+---@param coords table { x, y }
+---@return string|nil
+local function nearestDistrict(coords)
+    local best, bestD
+    for _, text in ipairs(type(rules().Districts) == 'table' and rules().Districts or {}) do
+        local spot = Places.parseArea(text)
+        if spot then
+            local d = (spot.x - (coords.x or 0)) ^ 2 + (spot.y - (coords.y or 0)) ^ 2
+            if not bestD or d < bestD then best, bestD = spot.name, d end
+        end
+    end
+    return best
+end
+
 --- The district nearest where the target stood the first time the rumour
 --- was told, or a zone name where that cannot be read.
 local function areaFor(contract)
@@ -120,17 +135,7 @@ local function areaFor(contract)
     if rules().AreaMode == 'district' then
         local target = deps.identity.byCitizenId(contract.target_cid)
         local coords = target and target.source and Places.coordsOf(target.source)
-        if coords then
-            local best, bestD
-            for _, text in ipairs(type(rules().Districts) == 'table' and rules().Districts or {}) do
-                local spot = Places.parseArea(text)
-                if spot then
-                    local d = (spot.x - (coords.x or 0)) ^ 2 + (spot.y - (coords.y or 0)) ^ 2
-                    if not bestD or d < bestD then best, bestD = spot.name, d end
-                end
-            end
-            area = best
-        end
+        if coords then area = nearestDistrict(coords) end
     end
     area = area or zoneFor(contract)
     areaOf[contract.id] = area
@@ -180,8 +185,15 @@ function Rumours.shapeListing(listing, actor)
             if contract then rows[i] = rumourRow(row, contract) end
         end
     end
+    local broker = Places.current('broker')
     listing.rumours = {
-        npc = Places.current('broker') ~= nil,
+        npc = broker ~= nil,
+        -- Where to ask around for the broker, as a district name only, on a
+        -- server that does not mark them on the map (Blip off): never the
+        -- spot. Marked on the map, the map says it.
+        brokerArea = (broker and rules().Blip ~= true and type(broker.x) == 'number')
+            and nearestDistrict(broker) or nil,
+        blip = (broker and rules().Blip == true) or nil,
         players = type(rules().BrokerJobs) == 'table' and next(rules().BrokerJobs) ~= nil,
         broker = Rumours.isBroker(actor) or nil,
         minutes = tonumber(rules().BriefValidMinutes) or 30,

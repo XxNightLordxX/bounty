@@ -744,6 +744,22 @@ function App.register()
             listing.settingsHash = hash
             if payload.settingsHash == hash then listing.settings = nil end
         end
+        -- What refuses writes right now, for every tab's banner and for the
+        -- page to draw the buttons it would refuse as unavailable: staff
+        -- paused the app, the restart hold is on (with how long it can last
+        -- at most), or this player is suspended (until when; 0 until staff
+        -- lift it). The server's gates stay as they are: this only says.
+        if type(listing) == 'table' then
+            local freeze = deps.freeze
+            local holds = {}
+            if freeze and freeze.appPaused and freeze.appPaused() then holds.appPaused = true end
+            if freeze and freeze.restartHeld and freeze.restartHeld() then
+                local ends = freeze.restartHoldEnds and freeze.restartHoldEnds()
+                holds.restartHold = { endsIn = ends and math.max(0, ends - os.time()) or nil }
+            end
+            if suspension then holds.suspendedUntil = tonumber(suspension.until_at) or 0 end
+            listing.holds = next(holds) and holds or nil
+        end
         return listing
     end)
 

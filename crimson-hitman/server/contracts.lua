@@ -3887,6 +3887,10 @@ local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
     Storage.setContractFields(contractId,
         { resolved_at = contract.resolved_at, resolution = contract.resolution })
 
+    -- The money it holds as it closes, for the Ledger row an ending without
+    -- a payout leaves (Ledger.ended), read before anything moves.
+    local heldMoney = Ledger and Ledger.ended and Escrow.moneyValue(contractId) or 0
+
     -- A target who outlived the contract has something to show for it.
     if Progression and (terminal == CH.STATE.BAILED_OUT or terminal == CH.STATE.EXPIRED) then
         Progression.onSurvived(contract.target_cid)
@@ -3905,6 +3909,17 @@ local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
     -- An expiry is the hitman failing, so the creator keeps their stake.
     local forfeit = terminal == CH.STATE.EXPIRED
     if forfeit and opts and opts.forfeit == false then forfeit = false end
+    -- On the Ledger: withdrawn, refunded or bought out, with what moved.
+    -- Written before finalise pushes the parties, so the refresh that push
+    -- causes finds the row. Never allowed to stop an ending.
+    if Ledger and Ledger.ended then
+        local wrote, err = pcall(Ledger.ended, contract, terminal, heldMoney)
+        if not wrote then
+            Audit.rejected('ledger_not_written', contract.creator_cid, contractId,
+                { error = tostring(err) })
+        end
+    end
+
     finalise(contractId, contract, forfeit, terminal)
 
     return true, result

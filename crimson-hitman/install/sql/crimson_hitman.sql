@@ -190,6 +190,11 @@ CREATE TABLE IF NOT EXISTS crimson_ledger (
     slot INT DEFAULT 1,
     photo_ref VARCHAR(512),
     resolved_at INT NOT NULL,
+    -- What kind of row ('paid', 'withdrawn', 'refunded', 'buyout') and
+    -- the money it moved (Ledger.ended). Added to existing databases by
+    -- MySQLStore.migrate.
+    kind VARCHAR(16),
+    amount BIGINT NOT NULL DEFAULT 0,
     INDEX idx_cid (cid, resolved_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

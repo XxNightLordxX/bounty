@@ -40,22 +40,28 @@ function Ledger.record(contract, hitmanCid, capture, fulfilment, result)
         fulfilment  = fulfilment,
         slot        = slot,
         resolved_at = os.time(),
+        kind        = 'paid',
     }
+    -- What this payout was worth in money: paid to the hitman, out of what
+    -- the client put up. The figure alone, never who; the target's row has
+    -- none (nothing of theirs moved).
+    local paid = math.max(0, math.floor(tonumber(result and result.money) or 0))
 
-    local function entry(cid, role, photoRef)
+    local function entry(cid, role, photoRef, amount)
         local row = {}
         for k, v in pairs(base) do row[k] = v end
         row.cid = cid
         row.role = role
         row.photo_ref = photoRef
+        row.amount = amount or 0
         Storage.writeLedger(row)
     end
 
     -- Depth is enforced by the storage backends on write, so there is no
     -- separate trim step to forget to call.
-    entry(contract.creator_cid, 'creator', handle)
-    entry(hitmanCid, 'hitman', nil)
-    entry(contract.target_cid, 'target', nil)
+    entry(contract.creator_cid, 'creator', handle, paid)
+    entry(hitmanCid, 'hitman', nil, paid)
+    entry(contract.target_cid, 'target', nil, 0)
 
     -- A row any of the three just pushed off the end of their ledger may
     -- have named a photo of theirs. Each, not only the creator: somebody
@@ -81,6 +87,52 @@ function Ledger.record(contract, hitmanCid, capture, fulfilment, result)
     end
 
     return handle
+end
+
+--- What a contract that ended without a payout leaves on the Ledger
+--- (Contracts' resolve): the client's own row when they withdrew it, when it
+--- ran out (or was cancelled by agreement) and what they put up came back,
+--- and on a buyout the client's row and the target's, with what moved. The
+--- money figure only: who paid, who held it and who was on it are never on
+--- a row. Written as the contract closes, before its parties are pushed.
+---@param contract table as it was read before it closed
+---@param terminal string the CH.STATE it ended in
+---@param held integer the money it held as it closed (Escrow.moneyValue)
+---@return integer written
+function Ledger.ended(contract, terminal, held)
+    if not contract or not contract.creator_cid then return 0 end
+    held = math.max(0, math.floor(tonumber(held) or 0))
+    local now = os.time()
+    local written = 0
+    local function entry(cid, role, kind, amount)
+        if not cid then return end
+        Storage.writeLedger({
+            cid = cid, role = role, kind = kind, amount = amount,
+            contract_id = contract.id, target_name = contract.target_name,
+            reason = contract.reason, fulfilment = kind, slot = contract.next_slot or 1,
+            resolved_at = now,
+        })
+        written = written + 1
+    end
+    if terminal == CH.STATE.CANCELLED then
+        entry(contract.creator_cid, 'creator',
+            contract.resolution == 'cancelled_by_creator' and 'withdrawn' or 'refunded', held)
+    elseif terminal == CH.STATE.EXPIRED then
+        entry(contract.creator_cid, 'creator', 'refunded', held)
+    elseif terminal == CH.STATE.BAILED_OUT then
+        local premium = math.max(0, math.floor(tonumber(contract.bailout_paid_amount) or 0))
+        entry(contract.creator_cid, 'creator', 'buyout', held + premium)
+        entry(contract.target_cid, 'target', 'buyout', premium)
+    end
+    -- A row these pushed off the end may have named a photo of theirs, as
+    -- in Ledger.record.
+    if written > 0 and Photos then
+        Photos.evict(contract.creator_cid)
+        if terminal == CH.STATE.BAILED_OUT and contract.target_cid then Photos.evict(contract.target_cid) end
+    end
+    -- No push of its own: the ending's own push to every party (finalise)
+    -- follows these rows, and its refresh reads the Ledger too.
+    return written
 end
 
 --- Forget kill photos past the retention window (§14.43).
@@ -151,6 +203,11 @@ function Ledger.entries(cid)
             slot        = row.slot,
             resolved_at = row.resolved_at,
             role        = row.role,
+            -- What kind of row ('paid', 'withdrawn', 'refunded', 'buyout';
+            -- a row from before there were kinds is a payout) and the money
+            -- it moved, as written.
+            kind        = row.kind or 'paid',
+            amount      = math.max(0, math.floor(tonumber(row.amount) or 0)),
         }
         local record = row.role == 'creator' and type(row.photo_ref) == 'string'
             and photos[row.photo_ref] or nil
