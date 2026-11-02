@@ -91,8 +91,10 @@ end
 
 describe('the roleplay consequences as shipped', function()
     it('ships every one off', function()
+        -- Read from the file: another spec may have turned one on live.
+        local shipped = require('tests.harness.shipped').fromFile()
         for _, name in ipairs({ 'WitnessHeat', 'EmsRelisting', 'CityNews', 'DirtyPayouts' }) do
-            eq(Config.Roleplay[name].Enabled, false, name)
+            eq(shipped.Roleplay[name].Enabled, false, name)
             eq(ConfigDefaults.Roleplay[name].Enabled, false, name .. ' in defaults.lua')
         end
     end)
