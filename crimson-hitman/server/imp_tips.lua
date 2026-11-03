@@ -33,7 +33,7 @@ local Log = CrimsonBoot.requireShared('log')
 
 local ImpTips = {}
 
-local Storage, Audit, Notify, Contracts, LocationTip, Informant
+local Storage, Audit, Notify, Contracts, LocationTip, Informant, Bailout
 
 ImpTips.KIND_WARN = 'imp_tipwarn'
 ImpTips.KIND_DARK = 'imp_dark'
@@ -61,6 +61,7 @@ function ImpTips.init(deps)
     Storage, Audit = deps.storage, deps.audit
     Notify, Contracts = deps.notify, deps.contracts
     LocationTip, Informant = deps.locationTip, deps.informant
+    Bailout = deps.bailout
     for _, timer in pairs(timers) do
         if type(ClearTimeout) == 'function' then pcall(ClearTimeout, timer) end
     end
@@ -446,6 +447,20 @@ end
 
 local buyDark
 
+--- Give back a go-dark price taken on a contract that was held or ended
+--- before the window stood. Owed (and handed over at the next login) where
+--- it cannot be paid now.
+local function refundDark(actor, contractId, cost, account, why)
+    if cost <= 0 then return end
+    local credited, raised = Util.credit(actor.player, account, cost)
+    if not credited and Bailout and Bailout.owe then
+        local owed, oweErr = pcall(Bailout.owe, actor.cid, contractId, cost, account, 'go_dark_refunded')
+        credited = owed and oweErr ~= nil
+    end
+    Audit.financial('go_dark_refunded', actor.cid, contractId, { amount = cost, account = account,
+        reason = why, owed = not credited or nil, error = raised })
+end
+
 --- A target told of a tip on a contract on them pays to go dark: every tip
 --- bought on them for Minutes finds nothing and is given back. One purchase
 --- at a time per target; refused while they are dark already.
@@ -498,6 +513,23 @@ buyDark = function(actor, contractId, shown)
     if not Util.charge(actor.player, account, cost) then
         pcall(Storage.deleteRpRow, row.id)
         return false, CH.ERR.INSUFFICIENT, { cost = cost, account = account }
+    end
+    -- And read once more: the row's write and the charge are awaits on
+    -- mysql, and a staff hold or an ending that landed in them moves no
+    -- money. The window is dropped and the price given back, once.
+    local read, after = pcall(Storage.readContract, contractId)
+    local refusal
+    if not read then
+        refusal = CH.ERR.SERVER_ERROR
+    elseif not after or CH.TERMINAL[after.state] then
+        refusal = CH.ERR.ALREADY_SETTLED
+    elseif Contracts and Contracts.heldByStaff and Contracts.heldByStaff(after) then
+        refusal = CH.ERR.CONTRACT_FROZEN
+    end
+    if refusal then
+        pcall(Storage.deleteRpRow, row.id)
+        refundDark(actor, contractId, cost, account, refusal)
+        return false, refusal
     end
     load()
     dark[actor.cid] = row

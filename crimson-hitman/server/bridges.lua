@@ -697,6 +697,8 @@ function Bridges.install(modules)
         -- A photo on its way to them is not any more, whoever gets this
         -- server id next.
         if modules.app.forgetSource then modules.app.forgetSource(src) end
+        -- And the staff panel's lookup handles given to them.
+        if modules.panel and modules.panel.forgetSource then modules.panel.forgetSource(src) end
         -- Somebody left, whoever they were: the expiry pass looks again.
         -- Without a citizen id onPlayerDropped stops before saying so, and
         -- the pass waited up to MaxDeadlineSkipSeconds to notice the clock

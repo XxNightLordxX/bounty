@@ -581,3 +581,190 @@ describe('sweep 4: the ledger', function()
         eq(rows[1] and rows[1].kind, 'cancelled')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Sweep 4 review: an atomic lifetime extension, go dark on a hold, and
+-- the staff panel's lookup handles
+--------------------------------------------------------------------------
+
+describe('sweep 4 review: the lifetime moves in one write', function()
+    local Exec = require('tests.harness.mysql_exec')
+
+    local function backends()
+        package.loaded['crimson-hitman.server.storage.memory'] = nil
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        Natives.files = {}
+        local memory = require('crimson-hitman.server.storage.memory')
+        local jsonStore = require('crimson-hitman.server.storage.json')
+        memory.open()
+        jsonStore.open()
+        Exec.install(Natives)
+        local mysqlStore = require('crimson-hitman.server.storage.mysql')
+        mysqlStore.open()
+        return { { name = 'memory', store = memory }, { name = 'json', store = jsonStore },
+                 { name = 'mysql', store = mysqlStore } }
+    end
+
+    it('adds to the lifetime as it is, held to a ceiling it never lowers, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local st = b.store
+            truthy(type(st.addToExpires) == 'function', b.name .. ': no addToExpires')
+            st.writeContract({ id = 'ctlife1', creator_cid = 'CREATOR1', target_cid = 'TARGET01',
+                mode = CH.MODE.EXCLUSIVE, state = CH.STATE.ACTIVE, created_at = 1, payout_slots = 1,
+                next_slot = 1, expires_at = 1000 })
+            truthy(st.addToExpires('ctlife1', 300), b.name .. ': added')
+            eq(st.readContract('ctlife1').expires_at, 1300, b.name)
+            truthy(st.addToExpires('ctlife1', 500, 1500), b.name .. ': added to the ceiling')
+            eq(st.readContract('ctlife1').expires_at, 1500, b.name .. ': held to the ceiling')
+            falsy(st.addToExpires('ctlife1', 100, 1400), b.name .. ': past the ceiling already')
+            eq(st.readContract('ctlife1').expires_at, 1500, b.name .. ': never lowered')
+            falsy(st.addToExpires('ctnone', 100), b.name .. ': no such contract')
+            st.writeContract({ id = 'ctlife2', creator_cid = 'CREATOR1', target_cid = 'TARGET01',
+                mode = CH.MODE.EXCLUSIVE, state = CH.STATE.ACTIVE, created_at = 1, payout_slots = 1,
+                next_slot = 1 })
+            falsy(st.addToExpires('ctlife2', 100), b.name .. ': no lifetime to add to')
+            eq(st.readContract('ctlife2').expires_at, nil, b.name)
+        end
+    end)
+
+    --- The reviewer's probe: a staff extension landing inside the freeze
+    --- give-back's write, after its read, with the contract's lock held.
+    it('keeps a staff extension made inside the give-back\'s write, and the give-back', function()
+        local s, f = decayStack()
+        Config.Improvements.ContractDecay.Enabled = false
+        local c = place(s, f)
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
+        local row = s.storage.readContract(c.id)
+        s.storage.setContractFields(c.id, { expires_at = row.deadline_at + 100 })
+        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        Env.advance(3600)
+        local exp0 = s.storage.readContract(c.id).expires_at
+        local setFields, add = s.storage.setContractFields, s.storage.addToExpires
+        local fired, ok, err = false, nil, nil
+        local function extendNow()
+            if fired then return end
+            fired = true
+            ok, err = s.admin.adjustDeadline(0, c.id, 7200, 'ticket')
+        end
+        s.storage.setContractFields = function(id, fields)
+            if fields.expires_at ~= nil then extendNow() end
+            return setFields(id, fields)
+        end
+        if add then
+            s.storage.addToExpires = function(...)
+                extendNow()
+                return add(...)
+            end
+        end
+        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        s.storage.setContractFields, s.storage.addToExpires = setFields, add
+        truthy(fired, 'the extension landed in the give-back')
+        truthy(ok, 'the extension: ' .. tostring(err))
+        eq(s.storage.readContract(c.id).expires_at, exp0 + 7200 + 3600,
+            'the extension (+7200) and the give-back (+3600) both kept')
+    end)
+
+    it('reports no success, and puts the deadline back, when the lifetime cannot be written', function()
+        local s, f = decayStack()
+        Config.Improvements.ContractDecay.Enabled = false
+        local c = place(s, f)
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
+        local row = s.storage.readContract(c.id)
+        s.storage.setContractFields(c.id, { expires_at = row.deadline_at + 100 })
+        local before = s.storage.readContract(c.id)
+        local setFields, add = s.storage.setContractFields, s.storage.addToExpires
+        local refused = function() error('Lock wait timeout exceeded', 0) end
+        s.storage.addToExpires = refused
+        s.storage.setContractFields = function(id, fields)
+            if fields.expires_at ~= nil then refused() end
+            return setFields(id, fields)
+        end
+        local ok, err = s.admin.adjustDeadline(0, c.id, 7200, 'ticket')
+        s.storage.setContractFields, s.storage.addToExpires = setFields, add
+        falsy(ok, 'reported as done')
+        eq(err, CH.ERR.SERVER_ERROR)
+        local after = s.storage.readContract(c.id)
+        eq(after.deadline_at, before.deadline_at, 'the deadline is put back')
+        eq(after.expires_at, before.expires_at)
+    end)
+end)
+
+describe('sweep 4 review: go dark on a hold landing in its awaits', function()
+    it('refunds a charge when a freeze lands in the go-dark row\'s write', function()
+        local s, _, c = taken()
+        Config.Improvements.GoDark.Enabled = true
+        Config.Improvements.GoDark.Cost = 50000
+        Config.Improvements.GoDark.Minutes = 30
+        truthy(call('locationTip', 3, { id = c.id, shown = PRICE }).ok, 'tip bought')
+        local before = bank(2)
+        local undo = freezeOnCall(s, 'writeRpRow', 1)
+        local r = call('goDark', 2, { id = c.id, shown = { cost = 50000, account = 'bank' } })
+        truthy(undo(), 'the freeze landed')
+        eq(r and r.err, CH.ERR.CONTRACT_FROZEN)
+        eq(bank(2), before, 'the price given back')
+        eq(s.impTips.darkUntil('TARGET01'), nil, 'and not dark')
+        for _, row in ipairs(s.storage.readRpRows(s.impTips.KIND_DARK) or {}) do
+            truthy(row.cid ~= 'TARGET01', 'the window\'s row dropped')
+        end
+        s.audit.flush()
+        eq(#(s.storage.auditByAction('go_dark_refunded', 10) or {}), 1, 'the refund recorded, once')
+    end)
+end)
+
+describe('sweep 4 review: the staff panel\'s lookup handles', function()
+    local function world()
+        local s = newStack()
+        local f = fixture(s)
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001',
+            firstname = 'Sam', lastname = 'Steward' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        Env.aces[7] = { ['crimson.admin'] = true }
+        Config.Cooldowns.admin = { per = 10, burst = 1000 }
+        Config.Cooldowns.adminWrite = { per = 10, burst = 1000 }
+        s.bridges.install(s)
+        return s, f
+    end
+
+    local function ask(src, op, data)
+        Env.clientEvents = {}
+        _G.source = src
+        local fired, err = pcall(Env.events['crimson-hitman:admin'], { op = op, data = data or {}, __rid = 4 })
+        _G.source = nil
+        truthy(fired, 'the net event must not raise: ' .. tostring(err))
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:adminResult' then return event.args[1] end
+        end
+        return nil
+    end
+
+    it('forgets the handles given to a source when it leaves', function()
+        local s = world()
+        local reply = ask(6, 'player', { subject = 2 })
+        truthy(reply and reply.ok, 'looked up')
+        local ref = reply.data.player.ref
+        truthy(ref, 'a handle')
+        _G.source = 6
+        Env.handlers['playerDropped']()
+        _G.source = nil
+        Env.removePlayer(6)
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001',
+            firstname = 'Sam', lastname = 'Steward' })
+        local late = ask(6, 'freeze', { ref = ref, reason = 'x' })
+        falsy(late.ok, 'a handle from before the drop')
+        truthy(tostring(late.message):find('Look them up again', 1, true), tostring(late.message))
+        falsy(s.freeze.of('TARGET01'))
+    end)
+
+    it('mints no handle for staff with no character, and takes none from them', function()
+        local s = world()
+        truthy(Env.players[7] == nil, 'source 7 has no character')
+        local reply = ask(7, 'player', { subject = 2 })
+        truthy(reply, 'answered')
+        local ref = reply.ok and reply.data and reply.data.player and reply.data.player.ref or nil
+        eq(ref, nil, 'a handle no write could tell from any other nobody\'s')
+        local made = ask(7, 'freeze', { ref = ref or 'p1_100000', reason = 'x' })
+        falsy(made and made.ok, 'frozen by nobody')
+        falsy(s.freeze.of('TARGET01'))
+    end)
+end)

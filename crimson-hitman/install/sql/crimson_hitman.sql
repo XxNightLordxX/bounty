@@ -203,8 +203,8 @@ CREATE TABLE IF NOT EXISTS crimson_ledger (
     slot INT DEFAULT 1,
     photo_ref VARCHAR(512),
     resolved_at INT NOT NULL,
-    -- What kind of row ('paid', 'withdrawn', 'refunded', 'buyout') and
-    -- the money it moved (Ledger.ended). Added to existing databases by
+    -- What kind of row ('paid', 'withdrawn', 'refunded', 'cancelled', 'buyout')
+    -- and the money it moved (Ledger.ended). Added to existing databases by
     -- MySQLStore.migrate.
     kind VARCHAR(16),
     amount BIGINT NOT NULL DEFAULT 0,

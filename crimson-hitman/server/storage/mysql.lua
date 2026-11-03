@@ -463,8 +463,8 @@ local SCHEMA = {
         slot INT DEFAULT 1,
         photo_ref VARCHAR(512),
         resolved_at INT NOT NULL,
-        -- What kind of row ('paid', 'withdrawn', 'refunded', 'buyout') and
-        -- the money it moved (Ledger.ended). Added to existing databases by
+        -- What kind of row ('paid', 'withdrawn', 'refunded', 'cancelled', 'buyout')
+        -- and the money it moved (Ledger.ended). Added to existing databases by
         -- MySQLStore.migrate.
         kind VARCHAR(16),
         amount BIGINT NOT NULL DEFAULT 0,
@@ -1828,6 +1828,25 @@ function MySQLStore.setContractFields(id, fields)
         if fields[column] ~= nil then db.update(sql, { fields[column], id }) end
     end
     return true
+end
+
+--- Add to a contract's lifetime in one statement: see the memory backend.
+--- The ceiling is a bound parameter, and the WHERE keeps a lifetime already
+--- at or past it as it is, so LEAST can never lower one.
+function MySQLStore.addToExpires(id, delta, cap)
+    local affected
+    if cap then
+        affected = db.update([[
+            UPDATE crimson_contracts SET expires_at = LEAST(expires_at + ?, ?)
+            WHERE id = ? AND expires_at IS NOT NULL AND expires_at < ?
+        ]], { delta, cap, id, cap })
+    else
+        affected = db.update([[
+            UPDATE crimson_contracts SET expires_at = expires_at + ?
+            WHERE id = ? AND expires_at IS NOT NULL
+        ]], { delta, id })
+    end
+    return (tonumber(affected) or 0) > 0
 end
 
 function MySQLStore.setReason(id, reason)

@@ -1368,20 +1368,14 @@ function Admin.adjustDeadline(src, contractId, seconds, reason)
     -- The lifetime after the deadline: the other way round, a deadline
     -- refused as locked left a lifetime extended for nothing. Should the
     -- lifetime not take, the deadline is put back by what this moved it.
-    -- Added to the lifetime as it is now, read again under the contract's
-    -- key just before the write (as the freeze's give-back does): written
-    -- as the figure planned before the deadline's awaits, it put back a
-    -- give-back an unfreeze had added in between.
+    -- Added in the store's own statement (Storage.addToExpires), never read
+    -- here and written back: a read-then-write put back a give-back an
+    -- unfreeze added in between, and the contract's lock is no help, since
+    -- a lock somebody else holds is refused as busy rather than waited for.
+    -- Held to the ceiling worked out above, never lowered by it.
     if plan.newExpires and plan.expires and plan.newExpires > plan.expires then
         local add = plan.newExpires - plan.expires
-        local function lengthen()
-            local fresh = Storage.readContract(contractId)
-            local expires = fresh and tonumber(fresh.expires_at) or plan.expires
-            Storage.setContractFields(contractId, { expires_at = expires + add })
-            return true
-        end
-        local wrote, err = pcall(Contracts.serialized, { 'contract:' .. contractId }, lengthen)
-        if wrote and err ~= true then wrote, err = pcall(lengthen) end
+        local wrote, err = pcall(Storage.addToExpires, contractId, add, lifetimeCap)
         if not wrote then
             Log.always(('staff extending contract %s: its lifetime could not be written (%s); the '
                 .. 'deadline is put back'):format(contractId, Util.dbError(err)))
@@ -1390,6 +1384,17 @@ function Admin.adjustDeadline(src, contractId, seconds, reason)
                 return (current.deadline_at or moved) - by
             end, 10)
             return false, CH.ERR.SERVER_ERROR
+        end
+        -- Another extension that reached the ceiling first leaves less room
+        -- than planned: the deadline is held to the lifetime it ended with.
+        local after = Storage.readContract(contractId)
+        local reached = after and tonumber(after.expires_at)
+        if reached and reached < moved then
+            local held = Contracts.moveDeadline(contractId, function(current)
+                return math.min(tonumber(current.deadline_at) or reached, reached)
+            end, 10)
+            if not held then return false, CH.ERR.LOCKED end
+            moved, plan.newExpires, plan.lifetime = held, reached, 'capped'
         end
     end
 

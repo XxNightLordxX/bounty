@@ -50,7 +50,7 @@ local Util = CrimsonBoot.requireShared('util')
 
 local Freeze = {}
 
-local Storage, Audit, Notify, Kidnap, Contracts
+local Storage, Audit, Notify, Kidnap
 
 local frozen = {}   -- [cid] = { cid, name, reason, by_cid, frozen_at }
 --- How many are frozen: always counted from `frozen` (recount), never kept
@@ -96,27 +96,24 @@ Freeze.TEXT = {
 --- began: it is already being paid, and stopping there strands the money.
 local LIVE = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true }
 
---- Give a contract's lifetime `back` seconds, added to the expiry as it is
---- right now: read again under the contract's lock (Contracts.serialized)
---- just before the write. Added to a copy read before a pass's awaits, the
---- write put back whatever a staff deadline or lifetime change had written
---- in between. A lock another call holds is not waited for: the contract is
---- still read again, just before the write, rather than not given back.
+--- Give a contract's lifetime `back` seconds, added to the expiry in the
+--- store's own statement (Storage.addToExpires). Read here and written back,
+--- even under the contract's lock, the write put back whatever a staff
+--- extension added in between: that lock is refused as busy rather than
+--- waited for, so the extension ran beside it.
 ---@param contractId string
 ---@param back integer seconds
 local function giveBack(contractId, back)
     if not back or back <= 0 then return end
-    local function apply()
+    local ok, err = pcall(function()
         local fresh = Storage.readContract(contractId)
-        if not fresh or not LIVE[fresh.state] or not fresh.expires_at then return true end
-        Storage.setContractFields(contractId, { expires_at = (tonumber(fresh.expires_at) or 0) + back })
-        return true
+        if not fresh or not LIVE[fresh.state] or not fresh.expires_at then return end
+        Storage.addToExpires(contractId, back)
+    end)
+    if not ok then
+        Log.always(('contract %s: the lifetime a hold took could not be given back (%s)')
+            :format(contractId, Util.dbError(err)))
     end
-    if Contracts and Contracts.serialized then
-        local ran, done = pcall(Contracts.serialized, { 'contract:' .. contractId }, apply)
-        if ran and done == true then return end
-    end
-    pcall(apply)
 end
 
 local REASON_MAX = 120
@@ -126,13 +123,12 @@ local REASON_MAX = 120
 local appPause = nil
 local PAUSE_META = 'staff_pause_since'
 
----@param deps table { storage, audit, notify, kidnap, contracts }
+---@param deps table { storage, audit, notify, kidnap }
 local giveBackRestart
 local loadAppPause
 
 function Freeze.init(deps)
     Storage, Audit, Notify, Kidnap = deps.storage, deps.audit, deps.notify, deps.kidnap
-    Contracts = deps.contracts
     -- A restart hold ends with the restart: this start is it.
     restartHold = nil
     Freeze.reload()

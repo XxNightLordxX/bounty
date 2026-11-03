@@ -1617,11 +1617,23 @@ end
 local STALE_LOOKUP = 'That lookup is out of date, so nothing was changed. Look them up again.'
 
 --- A handle for the character a lookup found, for this staff member only.
+--- None for a staff member with no character: a handle names who it was
+--- given to, and nobody would match any other nobody.
 ---@param src integer
 ---@param who table playerSubject's answer
----@return string ref
+---@return string|nil ref
 local function playerRef(src, who)
+    local staff = staffOf(src)
+    if not staff then return nil end
     local now = Util.monotonicMs()
+    -- Every staff member's handles that have run out, not only these: one
+    -- who never looks anybody up again would otherwise keep theirs.
+    for holder, refs in pairs(playerRefs) do
+        for ref, entry in pairs(refs) do
+            if now - entry.at >= PLAYER_REF_MS then refs[ref] = nil end
+        end
+        if next(refs) == nil then playerRefs[holder] = nil end
+    end
     local mine = playerRefs[src]
     if not mine then
         mine = {}
@@ -1639,9 +1651,16 @@ local function playerRef(src, who)
     if count >= PLAYER_REFS_PER_STAFF and oldest then mine[oldest] = nil end
     playerRefSeq = playerRefSeq + 1
     local ref = ('p%d_%d'):format(playerRefSeq, math.random(100000, 999999))
-    mine[ref] = { cid = who.cid, staff = staffOf(src), at = now, typed = who.typed or nil,
+    mine[ref] = { cid = who.cid, staff = staff, at = now, typed = who.typed or nil,
                   viaContract = who.viaContract or nil }
     return ref
+end
+
+--- Forget a source's lookup handles when it leaves: the next player given
+--- that server id is not who they were minted for.
+---@param src integer
+function Panel.forgetSource(src)
+    playerRefs[src] = nil
 end
 
 --- The character a lookup handle stands for, or nil and what to say.
@@ -1652,7 +1671,8 @@ local function fromPlayerRef(src, ref)
     local mine = type(ref) == 'string' and playerRefs[src] or nil
     local key = mine and ref:sub(1, 24) or nil
     local entry = key and mine[key] or nil
-    if not entry or Util.monotonicMs() - entry.at >= PLAYER_REF_MS or entry.staff ~= staffOf(src) then
+    if not entry or Util.monotonicMs() - entry.at >= PLAYER_REF_MS or not entry.staff
+        or entry.staff ~= staffOf(src) then
         if entry then mine[key] = nil end
         return nil, 'stale_lookup', STALE_LOOKUP
     end

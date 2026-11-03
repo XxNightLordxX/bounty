@@ -676,12 +676,19 @@ local function update(sql, params)
         -- And `col = LEAST(col + ?, n)`: the sum held to a ceiling, worked
         -- out before it is held, as MariaDB adds in BIGINT first.
         local leastSource, leastCap = trimmed:match('^LEAST%(%s*([%w_]+)%s*%+%s*%?%s*,%s*(%-?%d+)%s*%)$')
+        -- And `col = LEAST(col + ?, ?)`, the ceiling bound too.
+        local boundLeast = trimmed:match('^LEAST%(%s*([%w_]+)%s*%+%s*%?%s*,%s*%?%s*%)$')
 
         if leastSource then
             index = index + 1
             assignments[#assignments + 1] = {
                 column = column, relative = leastSource, index = index,
                 cap = tonumber(leastCap),
+            }
+        elseif boundLeast then
+            index = index + 2
+            assignments[#assignments + 1] = {
+                column = column, relative = boundLeast, index = index - 1, capIndex = index,
             }
         elseif boundSource then
             index = index + 1
@@ -761,7 +768,9 @@ local function update(sql, params)
                         if assignment.negate then delta = -delta end
                     end
                     value = { (tonumber(current(assignment.relative)) or 0) + delta }
-                    if assignment.cap and value[1] > assignment.cap then value = { assignment.cap } end
+                    local cap = assignment.cap
+                    if assignment.capIndex then cap = tonumber(params[assignment.capIndex]) end
+                    if cap and value[1] > cap then value = { cap } end
                 else
                     local literal = assignment.literal
                     local bound = literal == nil

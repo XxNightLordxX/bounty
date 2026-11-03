@@ -2756,6 +2756,29 @@ function JsonStore.setDeadline(id, expected, deadline)
     return true
 end
 
+--- Add `delta` seconds to a contract's lifetime, in one write against the
+--- row as it is now. Lengthening by reading expires_at, awaiting and writing
+--- the sum back put back whatever another lengthening (a staff extension, a
+--- hold's give-back) had added in between. With `cap`, the sum stops there,
+--- and a lifetime already at or past it is left as it is (never lowered).
+--- True when the lifetime moved; false when there was no row, no lifetime,
+--- or no room under the cap.
+---@param id string
+---@param delta integer seconds
+---@param cap integer|nil the latest it may reach
+---@return boolean moved
+function JsonStore.addToExpires(id, delta, cap)
+    local c = db.contracts[id]
+    if not c or c.expires_at == nil then return false end
+    local expires = tonumber(c.expires_at) or 0
+    if cap and expires >= cap then return false end
+    local sum = expires + delta
+    if cap and sum > cap then sum = cap end
+    c.expires_at = sum
+    touch(true, id)
+    return true
+end
+
 --- Write only the named fields of a contract. Every other writer used to
 --- read the row, await, and write the whole copy back, undoing whatever
 --- changed in between: a re-clamp of the buyout and stake, a bonus raise,

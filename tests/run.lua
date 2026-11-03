@@ -573,7 +573,8 @@ function _G.newStack()
     rpInformant.init({ audit = audit })
     rpReason.init({ storage = storage, review = review, contracts = contracts })
     impTips.init({ storage = storage, audit = audit, notify = notify, contracts = contracts,
-                   locationTip = locationTip, informant = informant, projection = projection })
+                   locationTip = locationTip, informant = informant, projection = projection,
+                   bailout = bailout })
     impBoard.init({ storage = storage, identity = identity, notify = notify, audit = audit,
                     escrow = escrow, contracts = contracts, amendments = amendments,
                     projection = projection, progression = progression,

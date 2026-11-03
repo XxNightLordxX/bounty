@@ -2056,7 +2056,8 @@ function StartCrimsonHitman()
     -- Informant fairness: the tip's and the target's informant's extra rules
     -- (server/imp_tips.lua).
     impTips.init({ storage = Storage, audit = audit, notify = notify, contracts = contracts,
-                   locationTip = locationTip, informant = informant, projection = projection })
+                   locationTip = locationTip, informant = informant, projection = projection,
+                   bailout = bailout })
     -- After projection, contracts and the roleplay consequences: it adds to
     -- the cards, hooks the claim and the witness report, and steps on the tick.
     impBoard.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
