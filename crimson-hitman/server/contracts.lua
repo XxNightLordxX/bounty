@@ -78,6 +78,24 @@ function Contracts.restartHeld()
     return Freeze ~= nil and Freeze.restartHeld()
 end
 
+--- When whatever holds a contract now began, os.time(): the earliest of a
+--- staff freeze on one of its parties, the restart hold and the app pause
+--- that are on. nil when none is.
+---@param contract table|nil
+---@param hitmen table[]|nil
+---@return integer|nil
+function Contracts.heldSince(contract, hitmen)
+    if Freeze == nil then return nil end
+    local since = Freeze.heldSince and Freeze.heldSince(contract, hitmen) or nil
+    local function earliest(at)
+        at = tonumber(at)
+        if at and (not since or at < since) then since = at end
+    end
+    if Freeze.restartHeld() and Freeze.restartHeldSince then earliest(Freeze.restartHeldSince()) end
+    if Freeze.appPausedSince then earliest(Freeze.appPausedSince()) end
+    return since
+end
+
 --- Whether staff have paused the whole app (Config.Staff.AppPaused):
 --- nothing is placed or accepted meanwhile (server/freeze.lua).
 ---@return boolean

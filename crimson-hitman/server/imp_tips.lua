@@ -469,6 +469,10 @@ buyDark = function(actor, contractId, shown)
     local contract = Storage.readContract(contractId)
     if not contract or contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+    -- On hold by staff (server/freeze.lua): no money moves on it.
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
+        return false, CH.ERR.CONTRACT_FROZEN
+    end
     if not (LocationTip and LocationTip.toldAt(contractId)) then return false, CH.ERR.NOT_TIPPED end
     local already = ImpTips.darkUntil(actor.cid)
     if already then return false, CH.ERR.ALREADY_DARK, { untilAt = already } end
@@ -481,6 +485,9 @@ buyDark = function(actor, contractId, shown)
     -- Read again with nothing between this and the charge.
     local now = Storage.readContract(contractId)
     if not now or CH.TERMINAL[now.state] then return false, CH.ERR.ALREADY_SETTLED end
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(now) then
+        return false, CH.ERR.CONTRACT_FROZEN
+    end
 
     -- Kept first, so a charge never stands without it; dropped if the charge
     -- is refused. Counted as dark only once paid.

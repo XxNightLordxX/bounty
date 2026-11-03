@@ -91,7 +91,8 @@ end
 
 --- What a contract that ended without a payout leaves on the Ledger
 --- (Contracts' resolve): the client's own row when they withdrew it, when it
---- ran out (or was cancelled by agreement) and what they put up came back,
+--- ran out ('refunded') or was cancelled by agreement ('cancelled') and what
+--- they put up came back,
 --- and on a buyout the client's row and the target's, with what moved. The
 --- money figure only: who paid, who held it and who was on it are never on
 --- a row. Written as the contract closes, before its parties are pushed.
@@ -115,8 +116,11 @@ function Ledger.ended(contract, terminal, held)
         written = written + 1
     end
     if terminal == CH.STATE.CANCELLED then
+        -- Withdrawn by the client, or called off otherwise (by agreement,
+        -- or by the target's bodyguard ending): never 'refunded', which the
+        -- app words as one that ran out.
         entry(contract.creator_cid, 'creator',
-            contract.resolution == 'cancelled_by_creator' and 'withdrawn' or 'refunded', held)
+            contract.resolution == 'cancelled_by_creator' and 'withdrawn' or 'cancelled', held)
     elseif terminal == CH.STATE.EXPIRED then
         entry(contract.creator_cid, 'creator', 'refunded', held)
     elseif terminal == CH.STATE.BAILED_OUT then
@@ -203,7 +207,7 @@ function Ledger.entries(cid)
             slot        = row.slot,
             resolved_at = row.resolved_at,
             role        = row.role,
-            -- What kind of row ('paid', 'withdrawn', 'refunded', 'buyout';
+            -- What kind of row ('paid', 'withdrawn', 'refunded', 'cancelled', 'buyout';
             -- a row from before there were kinds is a payout) and the money
             -- it moved, as written.
             kind        = row.kind or 'paid',

@@ -397,11 +397,11 @@ All off as shipped, each `Config.Improvements.<Feature>.Enabled`.
 | **Tip safe zones** (`TipSafeZones`) | No tip while the target is inside a zone (`'x, y, radius, name'`); the hitman is told only that the informant can't place them |
 | **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back |
 | **Placer record** (`PlacerRecord`) | A board card shows its placer's placed / paid out / cancelled counts over `LookbackDays`, never who; anonymous placers in bands with `ShowForAnonymous` |
-| **Hitman heat** (`HitmanHeat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` |
+| **Hitman heat** (`HitmanHeat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` (every officer alike, a known hitman who holds a police job too) |
 | **Tiered board** (`Tiers`) | Bigger rewards locked to a progression level (needs `Config.Progression.Enabled`) |
-| **Contract decay** (`ContractDecay`) | An untaken contract's reward rises (charged to its placer, up to `MaxIncreasePercent`) or its deadline comes in, every `Hours`; the placer can stop it on their card |
-| **Proof items** (`ProofItems`) | On a contract a kill completes, the hitman may hand the placer an item taken from the target (an id card as shipped) instead of a photo |
-| **Weapon serial scrubbing** (`SerialScrub`) | A weapon an anonymous placer put up reaches the hitman with a new serial |
+| **Contract decay** (`ContractDecay`) | An untaken contract's reward rises (charged to its placer, up to `MaxIncreasePercent`) or its deadline comes in, every `Hours` of waiting; time on a staff freeze, the restart hold, the app pause or held by an operative does not count. `rise` applies only to contracts placed under the placer's own name: a step charged when an anonymous placer logs in would show on the board when they did, so an anonymous contract never rises (its card says so). The placer can stop it on their card |
+| **Proof items** (`ProofItems`) | On a contract a kill completes, the hitman may hand the placer an item taken from the target (an id card as shipped) instead of a photo. The item is checked before where anybody stands, so a hitman without it is only ever told it is missing; refused, taking nothing, under a freeze, the restart hold or the app pause |
+| **Weapon serial scrubbing** (`SerialScrub`) | A weapon an anonymous placer put up reaches the hitman with a new serial (as does one whose contract cannot be read) |
 | **Weekly stats** (`WeeklyStats`) | One count-only post a week (`Day`, `Hour`) to `crimson_hitman_stats_webhook`, or the alert webhook |
 | **Completion cooldown** (`Config.Limits.TargetCooldownAfterCompletionSeconds`) | A wait before a completed contract's target can be listed again; 0 (off) as shipped |
 

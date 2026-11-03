@@ -216,20 +216,25 @@ local addEscrowUnlocked
 --- One change to what a contract holds at a time: a top-up reads the value
 --- and line counts it is checked against, and a bonus raise beside it read
 --- the same ones.
-function Amendments.addEscrow(actor, contractId, rewardSpec)
+---
+--- `opts.onlyActive` (contract decay's rise, server/imp_decay.lua): only
+--- while nobody has taken it, read under the contract's key, so an
+--- acceptance landing after the caller's own read is not charged a step.
+function Amendments.addEscrow(actor, contractId, rewardSpec, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     return Contracts.serialized({ 'contract:' .. contractId },
-        addEscrowUnlocked, actor, contractId, rewardSpec)
+        addEscrowUnlocked, actor, contractId, rewardSpec, type(opts) == 'table' and opts or nil)
 end
 
-addEscrowUnlocked = function(actor, contractId, rewardSpec)
+addEscrowUnlocked = function(actor, contractId, rewardSpec, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
         return false, CH.ERR.BAD_STATE
     end
+    if opts and opts.onlyActive and contract.state ~= CH.STATE.ACTIVE then return false, CH.ERR.BAD_STATE end
     -- On hold by staff (server/freeze.lua): nothing is taken.
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
 

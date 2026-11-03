@@ -2935,9 +2935,9 @@
       // Proof items (Config.Improvements.ProofItems, off as shipped): where
       // a kill pays, handing the placer an item taken from the target.
       if (killPays && settings().proofItem) {
-        row.appendChild(actionButton(null, 'Hand over proof',
+        row.appendChild(restartWaits(actionButton(null, 'Hand over proof',
           'proof:' + contract.id, 'Handing over\u2026',
-          function () { return handOverProof(contract); }));
+          function () { return handOverProof(contract); })));
       }
 
       // What the last photo was refused for, under the buttons that retry
@@ -7326,12 +7326,13 @@
   var ROLE_WORDS = { creator: 'You placed it', hitman: 'You took it', target: 'It was on you' };
 
   /* How a closed contract ended, from the row's kind (the server's Ledger:
-     'paid', 'withdrawn', 'refunded', 'buyout'; a row from before there were
+     'paid', 'withdrawn', 'refunded', 'cancelled', 'buyout'; a row from before there were
      kinds is a payout). */
   function ledgerOutcome(row) {
     var kind = row.kind || 'paid';
     if (kind === 'withdrawn') { return { text: 'Withdrawn', icon: 'i-xcircle' }; }
     if (kind === 'refunded') { return { text: 'Ran out \u2014 refunded', icon: 'i-clock' }; }
+    if (kind === 'cancelled') { return { text: 'Cancelled \u2014 refunded', icon: 'i-xcircle' }; }
     if (kind === 'buyout') { return { text: 'Bought out', icon: 'i-exit' }; }
     return row.fulfilment === 'kidnapping'
       ? { text: 'Delivered alive', icon: 'i-usercheck' }
@@ -7345,7 +7346,9 @@
     var amount = Number(row.amount) || 0;
     if (!(amount > 0)) { return null; }
     var kind = row.kind || 'paid';
-    if (kind === 'withdrawn' || kind === 'refunded') { return money(amount) + ' back to you'; }
+    if (kind === 'withdrawn' || kind === 'refunded' || kind === 'cancelled') {
+      return money(amount) + ' back to you';
+    }
     if (kind === 'buyout') {
       return row.role === 'target' ? 'You paid ' + money(amount) : money(amount) + ' to you';
     }
@@ -8593,7 +8596,11 @@
         : ' While nobody takes it, its reward rises ' + decay.percent + '% every ' + decay.hours
           + ' h, up to ' + decay.maxPercent + '%, taken from your '
           + (decay.account === 'cash' ? 'cash' : 'bank') + '.';
-      text += ' You can stop that from its card under Mine.';
+      if (decay.mode !== 'shorten' && asked.anonymous === true) {
+        text += ' Not this one: a contract placed anonymously never rises.';
+      } else {
+        text += ' You can stop that from its card under Mine.';
+      }
     }
     return text;
   }
@@ -8796,7 +8803,7 @@
     // Kept for the confirmation: the draft is cleared once it is placed.
     var held = takenText(composed);
     var asked = { bailout: num('bailout'), penalty: num('penalty'),
-                  aliveOnly: placingAliveOnly() };
+                  aliveOnly: placingAliveOnly(), anonymous: state.draft.anon === true };
 
     // Guarded here rather than at the top of the function: everything above
     // is client-side validation that answers instantly, and locking the
@@ -10631,6 +10638,12 @@
   function appendDecay(row, more, contract) {
     var d = contract.decay;
     if (!d) { return; }
+    // Placed anonymously: the reward never rises (server/imp_decay.lua).
+    if (d.anonymous) {
+      row.appendChild(el('div', 'notice decay-notice',
+        'Its reward does not rise while it waits: you placed it anonymously.'));
+      return;
+    }
     var what;
     if (d.mode === 'shorten') {
       what = 'While nobody takes it, it runs out ' + d.percent + '% sooner every '

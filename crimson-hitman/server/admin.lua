@@ -1368,8 +1368,20 @@ function Admin.adjustDeadline(src, contractId, seconds, reason)
     -- The lifetime after the deadline: the other way round, a deadline
     -- refused as locked left a lifetime extended for nothing. Should the
     -- lifetime not take, the deadline is put back by what this moved it.
+    -- Added to the lifetime as it is now, read again under the contract's
+    -- key just before the write (as the freeze's give-back does): written
+    -- as the figure planned before the deadline's awaits, it put back a
+    -- give-back an unfreeze had added in between.
     if plan.newExpires and plan.expires and plan.newExpires > plan.expires then
-        local wrote, err = pcall(Storage.setContractFields, contractId, { expires_at = plan.newExpires })
+        local add = plan.newExpires - plan.expires
+        local function lengthen()
+            local fresh = Storage.readContract(contractId)
+            local expires = fresh and tonumber(fresh.expires_at) or plan.expires
+            Storage.setContractFields(contractId, { expires_at = expires + add })
+            return true
+        end
+        local wrote, err = pcall(Contracts.serialized, { 'contract:' .. contractId }, lengthen)
+        if wrote and err ~= true then wrote, err = pcall(lengthen) end
         if not wrote then
             Log.always(('staff extending contract %s: its lifetime could not be written (%s); the '
                 .. 'deadline is put back'):format(contractId, Util.dbError(err)))

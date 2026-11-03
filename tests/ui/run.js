@@ -7481,6 +7481,25 @@ async function main() {
         });
       }
 
+      // Sweep 4: the restart hold greys it as it greys Verify kill.
+      const heldList = boardWithoutPhotos({ proofItem: { item: 'id_card', radius: 3 } });
+      heldList.data.holds = { restartHold: { endsIn: 1800 } };
+      const held = boot({ list: heldList, mine: mineWithAJob(), ledger: NEW_HITMAN,
+        proofItem: { ok: true, data: { settled: 1, pending: 0 } } });
+      await settle(); await settle();
+      tab(held, 'mine');
+      await settle();
+      const heldButton = held.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Hand over proof';
+      })[0];
+      if (heldButton && typeof heldButton.onclick === 'function') { heldButton.onclick(); }
+      await settle(); await settle();
+      it('greys Hand over proof and sends nothing during the restart hold', function () {
+        truthy(heldButton, 'the button is drawn');
+        truthy(heldButton.disabled === true, 'greyed');
+        eq(held.sent.filter(function (x) { return x.name === 'proofItem'; }).length, 0);
+      });
+
       const alive = boot({
         list: boardWithoutPhotos({ proofItem: { item: 'id_card', radius: 3 }, fulfilment: 'alive' }),
         mine: { ok: true, data: { created: [], accepted: [Object.assign({},
@@ -13535,7 +13554,9 @@ async function main() {
         { contract_id: 'ct00000043', target_name: 'You', role: 'target', kind: 'buyout',
           fulfilment: 'buyout', amount: 15000, resolved_at: Math.floor(Date.now() / 1000) - 180 },
         { contract_id: 'ct00000044', target_name: 'Ann Ryder', role: 'creator', kind: 'refunded',
-          fulfilment: 'refunded', amount: 3000, resolved_at: Math.floor(Date.now() / 1000) - 240 }
+          fulfilment: 'refunded', amount: 3000, resolved_at: Math.floor(Date.now() / 1000) - 240 },
+        { contract_id: 'ct00000045', target_name: 'Bo Kerr', role: 'creator', kind: 'cancelled',
+          fulfilment: 'cancelled', amount: 4000, resolved_at: Math.floor(Date.now() / 1000) - 300 }
       ] } } });
     await settle(); await settle();
     tab(ledger, 'ledger');
@@ -13545,10 +13566,13 @@ async function main() {
       ['You took it', 'Eliminated', 'Paid you $5,000',
        'You placed it', 'Withdrawn', '$7,000 back to you',
        'It was on you', 'Bought out', 'You paid $15,000',
-       'Ran out — refunded', '$3,000 back to you'].forEach(function (words) {
+       'Ran out — refunded', '$3,000 back to you',
+       'Cancelled — refunded', '$4,000 back to you'].forEach(function (words) {
         truthy(text.indexOf(words) !== -1, words + ' missing: ' + text);
       });
       falsy(/\bhitman\b|\bcreator\b/.test(text.replace(/hitman on it/g, '')), 'a field value on screen: ' + text);
+      // Sweep 4: one cancelled by agreement never reads as one that ran out.
+      truthy((text.match(/Ran out/g) || []).length === 1, 'only the one that ran out: ' + text);
     });
 
     // S1: the app paused, the restart hold, on hold.

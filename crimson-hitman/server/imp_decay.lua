@@ -10,7 +10,11 @@
 ---     escrow, charged last and audited, so nothing is made or lost. A step
 ---     waits while the placer is away (nobody can be charged who is not in
 ---     the city), and a refusal (they cannot pay, or a ceiling) stops the
----     rise on that contract for good, and they are told.
+---     rise on that contract for good, and they are told. Only a contract
+---     placed under the placer's own name rises: a step that waits for its
+---     placer to come back, then lands on the board, would tell anybody
+---     watching the reward when an anonymous placer logged in, so an
+---     anonymous contract never rises (its card says so).
 ---   * 'shorten': its deadline is brought in by Percent of the time it has
 ---     left (Contracts.bringDeadlineIn, never closer than the clock allows;
 ---     stopped once it is that close). Nothing is charged.
@@ -21,6 +25,11 @@
 --- opt-out. A contract already older than a step when it is first seen
 --- (one placed before this was turned on) starts its count then, rather
 --- than being stepped at once.
+---
+--- Only time spent waiting counts: while staff hold it (a freeze, the
+--- restart hold, the app pause) or an operative holds it, its count stands
+--- still (held_since on its row), and the time is added back when it is
+--- untaken and free again, so no step falls due the moment a hold ends.
 
 local Util = CrimsonBoot.requireShared('util')
 
@@ -44,7 +53,8 @@ local nextAt = 0
 --- The Hours that nextAt was worked out with: a change wakes the next pass.
 local nextHours = nil
 
---- [contractId] = row { id, kind, contract_id, steps, added, base, last_at, off, stopped }
+--- [contractId] = row { id, kind, contract_id, steps, added, base, last_at, off, stopped,
+---                      held_since }
 local rows = {}
 
 local function rules()
@@ -77,6 +87,50 @@ local function rowFor(contract, now, hours)
     return row
 end
 
+--- Whether a contract was placed anonymously.
+local function anonymous(contract)
+    return contract.anon_creator ~= nil and contract.anon_creator ~= false and contract.anon_creator ~= 0
+end
+
+--- When whatever holds this contract now began (a staff freeze, the
+--- restart hold, the app pause), or nil when nothing does.
+local function heldSince(contract, hitmen, now)
+    local held = (Contracts.heldByStaff and Contracts.heldByStaff(contract, hitmen))
+        or (Contracts.restartHeld and Contracts.restartHeld())
+        or (Contracts.appPaused and Contracts.appPaused())
+    if not held then return nil end
+    local since = Contracts.heldSince and Contracts.heldSince(contract, hitmen) or nil
+    return math.min(num(since, now), now)
+end
+
+--- When a taken contract was taken: the earliest acceptance among its
+--- active operatives (the snapshot's rosters, else read), or now.
+local function takenSince(contract, rosters, now)
+    local roster = rosters and rosters[contract.id] or Storage.readHitmen(contract.id) or {}
+    local since = now
+    for _, h in ipairs(roster) do
+        if h.state == 'active' and tonumber(h.accepted_at) then
+            since = math.min(since, tonumber(h.accepted_at))
+        end
+    end
+    return since
+end
+
+--- The count stands still from `since` (never before the count's own start).
+local function pauseRow(row, since)
+    if row.held_since then return end
+    row.held_since = math.max(since, num(row.last_at, since))
+    write(row)
+end
+
+--- And runs again: the time it stood still is added to its start.
+local function resumeRow(row, now)
+    local since = row.held_since
+    if not since then return end
+    row.held_since = nil
+    row.last_at = num(row.last_at, now) + math.max(0, now - num(since, now))
+    write(row)
+end
 
 --- Stop the rise on a contract for good, and tell its placer why.
 local function stop(row, contract, why, text)
@@ -111,7 +165,7 @@ local function rise(cfg, row, contract, now)
     row.added, row.steps, row.last_at = (row.added or 0) + amount, (row.steps or 0) + 1, now
     write(row)
     local ran, ok, err = pcall(Amendments.addEscrow, placer, contract.id,
-        { baseline = { [account] = amount } })
+        { baseline = { [account] = amount } }, { onlyActive = true })
     if ran and ok then
         Notify.toCitizen(contract.creator_cid, 'Contract reward',
             ('Nobody has taken your contract yet, so its reward rose by %s, taken from your %s.')
@@ -128,6 +182,12 @@ local function rise(cfg, row, contract, now)
     -- Busy (a claim or another change on it): tried again next step.
     if err == CH.ERR.BUSY or err == CH.ERR.LOCKED then
         row.last_at = now
+        return write(row)
+    end
+    -- On hold (a freeze, the restart hold or the app pause landed in the
+    -- awaits): not the placer's doing, so nothing stops. The count stands
+    -- still with the hold (Decay.tick) and the step is taken after it.
+    if err == CH.ERR.CONTRACT_FROZEN or err == CH.ERR.RESTART_HOLD or err == CH.ERR.APP_PAUSED then
         return write(row)
     end
     -- Ended or taken since it was read: nothing to do.
@@ -183,47 +243,71 @@ function Decay.tick()
     if not stepping and next(rows) == nil then return 0 end
     local every = hours * 3600
     local soonest, stepped, more = now + every, 0, false
-    local list
+    local list, rosters
     if Projection and Projection.liveSnapshot then
-        list = Projection.liveSnapshot()
+        list, rosters = Projection.liveSnapshot()
     else
         list = Storage.liveContracts()
     end
+    local rising = cfg.Mode ~= 'shorten'
     local live = {}
     for _, contract in ipairs(list or {}) do
         live[contract.id] = true
-        if stepping and contract.state == CH.STATE.ACTIVE then
-            if (Contracts.heldByStaff and Contracts.heldByStaff(contract))
-                or (Contracts.appPaused and Contracts.appPaused()) then
-                -- Held: no step, and looked at again on the next pass.
-                soonest = now
-            else
-                local row = rowFor(contract, now, hours)
-                if not row.off and not row.stopped then
-                    local dueAt = num(row.last_at, now) + every
-                    if now < dueAt then
-                        soonest = math.min(soonest, dueAt)
-                    elseif stepped >= Decay.STEPS_PER_PASS then
-                        more = true
+        -- Never risen for an anonymous placer: see the top of this file.
+        local skip = rising and anonymous(contract)
+        local active = contract.state == CH.STATE.ACTIVE
+        local kept = rows[contract.id]
+        local since = nil
+        if not skip and active and (stepping or kept) then
+            since = heldSince(contract, rosters and rosters[contract.id], now)
+        end
+        if skip or not active then
+            -- Taken: its count stands still from the acceptance.
+            if not skip and kept and not kept.held_since then
+                pauseRow(kept, takenSince(contract, rosters, now))
+            end
+        elseif since then
+            -- Held: no step, its count stands still from the hold's start,
+            -- and it is looked at again on the next pass.
+            pauseRow(kept or rowFor(contract, now, hours), since)
+            soonest = now
+        elseif kept and kept.held_since then
+            -- Free and untaken again: the count runs on from where it stood.
+            resumeRow(kept, now)
+            nextAt = math.min(nextAt, num(kept.last_at, now) + every)
+        end
+        if stepping and active and not skip and not since then
+            local row = rowFor(contract, now, hours)
+            if not row.off and not row.stopped then
+                local dueAt = num(row.last_at, now) + every
+                if now < dueAt then
+                    soonest = math.min(soonest, dueAt)
+                elseif stepped >= Decay.STEPS_PER_PASS then
+                    more = true
+                else
+                    stepped = stepped + 1
+                    if cfg.Mode == 'shorten' then
+                        shorten(cfg, row, contract, now)
                     else
-                        stepped = stepped + 1
-                        if cfg.Mode == 'shorten' then
-                            shorten(cfg, row, contract, now)
-                        else
-                            rise(cfg, row, contract, now)
-                        end
-                        -- One that waited (its placer away) is due again on
-                        -- the next pass; one taken, a step from now.
-                        if not row.stopped then
-                            soonest = math.min(soonest, num(row.last_at, now) + every)
-                        end
+                        rise(cfg, row, contract, now)
+                    end
+                    -- One that waited (its placer away) is due again on
+                    -- the next pass; one taken, a step from now.
+                    if not row.stopped then
+                        soonest = math.min(soonest, num(row.last_at, now) + every)
                     end
                 end
             end
         end
     end
     for id in pairs(rows) do
-        if not live[id] then forget(id) end
+        -- Not one being paid: a completion that fails goes back to
+        -- accepted, and forgotten it would start its count, and its
+        -- rise's ceiling, again from nothing.
+        if not live[id] then
+            local read, contract = pcall(Storage.readContract, id)
+            if not (read and contract and contract.state == CH.STATE.COMPLETING) then forget(id) end
+        end
     end
     if stepping then nextAt = more and 0 or soonest end
     return stepped
@@ -237,6 +321,10 @@ function Decay.cardFor(contract)
     if not cfg or type(contract) ~= 'table' then return nil end
     local row = rows[contract.id]
     if contract.state ~= CH.STATE.ACTIVE and not row then return nil end
+    if cfg.Mode ~= 'shorten' and anonymous(contract) then
+        -- Placed anonymously: it never rises, and the card says why.
+        return { mode = 'rise', anonymous = true }
+    end
     return {
         mode = cfg.Mode == 'shorten' and 'shorten' or 'rise',
         percent = math.floor(num(cfg.Percent)),

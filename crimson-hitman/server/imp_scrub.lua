@@ -66,9 +66,13 @@ function Scrub.scrub(recipientCid, line, meta)
     if type(line) ~= 'table' or line.source ~= CH.SOURCE.WEAPON then return nil end
     if type(meta) ~= 'table' or type(meta.serial) ~= 'string' or meta.serial == '' then return nil end
     if line.taken_from ~= nil and line.taken_from == recipientCid then return nil end
-    local contract = line.contract_id and deps.storage.readContract(line.contract_id)
-    -- Only an anonymous placer's weapon, and never back to them.
-    if not contract or contract.anon_creator ~= true or contract.creator_cid == recipientCid then
+    local read, contract = pcall(function()
+        return line.contract_id and deps.storage.readContract(line.contract_id) or nil
+    end)
+    -- Only an anonymous placer's weapon, and never back to them. A contract
+    -- that cannot be read is treated as anonymous, as Escrow's unregistered
+    -- treats it: a weapon is never handed over traceable for want of a read.
+    if read and contract and (contract.anon_creator ~= true or contract.creator_cid == recipientCid) then
         return nil
     end
     local serial = line.id and minted[line.id]

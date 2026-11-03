@@ -179,6 +179,18 @@ local function stillOn(contractId, cid)
     return true, nil, contract
 end
 
+--- stillOn, for a purchase: and not on hold by staff (server/freeze.lua),
+--- so a freeze that lands while the purchase awaits moves no money. Showing
+--- a tip already bought again (LocationTip.reshow) asks stillOn alone.
+local function stillBuyable(contractId, cid)
+    local open, err, contract = stillOn(contractId, cid)
+    if not open then return false, err end
+    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
+        return false, CH.ERR.CONTRACT_FROZEN
+    end
+    return true, nil, contract
+end
+
 --------------------------------------------------------------------------
 -- The buyer's map
 --------------------------------------------------------------------------
@@ -340,7 +352,7 @@ buyUnlocked = function(actor, contractId, shown)
 
     -- And the contract and this hitman read again, with nothing between this
     -- and the charge: every read above is an await on mysql.
-    local open, err = stillOn(contractId, actor.cid)
+    local open, err = stillBuyable(contractId, actor.cid)
     if not open then return false, err end
 
     if not Util.charge(actor.player, account, cost) then
@@ -374,7 +386,7 @@ buyUnlocked = function(actor, contractId, shown)
     end)
     local stands, refusal = false, CH.ERR.SERVER_ERROR
     if kept then
-        local read, ok, err2 = pcall(stillOn, contractId, actor.cid)
+        local read, ok, err2 = pcall(stillBuyable, contractId, actor.cid)
         stands = read and ok == true
         refusal = read and err2 or CH.ERR.SERVER_ERROR
     else

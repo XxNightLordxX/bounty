@@ -1365,7 +1365,7 @@ describe('every channel a player not entitled to it can read', function()
         -- The board improvements' channels (server/imp_*.lua), all on: the
         -- placer's record (an anonymous placer's in bands) and the tier lock
         -- on every board, contract decay on the anonymous placer's untaken
-        -- contract (its step, its notice, its card, turning it off), and
+        -- contract (no step, its card, turning it off), and
         -- heat's warning and police bulletin. Off again after.
         imp.PlacerRecord.Enabled, imp.PlacerRecord.ShowForAnonymous = true, true
         imp.HitmanHeat.Enabled, imp.HitmanHeat.WarnTargetChancePercent = true, 100
@@ -1384,7 +1384,9 @@ describe('every channel a player not entitled to it can read', function()
         for _, row in ipairs(s.storage.readRpRows('imp_decay')) do
             if (row.steps or 0) > 0 then stepped = true end
         end
-        truthy(stepped, 'decay stepped the untaken anonymous contract')
+        -- Sweep 4: a rise never steps an anonymous contract (its step would
+        -- time the placer's login), so this channel says nothing at all.
+        falsy(stepped, 'decay never raises the untaken anonymous contract')
         for _, src in ipairs({ 2, 3, 4, 5, 7 }) do call('list', src, { page = 1 }) end
         call('mine', 1, {})
         truthy(call('decayOff', 1, { id = lazy and lazy.id }).ok, 'turned off by its placer')

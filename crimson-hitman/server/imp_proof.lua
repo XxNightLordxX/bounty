@@ -145,7 +145,21 @@ function Proof.handover(actor, rawId)
         return false, CH.ERR.KILL_NOT_ALLOWED
     end
     if Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- On hold for the restart, or the whole app paused: the claim below
+    -- would be refused anyway, so the item is never taken to be given back.
+    if Contracts.restartHeld and Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
+    if Contracts.appPaused and Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
     if Contracts.slotCoolingDown(hitman) then return false, CH.ERR.SLOT_COOLDOWN end
+
+    -- The item first, before anybody's whereabouts are looked at: a hitman
+    -- without the card is told only that, whoever stands beside them, so
+    -- the answer can never be used to find out who the placer is or
+    -- whether they are online (too far for the placer, missing for anyone).
+    local item = tostring(rules().Item or 'id_card')
+    local key = tostring(rules().MetadataKey or 'citizenid')
+    local slot, read = proofSlot(actor, item, key, contract.target_cid)
+    if not read then return false, CH.ERR.FEATURE_OFF end
+    if not slot then return false, CH.ERR.PROOF_MISSING end
 
     -- Beside the placer, by where the server sees both, in one routing
     -- bucket: two players in two apartment shells stand at the same
@@ -160,12 +174,6 @@ function Proof.handover(actor, rawId)
     if not here or not there or Util.dist2(here, there) > radius * radius then
         return false, CH.ERR.PROOF_TOO_FAR, { radius = radius }
     end
-
-    local item = tostring(rules().Item or 'id_card')
-    local key = tostring(rules().MetadataKey or 'citizenid')
-    local slot, read = proofSlot(actor, item, key, contract.target_cid)
-    if not read then return false, CH.ERR.FEATURE_OFF end
-    if not slot then return false, CH.ERR.PROOF_MISSING end
 
     local busy = contractId .. ':' .. actor.cid
     if working[busy] then return false, CH.ERR.BUSY end

@@ -205,20 +205,20 @@ function Heat.bulletin(now)
     if not cfg then return false end
     local every = math.floor(num(cfg.BulletinEveryMinutes))
     if every <= 0 or now - lastBulletin < every * 60 then return false end
-    local known, any = {}, false
+    local any = false
     for cid in pairs(events) do
-        if Heat.known(cid) then
-            known[cid] = true
-            if not any and working(cid) then any = true end
-        end
+        if not any and Heat.known(cid) and working(cid) then any = true end
     end
     if not any then return false end
     lastBulletin = now
     local title = Util.sanitizeText(tostring(cfg.BulletinTitle or 'Intelligence bulletin'), 60)
     local text = Util.sanitizeText(tostring(cfg.BulletinText or ''), 160)
     local told = 0
+    -- To every officer alike, a known hitman who holds a police job too:
+    -- sc-dispatch shows it them anyway, and leaving them out of the phone
+    -- bulletin told whoever compared notes which officer was the hitman.
     for _, actor in ipairs(Identity.online() or {}) do
-        if not known[actor.cid] and Identity.isAdvisoryRecipient(actor.job) then
+        if Identity.isAdvisoryRecipient(actor.job) then
             Notify.toCitizen(actor.cid, title, text, { bypassBudget = true })
             told = told + 1
         end

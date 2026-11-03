@@ -189,9 +189,17 @@ end
 --- After the charge and before the roll: the contract still open, and the
 --- operative (where there is one) still on it. The contract as read now, or
 --- nil and why not.
+--- Whether staff hold the contract (server/freeze.lua): no money moves on
+--- one that is, so it is asked on every read again before and after the
+--- charge, and a freeze that lands in the awaits refunds.
+local function held(contract)
+    return Contracts ~= nil and Contracts.heldByStaff ~= nil and Contracts.heldByStaff(contract) == true
+end
+
 local function stillOn(contractId, pick, row)
     local now = Storage.readContract(contractId)
     if not live(now) then return nil, CH.ERR.ALREADY_SETTLED end
+    if held(now) then return nil, CH.ERR.CONTRACT_FROZEN end
     if row and not operativeFor(contractId, pick) then return nil, CH.ERR.OPERATIVE_GONE end
     return now
 end
@@ -391,7 +399,9 @@ targetBuy = function(actor, contractId, shown, pick)
 
     -- Read again with nothing between this and the charge: the state above
     -- was read before every await since.
-    if not live(Storage.readContract(contractId)) then return false, CH.ERR.ALREADY_SETTLED end
+    local fresh = Storage.readContract(contractId)
+    if not live(fresh) then return false, CH.ERR.ALREADY_SETTLED end
+    if held(fresh) then return false, CH.ERR.CONTRACT_FROZEN end
     if row and not operativeFor(contractId, pick) then return false, CH.ERR.OPERATIVE_GONE end
 
     -- Charged last. Balance read first: RemoveMoney answers true on an empty
@@ -642,7 +652,9 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
         end
     end
 
-    if not live(Storage.readContract(contractId)) then return false, CH.ERR.ALREADY_SETTLED end
+    local fresh = Storage.readContract(contractId)
+    if not live(fresh) then return false, CH.ERR.ALREADY_SETTLED end
+    if held(fresh) then return false, CH.ERR.CONTRACT_FROZEN end
     if not operativeFor(contractId, pick) then return false, CH.ERR.OPERATIVE_GONE end
 
     if not Util.charge(actor.player, account, cost) then

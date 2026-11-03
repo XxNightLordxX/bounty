@@ -486,6 +486,12 @@ function Freeze.restartHeld()
     return restartHold ~= nil and os.time() < Freeze.restartHoldEnds()
 end
 
+--- When the restart hold began, os.time(), while it is on; else nil.
+---@return integer|nil
+function Freeze.restartHeldSince()
+    return Freeze.restartHeld() and restartHold.since or nil
+end
+
 --- When the restart hold ends if the restart has not come: its start and
 --- Config.Restart.MaxHoldMinutes as it is set now. nil with no hold.
 ---@return integer|nil
