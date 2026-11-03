@@ -21,6 +21,14 @@ local Summary = {}
 local deps
 local lastDay = nil     -- yyyymmdd last posted, as the store had it at the start
 local DAY_META = 'staff_summary_day'
+--- A post refused after the counts were read: they are not read again
+--- until this (os.time()), or every tick past the hour read every contract
+--- and every unsettled escrow line for a post that went nowhere.
+--- { untilAt, why }; nil: try on the next tick. With no webhook set (or
+--- the alerts not wired) the tick answers before any count is read.
+local backoff = nil
+--- How long a refused post waits before the counts are read again.
+Summary.BACKOFF_SECONDS = 600
 
 --- What counts as refunded: a contract that ended with its reward handed
 --- back to the placer.
@@ -29,7 +37,7 @@ local REFUNDED = { [CH.STATE.CANCELLED] = true, [CH.STATE.EXPIRED] = true, [CH.S
 ---@param d table { storage, review, freeze, audit, alerts?, sanctions? (Sanctions.count) }
 function Summary.init(d)
     deps = d
-    lastDay = nil
+    lastDay, backoff = nil, nil
     if deps.storage and deps.storage.readStaffMeta then
         local ok, meta = pcall(deps.storage.readStaffMeta)
         if ok and type(meta) == 'table' then lastDay = tonumber(meta[DAY_META]) end
@@ -121,11 +129,27 @@ function Summary.tick()
     local at = math.floor(tonumber(Config.Staff.DailySummaryHour) or 6)
     if hour < at then return false, 'early' end
     if lastDay == day then return false, 'done' end
+    if backoff and now < backoff.untilAt then return false, backoff.why end
+    backoff = nil
     local alerts = deps.alerts
-    if not (alerts and alerts.post) then return false, 'unavailable' end
+    local why
+    if not (alerts and alerts.post) then
+        why = 'unavailable'
+    elseif type(alerts.discordState) == 'function' then
+        -- Asked before the counts are read: whether a webhook is set (it
+        -- names which convar set one, never the url).
+        local ok, state = pcall(alerts.discordState)
+        if ok and type(state) == 'table' and state.webhook == nil then why = 'no_webhook' end
+    end
+    -- A convar read, not a store read: a webhook set later posts on the
+    -- next tick, and a tick with none reads no contract.
+    if why then return false, why end
     local text = Summary.text(Summary.counts(now), day)
     local queued, err = alerts.post(text)
-    if not queued then return false, err end
+    if not queued then
+        backoff = { untilAt = now + Summary.BACKOFF_SECONDS, why = err }
+        return false, err
+    end
     lastDay = day
     local wrote, writeErr = pcall(deps.storage.writeStaffMeta, DAY_META, day)
     if not wrote then

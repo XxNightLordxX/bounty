@@ -696,7 +696,7 @@ local suites = {
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
     'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec', 'perf_round3_spec',
     'final_verify_spec', 'workflow3_spec',
-    'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec', 'sweep4_spec',
+    'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec', 'sweep4_spec', 'sweep4_staff_spec',
     'docs_spec',
 }
 

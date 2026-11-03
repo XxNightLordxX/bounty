@@ -2161,6 +2161,12 @@ end
 local function fits(changes)
     if not Check then return true, nil, {} end
     local candidate = copyOf(Config)
+    -- A restart-only key changed since this start is checked as the next
+    -- start will run it: left at the value in force, every later change was
+    -- refused as one that "would change" it (sweep 4 D1).
+    for key, value in pairs(nextStart) do
+        if byKey[key] then write(candidate, key, stored(byKey[key], value)) end
+    end
     for key, value in pairs(changes) do write(candidate, key, stored(byKey[key], value)) end
     local floor = belowFloor(changes, candidate)
     if floor then return false, floor end

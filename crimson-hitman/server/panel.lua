@@ -156,11 +156,25 @@ local ALERT_ROWS = 100
 --- reverse. Kept for the life of the process.
 local freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
 
+--- The handles a player lookup gives (H.player), so a write from that card
+--- (freeze, suspend, protect, pay, set playtime, and their lifts) acts on
+--- exactly the character the lookup found. The page sent back what was
+--- typed, and each write matched it again: a name or a player id that by
+--- then named somebody else (a drop and a join between the lookup and the
+--- click) paid or froze the wrong player. [src] = { [ref] = { cid, staff,
+--- at, typed, viaContract } }: only the staff member it was given to, and
+--- only for PLAYER_REF_MS. The page never holds the citizen id it stands
+--- for (staff without IdentityAce are not shown it).
+local playerRefs, playerRefSeq = {}, 0
+local PLAYER_REF_MS = 600000        -- ten minutes from the lookup
+local PLAYER_REFS_PER_STAFF = 20    -- the oldest go first past this
+
 function Panel.init(d)
     deps = d
     overviewCache, contractsCache = nil, nil
     deniedLogged = {}
     freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
+    playerRefs, playerRefSeq = {}, 0
 end
 
 --- Newest first, then by id: the order the Contracts section lists in.
@@ -1598,6 +1612,76 @@ local function playerSubject(subject, src)
     return byName(text, canIdentify)
 end
 
+--- What a write says when its lookup handle is not this staff member's,
+--- has run out, or never was.
+local STALE_LOOKUP = 'That lookup is out of date, so nothing was changed. Look them up again.'
+
+--- A handle for the character a lookup found, for this staff member only.
+---@param src integer
+---@param who table playerSubject's answer
+---@return string ref
+local function playerRef(src, who)
+    local now = Util.monotonicMs()
+    local mine = playerRefs[src]
+    if not mine then
+        mine = {}
+        playerRefs[src] = mine
+    end
+    local count, oldest, oldestAt = 0, nil, math.huge
+    for ref, entry in pairs(mine) do
+        if now - entry.at >= PLAYER_REF_MS then
+            mine[ref] = nil
+        else
+            count = count + 1
+            if entry.at < oldestAt then oldest, oldestAt = ref, entry.at end
+        end
+    end
+    if count >= PLAYER_REFS_PER_STAFF and oldest then mine[oldest] = nil end
+    playerRefSeq = playerRefSeq + 1
+    local ref = ('p%d_%d'):format(playerRefSeq, math.random(100000, 999999))
+    mine[ref] = { cid = who.cid, staff = staffOf(src), at = now, typed = who.typed or nil,
+                  viaContract = who.viaContract or nil }
+    return ref
+end
+
+--- The character a lookup handle stands for, or nil and what to say.
+---@return table|nil who { cid, actor, typed, viaContract }
+---@return string|nil err
+---@return string|nil message
+local function fromPlayerRef(src, ref)
+    local mine = type(ref) == 'string' and playerRefs[src] or nil
+    local key = mine and ref:sub(1, 24) or nil
+    local entry = key and mine[key] or nil
+    if not entry or Util.monotonicMs() - entry.at >= PLAYER_REF_MS or entry.staff ~= staffOf(src) then
+        if entry then mine[key] = nil end
+        return nil, 'stale_lookup', STALE_LOOKUP
+    end
+    return { cid = entry.cid, actor = deps.identity.byCitizenId(entry.cid), typed = entry.typed,
+             viaContract = entry.viaContract }
+end
+
+--- Who a write names: the handle of the lookup staff made (data.ref), a
+--- citizen id typed exactly, or a party to a contract by its role (fixed by
+--- the contract). Never a name or a player id matched again now: those can
+--- name somebody else by the time of the click.
+---@return table|nil who { cid, actor, typed }
+---@return string|nil err
+---@return string|nil message
+local function writeSubject(data, src)
+    if data.ref ~= nil then return fromPlayerRef(src, data.ref) end
+    local subject = data.subject
+    if type(subject) == 'string' and subject:sub(1, 9) == 'contract:' then
+        return contractParty(subject:sub(1, 96), src ~= nil and identifies(src))
+    end
+    local text = type(subject) == 'string' and shortText(subject, 64) or nil
+    local cid = text and not text:match('^%d+$') and typedCitizenId(text) or nil
+    if not cid then
+        return nil, CH.ERR.INVALID_INPUT, 'Look the player up first, then act from their card: a change '
+            .. 'names them by that lookup or by their exact citizen id, never by a name or a player id.'
+    end
+    return { cid = cid, actor = deps.identity.byCitizenId(cid), typed = true }
+end
+
 --- A character's playtime as the panel shows it: what the built-in tracker
 --- counted (Playtime.view), the floor, and what the rule reads for them
 --- (Identity.playtimeHours: an export, QBox metadata, or the tracker).
@@ -1636,7 +1720,14 @@ end
 H.player = function(src, data)
     local Storage = deps.storage
     local canIdentify = identifies(src)
-    local who, whoErr, whoMessage = playerSubject(data.subject, src)
+    -- Read again after a write, by the handle the lookup gave: the same
+    -- character, whatever the box says now.
+    local who, whoErr, whoMessage
+    if data.ref ~= nil then
+        who, whoErr, whoMessage = fromPlayerRef(src, data.ref)
+    else
+        who, whoErr, whoMessage = playerSubject(data.subject, src)
+    end
     if not who then return false, whoErr, whoMessage end
     local cid, actor, typedCid = who.cid, who.actor, who.typed
 
@@ -1711,6 +1802,8 @@ H.player = function(src, data)
         player = {
             cid = (canIdentify or typedCid) and cid or nil, name = name,
             online = actor ~= nil, server = actor and actor.source or nil,
+            -- What every write from this card names them by (writeSubject).
+            ref = playerRef(src, who),
         },
         contracts = contracts,
         stats = stats,
@@ -1767,7 +1860,7 @@ H.freeze = function(src, data)
     if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
     local reason = shortText(data.reason, 120)
     if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
-    local who, whoErr, whoMessage = playerSubject(data.subject, src)
+    local who, whoErr, whoMessage = writeSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local cid, actor = who.cid, who.actor
     if not actor and deps.identity.characterExists(cid) == false
@@ -1796,11 +1889,12 @@ end
 H.unfreeze = function(src, data)
     if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
     local cid
-    if data.ref ~= nil then
+    -- A row of the frozen list ('f' handles), or the player looked up.
+    if data.ref ~= nil and not (type(data.ref) == 'string' and data.ref:sub(1, 1) == 'p') then
         cid = type(data.ref) == 'string' and freezeRefs[data.ref:sub(1, 16)] or nil
         if not cid then return false, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
     else
-        local who, whoErr, whoMessage = playerSubject(data.subject, src)
+        local who, whoErr, whoMessage = writeSubject(data, src)
         if not who then return false, whoErr, whoMessage end
         cid = who.cid
     end
@@ -1836,7 +1930,7 @@ H.setPlaytime = function(src, data)
     if not hours or hours ~= hours or hours < 0 or hours > 100000 then
         return false, CH.ERR.INVALID_INPUT, 'Hours are a number from 0 to 100000.'
     end
-    local who, whoErr, whoMessage = playerSubject(data.subject, src)
+    local who, whoErr, whoMessage = writeSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local cid, actor = who.cid, who.actor
     -- A citizen id typed that no character has: refused, not a row made for
@@ -2675,11 +2769,12 @@ function Panel.sanctionView(kind, cid, canIdentify)
              by = canIdentify and row.by_cid or nil }
 end
 
---- The player a staff action names, as the freeze takes one: a player id or
---- a citizen id, and refused for a citizen id no character has and nothing
---- here names. nil, the error and what to say otherwise.
-local function actionSubject(subject, src)
-    local who, whoErr, whoMessage = playerSubject(subject, src)
+--- The player a staff action names, as the freeze takes one: the lookup's
+--- handle or an exact citizen id (writeSubject), and refused for a citizen
+--- id no character has and nothing here names. nil, the error and what to
+--- say otherwise.
+local function actionSubject(data, src)
+    local who, whoErr, whoMessage = writeSubject(data, src)
     if not who then return nil, whoErr, whoMessage end
     if not who.actor and deps.identity.characterExists(who.cid) == false
         and #(deps.storage.contractsInvolving(who.cid) or {}) == 0 then
@@ -2716,7 +2811,12 @@ end
 H.history = function(src, data)
     if not deps.history then return false, 'unavailable', 'The history card is not available here.' end
     local canIdentify = identifies(src)
-    local who, whoErr, whoMessage = playerSubject(data.subject, src)
+    local who, whoErr, whoMessage
+    if data.ref ~= nil then
+        who, whoErr, whoMessage = fromPlayerRef(src, data.ref)
+    else
+        who, whoErr, whoMessage = playerSubject(data.subject, src)
+    end
     if not who then return false, whoErr, whoMessage end
     -- The queue first, so the newest purchases are there to read.
     deps.audit.flush()
@@ -2740,7 +2840,7 @@ H.suspend = function(src, data)
         return false, CH.ERR.INVALID_INPUT, ('Days are a whole number from 1 to %d, or 0 for until you '
             .. 'lift it.'):format(Sanctions.MAX_SUSPEND_DAYS)
     end
-    local who, whoErr, whoMessage = actionSubject(data.subject, src)
+    local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.place('suspend', staffOf(src), who.cid, days > 0 and days * 86400 or nil,
         reason, who.name)
@@ -2756,7 +2856,7 @@ end
 H.unsuspend = function(src, data)
     local Sanctions = deps.sanctions
     if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
-    local who, whoErr, whoMessage = playerSubject(data.subject, src)
+    local who, whoErr, whoMessage = writeSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.lift('suspend', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not suspended.') end
@@ -2775,7 +2875,7 @@ H.protect = function(src, data)
         return false, CH.ERR.INVALID_INPUT, ('Hours are a whole number from 1 to %d, or 0 for good.')
             :format(Sanctions.MAX_PROTECT_HOURS)
     end
-    local who, whoErr, whoMessage = actionSubject(data.subject, src)
+    local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.place('protect', staffOf(src), who.cid, hours > 0 and hours * 3600 or nil,
         reason, who.name)
@@ -2791,7 +2891,7 @@ end
 H.unprotect = function(src, data)
     local Sanctions = deps.sanctions
     if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
-    local who, whoErr, whoMessage = playerSubject(data.subject, src)
+    local who, whoErr, whoMessage = writeSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.lift('protect', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not protected.') end
@@ -2818,7 +2918,7 @@ H.manualPay = function(src, data)
         return false, 'over_max', ('Not paid: $%d is over the most one payment may be, $%d '
             .. '(Config.Staff.ManualPaymentMax).'):format(amount, max)
     end
-    local who, whoErr, whoMessage = actionSubject(data.subject, src)
+    local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, result = Payments.pay(staffOf(src), who.cid, amount, account, reason, who.name)
     if not ok then

@@ -275,7 +275,7 @@ function logs(extra) {
 
 function player() {
   return { ok: true, data: {
-    player: { cid: 'TARGET01', name: 'Dana Reyes', online: true, server: 12 },
+    player: { cid: 'TARGET01', name: 'Dana Reyes', online: true, server: 12, ref: 'p7_424242' },
     contracts: [{ id: 'ct00000001', state: 'accepted', role: 'target', anonymous: false, target: 'Dana Reyes',
                   created_at: NOW - 3600, resolution: null }],
     stats: { completed: 4, failed: 1, placed: 2, survived: 3, rate: 80, standing: 'Unproven' },
@@ -1874,7 +1874,7 @@ async function main() {
     app.click(app.button('Set hours'));
     await settled();
     it('sends the hours for the player as they were looked up, not what the box says now', function () {
-      eq(app.last('setPlaytime').data, { subject: '12', hours: 6 });
+      eq(app.last('setPlaytime').data, { ref: 'p7_424242', hours: 6 });
       has(app.main(), 'Dana Reyes\'s counted playtime is now 6 h (it was 1.5 h).');
       has(app.main(), 'Enough to be named as a target.', 'the card shows what the server answered');
     });
@@ -1882,7 +1882,7 @@ async function main() {
     app.click(app.button('Reset to 0'));
     await settled();
     it('resets to 0 with two clicks', function () {
-      eq(app.last('setPlaytime').data, { subject: '12', hours: 0 });
+      eq(app.last('setPlaytime').data, { ref: 'p7_424242', hours: 0 });
     });
     const before = app.requests('setPlaytime').length;
     app.type(app.byId('pl-hours'), '-3');
@@ -3375,7 +3375,7 @@ async function main() {
     app.click(app.button('Freeze'));
     await settled();
     it('freezes the player as they were looked up, with the reason', function () {
-      eq(app.last('freeze').data, { subject: '12', reason: 'RP dispute' });
+      eq(app.last('freeze').data, { ref: 'p7_424242', reason: 'RP dispute' });
       has(app.main(), 'Dana Reyes is frozen.');
       truthy(app.button('Unfreeze'), 'Unfreeze once frozen');
       truthy(app.$$('.is-frozen').length >= 1, 'the Frozen badge');
@@ -3389,7 +3389,7 @@ async function main() {
     app.click(app.button('Unfreeze'));
     await settled();
     it('unfreezes, and offers Freeze again', function () {
-      eq(app.last('unfreeze').data.subject, '12');
+      eq(app.last('unfreeze').data.ref, 'p7_424242');
       has(app.main(), 'Unfrozen.');
       truthy(app.button('Freeze'), 'Freeze again');
     });
@@ -3684,7 +3684,7 @@ async function main() {
       has(app.main(), 'Protect from contracts');
       has(app.main(), 'Pay');
       has(app.main(), 'History');
-      eq(app.last('history').data, { subject: '12' });
+      eq(app.last('history').data, { ref: 'p7_424242' });
       has(app.main(), 'Their live contracts are not touched: freeze them for that.');
       has(app.main(), 'Contracts already on them are not touched: freeze them for that.');
     });
@@ -3722,7 +3722,7 @@ async function main() {
     app.click(app.button('Suspend'));
     await settled();
     it('suspends the player looked up, for the days picked, with the reason', function () {
-      eq(app.last('suspend').data, { subject: '12', days: 3, reason: 'Contract spam' });
+      eq(app.last('suspend').data, { ref: 'p7_424242', days: 3, reason: 'Contract spam' });
       has(app.main(), 'Dana Reyes is suspended');
       truthy(app.button('Lift suspension'), 'Lift once suspended');
       truthy(app.$$('.is-suspended').length >= 1, 'the Suspended badge');
@@ -3736,7 +3736,7 @@ async function main() {
     await settled();
     it('lifts it on the second click', function () {
       eq(app.requests('unsuspend').length, 1);
-      eq(app.last('unsuspend').data, { subject: '12' });
+      eq(app.last('unsuspend').data, { ref: 'p7_424242' });
       truthy(app.button('Suspend'), 'Suspend again');
     });
 
@@ -3750,7 +3750,7 @@ async function main() {
     await settled();
     it('protects for the days typed, sent as hours, on two clicks', function () {
       eq(app.requests('protect').length, 1);
-      eq(app.last('protect').data, { subject: '12', hours: 48, reason: 'New player' });
+      eq(app.last('protect').data, { ref: 'p7_424242', hours: 48, reason: 'New player' });
       truthy(app.button('Lift protection'), 'Lift once protected');
     });
     app.click(app.button('Lift protection'));
@@ -3762,7 +3762,7 @@ async function main() {
     await settled();
     it('and lifts it on the second', function () {
       eq(app.requests('unprotect').length, 1);
-      eq(app.last('unprotect').data, { subject: '12' });
+      eq(app.last('unprotect').data, { ref: 'p7_424242' });
     });
     app.click(app.button('Permanent'));
     await settled();
@@ -3771,7 +3771,7 @@ async function main() {
     app.click(app.button('Protect'));
     await settled();
     it('protects for good as hours 0', function () {
-      eq(app.last('protect').data, { subject: '12', hours: 0, reason: 'Off duty staff' });
+      eq(app.last('protect').data, { ref: 'p7_424242', hours: 0, reason: 'Off duty staff' });
     });
 
     app.type(app.byId('pay-amount'), '250000');
@@ -3793,7 +3793,7 @@ async function main() {
     app.click(app.button('Pay'));
     await settled();
     it('pays the amount in the account chosen, with the reason', function () {
-      eq(app.last('manualPay').data, { subject: '12', amount: 2500, account: 'bank', reason: 'Lost to a bug' });
+      eq(app.last('manualPay').data, { ref: 'p7_424242', amount: 2500, account: 'bank', reason: 'Lost to a bug' });
       has(app.toasts(), 'Paid $2500 in bank');
     });
     clean(app, 'staff player tools');
@@ -4698,6 +4698,85 @@ async function main() {
       }), 'a button to History');
     });
     clean(app, 'final pass panel');
+  })();
+
+  /* ---- sweep 4 D2: every write names the player by the lookup's handle ---- */
+  await (async function () {
+    let lookups = 0;
+    const server = staffPlayerServer({
+      player: function (data) {
+        lookups += 1;
+        const reply = player();
+        reply.data.payMax = 100000;
+        // A fresh handle each lookup, as the server gives one.
+        reply.data.player.ref = data.ref ? 'p9_' + lookups : 'p8_' + lookups;
+        return reply;
+      }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    await lookUp(app);
+    const first = app.last('player').data;
+    // Somebody else is typed in the box after the lookup.
+    app.type(app.byId('pl-q'), 'Someone Else');
+    app.type(app.byId('pay-amount'), '100');
+    app.type(app.byId('pay-reason'), 'refund');
+    app.click(app.button('Pay'));
+    await settled();
+    app.click(app.button('Pay'));
+    await settled();
+    const pay = app.last('manualPay').data;
+    it('sweep 4 D2: a payment names the player by the lookup\'s handle, never by what was typed', function () {
+      eq(first, { subject: '12' }, 'the lookup sends what was typed');
+      eq(pay.ref, 'p8_1');
+      eq(pay.subject, undefined, 'no name or player id for the server to match again');
+    });
+    it('sweep 4 D2: and reads the card again by that handle, not by the box', function () {
+      eq(app.last('player').data, { ref: 'p8_1' });
+      eq(app.last('history').data, { ref: 'p9_2' }, 'the history by the handle the reread gave');
+    });
+    app.type(app.byId('ps-reason'), 'spam');
+    app.click(app.button('3 days'));
+    await settled();
+    app.click(app.button('Suspend'));
+    await settled();
+    app.click(app.button('Suspend'));
+    await settled();
+    it('sweep 4 D2: the next write uses the handle the reread gave', function () {
+      eq(app.last('suspend').data, { ref: 'p9_2', days: 3, reason: 'spam' });
+    });
+    ['freeze', 'unfreeze', 'suspend', 'unsuspend', 'protect', 'unprotect', 'manualPay', 'setPlaytime']
+      .forEach(function (op) {
+        app.requests(op).forEach(function (r) {
+          it('sweep 4 D2: ' + op + ' carries no subject', function () { eq(r.data.subject, undefined); });
+        });
+      });
+    clean(app, 'sweep 4 lookup handle');
+  })();
+
+  await (async function () {
+    const app = boot(staffPlayerServer({
+      manualPay: { ok: false, err: 'stale_lookup',
+        message: 'That lookup is out of date, so nothing was changed. Look them up again.' }
+    }));
+    app.open(ADMIN);
+    await settled();
+    await lookUp(app);
+    app.type(app.byId('pay-amount'), '100');
+    app.type(app.byId('pay-reason'), 'refund');
+    app.click(app.button('Pay'));
+    await settled();
+    it('sweep 4 D2: the first click of a payment still sends nothing', function () {
+      eq(app.requests('manualPay').length, 0);
+    });
+    app.click(app.button('Pay'));
+    await settled();
+    it('sweep 4 D2: a stale handle is refused in words: look them up again', function () {
+      eq(app.requests('manualPay').length, 1);
+      has(app.toasts(), 'Look them up again.');
+    });
+    clean(app, 'sweep 4 stale handle');
   })();
 
   console.log('');

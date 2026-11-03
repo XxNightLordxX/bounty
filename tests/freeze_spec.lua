@@ -76,6 +76,14 @@ local function ask(src, op, data)
     return nil
 end
 
+--- The handle a Players lookup gives (sweep 4 D2): what every write from
+--- the card names the player by, never a name or a player id matched again.
+local function lookedUp(src, subject)
+    local reply = ask(src, 'player', { subject = subject })
+    truthy(reply and reply.ok, 'looked up ' .. tostring(subject) .. ': ' .. tostring(reply and reply.message))
+    return reply.data.player.ref
+end
+
 --- Every player's cash and bank, and every escrow line's state and amount.
 local function snapshot(s, ids)
     local out = {}
@@ -139,7 +147,7 @@ describe('a freeze stops both clocks, and gives the time back to the second', fu
         local deadlineLeft, lifetimeLeft = row.deadline_at - now, row.expires_at - now
         truthy(row.paused_since == nil, 'running before the freeze')
 
-        local reply = ask(6, 'freeze', { subject = 2, reason = 'RP dispute' })
+        local reply = ask(6, 'freeze', { ref = lookedUp(6, 2), reason = 'RP dispute' })
         truthy(reply and reply.ok, 'frozen: ' .. tostring(reply and reply.message))
         local frozenAt = os.time()
         eq(s.storage.readContract(c.id).paused_since, frozenAt, 'the deadline stopped as it was frozen')
@@ -160,7 +168,7 @@ describe('a freeze stops both clocks, and gives the time back to the second', fu
         eq(s.projection.contract(s.storage.readContract(c.id), 'TARGET01').timeLeft, band,
             'the target\'s band moved while on hold')
 
-        reply = ask(6, 'unfreeze', { subject = 2, reason = 'sorted' })
+        reply = ask(6, 'unfreeze', { ref = lookedUp(6, 2), reason = 'sorted' })
         truthy(reply and reply.ok, 'unfrozen: ' .. tostring(reply and reply.message))
         row = s.storage.readContract(c.id)
         now = os.time()
@@ -212,7 +220,7 @@ describe('every action on a contract on hold is refused, with nothing charged', 
         main.markPresenceChanged()
         main.expire()
 
-        local reply = ask(6, 'freeze', { subject = 1, reason = 'staff situation' })
+        local reply = ask(6, 'freeze', { ref = lookedUp(6, 1), reason = 'staff situation' })
         truthy(reply and reply.ok, 'frozen: ' .. tostring(reply and reply.message))
         local before = snapshot(s, { c.id, c2.id, c3.id })
         local F = CH.ERR.CONTRACT_FROZEN
@@ -261,7 +269,7 @@ describe('every action on a contract on hold is refused, with nothing charged', 
         eq(s.storage.readContract(c2.id).state, CH.STATE.ACTIVE)
 
         -- Released: the same calls work again.
-        truthy(ask(6, 'unfreeze', { subject = 1 }).ok, 'unfrozen')
+        truthy(ask(6, 'unfreeze', { ref = lookedUp(6, 1) }).ok, 'unfrozen')
         truthy(s.contracts.cancel(f.creator, c2.id), 'the cancel works once released')
         truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}),
             'the payout works once released')
@@ -308,7 +316,7 @@ describe('a freeze across a restart', function()
             local f = people(s)
             local c = place(s, f.creator, 'TARGET01')
             truthy(s.contracts.accept(f.hitman, c.id), 'taken')
-            truthy(ask(6, 'freeze', { subject = 2, reason = 'held over' }).ok, 'frozen')
+            truthy(ask(6, 'freeze', { ref = lookedUp(6, 2), reason = 'held over' }).ok, 'frozen')
 
             local main2, after = restart(mode, s)
             local row = after.freeze.of('TARGET01')
@@ -323,7 +331,7 @@ describe('a freeze across a restart', function()
             main2.tick()
             eq(after.storage.readContract(c.id).state, CH.STATE.ACCEPTED, mode .. ': expired on hold')
 
-            truthy(ask(6, 'unfreeze', { subject = 2 }).ok, mode .. ': unfrozen')
+            truthy(ask(6, 'unfreeze', { ref = lookedUp(6, 2) }).ok, mode .. ': unfrozen')
             eq(after.freeze.of('TARGET01'), nil, mode)
             local _, third = restart(mode, after)
             eq(third.freeze.of('TARGET01'), nil, mode .. ': the release was lost to the restart')
@@ -424,7 +432,7 @@ describe('nobody is told which party is frozen', function()
         local f = people(s)
         local c = place(s, f.creator, 'TARGET01', { anonymous = true })
         truthy(s.contracts.accept(f.hitman, c.id), 'taken')
-        truthy(ask(6, 'freeze', { subject = 1, reason = 'dispute' }).ok, 'the anonymous placer frozen')
+        truthy(ask(6, 'freeze', { ref = lookedUp(6, 1), reason = 'dispute' }).ok, 'the anonymous placer frozen')
 
         local function rowOf(src)
             local reply = ask(src, 'contracts', {})
@@ -439,14 +447,14 @@ describe('nobody is told which party is frozen', function()
         eq(seen.data.frozen and seen.data.frozen[1], 'the placer', 'with the identity ACE, which party')
 
         -- A visible party frozen is shown to every reader.
-        truthy(ask(6, 'freeze', { subject = 2, reason = 'also' }).ok, 'the target frozen')
+        truthy(ask(6, 'freeze', { ref = lookedUp(6, 2), reason = 'also' }).ok, 'the target frozen')
         eq(rowOf(6).frozen, true, 'the target frozen and no badge')
         local both = ask(6, 'contract', { id = c.id })
         eq(#both.data.frozen, 1, 'the anonymous client listed beside the target')
         eq(both.data.frozen[1], 'the target')
 
         -- The target's lookup, without the ACE, badges nothing through the client.
-        truthy(ask(6, 'unfreeze', { subject = 2 }).ok, 'the target released')
+        truthy(ask(6, 'unfreeze', { ref = lookedUp(6, 2) }).ok, 'the target released')
         local lookup = ask(6, 'player', { subject = 2 })
         truthy(lookup and lookup.ok, 'looked up')
         eq(lookup.data.frozen, nil, 'the target read as frozen')
@@ -477,7 +485,7 @@ describe('who may freeze', function()
         end
         eq(s.freeze.count(), 0, 'somebody was frozen')
         eq(#stored(s, 'freeze_player'), 0, 'a refused freeze was recorded as one')
-        local noReason = ask(6, 'freeze', { subject = 2 })
+        local noReason = ask(6, 'freeze', { ref = lookedUp(6, 2) })
         falsy(noReason.ok, 'frozen without a reason')
         eq(s.freeze.count(), 0)
     end)

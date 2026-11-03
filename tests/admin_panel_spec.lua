@@ -58,6 +58,14 @@ local function ask(src, op, data, payload)
     return nil
 end
 
+--- The handle a Players lookup gives (sweep 4 D2): what every write from
+--- the card names the player by, never a name or a player id matched again.
+local function lookedUp(src, subject)
+    local reply = ask(src, 'player', { subject = subject })
+    truthy(reply and reply.ok, 'looked up ' .. tostring(subject) .. ': ' .. tostring(reply and reply.message))
+    return reply.data.player.ref
+end
+
 --- Every string anywhere in a value, keys included.
 local function strings(value, out)
     out = out or {}
@@ -1162,7 +1170,7 @@ describe('a player\'s playtime in the admin panel', function()
             reward = { baseline = { cash = 5000 } } })
         falsy(refused, 'new, and under the floor')
 
-        local set = ask(6, 'setPlaytime', { subject = 4, hours = 6 })
+        local set = ask(6, 'setPlaytime', { ref = lookedUp(6, 4), hours = 6 })
         eq(set.ok, true, tostring(set.message))
         eq(set.message, 'Nell Newer\'s counted playtime is now 6 h (it was 0 h).')
         eq(set.data.playtime.hours, 6)
@@ -1189,13 +1197,13 @@ describe('a player\'s playtime in the admin panel', function()
         eq(seen[0].before, 6)
         eq(seen[0].reset, true)
 
-        local grandfathered = ask(6, 'setPlaytime', { subject = 2, hours = 1 })
+        local grandfathered = ask(6, 'setPlaytime', { ref = lookedUp(6, 2), hours = 1 })
         truthy(grandfathered.message:find('They are grandfathered', 1, true), grandfathered.message)
 
         -- Two hours in their QBox metadata: that is what the rule reads for
         -- them, and grandfathered by the count decides nothing.
         Env.players[2].PlayerData.metadata.playtime = 120
-        local elsewhere = ask(6, 'setPlaytime', { subject = 2, hours = 1 })
+        local elsewhere = ask(6, 'setPlaytime', { ref = lookedUp(6, 2), hours = 1 })
         Env.players[2].PlayerData.metadata.playtime = nil
         eq(elsewhere.data.playtime.from, 'metadata')
         falsy(elsewhere.message:find('grandfathered', 1, true),
@@ -1210,7 +1218,8 @@ describe('a player\'s playtime in the admin panel', function()
         for _, bad in ipairs({ -1, 'six', 100001, 0 / 0, {} }) do
             eq(ask(6, 'setPlaytime', { subject = 4, hours = bad }).err, CH.ERR.INVALID_INPUT, tostring(bad))
         end
-        eq(ask(6, 'setPlaytime', { subject = 99, hours = 1 }).err, CH.ERR.NOT_FOUND)
+        eq(ask(6, 'setPlaytime', { subject = 99, hours = 1 }).err, CH.ERR.INVALID_INPUT,
+            'a player id is never matched on a write: looked up first')
         eq(ask(6, 'setPlaytime', { subject = 'NOBODY99', hours = 1 }).err, CH.ERR.NOT_FOUND,
             'no row is made for a character nobody has')
         eq(s.storage.readPlaytime('NOBODY99'), nil)

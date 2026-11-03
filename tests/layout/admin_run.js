@@ -295,7 +295,7 @@ function serverStub() {
     player: function (data) { return playerView(data.subject === '456'); },
     history: null };
   function playerView(plain) {
-    const view = { ok: true, data: { player: { cid: 'TARGET01', name: LONG, online: true, server: 123 },
+    const view = { ok: true, data: { player: { cid: 'TARGET01', name: LONG, online: true, server: 123, ref: 'p1_100001' },
       contracts: rows.slice(0, 10).map(function (r) {
         return { id: r.id, state: r.state, role: 'target', anonymous: false, target: r.target,
           created_at: r.created_at, resolution: r.resolution };

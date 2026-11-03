@@ -327,7 +327,7 @@
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
-    players: { data: null, whois: {}, subject: null, playtime: null, freeze: null, frozen: null },
+    players: { data: null, whois: {}, subject: null, ref: null, playtime: null, freeze: null, frozen: null },
     settings: { data: null, answers: {}, photos: null, drafts: {} },
     remembered: {},         // [group] = the sub-tab last open in it
     tools: { refresh: null, diag: null, flush: null }
@@ -2310,20 +2310,29 @@
 
   /* ---- players ---- */
 
-  function loadPlayer() {
+  /** Look up who the box names; or, `again` after a write, read the same
+      player's card again by the handle the lookup gave, whatever the box
+      says now. */
+  function loadPlayer(again) {
     var subject = trim(S.forms['pl.q']);
-    if (!subject) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
+    var byRef = again === true && S.players.ref ? S.players.ref : null;
+    if (!subject && !byRef) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
     S.players.whois = {};
     S.players.playtime = null;
     S.players.freeze = null;
     resetPlayerStaff();
-    return ask('player', { subject: subject.slice(0, 64) }, 'player').then(function (reply) {
+    var sent = byRef ? { ref: byRef } : { subject: subject.slice(0, 64) };
+    return ask('player', sent, 'player').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); S.players.data = { error: words(reply) }; }
       else S.players.data = reply.data || {};
-      // Set and Reset name the player as this lookup did, whatever is typed
-      // in the box afterwards.
-      S.players.subject = reply.ok ? subject.slice(0, 64) : null;
+      // Every write from the card names the player by the handle this
+      // lookup gave (bound on the server to the character it found), never
+      // by what was typed: a name or a player id can name somebody else by
+      // the time of the click.
+      var found = reply.ok && reply.data && reply.data.player;
+      S.players.ref = found && typeof found.ref === 'string' ? found.ref : null;
+      S.players.subject = reply.ok ? (byRef ? S.players.subject : subject.slice(0, 64)) : null;
       if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
       if (reply.ok) loadPlayerHistory();
     });
@@ -3844,8 +3853,8 @@
   /** Set one character's counted hours, two clicks, naming them as the
       lookup did. The card shows what the server answered. */
   function setPlaytime(node, hours) {
-    if (!S.players.subject || !confirmed(node)) return;
-    write('setPlaytime', { subject: S.players.subject, hours: hours }, 'playtime', node).then(function (reply) {
+    if (!S.players.ref || !confirmed(node)) return;
+    write('setPlaytime', { ref: S.players.ref, hours: hours }, 'playtime', node).then(function (reply) {
       if (!reply) return;
       S.players.playtime = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
@@ -3878,7 +3887,7 @@
       toast(words(reply), reply.ok ? 'ok' : 'error');
       if (reply.ok) {
         delete S.forms['pl.freezeReason'];
-        if (S.players.data && !S.players.data.error && data.subject === S.players.subject) {
+        if (S.players.data && !S.players.data.error && data.ref === S.players.ref) {
           S.players.data.frozen = op === 'freeze' ? (reply.data && reply.data.frozen) || { since: nowSeconds() } : null;
         }
         loadFrozen();
@@ -3887,7 +3896,7 @@
     });
   }
   ACTIONS['pl-freeze'] = function (node) {
-    if (!S.players.subject) return;
+    if (!S.players.ref) return;
     var reason = trim(S.forms['pl.freezeReason']);
     if (!reason) {
       disarm();
@@ -3896,11 +3905,11 @@
       return;
     }
     if (!confirmed(node)) return;
-    freezeWrite('freeze', { subject: S.players.subject, reason: reason.slice(0, 120) }, node);
+    freezeWrite('freeze', { ref: S.players.ref, reason: reason.slice(0, 120) }, node);
   };
   ACTIONS['pl-unfreeze'] = function (node) {
-    if (!S.players.subject || !confirmed(node)) return;
-    freezeWrite('unfreeze', { subject: S.players.subject,
+    if (!S.players.ref || !confirmed(node)) return;
+    freezeWrite('unfreeze', { ref: S.players.ref,
       reason: trim(S.forms['pl.freezeReason']).slice(0, 120) }, node);
   };
   ACTIONS['pl-unfreeze-row'] = function (node) {
@@ -3909,7 +3918,7 @@
     write('unfreeze', { ref: ref }, 'freeze', node).then(function (reply) {
       if (!reply) return;
       toast(words(reply), reply.ok ? 'ok' : 'error');
-      if (reply.ok && S.players.data && S.players.data.frozen) loadPlayer();
+      if (reply.ok && S.players.data && S.players.data.frozen) loadPlayer(true);
       loadFrozen();
     });
   };
@@ -4639,12 +4648,13 @@
   }
 
   function loadPlayerHistory() {
-    var subject = S.players.subject;
-    if (!subject) return Promise.resolve();
+    // The same player the card shows: by the lookup's handle.
+    var ref = S.players.ref;
+    if (!ref) return Promise.resolve();
     S.pstaff.history = null;
     S.pstaff.historyError = null;
-    return ask('history', { subject: subject }, 'playerHistory').then(function (reply) {
-      if (!reply || subject !== S.players.subject) return;
+    return ask('history', { ref: ref }, 'playerHistory').then(function (reply) {
+      if (!reply || ref !== S.players.ref) return;
       if (reply.ok) S.pstaff.history = reply.data || {};
       else S.pstaff.historyError = words(reply);
       drawPlayer();
@@ -4660,7 +4670,7 @@
       toast(words(reply), reply.ok ? 'ok' : 'error');
       if (reply.ok) {
         var keep = S.pstaff[slot];
-        loadPlayer().then(function () { S.pstaff[slot] = keep; drawPlayer(); });
+        loadPlayer(true).then(function () { S.pstaff[slot] = keep; drawPlayer(); });
       } else {
         drawPlayer();
       }
@@ -4680,7 +4690,7 @@
     drawPlayer();
   };
   ACTIONS['ps-suspend'] = function (node) {
-    if (!S.players.subject) return;
+    if (!S.players.ref) return;
     var reason = trim(S.forms['ps.reason']);
     var raw = trim(S.forms['ps.days']);
     if (!/^\d{1,3}$/.test(raw) || Number(raw) > 365) {
@@ -4688,14 +4698,14 @@
     }
     if (!reason) return refuse('suspend', 'Give a reason: they are shown it, and it goes on the record.');
     if (!confirmed(node)) return;
-    staffWrite(write('suspend', { subject: S.players.subject, days: Number(raw),
+    staffWrite(write('suspend', { ref: S.players.ref, days: Number(raw),
       reason: reason.slice(0, 120) }, 'pstaff:suspend', node), 'suspend');
   };
   ACTIONS['ps-lift'] = function (node) {
-    if (!S.players.subject) return;
+    if (!S.players.ref) return;
     // Two clicks, as every other write here is (3 s to confirm).
     if (!confirmed(node)) return;
-    staffWrite(write('unsuspend', { subject: S.players.subject }, 'pstaff:suspend', node), 'suspend');
+    staffWrite(write('unsuspend', { ref: S.players.ref }, 'pstaff:suspend', node), 'suspend');
   };
 
   ACTIONS['pp-unit'] = function (node) {
@@ -4704,7 +4714,7 @@
     drawPlayer();
   };
   ACTIONS['pp-protect'] = function (node) {
-    if (!S.players.subject) return;
+    if (!S.players.ref) return;
     var reason = trim(S.forms['pp.reason']);
     var hours = 0;
     if (S.pstaff.unit !== 'forever') {
@@ -4718,14 +4728,14 @@
     }
     if (!reason) return refuse('protect', 'Give a reason: it goes on the record.');
     if (!confirmed(node)) return;
-    staffWrite(write('protect', { subject: S.players.subject, hours: hours,
+    staffWrite(write('protect', { ref: S.players.ref, hours: hours,
       reason: reason.slice(0, 120) }, 'pstaff:protect', node), 'protect');
   };
   ACTIONS['pp-lift'] = function (node) {
-    if (!S.players.subject) return;
+    if (!S.players.ref) return;
     // Two clicks, as every other write here is (3 s to confirm).
     if (!confirmed(node)) return;
-    staffWrite(write('unprotect', { subject: S.players.subject }, 'pstaff:protect', node), 'protect');
+    staffWrite(write('unprotect', { ref: S.players.ref }, 'pstaff:protect', node), 'protect');
   };
 
   ACTIONS['pay-account'] = function (node) {
@@ -4734,7 +4744,7 @@
     drawPlayer();
   };
   ACTIONS['pay-send'] = function (node) {
-    if (!S.players.subject) return;
+    if (!S.players.ref) return;
     var max = Number(S.players.data && S.players.data.payMax) || 0;
     var amount = wholeNumber(S.forms['pay.amount']);
     var reason = trim(S.forms['pay.reason']);
@@ -4744,7 +4754,7 @@
     }
     if (!reason) return refuse('pay', 'Give a reason: it goes on the record.');
     if (!confirmed(node)) return;
-    staffWrite(write('manualPay', { subject: S.players.subject, amount: amount, account: S.pstaff.account,
+    staffWrite(write('manualPay', { ref: S.players.ref, amount: amount, account: S.pstaff.account,
       reason: reason.slice(0, 120) }, 'pstaff:pay', node), 'pay');
   };
 
@@ -4798,6 +4808,7 @@
     S.players.data = null;
     S.players.whois = {};
     S.players.subject = null;
+    S.players.ref = null;
     S.players.playtime = null;
     S.players.freeze = null;
     S.players.frozen = null;

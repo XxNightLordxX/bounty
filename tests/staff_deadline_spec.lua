@@ -67,6 +67,14 @@ local function ask(src, op, data)
     return nil
 end
 
+--- The handle a Players lookup gives (sweep 4 D2): what every write from
+--- the card names the player by, never a name or a player id matched again.
+local function lookedUp(src, subject)
+    local reply = ask(src, 'player', { subject = subject })
+    truthy(reply and reply.ok, 'looked up ' .. tostring(subject) .. ': ' .. tostring(reply and reply.message))
+    return reply.data.player.ref
+end
+
 local function place(s, actor, extra)
     local req = { targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                   reward = { baseline = { cash = 5000 } } }
@@ -212,7 +220,7 @@ describe('the run time left moves by exactly the adjustment', function()
         local f = people(s)
         local c = running(main, s, f)
         local before = left(s, c)
-        truthy(ask(6, 'freeze', { subject = 2, reason = 'dispute' }).ok, 'the target frozen')
+        truthy(ask(6, 'freeze', { ref = lookedUp(6, 2), reason = 'dispute' }).ok, 'the target frozen')
         Env.advance(900)
         eq(left(s, c), before, 'on hold and it ran')
 
@@ -225,7 +233,7 @@ describe('the run time left moves by exactly the adjustment', function()
         eq(s.projection.contract(row(s, c), 'HITMAN01').timeLeft, Util.timeBand(before + 5400))
 
         Env.advance(300)
-        truthy(ask(6, 'unfreeze', { subject = 2 }).ok, 'released')
+        truthy(ask(6, 'unfreeze', { ref = lookedUp(6, 2) }).ok, 'released')
         pass(main)
         eq(row(s, c).paused_since, nil, 'running again')
         eq(left(s, c), before + 5400, 'the release undid the change, or banked the hold twice')

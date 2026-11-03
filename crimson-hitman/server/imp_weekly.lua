@@ -30,6 +30,14 @@ local lastDay = nil
 --- Asleep until the next post falls due: { untilAt, why, key }, key being
 --- the Day and Hour it was worked out for (a change wakes it). nil: awake.
 local asleep = nil
+--- A send refused after the totals were read (canSend said yes): they are
+--- not read again until this (os.time()), or every tick of a due day read
+--- every contract for a post that went nowhere. { untilAt, why }; nil: try
+--- on the next tick. With no webhook at all canSend answers first and
+--- nothing is read.
+local backoff = nil
+--- How long a refused send waits before the totals are read again.
+Weekly.BACKOFF_SECONDS = 600
 Weekly.META = 'imp_weekly_day'
 Weekly.CONVAR = 'crimson_hitman_stats_webhook'
 local WEEK = 7 * 86400
@@ -48,7 +56,7 @@ end
 ---@param d table { storage, audit, alerts }
 function Weekly.init(d)
     deps = d
-    lastDay, asleep = nil, nil
+    lastDay, asleep, backoff = nil, nil, nil
     if deps.storage and deps.storage.readStaffMeta then
         local ok, meta = pcall(deps.storage.readStaffMeta)
         if ok and type(meta) == 'table' then lastDay = tonumber(meta[Weekly.META]) end
@@ -139,12 +147,36 @@ function Weekly.text(totals, day)
     }, '\n')
 end
 
+--- The stats webhook, where its convar is set.
+---@return string|nil
+local function statsUrl()
+    local url = type(GetConvar) == 'function' and GetConvar(Weekly.CONVAR, '') or ''
+    if type(url) == 'string' and url ~= '' then return url end
+    return nil
+end
+
+--- Whether a post would go anywhere, asked before the totals are read: the
+--- stats webhook, or else the alerts' webhook (Alerts.discordState names
+--- which convar set one, never the url).
+---@return boolean
+---@return string|nil why 'no_webhook' | 'unavailable'
+local function canSend()
+    if statsUrl() then return true end
+    local alerts = deps.alerts
+    if not (alerts and alerts.post) then return false, 'unavailable' end
+    if type(alerts.discordState) == 'function' then
+        local ok, state = pcall(alerts.discordState)
+        if ok and type(state) == 'table' and state.webhook == nil then return false, 'no_webhook' end
+    end
+    return true
+end
+
 --- Send the text: to the stats webhook where one is set, else the alerts'.
 ---@return boolean queued
 ---@return string|nil err
 local function send(text)
-    local url = type(GetConvar) == 'function' and GetConvar(Weekly.CONVAR, '') or ''
-    if type(url) == 'string' and url ~= '' then
+    local url = statsUrl()
+    if url then
         local body = json.encode({ content = (text:gsub('@', '@\226\128\139')) })
         local ok = pcall(PerformHttpRequest, url, function(status)
             local code = tonumber(status) or 0
@@ -186,8 +218,17 @@ function Weekly.tick()
         asleep = { untilAt = due + WEEK, why = 'done', key = key }
         return false, 'done'
     end
+    if backoff and now < backoff.untilAt then return false, backoff.why end
+    backoff = nil
+    -- A convar read, not a store read: a webhook set later posts on the
+    -- next tick, and a tick with none reads no contract.
+    local can, why = canSend()
+    if not can then return false, why end
     local queued, err = send(Weekly.text(Weekly.totals(now), day))
-    if not queued then return false, err end
+    if not queued then
+        backoff = { untilAt = now + Weekly.BACKOFF_SECONDS, why = err }
+        return false, err
+    end
     lastDay = day
     local wrote, writeErr = pcall(deps.storage.writeStaffMeta, Weekly.META, day)
     if not wrote then
