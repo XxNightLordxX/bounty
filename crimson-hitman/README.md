@@ -395,13 +395,13 @@ All off as shipped, each `Config.Improvements.<Feature>.Enabled`.
 | **Hold before a tip** (`TipHoldFirst`) | A tip only once the hitman has held the contract `MinHeldMinutes` |
 | **Informant second try** (`InformantSecondTry`) | The target's later look-ups cost `SecondTryCostPercent` of the price |
 | **Tip safe zones** (`TipSafeZones`) | No tip while the target is inside a zone (`'x, y, radius, name'`); the hitman is told only that the informant can't place them |
-| **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back |
+| **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back. Kept across a restart only once paid: a purchase the store could not keep is refunded, and a window that has passed is cleared from the store on the minute |
 | **Placer record** (`PlacerRecord`) | A board card shows its placer's placed / paid out / cancelled counts over `LookbackDays`, never who; anonymous placers in bands with `ShowForAnonymous` |
 | **Hitman heat** (`HitmanHeat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` (every officer alike, a known hitman who holds a police job too) |
 | **Tiered board** (`Tiers`) | Bigger rewards locked to a progression level (needs `Config.Progression.Enabled`) |
 | **Contract decay** (`ContractDecay`) | An untaken contract's reward rises (charged to its placer, up to `MaxIncreasePercent`) or its deadline comes in, every `Hours` of waiting; time on a staff freeze, the restart hold, the app pause or held by an operative does not count. `rise` applies only to contracts placed under the placer's own name: a step charged when an anonymous placer logs in would show on the board when they did, so an anonymous contract never rises (its card says so). The placer can stop it on their card |
-| **Proof items** (`ProofItems`) | On a contract a kill completes, the hitman may hand the placer an item taken from the target (an id card as shipped) instead of a photo. The item is checked before where anybody stands, so a hitman without it is only ever told it is missing; refused, taking nothing, under a freeze, the restart hold or the app pause |
-| **Weapon serial scrubbing** (`SerialScrub`) | A weapon an anonymous placer put up reaches the hitman with a new serial (as does one whose contract cannot be read) |
+| **Proof items** (`ProofItems`) | On a contract a kill completes, the hitman may hand the placer an item taken from the target (an id card as shipped) instead of a photo. The item is checked before where anybody stands, so a hitman without it is only ever told it is missing; refused, taking nothing, under a freeze, the restart hold or the app pause. Paid as a kill would be, but recorded as what it was: the Ledger says *Proof handed over*, and there is no EMS re-listing, witness report or city news, since nobody saw a kill |
+| **Weapon serial scrubbing** (`SerialScrub`) | A weapon an anonymous placer put up reaches the hitman with a new serial (as does one whose contract cannot be read). One weapon always gets the same new serial, after a restart too: it is worked out from the escrow line and a secret the store keeps (`imp_serial_secret`), never from anything a player can see |
 | **Weekly stats** (`WeeklyStats`) | One count-only post a week (`Day`, `Hour`) to `crimson_hitman_stats_webhook`, or the alert webhook |
 | **Completion cooldown** (`Config.Limits.TargetCooldownAfterCompletionSeconds`) | A wait before a completed contract's target can be listed again; 0 (off) as shipped |
 
@@ -1066,7 +1066,15 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, final pass (newest)**
+**1.1.0, leftover fixes (newest)**
+
+- A staff freeze gives an open amendment proposal back the time it held it, also when the app pause or the restart hold covered the freeze (both of which let a proposal be answered, so they give it nothing); an idle release refused by a hold that landed at that moment keeps the hold's idle clocks.
+- A proof-item handover is its own outcome: *Proof handed over* on the Ledger, no EMS re-listing, witness report or city news.
+- The placer's Ledger row for an expiry (or a cancel) counts the operatives' stakes handed to them, and says how much of it was stakes, never whose.
+- Go dark keeps its row only once paid and confirmed, refunding a purchase the store could not keep; a delayed tip warning leaves the store only after the target is told. Passed go-dark windows, and decay rows of ended contracts while decay is off, are pruned a few a pass.
+- `/<panel>-close` follows the name the server registered the panel command under (a panel override included); a scrubbed serial is the same after a restart.
+
+**1.1.0, final pass**
 
 - Loops: contract decay runs on its own tick, sleeps until a step is due and takes at most 25 steps a pass; the weekly stats and hitman heat sleep until due; the bodyguard sweep reads a contract only once it has ended. Every optional job costs nothing with its feature off.
 - Simpler workflows: every refusal on the phone says what to do next; *the placer* is one word everywhere (never *the client*); the panel's Features run core, Anonymity, Informants, Advisory, Staff tools, Roleplay, Improvements, and config.lua follows the same order; every settings group says what it does and every number shows its unit; **Undo a setting change** is on Staff actions; the Developer section reads **Permissions & history** without the Developer ACE.

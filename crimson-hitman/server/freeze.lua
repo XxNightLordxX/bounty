@@ -398,14 +398,23 @@ unfreezeUnlocked = function(staffCid, cid, reason)
         if appPause then stop = math.min(stop, appPause.since) end
         local back = math.max(0, stop - row.frozen_at)
         if back > 0 and contract.expires_at then giveBack(contract.id, back) end
-        -- And every open amendment proposal on it the same time: none could
-        -- be answered while it was held, and none ran out meanwhile
-        -- (Amendments.expire), so each is given the hold back to be answered.
-        if back > 0 and Storage.readOpenAmendments and Storage.writeAmendment then
+        -- And every open amendment proposal on it the time this freeze held
+        -- it: none could be answered while it was held, and none ran out
+        -- meanwhile (Amendments.expire), so each is given the hold back to
+        -- be answered. Only a staff freeze holds a proposal: one can be
+        -- answered, and runs out, under the restart hold and the app pause,
+        -- and neither end gives one anything. So the time is this freeze's
+        -- up to the earliest other freeze still on it (which gives the rest
+        -- back at its own release), never cut at the restart hold's or the
+        -- app pause's start: cut there, a freeze inside the app pause gave
+        -- nothing back, and a proposal due meanwhile ran out the moment it
+        -- ended.
+        local held = math.max(0, (others or now) - row.frozen_at)
+        if held > 0 and Storage.readOpenAmendments and Storage.writeAmendment then
             pcall(function()
                 for _, proposal in ipairs(Storage.readOpenAmendments(contract.id) or {}) do
                     if proposal.expires_at then
-                        proposal.expires_at = (tonumber(proposal.expires_at) or now) + back
+                        proposal.expires_at = (tonumber(proposal.expires_at) or now) + held
                         Storage.writeAmendment(proposal)
                     end
                 end

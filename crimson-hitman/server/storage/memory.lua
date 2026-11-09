@@ -1855,8 +1855,9 @@ end
 --- 'staff_summary_day' (the day the daily summary was last posted, as
 --- yyyymmdd, server/summary.lua) and 'staff_pause_since' (when the app
 --- pause began, os.time(), server/freeze.lua); and 'imp_weekly_day' (the
---- day the weekly stats were last posted, yyyymmdd, server/imp_weekly.lua).
---- 0 or absent is none.
+--- day the weekly stats were last posted, yyyymmdd, server/imp_weekly.lua);
+--- and 'imp_serial_secret' (the secret scrubbed serials are worked out with,
+--- server/imp_scrub.lua). 0 or absent is none.
 ---@return table [key] = integer
 function Memory.readStaffMeta()
     local out = {}

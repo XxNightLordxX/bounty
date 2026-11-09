@@ -402,6 +402,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Shrink the game window to about phone width (or open the page in a browser at 390 px): the sections wrap along the top, nothing scrolls sideways
 
 - [ ] `/hitmanadmin` opens the panel full screen with a cursor; the phone app still opens from the phone as before. Escape closes it, so does its close button, and the game takes input again at once. `restart crimson-hitman` with it open leaves no cursor behind
+- [ ] With the panel's command renamed in the panel's settings (`Config.Admin.Commands.panel`, applied at the next start), open the panel with the new name and type `/<new name>-close` in F8: it closes and the game takes input again; `/hitmanadmin-close` still works too
 - [ ] Escape closes the panel without opening the pause menu: press and let go of Escape a few times, quickly and slowly, and the map or pause menu never opens as the panel goes (a second Escape after it has gone does open it)
 - [ ] The overview shows the contracts by state, money held by account, owed deliveries, stuck lines, open review items and photos, and refreshes every 10 seconds; it matches `/ch-stuck` and `/ch-review`
 - [ ] **Stuck escrow** lists the same lines as `/ch-stuck`, the badge beside it counting the ones left for you; each line's **Delivered** or **Pay** takes two clicks, its answer stays beside it, and its contract id opens the contract's view
@@ -516,6 +517,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `Config.Improvements.InformantSecondTry` at 50%: the target's second look-up quotes and charges half.
 - [ ] `Config.Improvements.TipSafeZones` around the hospital: with the target inside, a tip says *Your informant can't place them right now.* and nothing is taken; outside it is sold.
 - [ ] `Config.Improvements.GoDark`: the tipped-off target taps **Go dark** twice and pays; a tip bought on them then says the informant couldn't find them and the hitman's bank is back where it was; after `Minutes` tips work again.
+- [ ] Go dark, then restart the resource: the target is still dark until `Minutes` is up; after it, the `crimson_rp_rows` row of kind `imp_dark` is gone within a minute even though nobody bought another tip.
 
 ### Board and progression
 
@@ -530,9 +532,10 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] With every `Config.Improvements` switch off and `TargetCooldownAfterCompletionSeconds = 0`, completing, re-listing, weapon payouts and Discord behave as before.
 - [ ] `Config.Improvements.ProofItems` on, a contract placed under `Fulfilment = 'either'`: the hitman sees **Hand over proof**. Without the target's `id_card` it says *You are not carrying anything that proves who the target is.*, whether the placer stands beside the hitman or not; with an id card of somebody else, the same. During the restart hold the button is greyed and the card is never taken.
 - [ ] With the target's `id_card` (its `citizenid` theirs), more than 3 m from the placer: *Stand within 3 m...*, the card is still in the hitman's inventory; beside the placer: paid, the card is gone, the placer is told the contract was fulfilled.
+- [ ] With `Config.Roleplay.EmsRelisting`, `CityNews` and `WitnessHeat` on, a proof handover: every Ledger row says *Proof handed over*, no city news post or witness report goes out, and a new contract on the target is not held for EMS.
 - [ ] Proof items on a contract placed for live delivery only: no **Hand over proof** button.
 - [ ] Completion cooldown at `7200`: complete a contract, then place another on the same target: *You can place a contract on them again in 2 hours.* Cancel a contract nobody took instead: the usual rules apply.
-- [ ] `Config.Improvements.SerialScrub` on: an anonymous placer puts up a pistol, a hitman completes it: the pistol in the hitman's inventory has a different serial and no registered owner; **Logs** shows *weapon_serial_scrubbed*, the original as *(identity only)* without `crimson.identity`. A refund to the placer keeps the original.
+- [ ] `Config.Improvements.SerialScrub` on: an anonymous placer puts up a pistol, a hitman completes it: the pistol in the hitman's inventory has a different serial and no registered owner; **Logs** shows *weapon_serial_scrubbed*, the original as *(identity only)* without `crimson.identity`. A refund to the placer keeps the original. Restart before the hitman takes it (pockets full, then made room): the pistol arrives with the same new serial the log shows.
 - [ ] `Config.Improvements.WeeklyStats` on, with `set crimson_hitman_stats_webhook` in server.cfg: set the day and hour to now from the panel; one post arrives with three totals and no names; a restart does not post it again.
 
 ## If something fails

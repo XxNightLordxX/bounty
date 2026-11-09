@@ -1656,6 +1656,18 @@ local function playerRef(src, who)
     return ref
 end
 
+--- Test seam: how many lookup handles each staff source holds now.
+---@return table [src] = count
+function Panel._heldRefs()
+    local out = {}
+    for holder, refs in pairs(playerRefs) do
+        local n = 0
+        for _ in pairs(refs) do n = n + 1 end
+        out[holder] = n
+    end
+    return out
+end
+
 --- Forget a source's lookup handles when it leaves: the next player given
 --- that server id is not who they were minted for.
 ---@param src integer

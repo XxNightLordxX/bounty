@@ -2832,8 +2832,9 @@ local SCHEDULE = {
     -- The alert thresholds' books aged out: windows of an hour and more.
     ['thresholds.sweep'] = { every = 60, phase = 10 },
     -- The improvements' minute (server/imp_board.lua): heat cooled and the
-    -- police bulletin, the placer records forgotten. Nothing while all are
-    -- off; in memory only while on.
+    -- police bulletin, the placer records forgotten, and the go-dark windows
+    -- that have passed taken out of the store (server/imp_tips.lua). Nothing
+    -- while all are off; in memory only while on, but for those deletes.
     ['imp_board.tick'] = { every = 60, phase = 50 },
     -- Contract decay's steps (server/imp_decay.lua), the one of them that
     -- charges and writes, on a tick of its own. It sleeps until its soonest
@@ -2884,6 +2885,15 @@ jobInterval = function(name)
     local gated = SELF_GATED[name]
     if type(gated) == 'function' then gated = gated() end
     return gated or math.floor((tonumber(Config.Audit.FlushIntervalMs) or 10000) / 1000)
+end
+
+--- The improvements' minute (imp_board.tick): the board's own (heat, the
+--- placer records), and the go-dark windows that have passed taken out of
+--- the store (ImpTips.prune). Each reads and writes nothing while it has
+--- nothing to do.
+local function BoardMinute()
+    modules.impBoard.tickBoard()
+    if modules.impTips and modules.impTips.prune then modules.impTips.prune() end
 end
 
 function Tick()
@@ -2962,7 +2972,7 @@ function Tick()
     if modules.rpPlaces then every('rp_places.announce', modules.rpPlaces.announce, now) end
     -- The improvements' minute (server/imp_board.lua), and contract decay.
     if modules.impBoard then
-        every('imp_board.tick', modules.impBoard.tickBoard, now)
+        every('imp_board.tick', BoardMinute, now)
         every('imp_decay.tick', modules.impBoard.tickDecay, now)
     end
     job('app.sweepHandles', app.sweepHandles)

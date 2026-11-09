@@ -99,19 +99,23 @@ end
 ---@param contract table as it was read before it closed
 ---@param terminal string the CH.STATE it ended in
 ---@param held integer the money it held as it closed (Escrow.moneyValue)
+---@param stakes integer|nil the operatives' stakes the ending hands the client
+--- (a forfeit on an expiry, or a walk-away's still held): counted in the
+--- row's amount, and said apart as `stakes`, never whose
 ---@return integer written
-function Ledger.ended(contract, terminal, held)
+function Ledger.ended(contract, terminal, held, stakes)
     if not contract or not contract.creator_cid then return 0 end
     held = math.max(0, math.floor(tonumber(held) or 0))
+    stakes = math.max(0, math.floor(tonumber(stakes) or 0))
     local now = os.time()
     local written = 0
-    local function entry(cid, role, kind, amount)
+    local function entry(cid, role, kind, amount, staked)
         if not cid then return end
         Storage.writeLedger({
             cid = cid, role = role, kind = kind, amount = amount,
             contract_id = contract.id, target_name = contract.target_name,
             reason = contract.reason, fulfilment = kind, slot = contract.next_slot or 1,
-            resolved_at = now,
+            resolved_at = now, stakes = (staked or 0) > 0 and staked or nil,
         })
         written = written + 1
     end
@@ -120,9 +124,13 @@ function Ledger.ended(contract, terminal, held)
         -- or by the target's bodyguard ending): never 'refunded', which the
         -- app words as one that ran out.
         entry(contract.creator_cid, 'creator',
-            contract.resolution == 'cancelled_by_creator' and 'withdrawn' or 'cancelled', held)
+            contract.resolution == 'cancelled_by_creator' and 'withdrawn' or 'cancelled',
+            held + stakes, stakes)
     elseif terminal == CH.STATE.EXPIRED then
-        entry(contract.creator_cid, 'creator', 'refunded', held)
+        -- What came back: the reward, and the stakes of the operatives who
+        -- let it run out, which are the client's too (§ stakes). Left out,
+        -- the row said less came back than did.
+        entry(contract.creator_cid, 'creator', 'refunded', held + stakes, stakes)
     elseif terminal == CH.STATE.BAILED_OUT then
         local premium = math.max(0, math.floor(tonumber(contract.bailout_paid_amount) or 0))
         entry(contract.creator_cid, 'creator', 'buyout', held + premium)
@@ -212,6 +220,9 @@ function Ledger.entries(cid)
             -- it moved, as written.
             kind        = row.kind or 'paid',
             amount      = math.max(0, math.floor(tonumber(row.amount) or 0)),
+            -- How much of that figure was operatives' stakes handed to the
+            -- client (Ledger.ended), where any was: never whose.
+            stakes      = (tonumber(row.stakes) or 0) > 0 and math.floor(tonumber(row.stakes)) or nil,
         }
         local record = row.role == 'creator' and type(row.photo_ref) == 'string'
             and photos[row.photo_ref] or nil

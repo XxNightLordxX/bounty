@@ -79,7 +79,11 @@ CH.PORTION = {
 
 CH.MODE = { EXCLUSIVE = 'exclusive', COMPETITIVE = 'competitive' }
 
-CH.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping' }
+--- PROOF is never a way a claim is paid: a proof-item handover is paid as
+--- an elimination (server/imp_proof.lua). It is the outcome recorded for it,
+--- on the Ledger and to what runs after the claim (Contracts.afterClaim), so
+--- nothing treats a card handed over as a kill somebody saw.
+CH.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping', PROOF = 'proof' }
 
 --- How a contract may be completed (Config.Completion.Fulfilment): ALIVE
 --- only by a live handover, EITHER by a kill or a live handover. A term of

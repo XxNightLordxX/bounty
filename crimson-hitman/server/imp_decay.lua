@@ -46,6 +46,10 @@ local KIND = 'imp_decay'
 --- passes after, a minute apart; a step is counted in hours.
 Decay.STEPS_PER_PASS = 25
 
+--- The most rows of ended contracts one pass forgets while decay is off
+--- (Decay.tick). Each is a contract read and a delete.
+Decay.PRUNES_PER_PASS = 25
+
 --- When the next pass has anything to do, os.time(): the soonest step due,
 --- and never later than one step from the last pass, so a contract placed
 --- while it sleeps is seen before its first step can fall due. 0: now.
@@ -120,6 +124,36 @@ end
 local function pauseRow(row, since)
     if row.held_since then return end
     row.held_since = math.max(since, num(row.last_at, since))
+    write(row)
+end
+
+--- When an untaken contract last stopped being held by an operative: the
+--- latest an operative on it left, or nil when none left (the roster from
+--- the snapshot, else read).
+local function untakenSince(contract, rosters)
+    local roster = rosters and rosters[contract.id] or Storage.readHitmen(contract.id) or {}
+    local at
+    for _, h in ipairs(roster) do
+        local left = tonumber(h.left_at)
+        if h.state ~= 'active' and left and (not at or left > at) then at = left end
+    end
+    return at
+end
+
+--- A held, untaken contract whose count already stands still: if it stood
+--- still from a taking (an operative left after it began), the stretch it
+--- has been untaken since, up to the hold's start, is waiting time and is
+--- counted. The count then stands still from the hold's start. Kept from
+--- the taking, the hold's release gave the whole span back as held, and
+--- the untaken minutes between the walk-away and the freeze were lost.
+local function holdAfterTaking(row, contract, rosters, since)
+    local from = num(row.held_since, since)
+    if since <= from then return end
+    local left = untakenSince(contract, rosters)
+    if not left or left <= from then return end
+    local untaken = math.min(left, since)
+    row.last_at = num(row.last_at, from) + (untaken - from)
+    row.held_since = since
     write(row)
 end
 
@@ -222,6 +256,34 @@ local function shorten(cfg, row, contract, now)
     Audit.action('imp_decay_shortened', contract.creator_cid, contract.id, { step = row.steps })
 end
 
+--- While decay is off: the rows of contracts that have ended forgotten, at
+--- most PRUNES_PER_PASS a pass. Nothing else forgot them while it was off,
+--- so every contract that had a row kept it for good. A contract still
+--- running keeps its row (turned on again, its count and its opt-out are
+--- where they were), and so does one being paid, as below. Nothing is read
+--- while no row is kept.
+local function pruneWhileOff()
+    if next(rows) == nil then return end
+    local live = {}
+    local list = Projection and Projection.liveSnapshot and Projection.liveSnapshot()
+        or Storage.liveContracts() or {}
+    for _, contract in ipairs(list) do live[contract.id] = true end
+    local ended = {}
+    for id in pairs(rows) do
+        if not live[id] then ended[#ended + 1] = id end
+    end
+    table.sort(ended)
+    local done = 0
+    for i = 1, #ended do
+        if done >= Decay.PRUNES_PER_PASS then break end
+        local read, contract = pcall(Storage.readContract, ended[i])
+        if read and not (contract and contract.state == CH.STATE.COMPLETING) then
+            forget(ended[i])
+            done = done + 1
+        end
+    end
+end
+
 --- The tick (once a minute, on a tick of its own): one step on each
 --- untaken contract that is due one, at most STEPS_PER_PASS a pass, and the
 --- rows of contracts that ended forgotten. The steps sleep until the
@@ -234,6 +296,7 @@ function Decay.tick()
     local cfg = rules()
     if not cfg then
         nextAt = 0
+        pruneWhileOff()
         return 0
     end
     local now = os.time()
@@ -268,8 +331,15 @@ function Decay.tick()
             end
         elseif since then
             -- Held: no step, its count stands still from the hold's start,
-            -- and it is looked at again on the next pass.
-            pauseRow(kept or rowFor(contract, now, hours), since)
+            -- and it is looked at again on the next pass. One already
+            -- standing still from a taking counts the untaken time between
+            -- the walk-away and this hold first.
+            local row = kept or rowFor(contract, now, hours)
+            if row.held_since then
+                holdAfterTaking(row, contract, rosters, since)
+            else
+                pauseRow(row, since)
+            end
             soonest = now
         elseif kept and kept.held_since then
             -- Free and untaken again: the count runs on from where it stood.

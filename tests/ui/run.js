@@ -13575,6 +13575,25 @@ async function main() {
       truthy((text.match(/Ran out/g) || []).length === 1, 'only the one that ran out: ' + text);
     });
 
+    // Sweep 5: a proof handover says so, and an expiry says the stakes it handed back.
+    const ledger5 = boot({ list: emptyBoard(), mine: MINE, ledger: { ok: true, data: {
+      record: { completed: 1, placed: 1, survived: 0, standing: 'Unproven' },
+      entries: [
+        { contract_id: 'ct00000051', target_name: 'Dana Reyes', role: 'hitman', kind: 'paid',
+          fulfilment: 'proof', amount: 5000, resolved_at: Math.floor(Date.now() / 1000) - 60 },
+        { contract_id: 'ct00000052', target_name: 'Ann Ryder', role: 'creator', kind: 'refunded',
+          fulfilment: 'refunded', amount: 7000, stakes: 2000, resolved_at: Math.floor(Date.now() / 1000) - 120 }
+      ] } } });
+    await settle(); await settle();
+    tab(ledger5, 'ledger');
+    await settle();
+    it('Sweep 5: a proof handover reads as one, and a refund names the stakes in it', function () {
+      const text = ledger5.view.textContent;
+      truthy(text.indexOf('Proof handed over') !== -1, text);
+      falsy(text.indexOf('Eliminated') !== -1, 'never a kill: ' + text);
+      truthy(text.indexOf('$7,000 back to you ($2,000 of it forfeited stakes)') !== -1, text);
+    });
+
     // S1: the app paused, the restart hold, on hold.
     const paused = boot({ list: { ok: true, data: Object.assign({}, BOARD.data,
       { holds: { appPaused: true } }) }, mine: MINE, ledger: LEDGER });

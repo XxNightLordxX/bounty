@@ -156,7 +156,8 @@ describe('proof items', function()
         eq(total(s), before, 'no money made or lost')
         eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
         local hitmanRow = s.storage.readLedger('HITMAN01', 10)[1]
-        truthy(hitmanRow and hitmanRow.fulfilment == CH.FULFILMENT.ELIMINATION, 'a ledger row, as a kill')
+        truthy(hitmanRow and hitmanRow.fulfilment == CH.FULFILMENT.PROOF,
+            'a ledger row, as a proof handed over (paid as a kill, recorded as what it was)')
         -- A second handover pays nothing.
         card(3, 'TARGET01')
         local again = call('proofItem', 3, { id = c.id })

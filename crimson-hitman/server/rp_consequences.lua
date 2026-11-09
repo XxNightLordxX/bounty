@@ -571,6 +571,10 @@ end
 --- After every claim that paid (Contracts.afterClaim).
 function RpConsequences.onClaimed(contractId, hitmanCid, fulfilment, result)
     if not (on('WitnessHeat') or on('EmsRelisting') or on('CityNews')) then return end
+    -- A proof item handed to the placer (server/imp_proof.lua): nobody was
+    -- seen killed, so no EMS hold, and no news of an attack. Nor a witness
+    -- report: it would say where the hitman stood, beside the placer.
+    if fulfilment == CH.FULFILMENT.PROOF then return end
     local contract = Storage.readContract(contractId)
     if not contract then return end
     if fulfilment == CH.FULFILMENT.ELIMINATION and on('EmsRelisting') then

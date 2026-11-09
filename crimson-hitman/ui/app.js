@@ -7334,6 +7334,9 @@
     if (kind === 'refunded') { return { text: 'Ran out \u2014 refunded', icon: 'i-clock' }; }
     if (kind === 'cancelled') { return { text: 'Cancelled \u2014 refunded', icon: 'i-xcircle' }; }
     if (kind === 'buyout') { return { text: 'Bought out', icon: 'i-exit' }; }
+    // A proof item handed to the placer (Config.Improvements.ProofItems):
+    // paid as a kill would be, but nobody saw one.
+    if (row.fulfilment === 'proof') { return { text: 'Proof handed over', icon: 'i-usercheck' }; }
     return row.fulfilment === 'kidnapping'
       ? { text: 'Delivered alive', icon: 'i-usercheck' }
       : { text: 'Eliminated', icon: 'i-crosshair' };
@@ -7347,7 +7350,11 @@
     if (!(amount > 0)) { return null; }
     var kind = row.kind || 'paid';
     if (kind === 'withdrawn' || kind === 'refunded' || kind === 'cancelled') {
-      return money(amount) + ' back to you';
+      // The operatives' stakes it handed over are counted in, and said so
+      // (the server's Ledger.ended): never whose.
+      var stakes = Number(row.stakes) || 0;
+      return money(amount) + ' back to you'
+        + (stakes > 0 ? ' (' + money(stakes) + ' of it forfeited stakes)' : '');
     }
     if (kind === 'buyout') {
       return row.role === 'target' ? 'You paid ' + money(amount) : money(amount) + ' to you';

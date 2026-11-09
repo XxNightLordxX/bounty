@@ -693,7 +693,10 @@ Contracts.guardsTarget = nil
 --- What runs after every claim that paid (Contracts.claimSlot), by name:
 --- the roleplay consequences (server/rp_consequences.lua). Each is called
 --- with (contractId, hitmanCid, fulfilment, result) inside pcall, after the
---- money has moved, so none of them can change or undo a payout.
+--- money has moved, so none of them can change or undo a payout. The
+--- fulfilment is the claim's outcome (opts.outcome) where it has one of its
+--- own: CH.FULFILMENT.PROOF for a proof-item handover, paid as an
+--- elimination but no kill anybody saw.
 Contracts.afterClaim = {}
 
 --- Playtime, session and post-respawn immunity (§14.19, §14.39).
@@ -2655,6 +2658,9 @@ function Contracts.reindexHolds()
     return n
 end
 
+--- What releaseIdleHoldUnlocked answers when a hold refused the release.
+local IDLE_HELD = 'held'
+
 --- Take one idle operative off a contract: an exclusive one, or a full
 --- competitive one (Contracts.releaseIdleHolds). Their stake goes to the
 --- person who placed it, exactly as walking away hands it over
@@ -2666,7 +2672,8 @@ end
 --- acceptance, a buyout or an agreed change landing in its awaits is not
 --- interleaved with it. Busy, it is tried on the next pass.
 ---@return boolean released
----@return string|nil err CH.ERR.BUSY when the contract's key was held
+---@return string|nil err CH.ERR.BUSY when the contract's key was held, IDLE_HELD
+--- when a hold (a freeze, the restart hold, the app pause) refused it
 local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     -- Re-read: a payout or an abandonment may have moved it since the sweep
     -- read it, and a hitman being paid is not one to release.
@@ -2675,9 +2682,11 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     local current = Storage.readHitman(contractId, hitman.hitman_cid)
     if not current or current.state ~= 'active' then return false end
     -- On hold by staff, for the restart, or the whole app paused: nobody
-    -- is released and no stake moves.
+    -- is released and no stake moves. Said as held, so the sweep keeps the
+    -- hold's clocks: a hold landing between the sweep's look and this lock
+    -- is not the hitman working it.
     if Contracts.heldByStaff(contract) or Contracts.restartHeld() or Contracts.appPaused() then
-        return false
+        return false, IDLE_HELD
     end
 
     -- Read before anything moves, so the notices can name the figure.
@@ -3021,7 +3030,12 @@ function Contracts.releaseIdleHolds()
                 local ok, err = releaseIdleHold(c.id, d.row, d.held, d.why)
                 if ok then released = released + 1 end
                 -- Busy is not done: the clocks stand, and the next pass tries.
-                if err ~= CH.ERR.BUSY then
+                -- Nor is a hold that landed under the lock (a freeze, the
+                -- restart hold, the app pause): the clocks stand through it,
+                -- as they do for a hold the sweep saw, and the release goes
+                -- once it ends. Reset, the hitman was given a whole window
+                -- more for a hold that was none of their doing.
+                if err ~= CH.ERR.BUSY and err ~= IDLE_HELD then
                     idleFor[d.key], unattemptedFor[d.key], armedAt[d.key] = nil, nil, nil
                 end
             end
@@ -3447,8 +3461,9 @@ function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
         error(out[2], 0)
     end
     if out[2] == true then
+        local outcome = type(opts) == 'table' and opts.outcome or fulfilment
         for name, fn in pairs(Contracts.afterClaim) do
-            local ran, err = pcall(fn, contractId, hitmanCid, fulfilment, out[4])
+            local ran, err = pcall(fn, contractId, hitmanCid, outcome, out[4])
             if not ran then Log.debug(('after a claim, %s raised: %s'):format(name, tostring(err))) end
         end
     end
@@ -4002,6 +4017,29 @@ function Contracts.reclampToEscrow(contractId, actorCid)
     end
 end
 
+--- The money of the stakes an ending is about to hand the placer
+--- (settleStakes, as finalise runs it): a walked-away hitman's still held,
+--- and on a forfeit every active one's that forfeits. For the placer's
+--- Ledger row, which said only the reward came back. Read before anything
+--- moves; only money, as the row's own figure is.
+---@return integer
+local function forfeitedStakes(contractId, contract, forfeit)
+    local held = heldStakes(contractId)
+    if next(held) == nil then return 0 end
+    local total = 0
+    -- In the roster's order, as settleStakes walks it: the first row of a
+    -- hitman (one who walked away and took it again has two) releases every
+    -- stake line of theirs still held, to whichever side that row says.
+    for _, hitman in ipairs(Storage.readHitmen(contractId) or {}) do
+        local amount = held[hitman.hitman_cid]
+        held[hitman.hitman_cid] = nil
+        if amount and (walkedAway(hitman) or (forfeit and stakeForfeits(hitman, contract))) then
+            total = total + amount
+        end
+    end
+    return math.max(0, math.floor(total))
+end
+
 ---@param opts table|nil { forfeit = boolean } to say whether an expiry is
 --- the hitmen' failure; by default every expiry is
 local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
@@ -4064,7 +4102,9 @@ local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
     -- Written before finalise pushes the parties, so the refresh that push
     -- causes finds the row. Never allowed to stop an ending.
     if Ledger and Ledger.ended then
-        local wrote, err = pcall(Ledger.ended, contract, terminal, heldMoney)
+        local wrote, err = pcall(function()
+            return Ledger.ended(contract, terminal, heldMoney, forfeitedStakes(contractId, contract, forfeit))
+        end)
         if not wrote then
             Audit.rejected('ledger_not_written', contract.creator_cid, contractId,
                 { error = tostring(err) })

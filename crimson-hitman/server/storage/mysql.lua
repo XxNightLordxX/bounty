@@ -468,6 +468,9 @@ local SCHEMA = {
         -- MySQLStore.migrate.
         kind VARCHAR(16),
         amount BIGINT NOT NULL DEFAULT 0,
+        -- How much of that money was operatives' stakes handed to the client
+        -- (Ledger.ended). Added to existing databases by MySQLStore.migrate.
+        stakes BIGINT NOT NULL DEFAULT 0,
         INDEX idx_cid (cid, resolved_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_pending (
@@ -2511,12 +2514,12 @@ function MySQLStore.writeLedger(entry)
     db.query([[
         INSERT INTO crimson_ledger
             (cid, contract_id, role, target_name, reason, fulfilment, slot, photo_ref, resolved_at,
-             kind, amount)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             kind, amount, stakes)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     ]], {
         entry.cid, entry.contract_id, entry.role, entry.target_name, entry.reason,
         entry.fulfilment, entry.slot or 1, entry.photo_ref, entry.resolved_at,
-        entry.kind, math.floor(tonumber(entry.amount) or 0),
+        entry.kind, math.floor(tonumber(entry.amount) or 0), math.floor(tonumber(entry.stakes) or 0),
     })
     -- Keep the footprint small: prune anything past the configured depth.
     db.query([[
@@ -3595,7 +3598,8 @@ local META_UPSERT = [[
 function MySQLStore.readStaffMeta()
     local rows = db.query([[
         SELECT meta_key, meta_value FROM crimson_meta
-        WHERE meta_key IN ('staff_summary_day', 'staff_pause_since', 'imp_weekly_day')
+        WHERE meta_key IN ('staff_summary_day', 'staff_pause_since', 'imp_weekly_day',
+                           'imp_serial_secret')
     ]]) or {}
     local out = {}
     for i = 1, #rows do out[rows[i].meta_key] = tonumber(rows[i].meta_value) or 0 end

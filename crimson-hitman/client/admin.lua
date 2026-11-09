@@ -108,10 +108,29 @@ end
 -- From the server
 --------------------------------------------------------------------------
 
+--- The /<panel command>-close commands registered so far, by name.
+local closeCommands = {}
+
+--- Register /<name>-close, once per name: the way out typed in the F8
+--- console (below). Only a name a command can have.
+---@param name any
+local function registerClose(name)
+    if type(name) ~= 'string' or #name == 0 or #name > 32 or not name:match('^[%w_%-]+$') then return end
+    if closeCommands[name] then return end
+    closeCommands[name] = true
+    RegisterCommand(name .. '-close', function()
+        AdminPanel.close()
+    end, false)
+end
+
 RegisterNetEvent('crimson-hitman:adminOpen', function(access)
     -- Type-checked, as every handler in this resource is: an event name is
     -- a server-wide namespace.
     if type(access) ~= 'table' then return end
+    -- The name the server registered the panel's command under: a panel
+    -- override of Admin.Commands.panel, which this client's config.lua
+    -- does not know, gives /<that name>-close beside it.
+    registerClose(access.command)
     AdminPanel.open(access)
 end)
 
@@ -191,15 +210,14 @@ end)
 -- The way out when the page itself cannot give the focus back (it failed
 -- to load and its own fallback did not reach this client): typed in the F8
 -- console, which opens over the page. /<panel command>-close, so it sits
--- beside the command that opened it. It only closes this player's own page;
--- anyone may run it, and it opens nothing.
+-- beside the command that opened it: under config.lua's name from the start,
+-- and under the name the server says it registered with each open (a panel
+-- override). It only closes this player's own page; anyone may run it, and
+-- it opens nothing.
 do
     local commands = Config and Config.Admin and Config.Admin.Commands
-    local panel = type(commands) == 'table' and type(commands.panel) == 'string' and commands.panel
-        or 'hitmanadmin'
-    RegisterCommand(panel .. '-close', function()
-        AdminPanel.close()
-    end, false)
+    registerClose(type(commands) == 'table' and type(commands.panel) == 'string' and commands.panel
+        or 'hitmanadmin')
 end
 
 -- A restart with the page open: the focus is this resource's, and nothing

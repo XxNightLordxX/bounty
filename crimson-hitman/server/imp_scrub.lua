@@ -12,21 +12,89 @@
 --- Each scrub is audited for staff as 'weapon_serial_scrubbed' with the
 --- new serial and the original one; the original is shown only to staff
 --- with IdentityAce (server/panel.lua IDENTITY_ONLY), since it can name the
---- placer. One line keeps one new serial for as long as the server runs,
---- so a give that is tried again hands over the same number.
+--- placer. One line always gets the same new serial, across restarts too,
+--- so a give that is tried again (a retry, a queued give at the next login,
+--- a recovery after a restart) hands over the same number: it is worked out
+--- from the line's id and a secret the server keeps (Storage staff meta
+--- 'imp_serial_secret', made once at the first scrub), never stored per
+--- line. Without the secret nobody can work a serial out from a line, or a
+--- line from a serial.
 
+local Log = CrimsonBoot.requireShared('log')
+local Util = CrimsonBoot.requireShared('util')
 local Imp = CrimsonBoot.require('server.imp_staffeco')
 
 local Scrub = {}
 
 local deps
 
---- [escrow line id] = the serial minted for it.
+--- [escrow line id] = the serial worked out for it, this process.
 local minted = {}
+
+--- The secret the serials are worked out with, once read or made.
+local secret = nil
+Scrub.SECRET_META = 'imp_serial_secret'
 
 function Scrub.init(d)
     deps = d
     minted = {}
+    secret = nil
+end
+
+--- The server's secret: read from the store, or made and kept there the
+--- first time. A store that cannot be read gives one for this process
+--- only, said in the console, and is asked again at the next start: never
+--- written over a secret it could not read.
+---@return integer
+local function serverSecret()
+    if secret then return secret end
+    local storage = deps and deps.storage
+    local read, meta = false, nil
+    if storage and storage.readStaffMeta then read, meta = pcall(storage.readStaffMeta) end
+    local kept = read and type(meta) == 'table' and math.tointeger(tonumber(meta[Scrub.SECRET_META])) or nil
+    if kept and kept > 0 then
+        secret = kept
+        return secret
+    end
+    secret = math.random(1, 2147483646)
+    if read and storage.writeStaffMeta then
+        local wrote, err = pcall(storage.writeStaffMeta, Scrub.SECRET_META, secret)
+        if not wrote then
+            Log.always(('serial scrub: the secret could not be kept by the store (%s); a weapon '
+                .. 'given again after the next restart gets another serial'):format(Util.dbError(err)))
+        end
+    else
+        Log.always('serial scrub: the store\'s secret could not be read; serials are this '
+            .. 'process\'s own until the next start')
+    end
+    return secret
+end
+
+--- FNV-1a, 32 bits.
+local function fnv(text)
+    local hash = 2166136261
+    for i = 1, #text do
+        hash = ((hash ~ text:byte(i)) * 16777619) & 0xffffffff
+    end
+    return hash
+end
+
+--- The serial for one escrow line: the same for the same line and secret,
+--- in ox_inventory's form (Scrub.newSerial).
+---@param lineId string
+---@return string
+function Scrub.serialFor(lineId)
+    local state = fnv(('%d:%s'):format(serverSecret(), tostring(lineId)))
+    local function nextValue()
+        state = (state * 1103515245 + 12345) & 0x7fffffff
+        return state >> 8
+    end
+    local letters
+    repeat
+        local a, b, c = nextValue(), nextValue(), nextValue()
+        letters = string.char(65 + a % 26, 65 + b % 26, 65 + c % 26)
+    until letters ~= 'POL' and letters ~= 'EMS'
+    return ('%d%s%d'):format(100000 + nextValue() % 900000, letters, 100000 + nextValue() % 900000)
 end
 
 function Scrub.on()
@@ -78,7 +146,7 @@ function Scrub.scrub(recipientCid, line, meta)
     local serial = line.id and minted[line.id]
     local fresh = serial == nil
     if fresh then
-        serial = Scrub.newSerial()
+        serial = line.id and Scrub.serialFor(line.id) or Scrub.newSerial()
         if line.id then minted[line.id] = serial end
     end
     local copy = {}

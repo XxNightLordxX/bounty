@@ -231,7 +231,15 @@ local function load()
         if row.tip_id then pending[row.tip_id] = row end
     end
     for _, row in ipairs(darks) do
-        if row.cid then dark[row.cid] = row end
+        -- A row still pending was written for a purchase that never
+        -- finished (ImpTips.goDark): its charge was refused or never made,
+        -- or the write that confirms it did not go through and the price
+        -- was given back. Nobody paid for it, so nobody is dark by it.
+        if row.pending then
+            pcall(Storage.deleteRpRow, row.id)
+        elseif row.cid then
+            dark[row.cid] = row
+        end
     end
 end
 
@@ -239,17 +247,21 @@ end
 -- F1: the target's warning, delayed
 --------------------------------------------------------------------------
 
+--- Send one waiting warning, then take it out of the store: in that order,
+--- so a stop between the two sends it again after the restart rather than
+--- never. Taken out of memory first, so this process sends it once.
 local function send(row)
     pending[row.tip_id] = nil
     timers[row.tip_id] = nil
-    pcall(Storage.deleteRpRow, row.id)
     local ok, contract = pcall(Storage.readContract, row.contract_id)
     -- A contract that ended while the warning waited has nothing left to
-    -- warn of: dropped.
-    if not ok or not contract or CH.TERMINAL[contract.state] then return end
-    if Notify and Notify.locationTipped and LocationTip then
+    -- warn of: dropped. One that could not be read is kept for the next
+    -- start, as a warning is never lost.
+    if not ok then return end
+    if contract and not CH.TERMINAL[contract.state] and Notify and Notify.locationTipped and LocationTip then
         pcall(Notify.locationTipped, contract, LocationTip.TARGET_TITLE, LocationTip.TARGET_TEXT)
     end
+    pcall(Storage.deleteRpRow, row.id)
 end
 
 local function arm(row)
@@ -504,12 +516,19 @@ buyDark = function(actor, contractId, shown)
         return false, CH.ERR.CONTRACT_FROZEN
     end
 
-    -- Kept first, so a charge never stands without it; dropped if the charge
-    -- is refused. Counted as dark only once paid.
+    -- Kept first as pending, so a charge never stands without a row; then
+    -- charged; then confirmed. A pending row darkens nobody, here or after
+    -- a restart (load drops it): written as the purchase itself, a write
+    -- that raised but landed late left the target dark for nothing once
+    -- the server restarted. Counted as dark only once paid and confirmed.
     local untilAt = os.time() + minutes * 60
-    local row = { id = 'dk:' .. actor.cid, kind = ImpTips.KIND_DARK, cid = actor.cid, until_at = untilAt }
+    local row = { id = 'dk:' .. actor.cid, kind = ImpTips.KIND_DARK, cid = actor.cid, until_at = untilAt,
+                  contract_id = contractId, pending = true }
     local kept = pcall(Storage.writeRpRow, row)
-    if not kept then return false, CH.ERR.SERVER_ERROR end
+    if not kept then
+        pcall(Storage.deleteRpRow, row.id)
+        return false, CH.ERR.SERVER_ERROR
+    end
     if not Util.charge(actor.player, account, cost) then
         pcall(Storage.deleteRpRow, row.id)
         return false, CH.ERR.INSUFFICIENT, { cost = cost, account = account }
@@ -526,6 +545,19 @@ buyDark = function(actor, contractId, shown)
     elseif Contracts and Contracts.heldByStaff and Contracts.heldByStaff(after) then
         refusal = CH.ERR.CONTRACT_FROZEN
     end
+    if not refusal then
+        -- Confirmed: the purchase stands from here. A confirm that raised
+        -- may still land, so the row is taken away as well as the price
+        -- given back; one landing after the delete is the store's own
+        -- ordering, and leaves at most the window it was written for.
+        row.pending = nil
+        local confirmed, confirmErr = pcall(Storage.writeRpRow, row)
+        if not confirmed then
+            Log.always(('go dark: the purchase could not be kept by the store (%s); the price is '
+                .. 'given back'):format(Util.dbError(confirmErr)))
+            refusal = CH.ERR.SERVER_ERROR
+        end
+    end
     if refusal then
         pcall(Storage.deleteRpRow, row.id)
         refundDark(actor, contractId, cost, account, refusal)
@@ -537,6 +569,37 @@ buyDark = function(actor, contractId, shown)
         minutes = minutes })
     if Notify and Notify.push then pcall(Notify.push, actor.cid, 'tip', contractId) end
     return { untilAt = untilAt, minutes = minutes }
+end
+
+--- The most go-dark rows one prune takes out of the store.
+ImpTips.PRUNES_PER_PASS = 25
+
+--- Take out of the store the go-dark windows that have passed (the board's
+--- minute, imp_board.tick). darkUntil drops one only when somebody asks
+--- about that target again, and once the contract it was bought on had
+--- ended nobody did: the row was kept for good. A window still running is
+--- kept, whatever became of the contract: it was paid for. From memory, so
+--- a pass with nothing past its time reads and writes nothing, and at most
+--- PRUNES_PER_PASS deletes a pass. Runs with the switch off too.
+---@return integer pruned
+function ImpTips.prune()
+    -- Loaded at the start (ImpTips.resume); a start whose read raised is
+    -- tried again here, or the windows from before it were never pruned.
+    if not loaded then load() end
+    if not loaded or next(dark) == nil then return 0 end
+    local now, gone = os.time(), {}
+    for cid, row in pairs(dark) do
+        if (tonumber(row.until_at) or 0) <= now then
+            gone[#gone + 1] = cid
+            if #gone >= ImpTips.PRUNES_PER_PASS then break end
+        end
+    end
+    for i = 1, #gone do
+        local row = dark[gone[i]]
+        dark[gone[i]] = nil
+        if Storage and Storage.deleteRpRow then pcall(Storage.deleteRpRow, row.id) end
+    end
+    return #gone
 end
 
 --- Whether a tip bought now on this target finds nothing (they went dark).

@@ -1538,6 +1538,7 @@ function Bridges.installCommands(modules)
     -- anything that writes needs Ace itself. The page is drawn by the
     -- player's own game, so there is nothing to open from the console.
     if names.panel then
+        local panelCommand = names.panel
         command(names.panel, Config.Admin.Ace, function(src)
             if src == 0 then
                 return reply(src, ('The admin panel opens in game. From the console: /%s, /%s, '
@@ -1546,6 +1547,11 @@ function Bridges.installCommands(modules)
             end
             local access = modules.panel and modules.panel.open(src)
             if not access then return reply(src, Admin.howToAuthorise(Config.Admin.Ace, nil, names.panel)) end
+            -- The name this command was registered under, for the client's
+            -- /<name>-close (client/admin.lua): a panel override of
+            -- Admin.Commands.panel is in force here, and the client's own
+            -- config.lua never sees it.
+            access.command = panelCommand
             TriggerClientEvent('crimson-hitman:adminOpen', src, access)
         end)
     end

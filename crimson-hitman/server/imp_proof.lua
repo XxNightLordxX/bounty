@@ -17,7 +17,9 @@
 ---
 --- The item is taken first (the hitman's side of the exchange), then the
 --- payout is claimed as a verified kill is (Contracts.claimSlot, as an
---- elimination). A claim refused gives the item back, exactly as it was
+--- elimination), recorded as its own outcome (CH.FULFILMENT.PROOF): no EMS
+--- re-listing, witness report or city news, and the Ledger says proof. A
+--- claim refused gives the item back, exactly as it was
 --- taken; the item is used up only by a payout, so one id card never pays
 --- two collections. With ox_inventory not started the feature does nothing.
 
@@ -190,8 +192,12 @@ function Proof.handover(actor, rawId)
         return false, CH.ERR.PROOF_MISSING
     end
 
+    -- Paid as an elimination, recorded as what it is (CH.FULFILMENT.PROOF):
+    -- a card handed over, not a kill anybody saw, so what runs after the
+    -- claim (EMS re-listing, the witness report, city news) does not take
+    -- it for one, and the Ledger says proof.
     local ran, ok, err, result = pcall(Contracts.claimSlot, contractId, actor.cid,
-        CH.FULFILMENT.ELIMINATION, nil)
+        CH.FULFILMENT.ELIMINATION, { outcome = CH.FULFILMENT.PROOF })
     working[busy] = nil
     if not ran then
         -- The maintenance tick finishes a claim that raised
@@ -210,7 +216,7 @@ function Proof.handover(actor, rawId)
     local readOk, now = pcall(Storage.readContract, contractId)
     local after = readOk and now or contract
     local wrote, ledgerErr = pcall(deps.ledger.record, after, actor.cid, nil,
-        CH.FULFILMENT.ELIMINATION, result)
+        CH.FULFILMENT.PROOF, result)
     if not wrote then
         pcall(deps.audit.financial, 'ledger_write_failed', actor.cid, contractId,
             { error = tostring(ledgerErr) })

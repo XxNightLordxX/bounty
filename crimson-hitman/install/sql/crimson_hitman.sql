@@ -208,6 +208,9 @@ CREATE TABLE IF NOT EXISTS crimson_ledger (
     -- MySQLStore.migrate.
     kind VARCHAR(16),
     amount BIGINT NOT NULL DEFAULT 0,
+    -- How much of that money was operatives' stakes handed to the client
+    -- (Ledger.ended). Added to existing databases by MySQLStore.migrate.
+    stakes BIGINT NOT NULL DEFAULT 0,
     INDEX idx_cid (cid, resolved_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
