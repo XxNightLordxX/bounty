@@ -77,7 +77,7 @@ for name in ([[
     readStaffMeta playersTopId playerNumber playerNumbers readPlaytimeMany readRpRows lastHeartbeat health healthy timedOut
     notSent inspect quarantined readBackMismatches nextId
     writeAudit writeAuditBatch writeAuditNoWait writePlaytime writePlaytimeNoWait
-    writePlaytimeInstall writeStaffMeta heartbeat flush save writeMessage setMute writeLedger
+    writePlaytimeInstall writeStaffMeta claimStaffMeta heartbeat flush save writeMessage setMute writeLedger
     forgetLedgerPhotos queuePending clearPending bumpStat writeReview setReviewState
     writeSetting deleteSetting clearSettings writeAlert writeAlertNoWait deleteAlert
     setViewAlerts writePhoto openPhoto closePhoto publishPhoto movePhoto keepPhoto deletePhoto
@@ -605,8 +605,11 @@ function Projection.contract(contract, viewerCid, opts)
         -- band moves only while the clock runs, so nothing on the card
         -- changes the moment anybody logs off or on. Staff see the exact
         -- times (server/panel.lua).
+        -- It stands still from the start the stake's check at an acceptance
+        -- asks too (Freeze.bandStart), and for a stranger only through a
+        -- hold that stops every contract alike, never a staff freeze.
         timeLeft      = Util.timeBand(Util.bandLeft(contract,
-            Freeze and Freeze.holdStart and Freeze.holdStart(contract, hitmen) or nil)),
+            Freeze and Freeze.bandStart and Freeze.bandStart(contract, hitmen, role == 'public') or nil)),
         -- Staff have put it on hold (server/freeze.lua). The same one word
         -- to each of its parties, never which of them or why: true or
         -- absent. Never to a stranger on the board, where it told them
@@ -1303,7 +1306,7 @@ local function whitelistedEntry(contract, job, advised)
         state        = active and (active > 0 and 'taken' or 'open') or nil,
         hitmenActive = active,
         timeLeft     = posted and Util.timeBand(Util.bandLeft(contract,
-            Freeze and Freeze.holdStart and Freeze.holdStart(contract) or nil)) or nil,
+            Freeze and Freeze.bandStart and Freeze.bandStart(contract, nil, advised ~= nil) or nil)) or nil,
     }
 end
 

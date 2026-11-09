@@ -3613,7 +3613,8 @@ function MySQLStore.readStaffMeta()
     local rows = db.query([[
         SELECT meta_key, meta_value FROM crimson_meta
         WHERE meta_key IN ('staff_summary_day', 'staff_pause_since', 'imp_weekly_day',
-                           'imp_serial_secret')
+                           'imp_serial_secret', 'imp_serial_secret_1', 'imp_serial_secret_2',
+                           'imp_serial_secret_3', 'imp_serial_secret_4', 'imp_serial_secret_5')
     ]]) or {}
     local out = {}
     for i = 1, #rows do out[rows[i].meta_key] = tonumber(rows[i].meta_value) or 0 end
@@ -3623,6 +3624,20 @@ end
 function MySQLStore.writeStaffMeta(key, value)
     db.query(META_UPSERT, { key, math.floor(tonumber(value) or 0) })
     return true
+end
+
+--- See the memory backend. Inserted only where the key has no row (the
+--- update leaves a row there as it is), then read back, so every caller
+--- uses the row that landed first. Only for keys nothing writes 0 to.
+function MySQLStore.claimStaffMeta(key, value)
+    db.query([[
+        INSERT INTO crimson_meta (meta_key, meta_value) VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE meta_key = meta_key
+    ]], { key, math.floor(tonumber(value) or 0) })
+    local rows = db.query('SELECT meta_key, meta_value FROM crimson_meta WHERE meta_key = ?', { key }) or {}
+    local kept = rows[1] and tonumber(rows[1].meta_value) or nil
+    if not kept then error('crimson-hitman: staff meta ' .. tostring(key) .. ' was not kept', 0) end
+    return kept
 end
 
 function MySQLStore.writePlaytimeInstall(since, playersId)

@@ -1903,7 +1903,8 @@ do
     --- What the rule finds in a source's statements: the findings, and every
     --- column some statement inserts.
     ---
-    --- A statement whose update clause is `id = id` changes nothing: it is an
+    --- A statement whose update clause is `id = id` (or any column set to
+    --- itself) changes nothing: it is an
     --- insert that leaves a row already there alone (writeReview, and the
     --- insert-if-absent writes a take and a create make, insertEscrow and
     --- insertContract), and nothing it inserts is written again by it, so it
@@ -1919,7 +1920,10 @@ do
             if table_ and update then
                 -- Comments inside the clause carry column names in prose.
                 update = update:gsub('%-%-[^\n]*', '')
-                local insertOnly = update:gsub('%]%]$', ''):match('^%s*id%s*=%s*id%s*$') ~= nil
+                -- `id = id`, or any key set to itself (`meta_key = meta_key`,
+                -- claimStaffMeta's insert-if-absent).
+                local left, right = update:gsub('%]%]$', ''):match('^%s*([%w_]+)%s*=%s*([%w_]+)%s*$')
+                local insertOnly = left ~= nil and left == right
 
                 local updated = {}
                 for name in update:gmatch('([%w_]+)%s*=') do updated[name] = true end

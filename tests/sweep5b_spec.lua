@@ -664,6 +664,8 @@ describe('sweep 5 C5: freezes the start could not read', function()
         s.freeze.restartTick()
         truthy(s.freeze.holds(contract), 'still held while the read fails')
         s.storage.readFreezes = real
+        -- Tried again after the outage's wait, not on every tick.
+        Env.advance(300)
         s.freeze.restartTick()
         falsy(s.freeze.holds(contract), 'let go once they are read')
         truthy(s.contracts.accept(f.hitman, c.id, false))
@@ -854,4 +856,259 @@ describe('sweep 5 M5: a top-up on the financial record', function()
         eq(added[1].source, 'cash')
         eq(added[1].amount, 1500)
     end)
+end)
+
+--------------------------------------------------------------------------
+-- Sweep 5 review: what the sweep 5 fixes still got wrong
+--
+--   R1  freezes that could not be read held every contract, but the first
+--       good read gave none of them back the lifetime the outage took, so a
+--       contract whose lifetime ran out meanwhile ended on it; the read was
+--       tried, and said, on every tick; staff without IdentityAce were shown
+--       nothing held, and the count read 0.
+--   R2  the restart hold's release let go of the hold, then awaited, then
+--       carried the kills waiting through it over: a death sweep in between
+--       dropped them.
+--   R3  an acceptance under the restart hold worked the stake's band out
+--       from now, the card from the hold's start: refused as terms changed
+--       for the whole hold. And a stranger's card stood still under a staff
+--       freeze, which told them the contract was held.
+--   R5  the serial secret was one draw of math.random, and two first uses
+--       landing together each kept their own.
+--------------------------------------------------------------------------
+
+describe('sweep 5 review R1: the lifetime an unreadable freeze store took', function()
+    local function outage(s)
+        local real = s.storage.readFreezes
+        local calls = 0
+        s.storage.readFreezes = function()
+            calls = calls + 1
+            error('Lost connection to server during query', 0)
+        end
+        return function() s.storage.readFreezes = real end, function() return calls end
+    end
+
+    --- Ticks every `step` seconds until the freezes are read, at most `max`.
+    local function tickUntilRead(s, contract, step, max)
+        for _ = 1, max do
+            Env.advance(step)
+            s.freeze.restartTick()
+            if not s.freeze.holds(s.storage.readContract(contract.id)) then return true end
+        end
+        return false
+    end
+
+    it('is given back on the first good read, and the contract lives on', function()
+        local main, s = bootMain()
+        local f = fixture(s)
+        local c = place(s, f)
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
+        local row = s.storage.readContract(c.id)
+        row.expires_at = os.time() + 600
+        s.storage.writeContract(row)
+        local restore = outage(s)
+        s.freeze.reload()
+        for _ = 1, 20 do
+            Env.advance(60)
+            s.freeze.restartTick()
+            main.markPresenceChanged()
+            main.expire()
+        end
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'ended while held')
+        restore()
+        truthy(tickUntilRead(s, c, 60, 10), 'read again')
+        main.markPresenceChanged()
+        main.expire()
+        local after = s.storage.readContract(c.id)
+        eq(after.state, CH.STATE.ACCEPTED, 'ended on the first good read: the outage took its lifetime')
+        truthy(after.expires_at - os.time() >= 590, 'the lifetime it had: ' .. (after.expires_at - os.time()))
+        main.markPresenceChanged()
+        main.expire()
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+    end)
+
+    it('gives back nothing past a real freeze made meanwhile, which gives back the rest', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f)
+        local before = s.storage.readContract(c.id).expires_at
+        local restore = outage(s)
+        local t0 = os.time()
+        s.freeze.reload()
+        Env.advance(300)
+        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        Env.advance(600)
+        restore()
+        falsy(tickUntilRead(s, c, 300, 3), 'still held by the real freeze')
+        eq(s.storage.readContract(c.id).expires_at - before, 300, 'the outage up to the freeze, once')
+        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        eq(s.storage.readContract(c.id).expires_at - before, os.time() - t0, 'the whole span, once')
+    end)
+
+    it('tries again with a growing wait, and says so once and then every five minutes', function()
+        local s = newStack()
+        local f = fixture(s)
+        place(s, f)
+        local restore, calls = outage(s)
+        local said = 0
+        local realPrint = print
+        _G.print = function(text)
+            if tostring(text):find('staff freezes could not be read', 1, true) then said = said + 1 end
+        end
+        local ok, err = pcall(function()
+            s.freeze.reload()
+            for _ = 1, 1200 do
+                Env.advance(1)
+                s.freeze.restartTick()
+            end
+        end)
+        _G.print = realPrint
+        restore()
+        truthy(ok, tostring(err))
+        truthy(calls() <= 15, 'tried on every tick: ' .. calls())
+        truthy(calls() >= 4, 'gave up trying: ' .. calls())
+        truthy(said >= 1 and said <= 5, 'said ' .. said .. ' times in twenty minutes')
+    end)
+
+    it('shows staff why a contract is held, naming nobody, and the count as unknown', function()
+        local s, f = staffStack()
+        local c = place(s, f)
+        local restore = outage(s)
+        s.freeze.reload()
+        local count, unknown = s.freeze.count()
+        eq(count, 0)
+        truthy(unknown, 'the count read 0 as if known')
+        local plain = ask(6, 'contract', { id = c.id })
+        truthy(plain and plain.ok, 'read')
+        local shown = plain.data.frozen or {}
+        eq(#shown, 1, 'staff without IdentityAce shown nothing held')
+        eq(shown[1], 'held')
+        local overview = ask(6, 'overview')
+        truthy(overview.data.frozen.unknown, 'the overview counted 0 frozen')
+        Env.aces[6]['crimson.identity'] = true
+        local identified = ask(6, 'contract', { id = c.id })
+        eq((identified.data.frozen or {})[1], 'store unreadable')
+        restore()
+    end)
+end)
+
+describe('sweep 5 review R2: a death sweep inside the restart hold\'s release', function()
+    it('keeps the kill that waited through the hold', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Config.Completion.KillPhotos = false
+        Config.Restart.PauseBeforeSeconds = 1800
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1, 'the kill is attributed')
+        Env.advance(30)
+        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        for _ = 1, 10 do
+            Env.advance(60)
+            s.death.sweep()
+        end
+        local real, ran = s.storage.liveContracts, false
+        s.storage.liveContracts = function(...)
+            if not ran then ran = true; s.death.sweep() end
+            return real(...)
+        end
+        truthy(s.freeze.releaseRestart('skipped'))
+        s.storage.liveContracts = real
+        truthy(ran, 'the sweep ran inside the release')
+        local ok, err = s.photo.verifyAtScene(f.hitman, c.id)
+        truthy(ok, 'the kill was dropped: ' .. tostring(err))
+    end)
+end)
+
+describe('sweep 5 review R3: the stake\'s band and the card\'s are one', function()
+    local function staked()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f, { penaltyAmount = 2000 })
+        local row = s.storage.readContract(c.id)
+        row.deadline_at = os.time() + 5 * 3600
+        row.expires_at = os.time() + 1000
+        s.storage.writeContract(row)
+        return s, f, c
+    end
+
+    it('an acceptance on the band the card shows under the restart hold is taken', function()
+        local s, f, c = staked()
+        Config.Restart.PauseBeforeSeconds = 1800
+        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        Env.advance(300)
+        local card = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
+        eq(card.timeLeft, 'Under 1 hour left', 'the card stands still under the hold')
+        local ok, err = s.contracts.accept(f.hitman, c.id, false,
+            { checkDisclosure = true, disclosed = 2000, shownBand = card.timeLeft })
+        truthy(ok, 'refused: ' .. tostring(err))
+    end)
+
+    it('a stranger\'s card does not stand still for a staff freeze', function()
+        local s, _, c = staked()
+        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        Env.advance(300)
+        local contract = s.storage.readContract(c.id)
+        eq(s.projection.contract(contract, 'STRANGER').timeLeft, 'Under 15 minutes left',
+            'stood still: the stranger is told it is held')
+        eq(s.projection.contract(contract, 'CREATOR1').timeLeft, 'Under 1 hour left', 'a party\'s does')
+    end)
+end)
+
+describe('sweep 5 review R5: the serial secret', function()
+    local function weaponLine(id)
+        return { id = id, contract_id = 'ct-missing', source = CH.SOURCE.WEAPON,
+            item = 'WEAPON_PISTOL', taken_from = 'CREATOR1' }
+    end
+
+    it('is at least 128 bits, kept by the store', function()
+        local s = newStack()
+        Config.Improvements.SerialScrub.Enabled = true
+        truthy(s.impScrub.scrub('HITMAN01', weaponLine('ln-r5'), { serial = 'ORIG00001' }))
+        local meta = s.storage.readStaffMeta()
+        local bits = 0
+        for i = 1, 8 do
+            local word = tonumber(meta[s.impScrub.SECRET_META .. '_' .. i])
+            if word and word > 0 then bits = bits + 28 end
+        end
+        truthy(bits >= 128, 'kept ' .. bits .. ' bits')
+    end)
+
+    it('two first uses landing together use one secret, the one kept', function()
+        local s = newStack()
+        Config.Improvements.SerialScrub.Enabled = true
+        local real, nested, second = s.storage.readStaffMeta, false, nil
+        s.storage.readStaffMeta = function(...)
+            local out = real(...)
+            if not nested then
+                nested = true
+                second = s.impScrub.scrub('HITMAN01', weaponLine('ln-r5b'), { serial = 'ORIG00002' })
+            end
+            return out
+        end
+        local first = s.impScrub.scrub('HITMAN01', weaponLine('ln-r5a'), { serial = 'ORIG00001' })
+        s.storage.readStaffMeta = real
+        truthy(first and second, 'both scrubbed')
+        s.impScrub.init({ storage = s.storage, audit = s.audit })
+        eq(s.impScrub.scrub('HITMAN01', weaponLine('ln-r5a'), { serial = 'ORIG00001' }).serial, first.serial,
+            'the first line\'s serial after a restart')
+        eq(s.impScrub.scrub('HITMAN01', weaponLine('ln-r5b'), { serial = 'ORIG00002' }).serial, second.serial,
+            'the second line\'s serial after a restart')
+    end)
+end)
+
+describe('sweep 5 review R5: a staff meta claim keeps the first value on every store', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': the second claim answers the first one\'s value, and that is what is read', function()
+            local _, s = bootOn(mode)
+            eq(s.storage.claimStaffMeta('imp_serial_secret_1', 123456), 123456)
+            eq(s.storage.claimStaffMeta('imp_serial_secret_1', 654321), 123456, 'written over')
+            eq(tonumber(s.storage.readStaffMeta()['imp_serial_secret_1']), 123456)
+        end)
+    end
 end)

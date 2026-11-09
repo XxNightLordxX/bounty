@@ -2422,6 +2422,16 @@ function JsonStore.writeStaffMeta(key, value)
     return true
 end
 
+--- See the memory backend. Written at once where it is kept.
+function JsonStore.claimStaffMeta(key, value)
+    db.staffMeta = db.staffMeta or {}
+    if db.staffMeta[key] == nil then
+        db.staffMeta[key] = math.floor(tonumber(value) or 0)
+        touch(true)
+    end
+    return tonumber(db.staffMeta[key]) or 0
+end
+
 --------------------------------------------------------------------------
 -- Roleplay features' own rows
 --------------------------------------------------------------------------

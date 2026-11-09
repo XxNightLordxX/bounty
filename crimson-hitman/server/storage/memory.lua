@@ -1885,6 +1885,20 @@ function Memory.writeStaffMeta(key, value)
     return true
 end
 
+--- Keep `value` under `key` only where nothing is kept there yet,
+--- and answer what is kept now: the value of whichever first use landed
+--- first, so two landing together both use the one kept.
+---@param key string
+---@param value integer
+---@return integer kept
+function Memory.claimStaffMeta(key, value)
+    db.staffMeta = db.staffMeta or {}
+    if db.staffMeta[key] == nil then
+        db.staffMeta[key] = math.floor(tonumber(value) or 0)
+    end
+    return db.staffMeta[key]
+end
+
 --------------------------------------------------------------------------
 -- Playtime
 --------------------------------------------------------------------------

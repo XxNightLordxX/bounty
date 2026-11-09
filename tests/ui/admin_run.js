@@ -4892,6 +4892,87 @@ async function main() {
     clean(app, 'sweep 4 stale handle');
   })();
 
+  /* ---- sweep 5 review: an armed button never carries over to another subject ---- */
+  await (async function () {
+    const server = standardServer({
+      player: function (data) {
+        const reply = player();
+        const b = data && (data.subject === '13' || data.ref === 'p7_BBBBBB');
+        reply.data.player.ref = b ? 'p7_BBBBBB' : 'p7_AAAAAA';
+        reply.data.player.cid = b ? 'TARGET02' : 'TARGET01';
+        reply.data.frozen = { since: NOW - 60, reason: 'RP dispute' };
+        return reply;
+      },
+      frozen: { ok: true, data: { rows: [] } },
+      unfreeze: { ok: true, message: 'Unfrozen.' },
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    app.click(app.button('Unfreeze'));
+    await settled();
+    it('sweep 5 review: Unfreeze on the first player is armed', function () {
+      eq(app.requests('unfreeze').length, 0);
+      truthy(app.button('Unfreeze').classList.contains('is-armed'));
+    });
+    app.type(app.byId('pl-q'), '13');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('sweep 5 review: looking up another player leaves nothing armed', function () {
+      eq(app.last('player').data, { subject: '13' });
+      falsy(app.button('Unfreeze').classList.contains('is-armed'), 'still armed on the second player');
+    });
+    app.click(app.button('Unfreeze'));
+    await settled();
+    it('sweep 5 review: one click on the second player\'s Unfreeze sends nothing', function () {
+      eq(app.requests('unfreeze').length, 0, 'unfroze the second player on one click');
+    });
+    app.click(app.button('Unfreeze'));
+    await settled();
+    it('sweep 5 review: the second click unfreezes the player shown', function () {
+      eq(app.requests('unfreeze').length, 1);
+      eq(app.last('unfreeze').data.ref, 'p7_BBBBBB');
+    });
+    clean(app, 'sweep 5 review player arm');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({
+      contracts: contracts({ rows: [contractRow(1), contractRow(2)] }),
+    }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$$('tr.row')[0]);
+    await settled();
+    app.type(app.drawer().querySelector('[data-bind="dr.reason"]'), 'Duplicate');
+    app.click(app.button('Void contract', app.drawer()));
+    await settled();
+    it('sweep 5 review: Void on the first contract is armed', function () {
+      eq(app.requests('void').length, 0);
+      truthy(app.button('Void contract', app.drawer()).classList.contains('is-armed'));
+    });
+    app.click(app.$$('tr.row')[1]);
+    await settled();
+    it('sweep 5 review: opening another contract leaves nothing armed', function () {
+      eq(app.last('contract').data, { id: 'ct00000002' });
+      falsy(app.button('Void contract', app.drawer()).classList.contains('is-armed'), 'still armed');
+    });
+    app.type(app.drawer().querySelector('[data-bind="dr.reason"]'), 'Duplicate');
+    app.click(app.button('Void contract', app.drawer()));
+    await settled();
+    it('sweep 5 review: one click on the second contract\'s Void sends nothing', function () {
+      eq(app.requests('void').length, 0, 'voided the second contract on one click');
+    });
+    clean(app, 'sweep 5 review drawer arm');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

@@ -491,9 +491,14 @@
   var ARM_ATTRS = ['id', 'data-act', 'data-key', 'data-value', 'data-id', 'data-ref', 'data-index',
     'data-line', 'data-bucket', 'data-where', 'data-how', 'data-subject', 'data-contract', 'data-report',
     'data-ace', 'data-view', 'data-group', 'data-section'];
+  /* And whom it acts on: the player card's buttons and the drawer's carry
+     no id of their own, so the player looked up (by the handle the lookup
+     gave) and the contract open are part of what tells one apart. A button
+     armed on one player or contract is never armed again on the next. */
   function armSig(node) {
     return ARM_ATTRS.map(function (k) { return node.getAttribute(k) || ''; }).join('\u0001')
-      + '\u0001' + node.textContent;
+      + '\u0001' + node.textContent
+      + '\u0001' + ((S.players && S.players.ref) || '') + '\u0001' + ((S.drawer && S.drawer.id) || '');
   }
 
   function attached(node) {
@@ -1035,6 +1040,8 @@
     var reviewsOpen = o.reviews ? Number(o.reviews.open) || 0 : 0;
     var alertsOpen = o.alerts ? Number(o.alerts.open) || 0 : 0;
     var frozenCount = o.frozen ? Number(o.frozen.players) || 0 : 0;
+    // The store's freezes could not be read: unknown, never 0.
+    var frozenUnknown = !!(o.frozen && o.frozen.unknown);
 
     return frag(
       h('div.tiles',
@@ -1054,10 +1061,13 @@
             + num(owed.queued) + ' line' + (Number(owed.queued) === 1 ? '' : 's') + ' in a retry queue'))),
         tile('Waiting for staff', stuckBody, forYou > 0 ? '.is-warn' : ''),
         tile('Frozen players', frag(
-          h('p.big' + (frozenCount > 0 ? '.is-warn' : ''), { id: 'ov-frozen' }, num(frozenCount)),
-          h('p.sub', 'player' + (frozenCount === 1 ? '' : 's') + ' whose contracts are on hold'),
+          h('p.big' + (frozenCount > 0 || frozenUnknown ? '.is-warn' : ''), { id: 'ov-frozen' },
+            frozenUnknown ? 'Unknown' : num(frozenCount)),
+          h('p.sub', frozenUnknown
+            ? 'the store\'s freezes could not be read: every live contract is held until they can be'
+            : 'player' + (frozenCount === 1 ? '' : 's') + ' whose contracts are on hold'),
           btn('.is-small', 'section', { 'data-section': 'players' }, 'Open Players', 'arrow-right')),
-          frozenCount > 0 ? '.is-warn' : ''),
+          frozenCount > 0 || frozenUnknown ? '.is-warn' : ''),
         tile('Needs review', frag(
           h('p.big' + (reviewsOpen > 0 ? '.is-warn' : ''), num(reviewsOpen)),
           h('p.sub', 'open item' + (reviewsOpen === 1 ? '' : 's') + ' in the review queue'),
@@ -1252,6 +1262,8 @@
 
   function openContract(id) {
     if (!id) return;
+    // Nothing armed on the contract open before carries over to this one.
+    disarm();
     S.drawer = { id: String(id), data: null, answer: null, whois: null };
     // A reason typed for another contract is not this one's.
     S.forms['dr.reason'] = '';
@@ -2367,6 +2379,8 @@
     var subject = trim(S.forms['pl.q']);
     var byRef = again === true && S.players.ref ? S.players.ref : null;
     if (!subject && !byRef) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
+    // Nothing armed on the card before carries over to who is read now.
+    disarm();
     S.players.whois = {};
     S.players.playtime = null;
     S.players.freeze = null;

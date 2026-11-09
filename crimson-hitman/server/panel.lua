@@ -932,7 +932,10 @@ local function buildOverview()
     out.overrides, out.notApplied = overrides, notApplied
     out.auditQueued = deps.audit.pending()
     -- Players staff have put on hold (server/freeze.lua): a count only.
-    out.frozen = { players = deps.freeze and deps.freeze.count() or 0 }
+    -- Unknown while the store's freezes cannot be read: never 0 of nobody known.
+    local players, unknown = 0, false
+    if deps.freeze then players, unknown = deps.freeze.count() end
+    out.frozen = { players = players or 0, unknown = unknown == true or nil }
     -- The whole app paused by staff (Config.Staff.AppPaused), and since when.
     out.appPaused = deps.freeze and deps.freeze.appPausedSince and deps.freeze.appPausedSince() or nil
     return out
@@ -953,10 +956,14 @@ local function frozenShown(contract, hitmen, canIdentify)
     end
     local out = {}
     for _, party in ipairs(parties) do
-        if canIdentify or not party.anonymous then
+        if party.role == 'unknown' then
+            -- The store's freezes could not be read: every live contract is
+            -- held alike, through nobody. Said as that with IdentityAce, and
+            -- to everybody else as held, which names nobody either.
+            out[#out + 1] = canIdentify and 'store unreadable' or 'held'
+        elseif canIdentify or not party.anonymous then
             out[#out + 1] = party.role == 'target' and 'the target'
                 or party.role == 'client' and 'the placer'
-                or party.role == 'unknown' and 'unknown: the freezes could not be read'
                 or ('operative %s'):format(tostring(aliases[party.cid] or '?'))
         end
     end
@@ -1858,7 +1865,7 @@ H.player = function(src, data)
 
     -- Which of the contracts shown are on hold, by the same rule the list
     -- of contracts follows.
-    if deps.freeze and deps.freeze.count() > 0 then
+    if deps.freeze and (deps.freeze.count() > 0 or select(2, deps.freeze.count())) then
         for _, row in ipairs(contracts) do
             local contract = Storage.readContract(row.id)
             row.frozen = contract and frozenShown(contract, nil, canIdentify) ~= nil or nil

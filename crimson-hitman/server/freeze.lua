@@ -147,10 +147,20 @@ local PAUSE_META = 'staff_pause_since'
 --- Since when the store's freezes could not be read (os.time()), or nil.
 --- Read as nobody frozen, a frozen player's contracts ran their clocks and
 --- banked their deadlines, and the real unfreeze later gave the whole span
---- back again. So, until a read succeeds (retried on every maintenance
+--- back again. So, until a read succeeds (tried again from the maintenance
 --- tick, Freeze.restartTick), every live contract is held as if a party to
---- it were frozen, without saying which.
+--- it were frozen, without saying which, and the first read that succeeds
+--- gives each the lifetime the outage took (giveBackUnread).
 local unread = nil
+--- The outage's retries: { failures, retryAt, saidAt }. Tried again after
+--- a wait that doubles from UNREAD_FIRST_WAIT up to UNREAD_MAX_WAIT, and
+--- said in the console the first time and then at most every
+--- UNREAD_SAY_EVERY seconds: tried and said on every tick, a store down for
+--- an evening filled the console and the alerts with one line.
+local unreadRetry = nil
+local UNREAD_FIRST_WAIT = 5
+local UNREAD_MAX_WAIT = 300
+local UNREAD_SAY_EVERY = 300
 
 ---@param deps table { storage, audit, notify, kidnap }
 local giveBackRestart
@@ -160,7 +170,7 @@ function Freeze.init(deps)
     Storage, Audit, Notify, Kidnap, Death = deps.storage, deps.audit, deps.notify, deps.kidnap, deps.death
     -- A restart hold ends with the restart: this start is it.
     restartHold = nil
-    inFlight, unread = {}, nil
+    inFlight, unread, unreadRetry = {}, nil, nil
     Freeze.reload()
     -- An app pause from before the restart is still on: read before the
     -- restart hold's lifetime is given back, which leaves out what it covers.
@@ -185,34 +195,57 @@ function Freeze.init(deps)
 end
 
 
+local giveBackUnread
+
 --- Read every freeze from the store again. Done at the start, and again
---- on the tick while the start's read failed.
+--- from the tick while the start's read failed.
 ---@return boolean read
 function Freeze.reload()
     frozen, count = {}, 0
     if not (Storage and Storage.readFreezes) then
-        unread = nil
+        unread, unreadRetry = nil, nil
         return true
     end
     local ok, rows = pcall(Storage.readFreezes)
+    local now = os.time()
     if not ok then
-        unread = unread or os.time()
-        Log.always(('staff freezes could not be read from the store (%s); every live contract is '
-            .. 'held until they can be, tried again every tick'):format(Util.dbError(rows)))
+        unread = unread or now
+        local retry = unreadRetry or { failures = 0 }
+        unreadRetry = retry
+        retry.failures = retry.failures + 1
+        local wait = math.min(UNREAD_MAX_WAIT, UNREAD_FIRST_WAIT * 2 ^ math.min(16, retry.failures - 1))
+        retry.retryAt = now + math.floor(wait)
+        if not retry.saidAt or now - retry.saidAt >= UNREAD_SAY_EVERY then
+            retry.saidAt = now
+            Log.always(('staff freezes could not be read from the store (%s); every live contract is '
+                .. 'held until they can be (tried %d time(s) since %s, next in %d second(s))')
+                :format(Util.dbError(rows), retry.failures, os.date('%H:%M:%S', unread), math.floor(wait)))
+        end
         return false
     end
-    if unread then
-        Log.always('staff freezes have been read from the store: contracts nobody frozen is party to '
-            .. 'run again')
-    end
-    unread = nil
     for _, row in ipairs(rows or {}) do
         if row.cid then
-            row.frozen_at = tonumber(row.frozen_at) or os.time()
+            row.frozen_at = tonumber(row.frozen_at) or now
             frozen[row.cid] = row
         end
     end
     recount()
+    local since = unread
+    if since then
+        -- Let go of the outage's hold before the first await, under
+        -- whileReleasing (an expiry pass in the give-back leaves every
+        -- contract alone), and give each contract back what it took.
+        unread, unreadRetry = nil, nil
+        local gave, err = pcall(whileReleasing, giveBackUnread, since, now)
+        if not gave then
+            Log.always(('the lifetime the unreadable freezes took could not be given back (%s)')
+                :format(Util.dbError(err)))
+        end
+        Log.always('staff freezes have been read from the store: contracts nobody frozen is party to '
+            .. 'run again, with the time they were held given back')
+        if type(MarkPresenceChanged) == 'function' then MarkPresenceChanged() end
+        if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
+    end
     return true
 end
 
@@ -224,8 +257,12 @@ function Freeze.of(cid)
     return frozen[cid]
 end
 
----@return integer
-function Freeze.count() return count end
+--- How many are frozen, and whether that is unknown: while the store's
+--- freezes cannot be read (`unread`) the count is 0 of nobody
+--- known, never 0 frozen.
+---@return integer count
+---@return boolean unknown
+function Freeze.count() return count, unread ~= nil end
 
 --- Every freeze, oldest first.
 ---@return table[]
@@ -302,6 +339,31 @@ function Freeze.holdStart(contract, hitmen)
         earliest(Freeze.restartHeldSince())
         earliest(appPause and appPause.since or nil)
     end
+    return since
+end
+
+--- What a contract's time band stands still from (Util.bandLeft): the
+--- one start the card (server/projection.lua) and the stake's check at an
+--- acceptance (Contracts stakeTimeRefusal) both ask, so the band one is
+--- shown is the band the other judges. For a viewer who is not a party
+--- (`public`), only the holds that stop every contract alike: the restart
+--- hold, the app pause and freezes that could not be read. A staff freeze
+--- on one of its parties stood the stranger's card still too, and told
+--- them it was held.
+---@param contract table|nil
+---@param hitmen table[]|nil
+---@param public boolean|nil
+---@return integer|nil
+function Freeze.bandStart(contract, hitmen, public)
+    if not public then return Freeze.holdStart(contract, hitmen) end
+    if not (contract and LIVE[contract.state]) then return nil end
+    local since
+    local function earliest(at)
+        if at and (not since or at < since) then since = at end
+    end
+    earliest(unread)
+    earliest(Freeze.restartHeldSince())
+    earliest(appPause and appPause.since or nil)
     return since
 end
 
@@ -548,6 +610,27 @@ giveBackRestart = function(since, now)
     end
 end
 
+--- Give every live contract's lifetime back the time the freezes could not
+--- be read, from `since` (or the contract's placing, if later) to `now`,
+--- as giveBackRestart does: not the part a staff freeze, the restart hold
+--- or the app pause still holding it covers, which their own ends give
+--- back. Run once the freezes are read, so `heldSince` is the real
+--- freezes'.
+---@param since integer when the read first failed
+---@param now integer
+giveBackUnread = function(since, now)
+    for _, contract in ipairs(Storage.liveContracts() or {}) do
+        if LIVE[contract.state] and contract.expires_at then
+            local from = math.max(since, tonumber(contract.created_at) or since)
+            local stop = math.min(now, Freeze.heldSince(contract) or now)
+            if restartHold then stop = math.min(stop, restartHold.since) end
+            if appPause then stop = math.min(stop, appPause.since) end
+            local back = stop - from
+            if back > 0 then giveBack(contract.id, back) end
+        end
+    end
+end
+
 --- What every player with a live contract is told, once.
 Freeze.TEXT.restartTitle = 'Server restart'
 Freeze.TEXT.restart = 'Contracts are paused until the server restart.'
@@ -653,22 +736,24 @@ end
 
 releaseRestartNow = function(why, quiet)
     local since = restartHold.since
-    restartHold = nil
-    pcall(DeleteResourceKvp, RESTART_KVP)
     local now = os.time()
-    local gave, err = pcall(giveBackRestart, since, now)
-    if not gave then
-        Log.always(('the lifetime the restart hold took could not be given back (%s)')
-            :format(Util.dbError(err)))
-    end
+    restartHold = nil
     -- A kill made before the hold waited for its Verify through it
     -- (Death.carryOverRestartHold): the time it had left is given back.
+    -- At once, before the first await: a death sweep landing in the
+    -- give-back below found no hold and dropped every such kill.
     if Death and Death.carryOverRestartHold then
         local carried, carryErr = pcall(Death.carryOverRestartHold, since, now)
         if not carried then
             Log.always(('the kills waiting through the restart hold could not be kept (%s)')
                 :format(tostring(carryErr)))
         end
+    end
+    pcall(DeleteResourceKvp, RESTART_KVP)
+    local gave, err = pcall(giveBackRestart, since, now)
+    if not gave then
+        Log.always(('the lifetime the restart hold took could not be given back (%s)')
+            :format(Util.dbError(err)))
     end
     -- Everybody told at the start is told it is over: open pages kept
     -- "paused for the server restart" and its buttons off until the player
@@ -690,8 +775,9 @@ end
 --- From the maintenance tick: a hold the restart never came for ends at
 --- Config.Restart.MaxHoldMinutes.
 function Freeze.restartTick()
-    -- And the freezes the start could not read, until they are read.
-    if unread then pcall(Freeze.reload) end
+    -- And the freezes the start could not read, until they are read: after
+    -- the outage's wait, never on every tick.
+    if unread and (not unreadRetry or os.time() >= (unreadRetry.retryAt or 0)) then pcall(Freeze.reload) end
     if restartHold and os.time() >= Freeze.restartHoldEnds() then Freeze.releaseRestart('max_hold') end
 end
 

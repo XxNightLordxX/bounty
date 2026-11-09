@@ -1447,8 +1447,14 @@ local function stakeTimeRefusal(contract, shown, shownBand)
         return CH.ERR.TERMS_CHANGED
     end
     local was = Util.bandRank(shownBand)
-    -- The band the card shows, the lifetime's included (Util.bandLeft).
-    local _, now = Util.timeBand(Util.bandLeft(contract))
+    -- The band the card shows, the lifetime's included (Util.bandLeft),
+    -- standing still from the hold start the card's does (Freeze.bandStart):
+    -- worked out from now, under the restart hold every acceptance of a
+    -- staked contract the lifetime ends was refused as terms changed. A
+    -- staff freeze is refused before this (Contracts.heldByStaff), so a
+    -- stranger's start is the one.
+    local start = Freeze and Freeze.bandStart and Freeze.bandStart(contract, nil, true) or nil
+    local _, now = Util.timeBand(Util.bandLeft(contract, start))
     if was and now and now > was then
         return CH.ERR.TERMS_CHANGED
     end
