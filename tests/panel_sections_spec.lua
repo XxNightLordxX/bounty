@@ -260,10 +260,11 @@ describe('the editors\' shapes, checked on the server', function()
 
     it('takes a word for a text key, and nothing else', function()
         local s = stack()
-        truthy(s.settings.set('Progression.Resource', 'my-blackmarket', 'ADMIN001', 'ADMIN001'))
-        eq(Config.Progression.Resource, 'my-blackmarket')
-        eq(select(2, s.settings.set('Progression.Resource', 'a b', 'ADMIN001', 'ADMIN001')), 'invalid_value')
-        eq(select(2, s.settings.set('Progression.Resource', 12, 'ADMIN001', 'ADMIN001')), 'invalid_value')
+        -- A command name (Progression.Resource, the text key this used, is
+        -- an export called by name and read-only since sweep 5 F6).
+        truthy(s.settings.set('Bailout.Command', 'my-buyout', 'ADMIN001', 'ADMIN001'))
+        eq(select(2, s.settings.set('Bailout.Command', 'a b', 'ADMIN001', 'ADMIN001')), 'invalid_value')
+        eq(select(2, s.settings.set('Bailout.Command', 12, 'ADMIN001', 'ADMIN001')), 'invalid_value')
     end)
 
     it('marks a key read once at start as applying after a restart', function()

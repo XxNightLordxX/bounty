@@ -937,6 +937,7 @@ async function main() {
     app.nav('tools');
     await settled();
     app.click(app.button('Flush the audit log'));
+    app.click(app.button('Flush the audit log'));
     await settled();
     markupFrom(app, 'the toasts', found);
     it('player-written text is shown as text everywhere, never as markup', function () {
@@ -1463,9 +1464,17 @@ async function main() {
       eq(app.last('ackAlerts').data, { ids: ['al00000001', 'al00000002', 'al00000003', 'al00000004'] });
     });
 
-    app.click(app.button('Send a test alert'));
+    const testAlert = app.button('Send a test alert');
+    app.click(testAlert);
     await settled();
-    it('sends a test alert on one click, and says what came of it', function () {
+    it('a test alert takes two clicks too: the first arms it and sends nothing (sweep 5 F3)', function () {
+      eq(app.requests('testAlert').length, 0);
+      truthy(testAlert.classList.contains('is-armed'));
+      has(app.text(testAlert), 'Click again to send it');
+    });
+    app.click(testAlert);
+    await settled();
+    it('the second sends it, and says what came of it', function () {
       eq(app.requests('testAlert').length, 1);
       has(app.main(), 'A test alert goes to Discord');
     });
@@ -1967,13 +1976,36 @@ async function main() {
     it('each feature group says in one line what it controls', function () {
       has(app.text(app.$('.st-group[data-group="buyouts"]')), 'Whether a target may buy a contract out.');
     });
-    app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
+    it('every switch here carries a second-click confirm naming its new value (sweep 5 F3)', function () {
+      const switches = app.$$('.switch');
+      truthy(switches.length > 3, 'switches drawn');
+      switches.forEach(function (sw) {
+        eq(sw.getAttribute('data-confirm'), 'yes', sw.getAttribute('data-key'));
+        const on = sw.getAttribute('aria-checked') === 'true';
+        has(app.text(sw.querySelector('.cfm')), 'Click again: turn ' + (on ? 'Off' : 'On'), sw.getAttribute('data-key'));
+      });
+    });
+    const setsBefore = app.requests('setSetting').length;
+    const cashSwitch = app.byId('st-row-Sources.cash.enabled').querySelector('.switch');
+    app.click(cashSwitch);
     await settled();
-    it('a switch turns the feature off at one click and shows the answer', function () {
+    it('a switch takes two clicks: the first arms it, naming the new value, and sends nothing (sweep 5 F3)',
+      function () {
+        eq(app.requests('setSetting').length, setsBefore);
+        truthy(cashSwitch.classList.contains('is-armed'));
+        has(app.text(cashSwitch.querySelector('.cfm')), 'Click again: turn Off');
+      });
+    app.click(cashSwitch);
+    await settled();
+    it('the second turns the feature off and shows the answer', function () {
       eq(app.last('setSetting').data, { key: 'Sources.cash.enabled', value: false });
       has(app.toasts(), 'Sources.cash.enabled is now false.');
       has(app.text(app.byId('st-row-Sources.cash.enabled')), 'Sources.cash.enabled is now false.');
       truthy(app.requests('settings').length >= 2, 'the settings are read again');
+    });
+    app.click(app.byId('st-row-Bailout.Enabled').querySelector('.switch'));
+    it('armed to turn it On', function () {
+      has(app.text(app.byId('st-row-Bailout.Enabled').querySelector('.switch.is-armed')), 'Click again: turn On');
     });
     app.click(app.byId('st-row-Bailout.Enabled').querySelector('.switch'));
     await settled();
@@ -2008,8 +2040,31 @@ async function main() {
 
     app.nav('limits');
     await settled();
-    app.click(app.byId('st-row-Completion.Fulfilment').querySelectorAll('.seg-btn')
-      .filter(function (b) { return b.getAttribute('data-value') === 'either'; })[0]);
+    const either = function () {
+      return app.byId('st-row-Completion.Fulfilment').querySelectorAll('.seg-btn')
+        .filter(function (b) { return b.getAttribute('data-value') === 'either'; })[0];
+    };
+    it('every choice not chosen and every Save here carries a second-click confirm (sweep 5 F3)', function () {
+      const choices = app.$$('.seg-btn').filter(function (b) {
+        return b.getAttribute('data-act') === 'st-choice' && b.getAttribute('aria-pressed') !== 'true';
+      });
+      truthy(choices.length > 0, 'choices drawn');
+      choices.forEach(function (b) {
+        has(app.text(b.querySelector('.cfm')), 'Click again: ' + b.getAttribute('data-value'));
+      });
+      const saves = app.$$('button').filter(function (b) { return b.getAttribute('data-act') === 'st-save'; });
+      truthy(saves.length > 0, 'Saves drawn');
+      saves.forEach(function (b) { eq(b.getAttribute('data-confirm'), 'yes', b.getAttribute('data-key')); });
+    });
+    const setsChoice = app.requests('setSetting').length;
+    app.click(either());
+    await settled();
+    it('a choice takes two clicks: the first arms it, naming the choice (sweep 5 F3)', function () {
+      eq(app.requests('setSetting').length, setsChoice);
+      truthy(either().classList.contains('is-armed'));
+      has(app.text(either().querySelector('.cfm')), 'Click again: either');
+    });
+    app.click(either());
     await settled();
     it('Rules: Limits has the choices, and a choice sets one of its choices', function () {
       eq(app.last('setSetting').data, { key: 'Completion.Fulfilment', value: 'either' });
@@ -2019,6 +2074,15 @@ async function main() {
       truthy(app.byId('st-row-Bailout.Command').querySelector('.is-restart'), 'as a badge');
     });
     app.type(app.byId('st-row-Bailout.Command').querySelector('input'), 'buyout');
+    const setsText = app.requests('setSetting').length;
+    app.click(app.button('Save', app.byId('st-row-Bailout.Command')));
+    await settled();
+    it('a Save takes two clicks: the first arms it, naming the value it saves (sweep 5 F3)', function () {
+      eq(app.requests('setSetting').length, setsText);
+      const save = app.byId('st-save-Bailout.Command');
+      truthy(save.classList.contains('is-armed'));
+      has(app.text(save.querySelector('.cfm')), 'Click again: save buyout');
+    });
     app.click(app.button('Save', app.byId('st-row-Bailout.Command')));
     await settled();
     it('a text key goes as the word typed', function () {
@@ -2043,6 +2107,7 @@ async function main() {
       message: 'Not changed: Limits.MaxAcceptedPerHitman Config.Limits.MaxAcceptedPerHitman is above what the start allows.' };
     app.type(app.byId('st-row-Limits.MaxAcceptedPerHitman').querySelector('input'), '1');
     app.click(app.button('Save', app.byId('st-row-Limits.MaxAcceptedPerHitman')));
+    app.click(app.button('Save', app.byId('st-row-Limits.MaxAcceptedPerHitman')));
     await settled();
     it('a number goes as a number, and the start-up checks\' refusal is shown on its row', function () {
       eq(app.last('setSetting').data, { key: 'Limits.MaxAcceptedPerHitman', value: 1 });
@@ -2056,6 +2121,7 @@ async function main() {
       has(app.text(app.$('.st-group[data-group="escrow"]')), 'Largest stake, as a share');
     });
     app.type(app.byId('st-row-Penalty.MaxFractionOfEscrow').querySelector('input'), '0.75');
+    app.click(app.button('Save', app.byId('st-row-Penalty.MaxFractionOfEscrow')));
     app.click(app.button('Save', app.byId('st-row-Penalty.MaxFractionOfEscrow')));
     await settled();
     it('a fraction goes where the key takes one', function () {
@@ -2450,7 +2516,7 @@ async function main() {
       eq(app.requests('setSetting').length, sets);
       const save = app.byId('st-save-Ledger.PhotoRetentionDays');
       truthy(save.classList.contains('is-armed'));
-      has(app.text(save), 'Click again to save');
+      has(app.text(save.querySelector('.cfm')), 'Click again: save 1');
     });
     app.click(app.byId('st-save-Ledger.PhotoRetentionDays'));
     await settled();
@@ -2461,12 +2527,26 @@ async function main() {
     app.type(row().querySelector('input'), '60');
     app.click(app.button('Save', row()));
     await settled();
-    it('raising it deletes nothing, and saves at one click', function () {
+    it('raising it deletes nothing: the row warns of nothing, and Save still takes two clicks', function () {
+      eq(app.requests('setSetting').length, sets + 1);
+      lacks(app.text(row()), 'Click Save again to do it');
+      has(app.text(app.byId('st-save-Ledger.PhotoRetentionDays').querySelector('.cfm')), 'Click again: save 60 d');
+      truthy(app.byId('st-save-Ledger.PhotoRetentionDays').classList.contains('is-armed'));
+    });
+    app.click(app.button('Save', row()));
+    await settled();
+    it('and the second click saves it', function () {
       eq(app.requests('setSetting').length, sets + 2);
       eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 60 });
     });
     app.type(row().querySelector('input'), '0');
     app.key(row().querySelector('input'), 'Enter');
+    await settled();
+    it('Enter arms 0 (which keeps every photo) and sends nothing', function () {
+      eq(app.requests('setSetting').length, sets + 2);
+      lacks(app.text(row()), 'Click Save again to do it');
+    });
+    app.click(app.button('Save', row()));
     await settled();
     it('and so does 0, which keeps every photo', function () {
       eq(app.requests('setSetting').length, sets + 3);
@@ -2540,10 +2620,33 @@ async function main() {
       truthy(app.requests('stuck').length >= 2, 'read again');
       lacks(app.main(), 'ct00000001:2', 'a settled line leaves the list');
     });
+    // Sweep 5 F3: the timed refresh redraws Stuck escrow while a button
+    // waits for its second click. The button drawn in its place stays
+    // armed, so the next click is the second, not a third.
+    const pay = app.button('Pay', item('owe00000003'));
+    app.click(pay);
+    await settled();
+    const settlesArmed = app.requests('settle').length;
+    const stuckReads = app.requests('stuck').length;
+    app.fire(10000);
+    await settled();
+    it('the timed refresh redraws the list and keeps the armed button armed (sweep 5 F3)', function () {
+      truthy(app.requests('stuck').length > stuckReads, 'the refresh read the list again');
+      const again = app.button('Pay', item('owe00000003'));
+      truthy(again !== pay, 'the button was drawn again');
+      truthy(again.classList.contains('is-armed'), 'and is still armed');
+      eq(app.requests('settle').length, settlesArmed, 'nothing sent by the refresh');
+    });
+    app.click(app.button('Pay', item('owe00000003')));
+    await settled();
+    it('so the next click is the second, and settles', function () {
+      eq(app.requests('settle').length, settlesArmed + 1);
+      eq(app.last('settle').data, { line: 'owe00000003', disposition: 'pay' });
+    });
     app.click(app.button('Pay amount', item('ct00000005:1')));
     await settled();
     it('Pay amount asks for an amount first, beside the line, and sends nothing', function () {
-      eq(app.requests('settle').length, 1);
+      eq(app.requests('settle').length, settlesArmed + 1);
       has(app.text(item('ct00000005:1')), 'An amount is a whole number of at least 1.');
     });
     app.type(item('ct00000005:1').querySelector('[data-bind="dr.amount.ct00000005:1"]'), '400');
@@ -2881,7 +2984,15 @@ async function main() {
     it('and a line that had to wait is added when it comes', function () {
       has(app.main(), 'photo links: yes');
     });
-    app.click(app.button('Flush the audit log'));
+    const flush = app.button('Flush the audit log');
+    app.click(flush);
+    await settled();
+    it('flushing takes two clicks: the first arms it and writes nothing (sweep 5 F3)', function () {
+      eq(app.requests('flush').length, 0);
+      truthy(flush.classList.contains('is-armed'));
+      has(app.text(flush), 'Click again to flush');
+    });
+    app.click(flush);
     await settled();
     it('flushing says how many rows were written', function () {
       has(app.main(), 'Audit log flushed: 4 row(s) written.');
@@ -4493,6 +4604,7 @@ async function main() {
       eq(app.requests('settings')[0].data, {});
     });
     app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
+    app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
     await settled();
     it('then names the fixed parts it holds, and draws the lean rows the same', function () {
       eq(app.last('settings').data, { schema: 'S1' });
@@ -4510,6 +4622,7 @@ async function main() {
       return { ok: true, data: Object.assign({}, full.data, { schema: 'S2' }) };
     };
     schema = 'S2';
+    app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
     app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
     await settled();
     it('asks again whole when the lean reply names other fixed parts', function () {

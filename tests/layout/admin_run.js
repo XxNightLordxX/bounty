@@ -648,6 +648,28 @@ async function main() {
     const rowsFit = await page.evaluate(sideBySide);
     it(at + ': every setting\'s words and its control sit side by side', function () { none(rowsFit); });
 
+    // A switch armed for its second click (every write takes two), saying
+    // what it sets: still inside the window, beside its words.
+    await page.click('.st-row .switch:not([disabled])');
+    await page.waitForTimeout(60);
+    const switchArmed = await page.evaluate(function () {
+      const sw = document.querySelector('.switch.is-armed');
+      if (!sw) return null;
+      const r = sw.getBoundingClientRect();
+      const cfm = sw.querySelector('.cfm');
+      return { label: cfm && getComputedStyle(cfm).display !== 'none' ? cfm.textContent : '',
+               inside: r.left >= 0 && r.right <= window.innerWidth + 0.5, height: r.height };
+    });
+    const armedFaults = await page.evaluate(measure, { tablesFit: size.tablesFit });
+    const armedRows = await page.evaluate(sideBySide);
+    it(at + ': an armed switch says what it sets, and the features still fit', function () {
+      truthy(switchArmed, 'the first click did not arm a switch');
+      truthy(/^Click again: turn (On|Off)$/.test(switchArmed.label), switchArmed.label);
+      truthy(switchArmed.inside, 'the armed switch runs off the window');
+      truthy(switchArmed.height >= 28, switchArmed.height + 'px tall');
+      none(armedFaults.concat(armedRows), 'features with a switch armed');
+    });
+
     // And the limits, where a Save can carry a confirm label: armed, with
     // the row saying what lowering it deletes.
     await go(page, 'timers');
@@ -832,6 +854,8 @@ async function main() {
     await page.click('#drawer [data-act="drawer-close"]');
     await go(page, 'tools');
     await page.waitForTimeout(100);
+    // Two clicks, as every write is.
+    await page.click('button[data-act="tl-flush"]');
     await page.click('button[data-act="tl-flush"]');
     await page.waitForTimeout(150);
     const toast = await page.evaluate(function () {

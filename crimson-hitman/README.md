@@ -200,13 +200,19 @@ action starts on; typing is not counted.
 | Buy the target's informant | target | 3 (Informant, pick, Pay) |
 | Buy an informant tip | hitman | 2 |
 | Report a contract to staff | any party | 2 |
+| Set or clear the meeting point | placer | 2 |
+| Move a protection job's meeting pin | target | 2 |
 
 ## Admin panel
 
 `/hitmanadmin` opens the panel in game. Every staff command is a button
 there; nothing in it needs a command. The server checks the ACE on every
 request, so taking one away closes the panel at its next click. Every write
-takes two clicks, is rate-limited per staff member (`Config.Cooldowns.admin`,
+takes two clicks, a settings switch, choice or Save included: the first
+arms the button in brass and names what the second sets (*Click again: turn
+On*, *Click again: save 60 d*), and it disarms after three seconds. A
+redraw meanwhile, such as the overview's timed refresh, keeps it armed.
+Every write is rate-limited per staff member (`Config.Cooldowns.admin`,
 `adminWrite`) and is written to the audit log at once. While the server is
 still recovering from a restart, every write but flushing the log is
 refused.
@@ -246,6 +252,11 @@ id is the **Ref** at the foot of every card and Ledger entry.
 
 The players' buyout command (`Config.Bailout.Command`, `/cleanse`) is not a
 staff command; it answers in chat.
+
+No two of these names may be the same, in any case, and none may be the
+panel's way out, `/<panel>-close` (`/hitmanadmin-close`): two commands under
+one name is whichever registered last, so the start refuses it, the panel
+refuses such a change, and a stored one is not applied at the start.
 
 ### Panel requests
 

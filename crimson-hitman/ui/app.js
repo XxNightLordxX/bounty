@@ -1940,15 +1940,22 @@
   }
 
   /* A button wired to `once`. Disabled and relabelled while its work runs,
-     so the answer to "did my tap register" is on the button itself. */
-  function actionButton(className, label, key, busyLabel, work) {
+     so the answer to "did my tap register" is on the button itself.
+     `confirm` ({ question, detail, yes, no }) asks first: a write takes two
+     taps, the second confirming. */
+  function actionButton(className, label, key, busyLabel, work, confirm) {
     var button = el('button', className, isBusy(key) ? (busyLabel || label) : label);
     if (isBusy(key)) {
       button.disabled = true;
       button.classList.toggle('is-busy', true);
       return button;
     }
-    button.onclick = function () { once(key, work); };
+    button.onclick = confirm
+      ? function () {
+        ask(confirm.question, confirm.detail, function () { return once(key, work); },
+          { yes: confirm.yes, no: confirm.no });
+      }
+      : function () { once(key, work); };
     return button;
   }
 
@@ -2410,8 +2417,12 @@
       row.appendChild(here);
     }
     if (set) {
+      // Asked first, as Set is: the spot goes from every hitman's GPS.
       row.appendChild(actionButton('ghost ico i-xcircle', 'Clear', 'meetingClear:' + contract.id,
-        'Clearing\u2026', function () { return clearMeeting(contract); }));
+        'Clearing\u2026', function () { return clearMeeting(contract); },
+        { question: 'Clear the meeting point?',
+          detail: 'Every hitman on this contract loses the spot from their GPS.',
+          yes: 'Clear it', no: 'Keep it' }));
     }
     box.appendChild(row);
     return box;
@@ -10262,11 +10273,20 @@
          (which sends them back to the app if they left the job), the
          app's reads otherwise (which find the view if they joined one). */
       if (data.reason === 'access') {
+        // A kill photo open for its one look goes with the rest, as a
+        // Delete the server is told of (letGoOfProof, in the redraw), and
+        // the player is told too, rather than it vanishing unsaid. Kept, it
+        // could not be saved: a whitelisted job is refused the app's own
+        // requests, deciding on the photo among them.
+        var proofLost = !!proofShown && !!state.dialog && state.dialog.kind === 'proof';
         forgetMode();
         // Whatever tab the whole app had open held what was just dropped
         // (a thread, the Place form): it starts again from the board.
         if (state.mode !== 'whitelisted') { state.tab = 'board'; }
         render();
+        if (proofLost) {
+          say('Your access to the app changed, so the kill photo you had open was closed and deleted.');
+        }
         // Put away: read when shown again, everything, as here.
         if (pageShown()) { refresh(); } else { owe({ all: true }); }
         return;
@@ -10569,7 +10589,10 @@
           return post('protectionPin', { job: job.job }).then(function (r) {
             if (r.ok) { say('The meeting pin is where you stand now.', 'ok'); } else { fail(r); }
           });
-        }));
+        }, { question: 'Move the meeting pin to where you are standing?',
+             detail: job.state === 'taken' ? 'Your bodyguard sees the new spot on their GPS.'
+               : 'Whoever takes the job meets you at the new spot.',
+             yes: 'Move it', no: 'Not now' }));
       if (job.state !== 'taken') {
         var back = el('button', 'ghost ico i-xcircle', 'Cancel protection');
         back.onclick = function () {

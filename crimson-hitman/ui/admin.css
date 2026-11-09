@@ -433,6 +433,12 @@ ul, ol { padding: 0; list-style: none; }
 .switch.is-on .knob { background: rgba(143, 191, 138, 0.25); border-color: rgba(143, 191, 138, 0.6); }
 .switch.is-on .knob::after { left: auto; right: 0.14rem; background: var(--green); }
 .switch:disabled { opacity: 0.5; cursor: not-allowed; }
+/* A switch or a choice armed for its second click says what it sets, in
+   brass, in place of its label. */
+.switch .cfm, .seg-btn .cfm { display: none; }
+.switch.is-armed, .seg-btn.is-armed { color: #1b1408; background: var(--gold); border-color: var(--gold); }
+.switch.is-armed .lbl, .seg-btn.is-armed .lbl { display: none; }
+.switch.is-armed .cfm, .seg-btn.is-armed .cfm { display: inline; }
 
 .inline-form { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .inline-form.is-wide { display: flex; flex: 1 1 auto; }

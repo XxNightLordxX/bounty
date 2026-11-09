@@ -1896,7 +1896,9 @@ describe('rendering your own headshot', function()
             'crimson-hitman:appearanceChanged',
         }) do
             booted()
-            local handler = Client.handlers[event]
+            -- The clothing resources' as net events, so a copy raised from
+            -- the server arrives too (sweep 5 F5); our own as a local one.
+            local handler = Client.netEvents[event] or Client.handlers[event]
             truthy(handler, 'nothing is listening for ' .. event)
             handler()
 

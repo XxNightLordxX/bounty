@@ -119,6 +119,10 @@ local DENY = {
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['Relay.CallExport'] = { label = 'Phone call export',
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    -- progression.lua calls exports[<this>]:AddTrust(cid, amount): renamed
+    -- from here, every finished contract called another resource's export.
+    ['Progression.Resource'] = { label = 'Progression resource',
+        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['convar:crimson_hitman_webhook'] = { secret = true, convar = 'crimson_hitman_webhook',
         why = 'The Discord webhook for the log: a secret, set in server.cfg with set (never setr).' },
     ['convar:crimson_hitman_alert_webhook'] = { secret = true, convar = 'crimson_hitman_alert_webhook',
@@ -1046,9 +1050,6 @@ local CATALOGUE = {
     { key = 'Progression.TrustPerKidnapping', section = 'limits', category = 'rules-limits',
       group = 'Progression', kind = 'number', integer = true, min = 0, max = 10000,
       label = 'Trust per live handover', about = 'sc-blackmarket trust a handover earns.', inflight = AT_USE },
-    { key = 'Progression.Resource', section = 'limits', category = 'rules-limits', group = 'Progression',
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Progression resource',
-      about = 'The resource that keeps criminal trust.', inflight = AT_USE },
     { key = 'Listing.PageSize', section = 'limits', category = 'rules-limits', group = 'The app',
       kind = 'number', integer = true, min = 5, max = 100, label = 'Contracts per board page',
       about = 'On the app\'s board.', inflight = AT_USE },

@@ -1420,6 +1420,35 @@ local function validateConfig(quiet)
         commands.refresh = 'ch-refresh'
     end
 
+    -- Any other two command names the same (FiveM's are case-insensitive)
+    -- are refused: the one registered first was lost at the next start, the
+    -- panel (buttons only) to a staff command renamed onto it, or the
+    -- players' buyout command to the panel. The panel's way out of the F8
+    -- console, /<panel>-close (client/admin.lua), is a name too. A setting
+    -- from the panel that would clash is refused there in these words, and
+    -- a stored one is not applied at the start (server/settings.lua).
+    if type(commands) == 'table' then
+        local named, keys = {}, {}
+        for key in pairs(commands) do keys[#keys + 1] = tostring(key) end
+        table.sort(keys)
+        local function claim(name, what)
+            if type(name) ~= 'string' or name == '' then return end
+            local lower = name:lower()
+            if named[lower] then
+                fatal[#fatal + 1] = ('%s and %s are both the command \'%s\'; two commands under one '
+                    .. 'name is whichever registered last, so the other could not be used. Give '
+                    .. 'each its own name'):format(named[lower], what, name)
+            else
+                named[lower] = what
+            end
+        end
+        for _, key in ipairs(keys) do claim(commands[key], 'Admin.Commands.' .. key) end
+        claim(type(Config.Bailout) == 'table' and Config.Bailout.Command or nil, 'Bailout.Command')
+        if type(commands.panel) == 'string' and commands.panel ~= '' then
+            claim(commands.panel .. '-close', 'the panel\'s way out (Admin.Commands.panel and -close)')
+        end
+    end
+
     -- The roleplay features (server/rp_*.lua, Config.Roleplay): each fills
     -- its block where config.lua has none, and holds every field to its rule.
     CrimsonBoot.require('server.rp_rumours').validate(warn)

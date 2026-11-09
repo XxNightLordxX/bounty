@@ -68,13 +68,18 @@ local function announceAppearanceChange()
     TriggerServerEvent('crimson-hitman:appearanceChanged')
 end
 
+--- The clothing resources raise theirs from the server too (illenium's
+--- /reloadskin is a TriggerClientEvent), and a copy from the server reaches
+--- only a handler registered as a net event: with AddEventHandler alone it
+--- was dropped as not safe for net. Only the server sends a client its net
+--- events, so registering them opens nothing. Our own stays local.
 for _, event in ipairs({
     'qb-clothing:client:loadOutfit',
     'illenium-appearance:client:reloadSkin',
     'rcore_clothing:outfitChanged',
-    'crimson-hitman:appearanceChanged',
 }) do
-    AddEventHandler(event, announceAppearanceChange)
+    RegisterNetEvent(event, announceAppearanceChange)
 end
+AddEventHandler('crimson-hitman:appearanceChanged', announceAppearanceChange)
 
 return Mugshot

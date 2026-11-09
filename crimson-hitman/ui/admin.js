@@ -106,6 +106,7 @@
   function setHtml(node, markup) {
     if (!node) return;
     node.innerHTML = markup instanceof Markup ? markup.html : '';
+    rearm(node);
   }
 
   function icon(name) {
@@ -470,9 +471,12 @@
 
   /* ---------- confirming ------------------------------------------------
 
-     A destructive button (void, settle, resolve, reset, the timer refresh)
-     takes two clicks: the first arms it and says what the second does, and
-     it disarms itself after three seconds. */
+     Every write takes two clicks (a switch, a choice and a Save too): the
+     first arms the button and says what the second does, naming the new
+     value where there is one, and it disarms itself after three seconds.
+     A redraw while it is armed (the timed overview refresh, a list read
+     again) arms the button drawn in its place, when it is the same button
+     saying the same thing, so the second click is not a third. */
 
   function disarm() {
     if (!S.armed) return;
@@ -481,12 +485,54 @@
     S.armed = null;
   }
 
-  /** True on the second click; on the first, arms the button and says no. */
-  function confirmed(node) {
+  /* What tells a button apart from every other: its act, id and data, and
+     the words it shows. A redrawn one that says something else (a count
+     that moved, a switch the other way) is a different button. */
+  var ARM_ATTRS = ['id', 'data-act', 'data-key', 'data-value', 'data-id', 'data-ref', 'data-index',
+    'data-line', 'data-bucket', 'data-where', 'data-how', 'data-subject', 'data-contract', 'data-report',
+    'data-ace', 'data-view', 'data-group', 'data-section'];
+  function armSig(node) {
+    return ARM_ATTRS.map(function (k) { return node.getAttribute(k) || ''; }).join('\u0001')
+      + '\u0001' + node.textContent;
+  }
+
+  function attached(node) {
+    while (node) {
+      if (node === document) return true;
+      node = node.parentNode;
+    }
+    return false;
+  }
+
+  /** The armed label, naming the value the second click sets. */
+  function showArmed(node, label) {
+    var cfm = label && node.querySelector('.cfm');
+    if (cfm) cfm.textContent = label;
+  }
+
+  /** After a redraw inside root: the armed button, drawn again, armed again. */
+  function rearm(root) {
+    var armed = S.armed;
+    if (!armed || attached(armed.node) || !root.querySelectorAll) return;
+    var same = Array.prototype.filter.call(root.querySelectorAll('[data-act]'), function (n) {
+      return !n.disabled && armSig(n) === armed.sig;
+    });
+    if (same.length !== 1) return;
+    armed.node = same[0];
+    same[0].classList.toggle('is-armed', true);
+    showArmed(same[0], armed.label);
+  }
+
+  /** True on the second click; on the first, arms the button and says no.
+      `label`, when given, is what the armed button says in place of the
+      confirm it was drawn with. */
+  function confirmed(node, label) {
     if (S.armed && S.armed.node === node) { disarm(); return true; }
     disarm();
+    var sig = armSig(node);
     node.classList.toggle('is-armed', true);
-    S.armed = { node: node, timer: setTimeout(disarm, CONFIRM_MS) };
+    S.armed = { node: node, sig: sig, label: label || null, timer: setTimeout(disarm, CONFIRM_MS) };
+    showArmed(node, label);
     return false;
   }
 
@@ -577,6 +623,10 @@
                 'aria-pressed': on ? 'true' : 'false' };
       Object.keys(extra || {}).forEach(function (k) { a[k] = extra[k]; });
       if (o.disabled) { a.disabled = true; a.title = o.title || null; }
+      if (o.confirm && !on) {
+        a['data-confirm'] = 'yes';
+        return h('button.seg-btn', a, h('span.lbl', o.label), h('span.cfm', o.confirm));
+      }
       return h('button.seg-btn' + (on ? '.is-on' : ''), a, o.label);
     }));
   }
@@ -1930,7 +1980,7 @@
         h('dt', 'Posted since the start'), h('dd', num(d.posted) + ' alert' + (Number(d.posted) === 1 ? '' : 's')),
         h('dt', 'Waiting'), h('dd', num(d.waiting) + (d.posting ? ', and a post being tried again' : ''))),
       failNote,
-      h('div.btn-row', writeBtn('', 'al-test', {}, 'Send a test alert', null, 'paper-plane', true)),
+      h('div.btn-row', writeBtn('', 'al-test', {}, 'Send a test alert', 'Click again to send it', 'paper-plane', true)),
       answerBox(S.alerts.test));
   }
 
@@ -2715,13 +2765,15 @@
     if (entry.kind === 'switch') {
       var on = entry.value === true;
       var a = { type: 'button', 'data-act': 'st-switch', 'data-key': key, role: 'switch',
-                'aria-checked': on ? 'true' : 'false', 'aria-label': entry.label };
+                'aria-checked': on ? 'true' : 'false', 'aria-label': entry.label, 'data-confirm': 'yes' };
       if (!open || busy) { a.disabled = true; a.title = whyNoWrite() || null; }
-      return h('button.switch' + (on ? '.is-on' : ''), a, h('span.knob'), h('span.lbl', on ? 'On' : 'Off'));
+      return h('button.switch' + (on ? '.is-on' : ''), a, h('span.knob'), h('span.lbl', on ? 'On' : 'Off'),
+        h('span.cfm', 'Click again: turn ' + (on ? 'Off' : 'On')));
     }
     if (entry.kind === 'choice') {
       return segmented('st-choice', asList(entry.choices).map(function (c) {
-        return { value: c, label: String(c), disabled: !open, title: whyNoWrite() };
+        return { value: c, label: String(c), disabled: !open, title: whyNoWrite(),
+                 confirm: 'Click again: ' + String(c) };
       }), entry.value, { 'data-key': key });
     }
     if (entry.kind === 'list') {
@@ -2764,7 +2816,7 @@
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
         disabled: !open, 'aria-label': entry.label }),
       writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
-        entry.destroys || entry.stricter ? 'Click again to save' : null, 'check', false, open),
+        'Click again to save', 'check', false, open),
       h('span.st-range', range));
   }
 
@@ -3197,7 +3249,7 @@
         card('Audit log', frag(
           h('p.about', 'Writes every queued row of the audit log to the store now, rather than at the next flush. '
             + 'Works while recovery holds everything else back.'),
-          h('div.btn-row', writeBtn('', 'tl-flush', {}, 'Flush the audit log', null, 'floppy-disk', true)),
+          h('div.btn-row', writeBtn('', 'tl-flush', {}, 'Flush the audit log', 'Click again to flush', 'floppy-disk', true)),
           t.flush ? answerBox(t.flush) : null))),
       card('Diagnosis', frag(
         h('p.about', 'Why the app is not showing something, the server-wide checks, the settings that need '
@@ -3791,6 +3843,7 @@
     });
   };
   ACTIONS['al-test'] = function (node) {
+    if (!confirmed(node)) return;
     write('testAlert', {}, 'alert-test', node).then(function (reply) {
       if (!reply) return;
       toast(words(reply), reply.ok ? 'ok' : 'error');
@@ -4033,17 +4086,20 @@
     setSetting(key, value, node);
   };
   LIVE['st-filter'] = function () { filterSettings(); };
+  /* A switch, a choice and a Save each take two clicks too: a switch live
+     for the whole server (Staff.AppPaused pauses every contract) went on a
+     single misclick. The armed one names the value the second click sets. */
   ACTIONS['st-switch'] = function (node) {
     var key = node.getAttribute('data-key');
     var entry = settingEntry(key);
-    if (!entry || entry.readonly) return;
+    if (!entry || entry.readonly || !confirmed(node)) return;
     setSetting(key, entry.value !== true, node);
   };
   ACTIONS['st-choice'] = function (node) {
     var key = node.getAttribute('data-key');
     var entry = settingEntry(key);
     var value = node.getAttribute('data-value');
-    if (!entry || entry.readonly || String(entry.value) === value) return;
+    if (!entry || entry.readonly || String(entry.value) === value || !confirmed(node)) return;
     setSetting(key, value, node);
   };
   ACTIONS['st-save'] = function (node) {
@@ -4058,31 +4114,31 @@
       drawSettingRow(key);
       return;
     }
-    // A value that deletes something for good, or a rate limit made
-    // stricter, takes the two clicks every destructive button does, the row
-    // saying what the second one does. Saved on one click or on Enter, a
-    // typo of 1 for 10 days lost every unopened kill photo older than a day
-    // at the next sweep. Enter only ever arms it, and the second click saves
-    // only the value the first one named: anything typed since arms again
-    // with its own words.
-    var said = secondClick(entry, parsed.value);
-    if (said) {
-      if (node.tagName === 'BUTTON' && S.armed && S.armed.node === node && S.armed.value === parsed.value) {
-        disarm();
-        setSetting(key, parsed.value, node);
-        return;
-      }
+    // Every Save takes two clicks, the armed one naming the value it saves;
+    // one that deletes something for good, or a rate limit made stricter,
+    // has the row say what the second click does too. Saved on one click or
+    // on Enter, a typo of 1 for 10 days lost every unopened kill photo older
+    // than a day at the next sweep. Enter only ever arms it, and the second
+    // click saves only the value the first one named: anything typed since
+    // arms again with its own words.
+    if (node.tagName === 'BUTTON' && S.armed && S.armed.node === node && S.armed.value === parsed.value) {
       disarm();
-      S.settings.answers[key] = { ok: false, text: said + ' Click Save again to do it.' };
-      drawSettingRow(key);
-      var button = byId('st-save-' + key);
-      if (button) {
-        confirmed(button);
-        if (S.armed) { S.armed.value = parsed.value; S.armed.bind = 'st.' + key; }
-      }
+      setSetting(key, parsed.value, node);
       return;
     }
-    setSetting(key, parsed.value, node.tagName === 'BUTTON' ? node : null);
+    disarm();
+    var said = secondClick(entry, parsed.value);
+    if (said) {
+      S.settings.answers[key] = { ok: false, text: said + ' Click Save again to do it.' };
+      drawSettingRow(key);
+    }
+    var button = byId('st-save-' + key);
+    if (button) {
+      var shown = describe(entry, parsed.value);
+      if (shown.length > 24) shown = shown.slice(0, 23) + '\u2026';
+      confirmed(button, 'Click again: save ' + shown);
+      if (S.armed) { S.armed.value = parsed.value; S.armed.bind = 'st.' + key; }
+    }
   };
   ACTIONS['st-reset'] = function (node) {
     var key = node.getAttribute('data-key');
@@ -4128,6 +4184,7 @@
     });
   };
   ACTIONS['tl-flush'] = function (node) {
+    if (!confirmed(node)) return;
     write('flush', {}, 'flush', node).then(function (reply) {
       if (!reply) return;
       toast(words(reply), reply.ok ? 'ok' : 'error');

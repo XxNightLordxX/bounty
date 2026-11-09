@@ -354,6 +354,11 @@ local CLIENT_SETTINGS = {
     ['Mugshot.Enabled'] = 'boolean',
     -- Whether the app goes on the home screen when it is next added.
     ['App.DefaultInstalled'] = 'boolean',
+    -- How long the kill photo camera waits for the shutter: the server's
+    -- token lives this long, so a camera timed from config.lua's value
+    -- gave up on a photo the server would still take, or stayed open after
+    -- the token had died.
+    ['Completion.PhotoTokenLifetimeSeconds'] = 'number',
 }
 
 RegisterNetEvent('crimson-hitman:settings', function(values)

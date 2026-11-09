@@ -681,6 +681,26 @@ async function main() {
       .map(function (r) { return r.body.choice; });
   }
 
+  /* Sweep 5 (unproven, cheap): an access push (a job change into or out of
+     the whitelisted-job view) while the photo is up for its one look. It
+     went with everything else the page held, unsaid. It is a Delete, told
+     to the server and now to the player too. */
+  await (async function photoOpenAtAccessPush() {
+    const app = await openedPhoto();
+    it('access push: the photo is up before the job change', function () {
+      eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 1);
+      eq(decisions(app).length, 0);
+    });
+    app.sandbox.window._message({ data: { type: 'push', reason: 'access' } });
+    await settle(); await settle(); await settle();
+    it('access push: an open photo is deleted explicitly and the player is told so', function () {
+      drewCleanly(app, 'the access push over the photo');
+      eq(decisions(app).join(','), 'delete', 'the server is told it is deleted');
+      eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 0, 'the photo is gone');
+      truthy(app.notice().indexOf('the kill photo you had open was closed and deleted') !== -1, app.notice());
+    });
+  })();
+
   await (async function photoOpensOnce() {
     const app = await openedPhoto();
 
@@ -11114,8 +11134,23 @@ async function main() {
       truthy(labels(anon).indexOf('Clear') !== -1, labels(anon).join(' | '));
     });
     click(anon, 'Clear');
+    await settle();
+    it('placer: Clear asks first, saying every hitman loses the spot (sweep 5 F4)', function () {
+      const text = anon.view.textContent;
+      truthy(text.indexOf('Clear the meeting point?') !== -1, text);
+      truthy(text.indexOf('Every hitman on this contract loses the spot from their GPS.') !== -1, text);
+      eq(sentNamed(anon, 'clearMeeting').length, 0, 'nothing sent on the first tap');
+    });
+    click(anon, 'Keep it');
+    await settle();
+    it('placer: Keep it sends nothing', function () {
+      eq(sentNamed(anon, 'clearMeeting').length, 0);
+    });
+    click(anon, 'Clear');
+    await settle();
+    click(anon, 'Clear it');
     await settle(); await settle();
-    it('placer: Clear clears it, at once', function () {
+    it('placer: Clear it clears it', function () {
       eq(sentNamed(anon, 'clearMeeting').length, 1);
       eq(sentNamed(anon, 'clearMeeting')[0].body.id, 'ct00000077');
       truthy(anon.notice().indexOf('Meeting point cleared.') !== -1, anon.notice());
@@ -12884,6 +12919,38 @@ async function main() {
       eq(off.id, 'ct00000003');
       drewCleanly(app, 'after turning decay off');
     });
+    it('impB: and says so (sweep 5 F7)', function () {
+      truthy(app.notice().indexOf('Turned off for this contract.') !== -1, app.notice());
+    });
+
+    // Sweep 5 F7: the shorten mode asks in its own words, and a refusal is said.
+    const shorten = JSON.parse(JSON.stringify(own));
+    shorten.decay = { mode: 'shorten', percent: 10, hours: 1, maxPercent: 50, steps: 1 };
+    const short = boot({
+      list: board, ledger: LEDGER, amendments: { ok: true, data: [] },
+      mine: { ok: true, data: { created: [shorten], accepted: [], onMe: [] } },
+      decayOff: { ok: false, err: 'not_found' }
+    });
+    await settle(); await settle();
+    tab(short, 'mine');
+    await settle(); await settle();
+    const stopLabel = short.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && /^Stop /.test(n.textContent);
+    }).map(function (n) { return n.textContent; })[0];
+    truthy(stopLabel, 'a Stop button on the shorten card');
+    click(short, stopLabel);
+    await settle();
+    it('impB: stopping a shortening deadline asks in its own words, sending nothing yet', function () {
+      truthy(short.view.textContent.indexOf('Stop bringing its deadline in?') !== -1, short.view.textContent);
+      eq(short.sent.filter(function (s) { return s.name === 'decayOff'; }).length, 0);
+    });
+    click(short, 'Turn it off');
+    await settle(); await settle();
+    it('impB: a refused turn-off says why and not that it was turned off', function () {
+      eq(short.sent.filter(function (s) { return s.name === 'decayOff'; }).length, 1);
+      truthy(short.notice().indexOf('That is gone.') !== -1, short.notice());
+      falsy(short.notice().indexOf('Turned off for this contract.') !== -1, short.notice());
+    });
   })();
 
   await (async function roleplayRpC() {
@@ -13048,6 +13115,194 @@ async function main() {
     });
   })();
 
+  /* Sweep 5 F7: the bodyguard screens. Set GPS to the pin, and its
+     refusal; a push re-reading an open Protection tab; the target's Move the
+     pin here (asked first, F4) and Cancel protection, with the refund said;
+     and Hire protection refused. */
+  await (async function bodyguardScreens() {
+    function buttons(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    function sentNamed(app, name) {
+      return app.sent.filter(function (entry) { return entry.name === name; });
+    }
+    async function pushed(app) {
+      app.sandbox.window._message({ data: { type: 'push', reason: 'update' } });
+      const due = app.timers.filter(function (t) { return t.ms === 250; });
+      due[due.length - 1].fn();
+      await settle(); await settle(); await settle();
+    }
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.settings.protection = true;
+
+    // The guard's side: the Protection tab.
+    let gpsAnswer = { ok: true, event: 'protectionGps' };
+    let guarding = [{ job: 'prot00000002', reward: 4000, targetName: 'Kim Lane', pinSet: true }];
+    const guard = boot({
+      list: board, mine: MINE, ledger: LEDGER,
+      protectionBoard: function () {
+        return { ok: true, data: { enabled: true, maxJobs: 2, open: [], mine: guarding } };
+      },
+      protectionGps: function () { return gpsAnswer; }
+    });
+    await settle(); await settle();
+    click(guard, 'Protection');
+    await settle(); await settle();
+    it('bodyguard: a guarded person with a pin offers Set GPS to the pin', function () {
+      truthy(buttons(guard).indexOf('Set GPS to the pin') !== -1, buttons(guard).join(' | '));
+      truthy(guard.view.textContent.indexOf('Paid $4,000 if the contract on them ends without being '
+        + 'carried out.') !== -1, guard.view.textContent);
+      drewCleanly(guard, 'the Protection tab, guarding');
+    });
+    click(guard, 'Set GPS to the pin');
+    await settle(); await settle();
+    it('bodyguard: Set GPS sends the job alone and says the waypoint is set', function () {
+      const posts = sentNamed(guard, 'protectionGps');
+      eq(posts.length, 1);
+      eq(JSON.stringify(posts[0].body), JSON.stringify({ job: 'prot00000002' }));
+      truthy(guard.notice().indexOf('Waypoint set to the meeting pin.') !== -1, guard.notice());
+    });
+    gpsAnswer = { ok: false, event: 'protectionGps', err: 'not_found' };
+    click(guard, 'Set GPS to the pin');
+    await settle(); await settle();
+    it('bodyguard: a pin the server no longer has says it is gone, not that it was set', function () {
+      eq(sentNamed(guard, 'protectionGps').length, 2);
+      truthy(guard.notice().indexOf('That is gone.') !== -1, guard.notice());
+      drewCleanly(guard, 'after Set GPS refused');
+    });
+    const reads = sentNamed(guard, 'protectionBoard').length;
+    guarding = [];
+    await pushed(guard);
+    it('bodyguard: a push re-reads the open Protection tab and draws what it says now', function () {
+      truthy(sentNamed(guard, 'protectionBoard').length > reads, 'not read again');
+      eq(buttons(guard).indexOf('Set GPS to the pin'), -1, buttons(guard).join(' | '));
+      falsy(guard.view.textContent.indexOf('Kim Lane') !== -1, 'the job that ended is still drawn');
+      drewCleanly(guard, 'the Protection tab after a push');
+    });
+    tab(guard, 'mine');
+    await settle(); await settle();
+    const readsAway = sentNamed(guard, 'protectionBoard').length;
+    await pushed(guard);
+    it('bodyguard: a push with another tab open does not read the Protection tab', function () {
+      eq(sentNamed(guard, 'protectionBoard').length, readsAway);
+    });
+
+    // The target's side, on their On me card.
+    function onMe(protection) {
+      return {
+        id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive', state: 'accepted',
+        reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+        role: 'target', protection: protection
+      };
+    }
+    let pinned = null, cancelled = null;
+    async function target(protection, extra) {
+      const app = boot(Object.assign({
+        list: board, ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [onMe(protection)] } },
+        protectionPin: function (body) { pinned = body; return { ok: true, data: {} }; },
+        protectionCancel: function (body) { cancelled = body; return { ok: true, data: { cancelled: true } }; }
+      }, extra || {}));
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      return app;
+    }
+    const waiting = await target({ job: 'prot00000005', reward: 2500, state: 'open' });
+    it('target: a job waiting for a bodyguard says so, with Move the pin here and Cancel protection', function () {
+      truthy(waiting.view.textContent.indexOf('Your protection job ($2,500) is waiting for a bodyguard.') !== -1,
+        waiting.view.textContent);
+      truthy(buttons(waiting).indexOf('Move the pin here') !== -1, buttons(waiting).join(' | '));
+      truthy(buttons(waiting).indexOf('Cancel protection') !== -1, buttons(waiting).join(' | '));
+      drewCleanly(waiting, 'On me with a protection job');
+    });
+    click(waiting, 'Move the pin here');
+    await settle();
+    it('target: Move the pin here asks first and sends nothing on the first tap (sweep 5 F4)', function () {
+      eq(pinned, null, 'sent on one tap');
+      truthy(waiting.view.textContent.indexOf('Move the meeting pin to where you are standing?') !== -1,
+        waiting.view.textContent);
+      truthy(waiting.view.textContent.indexOf('Whoever takes the job meets you at the new spot.') !== -1,
+        waiting.view.textContent);
+    });
+    click(waiting, 'Not now');
+    await settle();
+    it('target: Not now sends nothing', function () { eq(pinned, null); });
+    click(waiting, 'Move the pin here');
+    await settle();
+    click(waiting, 'Move it');
+    await settle(); await settle();
+    it('target: Move it sends the job alone, and says where the pin is', function () {
+      truthy(pinned, 'nothing sent');
+      eq(JSON.stringify(pinned), JSON.stringify({ job: 'prot00000005' }));
+      truthy(waiting.notice().indexOf('The meeting pin is where you stand now.') !== -1, waiting.notice());
+    });
+    click(waiting, 'Cancel protection');
+    await settle();
+    it('target: Cancel protection asks first, saying the reward comes back', function () {
+      eq(cancelled, null, 'sent on one tap');
+      truthy(waiting.view.textContent.indexOf('Cancel your protection job?') !== -1, waiting.view.textContent);
+      truthy(waiting.view.textContent.indexOf('Nobody has taken it, so the $2,500 comes back to you.') !== -1,
+        waiting.view.textContent);
+    });
+    click(waiting, 'Keep it');
+    await settle();
+    it('target: Keep it sends nothing', function () { eq(cancelled, null); });
+    click(waiting, 'Cancel protection');
+    await settle();
+    click(waiting, 'Cancel it');
+    await settle(); await settle();
+    it('target: Cancel it sends the job and says the money is on its way back', function () {
+      truthy(cancelled, 'nothing sent');
+      eq(cancelled.job, 'prot00000005');
+      truthy(waiting.notice().indexOf('Cancelled. The money is on its way back to you.') !== -1, waiting.notice());
+    });
+
+    pinned = null;
+    const taken = await target({ job: 'prot00000006', reward: 3000, state: 'taken', guardName: 'Rook Ash' },
+      { protectionCancel: { ok: false, err: 'contract_taken' } });
+    it('target: a taken job names the guard and offers no Cancel', function () {
+      truthy(taken.view.textContent.indexOf('Your protection job ($3,000) was taken by Rook Ash. They have '
+        + 'your name and your pin.') !== -1, taken.view.textContent);
+      eq(buttons(taken).indexOf('Cancel protection'), -1, buttons(taken).join(' | '));
+    });
+    click(taken, 'Move the pin here');
+    await settle();
+    it('target: moving a taken job\'s pin says the bodyguard sees it', function () {
+      truthy(taken.view.textContent.indexOf('Your bodyguard sees the new spot on their GPS.') !== -1,
+        taken.view.textContent);
+      eq(pinned, null);
+    });
+
+    // Hire protection, refused by the server: said, and nothing claimed.
+    const offerCard = onMe(undefined);
+    offerCard.protectionOffer = { account: 'bank', min: 1000, max: 100000 };
+    const refused = boot({
+      list: board, ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [offerCard] } },
+      protectionPost: { ok: false, err: 'protection_exists' }
+    });
+    await settle(); await settle();
+    tab(refused, 'onme');
+    await settle(); await settle();
+    click(refused, 'Hire protection');
+    await settle();
+    refused.document.getElementById('dialog-amount').value = '1500';
+    click(refused, 'Next');
+    await settle();
+    click(refused, 'Pay $1,500');
+    await settle(); await settle();
+    it('hire protection refused: says why, and not that it was posted', function () {
+      eq(sentNamed(refused, 'protectionPost').length, 1);
+      eq(sentNamed(refused, 'protectionPost')[0].body.amount, 1500);
+      truthy(refused.notice().indexOf('There is already a protection job on this contract.') !== -1,
+        refused.notice());
+      falsy(refused.notice().indexOf('Your protection job is posted.') !== -1, refused.notice());
+    });
+  })();
+
   /* The roleplay features (Config.Roleplay): a rumour on the board in place
      of a card, asking the broker about it, a broker player's panel, and the
      burner phone's refusal in place of the contract tabs. */
@@ -13114,6 +13369,38 @@ async function main() {
       eq(briefed && briefed.who, 'bpAAAA');
       eq(briefed && briefed.id, 'ct00000301');
       drewCleanly(broker);
+    });
+    it('broker: and says they can see it now (sweep 5 F7)', function () {
+      truthy(broker.notice().indexOf('Briefed. They can see this one on their board now.') !== -1,
+        broker.notice());
+    });
+
+    // Sweep 5 F7: Brief them with nobody picked, and a brief refused.
+    const unpicked = boot({ list: rumourBoard({ npc: false, broker: true }), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      brokerBrief: { ok: false, err: 'not_found' } });
+    await settle(); await settle(); await settle();
+    button(unpicked, 'Brief them').onclick();
+    await settle(); await settle();
+    it('broker: Brief them with nobody picked says to pick first, and sends nothing', function () {
+      eq(unpicked.sent.filter(function (s) { return s.name === 'brokerBrief'; }).length, 0);
+      truthy(unpicked.notice().indexOf('Pick who is standing with you first') !== -1, unpicked.notice());
+    });
+    const refusedBrief = boot({ list: rumourBoard({ npc: false, broker: true }), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      brokerNearby: { ok: true, data: { people: [{ handle: 'bpBBBB', metres: 3 }], radius: 5 } },
+      brokerBrief: { ok: false, err: 'not_found' } });
+    await settle(); await settle(); await settle();
+    button(refusedBrief, 'Who is near me?').onclick();
+    await settle(); await settle();
+    button(refusedBrief, 'Person 1').onclick();
+    await settle();
+    button(refusedBrief, 'Brief them').onclick();
+    await settle(); await settle();
+    it('broker: a brief refused says why, and not that they were briefed', function () {
+      eq(refusedBrief.sent.filter(function (s) { return s.name === 'brokerBrief'; }).length, 1);
+      truthy(refusedBrief.notice().indexOf('That is gone.') !== -1, refusedBrief.notice());
+      falsy(refusedBrief.notice().indexOf('Briefed.') !== -1, refusedBrief.notice());
     });
 
     const burner = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [], burnerMissing: true,
