@@ -720,6 +720,8 @@ do
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
+        ['Panel._heldRefs']            = 'how many player lookup handles each staff source holds, '
+            .. 'so a test can watch expired ones be pruned',
         ['Mugshot.count']              = 'how many faces are cached, so a test can watch the '
             .. 'cache let go of players who left',
         -- The store's own seams. Every backend implements them so the
