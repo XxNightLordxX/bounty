@@ -605,7 +605,8 @@ function Projection.contract(contract, viewerCid, opts)
         -- band moves only while the clock runs, so nothing on the card
         -- changes the moment anybody logs off or on. Staff see the exact
         -- times (server/panel.lua).
-        timeLeft      = Util.timeBand(Util.runLeft(contract)),
+        timeLeft      = Util.timeBand(Util.bandLeft(contract,
+            Freeze and Freeze.holdStart and Freeze.holdStart(contract, hitmen) or nil)),
         -- Staff have put it on hold (server/freeze.lua). The same one word
         -- to each of its parties, never which of them or why: true or
         -- absent. Never to a stranger on the board, where it told them
@@ -1301,7 +1302,8 @@ local function whitelistedEntry(contract, job, advised)
         postedAt     = posted and (posted - (posted % Util.CLOCK_STEP)) or nil,
         state        = active and (active > 0 and 'taken' or 'open') or nil,
         hitmenActive = active,
-        timeLeft     = posted and Util.timeBand(Util.runLeft(contract)) or nil,
+        timeLeft     = posted and Util.timeBand(Util.bandLeft(contract,
+            Freeze and Freeze.holdStart and Freeze.holdStart(contract) or nil)) or nil,
     }
 end
 

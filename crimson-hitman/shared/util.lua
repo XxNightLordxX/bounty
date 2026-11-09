@@ -309,6 +309,27 @@ function Util.runLeft(contract, now)
     return math.max(0, deadline - (tonumber(contract.paused_since) or now or os.time()))
 end
 
+--- What a card's band is worked out from (Util.timeBand): the run time left
+--- (Util.runLeft), or the lifetime left (expires_at) where that ends first.
+--- Banked pauses carry a deadline past the lifetime of a contract whose
+--- parties are often away, and the card said "More than 2 hours left" until
+--- the lifetime ended it. The lifetime runs whoever is present, so it says
+--- nobody's presence; it stands while a hold stops it (`heldSince`, given
+--- back when the hold ends), as the run time does. nil without a deadline.
+---@param contract table
+---@param heldSince integer|nil when a hold on it began, os.time()
+---@param now integer|nil os.time()
+---@return integer|nil
+function Util.bandLeft(contract, heldSince, now)
+    local left = Util.runLeft(contract, now)
+    local expires = contract and tonumber(contract.expires_at)
+    if left and expires then
+        local from = tonumber(heldSince) or now or os.time()
+        left = math.min(left, math.max(0, expires - from))
+    end
+    return left
+end
+
 --- The band a run time falls in, and its rank (1 the longest).
 ---@param seconds integer|nil
 ---@return string|nil text

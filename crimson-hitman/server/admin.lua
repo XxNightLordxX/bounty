@@ -1311,7 +1311,9 @@ function Admin.adjustDeadline(src, contractId, seconds, reason)
     local maxAdjust = math.max(60, math.floor(tonumber(Config.Limits.StaffDeadlineMaxAdjustSeconds) or 86400))
     local minLeft = math.max(0, math.floor(tonumber(Config.Limits.StaffDeadlineMinLeftSeconds) or 300))
     seconds = math.tointeger(tonumber(seconds) or 0)
-    if not seconds or seconds == 0 or math.abs(seconds) > maxAdjust then
+    -- Both ways, never through math.abs: math.abs(math.mininteger) is still
+    -- negative, so the smallest integer passed as within the limit.
+    if not seconds or seconds == 0 or seconds < -maxAdjust or seconds > maxAdjust then
         return false, 'bad_adjust', { max = maxAdjust }
     end
     local why = Util.sanitizeText(reason, 120)

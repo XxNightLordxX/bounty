@@ -158,7 +158,7 @@ One word for one thing, on the phone, in the panel, in notices and here.
 
 1. **Placing** (Place tab): pick the target, give a reason, set the reward (and a stake, a kidnapping bonus or more payouts where allowed); the second tap on **Place** names the total and takes it. The target is not told at once.
 2. **Accepting** (Board): the hitman sees the reward, the rough time left and any stake, and accepts (anonymously where allowed). One hitman (**exclusive**) or several (**competitive**).
-3. **The clock**: the deadline (3 h as shipped) runs only while the placer, the target and one hitman holding it are all in the city, never while the target is jailed, and stops before a txAdmin restart. Players see a rough band (*More than 2 hours left* … *Under 15 minutes left*); staff see the exact time. A two-day lifetime ends any contract, pauses included.
+3. **The clock**: the deadline (3 h as shipped) runs only while the placer, the target and one hitman holding it are all in the city, never while the target is jailed, and stops before a txAdmin restart. Players see a rough band (*More than 2 hours left* … *Under 15 minutes left*), from the deadline or the lifetime, whichever ends first; staff see the exact time. A two-day lifetime ends any contract, pauses included.
 4. **Finishing**: as shipped only a live handover completes it (`Config.Completion.Fulfilment = 'alive'`): the hitman brings the target alive within `Config.Kidnap.Radius` of the placer and the three stay close for `Config.Kidnap.CountdownSeconds`. With `'either'`, a verified kill completes it too (**Verify kill**, with or without a kill photo).
 5. **Ending**: completed, the hitman is paid from escrow (owed and paid at their next login if away or full). Withdrawn by the placer while nobody holds it, expired, voided by staff or bought out: the reward goes back to the placer; a hitman's stake goes as the rules say. An exclusive hitman who never goes near the target is released after `ExclusiveIdleReleaseSeconds`.
 6. **Changes**: before anyone takes it, the placer's **Edit** sheet changes reason, reward, stake, deadline and mode at once. Once taken, the reward can still be raised, the deadline extended, and anything else proposed (**Propose change**) for the hitman to accept.
@@ -1066,7 +1066,15 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, leftover fixes (newest)**
+**1.1.0, sweep 5 fixes (newest)**
+
+- Staff without `crimson.identity`: a log search by a player's citizen id pages with a handle good for that staff member and that search only (ten minutes), and offers **Older** only when a row they may see is left, so no page or its absence points at an anonymous contract; a party's phone view says *On hold* only where the contract's own frozen badge would.
+- A handover arm refused because the placer is not close enough waits up to 15 seconds (at most `Config.Kidnap.RearmCooldownSeconds`) before the next try.
+- Ending a staff freeze, the app pause or the restart hold gives every contract its held time back before the expiry pass can end one; a kill made in the minutes before the restart hold can still be verified once the hold is skipped; skipping the hold (or reaching `Config.Restart.MaxHoldMinutes`) tells every party *Contracts are no longer paused for the server restart.* and refreshes their pages.
+- Answering a lapsed proposal while its contract is frozen is refused as on hold and leaves it open; the time band on a card is worked out from whichever ends first, the deadline or the two-day lifetime; an idle release never lands on a hitman being paid; a claim checks the holds again under its lock; if the freezes cannot be read at the start, every live contract is held until a tick reads them.
+- Withdrawing every cash and bank line of a contract takes its buyout off (the placer is told *Buyout removed*): a contract funded only in dirty money or goods cannot carry one. A give cut off by a restart records what the player held before it, and the start says when it probably arrived; tip and go-dark refunds whose credit raised go to staff as a buyout refund does; a decay step whose top-up raised after the charge is not charged again; a top-up's audit row lists each line.
+
+**1.1.0, leftover fixes**
 
 - A staff freeze gives an open amendment proposal back the time it held it, also when the app pause or the restart hold covered the freeze (both of which let a proposal be answered, so they give it nothing); an idle release refused by a hold that landed at that moment keeps the hold's idle clocks.
 - A proof-item handover is its own outcome: *Proof handed over* on the Ledger, no EMS re-listing, witness report or city news.

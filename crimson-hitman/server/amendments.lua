@@ -280,7 +280,15 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec, opts)
     local open, movedErr = keptOrReturned(actor, contractId, slot, ids)
     if not open then return false, movedErr end
 
-    Audit.financial('escrow_added', actor.cid, contractId, { lines = #lines, slot = slot })
+    -- What went in, a line at a time: the count alone left a top-up's
+    -- amounts and accounts off the financial record.
+    local added = {}
+    for i = 1, #lines do
+        local line = lines[i]
+        added[i] = { source = line.source, amount = line.amount, item = line.item,
+                     quantity = line.quantity, portion = line.portion }
+    end
+    Audit.financial('escrow_added', actor.cid, contractId, { lines = #lines, slot = slot, added = added })
 
     local people = participants(contract)
     for cid, role in pairs(people) do
@@ -940,6 +948,17 @@ respondUnlocked = function(actor, amendmentId, approve, keyHeld)
     if not proposal or proposal.outcome ~= 'open' then return false, CH.ERR.NOT_FOUND end
 
     if os.time() > proposal.expires_at then
+        -- Not while staff hold its contract: Amendments.expire leaves a
+        -- lapsed proposal open then, and the unfreeze gives it the time
+        -- held back. Answered meanwhile, it was closed as expired here and
+        -- that time was never given. A party is told it is on hold, as
+        -- below; anybody else only that they are not one.
+        local live = Storage.readContract(proposal.contract_id)
+        if live and not CH.TERMINAL[live.state] and Contracts and Contracts.heldByStaff
+            and Contracts.heldByStaff(live) then
+            if not participants(live)[actor.cid] then return false, CH.ERR.NOT_PARTICIPANT end
+            return false, CH.ERR.CONTRACT_FROZEN
+        end
         proposal.outcome = 'expired'
         Storage.writeAmendment(proposal)
         return false, CH.ERR.PROPOSAL_EXPIRED, 'expired'

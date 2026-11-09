@@ -50,7 +50,7 @@ local Util = CrimsonBoot.requireShared('util')
 
 local Freeze = {}
 
-local Storage, Audit, Notify, Kidnap
+local Storage, Audit, Notify, Kidnap, Death
 
 local frozen = {}   -- [cid] = { cid, name, reason, by_cid, frozen_at }
 --- How many are frozen: always counted from `frozen` (recount), never kept
@@ -76,6 +76,27 @@ local function oneAtATime(cid, fn, ...)
     if not out[1] then error(out[2], 0) end
     return table.unpack(out, 2, out.n)
 end
+
+--- Releases still giving back what their hold took: an unfreeze, the
+--- restart hold's end and the app pause's. Each lets go of its hold before
+--- its first await (so a second one landing finds it gone and gives nothing
+--- back twice), and gives each contract its time back after it: an expiry
+--- pass run in between found no hold, and ended a contract whose lifetime
+--- ran out while it was held, just before it was given that time back. So
+--- the pass leaves every contract alone while one runs (Freeze.releasing).
+local releasing = 0
+
+local function whileReleasing(fn, ...)
+    releasing = releasing + 1
+    local out = table.pack(pcall(fn, ...))
+    releasing = releasing - 1
+    if not out[1] then error(out[2], 0) end
+    return table.unpack(out, 2, out.n)
+end
+
+--- Whether a hold is being released now, its time not all given back yet.
+---@return boolean
+function Freeze.releasing() return releasing > 0 end
 
 --- The restart hold now, or nil: { since }. Kept in memory only, so
 --- the resource starting again after the restart is what ends it.
@@ -123,14 +144,23 @@ local REASON_MAX = 120
 local appPause = nil
 local PAUSE_META = 'staff_pause_since'
 
+--- Since when the store's freezes could not be read (os.time()), or nil.
+--- Read as nobody frozen, a frozen player's contracts ran their clocks and
+--- banked their deadlines, and the real unfreeze later gave the whole span
+--- back again. So, until a read succeeds (retried on every maintenance
+--- tick, Freeze.restartTick), every live contract is held as if a party to
+--- it were frozen, without saying which.
+local unread = nil
+
 ---@param deps table { storage, audit, notify, kidnap }
 local giveBackRestart
 local loadAppPause
 
 function Freeze.init(deps)
-    Storage, Audit, Notify, Kidnap = deps.storage, deps.audit, deps.notify, deps.kidnap
+    Storage, Audit, Notify, Kidnap, Death = deps.storage, deps.audit, deps.notify, deps.kidnap, deps.death
     -- A restart hold ends with the restart: this start is it.
     restartHold = nil
+    inFlight, unread = {}, nil
     Freeze.reload()
     -- An app pause from before the restart is still on: read before the
     -- restart hold's lifetime is given back, which leaves out what it covers.
@@ -154,16 +184,28 @@ function Freeze.init(deps)
     end
 end
 
---- Read every freeze from the store again. Done once at the start.
+
+--- Read every freeze from the store again. Done at the start, and again
+--- on the tick while the start's read failed.
+---@return boolean read
 function Freeze.reload()
-    frozen, count, inFlight = {}, 0, {}
-    if not (Storage and Storage.readFreezes) then return end
+    frozen, count = {}, 0
+    if not (Storage and Storage.readFreezes) then
+        unread = nil
+        return true
+    end
     local ok, rows = pcall(Storage.readFreezes)
     if not ok then
-        Log.always(('staff freezes could not be read from the store (%s); nobody reads as frozen '
-            .. 'until the next start'):format(Util.dbError(rows)))
-        return
+        unread = unread or os.time()
+        Log.always(('staff freezes could not be read from the store (%s); every live contract is '
+            .. 'held until they can be, tried again every tick'):format(Util.dbError(rows)))
+        return false
     end
+    if unread then
+        Log.always('staff freezes have been read from the store: contracts nobody frozen is party to '
+            .. 'run again')
+    end
+    unread = nil
     for _, row in ipairs(rows or {}) do
         if row.cid then
             row.frozen_at = tonumber(row.frozen_at) or os.time()
@@ -171,6 +213,7 @@ function Freeze.reload()
         end
     end
     recount()
+    return true
 end
 
 --- The freeze on a player, or nil.
@@ -204,6 +247,9 @@ end
 ---@param hitmen table[]|nil
 ---@return table[]|nil
 function Freeze.partiesOf(contract, hitmen)
+    if unread and contract and LIVE[contract.state] then
+        return { { cid = false, row = { frozen_at = unread }, role = 'unknown', anonymous = true } }
+    end
     if count == 0 or not contract or not LIVE[contract.state] then return nil end
     local out, seen = {}, {}
     local function take(cid, role, anonymous)
@@ -239,6 +285,22 @@ function Freeze.heldSince(contract, hitmen)
     for i = 1, #parties do
         local at = parties[i].row.frozen_at
         if not since or at < since then since = at end
+    end
+    return since
+end
+
+--- When anything holding a contract now began (os.time()): a staff freeze
+--- on one of its parties, the restart hold or the app pause, the earliest.
+--- nil when none is.
+---@return integer|nil
+function Freeze.holdStart(contract, hitmen)
+    local since = Freeze.heldSince(contract, hitmen)
+    local function earliest(at)
+        if at and (not since or at < since) then since = at end
+    end
+    if contract and LIVE[contract.state] then
+        earliest(Freeze.restartHeldSince())
+        earliest(appPause and appPause.since or nil)
     end
     return since
 end
@@ -366,7 +428,7 @@ end
 local unfreezeUnlocked
 function Freeze.unfreeze(staffCid, cid, reason)
     if type(cid) ~= 'string' then return false, 'not_frozen' end
-    return oneAtATime(cid, unfreezeUnlocked, staffCid, cid, reason)
+    return oneAtATime(cid, whileReleasing, unfreezeUnlocked, staffCid, cid, reason)
 end
 
 unfreezeUnlocked = function(staffCid, cid, reason)
@@ -449,6 +511,24 @@ end
 -- The restart hold
 --------------------------------------------------------------------------
 
+--- Every party a live contract is shown to, once each: the placer, the
+--- target once shown it, and its active operatives. Never which party.
+---@return table [cid] = true
+local function everyLiveParty(live)
+    local told = {}
+    for i = 1, #live do
+        local contract = live[i]
+        if LIVE[contract.state] then
+            if contract.creator_cid then told[contract.creator_cid] = true end
+            if contract.target_cid and Notify.shownToTarget(contract) then told[contract.target_cid] = true end
+            for _, hitman in ipairs(Storage.readHitmen(contract.id) or {}) do
+                if hitman.state == 'active' then told[hitman.hitman_cid] = true end
+            end
+        end
+    end
+    return told
+end
+
 --- Give every live contract's lifetime back the time the restart hold took,
 --- from its start (or the contract's placing, if later) to `now`: as a
 --- freeze's is given back. Not the part a staff freeze still holding it
@@ -471,6 +551,7 @@ end
 --- What every player with a live contract is told, once.
 Freeze.TEXT.restartTitle = 'Server restart'
 Freeze.TEXT.restart = 'Contracts are paused until the server restart.'
+Freeze.TEXT.restartOver = 'Contracts are no longer paused for the server restart.'
 
 --- Whether the deadline of a contract no freeze holds may run again now:
 --- asked of the expiry pass's own judgement (ContractClockMayRun, in
@@ -523,7 +604,7 @@ function Freeze.scheduledRestart(data)
     -- A hold past Config.Restart.MaxHoldMinutes that the tick has not
     -- released yet is released first, giving back the time it took: the
     -- new one taking its place lost that span.
-    if restartHold then Freeze.releaseRestart('max_hold') end
+    if restartHold then Freeze.releaseRestart('max_hold', true) end
 
     local now = os.time()
     restartHold = { since = now }
@@ -563,15 +644,41 @@ end
 --- clock nothing else stops run again, banking the time on hold.
 ---@param why string 'skipped' | 'max_hold'
 ---@return boolean released
-function Freeze.releaseRestart(why)
+local releaseRestartNow
+---@param quiet boolean|nil a new hold takes its place at once, and says so itself
+function Freeze.releaseRestart(why, quiet)
     if not restartHold then return false end
+    return whileReleasing(releaseRestartNow, why, quiet)
+end
+
+releaseRestartNow = function(why, quiet)
     local since = restartHold.since
     restartHold = nil
     pcall(DeleteResourceKvp, RESTART_KVP)
-    local gave, err = pcall(giveBackRestart, since, os.time())
+    local now = os.time()
+    local gave, err = pcall(giveBackRestart, since, now)
     if not gave then
         Log.always(('the lifetime the restart hold took could not be given back (%s)')
             :format(Util.dbError(err)))
+    end
+    -- A kill made before the hold waited for its Verify through it
+    -- (Death.carryOverRestartHold): the time it had left is given back.
+    if Death and Death.carryOverRestartHold then
+        local carried, carryErr = pcall(Death.carryOverRestartHold, since, now)
+        if not carried then
+            Log.always(('the kills waiting through the restart hold could not be kept (%s)')
+                :format(tostring(carryErr)))
+        end
+    end
+    -- Everybody told at the start is told it is over: open pages kept
+    -- "paused for the server restart" and its buttons off until the player
+    -- went elsewhere. Not when a new hold takes its place at once.
+    if not quiet then
+        local ok, told = pcall(function() return everyLiveParty(Storage.liveContracts() or {}) end)
+        for cid in pairs(ok and told or {}) do
+            Notify.toCitizen(cid, Freeze.TEXT.restartTitle, Freeze.TEXT.restartOver, { bypassBudget = true })
+            Notify.push(cid, 'hold')
+        end
     end
     Log.always(('the restart hold on contracts has ended (%s): their clocks run again where '
         .. 'nothing else stops them'):format(tostring(why)))
@@ -583,6 +690,8 @@ end
 --- From the maintenance tick: a hold the restart never came for ends at
 --- Config.Restart.MaxHoldMinutes.
 function Freeze.restartTick()
+    -- And the freezes the start could not read, until they are read.
+    if unread then pcall(Freeze.reload) end
     if restartHold and os.time() >= Freeze.restartHoldEnds() then Freeze.releaseRestart('max_hold') end
 end
 
@@ -602,23 +711,6 @@ function Freeze.appPaused() return appPause ~= nil end
 ---@return integer|nil
 function Freeze.appPausedSince() return appPause and appPause.since or nil end
 
---- Every party a live contract is shown to, once each: the placer, the
---- target once shown it, and its active operatives. Never which party.
----@return table [cid] = true
-local function everyLiveParty(live)
-    local told = {}
-    for i = 1, #live do
-        local contract = live[i]
-        if LIVE[contract.state] then
-            if contract.creator_cid then told[contract.creator_cid] = true end
-            if contract.target_cid and Notify.shownToTarget(contract) then told[contract.target_cid] = true end
-            for _, hitman in ipairs(Storage.readHitmen(contract.id) or {}) do
-                if hitman.state == 'active' then told[hitman.hitman_cid] = true end
-            end
-        end
-    end
-    return told
-end
 
 --- Give every live contract's lifetime back the time the app pause took,
 --- from its start (or the contract's placing, if later) to `now`: not the
@@ -722,7 +814,7 @@ function Freeze.syncAppPause()
         return 'paused'
     end
     if not want and appPause then
-        endAppPause()
+        whileReleasing(endAppPause)
         return 'resumed'
     end
     return nil

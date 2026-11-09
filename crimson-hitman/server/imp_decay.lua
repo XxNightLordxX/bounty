@@ -196,10 +196,28 @@ local function rise(cfg, row, contract, now)
     local account = cfg.Account == 'cash' and 'cash' or 'bank'
     -- Written first, put back if the charge does not go through.
     local before = { added = row.added, steps = row.steps, last_at = row.last_at }
+    -- What the contract held before the step, so a top-up that raised can
+    -- be told from one that never went in (below).
+    local readValue, valueBefore = pcall(Escrow.moneyValue, contract.id)
+    valueBefore = readValue and tonumber(valueBefore) or nil
     row.added, row.steps, row.last_at = (row.added or 0) + amount, (row.steps or 0) + 1, now
     write(row)
     local ran, ok, err = pcall(Amendments.addEscrow, placer, contract.id,
         { baseline = { [account] = amount } }, { onlyActive = true })
+    -- Raised after the charge landed: the money is in the contract, so the
+    -- step counts. Put back, the next step charged again and the rise went
+    -- past MaxIncreasePercent. Put back only where the escrow shows it did
+    -- not go in; kept where that cannot be read either.
+    if not ran then
+        local readAfter, valueAfter = pcall(Escrow.moneyValue, contract.id)
+        valueAfter = readAfter and tonumber(valueAfter) or nil
+        if not valueBefore or not valueAfter or valueAfter >= valueBefore + amount then
+            Audit.financial('imp_decay_rose', contract.creator_cid, contract.id,
+                { amount = amount, account = account, step = row.steps, added = row.added,
+                  raised = tostring(ok), unread = (not valueBefore or not valueAfter) or nil })
+            error(ok, 0)
+        end
+    end
     if ran and ok then
         Notify.toCitizen(contract.creator_cid, 'Contract reward',
             ('Nobody has taken your contract yet, so its reward rose by %s, taken from your %s.')

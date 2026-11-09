@@ -1363,10 +1363,42 @@ end
 --- from issue, and the kill it proves used to lapse lifetime-from-death,
 --- so a hitman who took their photo late in that window was told the
 --- target had been revived.
+local function endsAt(record)
+    local untilMs = record.at + Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    if record.heldUntil and record.heldUntil > untilMs then untilMs = record.heldUntil end
+    return untilMs
+end
+
+--- And never while the restart hold is on, for a kill still waiting when
+--- it began: no kill is claimed meanwhile (Contracts.claimSlot), so one
+--- made in the minutes before it ran out under it and was lost to a
+--- restart that was then skipped. Its release gives it the time it had
+--- left (Death.carryOverRestartHold).
 local function aged(record, now)
-    local lifetime = Config.Completion.PhotoTokenLifetimeSeconds * 1000
-    if now - record.at <= lifetime then return false end
-    return not (record.heldUntil and now <= record.heldUntil)
+    local ends = endsAt(record)
+    if now <= ends then return false end
+    local since = Contracts and Contracts.restartHeldSince and Contracts.restartHeldSince()
+    if since then
+        local startMs = now - math.max(0, os.time() - since) * 1000
+        if ends > startMs then return false end
+    end
+    return true
+end
+
+--- The restart hold has ended without a restart (Freeze.releaseRestart):
+--- each kill still waiting when it began is given the time it had left
+--- then, from now.
+---@param since integer when the hold began, os.time()
+---@param now integer os.time()
+function Death.carryOverRestartHold(since, now)
+    local nowMs = Util.monotonicMs()
+    local startMs = nowMs - math.max(0, (tonumber(now) or os.time()) - (tonumber(since) or 0)) * 1000
+    for _, record in pairs(pending) do
+        local ends = endsAt(record)
+        if ends > startMs then
+            record.heldUntil = math.max(record.heldUntil or 0, nowMs + (ends - startMs))
+        end
+    end
 end
 
 function Death.getPending(contractId, hitmanCid)

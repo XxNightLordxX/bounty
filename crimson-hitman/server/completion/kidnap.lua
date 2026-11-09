@@ -174,6 +174,13 @@ end
 --- When a hitman's last handover attempt on a contract failed.
 --- [contractId .. ':' .. hitmanCid] = os.time()
 local lastFailure = {}
+--- When a hitman's last arm on a contract was refused for the person who
+--- placed it not being there (creator_too_far): [key] = os.time(). Armed
+--- again at once, that refusal and its success said, a step at a time while
+--- walking past people, which of them was the anonymous placer. So it waits
+--- too: Config.Kidnap.RearmCooldownSeconds, at most FAR_RETRY_SECONDS.
+local lastFar = {}
+local FAR_RETRY_SECONDS = 15
 
 function Kidnap.arm(contractId, hitmanCid)
     contractId = Util.toId(contractId)
@@ -191,6 +198,10 @@ function Kidnap.arm(contractId, hitmanCid)
         -- Its own code. This is the one refusal on the delivery path that
         -- waiting fixes, and BAD_STATE is worded "Not right now." — the same
         -- words as the contract having been cancelled underneath them.
+        return false, CH.ERR.HANDOVER_COOLDOWN
+    end
+    local farAt = lastFar[key(contractId, hitmanCid)]
+    if farAt and (os.time() - farAt) < math.min(cooldown, FAR_RETRY_SECONDS) then
         return false, CH.ERR.HANDOVER_COOLDOWN
     end
 
@@ -234,7 +245,11 @@ function Kidnap.arm(contractId, hitmanCid)
 
     local radius = Config.Kidnap.Radius
     local ok, reason = Kidnap.conditionsMet(contract, hitmanActor, targetActor, creatorActor, radius)
-    if not ok then return false, reason end
+    if not ok then
+        if reason == 'creator_too_far' then lastFar[key(contractId, hitmanCid)] = os.time() end
+        return false, reason
+    end
+    lastFar[key(contractId, hitmanCid)] = nil
 
     -- Immunity is checked here, not only at the end. The claim would be
     -- refused either way, and finding out after thirty seconds of holding
@@ -744,6 +759,7 @@ function Kidnap.clearRearmCooldowns()
         lastFailure[k] = nil
         cleared = cleared + 1
     end
+    lastFar = {}
     return cleared
 end
 
@@ -772,6 +788,9 @@ function Kidnap.clearPlayer(cid)
     local cooldown = Config.Kidnap.RearmCooldownSeconds or 0
     for k, at in pairs(lastFailure) do
         if now - at >= cooldown then lastFailure[k] = nil end
+    end
+    for k, at in pairs(lastFar) do
+        if now - at >= FAR_RETRY_SECONDS then lastFar[k] = nil end
     end
 end
 
@@ -818,6 +837,9 @@ function Kidnap.clearContract(contractId)
     end
     for k in pairs(lastFailure) do
         if k:sub(1, #contractId + 1) == contractId .. ':' then lastFailure[k] = nil end
+    end
+    for k in pairs(lastFar) do
+        if k:sub(1, #contractId + 1) == contractId .. ':' then lastFar[k] = nil end
     end
 end
 

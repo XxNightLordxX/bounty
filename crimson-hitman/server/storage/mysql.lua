@@ -2396,6 +2396,20 @@ function MySQLStore.abandonHitman(id, contractId, leftAt)
     return (tonumber(affected) or 0) > 0
 end
 
+--- Release an idle operative (Contracts.releaseIdleHolds): only a row still
+--- active on this contract, and only while the contract is still taken. Its
+--- reads before this are awaits, and a claim that moved the contract on to
+--- COMPLETING in one of them was paying this hitman when the release marked
+--- them released and handed their stake to the client.
+function MySQLStore.releaseHitman(id, contractId, leftAt)
+    local affected = db.update([[
+        UPDATE crimson_hitmen SET state = 'released', left_at = ?
+        WHERE id = ? AND state = 'active'
+          AND EXISTS (SELECT 1 FROM crimson_contracts c WHERE c.id = ? AND c.state = 'accepted')
+    ]], { leftAt, id, contractId })
+    return (tonumber(affected) or 0) > 0
+end
+
 --- Mid-acceptance rows count: two acceptances in flight must each see the
 --- other against the cap.
 function MySQLStore.countHitmanContracts(cid, states)

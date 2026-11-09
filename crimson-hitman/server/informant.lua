@@ -209,12 +209,17 @@ end
 --- handed over at the next login) where it cannot be paid now.
 local function refund(actor, contractId, cost, account, action, why)
     if cost <= 0 then return end
-    local credited = Util.credit(actor.player, account, cost)
+    -- With what a credit that raised says arrived (Util.credit), as
+    -- Bailout.deliver passes it: owed blind, a price that had partly or
+    -- perhaps arrived was paid now and owed again.
+    local credited, raised, arrived, before = Util.credit(actor.player, account, cost)
     if not credited and Bailout and Bailout.owe then
-        credited = Bailout.owe(actor.cid, contractId, cost, account, action) ~= nil
+        local raise = raised and { error = raised, arrived = arrived, before = before } or nil
+        credited = Bailout.owe(actor.cid, contractId, cost, account, action, raise) ~= nil
     end
     Audit.financial(action, actor.cid, contractId,
-        { amount = cost, account = account, reason = why, owed = not credited or nil })
+        { amount = cost, account = account, reason = why, owed = not credited or nil,
+          error = raised })
 end
 
 --------------------------------------------------------------------------

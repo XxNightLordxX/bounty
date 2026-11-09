@@ -78,6 +78,12 @@ function Contracts.restartHeld()
     return Freeze ~= nil and Freeze.restartHeld()
 end
 
+--- When the restart hold began, os.time(), while it is on; else nil.
+---@return integer|nil
+function Contracts.restartHeldSince()
+    return Freeze ~= nil and Freeze.restartHeldSince and Freeze.restartHeldSince() or nil
+end
+
 --- When whatever holds a contract now began, os.time(): the earliest of a
 --- staff freeze on one of its parties, the restart hold and the app pause
 --- that are on. nil when none is.
@@ -1441,7 +1447,8 @@ local function stakeTimeRefusal(contract, shown, shownBand)
         return CH.ERR.TERMS_CHANGED
     end
     local was = Util.bandRank(shownBand)
-    local _, now = Util.timeBand(left)
+    -- The band the card shows, the lifetime's included (Util.bandLeft).
+    local _, now = Util.timeBand(Util.bandLeft(contract))
     if was and now and now > was then
         return CH.ERR.TERMS_CHANGED
     end
@@ -2692,7 +2699,18 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     -- Read before anything moves, so the notices can name the figure.
     local stake = heldStakes(contractId)[current.hitman_cid] or 0
 
-    Storage.updateHitman(current.id, { state = 'released', left_at = os.time() })
+    -- A claim does not take the contract's key: one under way (or one that
+    -- moved it on to COMPLETING in the reads above) is paying this hitman,
+    -- and releasing them handed their stake to the client mid-payout. Busy,
+    -- so the clocks stand and the next pass looks again. Then only an
+    -- active row on a contract still taken (Storage.releaseHitman), as a
+    -- walk-away's compare and set.
+    if Escrow.claimRunning(contractId) then return false, CH.ERR.BUSY end
+    if not Storage.releaseHitman(current.id, contractId, os.time()) then
+        local now = Storage.readContract(contractId)
+        if now and now.state == CH.STATE.COMPLETING then return false, CH.ERR.BUSY end
+        return false
+    end
 
     -- Recorded with the figure, and whether it waits for them, whenever it
     -- moved, as an abandon records it. Nothing is released, and nothing
@@ -3259,6 +3277,14 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
         refusal = CH.ERR.SLOT_COOLDOWN
     elseif not held or (held.next_slot or 1) > (held.payout_slots or 1) then
         refusal = CH.ERR.ALREADY_SETTLED
+    -- And the holds again: a freeze or the restart hold that landed in the
+    -- reads since the first look takes no key, and the claim paid out "on
+    -- hold". Asked of the contract as it was taken: a hold leaves one
+    -- already completing alone (Freeze.partiesOf).
+    elseif Contracts.heldByStaff(setmetatable({ state = CH.STATE.ACCEPTED }, { __index = held })) then
+        refusal = CH.ERR.CONTRACT_FROZEN
+    elseif Contracts.restartHeld() then
+        refusal = CH.ERR.RESTART_HOLD
     end
     if refusal then
         Contracts.transition(contractId, CH.STATE.COMPLETING, CH.STATE.ACCEPTED, 'claim_refused')
@@ -3992,13 +4018,34 @@ function Contracts.reclampToEscrow(contractId, actorCid)
         -- it touches new contracts only. A price is never taken to nothing
         -- here: a ceiling of nothing (no cash or bank left in it, or a
         -- multiplier of 0) leaves it as it stands.
+        --
+        -- But no cash or bank left in it at all is no buyout: a contract
+        -- funded only in dirty money or goods cannot carry one (creation
+        -- refuses it, BUYOUT_NEEDS_CLEAN), and withdrawing every clean line
+        -- of one that had kept the whole price, so a target paid $150,000
+        -- to escape a $1,000 contract. Taken off then, whatever the switch
+        -- and the multiplier say; not under a buyout already paid for and
+        -- waiting out its delay, which settles at the price it was paid at.
         local clamped = contract.bailout_amount
         local ceiling = math.floor(heldMoney * (tonumber(Config.Bailout.MaxMultiplier) or 0))
-        if ceiling > 0 and ceiling < clamped then clamped = ceiling end
+        local noClean = heldMoney <= 0 and not contract.bailout_queued_at
+        if noClean then
+            clamped = 0
+        elseif ceiling > 0 and ceiling < clamped then
+            clamped = ceiling
+        end
         if clamped ~= contract.bailout_amount then
+            local was = contract.bailout_amount
             contract.bailout_amount = clamped
             changed = true
-            Audit.financial('bailout_reclamped', actorCid, contractId, { to = clamped })
+            Audit.financial('bailout_reclamped', actorCid, contractId,
+                { to = clamped, from = was, reason = noClean and 'no_clean_money' or nil })
+            if noClean then
+                Notify.toCitizen(contract.creator_cid, 'Buyout removed',
+                    ('No cash or bank money is left in your contract on %s, so its target can no '
+                        .. 'longer buy their way out of it.'):format(contract.target_name or 'your target'),
+                    { bypassBudget = true, contractId = contractId })
+            end
         end
     end
 

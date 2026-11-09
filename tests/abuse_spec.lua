@@ -198,6 +198,8 @@ describe("an anonymous client's presence", function()
 
         local _, far = s.kidnap.arm(c.id, 'HITMAN01')
         Env.removePlayer(1)
+        -- Past the short wait a placer-too-far refusal starts (sweep 5).
+        Env.advance(16)
         local _, gone = s.kidnap.arm(c.id, 'HITMAN01')
         eq(far, 'creator_too_far')
         eq(gone, far)

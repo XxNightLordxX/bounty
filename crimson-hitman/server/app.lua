@@ -1925,18 +1925,22 @@ function App.register()
     -- beside it; and a broker player's two, who is near them and briefing
     -- one of them. Every distance is read on the server.
     handler('rumourBrief', 'accept', function(actor, payload)
+        if not deps.rpRumours then return false, CH.ERR.FEATURE_OFF end
         return deps.rpRumours.askBroker(actor, payload.id)
     end)
     handler('brokerNearby', 'load', function(actor)
+        if not deps.rpRumours then return false, CH.ERR.FEATURE_OFF end
         return deps.rpRumours.brokerNearby(actor)
     end)
     handler('brokerBrief', 'accept', function(actor, payload)
+        if not deps.rpRumours then return false, CH.ERR.FEATURE_OFF end
         return deps.rpRumours.brokerBrief(actor, payload.id, payload.who)
     end)
     -- Where the broker and the informant NPC stand now, for this player's
     -- game to draw (server/rp_places.lua). Asked at start and whenever the
     -- server says one moved.
     handler('rpPlaces', 'load', function()
+        if not deps.rpPlaces then return false, CH.ERR.FEATURE_OFF end
         return deps.rpPlaces.forClient()
     end)
 

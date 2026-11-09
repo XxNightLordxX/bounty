@@ -169,12 +169,27 @@ local playerRefs, playerRefSeq = {}, 0
 local PLAYER_REF_MS = 600000        -- ten minutes from the lookup
 local PLAYER_REFS_PER_STAFF = 20    -- the oldest go first past this
 
+--- The pages of a search by citizen id without IdentityAce, by the handle
+--- each page gives for the next (H.logs). The store's own cursor names the
+--- next row the search matched, kept or not: handed to staff, an unfiltered
+--- page from it opened on a row the search had left out, so on the
+--- anonymous contract the player placed or took. So staff get a handle
+--- instead, good only for the staff member it was given to, for the same
+--- search and for OPEN_PAGE_MS, and only where at least one more row they
+--- may see is left (the rows found past this page are kept with it): its
+--- being there says nothing about rows they may not see.
+--- [src] = { [handle] = { key, raw, done, rows, at } }
+local openPages, openPageSeq = {}, 0
+local OPEN_PAGE_MS = 600000         -- ten minutes from the page
+local OPEN_PAGES_PER_STAFF = 20     -- the oldest go first past this
+
 function Panel.init(d)
     deps = d
     overviewCache, contractsCache = nil, nil
     deniedLogged = {}
     freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
     playerRefs, playerRefSeq = {}, 0
+    openPages, openPageSeq = {}, 0
 end
 
 --- Newest first, then by id: the order the Contracts section lists in.
@@ -941,6 +956,7 @@ local function frozenShown(contract, hitmen, canIdentify)
         if canIdentify or not party.anonymous then
             out[#out + 1] = party.role == 'target' and 'the target'
                 or party.role == 'client' and 'the placer'
+                or party.role == 'unknown' and 'unknown: the freezes could not be read'
                 or ('operative %s'):format(tostring(aliases[party.cid] or '?'))
         end
     end
@@ -1427,6 +1443,7 @@ end
 --- without IdentityAce, which keeps only the rows actedOpenly allows.
 local OPEN_SEARCH_READS = 10
 
+
 --- The audit log, newest first, a page at a time (Storage.queryAudit). By
 --- a citizen id: every row they acted in for staff with IdentityAce, which
 --- includes the ones they acted in anonymously; for staff without it, only
@@ -1454,22 +1471,63 @@ H.logs = function(src, data)
     -- The queue first, so the newest rows are there to read.
     deps.audit.flush()
     local parties = partiesReader()
-    local rows, next_ = deps.storage.queryAudit(filter, cursor, limit)
+    local rows, next_
     if openly then
         -- Only the rows they acted in openly, read on until a page's worth
-        -- or the log ends (a few pages at most, then the rest is Older).
-        local kept, reads = {}, 1
-        while true do
-            for _, row in ipairs(rows or {}) do
+        -- and one more, or the log ends (a few pages at most, then the
+        -- search stops there). Never the store's cursor (openPages).
+        local key = table.concat({ tostring(filter.kind), tostring(filter.action),
+            tostring(filter.contract), tostring(filter.from), tostring(filter.to), filter.actor }, '|')
+        local now = Util.monotonicMs()
+        for holder, pages in pairs(openPages) do
+            for handle, page in pairs(pages) do
+                if now - page.at >= OPEN_PAGE_MS then pages[handle] = nil end
+            end
+            if next(pages) == nil then openPages[holder] = nil end
+        end
+        local kept, raw, done = {}, nil, false
+        if data.cursor ~= nil then
+            local page = cursor and openPages[src] and openPages[src][cursor] or nil
+            if not page or page.key ~= key then
+                return false, CH.ERR.INVALID_INPUT, 'That page of the search has run out. Search again.'
+            end
+            for i = 1, #page.rows do kept[i] = page.rows[i] end
+            raw, done = page.raw, page.done
+        end
+        local reads = 0
+        while #kept <= limit and not done and reads < OPEN_SEARCH_READS do
+            local got
+            got, raw = deps.storage.queryAudit(filter, raw, limit)
+            reads = reads + 1
+            done = raw == nil
+            for _, row in ipairs(got or {}) do
                 -- Every one a page read holds, so a page is never cut
                 -- part-way and its rest skipped by the cursor.
                 if actedOpenly(row, filter.actor, parties) then kept[#kept + 1] = row end
             end
-            if #kept >= limit or next_ == nil or reads >= OPEN_SEARCH_READS then break end
-            rows, next_ = deps.storage.queryAudit(filter, next_, limit)
-            reads = reads + 1
         end
-        rows = kept
+        rows = {}
+        for i = 1, math.min(limit, #kept) do rows[i] = kept[i] end
+        if #kept > limit then
+            local mine = openPages[src]
+            if not mine then
+                mine = {}
+                openPages[src] = mine
+            end
+            local count, oldest, oldestAt = 0, nil, math.huge
+            for handle, page in pairs(mine) do
+                count = count + 1
+                if page.at < oldestAt then oldest, oldestAt = handle, page.at end
+            end
+            if count >= OPEN_PAGES_PER_STAFF and oldest then mine[oldest] = nil end
+            openPageSeq = openPageSeq + 1
+            next_ = openPageSeq * 1000 + math.random(0, 999)
+            local rest = {}
+            for i = limit + 1, #kept do rest[#rest + 1] = kept[i] end
+            mine[next_] = { key = key, raw = raw, done = done, rows = rest, at = now }
+        end
+    else
+        rows, next_ = deps.storage.queryAudit(filter, cursor, limit)
     end
     local out = {}
     for _, row in ipairs(rows or {}) do
@@ -1673,6 +1731,7 @@ end
 ---@param src integer
 function Panel.forgetSource(src)
     playerRefs[src] = nil
+    openPages[src] = nil
 end
 
 --- The character a lookup handle stands for, or nil and what to say.
@@ -2766,6 +2825,11 @@ H.playerView = function(src, data)
     if not canIdentify then
         view = view and r.value(nil, view) or nil
         whitelisted = whitelisted and r.value(nil, whitelisted) or nil
+        -- On hold only where a party they may be shown is frozen, as the
+        -- contract view's badge (frozenShown): the party's own card says
+        -- On hold whoever is frozen, so a freeze of one suspect, then this
+        -- view, said which anonymous contracts were theirs.
+        if view and view.onHold and not frozenShown(contract, hitmen, false) then view.onHold = nil end
     end
 
     deps.audit.staff(canIdentify and 'admin_panel_player_view_identified' or 'admin_panel_player_view',

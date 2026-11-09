@@ -265,6 +265,21 @@ end
 
 --- Leave a money event for staff, where the review queue is wired (it is
 --- in every running server; a test may build escrow without it).
+--- What a player in the city holds in a cash or bank account now, by
+--- qbx_core's GetMoney export, or nil (away, or it could not be read).
+---@param cid string
+---@param account string 'cash' | 'bank'
+---@return number|nil
+local function accountHeld(cid, account)
+    local ok, value = pcall(function()
+        local player = exports.qbx_core:GetPlayerByCitizenId(cid)
+        local src = player and player.PlayerData and player.PlayerData.source
+        if not src then return nil end
+        return exports.qbx_core:GetMoney(src, account)
+    end)
+    return ok and tonumber(value) or nil
+end
+
 local function leaveForStaff(spec)
     if Review then Review.open(spec) end
 end
@@ -1419,6 +1434,14 @@ local function release(mine, contractId, recipientCid, filter, reason, guard)
                 -- the person it was going to — which is the case the whole
                 -- recovery path exists for.
                 line.releasing_to = recipientCid
+                -- And what they hold in that account now, in the same
+                -- write: a give a restart cuts off is left for staff
+                -- (Escrow.parkInterrupted), who had nothing to tell from
+                -- whether it had arrived, and paying one that had paid it
+                -- twice. Against this the next start can say it probably did.
+                if line.source == 'cash' or line.source == 'bank' then
+                    line.deliver_before = accountHeld(recipientCid, line.source) or line.deliver_before
+                end
                 -- A line left for staff that staff settle (Admin.settleLine,
                 -- `unpark`): its raise count starts again in this same write,
                 -- once the line is ours, so the give below tries it. Started
@@ -1910,11 +1933,27 @@ function Escrow.parkInterrupted(line, stopped)
     line.owed_to = to
     line.deliver_raises = math.max(tonumber(line.deliver_raises) or 0, Escrow.DELIVER_RAISE_LIMIT)
     Storage.writeEscrow(line.contract_id, { line })
+    -- Whether it probably arrived: a cash or bank line whose recipient is
+    -- in the city holding at least what they held when the give began
+    -- (deliver_before, written with the claim) and all of it. A hint for
+    -- staff choosing delivered or pay, never acted on here.
+    local probably
+    local before = tonumber(line.deliver_before)
+    if before and (line.source == 'cash' or line.source == 'bank') then
+        local now = accountHeld(to, line.source)
+        probably = now ~= nil and now >= before + Escrow.stillOwed(line) or nil
+    end
     Audit.financial('escrow_deliver_parked', to, line.contract_id, {
         line = line.id, source = line.source, item = line.item, count = line.quantity,
         amount = line.amount, raises = line.deliver_raises, unknown = true, interrupted = true,
-        stopped = stopped or nil, review = true,
+        stopped = stopped or nil, review = true, before = before,
+        probablyDelivered = probably,
     })
+    if probably then
+        Log.always(('escrow line %s: a give cut off part-way probably arrived (they hold at least '
+            .. 'what they held before it and all of it); check before /%s pay')
+            :format(tostring(line.id), tostring(Config.Admin.Commands.settle)))
+    end
     return true
 end
 

@@ -464,9 +464,14 @@ local buyDark
 --- it cannot be paid now.
 local function refundDark(actor, contractId, cost, account, why)
     if cost <= 0 then return end
-    local credited, raised = Util.credit(actor.player, account, cost)
+    -- With what a credit that raised says arrived (Util.credit), as
+    -- Bailout.deliver passes it, so a refund that partly or perhaps arrived
+    -- goes to staff rather than being owed blind.
+    local credited, raised, arrived, before = Util.credit(actor.player, account, cost)
     if not credited and Bailout and Bailout.owe then
-        local owed, oweErr = pcall(Bailout.owe, actor.cid, contractId, cost, account, 'go_dark_refunded')
+        local raise = raised and { error = raised, arrived = arrived, before = before } or nil
+        local owed, oweErr = pcall(Bailout.owe, actor.cid, contractId, cost, account, 'go_dark_refunded',
+            raise)
         credited = owed and oweErr ~= nil
     end
     Audit.financial('go_dark_refunded', actor.cid, contractId, { amount = cost, account = account,

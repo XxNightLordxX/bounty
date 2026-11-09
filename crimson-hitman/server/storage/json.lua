@@ -3278,6 +3278,19 @@ function JsonStore.abandonHitman(id, contractId, leftAt)
     return true
 end
 
+--- Release an idle operative: only a row still active on this contract,
+--- and only while the contract is still taken and no claim has moved it on
+--- (MySQLStore.releaseHitman).
+function JsonStore.releaseHitman(id, contractId, leftAt)
+    local h = db.hitmen[id]
+    if not h or h.state ~= 'active' or h.contract_id ~= contractId then return false end
+    local c = db.contracts[contractId]
+    if not c or c.state ~= CH.STATE.ACCEPTED then return false end
+    h.state, h.left_at = 'released', leftAt
+    touch(true, h.contract_id)
+    return true
+end
+
 --- Contracts a player is on, mid-acceptance included: two acceptances in
 --- flight must each see the other against the cap.
 function JsonStore.countHitmanContracts(cid, states)

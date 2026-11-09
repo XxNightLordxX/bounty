@@ -2004,7 +2004,7 @@ function StartCrimsonHitman()
                       locationTip = locationTip, freeze = freeze, staffContract = staffContract })
     -- Staff freezes (server/freeze.lua): read from the store once, here.
     freeze.init({ storage = Storage, audit = audit, notify = notify, kidnap = kidnap,
-                  contracts = contracts })
+                  contracts = contracts, death = death })
     -- Staff notes, removals and text edits on a contract
     -- (server/staffcontract.lua): the edits and removals read once, here.
     staffContract.init({ storage = Storage, audit = audit, notify = notify,
@@ -3214,6 +3214,14 @@ local function expireOne(contract, now, pass)
     -- pass that finds nothing at all stopping it, below.
     -- And the app pause (Config.Staff.AppPaused, Freeze.syncAppPause): every
     -- live contract while staff have the whole app paused, the same way.
+    -- And while a hold is being released (Freeze.releasing): it has let go
+    -- of its hold but not yet given each contract back the lifetime it
+    -- took, so one whose lifetime ran out while held reads as over. Looked
+    -- at again on the next tick, once that time is back.
+    if modules.freeze and modules.freeze.releasing and modules.freeze.releasing() then
+        pass.soonest = math.min(pass.soonest, now)
+        return
+    end
     if (modules.freeze and modules.freeze.holds(contract))
         or (modules.freeze and modules.freeze.restartHeld())
         or (modules.freeze and modules.freeze.appPaused and modules.freeze.appPaused()) then

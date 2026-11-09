@@ -542,7 +542,7 @@ function _G.newStack()
                       comms = comms, informant = informant, notify = notify,
                       locationTip = locationTip, freeze = freeze, staffContract = staffContract })
     freeze.init({ storage = storage, audit = audit, notify = notify, kidnap = kidnap,
-                  contracts = contracts })
+                  contracts = contracts, death = death })
     staffContract.init({ storage = storage, audit = audit, notify = notify,
                          contracts = contracts, identity = identity })
     sanctions.init({ storage = storage, audit = audit, notify = notify })
@@ -698,7 +698,7 @@ local suites = {
     'bug_sweep_spec', 'loops_spec', 'handlers_spec', 'sweep2_spec', 'round3_spec', 'perf_round3_spec',
     'final_verify_spec', 'workflow3_spec',
     'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec', 'sweep4_spec', 'sweep4_staff_spec',
-    'sweep5_spec',
+    'sweep5_spec', 'sweep5b_spec',
     'docs_spec',
 }
 
