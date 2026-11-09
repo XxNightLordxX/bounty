@@ -426,6 +426,9 @@ local function dropMeeting(contractId)
         Log.always(('contract %s: its meeting point could not be taken off: %s')
             :format(tostring(contractId), Util.dbError(err)))
     end
+    -- And off every map it was drawn on (Meeting.sync, through
+    -- Bridges.install): the placer's and each hitman's.
+    if Contracts.onMeetingDropped then pcall(Contracts.onMeetingDropped, contractId) end
 end
 
 --- Everything that must happen exactly once when a contract ends, whichever
@@ -2032,6 +2035,9 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- An operative on it may start its clock: with nobody holding it, it
     -- does not run (the expiry pass).
     if out[1] and Contracts.onChanged then Contracts.onChanged() end
+    -- A meeting point already set goes on the new hitman's map, with what to
+    -- do (Meeting.joined, through Bridges.install). Never stops the accept.
+    if out[1] and Contracts.onAccepted then pcall(Contracts.onAccepted, contractId, actor.cid) end
     return table.unpack(out, 1, out.n)
 end
 

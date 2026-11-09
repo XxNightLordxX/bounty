@@ -2069,7 +2069,8 @@ function StartCrimsonHitman()
     rpProtection.boot()
     -- The handover's meeting point (server/meeting.lua): the placer sets it,
     -- the hitmen on the contract are told.
-    meeting.init({ storage = Storage, notify = notify, audit = audit })
+    meeting.init({ storage = Storage, notify = notify, audit = audit, identity = identity,
+                   projection = projection })
     -- The built-in playtime tracker, the new-player rule's last answer
     -- (Identity.playtimeHours). Nothing is read until the tick's first pass.
     playtime.init({ storage = Storage, identity = identity })

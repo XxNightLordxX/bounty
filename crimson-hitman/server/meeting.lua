@@ -20,12 +20,30 @@
 --- leaves it (Contracts' dropMeeting, in the store at that moment), and when
 --- the placer clears it. Turning the feature off hides it and refuses
 --- changes, and takes no point off any contract.
+---
+--- The map marker: while one is set, the placer and every active hitman of
+--- the contract have a marker on their map at it (crimson-hitman:meetingBlip,
+--- to their game alone, never to the page), and each is told on their phone
+--- what to do to finish the handover (Meeting.steps, the same words as the
+--- 'What to do' line on their card). Who has it is worked out again from the
+--- store at every change (Meeting.sync): the point set, moved or cleared, a
+--- hitman joining or leaving, the contract ending, the switch turned. Anybody
+--- no longer a party has it taken off (crimson-hitman:meetingBlipClear); a
+--- party who comes back to the city has it drawn again (Meeting.reshow). The
+--- target, bystanders and staff who are not a party are never sent it.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Meeting = {}
 
-local Storage, Notify, Audit
+local Storage, Notify, Audit, Identity
+
+--- Who has the marker on their map now, by contract:
+--- [contractId] = { x, y, cids = { [cid] = true } }. Only parties who were
+--- in the city when it was sent; one who comes back is sent it then
+--- (Meeting.reshow). Forgotten with the point, and per player as they leave.
+local shown = {}
 
 --- At most one change on a contract this often, in seconds: a point set, a
 --- point moved or a point cleared by the placer. Kept by the store's own
@@ -47,7 +65,11 @@ Meeting.BOUNDS = {
 }
 
 function Meeting.init(deps)
-    Storage, Notify, Audit = deps.storage, deps.notify, deps.audit
+    Storage, Notify, Audit, Identity = deps.storage, deps.notify, deps.audit, deps.identity
+    shown = {}
+    -- The 'What to do' line on each side's card says what their phone was
+    -- told, word for word.
+    if deps.projection then deps.projection.meetingSteps = function(role) return Meeting.steps(role) end end
 end
 
 --- Whether the feature is on (Config.Kidnap.MeetingPoint), read at every
@@ -130,6 +152,208 @@ local function refusedAs(id, now)
 end
 
 --------------------------------------------------------------------------
+-- What each side does, in words
+--------------------------------------------------------------------------
+
+--- Metres as a player reads them: "12", not "12.0".
+local function metres()
+    local r = tonumber(Config.Kidnap and Config.Kidnap.Radius) or 0
+    if r == math.floor(r) then return ('%d'):format(math.floor(r)) end
+    return ('%.1f'):format(r)
+end
+
+--- What a party does to finish a live handover at the meeting point, in the
+--- app's own words (its button is Deliver alive, the contract is under
+--- Mine): the placer stands there and keeps still, and taps nothing (the
+--- handover is the hitman's to start, Kidnap.arm); the hitman brings the
+--- target there and taps Deliver alive. From Config.Kidnap at every use, so
+--- the figures are the server's. Names nobody: the hitman is told of "the
+--- person who placed the contract", the placer of "the hitman".
+---@param role 'placer'|'hitman'
+---@return string
+function Meeting.steps(role)
+    local kidnap = Config.Kidnap or {}
+    local seconds = tonumber(kidnap.CountdownSeconds) or 0
+    local hold = seconds > 0 and ('%d seconds'):format(math.floor(seconds)) or 'until it finishes'
+    if role == 'placer' then
+        return ('Be at the meeting point marked on your map. When the hitman arrives with the '
+            .. 'target, stay within %s m of them both and keep still while the hitman taps '
+            .. 'Deliver alive: the handover takes %s. Open the app on your phone to follow it '
+            .. 'on your contract under Mine; you have nothing to tap.'):format(metres(), hold)
+    end
+    return ('Bring the target alive to the meeting point marked on your map%s. Get within %s m '
+        .. 'of the person who placed the contract, open the app on your phone, tap Deliver '
+        .. 'alive on the contract under Mine and hold for %s. Killing the target does not '
+        .. 'count.'):format(kidnap.RequireCoercion and ', cuffed or in your vehicle' or '',
+        metres(), hold)
+end
+
+--- Tell one party, on their phone, that a point was set or moved and what
+--- to do. The hitman's words never say who placed it.
+local function tell(cid, role, contract, moved)
+    local target = contract.target_name or 'your target'
+    local intro
+    if role == 'placer' then
+        intro = ('Your meeting point for the contract on %s is %s.'):format(target,
+            moved and 'moved' or 'set')
+    else
+        intro = ('The person who placed your contract on %s %s the meeting point for the '
+            .. 'handover.'):format(target, moved and 'moved' or 'set')
+    end
+    Notify.toCitizen(cid, moved and 'Meeting point moved' or 'Meeting point set',
+        intro .. ' ' .. Meeting.steps(role), { contractId = contract.id })
+end
+
+--------------------------------------------------------------------------
+-- The map marker
+--------------------------------------------------------------------------
+
+--- The parties who need the marker on this contract now, from the store:
+--- the placer and each active hitman, while the feature is on and a point
+--- is set on a live contract only a live handover completes. Never the
+--- target. [cid] = 'placer' | 'hitman'.
+---@return table
+local function partiesOf(contract)
+    local want = {}
+    if not Meeting.enabled() or not contract or CH.TERMINAL[contract.state]
+        or contract.meeting_x == nil or contract.meeting_y == nil
+        or Util.fulfilmentRule(contract) ~= CH.FULFILMENT_RULE.ALIVE then
+        return want
+    end
+    local hitmen = activeHitmen(contract.id)
+    if #hitmen == 0 then return want end
+    if contract.creator_cid then want[contract.creator_cid] = 'placer' end
+    for i = 1, #hitmen do want[hitmen[i]] = want[hitmen[i]] or 'hitman' end
+    if contract.target_cid then want[contract.target_cid] = nil end
+    return want
+end
+
+--- This player's game, if they are in the city.
+local function sourceOf(cid)
+    local actor = Identity and Identity.byCitizenId(cid)
+    return actor and actor.source or nil
+end
+
+--- Draw the marker on one party's map: the contract id and the point, to
+--- their game alone.
+local function draw(cid, contractId, x, y)
+    local game = sourceOf(cid)
+    if not game then return false end
+    TriggerClientEvent('crimson-hitman:meetingBlip', game, { id = contractId, x = x, y = y })
+    return true
+end
+
+local function erase(cid, contractId)
+    local game = sourceOf(cid)
+    if not game then return end
+    TriggerClientEvent('crimson-hitman:meetingBlipClear', game, { id = contractId })
+end
+
+--- Bring every map in line with the store for one contract: drawn for each
+--- party who has not got it (or all of them where the point moved), taken
+--- off each who is no longer a party. Never raises: nothing here may stop a
+--- set, a walk-away or an ending.
+---
+--- `opts.tellNew`: a party drawn for the first time on a point that did not
+--- move (a hitman who took the contract after it was set) is told what to
+--- do as well.
+---@param contractId string
+---@param opts table|nil { tellNew = boolean }
+function Meeting.sync(contractId, opts)
+    if not contractId then return end
+    local ok, err = pcall(function()
+        local contract = Storage.readContract(contractId)
+        local want = partiesOf(contract)
+        local was = shown[contractId]
+        local x = contract and tonumber(contract.meeting_x)
+        local y = contract and tonumber(contract.meeting_y)
+        local moved = was ~= nil and (was.x ~= x or was.y ~= y)
+
+        if was then
+            for cid in pairs(was.cids) do
+                if not want[cid] then erase(cid, contractId) end
+            end
+        end
+        if next(want) == nil then
+            shown[contractId] = nil
+            return
+        end
+
+        local now = { x = x, y = y, cids = {} }
+        for cid, role in pairs(want) do
+            if was and was.cids[cid] and not moved then
+                now.cids[cid] = true
+            elseif draw(cid, contractId, x, y) then
+                now.cids[cid] = true
+                if opts and opts.tellNew and not moved then tell(cid, role, contract, false) end
+            end
+        end
+        shown[contractId] = now
+    end)
+    if not ok then
+        Log.debug(('meeting point %s: the map markers could not be brought up to '
+            .. 'date: %s'):format(tostring(contractId), tostring(err)))
+    end
+end
+
+--- Every contract the marker is drawn on, and every live one with a point:
+--- for the switch (Config.Kidnap.MeetingPoint), turned off (off every map)
+--- or on (back on the parties').
+function Meeting.syncAll()
+    local ids = {}
+    for id in pairs(shown) do ids[id] = true end
+    if Meeting.enabled() and Storage.liveContracts then
+        for _, c in ipairs(Storage.liveContracts() or {}) do
+            if c.meeting_x ~= nil then ids[c.id] = true end
+        end
+    end
+    for id in pairs(ids) do Meeting.sync(id) end
+end
+
+--- A hitman took the contract up: drawn on their map, and they are told
+--- what to do, where a point is already set.
+function Meeting.joined(contractId)
+    Meeting.sync(contractId, { tellNew = true })
+end
+
+--- Draw again, on this player's map, the marker of every live contract they
+--- are a party to with a point set: after the resource restarts, or when
+--- they come back to the city. Only theirs, and only where they are a party.
+---@param actor table
+---@return table result { shown = integer }
+function Meeting.reshow(actor)
+    local drawn = 0
+    if not Meeting.enabled() or not actor or not actor.cid then return { shown = 0 } end
+    local involved = Storage.contractsInvolving and Storage.contractsInvolving(actor.cid, true) or {}
+    for _, contract in ipairs(involved) do
+        if contract.meeting_x ~= nil and partiesOf(contract)[actor.cid] then
+            local x, y = tonumber(contract.meeting_x), tonumber(contract.meeting_y)
+            TriggerClientEvent('crimson-hitman:meetingBlip', actor.source,
+                { id = contract.id, x = x, y = y })
+            local entry = shown[contract.id]
+            if not entry or entry.x ~= x or entry.y ~= y then
+                entry = { x = x, y = y, cids = entry and entry.cids or {} }
+                shown[contract.id] = entry
+            end
+            entry.cids[actor.cid] = true
+            drawn = drawn + 1
+        end
+    end
+    return { shown = drawn }
+end
+
+--- This player has left the city or the character: their game took its own
+--- markers off (client/main.lua), so nothing is sent; forgotten, so the next
+--- change or their return draws it for them again.
+function Meeting.forget(cid)
+    if not cid then return end
+    for id, entry in pairs(shown) do
+        entry.cids[cid] = nil
+        if next(entry.cids) == nil then shown[id] = nil end
+    end
+end
+
+--------------------------------------------------------------------------
 -- The placer
 --------------------------------------------------------------------------
 
@@ -140,8 +364,10 @@ end
 --- only within Meeting.TOLERANCE of where the server sees them. Kept to the
 --- metre, x and y alone: the map's waypoint is flat.
 ---
---- Each hitman on it is told, in the notice budget, that a point was set or
---- moved, and nothing about who set it. Audited without the point.
+--- The placer and each hitman on it get the marker on their map and are
+--- told, in the notice budget, that a point was set or moved and what to
+--- do (Meeting.steps); the hitmen nothing about who set it. Audited without
+--- the point.
 ---@param actor table
 ---@param payload table
 ---@return table|false result { set = true, moved = boolean }
@@ -186,21 +412,20 @@ function Meeting.set(actor, payload)
 
     Audit.action(moved and 'meeting_moved' or 'meeting_set', actor.cid, id, {})
 
-    -- Who it is for, and nobody else: the hitmen holding it now. Worded the
+    -- Who it is for, and nobody else: the placer and the hitmen holding it
+    -- now, each with the marker on their map and told what to do. Worded the
     -- same whoever placed it, so the notice names nobody.
-    local target = contract.target_name or 'your target'
+    Meeting.sync(id)
+    tell(actor.cid, 'placer', contract, moved)
     for i = 1, #hitmen do
-        Notify.toCitizen(hitmen[i], moved and 'Meeting point moved' or 'Meeting point set',
-            ('The person who placed your contract on %s %s the meeting point for the handover. '
-                .. 'Open it under Mine and tap Set GPS.'):format(target, moved and 'moved' or 'set'),
-            { contractId = id })
+        tell(hitmen[i], 'hitman', contract, moved)
         Notify.push(hitmen[i], 'meeting', id)
     end
     return { set = true, moved = moved }
 end
 
---- Clear the meeting point. The hitmen's cards are moved on; nobody's phone
---- rings for it.
+--- Clear the meeting point. It comes off every party's map and the hitmen's
+--- cards are moved on; nobody's phone rings for it.
 ---@param actor table
 ---@param payload table { id }
 ---@return table|false result { cleared = true }
@@ -227,6 +452,8 @@ function Meeting.clear(actor, payload)
     end
 
     Audit.action('meeting_cleared', actor.cid, id, {})
+    -- Off every map it was on.
+    Meeting.sync(id)
     local hitmen = activeHitmen(id)
     for i = 1, #hitmen do Notify.push(hitmen[i], 'meeting', id) end
     return { cleared = true }

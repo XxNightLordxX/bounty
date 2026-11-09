@@ -160,7 +160,10 @@ describe('the handover meeting point: who is shown it', function()
             'nor where it is')
         eq(#noticesTo(4), 0, 'not the one who left')
         eq(#noticesTo(2), 0, 'not the target')
-        eq(#noticesTo(1), 0, 'not the placer')
+        -- The placer is told what to do at their own point
+        -- (meeting_blip_spec), in words that name no hitman.
+        eq(#noticesTo(1), 1, 'the placer is told once')
+        falsy(tostring(noticesTo(1)[1].content):find('Rook', 1, true))
         -- A push held behind the floor goes when it has passed.
         Env.advance(2)
         truthy(pushesTo(3) >= 1, 'the card of the hitman on it is moved on')
@@ -221,10 +224,25 @@ describe('the handover meeting point: who is shown it', function()
 
         -- An advisory sent after it: a second hitman's acceptance bulletin.
         Natives.calls.dispatch, Natives.calls.notifications = {}, {}
+        Env.clientEvents = {}
         second(s, c)
         falsy(carries(Natives.calls.dispatch), 'the dispatch advisory')
         for _, note in ipairs(Natives.calls.notifications) do
-            falsy(carries(note), 'a bulletin: ' .. tostring(note.title))
+            if note.title == 'Meeting point set' then
+                -- The second hitman's own notice of what to do there
+                -- (meeting_blip_spec): theirs alone, and never where.
+                local text = dump(note)
+                falsy(text:find('1234', 1, true) or text:find('-568', 1, true),
+                    'the late hitman\'s notice says nothing of where')
+            else
+                falsy(carries(note), 'a bulletin: ' .. tostring(note.title))
+            end
+        end
+        for _, event in ipairs(Env.clientEvents) do
+            if (event.name == 'lb-phone:SendNotification' or event.name == 'crimson-hitman:notify')
+                and type(event.args[1]) == 'table' and event.args[1].title == 'Meeting point set' then
+                eq(event.target, 4, 'the meeting point notice went to the hitman who took it')
+            end
         end
 
         for _, viewer in ipairs({ 'HITMAN01', 'CREATOR1', 'STRANGER', 'OFFICER1' }) do

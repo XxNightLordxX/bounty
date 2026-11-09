@@ -121,6 +121,7 @@ local CONDITIONAL = {
     -- once one is set, while Config.Kidnap.MeetingPoint is on; never on the
     -- board (meeting_spec, "who is shown it" and "the switch").
     meetingSet       = 'creator and active hitmen only, on an alive-only contract a hitman holds',
+    meetingSteps     = 'creator and active hitmen only, while a meeting point is set (Meeting.steps)',
     -- The informant tip (server/locationtip.lua): an active hitman's own,
     -- on their card under Mine alone, never on the board; and on the
     -- target's, when they were told one was bought (location_tip_spec).

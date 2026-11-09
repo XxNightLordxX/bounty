@@ -1524,8 +1524,15 @@ function App.register()
 
     -- The buyer's tips still showing, back on their map: asked by their game
     -- when the app is theirs again (after a restart, or back in the city).
+    -- And the meeting point markers of every live contract they are a party
+    -- to (Meeting.reshow): asked once, as the app becomes theirs, for both.
+    -- Only a count goes back to the page, never where.
     handler('locationTips', 'load', function(actor)
-        return deps.locationTip.reshow(actor)
+        local result = deps.locationTip.reshow(actor)
+        if deps.meeting and deps.meeting.reshow and type(result) == 'table' then
+            result.meetings = deps.meeting.reshow(actor).shown
+        end
+        return result
     end)
 
     -- Amendments --------------------------------------------------------

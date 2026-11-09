@@ -346,7 +346,8 @@ function _G.newCopyingStack()
 
     stack.settings.init({ storage = copying, audit = stack.audit,
                           check = require('crimson-hitman.server.main').checkCandidate })
-    stack.meeting.init({ storage = copying, notify = stack.notify, audit = stack.audit })
+    stack.meeting.init({ storage = copying, notify = stack.notify, audit = stack.audit,
+                         identity = stack.identity, projection = stack.projection })
     stack.playtime.init({ storage = copying, identity = stack.identity })
 
     stack.storage = copying
@@ -564,7 +565,8 @@ function _G.newStack()
     rpProtection.init({ storage = storage, identity = identity, audit = audit, notify = notify,
                         app = app, informant = informant, projection = projection,
                         review = review, contracts = contracts })
-    meeting.init({ storage = storage, notify = notify, audit = audit })
+    meeting.init({ storage = storage, notify = notify, audit = audit, identity = identity,
+                   projection = projection })
     playtime.init({ storage = storage, identity = identity })
     rpPlaces.init({ settings = settings })
     rpRumours.init({ storage = storage, identity = identity, audit = audit, notify = notify,
@@ -699,6 +701,7 @@ local suites = {
     'final_verify_spec', 'workflow3_spec',
     'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec', 'sweep4_spec', 'sweep4_staff_spec',
     'sweep5_spec', 'sweep5b_spec', 'sweep5c_spec',
+    'meeting_blip_spec',
     'docs_spec',
 }
 

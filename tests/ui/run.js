@@ -11125,13 +11125,37 @@ async function main() {
         unset.notice());
     });
 
-    const anon = await mineWith([meetingCard({ creatorAnonymous: true, meetingSet: true })], [],
+    const PLACER_STEPS = 'Be at the meeting point marked on your map. When the hitman arrives '
+      + 'with the target, stay within 12 m of them both and keep still while the hitman taps '
+      + 'Deliver alive: the handover takes 30 seconds. Open the app on your phone to follow it '
+      + 'on your contract under Mine; you have nothing to tap.';
+    const HITMAN_STEPS = 'Bring the target alive to the meeting point marked on your map. Get '
+      + 'within 12 m of the person who placed the contract, open the app on your phone, tap '
+      + 'Deliver alive on the contract under Mine and hold for 30 seconds. Killing the target '
+      + 'does not count.';
+    it('placer: no What to do line while none is set', function () {
+      eq(unset.view.textContent.indexOf('What to do:'), -1, unset.view.textContent);
+    });
+
+    const anon = await mineWith([meetingCard({ creatorAnonymous: true, meetingSet: true,
+      meetingSteps: PLACER_STEPS })], [],
       { clearMeeting: { ok: true, data: { cleared: true } } });
     it('placer, anonymous: told the hitman sees the spot, not who they are', function () {
       const text = anon.view.textContent;
       truthy(text.indexOf('Meeting point set. The hitman can follow it on their GPS.') !== -1, text);
       truthy(text.indexOf('the spot where you are standing, not who you are.') !== -1, text);
       truthy(labels(anon).indexOf('Clear') !== -1, labels(anon).join(' | '));
+    });
+    it('placer: a What to do line, in the server\'s words, once one is set', function () {
+      const text = anon.view.textContent;
+      truthy(text.indexOf('What to do: ' + PLACER_STEPS) !== -1, text);
+      const lines = anon.view.all().filter(function (n) {
+        return /(^| )meeting-steps( |$)/.test(n.className || '');
+      });
+      eq(lines.length, 1, 'one line');
+    });
+    it('placer: set still asks first with a meeting point set (two taps)', function () {
+      truthy(labels(anon).indexOf('Set meeting point here') !== -1, labels(anon).join(' | '));
     });
     click(anon, 'Clear');
     await settle();
@@ -11160,6 +11184,11 @@ async function main() {
       { setMeeting: { ok: false, err: 'meeting_too_soon', data: { retryAfter: 20 } } });
     click(soon, 'Set meeting point here');
     await settle();
+    it('placer: moving a set one asks first, sending nothing on the first tap', function () {
+      truthy(soon.view.textContent.indexOf('Set the meeting point where you are standing?') !== -1,
+        soon.view.textContent);
+      eq(sentNamed(soon, 'setMeeting').length, 0);
+    });
     click(soon, 'Set');
     await settle(); await settle();
     it('placer: a change inside the half minute says how long to wait', function () {
@@ -11172,11 +11201,17 @@ async function main() {
       eq(off.view.textContent.indexOf('eeting point'), -1, off.view.textContent);
     });
 
-    const hit = await mineWith([], [hitmanCard({ meetingSet: true })], { meetingGps: { ok: true } });
+    const hit = await mineWith([], [hitmanCard({ meetingSet: true, meetingSteps: HITMAN_STEPS })],
+      { meetingGps: { ok: true } });
     it('hitman: says a meeting point is set, and offers Set GPS', function () {
       truthy(hit.view.textContent.indexOf('Meeting point set') !== -1, hit.view.textContent);
       truthy(labels(hit).indexOf('Set GPS') !== -1, labels(hit).join(' | '));
       eq(labels(hit).indexOf('Set meeting point here'), -1, 'the placer\'s controls are theirs');
+    });
+    it('hitman: a What to do line, in the server\'s words, naming nobody', function () {
+      const text = hit.view.textContent;
+      truthy(text.indexOf('What to do: ' + HITMAN_STEPS) !== -1, text);
+      falsy(/Vic|Marlowe/.test(text), text);
     });
     click(hit, 'Set GPS');
     await settle(); await settle();
@@ -11201,6 +11236,7 @@ async function main() {
     const none = await mineWith([], [hitmanCard({})]);
     it('hitman: nothing of a meeting point while none is set', function () {
       eq(none.view.textContent.indexOf('eeting point'), -1, none.view.textContent);
+      eq(none.view.textContent.indexOf('What to do:'), -1, none.view.textContent);
       eq(labels(none).indexOf('Set GPS'), -1);
     });
 

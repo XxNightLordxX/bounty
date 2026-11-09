@@ -164,6 +164,15 @@ One word for one thing, on the phone, in the panel, in notices and here.
 5. **Ending**: completed, the hitman is paid from escrow (owed and paid at their next login if away or full). Withdrawn by the placer while nobody holds it, expired, voided by staff or bought out: the reward goes back to the placer; a hitman's stake goes as the rules say. An exclusive hitman who never goes near the target is released after `ExclusiveIdleReleaseSeconds`.
 6. **Changes**: before anyone takes it, the placer's **Edit** sheet changes reason, reward, stake, deadline and mode at once. Once taken, the reward can still be raised, the deadline extended, and anything else proposed (**Propose change**) for the hitman to accept.
 
+### The meeting point
+
+On a contract only a live handover completes, once a hitman holds it the placer can tap **Set meeting point here** (asked first) to mark where they stand (`Config.Kidnap.MeetingPoint`, on as shipped).
+
+- **Who gets the marker**: the placer and every hitman active on the contract get a yellow *Meeting point* marker on their map, seen from anywhere. Nobody else does: never the target, a bystander, or staff who are not a party. The coordinates go only to those games, never to the app's page.
+- **What each side is told**: both get a phone notice (*Meeting point set*, or *Meeting point moved*) saying what to do, and their card under Mine shows the same words as a *What to do* line. The placer: be at the meeting point, stay within `Config.Kidnap.Radius` of the hitman and the target and keep still while the hitman taps **Deliver alive** (`Config.Kidnap.CountdownSeconds`), and follow it in the app; there is nothing for them to tap. The hitman: bring the target alive there (cuffed or in their vehicle where `RequireCoercion` is on), get within the radius of the person who placed it, open the app and tap **Deliver alive** on the contract under Mine, and hold. Neither notice names the other side.
+- **When it changes**: moving the point moves the marker on every map. A hitman who takes the contract after it was set gets the marker and the notice when they accept. A party who logs out loses it from their map and gets it back when they return (and after a restart).
+- **When it goes**: off every map when the placer clears it, when the contract is completed by the handover, cancelled, expired, voided or bought out, and when the last hitman walks away, is released for idling or is removed by staff. A hitman who leaves while others stay loses it from their own map only. Turning the switch off takes it off every map; turning it on puts it back.
+
 ### Money rules
 
 - Every reward is held from placing to ending; a payout comes only from what is held, in exactly the sources it holds (dirty money in, dirty money out: there is no conversion, because `sc-blackmarket` values dirty money above clean).
@@ -1080,6 +1089,7 @@ The audit log records every money movement and every refused attempt:
 
 **1.1.0, sweep 5 fixes (newest)**
 
+- The meeting point is a marker on the map of the placer and every hitman on the contract, and both are told on their phone, and on their card, exactly what to do to finish the handover; it comes off every map when it is cleared, moved, or no longer needed.
 - Staff without `crimson.identity`: a log search by a player's citizen id pages with a handle good for that staff member and that search only (ten minutes), and offers **Older** only when a row they may see is left, so no page or its absence points at an anonymous contract; a party's phone view says *On hold* only where the contract's own frozen badge would.
 - A handover arm refused because the placer is not close enough waits up to 15 seconds (at most `Config.Kidnap.RearmCooldownSeconds`) before the next try.
 - Ending a staff freeze, the app pause or the restart hold gives every contract its held time back before the expiry pass can end one; a kill made in the minutes before the restart hold can still be verified once the hold is skipped; skipping the hold (or reaching `Config.Restart.MaxHoldMinutes`) tells every party *Contracts are no longer paused for the server restart.* and refreshes their pages.

@@ -765,6 +765,62 @@ RegisterNUICallback('crimson:meetingGps', function(data, cb)
     end)
 end)
 
+--- The meeting point on this player's map, while they are a party to it:
+--- the placer and each hitman on the contract (the server decides,
+--- Meeting.sync, and sends crimson-hitman:meetingBlip to their game alone).
+--- One marker per contract, replaced when the point moves, and taken off
+--- when the server says so (crimson-hitman:meetingBlipClear: cleared, the
+--- contract over, this player no longer on it, the switch off), on logout
+--- and as the resource stops. The page is never sent where it is.
+
+--- [contractId] = blip
+local meetings = {}
+
+local MEETING_SPRITE = 162      -- the point-of-interest marker
+local MEETING_COLOUR = 5        -- yellow: apart from the tip's red circle
+local MEETING_NAME = 'Meeting point'
+
+local function removeMeetingBlip(contractId)
+    local blip = meetings[contractId]
+    if not blip then return end
+    meetings[contractId] = nil
+    if DoesBlipExist(blip) then RemoveBlip(blip) end
+end
+
+local function clearMeetingBlips()
+    for contractId in pairs(meetings) do removeMeetingBlip(contractId) end
+end
+
+RegisterNetEvent('crimson-hitman:meetingBlip', function(data)
+    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
+    local x, y = tonumber(data.x), tonumber(data.y)
+    if not x or not y then return end
+    removeMeetingBlip(data.id)
+    local blip = AddBlipForCoord(x + 0.0, y + 0.0, 0.0)
+    SetBlipSprite(blip, MEETING_SPRITE)
+    SetBlipColour(blip, MEETING_COLOUR)
+    SetBlipScale(blip, 0.9)
+    SetBlipAsShortRange(blip, false)
+    BeginTextCommandSetBlipName('STRING')
+    AddTextComponentSubstringPlayerName(MEETING_NAME)
+    EndTextCommandSetBlipName(blip)
+    meetings[data.id] = blip
+end)
+
+RegisterNetEvent('crimson-hitman:meetingBlipClear', function(data)
+    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
+    removeMeetingBlip(data.id)
+end)
+
+-- Another character, or none: their meeting points are not this one's. The
+-- server draws them again for whoever logs in (Meeting.reshow).
+AddEventHandler('QBCore:Client:OnPlayerUnload', clearMeetingBlips)
+AddEventHandler('qbx_core:client:playerLoggedOut', clearMeetingBlips)
+AddEventHandler('onResourceStop', function(resource)
+    if resource ~= GetCurrentResourceName() then return end
+    clearMeetingBlips()
+end)
+
 --------------------------------------------------------------------------
 -- Informant tips (server/locationtip.lua)
 --------------------------------------------------------------------------
@@ -860,8 +916,9 @@ RegisterNUICallback('crimson:tipGps', function(data, cb)
 end)
 
 --- Ask for the tips still showing, once the app is this player's: the
---- server sends each as crimson-hitman:locationTip. Asked again a few times
---- while the server is still starting up.
+--- server sends each as crimson-hitman:locationTip, and with them the
+--- meeting points this player is a party to (crimson-hitman:meetingBlip).
+--- Asked again a few times while the server is still starting up.
 function App.askTips(attempt)
     attempt = attempt or 1
     App.request('locationTips', {}, function(result)

@@ -115,6 +115,9 @@ function Bridges.onPlayerDropped(modules, cid)
     modules.mugshot.clearPlayer(cid)
     modules.informant.clearPlayer(cid)
     modules.app.clearPlayerHandles(cid)
+    -- Their game took its own meeting point markers off; drawn again on
+    -- their return (Meeting.reshow).
+    if modules.meeting and modules.meeting.forget then modules.meeting.forget(cid) end
 
     -- Memory mode holds no durable escrow, so a creator disconnecting would
     -- strand it. Refund and close rather than risk losing their property.
@@ -186,6 +189,8 @@ function Bridges.install(modules)
         if modules.photo.forgetContract then modules.photo.forgetContract(contractId) end
         -- And every informant tip on it, off its buyer's map, with its records.
         if modules.locationTip then modules.locationTip.clearContract(contractId) end
+        -- And the meeting point's marker, off every party's map.
+        if modules.meeting and modules.meeting.sync then modules.meeting.sync(contractId) end
     end
 
     --- A hitman who is no longer on a contract has no handover on it either.
@@ -208,6 +213,21 @@ function Bridges.install(modules)
         -- And their informant tip on it, off their map. Its record stays, so
         -- coming back resets neither the wait nor the most per contract.
         if modules.locationTip then modules.locationTip.hitmanLeft(contractId, hitmanCid) end
+        -- And the meeting point's marker off their map, and off the placer's
+        -- where nobody is coming any more.
+        if modules.meeting and modules.meeting.sync then modules.meeting.sync(contractId) end
+    end
+
+    -- The meeting point's map marker (server/meeting.lua): drawn for a hitman
+    -- who takes the contract up after it was set, taken off every map when
+    -- the point is (Contracts' dropMeeting), and brought in line with the
+    -- switch the moment it is turned (Config.Kidnap.MeetingPoint).
+    if modules.meeting and modules.meeting.sync then
+        modules.contracts.onAccepted = function(contractId) modules.meeting.joined(contractId) end
+        modules.contracts.onMeetingDropped = function(contractId) modules.meeting.sync(contractId) end
+        if modules.settings and modules.settings.watch then
+            modules.settings.watch('Kidnap.MeetingPoint', function() modules.meeting.syncAll() end)
+        end
     end
 
     -- The expiry pass skips itself when nothing could have changed since the

@@ -2407,6 +2407,7 @@
     box.appendChild(el('div', 'hint', 'Set meeting point here shows the hitman on this '
       + 'contract the spot where you are standing'
       + (contract.creatorAnonymous ? ', not who you are.' : '.')));
+    if (set) { appendMeetingSteps(box, contract); }
     var row = el('div', 'row meeting-actions');
     var key = 'meeting:' + contract.id;
     if (isBusy(key)) {
@@ -2458,10 +2459,19 @@
     });
   }
 
-  /* The hitman's half: that one is set, and Set GPS. */
+  /* What to do at the meeting point, as the server worded it when it was
+     set (Meeting.steps): the same words the phone notice carried, for this
+     side of the handover. Absent from an older server: nothing drawn. */
+  function appendMeetingSteps(box, contract) {
+    if (typeof contract.meetingSteps !== 'string' || !contract.meetingSteps) { return; }
+    box.appendChild(el('div', 'hint meeting-steps', 'What to do: ' + contract.meetingSteps));
+  }
+
+  /* The hitman's half: that one is set, what to do, and Set GPS. */
   function hitmanMeeting(contract) {
     var box = el('div', 'meeting');
     box.appendChild(el('div', 'meeting-state ico i-pin', 'Meeting point set'));
+    appendMeetingSteps(box, contract);
     var row = el('div', 'row meeting-actions');
     row.appendChild(actionButton('ghost ico i-pin', 'Set GPS', 'gps:' + contract.id,
       'Setting GPS\u2026', function () {

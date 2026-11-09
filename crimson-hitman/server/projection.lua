@@ -34,6 +34,10 @@ local Freeze
 --- replaced its text, and who they barred from taking it again.
 local StaffContract
 
+--- What a party does at the meeting point, by role (Meeting.steps), set by
+--- Meeting.init; nil, and no 'What to do' line, without it.
+Projection.meetingSteps = nil
+
 function Projection.init(deps)
     Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify =
         deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
@@ -749,6 +753,12 @@ function Projection.contract(contract, viewerCid, opts)
             and (contract.state == CH.STATE.ACCEPTED or contract.state == CH.STATE.COMPLETING)
             and activeHitmen > 0 then
             out.meetingSet = contract.meeting_x ~= nil
+            -- With one set, what to do at it: the words their phone was
+            -- told when it was set (Meeting.steps), for the card's
+            -- 'What to do' line.
+            if out.meetingSet and Projection.meetingSteps then
+                out.meetingSteps = Projection.meetingSteps('placer')
+            end
         end
     elseif role == 'hitman' then
         local mine = hitmanOf(contract.id, viewerCid)
@@ -772,6 +782,8 @@ function Projection.contract(contract, viewerCid, opts)
         if Config.Kidnap.MeetingPoint == true and contract.meeting_x ~= nil
             and not CH.TERMINAL[contract.state] then
             out.meetingSet = true
+            -- And what to do at it, as their phone was told (Meeting.steps).
+            if Projection.meetingSteps then out.meetingSteps = Projection.meetingSteps('hitman') end
         end
         -- The target's buyout waiting out its delay, counted down on their
         -- card. Their one word of it was a phone notice (Notify.buyoutQueued)
@@ -1082,6 +1094,7 @@ local function buildListing(viewerCid, page)
         -- Never on the board, not even to its placer or a hitman on it:
         -- their own cards under Mine carry it.
         row.meetingSet = nil
+        row.meetingSteps = nil
         row.locationTip = nil
         out.contracts[#out.contracts + 1] = row
     end
@@ -1582,13 +1595,14 @@ Projection.ALLOWED_KEYS = {
         creatorName = true, creatorAnonymous = true,
     },
     creator = { bailoutAmount = true, hitmen = true, valueHeld = true, meetingSet = true,
+                meetingSteps = true,
                 placerInformantFound = true, placerInformantPicks = true,
                 placerInformantLeft = true, placerInformantWait = true,
                 -- What decay does to their untaken contract (server/imp_decay.lua).
                 decay = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true,
                 buyoutClosesIn = true, lastMessageAt = true, meetingSet = true,
-                locationTip = true,
+                meetingSteps = true, locationTip = true,
                 -- A payout of theirs held for proof of intent (server/rp_intent.lua).
                 intentHold = true,
                 -- The placer's record, never who (server/imp_placer_record.lua).
