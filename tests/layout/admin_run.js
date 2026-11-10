@@ -430,10 +430,6 @@ function serverStub() {
       { grade: 1, name: 'hitman', label: 'Hitman', pay: 100, members: 10, powers: {} }],
     members: ORG_MEMBERS,
     ceiling: { role: { 3: { M00: 'allow', M01: 'allow' } }, member: { m0_1000: { C30: 'deny' }, m5_1000: { M00: 'allow' } } },
-    spots: [{ id: 'hitman:office:1', kind: 'office', label: 'Back room of ' + LONG, x: -1234.56, y: 4567.89, z: 30.12,
-      heading: 359, radius: 12.5, blip: true, enabled: true },
-      { id: 'hitman:meeting:1', kind: 'meeting', label: 'Docks', x: 1.5, y: -2.5, z: 3, heading: 0, radius: 2,
-        blip: false, enabled: false }],
     cuts: { payout: 10, stake: 5, buyout: 0, byRole: { 1: 5 }, byMember: { X: 3 } },
     limits: { MaxMembers: 30, WithdrawMax: 5000, TotalCutCapPercent: 40, CutMaxPercent: 25, StakeCutMaxPercent: 20,
       BuyoutCutMaxPercent: 20, NoticeMaxLength: 400, HireRadius: 3.5, PayMax: 100000 },
@@ -461,7 +457,42 @@ function serverStub() {
     }
     return out;
   })() } };
-  answers.orgMyPosition = { ok: true, data: { x: -1234.567, y: 4567.891, z: 30.12, heading: 359.4 } };
+  answers.placeMyPosition = { ok: true, data: { x: -1234.567, y: 4567.891, z: 30.12, heading: 359.4 } };
+  // Every kind of place (placeList), with the longest labels and both disposal spots' states.
+  answers.placeList = { ok: true, data: { readable: true, kinds: (function () {
+    const ORG = { label: true, radius: true, blip: true, enabled: true };
+    function org(id, label, one, rows, single) {
+      return { id: id, group: 'org', label: label, one: one, icon: 'building', fields: ORG, labelMax: 64,
+        single: !!single, radius: { min: 0.5, max: 50, default: 2 }, switch: 'Organisation.Enabled', rows: rows };
+    }
+    function rp(id, label, rows) {
+      return { id: id, group: 'npc', label: label, one: id + ' place', icon: 'user-secret',
+        fields: { label: true, enabled: true }, labelMax: 40, labelOptional: true, reset: true, max: 20,
+        switch: 'Roleplay.NpcPlaces.Enabled', rows: rows, on: true, using: rows.length ? 'panel' : 'config',
+        defaults: [{ x: -1171.0, y: -1572.5, z: 4.66, h: 125 }], key: 'Roleplay.Rumours.Locations' };
+    }
+    function dp(id, label, one, rows) {
+      return { id: id, group: 'disposal', label: label, one: one, icon: 'truck', fields: {}, single: true, max: 1,
+        rows: rows, defaults: [], on: true, using: rows.length ? 'panel' : 'config',
+        note: 'Body disposal cannot start a step until both are set.' };
+    }
+    return [
+      org('office', 'Boss office', 'boss office', [{ id: 'hitman:office:1', kind: 'office', label: 'Back room of ' + LONG,
+        x: -1234.56, y: 4567.89, z: 30.12, heading: 359, radius: 12.5, blip: true, enabled: true }], true),
+      org('signup', 'Sign-up spots', 'sign-up spot', []),
+      org('meeting', 'Meeting and handover spots', 'meeting spot', [{ id: 'hitman:meeting:1', kind: 'meeting',
+        label: 'Docks', x: 1.5, y: -2.5, z: 3, heading: 0, radius: 2, blip: false, enabled: false }]),
+      org('npc', 'NPC spots', 'NPC spot', []),
+      org('place', 'Other organisation places', 'place', []),
+      rp('broker', 'Broker NPC', [{ id: 'map:broker:1', kind: 'broker', label: 'Pier of ' + LONG.slice(0, 30),
+        x: -1234.5, y: 4567.8, z: 30.1, heading: 359.4, enabled: true }]),
+      rp('informant', 'Informant NPC', []),
+      dp('disposal_vehicle', 'Disposal vehicle spawn', 'the vehicle spawn', [{ id: 'place:disposal_vehicle:1',
+        kind: 'disposal_vehicle', label: 'Disposal vehicle spawn', x: -1234.5, y: 4567.8, z: 30.1, heading: 359.4,
+        enabled: true }]),
+      dp('disposal_drop', 'Body drop-off', 'the drop-off', [])
+    ];
+  })() } };
   // The drawer's Change reward and Reassign, with the largest figures.
   answers.rewardPreview = function (data) {
     const base = { max: 100000000, slot: 3, reward: 1234567890, total: 1234567890, mostLower: 1234567889,
@@ -480,7 +511,6 @@ function serverStub() {
         stage: i % 2 ? 'loaded' : 'body', secondsLeft: 86399 - i * 3600, held: i % 2 === 0, vehicle: i % 3 !== 0,
         respawns: i };
     }) } };
-  answers.disposalMyPosition = { ok: true, data: { x: -1234.567, y: 4567.891, z: 30.12, heading: 359.4 } };
   answers.sanctions = { ok: true, data: {
     suspended: rows.slice(0, 6).map(function (r, i) {
       return { ref: 'f' + i, name: i === 0 ? LONG : 'Dana Reyes ' + i, cid: 'CITIZEN' + i, online: i % 2 === 0,
@@ -494,14 +524,14 @@ function serverStub() {
   settings.limits.push({ key: 'Organisation.Limits.WithdrawMax', category: 'organisation',
     group: 'Organisation: Boss limits', area: 'organisation', label: 'Largest withdrawal ($)', kind: 'number',
     integer: true, min: 0, max: 10000000, live: true, value: 5000, default: 5000, source: 'config' });
-  settings.limits.push({ key: 'Roleplay.Rumours.Locations', category: 'rules-limits', group: 'Roleplay: Rumours and broker',
+  settings.limits.push({ key: 'Roleplay.Rumours.Locations', place: 'point', category: 'rules-limits', group: 'Roleplay: Rumours and broker',
     area: 'extras', label: 'Broker NPC places', kind: 'list', whole: true, live: true,
     value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'], default: [], source: 'config' });
-  settings.limits.push({ key: 'Improvements.TipSafeZones.Zones', category: 'rules-targeting',
+  settings.limits.push({ key: 'Improvements.TipSafeZones.Zones', place: 'zone', category: 'rules-targeting',
     group: 'Improvements: Tip safe zones', area: 'informants', label: 'Safe zones (x, y, radius, name)', kind: 'list',
     whole: true, live: true, value: ['300, -590, 80, Pillbox Hill Medical Center and the car park'], default: [],
     source: 'config' });
-  settings.limits.push({ key: 'Limits.JailZone.x', category: 'rules-limits', group: 'Contract limits', area: 'placing',
+  settings.limits.push({ key: 'Limits.JailZone.x', place: 'jail', category: 'rules-limits', group: 'Contract limits', area: 'placing',
     label: 'Prison grounds centre, x', kind: 'number', min: -10000, max: 10000, live: true, value: 1700, default: 1700,
     source: 'config' });
   window.GetParentResourceName = function () { return 'crimson-hitman'; };
@@ -798,9 +828,9 @@ async function main() {
         await page.click('button[data-act="loc-mypos"][data-value="signup"]');
         await page.waitForTimeout(120);
         // And the drop-off filled from where staff stand, its Save armed.
-        await page.click('button[data-act="dsp-mypos"][data-value="drop"]');
+        await page.click('button[data-act="loc-mypos"][data-value="disposal_drop"]');
         await page.waitForTimeout(120);
-        await page.click('button[data-act="dsp-save"][data-value="drop"]');
+        await page.click('button[data-act="loc-save"][data-value="disposal_drop"]');
         await page.waitForTimeout(60);
       }
       if (section === 'contracts') {

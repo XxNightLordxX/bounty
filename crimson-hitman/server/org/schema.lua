@@ -42,13 +42,6 @@ Schema.TABLES = {
         columns = { 'id', 'org_id', 'subject', 'subject_id', 'power', 'state', 'by_cid', 'updated_at' },
         by = 'org_id',
     },
-    locations = {
-        table = 'crimson_org_locations',
-        columns = { 'id', 'org_id', 'kind', 'label', 'x', 'y', 'z', 'heading', 'radius', 'blip', 'enabled',
-            'anchor', 'by_cid', 'updated_at' },
-        json = { anchor = true }, bool = { blip = true, enabled = true },
-        by = 'org_id',
-    },
     funds = {
         table = 'crimson_org_funds',
         columns = { 'id', 'org_id', 'kind', 'amount', 'actor', 'reason', 'contract_id', 'created_at', 'backend' },
@@ -117,20 +110,6 @@ Schema.SQL = {
         insert = [[INSERT INTO crimson_org_grants (id, org_id, subject, subject_id, power, state, by_cid, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)]],
         delete = 'DELETE FROM crimson_org_grants WHERE id = ?',
-    },
-    locations = {
-        all = 'SELECT * FROM crimson_org_locations',
-        by = 'SELECT * FROM crimson_org_locations WHERE org_id = ?',
-        one = 'SELECT * FROM crimson_org_locations WHERE id = ?',
-        upsert = [[INSERT INTO crimson_org_locations (id, org_id, kind, label, x, y, z, heading, radius, blip,
-            enabled, anchor, by_cid, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE org_id = VALUES(org_id), kind = VALUES(kind), label = VALUES(label),
-            x = VALUES(x), y = VALUES(y), z = VALUES(z), heading = VALUES(heading), radius = VALUES(radius),
-            blip = VALUES(blip), enabled = VALUES(enabled), anchor = VALUES(anchor), by_cid = VALUES(by_cid),
-            updated_at = VALUES(updated_at)]],
-        insert = [[INSERT INTO crimson_org_locations (id, org_id, kind, label, x, y, z, heading, radius, blip,
-            enabled, anchor, by_cid, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]],
-        delete = 'DELETE FROM crimson_org_locations WHERE id = ?',
     },
     funds = {
         all = 'SELECT * FROM crimson_org_funds',
@@ -232,25 +211,6 @@ Schema.CREATE = {
         updated_at INT,
         INDEX idx_org_grants_org (org_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
-    -- Its places: the boss office, sign-up boards, meeting spots, NPCs, in
-    -- decimetres (x, y, z, radius) and degrees.
-    [[CREATE TABLE IF NOT EXISTS crimson_org_locations (
-        id VARCHAR(48) PRIMARY KEY,
-        org_id VARCHAR(32) NOT NULL,
-        kind VARCHAR(16) NOT NULL,
-        label VARCHAR(64),
-        x INT NOT NULL,
-        y INT NOT NULL,
-        z INT NOT NULL,
-        heading INT DEFAULT 0,
-        radius INT DEFAULT 20,
-        blip TINYINT(1) DEFAULT 0,
-        enabled TINYINT(1) DEFAULT 1,
-        anchor TEXT,
-        by_cid VARCHAR(64),
-        updated_at INT,
-        INDEX idx_org_locations_org (org_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Its funds ledger: every movement in or out, by a reference that is
     -- written once (a cut by its escrow line, a withdrawal by its request),
     -- marked with the backend it moved. With Renewed-Banking chosen the
@@ -299,6 +259,6 @@ Schema.CREATE = {
 }
 
 --- The short names, for a backend to walk.
-Schema.NAMES = { 'orgs', 'roles', 'members', 'grants', 'locations', 'funds', 'splits', 'applications' }
+Schema.NAMES = { 'orgs', 'roles', 'members', 'grants', 'funds', 'splits', 'applications' }
 
 return Schema

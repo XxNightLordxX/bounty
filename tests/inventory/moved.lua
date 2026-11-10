@@ -29,4 +29,22 @@ return {
     ['nui:crimson:meetingGps'] = { to = 'nui:crimson:gps', note = "kind = 'meeting'" },
     ['nui:crimson:protectionGps'] = { to = 'nui:crimson:gps', note = "kind = 'protection'" },
     ['nui:crimson:tipGps'] = { to = 'nui:crimson:gps', note = "kind = 'tip'" },
+    -- Step 3c: one Places registry (server/places.lua). Every staff-set map
+    -- spot is a kind of it, kept as one row kind (crimson_rp_rows,
+    -- 'map_place'), set and removed by one pair of panel ops, with one Use my
+    -- position. Each kind's own rules stay with its feature. Not items of
+    -- the inventory, recorded here as well: the stored row kinds 'rp_place'
+    -- and 'disp_spot' and the table crimson_org_locations -> rp row kind
+    -- 'map_place'; orgGet's `spots` -> placeList's kinds' rows.
+    ['op:orgMyPosition'] = { to = 'op:placeMyPosition', note = 'one Use my position for every kind' },
+    ['op:disposalMyPosition'] = { to = 'op:placeMyPosition', note = 'one Use my position for every kind' },
+    ['op:orgLocationSet'] = { to = 'op:placeSet',
+        note = 'kind office | signup | meeting | npc | place; the organisation keeps who may set each' },
+    ['op:orgLocationRemove'] = { to = 'op:placeRemove', note = 'by id' },
+    ['op:disposalSpotSet'] = { to = 'op:placeSet', note = 'kind disposal_vehicle | disposal_drop (spot vehicle | drop)' },
+    ['op:disposalSpotClear'] = { to = 'op:placeRemove', note = 'by id; config VehicleSpawn/DropOff apply again' },
+    ['op:rpPlaceList'] = { to = 'op:placeList', note = 'kinds broker | informant, with defaults and using' },
+    ['op:rpPlaceSet'] = { to = 'op:placeSet', note = 'kind broker | informant (npc)' },
+    ['op:rpPlaceRemove'] = { to = 'op:placeRemove', note = 'by id' },
+    ['op:rpPlaceReset'] = { to = 'op:placeReset', note = 'kind broker | informant (npc)' },
 }

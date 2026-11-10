@@ -20,10 +20,10 @@
 -- crimson_location_tips, crimson_freezes, crimson_contract_staff,
 -- crimson_staff_records, crimson_meta and crimson_rp_rows (the roleplay and
 -- improvements features' rows: proof-of-intent holds, bodyguard jobs, heat,
--- decay steps, tip warnings, going dark, EMS holds and the like), and the
--- hitman organisation's eight (Config.Organisation, off as shipped):
--- crimson_orgs, crimson_org_roles, crimson_org_members, crimson_org_grants,
--- crimson_org_locations, crimson_org_funds, crimson_org_splits and
+-- decay steps, tip warnings, going dark, EMS holds, the map spots staff set
+-- and the like), and the hitman organisation's seven (Config.Organisation,
+-- off as shipped): crimson_orgs, crimson_org_roles, crimson_org_members,
+-- crimson_org_grants, crimson_org_funds, crimson_org_splits and
 -- crimson_org_applications.
 --
 -- These are the same statements as server/storage/mysql.lua runs, word for
@@ -516,26 +516,6 @@ CREATE TABLE IF NOT EXISTS crimson_org_grants (
     by_cid VARCHAR(64),
     updated_at INT,
     INDEX idx_org_grants_org (org_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Its places: the boss office, sign-up boards, meeting spots, NPCs, in
--- decimetres (x, y, z, radius) and degrees.
-CREATE TABLE IF NOT EXISTS crimson_org_locations (
-    id VARCHAR(48) PRIMARY KEY,
-    org_id VARCHAR(32) NOT NULL,
-    kind VARCHAR(16) NOT NULL,
-    label VARCHAR(64),
-    x INT NOT NULL,
-    y INT NOT NULL,
-    z INT NOT NULL,
-    heading INT DEFAULT 0,
-    radius INT DEFAULT 20,
-    blip TINYINT(1) DEFAULT 0,
-    enabled TINYINT(1) DEFAULT 1,
-    anchor TEXT,
-    by_cid VARCHAR(64),
-    updated_at INT,
-    INDEX idx_org_locations_org (org_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Its funds ledger: every movement in or out, by a reference that is

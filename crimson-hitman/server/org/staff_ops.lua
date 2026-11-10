@@ -123,14 +123,6 @@ OPS.orgAudit = { 'read', function(src, data)
     return true, nil, nil, { rows = out }
 end }
 
---- Where the staff member's character stands, read by the server: for Use
---- my position on a location row.
-OPS.orgMyPosition = { 'read', function(src)
-    local at = Org.positionOf(src)
-    if not at then return false, Org.ERR.NOT_FOUND, 'The server cannot see your character right now.' end
-    return true, nil, nil, { x = at.x, y = at.y, z = at.z, heading = at.h }
-end }
-
 -- Setup -------------------------------------------------------------------
 
 --- Register (or register again) the job in qbx_core from the table, and
@@ -351,20 +343,6 @@ end }
 OPS.orgPick = { 'write', function(src, data)
     local cid = (data.member ~= nil or data.ref ~= nil or data.subject ~= nil) and memberCid(src, data) or nil
     return said(Org.pick(staff(src), Text.field(data.id, 64), cid))
-end }
-
--- Locations -------------------------------------------------------------------
-
---- A spot from typed figures, or (here = true) where the staff member
---- stands, read by the server.
-OPS.orgLocationSet = { 'write', function(src, data)
-    return said(Org.placeSpot(staff(src), { kind = Text.field(data.kind, 8), id = Text.field(data.id, 48),
-        label = Text.field(data.label, 128), radius = data.radius, blip = bool(data.blip), enabled = bool(data.enabled),
-        here = data.here == true, x = data.x, y = data.y, z = data.z, heading = data.heading }))
-end }
-
-OPS.orgLocationRemove = { 'write', function(src, data)
-    return said(Org.removeSpot(staff(src), Text.field(data.id, 48)))
 end }
 
 -- Applications ------------------------------------------------------------------

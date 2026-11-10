@@ -203,20 +203,24 @@ describe('the broker and informant placed from Locations (Config.Roleplay.NpcPla
         return s
     end
 
+    local function kind(view, id)
+        for _, k in ipairs(view.kinds) do if k.id == id then return k end end
+    end
+
     it('ships off, and off every write says so and the config list is used', function()
         resetConfig()
         eq(Config.Roleplay.NpcPlaces.Enabled, false)
         local s = stack(false)
         local before = s.rpPlaces.current('broker')
-        local reply = W.ask(6, 'rpPlaceSet', { npc = 'broker', here = true })
+        local reply = W.ask(6, 'placeSet', { kind = 'broker', here = true })
         falsy(reply.ok)
         eq(reply.err, 'feature_off')
         truthy(reply.message and reply.message:find('NpcPlaces', 1, true), 'names its switch')
-        local view = W.ask(6, 'rpPlaceList', {})
+        local view = W.ask(6, 'placeList', {})
         eq(view.ok, true)
-        eq(view.data.enabled, false)
-        eq(view.data.npcs.broker.using, 'config')
-        truthy(#view.data.npcs.broker.defaults >= 1, 'the config list shown as the defaults')
+        truthy(kind(view.data, 'broker').off, 'shown off')
+        eq(kind(view.data, 'broker').using, 'config')
+        truthy(#kind(view.data, 'broker').defaults >= 1, 'the config list shown as the defaults')
         eq(s.rpPlaces.current('broker').x, before.x)
     end)
 
@@ -224,52 +228,53 @@ describe('the broker and informant placed from Locations (Config.Roleplay.NpcPla
         local s = stack(true)
         local default = s.rpPlaces.current('broker')
         W.at(6, 1234.5, -987.6, 44.0)
-        local reply = W.ask(6, 'rpPlaceSet', { npc = 'broker', here = true, label = 'Pier', x = 1, y = 2, z = 3 })
+        local reply = W.ask(6, 'placeSet', { kind = 'broker', here = true, label = 'Pier', x = 1, y = 2, z = 3 })
         eq(reply.ok, true, tostring(reply.message))
         local now = s.rpPlaces.current('broker')
         eq(now.x, 1234.5, 'where the server sees staff, never the typed figures')
         eq(now.y, -987.6)
-        local view = W.ask(6, 'rpPlaceList', {}).data
-        eq(view.npcs.broker.using, 'panel')
-        eq(#view.npcs.broker.rows, 1)
-        eq(view.npcs.broker.rows[1].label, 'Pier')
-        eq(view.npcs.informant.using, 'config', 'the informant untouched')
-        -- Stored with the other spots staff set: the rp rows.
-        local rows = s.storage.readRpRows('rp_place')
+        local view = W.ask(6, 'placeList', {}).data
+        eq(kind(view, 'broker').using, 'panel')
+        eq(#kind(view, 'broker').rows, 1)
+        eq(kind(view, 'broker').rows[1].label, 'Pier')
+        eq(kind(view, 'informant').using, 'config', 'the informant untouched')
+        -- Stored with every other spot staff set: the one registry's rows.
+        local rows = s.storage.readRpRows('map_place')
         eq(#rows, 1)
         -- Off again: the config list, the place kept.
         Config.Roleplay.NpcPlaces.Enabled = false
         eq(s.rpPlaces.current('broker').x, default.x)
         Config.Roleplay.NpcPlaces.Enabled = true
         eq(s.rpPlaces.current('broker').x, 1234.5)
-        reply = W.ask(6, 'rpPlaceReset', { npc = 'broker' })
+        reply = W.ask(6, 'placeReset', { kind = 'broker' })
         eq(reply.ok, true, tostring(reply.message))
         eq(s.rpPlaces.current('broker').x, default.x, 'the config list again')
-        eq(W.ask(6, 'rpPlaceReset', { npc = 'broker' }).ok, false, 'nothing left to reset')
+        eq(W.ask(6, 'placeReset', { kind = 'broker' }).ok, false, 'nothing left to reset')
     end)
 
     it('removes one, refuses junk and readers, and keeps them across a reload', function()
         local s = stack(true)
         W.at(6, 10.0, 20.0, 30.0)
-        local id = W.ask(6, 'rpPlaceSet', { npc = 'informant', here = true }).data.id
+        local id = W.ask(6, 'placeSet', { kind = 'informant', here = true }).data.id
         truthy(id, 'saved')
-        eq(W.ask(7, 'rpPlaceSet', { npc = 'informant', here = true }).ok, false, 'a reader cannot write')
-        for _, junk in ipairs({ { npc = 'mayor', here = true }, { npc = 'broker', x = 'a', y = 1, z = 1 },
-            { npc = 'broker', x = 1e9, y = 1, z = 1 }, { npc = 'broker', x = 1, y = 1, z = 1, label = '<b>' },
-            { npc = 'broker', x = 1, y = 1, z = 1, enabled = 'yes' }, { npc = 'broker', id = 'nope', x = 1, y = 1, z = 1 } }) do
-            local reply = W.ask(6, 'rpPlaceSet', junk)
+        eq(W.ask(7, 'placeSet', { kind = 'informant', here = true }).ok, false, 'a reader cannot write')
+        for _, junk in ipairs({ { kind = 'mayor', here = true }, { kind = 'broker', x = 'a', y = 1, z = 1 },
+            { kind = 'broker', x = 1e9, y = 1, z = 1 }, { kind = 'broker', x = 1, y = 1, z = 1, label = '<b>' },
+            { kind = 'broker', x = 1, y = 1, z = 1, enabled = 'yes' }, { kind = 'broker', id = 'nope', x = 1, y = 1, z = 1 },
+            { kind = 'broker', x = 1, y = 1, z = 1, heading = 0 / 0 } }) do
+            local reply = W.ask(6, 'placeSet', junk)
             falsy(reply.ok, 'refused')
             truthy(reply.message, 'worded')
         end
         -- Typed figures work too.
-        eq(W.ask(6, 'rpPlaceSet', { npc = 'broker', x = 100, y = 200, z = 30, heading = 90 }).ok, true)
+        eq(W.ask(6, 'placeSet', { kind = 'broker', x = 100, y = 200, z = 30, heading = 90 }).ok, true)
         -- A reload reads them back from the store.
         s.rpPlaces.init({ settings = s.settings, storage = s.storage, audit = s.audit })
         eq(s.rpPlaces.current('informant').x, 10.0)
         eq(s.rpPlaces.current('broker').x, 100.0)
-        eq(W.ask(6, 'rpPlaceRemove', { id = id }).ok, true)
-        eq(W.ask(6, 'rpPlaceRemove', { id = id }).ok, false, 'gone')
-        eq(s.rpPlaces.panelView().npcs.informant.using, 'config')
+        eq(W.ask(6, 'placeRemove', { id = id }).ok, true)
+        eq(W.ask(6, 'placeRemove', { id = id }).ok, false, 'gone')
+        eq(kind(W.ask(6, 'placeList', {}).data, 'informant').using, 'config')
         s.audit.flush()
         truthy(#s.storage.auditByAction('rp_place_set', 5) >= 1, 'on the record')
     end)

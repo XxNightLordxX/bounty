@@ -393,8 +393,6 @@ function orgOn(extra) {
         grants: { M1: { by: 'staff' } }, denies: {}, limits: { maxAtOnce: 2 }, held: {} }
     ],
     ceiling: { role: { 3: { M1: 'allow' } }, member: { m1_1111: { C7: 'deny' } } },
-    spots: [{ id: 'hitman:office:1', kind: 'office', label: 'Back room ' + XSS, x: 10.5, y: -20.25, z: 30, heading: 90,
-      radius: 2, blip: true, enabled: true }],
     cuts: { payout: 10, stake: 0, buyout: 0, byRole: { 1: 5 }, byMember: {} },
     limits: { MaxMembers: 30, HireRadius: 3, WithdrawMax: 5000, NoticeMaxLength: 400, TotalCutCapPercent: 40,
       CutMaxPercent: 25, StakeCutMaxPercent: 20, BuyoutCutMaxPercent: 20 },
@@ -403,6 +401,44 @@ function orgOn(extra) {
     applications: [{ id: 'hitman:app:1', name: 'Rook ' + XSS, body: 'I am quiet ' + XSS, at: NOW - 300 }],
     powers: POWERS, warnings: [], layout: { labels: { members: 'Crew' }, hidden: { funds: [1] } }
   }, extra || {}) };
+}
+
+/** placeList as server/places.lua answers it: every kind, with its rows. */
+function placesView(opts) {
+  opts = opts || {};
+  const ORG = { label: true, radius: true, blip: true, enabled: true };
+  const orgOff = opts.org === false ? 'Its places (boss office, sign-up and meeting spots) are set here once the '
+    + 'organisation is on.' : null;
+  function org(id, label, one, icon, rows, single) {
+    return { id: id, group: 'org', label: label, one: one, icon: icon, fields: ORG, labelMax: 64, single: !!single,
+      radius: { min: 0.5, max: 50, default: 2 }, off: orgOff, switch: 'Organisation.Enabled', rows: orgOff ? [] : rows };
+  }
+  const npc = opts.npc || { enabled: false, rows: [] };
+  const npcOff = npc.enabled ? null : 'Turn on Roleplay.NpcPlaces (Switches) to place the broker and informant from here.';
+  function rp(id, label, rows, defaults, key) {
+    return { id: id, group: 'npc', label: label, one: id + ' place', icon: 'user-secret',
+      fields: { label: true, enabled: true }, labelMax: 40, labelOptional: true, reset: true, max: 20, off: npcOff,
+      switch: 'Roleplay.NpcPlaces.Enabled', rows: rows, defaults: defaults, on: true,
+      using: rows.length && npc.enabled ? 'panel' : 'config', key: key };
+  }
+  const dp = opts.disposal || {};
+  function disposal(id, label, one, icon, rows) {
+    return { id: id, group: 'disposal', label: label, one: one, icon: icon, fields: {}, single: true, max: 1,
+      rows: rows, defaults: [], on: true, switch: 'Disposal.Enabled', using: rows.length ? 'panel' : 'config',
+      note: 'Body disposal cannot start a step until both are set.' };
+  }
+  return { ok: true, data: { readable: true, kinds: [
+    org('office', 'Boss office', 'boss office', 'building', [{ id: 'hitman:office:1', kind: 'office',
+      label: 'Back room ' + XSS, x: 10.5, y: -20.25, z: 30, heading: 90, radius: 2, blip: true, enabled: true }], true),
+    org('signup', 'Sign-up spots', 'sign-up spot', 'clipboard', []),
+    org('meeting', 'Meeting and handover spots', 'meeting spot', 'handshake', []),
+    org('npc', 'NPC spots', 'NPC spot', 'user-tie', []),
+    org('place', 'Other organisation places', 'place', 'location-dot', []),
+    rp('broker', 'Broker NPC', npc.rows || [], [{ x: -1212.4, y: -1500.2, z: 4.4, h: 90 }], 'Roleplay.Rumours.Locations'),
+    rp('informant', 'Informant NPC', [], [], 'Roleplay.InformantNpc.Locations'),
+    disposal('disposal_vehicle', 'Disposal vehicle spawn', 'the vehicle spawn', 'truck', dp.vehicle || []),
+    disposal('disposal_drop', 'Body drop-off', 'the drop-off', 'flag-checkered', dp.drop || [])
+  ] } };
 }
 
 function standardServer(extra) {
@@ -4709,7 +4745,8 @@ async function main() {
 
   /* ---- the roleplay features (Config.Roleplay) ---- */
   await (async function () {
-    const places = { key: 'Roleplay.Rumours.Locations', category: 'rules-limits', group: 'Roleplay: Rumours and broker',
+    const places = { key: 'Roleplay.Rumours.Locations', place: 'point', category: 'rules-limits',
+      group: 'Roleplay: Rumours and broker',
       label: 'Broker NPC places', kind: 'list', whole: true, live: true, inflight: 'Every game is told at once.',
       value: ['-1171.0, -1572.5, 4.66, 125.0'], default: [], source: 'config' };
     const lazy = { id: 'rv00000010', kind: 'low_effort_reason', about: 'a contract was placed or edited with a low-effort reason',
@@ -4842,7 +4879,7 @@ async function main() {
 
   /* ---- informant fairness (Config.Improvements) ---- */
   await (async function () {
-    const zones = { key: 'Improvements.TipSafeZones.Zones', category: 'rules-targeting',
+    const zones = { key: 'Improvements.TipSafeZones.Zones', place: 'zone', category: 'rules-targeting',
       group: 'Improvements: Tip safe zones', label: 'Safe zones (x, y, radius, name)', kind: 'list',
       whole: true, live: true, inflight: 'Read each time it is used.', value: [], default: [],
       source: 'config' };
@@ -5698,13 +5735,13 @@ async function main() {
     view.data.limits.push({ key: 'Organisation.Limits.MaxMembers', category: 'organisation',
       group: 'Organisation: Boss limits', area: 'organisation', label: 'Members at most', kind: 'number',
       integer: true, min: 1, max: 500, live: true, value: 30, default: 30, source: 'config' });
-    view.data.limits.push({ key: 'Roleplay.Rumours.Locations', category: 'rules-limits',
+    view.data.limits.push({ key: 'Roleplay.Rumours.Locations', place: 'point', category: 'rules-limits',
       group: 'Roleplay: Rumours and broker', area: 'extras', label: 'Broker NPC places', kind: 'list', whole: true,
       live: true, value: [], default: [], source: 'config' });
-    view.data.limits.push({ key: 'Limits.JailZone.x', category: 'rules-limits', group: 'Contract limits',
+    view.data.limits.push({ key: 'Limits.JailZone.x', place: 'jail', category: 'rules-limits', group: 'Contract limits',
       area: 'placing', label: 'Prison grounds centre, x', kind: 'number', min: -10000, max: 10000, live: true,
       value: 1700, default: 1700, source: 'config' });
-    view.data.limits.push({ key: 'Limits.JailZone.y', category: 'rules-limits', group: 'Contract limits',
+    view.data.limits.push({ key: 'Limits.JailZone.y', place: 'jail', category: 'rules-limits', group: 'Contract limits',
       area: 'placing', label: 'Prison grounds centre, y', kind: 'number', min: -10000, max: 10000, live: true,
       value: 2600, default: 2600, source: 'config' });
     return view;
@@ -5719,12 +5756,13 @@ async function main() {
         return { ok: true, data: { rows: [{ ts: NOW - 30, action: data.action || 'org_grant', by: 'a staff member',
           detail: { subject: 'role', id: '3', power: 'M2', before: 'off', after: 'allow', note: XSS } }] } };
       },
-      orgMyPosition: { ok: true, data: { x: 123.456, y: -654.321, z: 30.04, heading: 182.6 } }
+      placeList: placesView(),
+      placeMyPosition: { ok: true, data: { x: 123.456, y: -654.321, z: 30.04, heading: 182.6 } }
     }, extra || {}));
     ['orgSetup', 'orgRename', 'orgLayout', 'orgNotice', 'orgRoleSet', 'orgRoleRemove', 'orgRolePowers',
       'orgMemberHire', 'orgMemberRole', 'orgMemberFire', 'orgMemberSuspend', 'orgMemberLimits', 'orgMemberOverride',
       'bossPermsSet', 'bossPermsRevokeAll', 'bossLimits', 'bossOfficeRule', 'orgCuts', 'orgFundsMove', 'orgAccess',
-      'orgPick', 'orgLocationSet', 'orgLocationRemove', 'orgApplication', 'orgFundsBackend'].forEach(function (op) {
+      'orgPick', 'placeSet', 'placeRemove', 'orgApplication', 'orgFundsBackend'].forEach(function (op) {
       if (server[op] === undefined) server[op] = { ok: true, message: op + ' done.' };
     });
     return server;
@@ -6419,7 +6457,8 @@ async function main() {
       has(app.main(), 'Boss office');
       has(app.main(), 'Back room ' + XSS);
       has(app.main(), '10.5, -20.2, 30, 90');
-      has(app.main(), 'No sign-up spot yet. Stand there in game and press Use my position.');
+      has(app.main(), 'Sign-up spots');
+      has(app.main(), 'None set here.');
       truthy(app.byId('st-row-Roleplay.Rumours.Locations'), 'the broker\\\'s places');
       truthy(app.byId('st-row-Limits.JailZone.x'), 'and the prison zone');
     });
@@ -6430,7 +6469,7 @@ async function main() {
     await settled();
     const bind = function (b) { return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === b; })[0]; };
     it('Use my position asks the server where you stand, and fills the row', function () {
-      eq(app.last('orgMyPosition').op, 'orgMyPosition');
+      eq(app.last('placeMyPosition').op, 'placeMyPosition');
       eq(bind('loc.signup.x').value, '123.5');
       eq(bind('loc.signup.y').value, '-654.3');
       eq(bind('loc.signup.h').value, '183');
@@ -6439,7 +6478,7 @@ async function main() {
     app.click(kind('loc-save', 'signup'));
     it('a spot with no name is refused before it is sent', function () {
       has(app.main(), 'Give the place a name.');
-      eq(app.requests('orgLocationSet').length, 0);
+      eq(app.requests('placeSet').length, 0);
     });
     app.type(bind('loc.signup.label'), 'Pier board');
     const save = kind('loc-save', 'signup');
@@ -6448,7 +6487,7 @@ async function main() {
     app.click(save);
     await settled();
     it('and sends the typed figures', function () {
-      eq(app.last('orgLocationSet').data, { kind: 'signup', label: 'Pier board', blip: false, enabled: true,
+      eq(app.last('placeSet').data, { kind: 'signup', label: 'Pier board', blip: false, enabled: true,
         x: 123.5, y: -654.3, z: 30, heading: 183 });
     });
     app.type(bind('loc.meeting.label'), 'Docks');
@@ -6457,14 +6496,14 @@ async function main() {
     app.click(here);
     await settled();
     it('Save where I stand lets the server read the position itself', function () {
-      eq(app.last('orgLocationSet').data, { kind: 'meeting', label: 'Docks', blip: false, enabled: true, here: true });
+      eq(app.last('placeSet').data, { kind: 'meeting', label: 'Docks', blip: false, enabled: true, here: true });
     });
     const remove = app.$$('[data-act="loc-remove"]')[0];
     app.click(remove);
     it('Remove arms, naming the place', function () { has(app.text(remove), 'Click again: remove Back room ' + XSS); });
     app.click(remove);
     await settled();
-    it('and removes it by its id', function () { eq(app.last('orgLocationRemove').data, { id: 'hitman:office:1' }); });
+    it('and removes it by its id', function () { eq(app.last('placeRemove').data, { id: 'hitman:office:1' }); });
     app.click(app.button('Use my position for a new line'));
     await settled();
     it('a list of places gets a line from where you stand, to add and save as any line', function () {
@@ -6477,6 +6516,44 @@ async function main() {
       eq(bind('st.Limits.JailZone.y').value, '-654.3');
     });
     clean(app, 'locations');
+  })();
+
+  /* ---- Locations is drawn from the kinds the server sends (placeList), and the settings it marks ---- */
+  await (async function () {
+    const view = placesView();
+    view.data.kinds.push({ id: 'stash', group: 'org', label: 'Stash ' + XSS, one: 'stash', icon: 'box',
+      fields: { label: true }, labelMax: 20, rows: [] });
+    const settings = orgSettings(true);
+    settings.data.limits.push({ key: 'Roleplay.WitnessHeat.Areas', place: 'area', category: 'rules-limits',
+      group: 'Roleplay: Witness heat', area: 'extras', label: 'Areas, as Name@x,y', kind: 'list', whole: true,
+      live: true, value: [], default: [], source: 'config' });
+    const app = boot(orgServer({ placeList: view, settings: settings }));
+    app.open(FULL);
+    await settled();
+    app.nav('locations');
+    await settled();
+    const found = [];
+    markupFrom(app, 'locations', found);
+    it('KINDS: a kind the server adds is drawn with its own fields, escaped', function () {
+      eq(found, []);
+      has(app.main(), 'Stash ' + XSS);
+      truthy(app.$('[data-bind="loc.stash.label"]'), 'its name field');
+      falsy(app.$('[data-bind="loc.stash.r"]'), 'no radius it does not take');
+      eq(app.requests('placeList').length, 1, 'one read for every kind');
+      eq(app.requests('orgGet').length, 0, 'not the organisation\'s');
+    });
+    it('KINDS: a setting the server marks as a place is edited here, with Use my position', function () {
+      truthy(app.byId('st-row-Roleplay.WitnessHeat.Areas'));
+    });
+    const bind = function (b) { return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === b; })[0]; };
+    app.click(app.$$('[data-act="loc-fill"]').filter(function (b) {
+      return b.getAttribute('data-key') === 'Roleplay.WitnessHeat.Areas';
+    })[0]);
+    await settled();
+    it('KINDS: and its line is filled in the form its kind takes', function () {
+      eq(bind('stl.Roleplay.WitnessHeat.Areas').value, 'New area@123.5,-654.3');
+    });
+    clean(app, 'locations kinds');
   })();
 
   /* ---- read-only staff: every new write is disabled, and sends nothing ---- */
@@ -6910,68 +6987,65 @@ async function main() {
 
   /* ---- Locations: the broker and informant placed from the panel (Config.Roleplay.NpcPlaces) ---- */
   await (async function () {
-    const view = function (enabled, rows) {
-      return { ok: true, data: { enabled: enabled, readable: true, npcs: {
-        broker: { on: true, using: rows.length ? 'panel' : 'config', rows: rows,
-          defaults: [{ x: -1212.4, y: -1500.2, z: 4.4, h: 90 }], key: 'Roleplay.Rumours.Locations' },
-        informant: { on: false, using: 'config', rows: [], defaults: [], key: 'Roleplay.InformantNpc.Locations' } } } };
-    };
-    const off = boot(standardServer({ orgGet: orgOff(), rpPlaceList: view(false, []) }));
+    const off = boot(standardServer({ orgGet: orgOff(), placeList: placesView({ org: false }) }));
     off.open(ADMIN);
     await settled();
     off.nav('locations');
     await settled();
     it('RPP: Locations lists the broker and informant, off as shipped, with the config defaults', function () {
-      eq(off.requests('rpPlaceList').length, 1);
+      eq(off.requests('placeList').length, 1);
       const text = off.main();
       has(text, 'Broker and informant places');
-      has(text, 'Placed from the panel is off');
-      has(text, 'Defaults (Locations list): -1212.4, -1500.2, 4.4');
-      eq(off.$$('[data-act="rpp-here"]').length, 0, 'nothing to place while off');
+      has(text, 'Turn on Roleplay.NpcPlaces (Switches)');
+      has(text, 'Defaults (config): -1212.4, -1500.2, 4.4');
+      eq(off.$$('[data-act="loc-here"]').filter(function (b) {
+        return b.getAttribute('data-value') === 'broker';
+      }).length, 0, 'nothing to place while off');
     });
     clean(off, 'npc places off');
 
     const placed = [{ id: 'rpplace-broker-1', label: 'Pier', x: 1.5, y: 2, z: 3, heading: 90, enabled: true }];
-    const app = boot(standardServer({ orgGet: orgOff(), rpPlaceList: view(true, placed),
-      rpPlaceSet: { ok: true, message: 'Place saved.' }, rpPlaceRemove: { ok: true, message: 'Place removed.' },
-      rpPlaceReset: { ok: true, message: 'The config list applies again.' } }));
+    const app = boot(standardServer({ orgGet: orgOff(),
+      placeList: placesView({ org: false, npc: { enabled: true, rows: placed } }),
+      placeSet: { ok: true, message: 'Place saved.' }, placeRemove: { ok: true, message: 'Place removed.' },
+      placeReset: { ok: true, message: 'The config list applies again.' } }));
     app.open(ADMIN);
     await settled();
     app.nav('locations');
     await settled();
     it('RPP: on, each NPC shows the places set here and which list it stands at', function () {
       const text = app.main();
-      has(text, 'Standing at the places set here.');
+      has(text, 'standing at the places set here.');
       has(text, 'Pier');
       has(text, '1.5, 2, 3, 90');
     });
     const by = function (act, k) {
       return app.$$('[data-act="' + act + '"]').filter(function (b) { return b.getAttribute('data-value') === k; })[0];
     };
-    const here = by('rpp-here', 'informant');
+    const here = by('loc-here', 'informant');
     app.click(here);
     it('RPP: Save where I stand arms first, sending nothing', function () {
-      eq(app.requests('rpPlaceSet').length, 0);
-      has(app.text(here), 'Click again: place the informant where you stand');
+      eq(app.requests('placeSet').length, 0);
+      has(app.text(here), 'Click again: save informant place where you stand');
     });
     app.click(here);
     await settled();
-    it('RPP: and then sends only the NPC and here: the server reads the position', function () {
-      eq(app.last('rpPlaceSet').data, { npc: 'informant', here: true });
+    it('RPP: and then sends only the kind and here: the server reads the position, a name may be left out', function () {
+      eq(app.last('placeSet').data, { kind: 'informant', enabled: true, here: true });
     });
-    const rm = app.$$('[data-act="rpp-remove"]')[0];
+    const rm = by('loc-remove', 'broker');
     app.click(rm);
     app.click(rm);
     await settled();
     it('RPP: Remove takes two clicks and names the place', function () {
-      eq(app.last('rpPlaceRemove').data, { id: 'rpplace-broker-1' });
+      eq(app.last('placeRemove').data, { id: 'rpplace-broker-1' });
     });
-    const reset = by('rpp-reset', 'broker');
+    const reset = by('loc-reset', 'broker');
     app.click(reset);
     app.click(reset);
     await settled();
     it('RPP: Reset to config takes two clicks', function () {
-      eq(app.last('rpPlaceReset').data, { npc: 'broker' });
+      eq(app.last('placeReset').data, { kind: 'broker' });
     });
     clean(app, 'npc places on');
   })();
@@ -6986,9 +7060,11 @@ async function main() {
           secondsLeft: 1510, held: true, vehicle: true, respawns: 1, spent: 290 }] } },
       disposalSkip: { ok: true, message: 'Finished: the payout is being handed over.' },
       disposalRespawn: { ok: true, message: 'The vehicle is back at the spawn spot.' },
-      disposalMyPosition: { ok: true, data: { x: 321.04, y: 654, z: 31, heading: 182 } },
-      disposalSpotSet: { ok: true, message: 'Spot saved.' },
-      disposalSpotClear: { ok: true, message: 'Spot cleared.' }
+      placeList: placesView({ org: false, disposal: { vehicle: [{ id: 'place:disposal_vehicle:1', kind: 'disposal_vehicle',
+        label: 'Disposal vehicle spawn', x: 1.5, y: 2, z: 3, heading: 90, enabled: true }] } }),
+      placeMyPosition: { ok: true, data: { x: 321.04, y: 654, z: 31, heading: 182 } },
+      placeSet: { ok: true, message: 'Place saved.' },
+      placeRemove: { ok: true, message: 'Place removed.' }
     }, extra || {}));
     return server;
   }
@@ -7070,8 +7146,8 @@ async function main() {
     await settled();
     old.nav('locations');
     await settled();
-    it('DP: a server without disposal: nothing on Contracts, and Locations says it has none', function () {
-      has(old.main(), 'This server has no body disposal.');
+    it('DP: a server without disposal: nothing on Contracts, and Locations says it has no places', function () {
+      has(old.main(), 'This server has no panel-set places.');
       eq(old.$$('[data-act="dp-skip"]').length, 0);
     });
     clean(old, 'no disposal');
@@ -7087,51 +7163,51 @@ async function main() {
       const text = app.main();
       has(text, 'Disposal vehicle spawn');
       has(text, 'Body drop-off');
-      has(text, 'Now: 1.5, 2, 3, heading 90');
-      has(text, 'Not set: body disposal cannot start a step until it is.');
+      has(text, '1.5, 2, 3, 90');
+      has(text, 'Not set.');
+      has(text, 'Body disposal cannot start a step until both are set.');
     });
     const spotButtons = function (act, k) {
       return app.$$('[data-act="' + act + '"]').filter(function (b) { return b.getAttribute('data-value') === k; })[0];
     };
-    app.click(spotButtons('dsp-save', 'drop'));
+    app.click(spotButtons('loc-save', 'disposal_drop'));
     await settled();
     it('DP: Save with no figures sends nothing', function () {
-      eq(app.requests('disposalSpotSet').length, 0);
+      eq(app.requests('placeSet').length, 0);
       has(app.main(), 'Give x, y and z as numbers');
     });
-    app.click(spotButtons('dsp-mypos', 'drop'));
+    app.click(spotButtons('loc-mypos', 'disposal_drop'));
     await settled();
     it('DP: Use my position asks the server where staff stand and fills the drop-off', function () {
-      eq(app.requests('disposalMyPosition').length, 1);
-      eq(app.requests('orgMyPosition').length, 0, 'the disposal\'s own read');
-      eq(app.$('[data-bind="dsp.drop.x"]').value, '321');
-      eq(app.$('[data-bind="dsp.drop.h"]').value, '182');
+      eq(app.requests('placeMyPosition').length, 1, 'the one read for every kind');
+      eq(app.$('[data-bind="loc.disposal_drop.x"]').value, '321');
+      eq(app.$('[data-bind="loc.disposal_drop.h"]').value, '182');
     });
-    const save = spotButtons('dsp-save', 'drop');
+    const save = spotButtons('loc-save', 'disposal_drop');
     app.click(save);
     it('DP: Save arms naming the spot and the point', function () {
-      eq(app.requests('disposalSpotSet').length, 0);
-      has(app.text(save), 'Click again: save the drop-off at 321, 654, 31');
+      eq(app.requests('placeSet').length, 0);
+      has(app.text(save), 'Click again: save the drop-off at 321, 654');
     });
     app.click(save);
     await settled();
     it('DP: and sends the spot with its figures', function () {
-      eq(app.last('disposalSpotSet').data, { spot: 'drop', x: 321, y: 654, z: 31, heading: 182 });
+      eq(app.last('placeSet').data, { kind: 'disposal_drop', x: 321, y: 654, z: 31, heading: 182 });
     });
-    const here = spotButtons('dsp-here', 'vehicle');
+    const here = spotButtons('loc-here', 'disposal_vehicle');
     app.click(here);
     it('DP: Save where I stand arms naming the spot', function () {
       has(app.text(here), 'Click again: save the vehicle spawn where you stand');
     });
     app.click(here);
     await settled();
-    it('DP: and sends here', function () { eq(app.last('disposalSpotSet').data, { spot: 'vehicle', here: true }); });
-    const clear = spotButtons('dsp-clear', 'vehicle');
+    it('DP: and sends here', function () { eq(app.last('placeSet').data, { kind: 'disposal_vehicle', here: true }); });
+    const clear = spotButtons('loc-remove', 'disposal_vehicle');
     app.click(clear);
     app.click(clear);
     await settled();
     it('DP: Clear takes two clicks and sends the spot', function () {
-      eq(app.last('disposalSpotClear').data, { spot: 'vehicle' });
+      eq(app.last('placeRemove').data, { id: 'place:disposal_vehicle:1' });
     });
     clean(app, 'disposal spots');
 
@@ -7142,10 +7218,10 @@ async function main() {
     await settled();
     it('DP: a reader sees the spots and every disposal write disabled', function () {
       has(reader.main(), 'Disposal vehicle spawn');
-      ['dsp-save', 'dsp-here', 'dsp-clear'].forEach(function (act) {
+      ['loc-save', 'loc-here', 'loc-remove'].forEach(function (act) {
         reader.$$('[data-act="' + act + '"]').forEach(function (b) { truthy(b.disabled, act + ' disabled'); });
       });
-      truthy(!reader.$$('[data-act="dsp-mypos"]')[0].disabled, 'Use my position is a read');
+      truthy(!reader.$$('[data-act="loc-mypos"]')[0].disabled, 'Use my position is a read');
     });
     reader.nav('contracts');
     await settled();

@@ -448,6 +448,7 @@ function _G.newStack()
     end
     package.loaded['server.missionsteps'] = nil
     package.loaded['server.disposal'] = nil
+    package.loaded['server.places'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -667,7 +668,7 @@ function _G.newStack()
     alerts.init(wiring)
     require('server.org.boss_ops').register(wiring)
     require('server.org.staff_ops').register(wiring)
-    rpPlaces.addOps(panel)
+    require('server.places').addOps(panel)
     require('server.staff_reward').register(wiring)
     require('server.staff_reassign').register(wiring)
     org.boot()

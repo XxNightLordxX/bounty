@@ -26,6 +26,7 @@ local Engine = CrimsonBoot.require('server.org.engine')
 local Jobs = CrimsonBoot.require('server.org.jobs')
 local Funds = CrimsonBoot.require('server.org.funds')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Places = CrimsonBoot.require('server.places')
 
 local Org = {}
 
@@ -258,7 +259,8 @@ local function load()
             State.ceiling.member[g.subject_id][g.power] = g.state
         end
     end
-    for _, l in ipairs(storage.readOrgRows('locations', id) or {}) do State.locations[l.id] = l end
+    -- Its spots are kept by the one registry of map spots (server/places.lua).
+    State.locations = Places.owned(id)
     for _, a in ipairs(storage.readOrgRows('applications', id) or {}) do
         if a.state == 'open' then State.applications[a.id] = a end
     end
@@ -268,6 +270,8 @@ local function load()
     end
     return State
 end
+
+local registerSpots -- LOCATIONS, below
 
 function Org.init(d)
     deps = d
@@ -280,6 +284,8 @@ function Org.init(d)
     Paying, PaidHere = {}, {}
     Jobs.reset()
     Funds.init({ storage = d.storage, audit = d.audit })
+    Places.attach(d.storage)
+    registerSpots()
     -- The money path's two hooks, which read one switch while it is off.
     if d.escrow then
         d.escrow.orgCut = function(recipientCid, line) return Org.cutFor(recipientCid, line) end
@@ -534,8 +540,8 @@ function Org.inOffice(org, src)
         if loc.kind == 'office' and loc.enabled ~= false then
             at = at or Geo.position(src)
             if not at then return false end
-            local radius = math.max(tonumber(Config.Organisation.OfficeRadius) or 5, (loc.radius or 0) / 10)
-            if Geo.near(at, { x = loc.x / 10, y = loc.y / 10, z = loc.z / 10 }, radius) then return true end
+            local radius = math.max(tonumber(Config.Organisation.OfficeRadius) or 5, loc.radius or 0)
+            if Geo.near(at, loc, radius) then return true end
         end
     end
     return false
@@ -2284,32 +2290,28 @@ end
 --                              LOCATIONS
 -- ============================================================================
 
---- The kinds of place, who may set each, and how many there may be.
+--- The kinds of place, who may set each, and how many there may be. Each
+--- is a kind of the one registry of map spots (server/places.lua), which
+--- keeps them (owner: the organisation's id), reads where the actor stands
+--- and checks what is set; the rules below stay the organisation's.
 Org.SPOTS = {
-    office = { power = 'L1', max = function() return 1 end, everyone = false },
-    signup = { power = 'L2', max = function(org) return Powers.limit(org, 'MaxSignupSpots') end, everyone = true },
-    meeting = { power = 'L3', max = function(org) return Powers.limit(org, 'MaxMeetingSpots') end, everyone = false },
-    npc = { power = nil, max = function() return 20 end, everyone = false },
-    place = { power = nil, max = function() return 50 end, everyone = false },
+    office = { power = 'L1', max = function() return 1 end, everyone = false,
+        label = 'Boss office', one = 'boss office', icon = 'building' },
+    signup = { power = 'L2', max = function(org) return Powers.limit(org, 'MaxSignupSpots') end, everyone = true,
+        label = 'Sign-up spots', one = 'sign-up spot', icon = 'clipboard' },
+    meeting = { power = 'L3', max = function(org) return Powers.limit(org, 'MaxMeetingSpots') end, everyone = false,
+        label = 'Meeting and handover spots', one = 'meeting spot', icon = 'handshake' },
+    npc = { power = nil, max = function() return 20 end, everyone = false,
+        label = 'NPC spots', one = 'NPC spot', icon = 'user-tie' },
+    place = { power = nil, max = function() return 50 end, everyone = false,
+        label = 'Other organisation places', one = 'place', icon = 'location-dot' },
 }
-
-local function count(org, kind)
-    local n = 0
-    for _, l in pairs(org.locations) do if l.kind == kind then n = n + 1 end end
-    return n
-end
+Org.SPOT_ORDER = { 'office', 'signup', 'meeting', 'npc', 'place' }
 
 --- The server's own position for a player: coords and heading.
 ---@return table|nil { x, y, z, h }
 function Org.positionOf(src)
-    src = tonumber(src)
-    if not src or src <= 0 then return nil end
-    local at = Geo.position(src)
-    if type(at) ~= 'table' and type(at) ~= 'vector3' and type(at) ~= 'userdata' then return nil end
-    local _, h = pcall(function() return GetEntityHeading(GetPlayerPed(src)) end)
-    local x, y, z = Geo.finite(at.x), Geo.finite(at.y), Geo.finite(at.z)
-    if not x or not y or not z or (x == 0 and y == 0 and z == 0) then return nil end
-    return { x = x, y = y, z = z, h = Geo.finite(h) or 0 }
+    return Places.positionOf(src)
 end
 
 --- Inside one of the staff safe zones (Config.Improvements.TipSafeZones.Zones,
@@ -2324,103 +2326,117 @@ local function inSafeZone(x, y)
     return false
 end
 
-local BOUNDS = { minX = -4500, maxX = 6000, minY = -6500, maxY = 8500, minZ = -200, maxZ = 2000 }
+--- The registry's refusals in the organisation's words.
+local FROM_PLACES = {
+    invalid_input = ERR.INVALID, not_found = ERR.NOT_FOUND, limit_reached = ERR.LIMIT,
+    feature_off = ERR.OFF, store_unreadable = ERR.REFUSED,
+}
 
---- Place or move a spot. Staff: any kind, from their own position (`here`)
---- or typed coordinates. A boss: the office (L1, near staff's point), a
+--- Register the five kinds with the registry. Staff: any kind, from their
+--- own position (`here`) or typed coordinates, up to 20 of a kind (50 other
+--- places, one office). A boss: the office (L1, near staff's point), a
 --- sign-up spot (L2) or a meeting spot (L3), from where they stand only,
---- once per LocationCooldownMinutes, never in a staff safe zone.
----@param spec table { kind, id?, label?, radius?, blip?, enabled?, x?, y?, z?, heading? }
+--- once per LocationCooldownMinutes, within the limits, never in a staff
+--- safe zone. Audited org_location_set / org_location_removed.
+registerSpots = function()
+    for _, kind in ipairs(Org.SPOT_ORDER) do
+        local def = Org.SPOTS[kind]
+        local says = {}
+        for code, err in pairs(FROM_PLACES) do says[code] = MESSAGES[err] end
+        says.no_position = 'The server cannot see where you stand right now.'
+        for code, text in pairs(MESSAGES) do says[code] = text end
+        Places.kind(kind, {
+            group = 'org', label = def.label, one = def.one, icon = def.icon,
+            fields = { label = true, radius = true, blip = true, enabled = true }, labelMax = 64,
+            defaultLabel = kind, single = kind == 'office', radius = { min = 0.5, max = 50, default = 2.0 },
+            owner = function() return State and Org.current() and State.id or nil end,
+            ready = function()
+                if Org.current() then return nil end
+                if Feature.on('Organisation') then
+                    return ERR.OFF, { message = 'The organisation is on and not read yet: Hitman organisation, Setup.' }
+                end
+                return ERR.OFF, { message = 'Its places (boss office, sign-up and meeting spots) are set here once '
+                    .. 'the organisation is on.' }
+            end,
+            allow = function(who)
+                if who.staff then return nil end
+                if not def.power then return ERR.NO_POWER end
+                return Org.authorize(State, who, def.power)
+            end,
+            max = function(who)
+                if who.staff then return math.max(def.max(State), kind == 'office' and 1 or 20) end
+                return def.max(State)
+            end,
+            rules = function(who, at, existing)
+                if who.staff then return nil end
+                if inSafeZone(at.x, at.y) then
+                    return ERR.RULE, { message = 'Not here: this is a safe zone staff keep clear of organisation spots.' }
+                end
+                local moved = State.settings.moves[kind .. ':' .. who.cid]
+                if moved and now() - moved < Powers.limit(State, 'LocationCooldownMinutes') * 60 then
+                    return ERR.COOLDOWN
+                end
+                if kind == 'office' then
+                    local anchor = existing and existing.anchor
+                    if type(anchor) ~= 'table' then return ERR.LOCKED end
+                    local reach = Powers.limit(State, 'OfficeMoveMetres')
+                    if (at.x - anchor.x) ^ 2 + (at.y - anchor.y) ^ 2 > reach * reach then return ERR.BOUNDS end
+                end
+            end,
+            anchor = function(who, at)
+                if who.staff and kind == 'office' then return { x = at.x, y = at.y } end
+            end,
+            after = function(who, row, existing)
+                if not who.staff then
+                    State.settings.moves[kind .. ':' .. who.cid] = now()
+                    saveOrgRow()
+                end
+                record('org_location_set', who, { kind = kind, id = row.id, x = row.x, y = row.y, z = row.z,
+                    moved = existing ~= nil or nil })
+                Org.pushSpotsAll()
+            end,
+            mayRemove = function(who)
+                if who.staff then return nil end
+                if not def.power or kind == 'office' then return ERR.NO_POWER end
+                return Org.authorize(State, who, def.power)
+            end,
+            removed = function(who, rows)
+                for _, row in ipairs(rows) do record('org_location_removed', who, { kind = kind, id = row.id }) end
+                Org.pushSpotsAll()
+            end,
+            says = says,
+            view = function() return { switch = 'Organisation.Enabled' } end,
+        })
+    end
+end
+
+local function fromPlaces(ok, err, row, extra)
+    if ok then return true, nil, row end
+    return fail(FROM_PLACES[err] or err, extra)
+end
+
+--- Place or move a spot (the boss menu's Place here; the panel's placeSet
+--- reaches the registry itself). See registerSpots for who may set what.
+---@param spec table { kind, id?, label?, radius?, blip?, enabled?, here?, x?, y?, z?, heading? }
 function Org.placeSpot(who, spec)
-    local org = Org.current()
-    if not org then return fail(ERR.OFF) end
-    if type(spec) ~= 'table' then return fail(ERR.INVALID) end
-    local kind = type(spec.kind) == 'string' and Org.SPOTS[spec.kind] and spec.kind or nil
-    if not kind then return fail(ERR.INVALID) end
-    local def = Org.SPOTS[kind]
-    if not who.staff then
-        if not def.power then return fail(ERR.NO_POWER) end
-        local err = Org.authorize(org, who, def.power)
-        if err then return fail(err) end
-    end
-    local existing = spec.id ~= nil and (type(spec.id) == 'string' and org.locations[spec.id:sub(1, 48)]) or nil
-    if spec.id ~= nil and (not existing or existing.kind ~= kind) then return fail(ERR.NOT_FOUND) end
-    if kind == 'office' and not existing then
-        for _, l in pairs(org.locations) do if l.kind == 'office' then existing = l end end
-    end
-    local at
-    if spec.here or not who.staff then
-        at = Org.positionOf(who.source)
-        if not at then return fail(ERR.RULE, { message = 'The server cannot see where you stand right now.' }) end
-    else
-        local x, y, z = Geo.finite(spec.x), Geo.finite(spec.y), Geo.finite(spec.z)
-        if not x or not y or not z then return fail(ERR.INVALID) end
-        at = { x = x, y = y, z = z, h = Geo.finite(spec.heading) or 0 }
-    end
-    if at.x ~= at.x or at.x < BOUNDS.minX or at.x > BOUNDS.maxX or at.y < BOUNDS.minY or at.y > BOUNDS.maxY
-        or at.z < BOUNDS.minZ or at.z > BOUNDS.maxZ then
-        return fail(ERR.INVALID)
-    end
-    local radius = spec.radius == nil and (existing and existing.radius / 10 or 2.0) or tonumber(spec.radius)
-    if not radius or radius < 0.5 or radius > 50 then return fail(ERR.INVALID) end
-    local label = spec.label == nil and (existing and existing.label or kind) or cleanName(spec.label, 64)
-    if not label then return fail(ERR.INVALID) end
-    if not who.staff then
-        if inSafeZone(at.x, at.y) then
-            return fail(ERR.RULE, { message = 'Not here: this is a safe zone staff keep clear of organisation spots.' })
+    if not Org.current() then return fail(ERR.OFF) end
+    if type(spec) ~= 'table' or type(spec.kind) ~= 'string' or not Org.SPOTS[spec.kind] then return fail(ERR.INVALID) end
+    local ok, err, row, extra = Places.set(who, spec.kind, spec)
+    if not ok then
+        if err == 'no_position' then
+            return fail(ERR.RULE, { message = 'The server cannot see where you stand right now.' })
         end
-        local moved = org.settings.moves[kind .. ':' .. who.cid]
-        if moved and now() - moved < Powers.limit(org, 'LocationCooldownMinutes') * 60 then
-            return fail(ERR.COOLDOWN)
-        end
-        if not existing and count(org, kind) >= def.max(org) then return fail(ERR.LIMIT) end
-        if kind == 'office' then
-            local anchor = existing and existing.anchor
-            if type(anchor) ~= 'table' then return fail(ERR.LOCKED) end
-            local reach = Powers.limit(org, 'OfficeMoveMetres')
-            if (at.x - anchor.x) ^ 2 + (at.y - anchor.y) ^ 2 > reach * reach then return fail(ERR.BOUNDS) end
-        end
-    elseif not existing and count(org, kind) >= math.max(def.max(org), kind == 'office' and 1 or 20) then
-        return fail(ERR.LIMIT)
+        return fromPlaces(false, err, nil, extra)
     end
-    local id = existing and existing.id or ('%s:%s:%d:%d'):format(org.id, kind, now(), math.random(100, 999))
-    local loc = {
-        id = id:sub(1, 48), org_id = org.id, kind = kind, label = label,
-        x = math.floor(at.x * 10 + 0.5), y = math.floor(at.y * 10 + 0.5), z = math.floor(at.z * 10 + 0.5),
-        heading = math.floor((at.h or 0) % 360), radius = math.floor(radius * 10 + 0.5),
-        blip = spec.blip == nil and (existing and existing.blip or false) or spec.blip == true,
-        enabled = spec.enabled == nil and true or spec.enabled == true,
-        anchor = who.staff and kind == 'office' and { x = at.x, y = at.y } or (existing and existing.anchor) or nil,
-        by_cid = who.cid, updated_at = now(),
-    }
-    org.locations[loc.id] = loc
-    deps.storage.writeOrgRow('locations', loc)
-    if not who.staff then
-        org.settings.moves[kind .. ':' .. who.cid] = now()
-        saveOrgRow()
-    end
-    record('org_location_set', who, { kind = kind, id = loc.id, x = loc.x / 10, y = loc.y / 10, z = loc.z / 10,
-        moved = existing ~= nil or nil })
-    Org.pushSpotsAll()
-    return true, nil, { id = loc.id, x = at.x, y = at.y, z = at.z, h = at.h }
+    return true, nil, { id = row.id, x = row.x, y = row.y, z = row.z, h = row.h }
 end
 
 --- Remove a spot: staff any; a boss a sign-up (L2) or meeting (L3) spot.
 function Org.removeSpot(who, id)
-    local org = Org.current()
-    if not org then return fail(ERR.OFF) end
-    local loc = type(id) == 'string' and org.locations[id:sub(1, 48)]
-    if not loc then return fail(ERR.NOT_FOUND) end
-    if not who.staff then
-        local def = Org.SPOTS[loc.kind]
-        if not def or not def.power or loc.kind == 'office' then return fail(ERR.NO_POWER) end
-        local err = Org.authorize(org, who, def.power)
-        if err then return fail(err) end
-    end
-    org.locations[loc.id] = nil
-    deps.storage.deleteOrgRow('locations', loc.id)
-    record('org_location_removed', who, { kind = loc.kind, id = loc.id })
-    Org.pushSpotsAll()
+    if not Org.current() then return fail(ERR.OFF) end
+    if type(id) ~= 'string' then return fail(ERR.NOT_FOUND) end
+    local ok, err, _, extra = Places.remove(who, id:sub(1, 48), Org.SPOTS)
+    if not ok then return fromPlaces(false, err, nil, extra) end
     return true
 end
 
@@ -2435,8 +2451,8 @@ function Org.spotsFor(cid)
     for _, l in pairs(org.locations) do
         local def = Org.SPOTS[l.kind]
         if l.enabled ~= false and def and (def.everyone or member) then
-            out[#out + 1] = { id = l.id, kind = l.kind, label = l.label, x = l.x / 10, y = l.y / 10, z = l.z / 10,
-                h = l.heading or 0, radius = (l.radius or 20) / 10, blip = l.blip == true or nil }
+            out[#out + 1] = { id = l.id, kind = l.kind, label = l.label, x = l.x, y = l.y, z = l.z,
+                h = l.h or 0, radius = l.radius or 2.0, blip = l.blip == true or nil }
         end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
@@ -2470,8 +2486,7 @@ function Org.useSpot(src, id)
     local actor = deps.identity.resolve(src)
     if not loc or not actor then return end
     local at = Org.positionOf(src)
-    local r = (loc.radius or 20) / 10 + 2.0
-    if not at or (at.x - loc.x / 10) ^ 2 + (at.y - loc.y / 10) ^ 2 + (at.z - loc.z / 10) ^ 2 > r * r then return end
+    if not at or not Geo.near(at, loc, (loc.radius or 2.0) + 2.0) then return end
     local member = org.members[actor.cid]
     local text
     if loc.kind == 'signup' then
@@ -2492,8 +2507,7 @@ local function atSignup(org, src)
     if not at then return false end
     for _, l in pairs(org.locations) do
         if l.kind == 'signup' and l.enabled ~= false then
-            local r = (l.radius or 20) / 10 + 2.0
-            if (at.x - l.x / 10) ^ 2 + (at.y - l.y / 10) ^ 2 + (at.z - l.z / 10) ^ 2 <= r * r then return true end
+            if Geo.near(at, l, (l.radius or 2.0) + 2.0) then return true end
         end
     end
     return false
@@ -2844,12 +2858,6 @@ function Org.staffView(viewer)
     local ceiling = { role = {}, member = {} }
     for grade, cells in pairs(org.ceiling.role) do ceiling.role[tostring(grade)] = Util.copy(cells) end
     for cid, cells in pairs(org.ceiling.member) do ceiling.member[Org.refFor(viewer, cid)] = Util.copy(cells) end
-    local spots = {}
-    for _, l in pairs(org.locations) do
-        spots[#spots + 1] = { id = l.id, kind = l.kind, label = l.label, x = l.x / 10, y = l.y / 10, z = l.z / 10,
-            heading = l.heading, radius = (l.radius or 20) / 10, blip = l.blip, enabled = l.enabled ~= false }
-    end
-    table.sort(spots, function(a, b) return a.id < b.id end)
     local limits = {}
     for key in pairs(Powers.LIMIT_KEYS) do limits[key] = Powers.limit(org, key) end
     local officeStaff = type(org.settings.officeStaff) == 'table' and org.settings.officeStaff or Powers.officeDefaults()
@@ -2858,7 +2866,7 @@ function Org.staffView(viewer)
         enabled = true, loaded = true, job = org.job, label = org.label, type = org.jobType,
         requireJob = Config.Organisation.RequireJobToAccept == true,
         roles = roles and roles.rows or {}, members = members and members.rows or {}, ceiling = ceiling,
-        spots = spots, cuts = Util.copy(org.settings.cuts), limits = limits, officeStaff = officeStaff,
+        cuts = Util.copy(org.settings.cuts), limits = limits, officeStaff = officeStaff,
         officeBoss = org.settings.officeBoss, notice = org.settings.notice, access = org.settings.access,
         layout = org.settings.layout,
         balance = Funds.balance(org), bank = Funds.usesBank(), fundsBackend = Funds.backend(),

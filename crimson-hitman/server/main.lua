@@ -2201,9 +2201,9 @@ function StartCrimsonHitman()
         -- player brought in step where it does not.
         CrimsonBoot.require('server.org.boss_ops').register(modules)
         CrimsonBoot.require('server.org.staff_ops').register(modules)
-        -- The broker's and informant's places set from Locations
-        -- (Config.Roleplay.NpcPlaces).
-        rpPlaces.addOps(panel)
+        -- Every map spot set from Locations (server/places.lua): the
+        -- organisation's, the broker's and informant's, body disposal's.
+        CrimsonBoot.require('server.places').addOps(panel)
         -- The panel's Change reward and Reassign (README, Staff tools).
         CrimsonBoot.require('server.staff_reward').register(modules)
         CrimsonBoot.require('server.staff_reassign').register(modules)

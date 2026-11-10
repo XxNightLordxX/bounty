@@ -87,9 +87,10 @@ stops and prints the `ALTER TABLE` to run. The tables are `crimson_contracts`,
 `crimson_view_alerts`, `crimson_playtime`, `crimson_location_tips`,
 `crimson_freezes`, `crimson_contract_staff`, `crimson_staff_records`,
 `crimson_meta` and `crimson_rp_rows` (the roleplay and improvements rows,
-and each held exclusive contract's idle clocks), and the organisation's
+each held exclusive contract's idle clocks, and every map spot set in
+Locations), and the organisation's
 `crimson_orgs`, `crimson_org_roles`, `crimson_org_members`,
-`crimson_org_grants`, `crimson_org_locations`, `crimson_org_funds`,
+`crimson_org_grants`, `crimson_org_funds`,
 `crimson_org_splits` and `crimson_org_applications` (made on every start,
 read and written only with `Config.Organisation.Enabled`). A
 start refuses, changing nothing, where a table of one of these names belongs
@@ -743,11 +744,10 @@ clicks, naming what it sets.
 
 | Op | Level | What it does |
 |---|---|---|
-| `orgGet` | read | Everything: setup, roles, members (by handle), Boss permissions, spots, cuts, bounds, funds, applications, warnings |
+| `orgGet` | read | Everything: setup, roles, members (by handle), Boss permissions, cuts, bounds, funds, applications, warnings (its spots: `placeList`) |
 | `bossPermsGet` | read | The Boss permissions matrix |
 | `orgFunds` | read | Balance and ledger |
 | `orgAudit` | read | The organisation's log (`org_*` actions) |
-| `orgMyPosition` | read | Where your character stands, read by the server |
 | `orgSetup` | write | Create / sync the job in qbx_core |
 | `orgRename`, `orgLayout`, `orgNotice` | write | Label, boss menu layout, board notice |
 | `orgRoleSet`, `orgRoleRemove`, `orgRolePowers` | write | Add or edit a role, delete an empty one, set its powers |
@@ -759,7 +759,6 @@ clicks, naming what it sets.
 | `orgFundsBackend` | write | Keep the funds in the ledger or Renewed-Banking (`backend`), the balance carried across; `abandon` leaves a bank that is down |
 | `orgAccess`, `orgPick` | write | A role's access rules; a boss pick |
 | `orgSalary` | write | A role's salary (`amount`), or the most it may be paid (`max`, false clears it): payroll |
-| `orgLocationSet`, `orgLocationRemove` | write | A spot, typed or `here` (Use my position); remove one |
 | `orgApplication` | write | Accept or reject an application |
 
 #### Organisation requests (phone)
@@ -843,7 +842,7 @@ be handed over at the kill instead (0 as shipped: all at the drop-off).
 
 Through the panel's one way in; reads need a staff ACE, writes `crimson.admin`
 itself. The page draws them on Contracts and Home (the steps, **Skip**,
-**Respawn vehicle**) and in Locations (the two spots, **Use my position**);
+**Respawn vehicle**); its two spots are set in Locations (*Places requests*);
 who the hitman is comes only with `crimson.identity`.
 
 | Op | Level | What it does |
@@ -851,22 +850,35 @@ who the hitman is comes only with `crimson.identity`.
 | `disposalList` | read | Every disposal step: stage, exact seconds left, held, vehicle, respawns; the spots and the rules. Without `crimson.identity`, `held` says only the restart hold, the app pause and a freeze through a party they may see (never one through an anonymous placer or hitman) |
 | `disposalSkip` | write | Finish a step (`id`: a step or contract id) as if dropped off: the payout is released |
 | `disposalRespawn` | write | Make the vehicle again at the spawn spot (not counted as a respawn) |
-| `disposalSpotSet` | write | `spot` = `vehicle` or `drop`, typed (`x`, `y`, `z`, `heading`) or `here` (Use my position, read by the server) |
-| `disposalSpotClear` | write | Clear a spot (config.lua's `VehicleSpawn` / `DropOff` apply again) |
-| `disposalMyPosition` | read | Where your character stands, read by the server |
 
-#### Roleplay places requests (admin panel)
+#### Places requests (admin panel)
 
-The broker's and informant's places set from Locations
-(`Config.Roleplay.NpcPlaces`, off as shipped; off, every write says so).
-Reads need a staff ACE, writes `crimson.admin`; every write takes two clicks.
+Every map spot staff set lives in one registry (`server/places.lua`), kept as
+one row kind (`crimson_rp_rows`, kind `map_place`) in every store, and is set
+from Locations. Each kind keeps its own rules: the organisation's `office`
+(one; a boss moves it only near staff's point), `signup`, `meeting` (a boss
+with L2 / L3 from where they stand, within the limits and the cooldown, never
+in a safe zone), `npc` and `place` (staff only); the `broker` and `informant`
+NPCs (`Config.Roleplay.NpcPlaces`, off as shipped; off, every write says so;
+at most 20 each; their config `Locations` stay the defaults); body disposal's
+`disposal_vehicle` and `disposal_drop` (one each; config.lua's `VehicleSpawn`
+/ `DropOff` apply while one is not set). One check for every kind: on the map
+(x -4500 to 6000, y -6500 to 8500, z -200 to 2000), finite, a heading -360 to
+360 (kept 0-360), a name without `<`, `>` or control characters (64 for the
+organisation's, 40 for the NPCs'), a radius 0.5 to 50 m where the kind has
+one. Reads need a staff ACE, writes `crimson.admin`; every write takes two
+clicks. The places that are settings (tip safe zones, the rumours' districts
+and zone names, witness heat's areas, the prison zone, the NPCs' default
+lists) are settings, marked `place` in the catalogue, and edited in the same
+Locations section, with Use my position filling a line.
 
 | Op | Level | What it does |
 |---|---|---|
-| `rpPlaceList` | read | For each NPC: the places set here, its config defaults, and which it stands at |
-| `rpPlaceSet` | write | `npc` = `broker` or `informant`, `here` (read by the server) or typed `x`, `y`, `z`, `heading`; `label`, `enabled`; `id` moves one |
-| `rpPlaceRemove` | write | Remove one place (`id`) |
-| `rpPlaceReset` | write | Remove every place of one NPC (`npc`): its config list applies again |
+| `placeList` | read | Every kind: its rows, what may be set beside the point, its limit, its config defaults and which it uses, and why it cannot be set now |
+| `placeMyPosition` | read | Where your character stands, read by the server (Use my position, for every kind) |
+| `placeSet` | write | `kind`, typed `x`, `y`, `z`, `heading` or `here` (read by the server); `label`, `radius`, `blip`, `enabled` where the kind takes them; `id` moves one (a kind with one moves it) |
+| `placeRemove` | write | Remove one spot (`id`) |
+| `placeReset` | write | Remove every place of the `broker` or the `informant` (`kind`): its config list applies again |
 
 ## Permissions
 
@@ -1359,7 +1371,7 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 
 ### Mission steps
 
-Map markers for each step of a contract, to the one party who acts on it (README, Optional features), and body disposal: a verified kill paid once the body is dropped off. Disposal ships off; its spots are set by staff in the admin panel (disposalSpotSet) or below.
+Map markers for each step of a contract, to the one party who acts on it (README, Optional features), and body disposal: a verified kill paid once the body is dropped off. Disposal ships off; its spots are set by staff in the admin panel (Locations) or below.
 
 | Setting | Shipped | What it does |
 |---|---|---|

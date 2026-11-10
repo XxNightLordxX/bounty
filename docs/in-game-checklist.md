@@ -589,7 +589,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Turn `Config.Organisation.Enabled` on from the panel: the console says nothing about it but any convar warning; `/setjob <id> hitman 0` works; a member already online keeps the job after `restart crimson-hitman`.
 - [ ] server.cfg: `qbx:cleanPlayerGroups` false, `qbx:enableGroupManagement` false, `qbx:max_jobs_per_player` 2 or more, and `ensure crimson-hitman` before `ensure Renewed-Banking`; with any of them wrong, /ch-diag lists it once.
 - [ ] Staff hire a looked-up player (orgMemberHire), set a role (orgMemberRole) and fire them (orgMemberFire, with a reason): qbx_core's job follows each, online and for a player who logged off; a staff hire does not change the player's primary job.
-- [ ] Boss permissions: allow Hire for the boss role (bossPermsSet), stand at the boss office set with Use my position (orgLocationSet, here), hire a player within 5 m from the app; away from the office it says to go there.
+- [ ] Boss permissions: allow Hire for the boss role (bossPermsSet), stand at the boss office set in Locations with Save where I stand (placeSet, here), hire a player within 5 m from the app; away from the office it says to go there.
 - [ ] That hire is an invite: the player gets a phone notice and, on the app's board, the organisation and role (never the boss's name) with Accept and Decline; each needs a second tap within 3 s. Until they accept they hold no job; Accept makes them a member and (SetPrimaryOnHire) their primary job; Decline, or waiting out `Limits.InviteMinutes`, leaves nothing.
 - [ ] A player who applied and was then hired by staff: their application is gone from orgApplications, and nobody can accept it.
 - [ ] Take a member out of the job with `/setjob` while they are logged off (or while the organisation is off), then log them in: with `ExternalChanges = 'adopt'` they are no longer a member; with `'revert'` they are put back.
@@ -616,7 +616,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] The broker and informant NPC blips (Roleplay.*.Blip on) and the organisation's spot blips look as before (sprites 280, 480, 475; short range); the NPC blips stay over a logout, the organisation's go with it and come back for the next character. Each Set GPS (meeting point, informant tip, protection pin) still sets a waypoint.
 - [ ] With a marker showing, `restart crimson-hitman` or log out and back in: it is gone, then drawn again once the app is opened; resmon for the resource stays at 0.00 ms idle with markers drawn.
 - [ ] `Config.Disposal.Enabled` off (as shipped): a verified kill pays at once, as before, and nothing new is in resmon.
-- [ ] Staff set the vehicle spot and the drop-off with Use my position (disposalSpotSet, here), then turn `Config.Disposal.Enabled` on: a verified kill tells the hitman to get rid of the body (time as a band), a hearse appears at the spawn spot, locked, with keys for the hitman only (another player cannot drive it).
+- [ ] Staff set the vehicle spot and the drop-off in Locations with Save where I stand (placeSet, kinds disposal_vehicle and disposal_drop, here), then turn `Config.Disposal.Enabled` on: a verified kill tells the hitman to get rid of the body (time as a band), a hearse appears at the spawn spot, locked, with keys for the hitman only (another player cannot drive it).
 - [ ] Load the body (ox_target at the body) with the hearse beside it: the body marker goes and the drop-off marker appears; without the hearse beside it, it says to bring the vehicle first.
 - [ ] Drop off at the drop-off with the hearse there: the payout arrives at once, the hearse is taken away about 10 s later; the placer's money is exactly the reward less the payout (or the whole reward back on a `refund` timeout).
 - [ ] Drive the hearse well away from everybody else and back (and leave it parked out of everyone's scope for a few minutes): it is still there (orphan mode kept, `SetEntityOrphanMode(vehicle, 2)`), and its respawn count in disposalList has not moved. Its plate is `CH` and six random characters, different on every hearse; an old hearse's key does not open the new one.
@@ -626,6 +626,14 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Leave the hearse 300 m behind for 5 minutes: it is taken away and made again at the spawn spot; log the hitman out and back in mid-step: the hearse goes and comes back, the markers are drawn again.
 - [ ] **Locations** has *Disposal vehicle spawn* and *Body drop-off*: **Use my position** fills the figures from where you stand, **Save** arms naming the point, **Save where I stand** and **Clear** take two clicks each. Mid-step, **Contracts** (and **Home**) list the step with the exact time left and *clock held* while frozen; **Skip** pays it, **Respawn vehicle** makes the hearse again; without `crimson.identity` no citizen id is shown
 - [ ] `restart crimson-hitman` mid-step: the hearse goes, comes back once the hitman is in the city, and the step finishes as before; disposalSkip and disposalRespawn do what they say.
+
+## Locations: one registry of map spots (step 3c)
+
+- [ ] Admin panel, Locations: every kind is listed (organisation spots, broker and informant, disposal vehicle and drop-off), then the places that are settings; with the organisation or NpcPlaces off, each says so with its switch.
+- [ ] Use my position fills x, y, z and heading for any kind from where your character stands; Save where I stand places it there (check the boss office, a broker place and the drop-off).
+- [ ] The broker moves to the place set (the NPC and its blip), Reset to config puts it back on its Locations list; the disposal vehicle is made at the spawn set here.
+- [ ] A boss with L2 still places a sign-up spot from the phone where they stand, never in a safe zone; staff's spots show on the boss's map as before.
+- [ ] `restart crimson-hitman`: every spot is still where it was set.
 
 ## If something fails
 

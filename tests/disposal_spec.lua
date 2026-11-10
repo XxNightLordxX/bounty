@@ -82,8 +82,10 @@ local function staffAt(s)
             firstname = 'Sam', lastname = 'Steward' })
         Env.aces[6] = { ['crimson.admin'] = true }
     end
-    truthy(s.disposal.setSpot('ADMIN001', 'vehicle', SPAWN))
-    truthy(s.disposal.setSpot('ADMIN001', 'drop', DROP))
+    local staff = { staff = true, cid = 'ADMIN001', source = 6 }
+    local places = require('server.places')
+    truthy(places.set(staff, 'disposal_vehicle', { x = SPAWN.x, y = SPAWN.y, z = SPAWN.z, heading = SPAWN.h }))
+    truthy(places.set(staff, 'disposal_drop', { x = DROP.x, y = DROP.y, z = DROP.z }))
 end
 
 --- A contract taken by the hitman (3) and its target (2) killed by them,
@@ -193,7 +195,7 @@ describe('body disposal as shipped', function()
         local reads = 0
         local real = s.storage.readRpRows
         s.storage.readRpRows = function(kind, ...)
-            if kind == 'disposal' or kind == 'disp_spot' then reads = reads + 1 end
+            if kind == 'disposal' or kind == 'map_place' then reads = reads + 1 end
             return real(kind, ...)
         end
         local W = fakeWorld(s)
@@ -642,14 +644,14 @@ describe('the staff ops', function()
         Env.addPlayer({ source = 7, citizenid = 'READER01', license = 'license:R', firstname = 'R', lastname = 'D' })
         Env.aces[7] = { command = true }
         at(6, { x = 321.0, y = 654.0, z = 31.0 })
-        local r = ask(6, 'disposalSpotSet', { spot = 'drop', here = true })
+        local r = ask(6, 'placeSet', { kind = 'disposal_drop', here = true })
         truthy(r.ok, tostring(r.message))
         eq(s.disposal.spot('drop').x, 321.0, 'where staff stand, read by the server')
-        eq(ask(6, 'disposalSpotSet', { spot = 'moon', x = 1, y = 1, z = 1 }).ok, false)
-        eq(ask(6, 'disposalSpotSet', { spot = 'drop', x = 1e9, y = 1, z = 1 }).ok, false, 'off the map')
-        eq(ask(6, 'disposalSpotSet', { spot = 'drop', x = 'a', y = 1, z = 1 }).ok, false)
-        truthy(ask(6, 'disposalSpotSet', { spot = 'drop', x = DROP.x, y = DROP.y, z = DROP.z }).ok)
-        local my = ask(6, 'disposalMyPosition', {})
+        eq(ask(6, 'placeSet', { kind = 'moon', x = 1, y = 1, z = 1 }).ok, false)
+        eq(ask(6, 'placeSet', { kind = 'disposal_drop', x = 1e9, y = 1, z = 1 }).ok, false, 'off the map')
+        eq(ask(6, 'placeSet', { kind = 'disposal_drop', x = 'a', y = 1, z = 1 }).ok, false)
+        truthy(ask(6, 'placeSet', { kind = 'disposal_drop', x = DROP.x, y = DROP.y, z = DROP.z }).ok)
+        local my = ask(6, 'placeMyPosition', {})
         eq(my.data.x, 321.0)
         local list = ask(7, 'disposalList', {})
         truthy(list.ok, 'staff with a read ACE may read')
@@ -664,7 +666,8 @@ describe('the staff ops', function()
         truthy(ask(6, 'disposalSkip', { id = c.id }).ok)
         eq(cash(3), 10000, 'paid')
         eq(total(s), before)
-        truthy(ask(6, 'disposalSpotClear', { spot = 'drop' }).ok)
+        local dropRow = require('server.places').rows('disposal_drop')[1]
+        truthy(ask(6, 'placeRemove', { id = dropRow.id }).ok)
         eq(s.disposal.spot('drop'), nil)
     end)
 end)

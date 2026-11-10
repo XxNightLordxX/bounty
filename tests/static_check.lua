@@ -2293,9 +2293,9 @@ do
         extra[name] = true
     end
     -- And the other modules' (Change reward, Reassign, body disposal, the
-    -- broker's and informant's places),
+    -- one registry of map spots),
     -- each added with panel.extend('<op>', ...).
-    for _, file in ipairs({ 'staff_reward', 'staff_reassign', 'disposal', 'rp_places' }) do
+    for _, file in ipairs({ 'staff_reward', 'staff_reassign', 'disposal', 'places' }) do
         for name in (read('crimson-hitman/server/' .. file .. '.lua') or ''):gmatch("%.extend%('([%a_][%w_]*)'") do
             extra[name] = true
         end

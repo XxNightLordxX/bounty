@@ -356,9 +356,8 @@
                    alerts: true, console: true, frozen: true, exportContract: true, playerView: true,
                    history: true, settingsHistory: true, sanctions: true,
                    targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true,
-                   orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, orgMyPosition: true,
-                   rewardPreview: true, reassignPreview: true, disposalList: true, disposalMyPosition: true,
-                   rpPlaceList: true };
+                   orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, placeMyPosition: true,
+                   rewardPreview: true, reassignPreview: true, disposalList: true, placeList: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -3544,16 +3543,12 @@
     var a = entry && entry.area ? String(entry.area) : 'other';
     return a;
   }
-  /** The lists of places, edited in Locations instead. */
-  var PLACE_KEYS = {
-    'Roleplay.Rumours.Locations': 'point', 'Roleplay.InformantNpc.Locations': 'point',
-    'Improvements.TipSafeZones.Zones': 'zone', 'Roleplay.Rumours.Districts': 'district',
-    'Roleplay.WitnessHeat.Areas': 'area', 'Roleplay.Rumours.Zones': 'name',
-    'Limits.JailZone.x': 'jail', 'Limits.JailZone.y': 'jail', 'Limits.JailZone.radius': 'jail'
-  };
+  /** The settings that are places (the server marks each with its kind of
+      place: point, zone, district, area, name, jail), edited in Locations. */
+  function placeOf(entry) { return entry && entry.place ? String(entry.place) : ''; }
   /** The section a setting is edited in. */
   function viewOfSetting(entry) {
-    if (PLACE_KEYS[entry.key]) return 'locations';
+    if (placeOf(entry)) return 'locations';
     var cat = categoryOf(entry);
     if (cat === 'organisation') {
       return String(entry.group || '').indexOf('Boss limits') !== -1 ? 'bplimits' : 'orgsetup';
@@ -7233,7 +7228,7 @@
   ACTIONS['refresh-view'] = function () {
     loadOverview(true);
     if (SETTING_VIEWS[S.section]) { loadSettings(); return; }
-    if (ORG_VIEWS[S.section] || BP_VIEWS[S.section] || S.section === 'locations') { loadOrg(); }
+    if (ORG_VIEWS[S.section] || BP_VIEWS[S.section]) { loadOrg(); }
     LOAD[S.section]();
   };
   ACTIONS['help-btn'] = function () { openGroup('help'); };
@@ -7494,16 +7489,12 @@
      is held, the vehicle), each with Skip (finish it as if dropped off: the
      payout is handed over) and Respawn vehicle (made again at the spawn
      spot), both the staff ACE's, two clicks naming the contract. Locations
-     sets the two spots (disposalSpotSet, typed or where the staff member
-     stands; disposalSpotClear). Who the hitman is comes only with the
+     sets the two spots (placeSet, kinds disposal_vehicle and disposal_drop,
+     typed or where the staff member stands; placeRemove). Who the hitman is comes only with the
      identity ACE. */
 
-  S.disposal = { data: null, error: null, errCode: null, answers: {}, pos: null, posAt: 0 };
+  S.disposal = { data: null, error: null, errCode: null, answers: {} };
 
-  var DISPOSAL_SPOTS = [
-    { id: 'vehicle', label: 'Disposal vehicle spawn', one: 'the vehicle spawn', icon: 'truck' },
-    { id: 'drop', label: 'Body drop-off', one: 'the drop-off', icon: 'flag-checkered' }
-  ];
   var DISPOSAL_STAGE = { body: 'Body not loaded yet', loaded: 'Loaded, on the way to the drop-off' };
   var DISPOSAL_TIMEOUT = { pay: 'paid in full', reduced: 'paid in part, the rest back to the placer',
     refund: 'refunded to the placer' };
@@ -7520,7 +7511,6 @@
   function drawDisposal() {
     var list = byId('dp-list');
     if (list) setHtml(list, disposalBody(S.section === 'contracts' ? 'contracts' : 'home'));
-    if (S.section === 'locations') drawOrg();
   }
 
   function disposalSteps() { return asList((S.disposal.data || {}).steps); }
@@ -7588,188 +7578,6 @@
     disposalWrite('disposalRespawn', { id: node.getAttribute('data-id') }, 'list', node);
   };
 
-  /* ---- Locations: the broker's and informant's places (Config.Roleplay.NpcPlaces) ----
-     The places staff set by standing there (rpPlaceSet, here: the server
-     reads where they stand), and the config Locations lists they replace
-     while any is set. Each write takes two clicks. */
-  S.rpPlaces = { data: null, error: null, errCode: null, answers: {} };
-  var RP_NPCS = [{ id: 'broker', label: 'Broker NPC', icon: 'user-secret' },
-    { id: 'informant', label: 'Informant NPC', icon: 'user-secret' }];
-
-  function loadRpPlaces() {
-    return ask('rpPlaceList', {}, 'rpPlaces').then(function (reply) {
-      if (!reply) return;
-      if (reply.ok) { S.rpPlaces.data = reply.data || {}; S.rpPlaces.error = null; S.rpPlaces.errCode = null; }
-      else { S.rpPlaces.error = words(reply); S.rpPlaces.errCode = reply.err || null; }
-      if (S.section === 'locations') drawOrg();
-    });
-  }
-
-  function rpPlacesBody() {
-    var d = S.rpPlaces.data;
-    if (!d) {
-      return S.rpPlaces.error ? (S.rpPlaces.errCode === 'unknown_op' ? empty('This server has no panel-set NPC places.')
-        : empty(S.rpPlaces.error)) : loading('Reading the broker and informant places…');
-    }
-    var sw = settingEntry('Roleplay.NpcPlaces.Enabled');
-    var npcs = d.npcs || {};
-    return frag(
-      h('p.hint', 'Where the broker (Rumours) and the informant NPC stand. Stand on the spot in game and press Save '
-        + 'where I stand: the server reads where you are. With none set, each uses its Locations list in the settings '
-        + 'below, which stays the default.'),
-      !d.enabled ? card('Placed from the panel is off', frag(
-        h('p.about', 'Off as shipped (Config.Roleplay.NpcPlaces): the broker and informant use their Locations lists. '
-          + 'Turn it on to place them here; nothing set here is lost by turning it off.'),
-        sw ? h('div.st-row', { id: 'st-row-' + sw.key, 'data-key': sw.key }, settingInner(sw))
-          : loading('Reading the switch…')), '.is-warn.rp-off') : null,
-      RP_NPCS.map(function (k) {
-        var n = npcs[k.id] || {};
-        var rows = asList(n.rows);
-        var defaults = asList(n.defaults);
-        var pre = 'rpp.' + k.id + '.';
-        return card(frag(icon(k.icon), ' ', k.label), frag(
-          h('p.sub', (n.on ? 'Its feature is on. ' : 'Its feature is off. ') + (n.using === 'panel'
-            ? 'Standing at the places set here.' : 'Standing at its Locations list (the defaults).')),
-          rows.length ? h('div.table-wrap', h('table.grid',
-            h('thead', h('tr', h('th', 'Name'), h('th', 'x, y, z, heading'), h('th', 'On'), h('th', ''))),
-            h('tbody', rows.map(function (r) {
-              return h('tr', h('td.name', String(r.label || '—')),
-                h('td.mono', fmt(r.x) + ', ' + fmt(r.y) + ', ' + fmt(r.z) + ', ' + fmt(r.heading, 0)),
-                h('td', r.enabled === false ? 'off' : 'on'),
-                h('td', writeBtn('.is-small.is-danger', 'rpp-remove', { 'data-id': String(r.id), 'data-value': k.id },
-                  'Remove', 'Click again: remove ' + String(r.label || 'it'), 'trash-can')));
-            })))) : empty('None set here.'),
-          h('p.sub', 'Defaults (Locations list): ' + (defaults.length ? defaults.map(function (p) {
-            return fmt(p.x) + ', ' + fmt(p.y) + ', ' + fmt(p.z);
-          }).join(' · ') : 'none')),
-          d.enabled ? h('div.toolbar',
-            field(pre + 'label', { class: 'is-mid', maxlength: '40', placeholder: 'Name (optional)', 'aria-label': 'Name' }),
-            writeBtn('.is-primary.is-small', 'rpp-here', { 'data-value': k.id }, 'Save where I stand',
-              'Click again: place the ' + k.id + ' where you stand', 'street-view'),
-            rows.length ? writeBtn('.is-small.is-ghost', 'rpp-reset', { 'data-value': k.id }, 'Reset to config',
-              'Click again: remove every place set here', 'rotate-left') : null) : null,
-          answerBox(S.rpPlaces.answers[k.id])), '.rp-place');
-      }));
-  }
-
-  function rpPlaceWrite(op, data, slot, node) {
-    return write(op, data, 'rpPlaces:' + slot, node).then(function (reply) {
-      if (!reply) return null;
-      S.rpPlaces.answers[slot] = { ok: reply.ok === true, text: words(reply) };
-      toast(words(reply), reply.ok ? 'ok' : 'error');
-      loadRpPlaces();
-      return reply;
-    });
-  }
-
-  ACTIONS['rpp-here'] = function (node) {
-    var k = node.getAttribute('data-value');
-    if (!armed(node)) return;
-    var label = trim(S.forms['rpp.' + k + '.label']);
-    rpPlaceWrite('rpPlaceSet', label ? { npc: k, here: true, label: label } : { npc: k, here: true }, k, node);
-  };
-  ACTIONS['rpp-remove'] = function (node) {
-    if (!armed(node)) return;
-    rpPlaceWrite('rpPlaceRemove', { id: node.getAttribute('data-id') }, node.getAttribute('data-value'), node);
-  };
-  ACTIONS['rpp-reset'] = function (node) {
-    var k = node.getAttribute('data-value');
-    if (!armed(node)) return;
-    rpPlaceWrite('rpPlaceReset', { npc: k }, k, node);
-  };
-
-  /** Locations: the two disposal spots, each with Use my position. */
-  function disposalSpotsBody() {
-    var d = S.disposal.data;
-    if (!d) {
-      return S.disposal.error ? (S.disposal.errCode === 'unknown_op' ? empty('This server has no body disposal.')
-        : empty(S.disposal.error)) : loading('Reading the disposal spots…');
-    }
-    var spots = d.spots || {};
-    var pos = S.disposal.pos;
-    return frag(
-      h('p.hint', 'Where the disposal vehicle is made, and where the body is dropped off (Config.Disposal'
-        + (d.enabled ? ', on' : ', off as shipped') + '). Stand there in game and press Use my position, or type the '
-        + 'figures; each save takes two clicks.'),
-      pos ? h('p.note', 'Your position: x ' + fmt(pos.x) + ', y ' + fmt(pos.y) + ', z ' + fmt(pos.z) + ', heading '
-        + fmt(pos.heading, 0) + ' (read ' + ago(S.disposal.posAt) + ')') : null,
-      answerBox(S.disposal.answers.pos),
-      DISPOSAL_SPOTS.map(function (k) {
-        var now = spots[k.id];
-        var pre = 'dsp.' + k.id + '.';
-        return card(frag(icon(k.icon), ' ', k.label), frag(
-          h('p', now ? frag('Now: ', h('span.mono', fmt(now.x) + ', ' + fmt(now.y) + ', ' + fmt(now.z) + ', heading '
-            + fmt(now.h, 0))) : 'Not set: body disposal cannot start a step until it is.'),
-          h('div.toolbar',
-            ['x', 'y', 'z', 'h'].map(function (f) {
-              return field(pre + f, { class: 'is-short', inputmode: 'decimal', placeholder: f === 'h' ? 'heading' : f,
-                'aria-label': f === 'h' ? 'Heading' : f });
-            }),
-            btn('.is-small', 'dsp-mypos', { 'data-value': k.id }, 'Use my position', 'location-crosshairs'),
-            writeBtn('.is-primary.is-small', 'dsp-save', { 'data-value': k.id }, 'Save', 'Click again to save', 'check'),
-            writeBtn('.is-small', 'dsp-here', { 'data-value': k.id }, 'Save where I stand',
-              'Click again: save where you stand', 'street-view'),
-            now ? writeBtn('.is-small.is-danger', 'dsp-clear', { 'data-value': k.id }, 'Clear',
-              'Click again to clear', 'eraser') : null),
-          answerBox(S.disposal.answers['spot:' + k.id])), '.dp-spot');
-      }));
-  }
-
-  function spotName(k) {
-    for (var i = 0; i < DISPOSAL_SPOTS.length; i++) if (DISPOSAL_SPOTS[i].id === k) return DISPOSAL_SPOTS[i].one;
-    return 'the spot';
-  }
-  function spotRefuse(k, text) {
-    disarm();
-    S.disposal.answers['spot:' + k] = { ok: false, text: text };
-    drawOrg();
-  }
-
-  ACTIONS['dsp-mypos'] = function (node) {
-    var k = node.getAttribute('data-value');
-    ask('disposalMyPosition', {}, 'disposalPos').then(function (reply) {
-      if (!reply) return;
-      if (!reply.ok) { S.disposal.answers.pos = { ok: false, text: words(reply) }; drawOrg(); return; }
-      var pos = reply.data || {};
-      S.disposal.answers.pos = null;
-      S.disposal.pos = pos;
-      S.disposal.posAt = nowSeconds();
-      var pre = 'dsp.' + k + '.';
-      S.forms[pre + 'x'] = fmt(pos.x);
-      S.forms[pre + 'y'] = fmt(pos.y);
-      S.forms[pre + 'z'] = fmt(pos.z);
-      S.forms[pre + 'h'] = fmt(pos.heading, 0);
-      disarm();
-      drawOrg();
-    });
-  };
-  ACTIONS['dsp-save'] = function (node) {
-    var k = node.getAttribute('data-value');
-    var pre = 'dsp.' + k + '.';
-    var t = ['x', 'y', 'z', 'h'].map(function (f) { return trim(S.forms[pre + f]); });
-    if (t.slice(0, 3).some(function (v) { return v === '' || !isFinite(Number(v)); })) {
-      spotRefuse(k, 'Give x, y and z as numbers, or press Use my position.');
-      return;
-    }
-    if (t[3] !== '' && !isFinite(Number(t[3]))) { spotRefuse(k, 'The heading is a number from 0 to 360.'); return; }
-    var data = { spot: k, x: Number(t[0]), y: Number(t[1]), z: Number(t[2]), heading: t[3] === '' ? 0 : Number(t[3]) };
-    var label = 'Click again: save ' + spotName(k) + ' at ' + fmt(data.x) + ', ' + fmt(data.y) + ', ' + fmt(data.z);
-    if (!armed(node, label, ['x', 'y', 'z', 'h'].map(function (f) { return pre + f; }))) return;
-    disposalWrite('disposalSpotSet', data, 'spot:' + k, node).then(function (reply) {
-      if (reply && reply.ok) ['x', 'y', 'z', 'h'].forEach(function (f) { delete S.forms[pre + f]; });
-    });
-  };
-  ACTIONS['dsp-here'] = function (node) {
-    var k = node.getAttribute('data-value');
-    if (!armed(node, 'Click again: save ' + spotName(k) + ' where you stand')) return;
-    disposalWrite('disposalSpotSet', { spot: k, here: true }, 'spot:' + k, node);
-  };
-  ACTIONS['dsp-clear'] = function (node) {
-    var k = node.getAttribute('data-value');
-    if (!armed(node, 'Click again: clear ' + spotName(k))) return;
-    disposalWrite('disposalSpotClear', { spot: k }, 'spot:' + k, node);
-  };
-
   STAFF_ACTIONS.push(
     { title: 'Change a reward or give a contract to another hitman', icon: 'sack-dollar', view: 'contracts',
       go: 'Contracts',
@@ -7797,20 +7605,13 @@
       auditAction: '', member: null, role: null, nonce: null, dir: 'deposit', bonusTo: '', newGrade: null,
       layout: null, hire: null, history: null, historyError: null,
       bp: { pending: {}, cols: [], area: '', granted: false, col: '', add: '' },
-      loc: { edit: {}, pos: null }, staged: {} };
+      staged: {} };
   }
   orgReset();
 
   var ORG_TABS = ['members', 'roles', 'pay', 'funds', 'contracts', 'locations', 'notices', 'settings', 'log'];
   var AREA_NAMES = { members: 'Members', roles: 'Roles', pay: 'Pay', money: 'Money & cuts', contracts: 'Contracts',
     locations: 'Locations', notices: 'Notices', settings: 'Settings', delegation: 'Delegation' };
-  var SPOT_KINDS = [
-    { id: 'office', label: 'Boss office', one: 'boss office', icon: 'building' },
-    { id: 'signup', label: 'Sign-up spots', one: 'sign-up spot', icon: 'clipboard' },
-    { id: 'meeting', label: 'Meeting and handover spots', one: 'meeting spot', icon: 'handshake' },
-    { id: 'npc', label: 'NPC spots', one: 'NPC spot', icon: 'user-tie' },
-    { id: 'place', label: 'Other organisation places', one: 'place', icon: 'location-dot' }
-  ];
   var ORG_ACTIONS = ['org_created', 'org_member_hired', 'org_member_fired', 'org_member_role', 'org_member_suspended',
     'org_member_limits', 'org_member_grant', 'org_member_staff', 'org_role_created', 'org_role_edited',
     'org_role_deleted', 'org_role_power', 'org_role_pay', 'org_grant', 'org_limits', 'org_office_rule',
@@ -7831,15 +7632,13 @@
   function orgOn() { var d = S.org.data; return !!(d && d.enabled && d.loaded); }
 
   function drawOrg() {
-    if (ORG_VIEWS[S.section] || BP_VIEWS[S.section] || S.section === 'locations') {
+    if (ORG_VIEWS[S.section] || BP_VIEWS[S.section]) {
       setHtml(byId('org-body'), orgViewBody());
     }
   }
   AFTER_SETTINGS.push(function () {
     // The switch turned on or off from the card: what the server holds now.
     var e = settingEntry('Organisation.Enabled');
-    var rp = settingEntry('Roleplay.NpcPlaces.Enabled');
-    if (rp && S.rpPlaces.data && (rp.value === true) !== (S.rpPlaces.data.enabled === true)) loadRpPlaces();
     if (e && S.org.data && (e.value === true) !== (S.org.data.enabled === true)) { loadOrg(); return; }
     drawOrg();
   });
@@ -7889,8 +7688,6 @@
 
   function orgViewBody() {
     var d = S.org.data;
-    // Locations holds the settings' places too, whatever the organisation says.
-    if (S.section === 'locations') return locationsBody(d);
     if (!d) return S.org.error ? empty(S.org.error) : loading('Reading the organisation…');
     if (!d.enabled) return offCard(S.section === 'orgsetup' ? '' : 'Setup has its other settings.');
     if (!d.loaded) {
@@ -8750,106 +8547,359 @@
   /** A spot's or a list's coordinates, as each list writes them. */
   function fmt(n, places) { var p = Math.pow(10, places == null ? 1 : places); return String(Math.round(Number(n) * p) / p); }
 
-  function locationsBody(d) {
-    var on = orgOn();
-    var spots = asList((d || {}).spots);
-    var pos = S.org.loc.pos;
+  /* Every place this resource uses, from the one registry of map spots
+     (server/places.lua): placeList gives every kind (the organisation's,
+     the broker's and informant's, body disposal's) with its rows, what may
+     be set beside the point, its defaults and whether it can be set now;
+     placeMyPosition reads where the staff member stands; placeSet,
+     placeRemove and placeReset write, each two clicks. The places that are
+     settings (marked `place` by the server) follow, with Use my position
+     filling a line. */
+  S.places = { data: null, error: null, errCode: null, answers: {}, edit: {}, staged: {}, pos: null, posAt: 0 };
+
+  var PLACE_GROUPS = {
+    org: { title: 'Organisation places' },
+    npc: { title: 'Broker and informant places',
+      hint: 'Where the broker (Rumours) and the informant NPC stand. With none set, each uses its Locations list in '
+        + 'the settings below, which stays the default.' },
+    disposal: { title: 'Body disposal',
+      hint: 'Where the disposal vehicle is made, and where the body is dropped off (Config.Disposal). Config.lua\'s '
+        + 'VehicleSpawn and DropOff apply while one is not set.' }
+  };
+
+  function loadPlaces() {
+    return ask('placeList', {}, 'places').then(function (reply) {
+      if (!reply) return;
+      if (reply.ok) { S.places.data = reply.data || {}; S.places.error = null; S.places.errCode = null; }
+      else { S.places.error = words(reply); S.places.errCode = reply.err || null; }
+      S.places.switches = S.settings.data ? placeSwitches() : null;
+      drawPlaces();
+    });
+  }
+  function drawPlaces() {
+    if (S.section === 'locations') setHtml(byId('places-body'), locationsBody());
+  }
+  function placeKinds() { return asList((S.places.data || {}).kinds); }
+  function placeKind(id) { return placeKinds().filter(function (k) { return k.id === id; })[0] || null; }
+  function placeAnswer(slot) { return answerBox(S.places.answers[slot]); }
+  function placeRefuse(slot, text) {
+    disarm();
+    S.places.answers[slot] = { ok: false, text: text };
+    drawPlaces();
+  }
+  function placeWrite(op, data, slot, node, after) {
+    return write(op, data, 'places:' + slot, node).then(function (reply) {
+      if (!reply) return null;
+      S.places.answers[slot] = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok && after) after(reply);
+      loadPlaces();
+      // The organisation's own views read its spots from where they draw.
+      if (reply.ok && S.org.data) loadOrg();
+      if (reply.ok && S.disposal.data) loadDisposal();
+      return reply;
+    });
+  }
+
+  function locationsBody() {
+    var d = S.places.data;
+    var pos = S.places.pos;
+    var groups = [];
+    placeKinds().forEach(function (k) {
+      var g = groups.filter(function (x) { return x.id === k.group; })[0];
+      if (!g) { g = { id: k.group, kinds: [] }; groups.push(g); }
+      g.kinds.push(k);
+    });
     return frag(
       h('p.hint', 'Every place this resource uses, by kind. Stand on the spot in game and press Use my position: the '
         + 'server reads where you stand. Adjust, then save; every save takes two clicks.'),
       pos ? h('p.note', 'Your position: x ' + fmt(pos.x) + ', y ' + fmt(pos.y) + ', z ' + fmt(pos.z) + ', heading '
-        + fmt(pos.heading, 0) + ' (read ' + ago(S.org.loc.posAt) + ')') : null,
-      orgAnswer('pos'),
-      h('h3.st-group-title', 'Organisation places'),
-      !d ? (S.org.error ? empty(S.org.error) : loading('Reading the organisation…'))
-        : on ? SPOT_KINDS.map(function (k) { return spotCard(k, spots.filter(function (s) { return s.kind === k.id; })); })
-        : (d.enabled && !d.loaded ? empty('The organisation is on and not read yet: Hitman organisation, Setup.')
-          : offCard('Its places (boss office, sign-up and meeting spots) are set here once it is on.')),
-      h('h3.st-group-title', 'Broker and informant places'),
-      rpPlacesBody(),
-      h('h3.st-group-title', 'Body disposal'),
-      disposalSpotsBody(),
+        + fmt(pos.heading, 0) + ' (read ' + ago(S.places.posAt) + ')') : null,
+      placeAnswer('pos'),
+      !d ? (S.places.error ? (S.places.errCode === 'unknown_op' ? empty('This server has no panel-set places.')
+        : empty(S.places.error)) : loading('Reading the places…'))
+        : groups.map(placeGroup),
       h('h3.st-group-title', 'Places in the settings'),
       S.settings.data ? placeSettings() : loading('Reading the settings…'));
   }
 
-  function spotCard(kind, rows) {
+  /** One group of kinds; all of it off for one reason: said once, with its switch. */
+  function placeGroup(g) {
+    var about = PLACE_GROUPS[g.id] || { title: String(g.id || 'Places') };
+    var first = g.kinds[0] || {};
+    var allOff = g.kinds.every(function (k) { return k.off && k.off === first.off; });
+    return frag(h('h3.st-group-title', about.title),
+      about.hint ? h('p.hint', about.hint) : null,
+      allOff ? placeOff(first, g.kinds) : g.kinds.map(function (k) { return placeCard(k); }));
+  }
+  function switchRow(key) {
+    var sw = key ? settingEntry(key) : null;
+    if (!sw) return key ? (S.settings.data ? null : loading('Reading the switch…')) : null;
+    return h('div.st-row', { id: 'st-row-' + sw.key, 'data-key': sw.key }, settingInner(sw));
+  }
+  function placeOff(k, kinds) {
+    return card('Set here once it is on', frag(
+      h('p.about', String(k.off)),
+      kinds.map(function (x) { return asList(x.rows).length || asList(x.defaults).length ? placeDefaults(x) : null; }),
+      switchRow(k.switch)), '.is-warn.place-off');
+  }
+  function placeDefaults(k) {
+    var defaults = asList(k.defaults);
+    var rows = asList(k.rows);
+    return frag(
+      k.using ? h('p.sub', k.label + ': ' + (k.using === 'panel' ? 'standing at the places set here.'
+        : 'using its config ' + (k.key ? '(' + k.key + ')' : 'default') + '.')) : null,
+      k.defaults ? h('p.sub', 'Defaults (config): ' + (defaults.length ? defaults.map(function (p) {
+        return fmt(p.x) + ', ' + fmt(p.y) + ', ' + fmt(p.z);
+      }).join(' · ') : 'none')) : null,
+      k.off && rows.length ? h('p.sub', num(rows.length) + ' set here, kept while it is off.') : null);
+  }
+
+  /** One kind: its rows, and the form that adds one or edits the one picked. */
+  function placeCard(kind) {
     var k = kind.id;
-    var edit = S.org.loc.edit[k] || '';
+    var f = kind.fields || {};
+    var rows = asList(kind.rows);
+    var edit = kind.single ? (rows[0] ? rows[0].id : '') : (S.places.edit[k] || '');
     var editing = edit ? rows.filter(function (r) { return r.id === edit; })[0] : null;
-    var blip = S.org.staged['blip:' + k] != null ? S.org.staged['blip:' + k] : (editing ? !!editing.blip : false);
-    var enabled = S.org.staged['en:' + k] != null ? S.org.staged['en:' + k] : (editing ? editing.enabled !== false : true);
+    var st = S.places.staged;
+    var blip = st['blip:' + k] != null ? st['blip:' + k] : (editing ? !!editing.blip : false);
+    var enabled = st['en:' + k] != null ? st['en:' + k] : (editing ? editing.enabled !== false : true);
     var pre = 'loc.' + k + '.';
-    return card(frag(icon(kind.icon), ' ', kind.label), frag(
+    var open = !kind.off;
+    function input(name, attrs) { return field(pre + name, attrs); }
+    return card(frag(icon(kind.icon || 'location-dot'), ' ', String(kind.label || k)), frag(
+      kind.off ? h('p.note.is-warn', String(kind.off)) : null,
+      kind.off ? switchRow(kind.switch) : null,
+      kind.note ? h('p.sub', String(kind.note)) : null,
       rows.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Name'), h('th', 'x, y, z, heading'), h('th.num', 'Radius'), h('th', 'Blip'),
-          h('th', 'On'), h('th', ''))),
+        h('thead', h('tr', h('th', 'Name'), h('th', 'x, y, z, heading'), f.radius ? h('th.num', 'Radius') : null,
+          f.blip ? h('th', 'Blip') : null, f.enabled ? h('th', 'On') : null, h('th', ''))),
         h('tbody', rows.map(function (r) {
-          return h('tr' + (r.id === edit ? '.is-open' : ''), h('td.name', String(r.label || '—')),
+          return h('tr' + (r.id === edit && !kind.single ? '.is-open' : ''), h('td.name', String(r.label || '—')),
             h('td.mono', fmt(r.x) + ', ' + fmt(r.y) + ', ' + fmt(r.z) + ', ' + fmt(r.heading, 0)),
-            h('td.num', fmt(r.radius) + ' m'), h('td', r.blip ? 'yes' : 'no'), h('td', r.enabled === false ? 'off' : 'on'),
+            f.radius ? h('td.num', fmt(r.radius) + ' m') : null, f.blip ? h('td', r.blip ? 'yes' : 'no') : null,
+            f.enabled ? h('td', r.enabled === false ? 'off' : 'on') : null,
             h('td', h('div.inline-form',
-              btn('.is-small.is-ghost', 'loc-edit', { 'data-id': String(r.id), 'data-value': k }, 'Edit', 'pen'),
-              writeBtn('.is-small.is-danger', 'loc-remove', { 'data-id': String(r.id) }, 'Remove',
-                'Click again: remove ' + String(r.label || 'it'), 'trash-can'))));
-        })))) : empty('No ' + kind.one + ' yet. Stand there in game and press Use my position.'),
-      h('div.loc-form',
-        h('p.sub', editing ? 'Editing ' + String(editing.label || kind.one) : 'Add a ' + kind.one),
+              !kind.single && open ? btn('.is-small.is-ghost', 'loc-edit', { 'data-id': String(r.id), 'data-value': k },
+                'Edit', 'pen') : null,
+              open ? writeBtn('.is-small.is-danger', 'loc-remove', { 'data-id': String(r.id), 'data-value': k },
+                kind.single ? 'Clear' : 'Remove', 'Click again: remove ' + String(r.label || 'it'), 'trash-can') : null)));
+        })))) : empty(kind.single ? 'Not set.' : 'None set here.'),
+      kind.using || kind.defaults ? placeDefaults(kind) : null,
+      open ? h('div.loc-form',
+        h('p.sub', editing ? 'Editing ' + String(editing.label || kind.one || k) : 'Add ' + String(kind.one || 'a place')),
         h('div.toolbar',
-          field(pre + 'label', { class: 'is-mid', maxlength: '64', placeholder: 'Name',
-            value: editing ? String(editing.label || '') : '', 'aria-label': 'Name' }),
-          field(pre + 'x', { class: 'is-short', inputmode: 'decimal', placeholder: 'x', value: editing ? fmt(editing.x) : '',
-            'aria-label': 'x' }),
-          field(pre + 'y', { class: 'is-short', inputmode: 'decimal', placeholder: 'y', value: editing ? fmt(editing.y) : '',
-            'aria-label': 'y' }),
-          field(pre + 'z', { class: 'is-short', inputmode: 'decimal', placeholder: 'z', value: editing ? fmt(editing.z) : '',
-            'aria-label': 'z' }),
-          field(pre + 'h', { class: 'is-short', inputmode: 'decimal', placeholder: 'heading',
+          f.label ? input('label', { class: 'is-mid', maxlength: String(kind.labelMax || 64), placeholder: 'Name',
+            value: editing ? String(editing.label || '') : '', 'aria-label': 'Name' }) : null,
+          ['x', 'y', 'z'].map(function (a) {
+            return input(a, { class: 'is-short', inputmode: 'decimal', placeholder: a, value: editing ? fmt(editing[a]) : '',
+              'aria-label': a });
+          }),
+          input('h', { class: 'is-short', inputmode: 'decimal', placeholder: 'heading',
             value: editing ? fmt(editing.heading, 0) : '', 'aria-label': 'Heading' }),
-          field(pre + 'r', { class: 'is-short', inputmode: 'decimal', placeholder: 'radius m',
-            value: editing ? fmt(editing.radius) : '', 'aria-label': 'Radius (m)' })),
+          f.radius ? input('r', { class: 'is-short', inputmode: 'decimal', placeholder: 'radius m',
+            value: editing && editing.radius != null ? fmt(editing.radius) : '', 'aria-label': 'Radius (m)' }) : null),
         h('div.toolbar',
-          segmented('loc-blip', [{ value: 'no', label: 'No blip' }, { value: 'yes', label: 'Map blip' }], blip ? 'yes' : 'no',
-            { 'data-id': k }),
-          segmented('loc-enabled', [{ value: 'yes', label: 'On' }, { value: 'no', label: 'Off' }], enabled ? 'yes' : 'no',
-            { 'data-id': k }),
+          f.blip ? segmented('loc-blip', [{ value: 'no', label: 'No blip' }, { value: 'yes', label: 'Map blip' }],
+            blip ? 'yes' : 'no', { 'data-id': k }) : null,
+          f.enabled ? segmented('loc-enabled', [{ value: 'yes', label: 'On' }, { value: 'no', label: 'Off' }],
+            enabled ? 'yes' : 'no', { 'data-id': k }) : null,
           btn('.is-small', 'loc-mypos', { 'data-value': k }, 'Use my position', 'location-crosshairs'),
           writeBtn('.is-primary.is-small', 'loc-save', { 'data-value': k, 'data-id': edit }, 'Save', 'Click again to save',
             'check'),
           writeBtn('.is-small', 'loc-here', { 'data-value': k, 'data-id': edit }, 'Save where I stand',
             'Click again: save where you stand', 'street-view'),
-          editing ? btn('.is-small.is-ghost', 'loc-new', { 'data-value': k }, 'New instead', 'plus') : null),
-        orgAnswer('loc:' + k))));
+          editing && !kind.single ? btn('.is-small.is-ghost', 'loc-new', { 'data-value': k }, 'New instead', 'plus') : null,
+          kind.reset && rows.length ? writeBtn('.is-small.is-ghost', 'loc-reset', { 'data-value': k }, 'Reset to config',
+            'Click again: remove every place set here', 'rotate-left') : null),
+        placeAnswer('loc:' + k)) : placeAnswer('loc:' + k)), '.loc-kind');
   }
 
-  /** The lists of places that are settings, with Use my position filling a line. */
+  /** The settings that are places, with Use my position filling a line. */
   function placeSettings() {
-    var keys = Object.keys(PLACE_KEYS).filter(function (k) { return !!settingEntry(k); });
-    if (!keys.length) return empty('No place settings on this server.');
-    var jail = keys.filter(function (k) { return PLACE_KEYS[k] === 'jail'; });
-    return frag(keys.filter(function (k) { return PLACE_KEYS[k] !== 'jail'; }).map(function (k) {
-      var e = settingEntry(k);
-      var kind = PLACE_KEYS[k];
+    var entries = allSettings().filter(function (e) { return !!placeOf(e); });
+    if (!entries.length) return empty('No place settings on this server.');
+    var jail = entries.filter(function (e) { return placeOf(e) === 'jail'; });
+    return frag(entries.filter(function (e) { return placeOf(e) !== 'jail'; }).map(function (e) {
       return h('div.loc-setting',
         settingRow(e),
-        kind !== 'name' && settingOpen(e) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': k },
+        placeOf(e) !== 'name' && settingOpen(e) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': e.key },
           'Use my position for a new line', 'location-crosshairs')) : null);
     }), jail.length ? h('div.loc-setting', h('h3.st-group-title', 'Prison zone'),
-      jail.map(function (k) { return settingRow(settingEntry(k)); }),
-      settingOpen(settingEntry(jail[0])) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': 'Limits.JailZone.x' },
+      jail.map(function (e) { return settingRow(e); }),
+      settingOpen(jail[0]) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': jail[0].key },
         'Use my position for the centre', 'location-crosshairs')) : null) : null);
   }
 
+  /** Use my position: read by the server, from where the character stands. */
+  function myPosition() {
+    return ask('placeMyPosition', {}, 'placePos').then(function (reply) {
+      if (!reply) return null;
+      if (!reply.ok) { S.places.answers.pos = { ok: false, text: words(reply) }; drawPlaces(); return null; }
+      S.places.answers.pos = null;
+      S.places.pos = reply.data || {};
+      S.places.posAt = nowSeconds();
+      return S.places.pos;
+    });
+  }
+  ACTIONS['loc-mypos'] = function (node) {
+    var k = node.getAttribute('data-value');
+    myPosition().then(function (pos) {
+      if (!pos) return;
+      var pre = 'loc.' + k + '.';
+      S.forms[pre + 'x'] = fmt(pos.x);
+      S.forms[pre + 'y'] = fmt(pos.y);
+      S.forms[pre + 'z'] = fmt(pos.z);
+      S.forms[pre + 'h'] = fmt(pos.heading, 0);
+      disarm();
+      drawPlaces();
+    });
+  };
+  ACTIONS['loc-fill'] = function (node) {
+    var key = node.getAttribute('data-key');
+    myPosition().then(function (pos) {
+      if (!pos) return;
+      var kind = placeOf(settingEntry(key));
+      if (kind === 'jail') {
+        S.forms['st.Limits.JailZone.x'] = fmt(pos.x);
+        S.forms['st.Limits.JailZone.y'] = fmt(pos.y);
+        drawPlaces();
+        return;
+      }
+      var line = kind === 'point' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', ' + fmt(pos.z) + ', ' + fmt(pos.heading, 0)
+        : kind === 'zone' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', 50, New zone'
+          : kind === 'district' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', New district'
+            : 'New area@' + fmt(pos.x) + ',' + fmt(pos.y);
+      S.forms['stl.' + key] = line;
+      drawPlaces();
+    });
+  };
+  function clearForm(k) {
+    ['label', 'x', 'y', 'z', 'h', 'r'].forEach(function (f) { delete S.forms['loc.' + k + '.' + f]; });
+    delete S.places.staged['blip:' + k];
+    delete S.places.staged['en:' + k];
+  }
+  ACTIONS['loc-edit'] = function (node) {
+    var k = node.getAttribute('data-value');
+    S.places.edit[k] = node.getAttribute('data-id');
+    clearForm(k);
+    disarm();
+    drawPlaces();
+  };
+  ACTIONS['loc-new'] = function (node) {
+    var k = node.getAttribute('data-value');
+    S.places.edit[k] = '';
+    clearForm(k);
+    disarm();
+    drawPlaces();
+  };
+  ACTIONS['loc-blip'] = function (node) {
+    disarm(); S.places.staged['blip:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes'; drawPlaces();
+  };
+  ACTIONS['loc-enabled'] = function (node) {
+    disarm(); S.places.staged['en:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes'; drawPlaces();
+  };
+  function spotSpec(k, here) {
+    var kind = placeKind(k) || { fields: {} };
+    var f = kind.fields || {};
+    var id = kind.single ? '' : (S.places.edit[k] || '');
+    var editing = kind.single ? asList(kind.rows)[0] || null
+      : id ? asList(kind.rows).filter(function (s) { return s.id === id; })[0] : null;
+    var pre = 'loc.' + k + '.';
+    function val(name, from) { var t = S.forms[pre + name]; return trim(t === undefined ? (from == null ? '' : from) : t); }
+    var spec = { kind: k };
+    if (id) spec.id = id;
+    if (f.label) {
+      var label = val('label', editing && editing.label);
+      if (!label && !kind.labelOptional) return { error: 'Give the place a name.' };
+      if (label) spec.label = label.slice(0, kind.labelMax || 64);
+    }
+    if (f.radius) {
+      var r = val('r', editing && editing.radius != null ? fmt(editing.radius) : '');
+      if (r !== '') {
+        spec.radius = Number(r);
+        var lim = kind.radius || { min: 0.5, max: 50 };
+        if (!isFinite(spec.radius) || spec.radius < lim.min || spec.radius > lim.max) {
+          return { error: 'The radius is ' + lim.min + ' to ' + lim.max + ' m.' };
+        }
+      }
+    }
+    var st = S.places.staged;
+    if (f.blip) spec.blip = st['blip:' + k] != null ? st['blip:' + k] : !!(editing && editing.blip);
+    if (f.enabled) spec.enabled = st['en:' + k] != null ? st['en:' + k] : !(editing && editing.enabled === false);
+    if (here) { spec.here = true; return spec; }
+    var nums = ['x', 'y', 'z', 'h'].map(function (a) {
+      return val(a, editing && (a === 'h' ? fmt(editing.heading, 0) : fmt(editing[a])));
+    });
+    if (nums.slice(0, 3).some(function (t) { return t === '' || !isFinite(Number(t)); })) {
+      return { error: 'Give x, y and z as numbers, or press Use my position.' };
+    }
+    spec.x = Number(nums[0]); spec.y = Number(nums[1]); spec.z = Number(nums[2]);
+    spec.heading = nums[3] === '' ? 0 : Number(nums[3]);
+    if (!isFinite(spec.heading) || spec.heading < 0 || spec.heading > 360) {
+      return { error: 'The heading is a number from 0 to 360.' };
+    }
+    return spec;
+  }
+  function locSave(node, here) {
+    var k = node.getAttribute('data-value');
+    var kind = placeKind(k) || {};
+    var spec = spotSpec(k, here);
+    if (spec.error) { placeRefuse('loc:' + k, spec.error); return; }
+    var pre = 'loc.' + k + '.';
+    var what = spec.label || kind.one || 'the place';
+    var label = here ? 'Click again: save ' + what + ' where you stand'
+      : 'Click again: save ' + what + ' at ' + fmt(spec.x) + ', ' + fmt(spec.y);
+    if (!armed(node, label, ['label', 'x', 'y', 'z', 'h', 'r'].map(function (f) { return pre + f; }))) return;
+    placeWrite('placeSet', spec, 'loc:' + k, node, function () {
+      clearForm(k);
+      S.places.edit[k] = '';
+    });
+  }
+  ACTIONS['loc-save'] = function (node) { locSave(node, false); };
+  ACTIONS['loc-here'] = function (node) { locSave(node, true); };
+  ACTIONS['loc-remove'] = function (node) {
+    if (!armed(node)) return;
+    placeWrite('placeRemove', { id: node.getAttribute('data-id') }, 'loc:' + (node.getAttribute('data-value') || 'place'),
+      node);
+  };
+  ACTIONS['loc-reset'] = function (node) {
+    var k = node.getAttribute('data-value');
+    if (!armed(node)) return;
+    placeWrite('placeReset', { kind: k }, 'loc:' + k, node);
+  };
+
+  SHELL.locations = function () { return h('section.view', h('div.stack', { id: 'places-body' }, locationsBody())); };
+  LOAD.locations = function () {
+    if (!S.settings.data) loadSettings();
+    return loadPlaces();
+  };
+  /** The switches the kinds name, as last read, to tell when one moved. */
+  function placeSwitches() {
+    return placeKinds().map(function (k) {
+      var e = k.switch ? settingEntry(k.switch) : null;
+      return e ? k.switch + '=' + (e.value === true) : '';
+    }).join('|');
+  }
+  AFTER_SETTINGS.push(function () {
+    if (S.section !== 'locations') return;
+    // A switch turned on or off from a card here: what can be set now.
+    var now = placeSwitches();
+    if (S.places.data && S.places.switches != null && now !== S.places.switches) { loadPlaces(); return; }
+    S.places.switches = now;
+    drawPlaces();
+  });
+
   /* -- the shells -- */
 
-  Object.keys(ORG_VIEWS).concat(Object.keys(BP_VIEWS), ['locations']).forEach(function (view) {
+  Object.keys(ORG_VIEWS).concat(Object.keys(BP_VIEWS)).forEach(function (view) {
     SHELL[view] = function () { return h('section.view', h('div.stack', { id: 'org-body' }, orgViewBody())); };
     LOAD[view] = function () {
       var ready = S.org.data ? Promise.resolve() : loadOrg();
-      if (!S.settings.data && (view === 'orgsetup' || view === 'locations' || view === 'bplimits' || view === 'bpmatrix')) {
+      if (!S.settings.data && (view === 'orgsetup' || view === 'bplimits' || view === 'bpmatrix')) {
         loadSettings();
       }
-      if (view === 'locations') { loadDisposal(); loadRpPlaces(); }
       // The ledger and the log only of an organisation that is on.
       ready.then(function () {
         if (S.section !== view || !orgOn()) return;
@@ -9287,121 +9337,6 @@
     orgWrite('bossPermsSet', { cells: [{ subject: 'role', id: g, power: code, state: state }] }, 'bp', node, function () {
       loadOrgAudit('org_grant');
     });
-  };
-
-  /** Use my position: read by the server, from where the character stands. */
-  function myPosition() {
-    return ask('orgMyPosition', {}, 'orgPos').then(function (reply) {
-      if (!reply) return null;
-      if (!reply.ok) { S.org.answers.pos = { ok: false, text: words(reply) }; drawOrg(); return null; }
-      S.org.answers.pos = null;
-      S.org.loc.pos = reply.data || {};
-      S.org.loc.posAt = nowSeconds();
-      return S.org.loc.pos;
-    });
-  }
-  ACTIONS['loc-mypos'] = function (node) {
-    var k = node.getAttribute('data-value');
-    myPosition().then(function (pos) {
-      if (!pos) return;
-      var pre = 'loc.' + k + '.';
-      S.forms[pre + 'x'] = fmt(pos.x);
-      S.forms[pre + 'y'] = fmt(pos.y);
-      S.forms[pre + 'z'] = fmt(pos.z);
-      S.forms[pre + 'h'] = fmt(pos.heading, 0);
-      disarm();
-      drawOrg();
-    });
-  };
-  ACTIONS['loc-fill'] = function (node) {
-    var key = node.getAttribute('data-key');
-    myPosition().then(function (pos) {
-      if (!pos) return;
-      var kind = PLACE_KEYS[key];
-      if (kind === 'jail') {
-        S.forms['st.Limits.JailZone.x'] = fmt(pos.x);
-        S.forms['st.Limits.JailZone.y'] = fmt(pos.y);
-        drawOrg();
-        return;
-      }
-      var line = kind === 'point' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', ' + fmt(pos.z) + ', ' + fmt(pos.heading, 0)
-        : kind === 'zone' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', 50, New zone'
-          : kind === 'district' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', New district'
-            : 'New area@' + fmt(pos.x) + ',' + fmt(pos.y);
-      S.forms['stl.' + key] = line;
-      drawOrg();
-    });
-  };
-  ACTIONS['loc-edit'] = function (node) {
-    var k = node.getAttribute('data-value');
-    S.org.loc.edit[k] = node.getAttribute('data-id');
-    ['label', 'x', 'y', 'z', 'h', 'r'].forEach(function (f) { delete S.forms['loc.' + k + '.' + f]; });
-    delete S.org.staged['blip:' + k];
-    delete S.org.staged['en:' + k];
-    disarm();
-    drawOrg();
-  };
-  ACTIONS['loc-new'] = function (node) {
-    var k = node.getAttribute('data-value');
-    S.org.loc.edit[k] = '';
-    ['label', 'x', 'y', 'z', 'h', 'r'].forEach(function (f) { delete S.forms['loc.' + k + '.' + f]; });
-    disarm();
-    drawOrg();
-  };
-  ACTIONS['loc-blip'] = function (node) { disarm(); S.org.staged['blip:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes'; drawOrg(); };
-  ACTIONS['loc-enabled'] = function (node) { disarm(); S.org.staged['en:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes'; drawOrg(); };
-  function spotSpec(k, here) {
-    var d = S.org.data || {};
-    var id = S.org.loc.edit[k] || '';
-    var editing = id ? asList(d.spots).filter(function (s) { return s.id === id; })[0] : null;
-    var pre = 'loc.' + k + '.';
-    function val(f, from) { var t = S.forms[pre + f]; return trim(t === undefined ? (from == null ? '' : from) : t); }
-    var spec = { kind: k };
-    if (id) spec.id = id;
-    var label = val('label', editing && editing.label);
-    if (!label) return { error: 'Give the place a name.' };
-    spec.label = label.slice(0, 64);
-    var r = val('r', editing && fmt(editing.radius));
-    if (r !== '') {
-      spec.radius = Number(r);
-      if (!isFinite(spec.radius) || spec.radius < 0.5 || spec.radius > 50) return { error: 'The radius is 0.5 to 50 m.' };
-    }
-    spec.blip = S.org.staged['blip:' + k] != null ? S.org.staged['blip:' + k] : !!(editing && editing.blip);
-    spec.enabled = S.org.staged['en:' + k] != null ? S.org.staged['en:' + k] : !(editing && editing.enabled === false);
-    if (here) { spec.here = true; return spec; }
-    var nums = ['x', 'y', 'z', 'h'].map(function (f) {
-      return val(f, editing && (f === 'h' ? fmt(editing.heading, 0) : fmt(editing[f])));
-    });
-    if (nums.slice(0, 3).some(function (t) { return t === '' || !isFinite(Number(t)); })) {
-      return { error: 'Give x, y and z as numbers, or press Use my position.' };
-    }
-    spec.x = Number(nums[0]); spec.y = Number(nums[1]); spec.z = Number(nums[2]);
-    spec.heading = nums[3] === '' ? 0 : Number(nums[3]);
-    if (!isFinite(spec.heading)) return { error: 'The heading is a number from 0 to 360.' };
-    return spec;
-  }
-  function locSave(node, here) {
-    var k = node.getAttribute('data-value');
-    var spec = spotSpec(k, here);
-    if (spec.error) { orgRefuse('loc:' + k, spec.error); return; }
-    var pre = 'loc.' + k + '.';
-    var label = here ? 'Click again: save ' + spec.label + ' where you stand'
-      : 'Click again: save ' + spec.label + ' at ' + fmt(spec.x) + ', ' + fmt(spec.y);
-    if (!armed(node, label, ['label', 'x', 'y', 'z', 'h', 'r'].map(function (f) { return pre + f; }))) return;
-    orgWrite('orgLocationSet', spec, 'loc:' + k, node, function () {
-      ['label', 'x', 'y', 'z', 'h', 'r'].forEach(function (f) { delete S.forms[pre + f]; });
-      S.org.loc.edit[k] = '';
-      delete S.org.staged['blip:' + k];
-      delete S.org.staged['en:' + k];
-    });
-  }
-  ACTIONS['loc-save'] = function (node) { locSave(node, false); };
-  ACTIONS['loc-here'] = function (node) { locSave(node, true); };
-  ACTIONS['loc-remove'] = function (node) {
-    var id = node.getAttribute('data-id');
-    var spot = asList((S.org.data || {}).spots).filter(function (s) { return s.id === id; })[0];
-    if (!armed(node)) return;
-    orgWrite('orgLocationRemove', { id: id }, 'loc:' + (spot ? spot.kind : 'place'), node);
   };
 
   HELP.push(

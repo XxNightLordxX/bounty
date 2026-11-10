@@ -746,7 +746,7 @@ ConfigDefaults.Organisation = {
 -- Map markers for each step of a contract, to the one party who acts on it
 -- (README, Optional features), and body disposal: a verified kill paid once
 -- the body is dropped off. Disposal ships off; its spots are set by staff
--- in the admin panel (disposalSpotSet) or below.
+-- in the admin panel (Locations) or below.
 
 ConfigDefaults.StepMarkers = {
     Enabled    = true,  -- markers for each step, to the party who acts on it

@@ -49,14 +49,16 @@ local Log = CrimsonBoot.requireShared('log')
 local Text = CrimsonBoot.requireShared('text')
 local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Registry = CrimsonBoot.require('server.places')
 
 local Disposal = {}
 
 local Deps = {}
 
 local KIND = 'disposal'
-local SPOT_KIND = 'disp_spot'
-local SPOTS = { vehicle = true, drop = true }
+--- The two staff-set spots, kinds of the one registry of map spots
+--- (server/places.lua).
+local SPOTS = { vehicle = 'disposal_vehicle', drop = 'disposal_drop' }
 
 --- Steps in force: [id] = row { id, kind, contract_id, slot, hitman_cid,
 --- creator_cid, target_cid, stage = 'body' | 'loaded', body = { x, y, z },
@@ -67,8 +69,6 @@ local Steps = {}
 --- vehicle was taken away by this file (the hitman left, it was abandoned,
 --- the stop), so the next one made is not a respawn; any other loss is.
 local Runtime = {}
---- The staff-set spots: [name] = { x, y, z, h }.
-local Spots = {}
 local loaded = false
 --- When a missing setting was last said, so it is said once a minute.
 local saidAt = {}
@@ -277,8 +277,7 @@ end
 local function Load()
     if loaded then return true end
     local ok, rows = pcall(Deps.storage.readRpRows, KIND)
-    local okS, spots = pcall(Deps.storage.readRpRows, SPOT_KIND)
-    if not ok or type(rows) ~= 'table' or not okS or type(spots) ~= 'table' then return false end
+    if not ok or type(rows) ~= 'table' then return false end
     loaded = true
     for i = 1, #rows do
         local row = rows[i]
@@ -286,11 +285,6 @@ local function Load()
             Steps[row.id] = row
             Runtime[row.id] = Runtime[row.id] or {}
         end
-    end
-    for i = 1, #spots do
-        local name = type(spots[i].name) == 'string' and spots[i].name or nil
-        local at = Point(spots[i])
-        if name and SPOTS[name] and at then Spots[name] = at end
     end
     return true
 end
@@ -300,8 +294,8 @@ Disposal.load = Load
 ---@param name 'vehicle'|'drop'
 ---@return table|nil { x, y, z, h }
 function Disposal.spot(name)
-    Load()
-    if Spots[name] then return Spots[name] end
+    local row = SPOTS[name] and (Registry.rows(SPOTS[name]) or {})[1]
+    if row then return { x = row.x, y = row.y, z = row.z, h = row.h or 0.0 } end
     return Point(name == 'vehicle' and Cfg().VehicleSpawn or Cfg().DropOff)
 end
 
@@ -617,7 +611,7 @@ function Disposal.onClaim(contract, hitmanCid, fulfilment, opts)
     if not Load() then return end
     if not Disposal.spot('vehicle') or not Disposal.spot('drop') then
         Say('spots', 'body disposal is on but its vehicle spawn spot or its drop-off is not set, so kills '
-            .. 'pay at once (admin panel: disposalSpotSet)')
+            .. 'pay at once (admin panel: Locations, placeSet)')
         return
     end
     local slot = tonumber(contract.next_slot) or 1
@@ -918,40 +912,6 @@ function Disposal.respawn(staffCid, id)
     return true
 end
 
---- Set a spot from typed figures, or where the staff member stands.
----@param name 'vehicle'|'drop'
----@param at table|nil { x, y, z, h }
-function Disposal.setSpot(staffCid, name, at)
-    if not SPOTS[name] then return false, 'invalid_input' end
-    local point = Point(at)
-    if not point then return false, 'invalid_input' end
-    local b = { minX = -4500.0, maxX = 6000.0, minY = -6500.0, maxY = 8500.0 }
-    if point.x < b.minX or point.x > b.maxX or point.y < b.minY or point.y > b.maxY then
-        return false, 'invalid_input'
-    end
-    if not Load() then return false, 'store_unreadable' end
-    point = { x = math.floor(point.x * 10 + 0.5) / 10, y = math.floor(point.y * 10 + 0.5) / 10,
-              z = math.floor(point.z * 10 + 0.5) / 10, h = math.floor(point.h * 10 + 0.5) / 10 }
-    local ok = pcall(Deps.storage.writeRpRow, { id = SPOT_KIND .. ':' .. name, kind = SPOT_KIND, name = name,
-        x = point.x, y = point.y, z = point.z, h = point.h, by = staffCid, at = os.time() })
-    if not ok then return false, 'store_unreadable' end
-    Spots[name] = point
-    Deps.audit.action('disposal_spot_set', staffCid, nil, { spot = name })
-    Refresh()
-    return true, nil, point
-end
-
---- Clear a staff-set spot (config.lua's, if any, applies again).
-function Disposal.clearSpot(staffCid, name)
-    if not SPOTS[name] then return false, 'invalid_input' end
-    if not Load() then return false, 'store_unreadable' end
-    pcall(Deps.storage.deleteRpRow, SPOT_KIND .. ':' .. name)
-    Spots[name] = nil
-    Deps.audit.action('disposal_spot_cleared', staffCid, nil, { spot = name })
-    Refresh()
-    return true
-end
-
 --- How many steps are in force (the diagnosis, the tests).
 function Disposal.count()
     local n = 0
@@ -966,13 +926,43 @@ function Disposal.runtime(id) return Runtime[id] end
 --                              WIRING
 -- ============================================================================
 
+--- The vehicle spawn and the drop-off as kinds of the registry: staff only,
+--- one each, set whether disposal is on or off (config.lua's VehicleSpawn
+--- and DropOff apply while one is not set); audited disposal_spot_set /
+--- disposal_spot_cleared.
+local function RegisterSpots()
+    for _, name in ipairs({ 'vehicle', 'drop' }) do
+        local kindName = SPOTS[name]
+        Registry.kind(kindName, {
+            group = 'disposal', icon = name == 'vehicle' and 'truck' or 'flag-checkered',
+            label = name == 'vehicle' and 'Disposal vehicle spawn' or 'Body drop-off',
+            one = name == 'vehicle' and 'the vehicle spawn' or 'the drop-off', single = true,
+            max = function() return 1 end,
+            says = { invalid_input = 'Give the spot (vehicle or drop) and a point on the map.' },
+            after = function(who, row)
+                Deps.audit.action('disposal_spot_set', who.cid, nil, { spot = name })
+                Refresh()
+            end,
+            removed = function(who)
+                Deps.audit.action('disposal_spot_cleared', who.cid, nil, { spot = name })
+                Refresh()
+            end,
+            view = function()
+                local cfg = Point(name == 'vehicle' and Cfg().VehicleSpawn or Cfg().DropOff)
+                return { on = Feature.on('Disposal'), switch = 'Disposal.Enabled', defaults = cfg and { cfg } or {},
+                    using = (Registry.rows(kindName) or {})[1] and 'panel' or 'config',
+                    note = 'Body disposal cannot start a step until both are set.' }
+            end,
+        })
+    end
+end
+
 local function AddOps(panel)
     if not (panel and panel.extend and panel.LEVELS) then return end
     local READ, WRITE = panel.LEVELS.READ, panel.LEVELS.WRITE
     local function staffCid(src) return panel.staffOf and panel.staffOf(src) or ('player ' .. tostring(src)) end
     Disposal.OPS = {
         disposalList = READ, disposalSkip = WRITE, disposalRespawn = WRITE,
-        disposalSpotSet = WRITE, disposalSpotClear = WRITE, disposalMyPosition = READ,
     }
     panel.extend('disposalList', READ, function(src)
         -- Who the hitman is goes only to staff with the identity ACE, as
@@ -1002,34 +992,6 @@ local function AddOps(panel)
         end
         return true, nil, 'The vehicle is back at the spawn spot.'
     end)
-    panel.extend('disposalSpotSet', WRITE, function(src, data)
-        local name = Text.field(data.spot, 8)
-        local at
-        if data.here == true then
-            at = PositionOf(src)
-            if at then
-                local okH, heading = pcall(function() return GetEntityHeading(GetPlayerPed(src)) end)
-                at.h = okH and tonumber(heading) or 0.0
-            end
-            if not at then return false, 'not_found', 'The server cannot see your character right now.' end
-        else
-            at = { x = data.x, y = data.y, z = data.z, h = data.heading }
-        end
-        local ok, err, point = Disposal.setSpot(staffCid(src), name, at)
-        if not ok then return false, err, 'Give the spot (vehicle or drop) and a point on the map.' end
-        return true, nil, 'Spot saved.', point
-    end)
-    panel.extend('disposalSpotClear', WRITE, function(src, data)
-        local ok, err = Disposal.clearSpot(staffCid(src), Text.field(data.spot, 8))
-        if not ok then return false, err, 'Give the spot: vehicle or drop.' end
-        return true, nil, 'Spot cleared.'
-    end)
-    panel.extend('disposalMyPosition', READ, function(src)
-        local at = PositionOf(src)
-        if not at then return false, 'not_found', 'The server cannot see your character right now.' end
-        local okH, heading = pcall(function() return GetEntityHeading(GetPlayerPed(src)) end)
-        return true, nil, nil, { x = at.x, y = at.y, z = at.z, heading = okH and tonumber(heading) or 0.0 }
-    end)
 end
 
 --- The hitman's two actions, from their ox_target options
@@ -1056,7 +1018,9 @@ end
 function Disposal.init(deps)
     Deps = deps or {}
     -- Read lazily, at the first give or tick that asks: nothing at start.
-    Steps, Runtime, Spots, loaded, saidAt = {}, {}, {}, false, {}
+    Steps, Runtime, loaded, saidAt = {}, {}, false, {}
+    Registry.attach(Deps.storage)
+    RegisterSpots()
     local escrow, contracts = Deps.escrow, Deps.contracts
     -- The escrow's gate, ahead of the proof-of-intent hold that holds it.
     if escrow then

@@ -29,24 +29,24 @@ describe('Use my position, and staff\'s spots', function()
         local s, _, org = world()
         W.at(6, 215.5, -810.25, 30.75)
         Env.players[6]._heading = 90.0
-        local reply = W.ask(6, 'orgMyPosition', {})
+        local reply = W.ask(6, 'placeMyPosition', {})
         eq(reply.ok, true)
         eq(reply.data.x, 215.5)
         eq(reply.data.heading, 90.0)
-        reply = W.ask(6, 'orgLocationSet', { kind = 'office', here = true, x = 1, y = 2, z = 3, label = 'Office' })
+        reply = W.ask(6, 'placeSet', { kind = 'office', here = true, x = 1, y = 2, z = 3, label = 'Office' })
         eq(reply.ok, true, tostring(reply.message))
         local office
         for _, l in pairs(org.locations) do if l.kind == 'office' then office = l end end
-        eq(office.x, 2155, 'decimetres, from the server\'s position, not the page\'s 1')
-        eq(office.heading, 90)
+        eq(office.x, 215.5, 'from the server\'s position, not the page\'s 1')
+        eq(office.h, 90)
         truthy(office.anchor, 'staff\'s point, which a boss may move it near')
-        reply = W.ask(6, 'orgLocationSet', { kind = 'meeting', x = 10, y = 20, z = 30, radius = 3, blip = true })
+        reply = W.ask(6, 'placeSet', { kind = 'meeting', x = 10, y = 20, z = 30, radius = 3, blip = true })
         eq(reply.ok, true)
-        reply = W.ask(6, 'orgLocationSet', { kind = 'signup', x = 1e9, y = 20, z = 30 })
+        reply = W.ask(6, 'placeSet', { kind = 'signup', x = 1e9, y = 20, z = 30 })
         falsy(reply.ok, 'off the map')
-        reply = W.ask(6, 'orgLocationSet', { kind = 'vault', x = 1, y = 2, z = 3 })
+        reply = W.ask(6, 'placeSet', { kind = 'vault', x = 1, y = 2, z = 3 })
         falsy(reply.ok, 'no such kind')
-        reply = W.ask(6, 'orgLocationRemove', { id = office.id })
+        reply = W.ask(6, 'placeRemove', { id = office.id })
         eq(reply.ok, true)
         eq(org.locations[office.id], nil)
         local _ = s
@@ -56,9 +56,9 @@ describe('Use my position, and staff\'s spots', function()
         local _, _, org = world()
         local s = W
         s.at(6, 10, 10)
-        eq(W.ask(6, 'orgLocationSet', { kind = 'office', here = true }).ok, true)
+        eq(W.ask(6, 'placeSet', { kind = 'office', here = true }).ok, true)
         s.at(6, 50, 50)
-        eq(W.ask(6, 'orgLocationSet', { kind = 'office', here = true }).ok, true)
+        eq(W.ask(6, 'placeSet', { kind = 'office', here = true }).ok, true)
         local n = 0
         for _, l in pairs(org.locations) do if l.kind == 'office' then n = n + 1 end end
         eq(n, 1)
@@ -80,7 +80,7 @@ describe('a boss\'s spots', function()
         truthy(s.org.placeSpot(BOSS, { kind = 'office', x = 5000, y = 5000, z = 1 }), 'where they stand')
         local office
         for _, l in pairs(org.locations) do if l.kind == 'office' then office = l end end
-        eq(office.x, 1800, 'their position, not the figures sent')
+        eq(office.x, 180, 'their position, not the figures sent')
         W.at(11, 170.0, 100.0)
         ok, err = s.org.placeSpot(BOSS, { kind = 'office' })
         eq(err, 'org_cooldown')
@@ -360,5 +360,133 @@ describe('client/org.lua', function()
         t.target = 'missing'
         t.handlers['crimson-hitman:orgSpots']({ spots = { { id = 'a', kind = 'signup', x = 1, y = 2, z = 3 } } })
         eq(#t.zones, 0)
+    end)
+end)
+
+describe('one Places registry: every staff-set map spot (server/places.lua)', function()
+    local function on(s)
+        Config.Roleplay.Rumours.Enabled = true
+        Config.Roleplay.InformantNpc.Enabled = true
+        Config.Roleplay.NpcPlaces.Enabled = true
+        local _ = s
+    end
+    local function kind(view, id)
+        for _, k in ipairs(view.kinds) do if k.id == id then return k end end
+    end
+
+    it('keeps the organisation\'s, the NPCs\' and body disposal\'s spots as one row kind in the store', function()
+        local s = world()
+        on(s)
+        W.at(6, 100.0, 200.0, 30.0)
+        for _, k in ipairs({ 'office', 'broker', 'disposal_vehicle' }) do
+            local reply = W.ask(6, 'placeSet', { kind = k, here = true })
+            eq(reply.ok, true, k .. ': ' .. tostring(reply.message))
+        end
+        local rows = s.storage.readRpRows('map_place')
+        eq(#rows, 3, 'one row each, all of one kind')
+        local seen = {}
+        for _, r in ipairs(rows) do seen[r.place] = r.x end
+        eq(seen.office, 100.0)
+        eq(seen.broker, 100.0)
+        eq(seen.disposal_vehicle, 100.0)
+        eq(#s.storage.readRpRows('rp_place'), 0, 'no row kind of its own for the NPCs')
+        eq(#s.storage.readRpRows('disp_spot'), 0, 'nor for disposal')
+        for _, name in ipairs(require('server.org.schema').NAMES) do
+            truthy(name ~= 'locations', 'the organisation keeps no table of spots')
+        end
+        eq(s.rpPlaces.current('broker').x, 100.0, 'the broker stands there')
+        eq(s.disposal.spot('vehicle').x, 100.0, 'the vehicle is made there')
+        local office
+        for _, l in pairs(s.org.current().locations) do if l.kind == 'office' then office = l end end
+        eq(office.x, 100.0, 'the organisation reads its office from it')
+    end)
+
+    it('has one Use my position and one set, remove and reset; the old ops are gone', function()
+        world()
+        W.at(6, 215.5, -810.25, 30.75)
+        Env.players[6]._heading = 90.0
+        local reply = W.ask(6, 'placeMyPosition', {})
+        eq(reply.ok, true)
+        eq(reply.data.x, 215.5)
+        eq(reply.data.heading, 90.0)
+        for _, op in ipairs({ 'orgMyPosition', 'disposalMyPosition', 'orgLocationSet', 'orgLocationRemove',
+            'disposalSpotSet', 'disposalSpotClear', 'rpPlaceList', 'rpPlaceSet', 'rpPlaceRemove', 'rpPlaceReset' }) do
+            eq(W.ask(6, op, {}).err, 'unknown_op', op)
+        end
+        eq(W.ask(7, 'placeSet', { kind = 'office', here = true }).ok, false, 'a reader cannot write')
+        W.at(7, 1.0, 2.0, 3.0)
+        eq(W.ask(7, 'placeMyPosition', {}).ok, true, 'but may read where they stand')
+    end)
+
+    it('lists every kind, in order, with what may be set and why one cannot be set now', function()
+        local s = world()
+        local view = W.ask(6, 'placeList', {}).data
+        local ids = {}
+        for _, k in ipairs(view.kinds) do ids[#ids + 1] = k.id end
+        eq(table.concat(ids, ','),
+            'broker,informant,office,signup,meeting,npc,place,disposal_vehicle,disposal_drop')
+        eq(kind(view, 'office').group, 'org')
+        eq(kind(view, 'office').single, true)
+        eq(kind(view, 'office').fields.radius, true)
+        eq(kind(view, 'disposal_drop').fields.label, nil, 'disposal spots have no name to set')
+        eq(kind(view, 'broker').max, 20)
+        truthy(kind(view, 'broker').off, 'NpcPlaces is off as shipped')
+        eq(kind(view, 'office').off, nil, 'the organisation is on here')
+        Config.Organisation.Enabled = false
+        view = W.ask(6, 'placeList', {}).data
+        truthy(kind(view, 'office').off, 'off: said, and nothing listed')
+        eq(#kind(view, 'office').rows, 0)
+        eq(W.ask(6, 'placeSet', { kind = 'office', x = 1, y = 2, z = 3 }).err, 'org_off')
+        local _ = s
+    end)
+
+    it('checks every kind the same way: the map, NaN, the heading, the name, the radius', function()
+        local s = world()
+        on(s)
+        local bad = {
+            { x = 1e9, y = 1, z = 1 }, { x = 1, y = 1, z = 5000 }, { x = 0 / 0, y = 1, z = 1 },
+            { x = 1, y = 1, z = 1, heading = 0 / 0 }, { x = 1, y = 1, z = 1, heading = 720 },
+            { x = 'a', y = 1, z = 1 },
+        }
+        for _, k in ipairs({ 'office', 'signup', 'broker', 'disposal_drop' }) do
+            for i, junk in ipairs(bad) do
+                junk.kind = k
+                local reply = W.ask(6, 'placeSet', junk)
+                eq(reply.ok, false, k .. ' #' .. i)
+                truthy(reply.message, 'worded')
+            end
+        end
+        eq(W.ask(6, 'placeSet', { kind = 'signup', x = 1, y = 1, z = 1, label = '<b>' }).ok, false, 'markup')
+        eq(W.ask(6, 'placeSet', { kind = 'signup', x = 1, y = 1, z = 1, radius = 99 }).ok, false, 'radius')
+        eq(W.ask(6, 'placeSet', { kind = 'signup', x = 1, y = 1, z = 1, blip = 'yes' }).ok, false, 'blip')
+        eq(W.ask(6, 'placeSet', { kind = 'broker', x = 1, y = 1, z = 1, label = string.rep('a', 41) }).ok, false,
+            'the NPCs\' 40')
+        eq(#s.storage.readRpRows('map_place'), 0, 'nothing kept')
+    end)
+
+    it('keeps each kind\'s own rules: who may set it, how many, one office, one of each disposal spot', function()
+        local s = world()
+        on(s)
+        W.at(11, 1000.0, 1000.0)
+        local places = require('server.places')
+        local ok, err = places.set(BOSS, 'broker', { here = true })
+        falsy(ok, 'a boss never places the NPCs')
+        ok, err = places.set(BOSS, 'disposal_drop', { here = true })
+        falsy(ok, 'nor body disposal\'s spots')
+        local _ = err
+        for i = 1, 20 do
+            eq(W.ask(6, 'placeSet', { kind = 'broker', x = i, y = 1, z = 1 }).ok, true)
+        end
+        eq(W.ask(6, 'placeSet', { kind = 'broker', x = 21, y = 1, z = 1 }).message, 'At most 20 places for one NPC.')
+        eq(W.ask(6, 'placeSet', { kind = 'disposal_drop', x = 1, y = 1, z = 1 }).ok, true)
+        eq(W.ask(6, 'placeSet', { kind = 'disposal_drop', x = 2, y = 2, z = 2 }).ok, true)
+        eq(#places.rows('disposal_drop'), 1, 'moved, not doubled')
+        eq(places.rows('disposal_drop')[1].x, 2.0)
+        eq(W.ask(6, 'placeReset', { kind = 'disposal_drop' }).ok, false, 'only the NPCs reset to a config list')
+        eq(W.ask(6, 'placeReset', { kind = 'broker' }).ok, true)
+        s.audit.flush()
+        truthy(#s.storage.auditByAction('rp_place_set', 50) >= 20, 'rp_place_set kept')
+        truthy(#s.storage.auditByAction('rp_place_removed', 5) >= 1, 'rp_place_removed kept')
+        truthy(#s.storage.auditByAction('disposal_spot_set', 5) >= 2, 'disposal_spot_set kept')
     end)
 end)

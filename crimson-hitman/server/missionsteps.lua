@@ -376,7 +376,7 @@ end
 
 --- The admin panel's settings for both (server/settings.lua adds them, in
 --- their own category, 'mission-steps'). The disposal spots are not here:
---- they are set with the panel's disposalSpotSet, as places are.
+--- they are set in the panel's Locations (placeSet), as every place is.
 local GROUP, DISPOSAL = 'Step markers', 'Body disposal'
 local AT_USE = 'Read each time it is used.'
 local NEXT = 'Read at the next verified kill: a disposal already under way finishes as it started.'

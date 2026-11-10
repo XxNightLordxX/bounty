@@ -211,8 +211,10 @@ local function setup(config, anonymous)
     Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001',
         firstname = 'Sam', lastname = 'Steward' })
     Env.aces[6] = { ['crimson.admin'] = true }
-    truthy(s.disposal.setSpot('ADMIN001', 'vehicle', SPAWN))
-    truthy(s.disposal.setSpot('ADMIN001', 'drop', DROP))
+    local staff = { staff = true, cid = 'ADMIN001', source = 6 }
+    local places = require('server.places')
+    truthy(places.set(staff, 'disposal_vehicle', { x = SPAWN.x, y = SPAWN.y, z = SPAWN.z, heading = SPAWN.h }))
+    truthy(places.set(staff, 'disposal_drop', { x = DROP.x, y = DROP.y, z = DROP.z }))
     local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 } } })
     truthy(c, 'placed')
