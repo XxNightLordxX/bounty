@@ -757,6 +757,14 @@ local SCHEMA = {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
 }
 
+-- The hitman organisation's tables (server/org/schema.lua), after these and
+-- in that file's order: created, and migrated, like every other. Made at
+-- every start whether or not Config.Organisation is on, as every table is;
+-- nothing reads or writes them while it is off.
+for _, statement in ipairs(CrimsonBoot.require('server.org.schema').CREATE) do
+    SCHEMA[#SCHEMA + 1] = statement
+end
+
 --------------------------------------------------------------------------
 -- Migration
 --------------------------------------------------------------------------
@@ -3754,6 +3762,95 @@ function MySQLStore.lastHeartbeat()
     local rows = db.query(
         'SELECT meta_value FROM crimson_meta WHERE meta_key = ?', { 'heartbeat' }) or {}
     return rows[1] and tonumber(rows[1].meta_value) or nil
+end
+
+--------------------------------------------------------------------------
+-- The hitman organisation's rows (server/org/, Config.Organisation)
+--------------------------------------------------------------------------
+
+local OrgSchema = CrimsonBoot.require('server.org.schema')
+
+--- A row as the table keeps it: the JSON columns decoded, numbers as numbers.
+local function hydrateOrgRow(spec, row)
+    if type(row) ~= 'table' then return nil end
+    local out = {}
+    for _, column in ipairs(spec.columns) do
+        local value = row[column]
+        if spec.json and spec.json[column] then
+            local ok, decoded = pcall(json.decode, type(value) == 'string' and value or '')
+            value = ok and type(decoded) == 'table' and decoded or nil
+        elseif spec.bool and spec.bool[column] then
+            value = value == true or value == 1
+        end
+        out[column] = value
+    end
+    return out
+end
+
+--- Its parameters, in the column order of the table's statements.
+local function orgParams(spec, row)
+    local params = {}
+    for i, column in ipairs(spec.columns) do
+        local value = row[column]
+        if spec.json and spec.json[column] then
+            value = type(value) == 'table' and json.encode(value) or nil
+        elseif spec.bool and spec.bool[column] then
+            value = value and 1 or 0
+        end
+        params[i] = value
+    end
+    return params
+end
+
+--- See the memory backend.
+function MySQLStore.readOrgRows(name, value)
+    local spec, sql = OrgSchema.TABLES[name], OrgSchema.SQL[name]
+    if not spec then return {} end
+    local rows
+    if value == nil then
+        rows = db.query(sql.all, {}) or {}
+    elseif sql.by then
+        rows = db.query(sql.by, { value }) or {}
+    else
+        rows = {}
+    end
+    local out = {}
+    for i = 1, #rows do out[#out + 1] = hydrateOrgRow(spec, rows[i]) end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+function MySQLStore.readOrgRow(name, id)
+    local spec, sql = OrgSchema.TABLES[name], OrgSchema.SQL[name]
+    if not spec then return nil end
+    local rows = db.query(sql.one, { id }) or {}
+    return rows[1] and hydrateOrgRow(spec, rows[1]) or nil
+end
+
+function MySQLStore.writeOrgRow(name, row)
+    local spec, sql = OrgSchema.TABLES[name], OrgSchema.SQL[name]
+    if not spec then return false end
+    db.query(sql.upsert, orgParams(spec, row))
+    return true
+end
+
+--- Written only when no row has that id yet: asked first, then inserted.
+--- The callers serialise each id in this process (server/org/funds.lua),
+--- so nothing of this resource's can land between the two.
+function MySQLStore.insertOrgRowOnce(name, row)
+    local spec, sql = OrgSchema.TABLES[name], OrgSchema.SQL[name]
+    if not spec then return false end
+    local held = db.query(sql.one, { row.id }) or {}
+    if held[1] then return false end
+    db.query(sql.insert, orgParams(spec, row))
+    return true
+end
+
+function MySQLStore.deleteOrgRow(name, id)
+    local sql = OrgSchema.SQL[name]
+    if not sql then return false end
+    db.query(sql.delete, { id })
+    return true
 end
 
 function MySQLStore.flush() return true end

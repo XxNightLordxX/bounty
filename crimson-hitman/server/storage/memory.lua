@@ -51,6 +51,7 @@ function Memory.open()
         contractStaff = {},
         staffRecords = {},
         rpRows = {},
+        org = {},
     }
     return true
 end
@@ -2002,6 +2003,61 @@ end
 ---@param id string
 function Memory.deleteRpRow(id)
     if db.rpRows then db.rpRows[id] = nil end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The hitman organisation's rows (server/org/, Config.Organisation)
+--------------------------------------------------------------------------
+
+--- Every organisation table by its short name (server/org/schema.lua): its
+--- rows by id, each written whole and handed back as a copy. `value` reads
+--- only the rows whose `by` column (the table's own, in the schema) holds
+--- it; nil reads them all.
+---@param name string a Schema.TABLES name
+---@param value any|nil
+---@return table[] rows, by id
+function Memory.readOrgRows(name, value)
+    local by = CrimsonBoot.require('server.org.schema').TABLES[name]
+    by = by and by.by
+    local out = {}
+    for _, row in pairs((db.org or {})[name] or {}) do
+        if value == nil or (by and row[by] == value) then out[#out + 1] = Util.copy(row) end
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+---@param name string
+---@param id string
+---@return table|nil row
+function Memory.readOrgRow(name, id)
+    local rows = (db.org or {})[name]
+    local row = rows and rows[id]
+    return row and Util.copy(row) or nil
+end
+
+---@param name string
+---@param row table { id, ... }
+function Memory.writeOrgRow(name, row)
+    db.org = db.org or {}
+    db.org[name] = db.org[name] or {}
+    db.org[name][row.id] = Util.copy(row)
+    return true
+end
+
+--- Written only when no row has that id yet: false when one has.
+---@return boolean inserted
+function Memory.insertOrgRowOnce(name, row)
+    db.org = db.org or {}
+    db.org[name] = db.org[name] or {}
+    if db.org[name][row.id] ~= nil then return false end
+    db.org[name][row.id] = Util.copy(row)
+    return true
+end
+
+function Memory.deleteOrgRow(name, id)
+    if db.org and db.org[name] then db.org[name][id] = nil end
     return true
 end
 

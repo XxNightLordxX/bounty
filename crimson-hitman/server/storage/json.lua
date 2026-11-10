@@ -31,6 +31,7 @@ local EMPTY = {
     staffRecords = {},
     staffMeta = {},
     rpRows = {},
+    org = {},
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -60,7 +61,7 @@ local indexDirty = false
 --- file and, at most, a store.json small enough not to matter.
 local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings',
                   'alerts', 'viewAlerts', 'locationTips', 'placerInformants', 'freezes',
-                  'contractStaff', 'staffRecords', 'staffMeta', 'rpRows' }
+                  'contractStaff', 'staffRecords', 'staffMeta', 'rpRows', 'org' }
 local recordsDirty = false
 
 --- An alert changed (server/alerts.lua) since records.json was written.
@@ -2474,6 +2475,55 @@ function JsonStore.deleteRpRow(id)
     if db.rpRows and db.rpRows[id] then
         db.rpRows[id] = nil
         touch(rpRowHoldsMoney(id))
+    end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The hitman organisation's rows (server/org/, Config.Organisation)
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, written at once: the funds
+--- ledger and the frozen cuts are money paths, and the rest is small and
+--- changes only when staff or a boss change something.
+function JsonStore.readOrgRows(name, value)
+    local by = CrimsonBoot.require('server.org.schema').TABLES[name]
+    by = by and by.by
+    local out = {}
+    for _, row in pairs((db.org or {})[name] or {}) do
+        if value == nil or (by and row[by] == value) then out[#out + 1] = Util.copy(row) end
+    end
+    table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    return out
+end
+
+function JsonStore.readOrgRow(name, id)
+    local rows = (db.org or {})[name]
+    local row = rows and rows[id]
+    return row and Util.copy(row) or nil
+end
+
+function JsonStore.writeOrgRow(name, row)
+    db.org = db.org or {}
+    db.org[name] = db.org[name] or {}
+    db.org[name][row.id] = Util.copy(row)
+    touch(true)
+    return true
+end
+
+function JsonStore.insertOrgRowOnce(name, row)
+    db.org = db.org or {}
+    db.org[name] = db.org[name] or {}
+    if db.org[name][row.id] ~= nil then return false end
+    db.org[name][row.id] = Util.copy(row)
+    touch(true)
+    return true
+end
+
+function JsonStore.deleteOrgRow(name, id)
+    if db.org and db.org[name] and db.org[name][id] ~= nil then
+        db.org[name][id] = nil
+        touch(true)
     end
     return true
 end

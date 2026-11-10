@@ -1645,7 +1645,11 @@ function Escrow.stillOwed(line)
         total = 1
     end
     local already = math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
-    return math.max(0, math.floor(tonumber(total) or 0) - already)
+    -- Less what the hitman organisation's funds already took of it as it
+    -- was given (Escrow.orgTaken, server/org/init.lua): theirs, never given
+    -- to the member again.
+    local taken = Escrow.orgTaken and (line.source == 'cash' or line.source == 'bank') and Escrow.orgTaken(line) or 0
+    return math.max(0, math.floor(tonumber(total) or 0) - already - taken)
 end
 
 --- Whether a line owed to somebody waits in their retry queue.
@@ -1963,6 +1967,14 @@ end
 --- (one item holding the figure), or nil to pay it in its own account.
 Escrow.payoutAs = nil
 
+--- Set by server/org/init.lua (Config.Organisation, off as shipped): for a
+--- cash or bank line being given, the dollars of it the organisation's funds
+--- take now or took on an earlier try (once per line, by its own reference),
+--- given to the member less that; and what was taken of a line already.
+--- Off, both answer only what was taken already, from memory.
+Escrow.orgCut = nil
+Escrow.orgTaken = nil
+
 --- Hand a single escrow line to a player. Returns false when it cannot be
 --- delivered right now — never destroys the property to force success —
 --- and, then, whether that was because they are not in the city.
@@ -2003,8 +2015,16 @@ function Escrow.deliver(recipientCid, line)
 
     if (line.source == 'cash' or line.source == 'bank') and not asItem then
         local account, amount = line.source, line.amount
-        if already > 0 then
-            amount = (tonumber(amount) or 0) - already
+        -- The organisation's cut of a member's payout, taken into its funds
+        -- first (Escrow.orgCut): the line is then given less it, so what was
+        -- escrowed is what the member and the funds received between them.
+        local cut = 0
+        if Escrow.orgCut then
+            local ran, taken = pcall(Escrow.orgCut, recipientCid, line)
+            if ran then cut = math.max(0, math.floor(tonumber(taken) or 0)) end
+        end
+        if already > 0 or cut > 0 then
+            amount = (tonumber(amount) or 0) - already - cut
             if amount <= 0 then return true end
         end
         -- Paid in the account it was taken from, always (§14.10). There is

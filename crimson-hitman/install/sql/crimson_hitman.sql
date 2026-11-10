@@ -12,7 +12,7 @@
 --
 -- mysql is the shipped mode; in json mode nothing here is used.
 --
--- The 24 tables: crimson_contracts, crimson_escrow, crimson_hitmen,
+-- The 32 tables: crimson_contracts, crimson_escrow, crimson_hitmen,
 -- crimson_amendments, crimson_messages, crimson_ledger, crimson_pending,
 -- crimson_stats, crimson_audit, crimson_reveals, crimson_placer_informants,
 -- crimson_mutes, crimson_photos, crimson_review, crimson_settings,
@@ -20,7 +20,11 @@
 -- crimson_location_tips, crimson_freezes, crimson_contract_staff,
 -- crimson_staff_records, crimson_meta and crimson_rp_rows (the roleplay and
 -- improvements features' rows: proof-of-intent holds, bodyguard jobs, heat,
--- decay steps, tip warnings, going dark, EMS holds and the like).
+-- decay steps, tip warnings, going dark, EMS holds and the like), and the
+-- hitman organisation's eight (Config.Organisation, off as shipped):
+-- crimson_orgs, crimson_org_roles, crimson_org_members, crimson_org_grants,
+-- crimson_org_locations, crimson_org_funds, crimson_org_splits and
+-- crimson_org_applications.
 --
 -- These are the same statements as server/storage/mysql.lua runs, word for
 -- word: utf8mb4 with utf8mb4_unicode_ci, as qbx_core's own tables are, and
@@ -450,4 +454,129 @@ CREATE TABLE IF NOT EXISTS crimson_rp_rows (
     body TEXT NOT NULL,
     updated_at INT NOT NULL,
     INDEX idx_rp_rows_kind (kind)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The organisations: one row each, the job it is in qbx_core, and the
+-- staff's settings for it as JSON (cuts, bounds, the office rule, the
+-- notice, the boss menu layout).
+CREATE TABLE IF NOT EXISTS crimson_orgs (
+    id VARCHAR(32) PRIMARY KEY,
+    job VARCHAR(32) NOT NULL,
+    label VARCHAR(64),
+    job_type VARCHAR(32),
+    settings TEXT,
+    created_at INT NOT NULL,
+    updated_at INT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Its roles: the job's grades, each with its set of powers as JSON.
+CREATE TABLE IF NOT EXISTS crimson_org_roles (
+    id VARCHAR(48) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    grade INT NOT NULL,
+    name VARCHAR(32),
+    label VARCHAR(64),
+    pay INT DEFAULT 0,
+    is_boss TINYINT(1) DEFAULT 0,
+    locked TINYINT(1) DEFAULT 0,
+    powers TEXT,
+    updated_at INT,
+    INDEX idx_org_roles_org (org_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Its members: the role each holds, their own grants and denies, their
+-- limits and codename. The source of truth the qbx_core job follows.
+CREATE TABLE IF NOT EXISTS crimson_org_members (
+    id VARCHAR(80) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    cid VARCHAR(32) NOT NULL,
+    name VARCHAR(64),
+    grade INT NOT NULL,
+    codename VARCHAR(32),
+    grants TEXT,
+    denies TEXT,
+    limits TEXT,
+    locked TINYINT(1) DEFAULT 0,
+    suspended_until INT,
+    joined_at INT NOT NULL,
+    last_seen INT,
+    updated_at INT,
+    INDEX idx_org_members_org (org_id),
+    INDEX idx_org_members_cid (cid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Boss permissions: what staff allow or deny a role or one member.
+CREATE TABLE IF NOT EXISTS crimson_org_grants (
+    id VARCHAR(96) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    subject VARCHAR(8) NOT NULL,
+    subject_id VARCHAR(32) NOT NULL,
+    power VARCHAR(4) NOT NULL,
+    state VARCHAR(8) NOT NULL,
+    by_cid VARCHAR(64),
+    updated_at INT,
+    INDEX idx_org_grants_org (org_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Its places: the boss office, sign-up boards, meeting spots, NPCs, in
+-- decimetres (x, y, z, radius) and degrees.
+CREATE TABLE IF NOT EXISTS crimson_org_locations (
+    id VARCHAR(48) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    kind VARCHAR(16) NOT NULL,
+    label VARCHAR(64),
+    x INT NOT NULL,
+    y INT NOT NULL,
+    z INT NOT NULL,
+    heading INT DEFAULT 0,
+    radius INT DEFAULT 20,
+    blip TINYINT(1) DEFAULT 0,
+    enabled TINYINT(1) DEFAULT 1,
+    anchor TEXT,
+    by_cid VARCHAR(64),
+    updated_at INT,
+    INDEX idx_org_locations_org (org_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Its funds ledger: every movement in or out, by a reference that is
+-- written once (a cut by its escrow line, a withdrawal by its request).
+-- With Renewed-Banking running the balance is the society account's,
+-- and these rows are the history; without it the balance is their sum.
+CREATE TABLE IF NOT EXISTS crimson_org_funds (
+    id VARCHAR(96) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    kind VARCHAR(16) NOT NULL,
+    amount INT NOT NULL,
+    actor VARCHAR(64),
+    reason VARCHAR(160),
+    contract_id VARCHAR(32),
+    created_at INT NOT NULL,
+    INDEX idx_org_funds_org (org_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The cut frozen onto a contract when a member accepted it.
+CREATE TABLE IF NOT EXISTS crimson_org_splits (
+    id VARCHAR(80) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    contract_id VARCHAR(32) NOT NULL,
+    cid VARCHAR(32) NOT NULL,
+    payout_pct INT DEFAULT 0,
+    stake_pct INT DEFAULT 0,
+    buyout_pct INT DEFAULT 0,
+    created_at INT NOT NULL,
+    INDEX idx_org_splits_contract (contract_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Sign-ups waiting for a boss or staff.
+CREATE TABLE IF NOT EXISTS crimson_org_applications (
+    id VARCHAR(48) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    cid VARCHAR(32) NOT NULL,
+    name VARCHAR(64),
+    body VARCHAR(255),
+    state VARCHAR(12) NOT NULL,
+    decided_by VARCHAR(64),
+    created_at INT NOT NULL,
+    decided_at INT,
+    INDEX idx_org_applications_org (org_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

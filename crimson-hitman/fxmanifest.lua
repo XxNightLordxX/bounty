@@ -34,6 +34,9 @@ client_scripts {
     'client/admin.lua',
     -- The roleplay NPCs, the broker and the informant (Config.Roleplay).
     'client/rp_npc.lua',
+    -- The hitman organisation's spots (Config.Organisation, off as shipped):
+    -- nothing runs until the server sends this player a spot to draw.
+    'client/org.lua',
 }
 
 server_scripts {

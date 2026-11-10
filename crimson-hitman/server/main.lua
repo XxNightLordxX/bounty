@@ -1466,6 +1466,8 @@ local function validateConfig(quiet)
     -- The day and week limits on contracts placed on one person
     -- (server/targetlimits.lua), 0 (off) where config.lua has none.
     CrimsonBoot.require('server.targetlimits').checkConfig(warn)
+    -- The hitman organisation (server/org/, Config.Organisation).
+    CrimsonBoot.require('server.org.init').validate(warn)
 
     if quiet then return #fatal == 0, fatal, warn end
 
@@ -1993,6 +1995,8 @@ function StartCrimsonHitman()
     local impProof    = CrimsonBoot.require('server.imp_proof')
     local impScrub    = CrimsonBoot.require('server.imp_scrub')
     local impWeekly   = CrimsonBoot.require('server.imp_weekly')
+    -- The hitman organisation (README, Optional features), off as shipped.
+    local org         = CrimsonBoot.require('server.org.init')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -2109,6 +2113,10 @@ function StartCrimsonHitman()
     impScrub.init({ storage = Storage, audit = audit })
     escrow.scrubSerial = impScrub.scrub
     impWeekly.init({ storage = Storage, audit = audit, alerts = alerts })
+    -- After escrow, contracts and settings: it hooks the payout
+    -- (Escrow.orgCut), the accept (Contracts.acceptGate) and its switch.
+    org.init({ storage = Storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
+               contracts = contracts, settings = settings })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -2163,6 +2171,9 @@ function StartCrimsonHitman()
         impBoard = impBoard,
         -- The improvements, for the app's requests and the tick.
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
+        -- The hitman organisation: the app's and the panel's requests, the
+        -- job events the bridge hears.
+        org = org,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2213,6 +2224,13 @@ function StartCrimsonHitman()
         -- opening) waited in shared/log.lua and is kept now. Never raises.
         alerts.init(modules)
         CrimsonBoot.require('server.bridges').install(modules)
+        -- The hitman organisation's requests (each answers org_off while it
+        -- is off), and its job registered with qbx_core where it is on:
+        -- before players load where the start order allows, every online
+        -- player brought in step where it does not.
+        CrimsonBoot.require('server.org.boss_ops').register(modules)
+        CrimsonBoot.require('server.org.staff_ops').register(modules)
+        org.boot()
 
         -- Its own clock, faster than the maintenance tick: attribution is
         -- only as precise as the last condition sample. And when this start

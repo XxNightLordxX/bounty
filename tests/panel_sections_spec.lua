@@ -12,6 +12,9 @@ local VALID = {
     ['rules-targeting'] = true, features = true, developer = true,
     -- The Target limits section's Defaults.
     ['target-limits'] = true,
+    -- The hitman organisation's own (server/org/settings_catalogue.lua),
+    -- switches included: the admin panel rebuild gives it its view.
+    organisation = true,
 }
 
 local function stack()
@@ -91,7 +94,8 @@ describe('the catalogue, by who uses it', function()
         local bad, seen = {}, {}
         for _, entry in ipairs(s.settings.CATALOGUE) do
             if not VALID[entry.category] then bad[#bad + 1] = entry.key .. ': ' .. tostring(entry.category) end
-            if entry.kind == 'switch' and entry.category ~= 'features' and entry.category ~= 'developer' then
+            if entry.kind == 'switch' and entry.category ~= 'features' and entry.category ~= 'developer'
+                and entry.category ~= 'organisation' then
                 bad[#bad + 1] = entry.key .. ' is a switch in ' .. entry.category
             end
             if seen[entry.key] then bad[#bad + 1] = entry.key .. ' twice' end
@@ -427,12 +431,16 @@ describe('the panel, as an owner reads it', function()
         local missing, seen = {}, {}
         for _, list in ipairs({ 'features', 'limits', 'readonly' }) do
             for _, e in ipairs(v[list]) do
+                -- The organisation's groups are introduced by the panel
+                -- rebuild that gives them their view (server/org/).
+                if e.category == 'organisation' then goto nextRow end
                 for _, g in ipairs({ e.group or 'Other', e.money }) do
                     if g and not seen[g] then
                         seen[g] = true
                         if not intro[g] then missing[#missing + 1] = g end
                     end
                 end
+                ::nextRow::
             end
         end
         table.sort(missing)

@@ -769,6 +769,11 @@ Contracts.guardsTarget = nil
 --- elimination but no kill anybody saw.
 Contracts.afterClaim = {}
 
+--- Set by server/org/init.lua: asked before an acceptance (nil to let it
+--- through, or the refusal and its data), and told after one.
+Contracts.acceptGate = nil
+Contracts.afterAccept = nil
+
 --- Playtime, session and post-respawn immunity (§14.19, §14.39).
 ---
 --- A check we can perform fails closed. A check we have no data for does
@@ -2091,6 +2096,13 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- The same for every contract and everybody, so it says nothing about
     -- this one.
     if Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
+    -- The hitman organisation's rules (server/org/init.lua, off as shipped):
+    -- members only, a suspension, a role's access rules. Nothing is taken
+    -- before it answers.
+    if Contracts.acceptGate then
+        local ran, refused, data = pcall(Contracts.acceptGate, actor, contractId, opts)
+        if ran and refused then return false, refused, data end
+    end
     local out = table.pack(Contracts.serialized({ 'contract:' .. contractId, 'hitman:' .. tostring(actor.cid) },
         acceptUnlocked, actor, contractId, anonymous, opts))
     -- An operative on it may start its clock: with nobody holding it, it
@@ -2099,6 +2111,8 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- A meeting point already set goes on the new hitman's map, with what to
     -- do (Meeting.joined, through Bridges.install). Never stops the accept.
     if out[1] and Contracts.onAccepted then pcall(Contracts.onAccepted, contractId, actor.cid) end
+    -- And a member's cut frozen on it (Org.afterAccept).
+    if out[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId) end
     return table.unpack(out, 1, out.n)
 end
 

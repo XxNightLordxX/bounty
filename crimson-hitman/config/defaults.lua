@@ -663,6 +663,63 @@ ConfigDefaults.Improvements.WeeklyStats = {
 
 ConfigDefaults.Limits.TargetCooldownAfterCompletionSeconds = 0  -- wait after a completed contract on them; 0 = off
 -- ============================================================================
+--                               ORGANISATION
+-- ============================================================================
+-- The hitman organisation: a real qbx_core job with roles, a boss menu and
+-- Boss permissions (README, Optional features). Off as shipped: while it is
+-- off no job is registered, nothing is read or written, nothing changes.
+
+ConfigDefaults.Organisation = {
+    Enabled            = false,                  -- the organisation and its qbx_core job
+    RequireJobToAccept = false,                  -- only members may accept contracts
+    AcceptNeedsPower   = false,                  -- and only roles given Take contracts
+    OnDutyOnly         = false,                  -- members accept only while on duty
+    JobName            = 'hitman',               -- the qbx_core job (lower case)
+    JobLabel           = 'Crimson Contractors',  -- the job's label in qbx_core
+    JobType            = 'hitman',               -- the qbx_core job type
+    DefaultDuty        = true,                   -- on duty when the job is set
+    SetPrimaryOnHire   = true,                   -- a hire makes it their primary job
+    QbxBossFlag        = false,                  -- mark boss roles isboss in qbx_core too
+    ExternalChanges    = 'adopt',                -- 'adopt' | 'revert' job changes made elsewhere
+    Funds              = 'auto',                 -- 'auto' (Renewed-Banking if started) | 'internal'
+    OfficeRadius       = 5.0,                    -- metres from the boss office that count
+    DrawMetres         = 40.0,                   -- metres at which a spot is drawn
+    ApplyAtSignupOnly  = true,                   -- applications only at a sign-up spot
+    NpcModel           = 'g_m_m_armboss_01',     -- the ped drawn at an NPC spot
+    Roles              = { -- the roles made with it: 'grade, name, label, pay, boss'
+        '0, recruit, Recruit, 0, no',
+        '1, operative, Operative, 0, no',
+        '2, lieutenant, Lieutenant, 0, no',
+        '3, boss, Boss, 0, yes',
+    },
+    Limits             = { -- the staff bounds every boss power works within
+        MaxMembers               = 20,      -- members at most
+        HireRadius               = 5.0,     -- metres a hire stands from the boss
+        HireMaxGrade             = 0,       -- highest grade a boss hires into
+        FireCooldownMinutes      = 10,      -- minutes between two fires by one boss
+        PromotionsPerDay         = 5,       -- role changes one boss makes a day
+        SuspendMaxHours          = 72,      -- longest a boss bars a member from contracts
+        MemberMaxAtOnce          = 3,       -- most contracts a boss lets a member hold
+        MemberCooldownMaxMinutes = 120,     -- longest cooldown between accepts a boss sets
+        MaxRoles                 = 8,       -- roles at most
+        PayMax                   = 500,     -- most pay per role per pay-cycle ($)
+        BonusMax                 = 10000,   -- largest bonus ($)
+        BonusPerDay              = 25000,   -- bonuses one boss pays a day ($)
+        WithdrawMax              = 50000,   -- largest withdrawal ($)
+        WithdrawPerDay           = 100000,  -- withdrawals one boss makes a day ($)
+        CutMaxPercent            = 25,      -- most a boss sets the payout cut to (%)
+        TotalCutCapPercent       = 40,      -- most of one payout all cuts take (%)
+        StakeCutMaxPercent       = 25,      -- most a boss sets the stake cut to (%)
+        BuyoutCutMaxPercent      = 25,      -- most a boss sets the buyout cut to (%)
+        OfficeMoveMetres         = 150.0,   -- how far a boss moves the office from staff's point
+        LocationCooldownMinutes  = 60,      -- minutes between two moves of a spot by a boss
+        MaxSignupSpots           = 2,       -- sign-up spots at most
+        MaxMeetingSpots          = 5,       -- organisation meeting spots at most
+        NoticeMaxLength          = 500,     -- characters in the board notice
+        RenameCooldownMinutes    = 1440,    -- minutes between two label changes by a boss
+    },
+}
+-- ============================================================================
 --                          ADVANCED AND DEVELOPER
 -- ============================================================================
 -- Logging, diagnostics, rate limits, json tuning and the timings of the
@@ -710,6 +767,8 @@ ConfigDefaults.Cooldowns = { -- per-player allowances: refill over `per` seconds
     admin           = { per = 10, burst = 30 },   -- the admin panel, per staff member
     adminWrite      = { per = 10, burst = 6 },    -- what the admin panel writes
     report          = { per = 600, burst = 3 },   -- reporting a contract or a thread to staff
+    org             = { per = 10, burst = 20 },   -- the organisation's reads (members, boss menu)
+    orgWrite        = { per = 10, burst = 5 },    -- what a boss changes in the organisation
 }
 
 ConfigDefaults.Database.Json.WarnContractCount      = 2000  -- json: warn above this many contracts

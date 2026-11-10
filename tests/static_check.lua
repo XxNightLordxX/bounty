@@ -109,10 +109,12 @@ end
 
 for _, path in ipairs(files) do
     -- app.lua, main.lua and bridges.lua are the event boundary: they are
-    -- where `source` legitimately enters and is immediately resolved.
+    -- where `source` legitimately enters and is immediately resolved. So is
+    -- the organisation's one event outside the app gate (server/org/boss_ops.lua,
+    -- crimson-hitman:orgUse), which resolves it at once.
     if path:find('server/') and not path:find('identity%.lua')
         and not path:find('app%.lua') and not path:find('main%.lua')
-        and not path:find('bridges%.lua') then
+        and not path:find('bridges%.lua') and not path:find('org/boss_ops%.lua') then
         local src = read(path)
         if src and src:find('\n%s*local%s+src%s*=%s*source') then
             failures[#failures + 1] = ('%s captures `source` outside identity.lua'):format(path)
@@ -720,6 +722,8 @@ do
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
+        ['OrgSpots.running']           = 'whether the organisation\'s NPC loop runs, so a test can '
+            .. 'watch it stop',
         ['Panel._heldRefs']            = 'how many player lookup handles each staff source holds, '
             .. 'so a test can watch expired ones be pruned',
         ['Mugshot.count']              = 'how many faces are cached, so a test can watch the '

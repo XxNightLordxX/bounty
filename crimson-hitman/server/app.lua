@@ -611,6 +611,10 @@ local function handler(name, action, fn, access, exempt)
     end)
 end
 
+--- The same gate for a module's own requests (the hitman organisation's,
+--- server/org/boss_ops.lua): registered once App.init has run.
+App.addHandler = handler
+
 --- How fast a kill photo kept on this server is sent to the phone opening
 --- it, in bytes a second. FiveM's default for a latent event is 25000.
 --- What actually bounds it is lower: FXServer sends a latent event no
@@ -774,6 +778,9 @@ function App.register()
             end
             if suspension then holds.suspendedUntil = tonumber(suspension.until_at) or 0 end
             listing.holds = next(holds) and holds or nil
+            -- A member's cut, shown before they accept (server/org/init.lua):
+            -- nil for everybody else, and while the organisation is off.
+            listing.orgTerms = deps.org and deps.org.termsFor(actor.cid) or nil
         end
         return listing
     end)

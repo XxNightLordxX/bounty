@@ -2911,7 +2911,7 @@ describe('the install SQL', function()
         local shipped = statements(handle:read('a'))
         handle:close()
 
-        eq(#ran, 24, 'the twenty-four crimson_* tables (crimson_rp_rows the latest)')
+        eq(#ran, 32, 'the thirty-two crimson_* tables (the eight organisation tables the latest)')
         eq(#shipped, #ran, 'one statement for every table')
         for i = 1, #ran do
             eq(shipped[i], ran[i], 'statement ' .. i .. ' as mysql mode runs it')

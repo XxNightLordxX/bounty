@@ -457,6 +457,9 @@ function Bridges.install(modules)
         Bridges.tellAccess(src)
         Bridges.tellSettings(modules, src)
         scheduleReady(src)
+        -- The hitman organisation's job and places for them (server/org/,
+        -- nothing while it is off).
+        if modules.org then pcall(modules.org.playerLoaded, src) end
     end
 
     -- The trusted login: a local event, so no client can raise it. qbx_core
@@ -664,9 +667,16 @@ function Bridges.install(modules)
     local function jobChanged(src)
         local id = tonumber(src)
         if id then tellAccess(id) end
+        -- A job change made elsewhere, for the hitman organisation's table.
+        if id and modules.org then pcall(modules.org.reconcile, id) end
     end
     AddEventHandler('QBCore:Server:OnJobUpdate', jobChanged)
     AddEventHandler('qbx_core:server:onSetJob', jobChanged)
+    -- qbx_core's own word for a job added, regraded or taken away (online
+    -- players only), which RemovePlayerFromJob fires instead of OnJobUpdate.
+    AddEventHandler('qbx_core:server:onGroupUpdate', function(src, group, grade)
+        if modules.org then pcall(modules.org.onGroupUpdate, src, group, grade) end
+    end)
     -- And a duty change, which Config.BlockOffDuty reads: qbx_core's
     -- SetJobDuty fires QBCore:Server:SetDuty (source, onDuty), a local event,
     -- and not OnJobUpdate. Without it the change waited for the tick's

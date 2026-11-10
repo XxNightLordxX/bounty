@@ -402,6 +402,12 @@ describe('what this suite really covered', function()
         protectionPin      = 'authz_matrix_spec (protectionPin, the target), through the net event',
         protectionWaypoint = 'rpC_roleplay_spec ("the guard gets the pin"), through the net event',
     }
+    -- The hitman organisation's requests (off as shipped), each through the
+    -- net event in org_powers_spec and org_places_spec, and refused to
+    -- everybody else in authz_matrix_spec ("the hitman organisation requests").
+    for _, name in ipairs({ 'orgMine', 'orgMembers', 'orgRoles', 'orgFunds', 'orgApplications', 'orgSpots', 'orgHire', 'orgFire', 'orgSetRole', 'orgSuspend', 'orgMemberLimits', 'orgMemberGrant', 'orgRoleCreate', 'orgRoleEdit', 'orgRoleDelete', 'orgRolePowers', 'orgRolePay', 'orgBonus', 'orgSetCut', 'orgDeposit', 'orgWithdraw', 'orgAccess', 'orgPick', 'orgRoleCooldown', 'orgPlaceHere', 'orgRemoveSpot', 'orgNotice', 'orgDecide', 'orgApply', 'orgRename', 'orgLayout', 'orgOfficeRule' }) do
+        ELSEWHERE[name] = 'org_powers_spec / org_places_spec / org_money_spec, through the net event'
+    end
 
     it('got an ok from every handler the server registers', function()
         local App = require('crimson-hitman.server.app')

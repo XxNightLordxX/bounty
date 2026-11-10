@@ -132,7 +132,7 @@ Settings.DENY = DENY
 
 --- The categories a key is shown under in the panel: who uses it.
 Settings.CATEGORIES = { 'rules-timers', 'rules-rewards', 'rules-limits', 'rules-targeting', 'features',
-    'developer',
+    'developer', 'organisation',
     -- The Target limits section's Defaults (server/targetlimits.lua).
     'target-limits' }
 
@@ -1206,7 +1206,7 @@ local BUCKETS = {
     'load', 'search', 'wallet', 'create', 'accept', 'amend', 'informant', 'placerInformant', 'locationTip',
     'bailout', 'photo',
     'photoSubmit', 'photoView', 'photoDecide', 'message', 'progress', 'death', 'mugshot',
-    'image', 'diagnostic', 'admin', 'adminWrite', 'report',
+    'image', 'diagnostic', 'admin', 'adminWrite', 'report', 'org', 'orgWrite',
 }
 
 --- What each bucket gates: the buttons and events a player is refused once
@@ -1245,6 +1245,10 @@ local BUCKET_ABOUT = {
         .. 'never spends it.',
     report = 'Reporting a contract or a message thread to staff (the Report button). Each one '
         .. 'is an item in the review queue.',
+    org = 'Reading the hitman organisation in the app: the Organisation tab, its roster, roles, funds '
+        .. 'and applications.',
+    orgWrite = 'What a boss or member changes in the hitman organisation from the app: hiring, roles, '
+        .. 'cuts, money, places, notices and applications.',
 }
 
 --- The least the buckets the app cannot work without may be set to from
@@ -1852,6 +1856,12 @@ for _, entry in ipairs({
       about = 'The longer of this and the wait after any contract. The placer is told the wait '
           .. 'in hours, nothing else.', inflight = AT_USE },
 }) do
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+
+-- The hitman organisation's own (server/org/settings_catalogue.lua), in
+-- their category, 'organisation'.
+for _, entry in ipairs(CrimsonBoot.require('server.org.settings_catalogue')) do
     CATALOGUE[#CATALOGUE + 1] = entry
 end
 

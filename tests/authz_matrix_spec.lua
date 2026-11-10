@@ -1018,6 +1018,20 @@ local CUSTOM = {
     admin = 'the admin panel requests',
 }
 
+-- The hitman organisation's requests (server/org/boss_ops.lua) and its spot
+-- event: they name no contract, so no contract role permits or refuses them.
+-- Who may is the organisation's own rule (a member, a power held after Boss
+-- permissions, the office), which org_powers_spec walks power by power; the
+-- block below holds every one of them shut to every player while it is off,
+-- and to a player outside it while it is on.
+local ORG_REQUESTS = { 'orgMine', 'orgMembers', 'orgRoles', 'orgFunds', 'orgApplications', 'orgSpots', 'orgHire', 'orgFire', 'orgSetRole', 'orgSuspend', 'orgMemberLimits', 'orgMemberGrant', 'orgRoleCreate', 'orgRoleEdit', 'orgRoleDelete', 'orgRolePowers', 'orgRolePay', 'orgBonus', 'orgSetCut', 'orgDeposit', 'orgWithdraw', 'orgAccess', 'orgPick', 'orgRoleCooldown', 'orgPlaceHere', 'orgRemoveSpot', 'orgNotice', 'orgDecide', 'orgApply', 'orgRename', 'orgLayout', 'orgOfficeRule' }
+for _, name in ipairs(ORG_REQUESTS) do
+    CUSTOM[name] = 'the hitman organisation requests'
+    MATRIX[name] = { custom = true, why = 'the organisation\'s own rule: a member holding the power' }
+end
+CUSTOM.orgUse = 'the hitman organisation requests'
+MATRIX.orgUse = { custom = true, why = 'a spot used by whoever the server sees standing at it' }
+
 -- Registered in bridges.lua, which is how three events any player on the
 -- server can fire came to have no row at all: the completeness guard read
 -- app.lua and the block around it said "the whole net surface".
@@ -1044,6 +1058,45 @@ MATRIX.maskState = { custom = true,
 
 MATRIX.admin = { custom = true,
     why = 'staff only, by ACE on every request; no role a player holds on a contract opens it' }
+
+describe('the hitman organisation requests', function()
+    local W = require('tests.harness.org_world')
+
+    it('answers every one org_off to every player while it is off (as shipped)', function()
+        W.world({ off = true })
+        for _, name in ipairs(ORG_REQUESTS) do
+            for _, src in ipairs({ 1, 2, 3, 11 }) do
+                local reply = W.call(name, src, { member = 'x', grade = 0, amount = 1 })
+                if name == 'orgMine' then
+                    eq(reply.data.enabled, false)
+                else
+                    eq(reply.err, 'org_off', name .. ' for ' .. src)
+                end
+            end
+        end
+    end)
+
+    it('lets a player outside the organisation do nothing but read their own place and apply', function()
+        W.world()
+        for _, name in ipairs(ORG_REQUESTS) do
+            local reply = W.call(name, 3, { member = 'x', grade = 0, amount = 1, kind = 'signup', text = 'hi',
+                id = 'x', reason = 'r', percent = 1, power = 'M1', state = 'grant', on = true, label = 'L',
+                layout = {}, rules = {}, minutes = 1, target = 2 })
+            if name == 'orgMine' then
+                eq(reply.ok, true)
+                eq(reply.data.member, false)
+            elseif name ~= 'orgApply' and name ~= 'orgSpots' then
+                falsy(reply.ok, name .. ' refused to a player outside it')
+            end
+        end
+        eq(#W.call('orgSpots', 3, {}).data.rows, 0, 'orgSpots: only sign-up spots, and there are none')
+        Natives.calls.notifications = {}
+        _G.source = 3
+        Env.events['crimson-hitman:orgUse']('nothing')
+        _G.source = nil
+        eq(#Natives.calls.notifications, 0, 'a spot that is not there answers nothing')
+    end)
+end)
 
 describe('the admin panel requests', function()
     --- Every op the page may ask for. Each role in the cast is a player

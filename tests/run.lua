@@ -441,6 +441,9 @@ function _G.newStack()
     package.loaded['server.imp_proof'] = nil
     package.loaded['server.imp_scrub'] = nil
     package.loaded['server.imp_weekly'] = nil
+    for _, name in ipairs({ 'init', 'powers', 'engine', 'jobs', 'funds', 'boss_ops', 'staff_ops' }) do
+        package.loaded['server.org.' .. name] = nil
+    end
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -496,6 +499,7 @@ function _G.newStack()
     local impProof  = require('server.imp_proof')
     local impScrub  = require('server.imp_scrub')
     local impWeekly = require('server.imp_weekly')
+    local org       = require('server.org.init')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -590,6 +594,8 @@ function _G.newStack()
     impScrub.init({ storage = storage, audit = audit })
     escrow.scrubSerial = impScrub.scrub
     impWeekly.init({ storage = storage, audit = audit, alerts = alerts })
+    org.init({ storage = storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
+               contracts = contracts, settings = settings })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was
@@ -638,11 +644,16 @@ function _G.newStack()
         -- The board and progression improvements.
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
+        -- The hitman organisation.
+        org = org,
     }
     app.init(wiring)
     admin.init(wiring)
     panel.init(wiring)
     alerts.init(wiring)
+    require('server.org.boss_ops').register(wiring)
+    require('server.org.staff_ops').register(wiring)
+    org.boot()
 
     return {
         storage = storage, audit = audit, kidnap = kidnap, projection = projection,
@@ -663,6 +674,7 @@ function _G.newStack()
         impTips = impTips,
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
+        org = org,
     }
 end
 
@@ -711,6 +723,7 @@ local suites = {
     'meeting_blip_spec',
     'sweep6_spec',
     'target_limits_spec',
+    'org_core_spec', 'org_powers_spec', 'org_money_spec', 'org_places_spec',
     'docs_spec',
 }
 

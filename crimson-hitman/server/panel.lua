@@ -115,6 +115,21 @@ Panel.COMMANDS = {
 Panel.LEVELS = { READ = READ, MOD = MOD, WRITE = WRITE, IDENTITY = IDENTITY, DEVELOPER = DEVELOPER }
 Panel.OPS = OPS
 
+--- Ops a module adds (the hitman organisation's, server/org/staff_ops.lua),
+--- answered through the same gate as OPS: [op] = level, and their handlers.
+--- Writes among them wait for boot recovery.
+local EXTRA_OPS, EXTRA_H = {}, {}
+Panel.EXTRA_OPS = EXTRA_OPS
+
+---@param op string
+---@param level string a Panel.LEVELS value
+---@param fn function (src, data) -> ok, err, message, data
+function Panel.extend(op, level, fn)
+    if type(op) == 'string' and not OPS[op] and type(fn) == 'function' then
+        EXTRA_OPS[op], EXTRA_H[op] = level, fn
+    end
+end
+
 --- Writes that wait for boot recovery, as the commands do. Flushing the
 --- log is not one: it moves nothing, and is how the log reaches the disk
 --- after a recovery that failed.
@@ -1817,6 +1832,13 @@ local function writeSubject(data, src)
     end
     return { cid = cid, actor = deps.identity.byCitizenId(cid), typed = true }
 end
+
+--- For a module's ops (Panel.extend): who a write names, and a lookup
+--- handle for a character it lists, as the panel's own ops use them.
+Panel.writeSubject = function(data, src) return writeSubject(data, src) end
+Panel.refFor = function(src, cid) return playerRef(src, { cid = cid }) end
+Panel.staffOf = function(src) return staffOf(src) end
+Panel.identifies = function(src) return identifies(src) end
 
 --- A character's playtime as the panel shows it: what the built-in tracker
 --- counted (Playtime.view), the floor, and what the rule reads for them
@@ -3562,7 +3584,7 @@ function Panel.handle(src, payload)
     -- Permission, before anything about the request is looked at. An op
     -- nobody knows is checked as a read, so it answers the same as any
     -- other to somebody who may not read.
-    local level = (op and OPS[op]) or READ
+    local level = (op and (OPS[op] or EXTRA_OPS[op])) or READ
     local byDeveloper = level == WRITE and type(payload) == 'table' and not allowed(src, WRITE)
         and developerWrite(src, op, payload.data)
     if not byDeveloper
@@ -3610,17 +3632,17 @@ function Panel.handle(src, payload)
         end
     end
 
-    if not op or not OPS[op] then
+    if not op or not (OPS[op] or EXTRA_OPS[op]) then
         return answer(false, 'unknown_op', 'The page asked for something this server does not do.')
     end
     local data = type(payload.data) == 'table' and payload.data or {}
 
-    if WAITS_FOR_RECOVERY[op] then
+    if WAITS_FOR_RECOVERY[op] or (EXTRA_OPS[op] and writes) then
         local waiting = deps.admin.recovery()
         if waiting then return answer(false, waiting, deps.admin.notRecovered()) end
     end
 
-    local ran, ok, err, message, result = pcall(H[op], src, data)
+    local ran, ok, err, message, result = pcall(H[op] or EXTRA_H[op], src, data)
     if not ran then
         -- What it was asked to act on, and why, so the contract's timeline
         -- and the log say which one a raised void or settle was about.

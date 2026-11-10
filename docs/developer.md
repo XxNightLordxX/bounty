@@ -42,6 +42,7 @@ Every server file's public functions take an actor already resolved by
 | Staff | `server/settings.lua` (the panel's settings over config.lua), `server/freeze.lua`, `server/sanctions.lua`, `server/staffcontract.lua`, `server/history.lua`, `server/announce.lua`, `server/summary.lua`, `server/thresholds.lua`, `server/alerts.lua`, `server/reports.lua`, `server/audit.lua` |
 | Roleplay | `server/rp_places.lua` (shared helpers, the NPC places), `rp_consequences.lua` (witness heat, EMS, city news, dirty payouts), `rp_intent.lua`, `rp_reputation.lua`, `rp_protection.lua` (bodyguards, the hit on the hitman), `rp_rumours.lua`, `rp_burner.lua`, `rp_informant.lua`, `rp_reason.lua` |
 | Improvements | `server/imp_tips.lua` (informant fairness), `imp_board.lua` with `imp_placer_record.lua`, `imp_heat.lua`, `imp_tiers.lua`, `imp_decay.lua`, and `imp_staffeco.lua` with `imp_proof.lua`, `imp_scrub.lua`, `imp_weekly.lua` |
+| Organisation | `server/org/init.lua` (state, members, roles, cuts, the accept gate, places, notices), `powers.lua` (the power codes and bounds), `engine.lua` (who holds what, the delegation rules), `jobs.lua` (qbx_core), `funds.lua` (Renewed-Banking or the ledger), `schema.lua` (its tables, all three stores), `staff_ops.lua` (panel ops), `boss_ops.lua` (app requests), `settings_catalogue.lua`; `client/org.lua` |
 | Storage | `server/storage/memory.lua` (the reference implementation of the interface), `json.lua`, `mysql.lua` |
 | Shared | `shared/constants.lua` (states, enums, `CH.ERR`), `shared/util.lua` (pure helpers, `Util.copy`, `Util.dollars`), `shared/log.lua` (the one way to the console) |
 | Client | `client/main.lua` (lb-phone registration, the NUI bridge, the death and mask watchers), `client/admin.lua` (the panel's page), `client/mugshot.lua`, `client/rp_npc.lua` |
@@ -54,6 +55,39 @@ change in it), hooks it registers on the modules it extends
 (`Projection.extenders`, `Contracts.afterClaim`, `Escrow.holdBack` and the
 like) and, if it has periodic work, one job on the tick that does nothing
 while it is off.
+
+### The hitman organisation
+
+`server/org/` (Config.Organisation, off as shipped). Its own tables are the
+source of truth, read once at start into one state and written through on
+every change; qbx_core is told after (`jobs.lua`: `CreateJobs` at start and for
+a new job, `UpsertJobData` / `UpsertJobGrade` / `RemoveJobGrade` on a role or
+label change, `AddPlayerToJob` / `RemovePlayerFromJob` / `SetPlayerPrimaryJob`
+for members by citizen id; never `commitToFile`). The calls this resource makes
+are marked (`Jobs.applying`) so the qbx_core events they fire are not read as
+outside changes; an outside change arrives through `qbx_core:server:onGroupUpdate`
+and `QBCore:Server:OnJobUpdate` (both heard in `bridges.lua`) and is adopted or
+reverted. Every change goes through one function in `init.lua` with the
+actor `{ staff = true }` or a boss `{ cid, source }`; `Org.authorize` is the
+whole permission check (member, `Engine.holds` after the ceiling, the office
+from `GetEntityCoords(GetPlayerPed(src))`), then the rank rules
+(`Engine.mayActOn`, `mayAssignGrade`, `mayEditRole`, `mayDelegate`,
+`wouldLeaveNoBoss`). A grant records who made it (`by`), and `Engine.holds`
+asks whether that granter still holds the power and still outranks the holder,
+so revoking cascades without touching a row.
+
+Money: `funds.lua` writes one `crimson_org_funds` row per movement under a
+reference written once (`insertOrgRowOnce`), then moves Renewed-Banking's
+account (credit: row first, taken back if the account refuses; debit: account
+first, refused on a shortfall). The cut is two hooks on the payout path:
+`Escrow.orgCut(recipient, line)` in `Escrow.deliver` credits the funds once per
+line (reference `cut:<line id>`) and the member is given the line less it, and
+`Escrow.orgTaken(line)` in `Escrow.stillOwed` keeps a later give (a retry, a
+staff pay) from paying that part again. The split is frozen per contract and
+member (`crimson_org_splits`) by `Contracts.afterAccept`; `Contracts.acceptGate`
+runs before anything is taken. `tests/invariants.lua` holds every cut to its
+line and the internal ledger above zero. Off, both hooks read one switch and
+`Funds.taken` (memory only), and no request reads anything.
 
 ### The event and handler order
 

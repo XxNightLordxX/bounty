@@ -137,6 +137,37 @@ local function auditAtRest(store)
             end
         end
     end
+
+    -- The hitman organisation (server/org/): a cut is more than nothing and
+    -- never more than the escrow line it was taken from, so a member and
+    -- the funds between them never received more than was escrowed; and
+    -- the internal ledger never holds less than nothing.
+    if type(store.readOrgRows) == 'function' then
+        local okF, funds = pcall(store.readOrgRows, 'funds')
+        if okF and type(funds) == 'table' then
+            local totals = {}
+            for _, row in ipairs(funds) do
+                local amount = tonumber(row.amount) or 0
+                totals[row.org_id] = (totals[row.org_id] or 0) + amount
+                if row.kind == 'cut' then
+                    if amount <= 0 then note('an organisation cut of nothing', tostring(row.id)) end
+                    local lineId = tostring(row.id):match('^cut:(.+)$')
+                    local okL, line = pcall(store.readEscrowLine, lineId)
+                    if okL and type(line) == 'table' and line.id == lineId
+                        and amount > (tonumber(line.amount) or 0) then
+                        note('an organisation cut above its escrow line', tostring(row.id))
+                    end
+                end
+            end
+            local banked = GetResourceState('Renewed-Banking') == 'started'
+                and not (type(Config.Organisation) == 'table' and Config.Organisation.Funds == 'internal')
+            if not banked then
+                for org, total in pairs(totals) do
+                    if total < 0 then note('organisation funds below zero', tostring(org)) end
+                end
+            end
+        end
+    end
 end
 
 --- Every store the suite has built, held weakly: a store nothing else

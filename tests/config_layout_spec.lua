@@ -195,6 +195,26 @@ local ADDED = {
     ['Improvements.SerialScrub'] = { Enabled = false },
     ['Improvements.WeeklyStats'] = { Enabled = false, Day = 'sunday', Hour = 18 },
     ['Limits.TargetCooldownAfterCompletionSeconds'] = 0,
+    -- The hitman organisation (the ORGANISATION section, server/org/), new
+    -- and shipped off, and its two rate-limit buckets.
+    ['Organisation'] = {
+        Enabled = false, RequireJobToAccept = false, AcceptNeedsPower = false, OnDutyOnly = false,
+        JobName = 'hitman', JobLabel = 'Crimson Contractors', JobType = 'hitman', DefaultDuty = true,
+        SetPrimaryOnHire = true, QbxBossFlag = false, ExternalChanges = 'adopt', Funds = 'auto',
+        OfficeRadius = 5.0, DrawMetres = 40.0, ApplyAtSignupOnly = true, NpcModel = 'g_m_m_armboss_01',
+        Roles = { '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no',
+            '2, lieutenant, Lieutenant, 0, no', '3, boss, Boss, 0, yes' },
+        Limits = {
+            MaxMembers = 20, HireRadius = 5.0, HireMaxGrade = 0, FireCooldownMinutes = 10,
+            PromotionsPerDay = 5, SuspendMaxHours = 72, MemberMaxAtOnce = 3, MemberCooldownMaxMinutes = 120,
+            MaxRoles = 8, PayMax = 500, BonusMax = 10000, BonusPerDay = 25000, WithdrawMax = 50000,
+            WithdrawPerDay = 100000, CutMaxPercent = 25, TotalCutCapPercent = 40, StakeCutMaxPercent = 25,
+            BuyoutCutMaxPercent = 25, OfficeMoveMetres = 150.0, LocationCooldownMinutes = 60,
+            MaxSignupSpots = 2, MaxMeetingSpots = 5, NoticeMaxLength = 500, RenameCooldownMinutes = 1440,
+        },
+    },
+    ['Cooldowns.org'] = { per = 10, burst = 20 },
+    ['Cooldowns.orgWrite'] = { per = 10, burst = 5 },
 }
 
 --- The commit before config.lua was reordered to mirror the admin panel's
@@ -317,7 +337,8 @@ describe('the configuration as one short file', function()
                 and (path:match('^Limits%.StaffDeadline') ~= nil or path == 'Admin.ModeratorAce')
             -- The Staff section and the report bucket, new and whole, as
             -- ADDED says.
-            if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report'
+            if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report' or path == 'Organisation'
+                or path == 'Cooldowns.org' or path == 'Cooldowns.orgWrite'
                 or ((path:match('^Roleplay%.') or path:match('^Improvements%.')) and ADDED[path] ~= nil)) then
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
@@ -383,7 +404,10 @@ describe('the configuration as one short file', function()
         -- tiers, contract decay) and impC's three (proof items, serial
         -- scrubbing, weekly stats) with its completion cooldown line.
         -- And the Target limits' day and week caps, two lines.
-        truthy(lines < 753, 'config.lua is ' .. lines .. ' lines')
+        -- And the Organisation section: one header and its one block, with
+        -- the roles it is made with and the staff bounds every boss works
+        -- within, and its two rate-limit buckets.
+        truthy(lines < 817, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and
@@ -391,7 +415,7 @@ describe('the configuration as one short file', function()
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: CORE', 'FEATURES: ANONYMITY',
             'FEATURES: INFORMANTS', 'FEATURES: ADVISORY', 'STAFF AND PERMISSIONS',
-            'ROLEPLAY', 'IMPROVEMENTS', 'ADVANCED AND DEVELOPER' }) do
+            'ROLEPLAY', 'IMPROVEMENTS', 'ORGANISATION', 'ADVANCED AND DEVELOPER' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')
             at = found

@@ -1083,6 +1083,10 @@ function Natives.exportsProxy()
         end,
     }
 
+    -- Each resource's export table, for a harness module that adds the
+    -- exports of its own area (tests/harness/qbx_jobs.lua).
+    Natives.exportTables = resources
+
     return setmetatable({}, {
         __index = function(_, resource)
             return resources[resource] or setmetatable({}, {

@@ -83,7 +83,11 @@ stops and prints the `ALTER TABLE` to run. The tables are `crimson_contracts`,
 `crimson_view_alerts`, `crimson_playtime`, `crimson_location_tips`,
 `crimson_freezes`, `crimson_contract_staff`, `crimson_staff_records`,
 `crimson_meta` and `crimson_rp_rows` (the roleplay and improvements rows,
-and each held exclusive contract's idle clocks). A
+and each held exclusive contract's idle clocks), and the organisation's
+`crimson_orgs`, `crimson_org_roles`, `crimson_org_members`,
+`crimson_org_grants`, `crimson_org_locations`, `crimson_org_funds`,
+`crimson_org_splits` and `crimson_org_applications` (made on every start,
+read and written only with `Config.Organisation.Enabled`). A
 start refuses, changing nothing, where a table of one of these names belongs
 to another resource. Money columns are `INT` (at most $2,147,483,647; the
 start holds every money setting to it), reasons and messages at most 255
@@ -488,6 +492,129 @@ All off as shipped, each `Config.Improvements.<Feature>.Enabled`.
 | **Weapon serial scrubbing** (`SerialScrub`) | A weapon an anonymous placer put up reaches the hitman with a new serial (as does one whose contract cannot be read). One weapon always gets the same new serial, after a restart too: it is worked out from the escrow line and a secret the store keeps (`imp_serial_secret_1` to `_5`, 140 random bits made at the first scrub), never from anything a player can see |
 | **Weekly stats** (`WeeklyStats`) | One count-only post a week (`Day`, `Hour`) to `crimson_hitman_stats_webhook`, or the alert webhook |
 | **Completion cooldown** (`Config.Limits.TargetCooldownAfterCompletionSeconds`) | A wait before a completed contract's target can be listed again; 0 (off) as shipped |
+
+### Organisation
+
+Off as shipped (`Config.Organisation.Enabled`). While it is off no job is
+registered, nothing about it is read or written, every request answers
+*switched off*, and contracts are placed, taken and paid exactly as without it.
+
+On, the **hitman organisation** is a real qbx_core job (`Config.Organisation.JobName`,
+`hitman` as shipped) whose roles are its grades. This resource's own tables
+(`crimson_orgs`, `crimson_org_*`) are the source of truth and qbx_core is told:
+the job is registered at every start with `CreateJobs` (never written into
+qbx_core's own `jobs.lua`), roles with `UpsertJobGrade`, members with
+`AddPlayerToJob` / `RemovePlayerFromJob` / `SetPlayerPrimaryJob` by citizen id,
+so it works for players who are away too. A start that comes after players
+loaded brings every online member back in step. A change made elsewhere
+(`/setjob`, another resource) is adopted into the table, or put back with
+`Config.Organisation.ExternalChanges = 'revert'`.
+
+- **Roles and members.** Staff run everything from the panel: roles (order,
+  name, label, pay, boss), hiring, roles, firing (with a reason), per-member
+  grants and denies, a lock against boss edits, a codename.
+- **Boss permissions.** Every boss power is **off for every boss** until staff
+  allow it for a boss role or one boss (Allow / Deny / Inherit). Staff can
+  always do everything themselves. A boss passes on only what they hold, only
+  to roles and members below their rank (level with it only with D3, never
+  above), never to or on themselves, never past a staff lock; revoking a power
+  from a boss makes every grant they made of it inactive at once, and allowing
+  it again restores them. The organisation is never left without a member in
+  its top boss role, unless staff do it. Every rule is checked on the server
+  for every request.
+- **The 33 powers** (the plan's 31 area powers and D2, D3; D1 is R4):
+  M1 view members, M2 hire, M3 fire, M4 promote/demote, M5 suspend from
+  contracts, M6 member limits; R1 create, R2 edit, R3 delete roles, R4 set role
+  powers; P1 role pay, P2 bonus; C1 organisation cut, C2 cut by role, C3 cut per
+  member, C4 cut on stakes, C5 cut on buyouts, C6 deposit, C7 withdraw, C8 view
+  funds; K1 contract access rules, K2 boss pick, K3 role cooldowns; L1 move the
+  office, L2 sign-up spot, L3 meeting spots; N1 notice, N2 applications; S1
+  label, S2 boss menu layout, S3 office requirement; D2 per-member grants, D3
+  promote to own rank. Hire, fire, role edits, cuts and withdrawals need the
+  **boss office** by default (the server's own position, `OfficeRadius`).
+  Every bound is `Config.Organisation.Limits`, and staff may set an
+  organisation's own.
+- **Funds.** Renewed-Banking's society account for the job when it is started
+  (`Config.Organisation.Funds = 'auto'`), this resource's ledger otherwise.
+  Every movement is one ledger row written once, so a retry never pays twice;
+  only whole amounts above zero ever reach Renewed-Banking (it would take a
+  negative one).
+- **Cuts.** A share of a member's payout (and of a stake they win, or a buyout
+  premium paid to them) goes to the funds. It is frozen on the contract when
+  the member accepts it, shown to them on the board before they do
+  (`orgTerms`), and taken out of the payout when it is paid, once per escrow
+  line: what was escrowed is what the member and the funds received.
+- **Accepting.** With `RequireJobToAccept`, only members may accept (with
+  `AcceptNeedsPower`, only roles given *Take contracts*; with `OnDutyOnly`, on
+  duty). Members are always held to a suspension, their own and their role's
+  limits and access rules, which are only ever stricter than the server's.
+- **Places.** The boss office, sign-up spots, meeting spots, NPCs and other
+  places are set by staff with **Use my position** (the server reads where the
+  staff member stands) and drawn as ox_target spots only for the players who may
+  use them: sign-up spots for everybody, the rest for members. A boss may move
+  the office near staff's point, and place sign-up and meeting spots, where they
+  stand, never in a safe zone.
+
+**server.cfg.** Keep `set qbx:cleanPlayerGroups false` (true deletes the
+organisation's members at every qbx_core start) and `set
+qbx:enableGroupManagement false` (qbx_management would take over the job), set
+`set qbx:max_jobs_per_player 2` or more so a player with a job can join, and
+`ensure crimson-hitman` before `ensure Renewed-Banking` (it reads the job list
+once, as it starts). Each one wrong is said once at the start and in
+`/ch-diag`. bankAuth is never set, and isboss only with
+`Config.Organisation.QbxBossFlag`: Renewed-Banking's bank screen,
+qbx_management and lb-phone's Services boss tab check far less than this
+resource does.
+
+#### Organisation requests (admin panel)
+
+Through the panel's one way in, as every op in *Panel requests*; reads need a
+staff ACE, writes `crimson.admin` itself. The page for them comes with the panel
+rebuild; the ops answer now.
+
+| Op | Level | What it does |
+|---|---|---|
+| `orgGet` | read | Everything: setup, roles, members (by handle), Boss permissions, spots, cuts, bounds, funds, applications, warnings |
+| `bossPermsGet` | read | The Boss permissions matrix |
+| `orgFunds` | read | Balance and ledger |
+| `orgAudit` | read | The organisation's log (`org_*` actions) |
+| `orgMyPosition` | read | Where your character stands, read by the server |
+| `orgSetup` | write | Create / sync the job in qbx_core |
+| `orgRename`, `orgLayout`, `orgNotice` | write | Label, boss menu layout, board notice |
+| `orgRoleSet`, `orgRoleRemove`, `orgRolePowers` | write | Add or edit a role, delete an empty one, set its powers |
+| `orgMemberHire`, `orgMemberRole`, `orgMemberFire` | write | Hire (lookup handle or exact citizen id), set a role, fire with a reason |
+| `orgMemberSuspend`, `orgMemberLimits`, `orgMemberOverride` | write | Bar from contracts, limits, a grant or deny, lock and codename |
+| `bossPermsSet`, `bossPermsRevokeAll`, `bossLimits`, `bossOfficeRule` | write | Boss permissions cells (one or a batch), revoke a column, bounds, the office list |
+| `orgCuts` | write | A cut: payout, role, member, stake, buyout |
+| `orgFundsMove` | write | Deposit, withdraw or bonus, with a reason and a nonce |
+| `orgAccess`, `orgPick` | write | A role's access rules; a boss pick |
+| `orgLocationSet`, `orgLocationRemove` | write | A spot, typed or `here` (Use my position); remove one |
+| `orgApplication` | write | Accept or reject an application |
+
+#### Organisation requests (phone)
+
+lb-phone app requests through the app's own gate, `org` and `orgWrite` rate
+limits; each needs the power named, held after Boss permissions, at the office
+where it needs one. The phone's Organisation tab comes later; the requests
+answer now.
+
+| Request | Power | Request | Power |
+|---|---|---|---|
+| `orgMine` | anybody | `orgApply` | anybody, at a sign-up spot |
+| `orgMembers` | M1 | `orgRoles`, `orgSpots` | a member |
+| `orgHire` | M2 | `orgFire` | M3 |
+| `orgSetRole` | M4 | `orgSuspend` | M5 |
+| `orgMemberLimits` | M6 | `orgMemberGrant` | D2 |
+| `orgRoleCreate` | R1 | `orgRoleEdit` | R2 |
+| `orgRoleDelete` | R3 | `orgRolePowers` | R4 |
+| `orgRolePay` | P1 | `orgBonus` | P2 |
+| `orgSetCut` | C1-C5 | `orgDeposit` | C6 |
+| `orgWithdraw` | C7 | `orgFunds` | C8 |
+| `orgAccess` | K1 | `orgPick` | K2 |
+| `orgRoleCooldown` | K3 | `orgPlaceHere` | L1-L3 |
+| `orgRemoveSpot` | L2, L3 | `orgNotice` | N1 |
+| `orgApplications`, `orgDecide` | N2 | `orgRename` | S1 |
+| `orgLayout` | S2 | `orgOfficeRule` | S3 |
 
 ## Permissions
 
@@ -912,6 +1039,54 @@ Optional changes to existing features, each its own block and each off as shippe
 | `Config.Improvements.WeeklyStats.Hour` | `18` | the hour it is posted, server time (0-23) |
 | `Config.Limits.TargetCooldownAfterCompletionSeconds` | `0` | wait after a completed contract on them; 0 = off |
 
+### Organisation
+
+The hitman organisation: a real qbx_core job with roles, a boss menu and Boss permissions (README, Optional features). Off as shipped: while it is off no job is registered, nothing is read or written, nothing changes.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.Organisation.Enabled` | `false` | the organisation and its qbx_core job |
+| `Config.Organisation.RequireJobToAccept` | `false` | only members may accept contracts |
+| `Config.Organisation.AcceptNeedsPower` | `false` | and only roles given Take contracts |
+| `Config.Organisation.OnDutyOnly` | `false` | members accept only while on duty |
+| `Config.Organisation.JobName` | `'hitman'` | the qbx_core job (lower case) |
+| `Config.Organisation.JobLabel` | `'Crimson Contractors'` | the job's label in qbx_core |
+| `Config.Organisation.JobType` | `'hitman'` | the qbx_core job type |
+| `Config.Organisation.DefaultDuty` | `true` | on duty when the job is set |
+| `Config.Organisation.SetPrimaryOnHire` | `true` | a hire makes it their primary job |
+| `Config.Organisation.QbxBossFlag` | `false` | mark boss roles isboss in qbx_core too |
+| `Config.Organisation.ExternalChanges` | `'adopt'` | 'adopt' \| 'revert' job changes made elsewhere |
+| `Config.Organisation.Funds` | `'auto'` | 'auto' (Renewed-Banking if started) \| 'internal' |
+| `Config.Organisation.OfficeRadius` | `5.0` | metres from the boss office that count |
+| `Config.Organisation.DrawMetres` | `40.0` | metres at which a spot is drawn |
+| `Config.Organisation.ApplyAtSignupOnly` | `true` | applications only at a sign-up spot |
+| `Config.Organisation.NpcModel` | `'g_m_m_armboss_01'` | the ped drawn at an NPC spot |
+| `Config.Organisation.Roles` | `{ '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no', '2, lieutenant, Lieutenant, 0, no', … 4 in all }` | the roles made with it: 'grade, name, label, pay, boss' |
+| `Config.Organisation.Limits.MaxMembers` | `20` | members at most |
+| `Config.Organisation.Limits.HireRadius` | `5.0` | metres a hire stands from the boss |
+| `Config.Organisation.Limits.HireMaxGrade` | `0` | highest grade a boss hires into |
+| `Config.Organisation.Limits.FireCooldownMinutes` | `10` | minutes between two fires by one boss |
+| `Config.Organisation.Limits.PromotionsPerDay` | `5` | role changes one boss makes a day |
+| `Config.Organisation.Limits.SuspendMaxHours` | `72` | longest a boss bars a member from contracts |
+| `Config.Organisation.Limits.MemberMaxAtOnce` | `3` | most contracts a boss lets a member hold |
+| `Config.Organisation.Limits.MemberCooldownMaxMinutes` | `120` | longest cooldown between accepts a boss sets |
+| `Config.Organisation.Limits.MaxRoles` | `8` | roles at most |
+| `Config.Organisation.Limits.PayMax` | `500` | most pay per role per pay-cycle ($) |
+| `Config.Organisation.Limits.BonusMax` | `10000` | largest bonus ($) |
+| `Config.Organisation.Limits.BonusPerDay` | `25000` | bonuses one boss pays a day ($) |
+| `Config.Organisation.Limits.WithdrawMax` | `50000` | largest withdrawal ($) |
+| `Config.Organisation.Limits.WithdrawPerDay` | `100000` | withdrawals one boss makes a day ($) |
+| `Config.Organisation.Limits.CutMaxPercent` | `25` | most a boss sets the payout cut to (%) |
+| `Config.Organisation.Limits.TotalCutCapPercent` | `40` | most of one payout all cuts take (%) |
+| `Config.Organisation.Limits.StakeCutMaxPercent` | `25` | most a boss sets the stake cut to (%) |
+| `Config.Organisation.Limits.BuyoutCutMaxPercent` | `25` | most a boss sets the buyout cut to (%) |
+| `Config.Organisation.Limits.OfficeMoveMetres` | `150.0` | how far a boss moves the office from staff's point |
+| `Config.Organisation.Limits.LocationCooldownMinutes` | `60` | minutes between two moves of a spot by a boss |
+| `Config.Organisation.Limits.MaxSignupSpots` | `2` | sign-up spots at most |
+| `Config.Organisation.Limits.MaxMeetingSpots` | `5` | organisation meeting spots at most |
+| `Config.Organisation.Limits.NoticeMaxLength` | `500` | characters in the board notice |
+| `Config.Organisation.Limits.RenameCooldownMinutes` | `1440` | minutes between two label changes by a boss |
+
 ### Advanced and developer
 
 Logging, diagnostics, rate limits, json tuning and the timings of the kill and handover checks. The shipped values suit most servers.
@@ -952,6 +1127,8 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 | `Config.Cooldowns.admin` | `{ burst = 30, per = 10 }` | the admin panel, per staff member |
 | `Config.Cooldowns.adminWrite` | `{ burst = 6, per = 10 }` | what the admin panel writes |
 | `Config.Cooldowns.report` | `{ burst = 3, per = 600 }` | reporting a contract or a thread to staff |
+| `Config.Cooldowns.org` | `{ burst = 20, per = 10 }` | the organisation's reads (members, boss menu) |
+| `Config.Cooldowns.orgWrite` | `{ burst = 5, per = 10 }` | what a boss changes in the organisation |
 | `Config.Database.Json.WarnContractCount` | `2000` | json: warn above this many contracts |
 | `Config.Database.Json.MaxDirtyShardsPerFlush` | `25` | json: contract files one ordinary flush writes |
 | `Config.Limits.MaxDeadlineSkipSeconds` | `600` | longest the expiry pass sleeps |

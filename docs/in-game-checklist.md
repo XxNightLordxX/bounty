@@ -563,6 +563,19 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `Config.Improvements.SerialScrub` on: an anonymous placer puts up a pistol, a hitman completes it: the pistol in the hitman's inventory has a different serial and no registered owner; **Logs** shows *weapon_serial_scrubbed*, the original as *(identity only)* without `crimson.identity`. A refund to the placer keeps the original. Restart before the hitman takes it (pockets full, then made room): the pistol arrives with the same new serial the log shows.
 - [ ] `Config.Improvements.WeeklyStats` on, with `set crimson_hitman_stats_webhook` in server.cfg: set the day and hour to now from the panel; one post arrives with three totals and no names; a restart does not post it again.
 
+## 16. Hitman organisation (off as shipped)
+
+- [ ] `Config.Organisation.Enabled` off (as shipped): no `hitman` job in qbx_core (`/setjob` refuses it), nothing new in resmon, contracts accept as before.
+- [ ] Turn `Config.Organisation.Enabled` on from the panel: the console says nothing about it but any convar warning; `/setjob <id> hitman 0` works; a member already online keeps the job after `restart crimson-hitman`.
+- [ ] server.cfg: `qbx:cleanPlayerGroups` false, `qbx:enableGroupManagement` false, `qbx:max_jobs_per_player` 2 or more, and `ensure crimson-hitman` before `ensure Renewed-Banking`; with any of them wrong, /ch-diag lists it once.
+- [ ] Staff hire a looked-up player (orgMemberHire), set a role (orgMemberRole) and fire them (orgMemberFire, with a reason): qbx_core's job follows each, online and for a player who logged off.
+- [ ] Boss permissions: allow Hire for the boss role (bossPermsSet), stand at the boss office set with Use my position (orgLocationSet, here), hire a player within 5 m from the app; away from the office it says to go there.
+- [ ] Revoke Set role powers from the boss: the powers that boss gave a role go inactive at once; allow it again and they come back.
+- [ ] Set a 10% organisation cut (orgCuts), accept a contract as a member, change the cut to 20%, complete it: the member receives 90%, the funds 10% (orgFunds), and the ledger names the line.
+- [ ] With Renewed-Banking started, the society account balance moves with deposits, withdrawals, bonuses and cuts; with `Config.Organisation.Funds = 'internal'` only the ledger does.
+- [ ] `Config.Organisation.RequireJobToAccept` on: a non-member's Accept is refused; a member's goes through; a suspended member's is refused until the suspension ends.
+- [ ] A sign-up spot shows an ox_target option to everybody within reach and nothing past `Config.Organisation.DrawMetres`; resmon for the resource stays at 0.00 ms idle with no spot near, and nothing remains after `stop crimson-hitman` or a logout.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.
