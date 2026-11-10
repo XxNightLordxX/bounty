@@ -428,11 +428,11 @@ describe('Reassign', function()
         eq(ask(s, 6, 'reassignHitman', { id = c.id, ref = lookedUp(s, 1), reason = 'r' }).err, CH.ERR.SELF_ACCEPT)
         eq(ask(s, 6, 'reassignHitman', { id = c.id, ref = lookedUp(s, 3), reason = 'r' }).err, 'already_on')
         Config.Limits.MaxAcceptedPerHitman = 0
-        eq(ask(s, 6, 'reassignHitman', { id = c.id, ref = lookedUp(s, 4), reason = 'r' }).err, 'not_assigned',
-            'refused by Accept itself, said')
+        eq(ask(s, 6, 'reassignHitman', { id = c.id, ref = lookedUp(s, 4), reason = 'r' }).err,
+            CH.ERR.LIMIT_REACHED, 'refused by Accept itself, before anybody is taken off (review-x F5)')
         Config.Limits.MaxAcceptedPerHitman = 3
-        -- An exclusive contract is cleared first, so a refusal by Accept
-        -- itself is said; the earlier refusals moved nothing.
+        -- Every Accept check is asked before an exclusive contract is
+        -- cleared, so nothing moved for any of these refusals.
         conserved(s, before, 'refusals')
     end)
 

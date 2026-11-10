@@ -227,12 +227,23 @@ local function changeUnlocked(staff, contractId, by, opts)
         local plan, planErr, detail = cutPlan(contract, held, -by)
         if not plan then return false, planErr, detail end
         local toPlacer, toStaff, queued, cut = 0, 0, 0, 0
+        -- A claim takes no key: one that starts in any await of this change
+        -- marks the collection's lines for its hitman and pays them as they
+        -- stand. So the contract is asked again right before each cut, and
+        -- the claim count once more with nothing awaited before the cut is
+        -- written (the guard), and the store cuts only a line still owed to
+        -- nobody (Escrow.reduceLine).
+        local function noClaim() return not deps.escrow.claimRunning(contractId) end
         for _, step in ipairs(plan) do
             local line = step.line
             local staffLine = line.taken_from == deps.escrow.STAFF
             local recipient = staffLine and deps.escrow.STAFF or (line.taken_from or contract.creator_cid)
+            local now = deps.storage.readContract(contractId)
+            if not now or (now.state ~= CH.STATE.ACTIVE and now.state ~= CH.STATE.ACCEPTED) or not noClaim() then
+                break
+            end
             local owedId, delivered = deps.escrow.reduceLine(contractId, line, step.to,
-                'staff_reward_lowered', recipient)
+                'staff_reward_lowered', recipient, noClaim)
             -- A claim took the line from under the cut: stop here, with
             -- what was cut already on the record.
             if not owedId then break end

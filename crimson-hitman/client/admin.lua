@@ -165,7 +165,9 @@ end)
 RegisterNetEvent('crimson-hitman:adminPush', function(data)
     if not open or type(data) ~= 'table' then return end
     SendNUIMessage({ type = 'push', kind = tostring(data.kind or ''),
-                     line = type(data.line) == 'string' and data.line or nil })
+                     line = type(data.line) == 'string' and data.line or nil,
+                     -- The Players lookup handle a diagnosis was run for, or nil.
+                     ref = type(data.ref) == 'string' and data.ref:sub(1, 64) or nil })
 end)
 
 --------------------------------------------------------------------------

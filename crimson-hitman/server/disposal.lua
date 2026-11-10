@@ -33,7 +33,12 @@
 --- Its clock runs only while the hitman is in the city and nothing holds it
 --- (a staff freeze on a party, the app pause, the restart hold), up to
 --- TimeLimitMinutes; the hitman is told the time left as a band, staff the
---- exact figure. On timeout: 'pay' (as shipped: nobody can grief the hitman
+--- exact figure. And it never stands for longer than MaxHoldMinutes of real
+--- time from the kill, away or not (120 as shipped): past that it times out
+--- as below even while the hitman is away, unless staff hold it, and from
+--- then on it no longer keeps the target off the board (Contracts
+--- .relistHold), so a hitman who logs off over a body cannot shield its
+--- target from every new contract. On timeout: 'pay' (as shipped: nobody can grief the hitman
 --- out of a kill), 'reduced' (the hitman keeps ReducedPercent of the money,
 --- the rest goes back to the placer) or 'refund' (back to the placer). Kept
 --- in the store (crimson_rp_rows, kind 'disposal') so a restart resumes it
@@ -55,12 +60,13 @@ local SPOTS = { vehicle = true, drop = true }
 --- started_at, spent, respawns, paid_now }.
 local Steps = {}
 --- What is not kept in the store, by step id: { vehicle, reached, farSince,
---- countedAt, wroteAt, unwritten }.
+--- countedAt, wroteAt, unwritten, plate, removedByUs }. removedByUs: the last
+--- vehicle was taken away by this file (the hitman left, it was abandoned,
+--- the stop), so the next one made is not a respawn; any other loss is.
 local Runtime = {}
 --- The staff-set spots: [name] = { x, y, z, h }.
 local Spots = {}
 local loaded = false
-local plateSeq = 0
 --- When a missing setting was last said, so it is said once a minute.
 local saidAt = {}
 
@@ -98,6 +104,7 @@ Disposal.RULES = {
     AbandonMinutes = { kind = 'number', min = 1, max = 60 },
     MaxRespawns = { kind = 'number', min = 0, max = 10 },
     DespawnSeconds = { kind = 'number', min = 0, max = 300 },
+    MaxHoldMinutes = { kind = 'number', min = 10, max = 2880 },
 }
 
 --- Held to its rules at start, and against a copy on every panel change.
@@ -215,6 +222,18 @@ local function LeftOf(step)
     return math.max(0, LimitSeconds() - (tonumber(step.spent) or 0))
 end
 
+--- The most real time a step may stand from the kill, in seconds
+--- (MaxHoldMinutes, 120 as shipped; never below the time limit itself).
+local function MaxHoldSeconds()
+    return math.floor(math.max(Num('MaxHoldMinutes', 120), Num('TimeLimitMinutes', 30)) * 60)
+end
+
+--- Whether a step has stood past MaxHoldMinutes of real time.
+local function PastHold(step, now)
+    local started = tonumber(step.started_at)
+    return started ~= nil and (now or os.time()) - started >= MaxHoldSeconds()
+end
+
 --- Whether anything holds this step's clock now: a staff freeze on one of
 --- its parties, the app pause or the restart hold.
 local function Held(step)
@@ -229,6 +248,31 @@ local function Held(step)
     return false
 end
 Disposal.held = Held
+
+--- Whether a step is shown held to staff who may not see who is behind an
+--- anonymous party: the restart hold and the app pause, which name nobody,
+--- and a freeze only through a party they may see (the target, the placer
+--- unless placed anonymously, the hitman unless on it anonymously), as the
+--- panel shows a contract's own hold (Panel.frozenShown). "Held" through an
+--- anonymous party, beside the Frozen list every reader sees, narrowed down
+--- who that party was.
+local function HeldShown(step)
+    local contracts, freeze = Deps.contracts, Deps.freeze
+    if contracts and contracts.restartHeld and contracts.restartHeld() then return true end
+    if freeze and freeze.appPaused and freeze.appPaused() then return true end
+    if not (freeze and freeze.of) then return false end
+    if step.target_cid and freeze.of(step.target_cid) then return true end
+    local okC, contract = pcall(Deps.storage.readContract, step.contract_id)
+    contract = okC and contract or nil
+    if step.creator_cid and freeze.of(step.creator_cid) and contract and contract.anon_creator ~= true then
+        return true
+    end
+    if step.hitman_cid and freeze.of(step.hitman_cid) then
+        local okH, row = pcall(Deps.storage.readHitman, step.contract_id, step.hitman_cid)
+        if okH and row and row.anon ~= true then return true end
+    end
+    return false
+end
 
 local function Write(step)
     local rt = Runtime[step.id]
@@ -283,12 +327,27 @@ Disposal.world = {
         -- no row in any garage's table, so nothing can store or sell it.
         return CreateVehicleServerSetter(GetHashKey(model), 'automobile', at.x, at.y, at.z, at.h or 0.0)
     end,
+    -- Kept by the server whoever owns it or is near it: a server-made
+    -- entity is otherwise deleted by OneSync once nobody is in scope of it
+    -- (orphan mode 0, DeleteWhenNotRelevant), which a hitman driving off
+    -- for the body did; 2 is KeepEntity. Only this file deletes it. Guarded
+    -- on an artifact without the native. And in the hitman's routing
+    -- bucket (an instance they are in), or they never see it.
+    keep = function(vehicle, hitmanSource)
+        if type(SetEntityOrphanMode) == 'function' then SetEntityOrphanMode(vehicle, 2) end
+        if hitmanSource and type(SetEntityRoutingBucket) == 'function' and type(GetPlayerRoutingBucket) == 'function' then
+            local bucket = tonumber(GetPlayerRoutingBucket(hitmanSource)) or 0
+            local now = type(GetEntityRoutingBucket) == 'function' and tonumber(GetEntityRoutingBucket(vehicle)) or nil
+            if now ~= bucket then SetEntityRoutingBucket(vehicle, bucket) end
+        end
+    end,
     exists = function(vehicle)
         return vehicle ~= nil and vehicle ~= 0 and DoesEntityExist(vehicle) and true or false
     end,
     coords = function(vehicle) return Point(GetEntityCoords(vehicle)) end,
     remove = function(vehicle) DeleteEntity(vehicle) end,
     prepare = function(vehicle, plate, hitmanSource)
+        Disposal.world.keep(vehicle, hitmanSource)
         SetVehicleNumberPlateText(vehicle, plate)
         -- Marked, so another resource can tell it is not a player's.
         Entity(vehicle).state:set('crimsonDisposal', true, true)
@@ -305,19 +364,45 @@ Disposal.world = {
     end,
 }
 
-local function RemoveVehicle(step)
-    local rt = Runtime[step.id]
-    if not rt or not rt.vehicle then return end
-    local vehicle = rt.vehicle
-    rt.vehicle, rt.reached, rt.farSince = nil, nil, nil
-    pcall(Disposal.world.remove, vehicle)
-end
-
 local function VehicleThere(rt)
     if not rt or not rt.vehicle then return false end
     local ok, there = pcall(Disposal.world.exists, rt.vehicle)
     return ok and there == true
 end
+
+--- Take the vehicle away. Only one still there counts as taken away by
+--- this file (removedByUs): a handle to a vehicle already lost, destroyed
+--- or deleted by something else is a loss, and the next one made is a
+--- respawn, counted, whatever happens to the hitman in between.
+local function RemoveVehicle(step)
+    local rt = Runtime[step.id]
+    if not rt or not rt.vehicle then return end
+    local vehicle = rt.vehicle
+    if VehicleThere(rt) then rt.removedByUs = true end
+    rt.vehicle, rt.reached, rt.farSince = nil, nil, nil
+    pcall(Disposal.world.remove, vehicle)
+end
+
+--- A plate nobody can guess: two letters and six random characters, never
+--- one a vehicle of a step in force has. qbx_vehiclekeys knows a key by its
+--- plate, so a sequence (CHD0001, CHD0002, ...) starting again at every
+--- start let a hitman holding an old key open a later disposal vehicle.
+local PLATE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+local function NewPlate()
+    local taken = {}
+    for _, rt in pairs(Runtime) do if rt.plate then taken[rt.plate] = true end end
+    for _ = 1, 20 do
+        local out = { 'C', 'H' }
+        for i = 3, 8 do
+            local n = math.random(1, #PLATE_CHARS)
+            out[i] = PLATE_CHARS:sub(n, n)
+        end
+        local plate = table.concat(out)
+        if not taken[plate] then return plate end
+    end
+    return ('CH%06d'):format(math.random(0, 999999))
+end
+Disposal.newPlate = NewPlate
 
 --- Make the vehicle at the spawn spot for an online hitman. A respawn counts
 --- towards MaxRespawns unless staff asked for it.
@@ -341,14 +426,13 @@ local function SpawnVehicle(step, why)
             .. 'Config.Disposal.VehicleModel'):format(tostring(model), tostring(vehicle)))
         return false
     end
-    plateSeq = (plateSeq + 1) % 10000
-    local plate = ('CHD%04d'):format(plateSeq)
+    local plate = NewPlate()
     local prepared, keyed = pcall(Disposal.world.prepare, vehicle, plate, actor.source)
     if prepared and keyed == false then
         Say('keys', 'body disposal: qbx_vehiclekeys is not started, so the disposal vehicle is left '
             .. 'unlocked for anybody to drive')
     end
-    rt.vehicle, rt.reached, rt.farSince, rt.spawnedOnce = vehicle, nil, nil, true
+    rt.vehicle, rt.reached, rt.farSince, rt.spawnedOnce, rt.plate, rt.removedByUs = vehicle, nil, nil, true, plate, nil
     Deps.audit.action('disposal_vehicle', step.hitman_cid, step.contract_id, { why = why, plate = plate })
     return true
 end
@@ -583,8 +667,11 @@ end
 --- the roleplay consequences' EMS rule).
 function Disposal.namesTarget(cid)
     if next(Steps) == nil then return false end
+    local now = os.time()
     for _, step in pairs(Steps) do
-        if step.target_cid == cid then return true end
+        -- Not past MaxHoldMinutes of real time: a step left standing (the
+        -- hitman away, or staff holding it) stops shielding its target then.
+        if step.target_cid == cid and not PastHold(step, now) then return true end
     end
     return false
 end
@@ -679,13 +766,18 @@ function Disposal.tick()
             rt.countedAt = now
             if not Disposal.enabled() then
                 if Finish(step, 'switched_off') then finished = finished + 1 end
+            elseif PastHold(step, now) and not Held(step) then
+                -- Stood past MaxHoldMinutes of real time, the hitman in the
+                -- city or not: timed out as OnTimeout says.
+                Deps.audit.action('disposal_hold_capped', step.hitman_cid, step.contract_id,
+                    { away = actor == nil or nil })
+                if TimedOut(step) then finished = finished + 1 end
             elseif not actor then
                 -- Away: the clock stands, the vehicle goes, the stage stays.
                 if rt.vehicle then
                     RemoveVehicle(step)
                     changed = true
                 end
-                rt.rejoin = true
             elseif Held(step) then
                 -- On hold: the clock stands, the vehicle stays where it is.
                 rt.farSince = nil
@@ -697,13 +789,14 @@ function Disposal.tick()
                     if now - (rt.wroteAt or 0) >= 60 then Write(step) end
                     if not VehicleThere(rt) then
                         if rt.vehicle then rt.vehicle = nil end
-                        -- Back in the city, or after a restart: not counted.
-                        local why = (rt.rejoin or not rt.spawnedOnce) and 'rejoin' or 'lost'
-                        if SpawnVehicle(step, why) then
-                            changed = true
-                            rt.rejoin = nil
-                        end
+                        -- Taken away by this file (the hitman left), or after
+                        -- a restart: not counted. Any other loss is, a relog
+                        -- in between or not.
+                        local why = (rt.removedByUs or not rt.spawnedOnce) and 'rejoin' or 'lost'
+                        if SpawnVehicle(step, why) then changed = true end
                     else
+                        -- Into whatever routing bucket the hitman moved to.
+                        pcall(Disposal.world.keep, rt.vehicle, actor.source)
                         local me = PositionOf(actor.source)
                         local at = Disposal.world.coords(rt.vehicle)
                         if me and at then
@@ -897,7 +990,10 @@ local function AddOps(panel)
         -- every other list of the panel's names them.
         local steps = Disposal.list()
         if not (panel.identifies and panel.identifies(src)) then
-            for _, step in ipairs(steps) do step.hitman = nil end
+            for _, step in ipairs(steps) do
+                step.hitman = nil
+                step.held = Steps[step.id] ~= nil and HeldShown(Steps[step.id]) or false
+            end
         end
         return true, nil, nil, { enabled = Disposal.enabled(), steps = steps,
             spots = { vehicle = Disposal.spot('vehicle'), drop = Disposal.spot('drop') },

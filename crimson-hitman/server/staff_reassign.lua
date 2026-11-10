@@ -20,7 +20,10 @@
 --- characters, not the target's guard, not suspended or frozen, not barred
 --- from it, their own MaxAcceptedPerHitman, a walk-away's wait, the time
 --- left, anonymity allowed). The stake is waived, or charged as on Accept,
---- by Config.Staff.ReassignStake ('waive' as shipped).
+--- by Config.Staff.ReassignStake ('waive' as shipped). They go on it
+--- anonymously, never charged the anonymity fee, unless staff choose
+--- 'named' or 'carry' (what they chose on their own earlier stint on it);
+--- named only where the server has turned a hitman's anonymity off.
 ---
 --- Every operative on it now is taken off it exactly as Remove operative
 --- takes one off (StaffContract.removeHitman: their stake to the placer as a
@@ -30,8 +33,15 @@
 --- board in between. Where there is room beside them (a competitive
 --- contract below Config.Limits.MaxHitmenPerContract) the new hitman is
 --- accepted first, so a refusal leaves everybody where they were; otherwise
---- the operatives are taken off first, and a refusal after that is said and
---- audited (staff_reassign_failed). Audited as staff_reassign_hitman with
+--- every check of the acceptance is run first with nothing written (the
+--- money, the limits, the anonymity, a walk-away's wait: Contracts
+--- .acceptHeld with dryRun, as the preview runs it), then the operatives are
+--- taken off with their stakes held back, and the acceptance made. One
+--- refused after all (a balance or a limit that moved in between) puts every
+--- operative back on it with their stake and lifts the bar this set
+--- (Contracts.reinstateHitman, StaffContract.liftRemoval); one that stands
+--- hands each stake over as the removal chose. Either is audited
+--- (staff_reassign_failed with what was put back). Audited as staff_reassign_hitman with
 --- the reason. The new hitman is told staff assigned them a contract, the
 --- placer that staff gave it to another hitman; nobody is told who.
 
@@ -45,6 +55,10 @@ StaffReassign.OPS = {}
 
 StaffReassign.ASSIGNED_TITLE = 'Contract assigned'
 StaffReassign.PLACER_TITLE = 'Contract reassigned'
+StaffReassign.REINSTATED_TITLE = 'Back on the contract'
+
+--- How the new hitman goes on it (opReassign's `identity`).
+StaffReassign.IDENTITIES = { anonymous = true, named = true, carry = true }
 
 ---@return boolean whether the stake is waived for a hitman staff assign
 function StaffReassign.waived()
@@ -114,6 +128,23 @@ local function operatives(contractId, exceptCid)
     return out
 end
 
+--- Whether the new hitman goes on it anonymously (opts.identity):
+--- 'anonymous' (the default) unless the server has turned a hitman's
+--- anonymity off on this contract (then named, as any hitman would be);
+--- 'named' when staff chose it; 'carry' what this hitman chose on their own
+--- earlier stint on this contract, or anonymous with none. Never named to
+--- the placer by default: staff choosing for them is not their choice.
+---@return boolean anonymous
+local function anonymousFor(contract, actor, identity)
+    if identity == 'named' then return false end
+    if not Util.anonymityAllowed('hitman', contract.target_protected == true) then return false end
+    if identity == 'carry' then
+        local previous = deps.storage.readHitman(contract.id, actor.cid)
+        if previous and previous.state ~= 'refused' then return previous.anon == true end
+    end
+    return true
+end
+
 local function reassignUnlocked(staff, contractId, subject, opts)
     local contract = deps.storage.readContract(contractId)
     local err = contractRefusal(contract)
@@ -124,71 +155,133 @@ local function reassignUnlocked(staff, contractId, subject, opts)
     local current = operatives(contractId, actor.cid)
     local room = contract.mode ~= CH.MODE.EXCLUSIVE
         and #current < (tonumber(Config.Limits.MaxHitmenPerContract) or 0)
-    local acceptOpts = { staffAssigned = true, waiveStake = StaffReassign.waived() }
+    local anonymous = anonymousFor(contract, actor, opts.identity)
+    local acceptOpts = { staffAssigned = true, waiveStake = StaffReassign.waived(), waiveFee = true }
 
     local function accept()
-        return deps.contracts.acceptHeld(actor, contractId, opts.anonymous == true, acceptOpts)
+        return deps.contracts.acceptHeld(actor, contractId, anonymous, acceptOpts)
     end
+
+    -- Every check of the acceptance first, the money, the limits, the
+    -- anonymity and a walk-away's wait among them, with the operatives about
+    -- to come off counted as gone and nothing written: a refusal is said
+    -- before anybody is taken off, as the preview says it.
+    local vacating = {}
+    for _, h in ipairs(current) do vacating[h.id] = true end
+    local dry, dryErr, dryData = deps.contracts.acceptHeld(actor, contractId, anonymous,
+        { staffAssigned = true, waiveStake = acceptOpts.waiveStake, waiveFee = true,
+          vacating = vacating, dryRun = true })
+    if not dry then return false, dryErr, dryData end
+
     local removed = {}
-    local function removeAll()
+    local function removeAll(holdStake)
         for _, h in ipairs(current) do
             local ok, removeErr, detail = deps.staffContract.removeHitman(staff, contractId, h.id, opts.reason,
-                { block = opts.block ~= false, returnStake = opts.returnStake == true })
+                { block = opts.block ~= false, returnStake = opts.returnStake == true, holdStake = holdStake })
             if not ok then return false, removeErr end
             removed[#removed + 1] = { cid = h.hitman_cid, alias = h.alias, stake = detail and detail.stake or 0,
-                returned = detail and detail.returned or 0, forfeited = detail and detail.forfeited or 0 }
+                returned = detail and detail.returned or 0, forfeited = detail and detail.forfeited or 0,
+                held = detail and detail.held or nil, record = detail and detail.record,
+                hitmanId = h.id }
         end
         return true
+    end
+
+    --- The stakes a removal held back for the acceptance, handed over as
+    --- each removal chose, now that it stands.
+    local function settleHeld()
+        local now = deps.storage.readContract(contractId) or contract
+        for _, r in ipairs(removed) do
+            if r.held then
+                local moved, returned = deps.contracts.settleWalkedStake(now, r.cid, r.held,
+                    { staff = true, returnStake = opts.returnStake == true })
+                r.forfeited = moved > 0 and r.held or 0
+                r.returned = returned > 0 and r.held or 0
+                r.held = nil
+            end
+        end
+    end
+
+    --- The acceptance was refused after all: every operative this took off
+    --- is put back on it with their stake, and the bar this set lifted.
+    local function rollBack()
+        local back = 0
+        for _, r in ipairs(removed) do
+            if deps.contracts.reinstateHitman(contractId, r.hitmanId) then
+                back = back + 1
+                if r.record then deps.staffContract.liftRemoval(contractId, r.record) end
+                deps.notify.tellOrKeep(r.cid, StaffReassign.REINSTATED_TITLE,
+                    'Staff put you back on a contract you were taken off a moment ago, with your stake.',
+                    { bypassBudget = true }, contractId)
+            elseif r.held then
+                -- Not put back (it ended meanwhile, or the row moved): the
+                -- stake goes as the removal chose.
+                local now = deps.storage.readContract(contractId) or contract
+                if not CH.TERMINAL[now.state] then
+                    deps.contracts.settleWalkedStake(now, r.cid, r.held,
+                        { staff = true, returnStake = opts.returnStake == true })
+                end
+            end
+        end
+        return back
     end
 
     local ok, acceptErr, row
     if room then
         ok, acceptErr, row = accept()
         if not ok then return false, acceptErr, row end
-        local gone, removeErr = removeAll()
+        local gone, removeErr = removeAll(false)
         if not gone then
             deps.audit.staff('staff_reassign_failed', staff.cid, contractId, { to = actor.cid,
                 err = removeErr, removed = #removed, reason = opts.reason, assigned = true })
             return false, 'not_all_removed', { removed = #removed, assigned = true }
         end
     else
-        local gone, removeErr = removeAll()
+        local gone, removeErr = removeAll(true)
         if not gone then
+            local back = rollBack()
             deps.audit.staff('staff_reassign_failed', staff.cid, contractId, { to = actor.cid,
-                err = removeErr, removed = #removed, reason = opts.reason })
-            return false, #removed == 0 and removeErr or 'not_all_removed', { removed = #removed }
+                err = removeErr, removed = #removed, reinstated = back, reason = opts.reason })
+            if back == #removed then return false, removeErr end
+            return false, 'not_all_removed', { removed = #removed - back }
         end
         ok, acceptErr, row = accept()
         if not ok then
+            local back = rollBack()
             deps.audit.staff('staff_reassign_failed', staff.cid, contractId, { to = actor.cid,
-                err = acceptErr, removed = #removed, reason = opts.reason })
-            return false, 'not_assigned', { removed = #removed, err = acceptErr, refusal = row }
+                err = acceptErr, removed = #removed, reinstated = back, reason = opts.reason })
+            return false, 'not_assigned', { removed = #removed, reinstated = back, err = acceptErr, refusal = row }
         end
+        settleHeld()
     end
 
     local fromCids = {}
     for i, r in ipairs(removed) do fromCids[i] = r.cid end
+    local named = type(row) == 'table' and row.anon == false
     deps.audit.staff('staff_reassign_hitman', staff.cid, contractId, {
         to = actor.cid, alias = type(row) == 'table' and row.alias or nil, from = fromCids,
         stake = acceptOpts.waiveStake and 'waived' or 'charged', reason = opts.reason,
+        identity = opts.identity or 'anonymous', anonymous = not named,
     })
     local target = tostring(contract.target_name or 'a target')
     deps.notify.tellOrKeep(actor.cid, StaffReassign.ASSIGNED_TITLE,
-        ('Staff assigned you a contract on %s. It is under Mine.%s'):format(target,
-            acceptOpts.waiveStake and ' You put no stake up for it.' or ''),
+        ('Staff assigned you a contract on %s. It is under Mine.%s%s'):format(target,
+            acceptOpts.waiveStake and ' You put no stake up for it.' or '',
+            named and ' The person who placed it sees your name.'
+                or ' You are on it anonymously, at no charge.'),
         { bypassBudget = true }, contractId)
     deps.notify.tellOrKeep(contract.creator_cid, StaffReassign.PLACER_TITLE,
         ('Staff gave your contract on %s to another hitman.'):format(target),
         { bypassBudget = true }, contractId)
     return true, nil, { alias = type(row) == 'table' and row.alias or nil, removed = removed,
-        stakeWaived = acceptOpts.waiveStake }
+        stakeWaived = acceptOpts.waiveStake, anonymous = not named }
 end
 
 --- Give a live contract to another hitman (see the top of this file).
 ---@param staff table { cid, name, source }
 ---@param contractId string
 ---@param subject table { cid, actor } from the panel's lookup handle
----@param opts table { reason, block, returnStake, anonymous }
+---@param opts table { reason, block, returnStake, identity = 'anonymous'|'named'|'carry' }
 function StaffReassign.reassign(staff, contractId, subject, opts)
     return deps.contracts.serialized({ 'contract:' .. contractId }, reassignUnlocked, staff, contractId,
         subject, opts or {})
@@ -224,9 +317,13 @@ local function said(err, detail)
     local base = MESSAGES[err]
     if err == 'not_assigned' then
         local inner = detail and detail.err
-        return ('%d operative(s) were taken off it, and the new hitman could not be assigned: %s '
-            .. 'It is back on the board.'):format(detail and detail.removed or 0,
-                MESSAGES[inner] or ('their Accept was refused (' .. tostring(inner) .. ').'))
+        local back = detail and detail.reinstated or 0
+        return ('The new hitman could not be assigned after all: %s %s'):format(
+            MESSAGES[inner] or ('their Accept was refused (' .. tostring(inner) .. ').'),
+            back == (detail and detail.removed or 0)
+                and 'Everybody taken off it was put back on it, with their stake, and no bar was kept.'
+                or ('%d of %d operative(s) taken off it could not be put back; look at the contract.')
+                    :format((detail and detail.removed or 0) - back, detail and detail.removed or 0))
     end
     if err == 'not_all_removed' then
         return ('Only %d operative(s) were taken off it before one could not be.%s Look at the contract.')
@@ -276,7 +373,29 @@ local function opPreview(src, data)
             view.refused, view.message = subjectErr, message
         else
             local actor, why = eligible(subject, contract)
-            if not actor then view.refused, view.message = why, said(why) end
+            if not actor then
+                view.refused, view.message = why, said(why)
+            else
+                -- And every check of the acceptance itself, as the
+                -- reassignment asks it before it takes anybody off: the
+                -- same refusals, nothing written.
+                local vacating = {}
+                for _, h in ipairs(operatives(id, actor.cid)) do vacating[h.id] = true end
+                local identity = StaffReassign.IDENTITIES[data.identity] and data.identity or nil
+                local anonymous = anonymousFor(contract, actor, identity)
+                view.anonymous = anonymous
+                local ok, acceptErr = deps.contracts.acceptHeld(actor, id, anonymous,
+                    { staffAssigned = true, waiveStake = StaffReassign.waived(), waiveFee = true,
+                      vacating = vacating, dryRun = true })
+                if not ok then
+                    if acceptErr == CH.ERR.CONTRACT_FROZEN then
+                        local _, code, frozenMessage = frozenSaid(src, id, acceptErr)
+                        view.refused, view.message = code, frozenMessage
+                    else
+                        view.refused, view.message = acceptErr, said(acceptErr)
+                    end
+                end
+            end
         end
     end
     return true, nil, nil, view
@@ -293,11 +412,18 @@ local function opReassign(src, data)
             return false, CH.ERR.INVALID_INPUT, 'Tick or untick it.'
         end
     end
+    -- How the new hitman goes on it: 'anonymous' (the default), 'named' or
+    -- 'carry'. The old boolean `anonymous = false` still reads as named.
+    local identity = data.identity
+    if identity == nil then identity = data.anonymous == false and 'named' or 'anonymous' end
+    if not StaffReassign.IDENTITIES[identity] then
+        return false, CH.ERR.INVALID_INPUT, 'Choose anonymous, named or as they had it.'
+    end
     local subject, subjectErr, message = subjectOf(src, data)
     if not subject then return false, subjectErr, message end
     local ok, err, detail = StaffReassign.reassign(staffOf(src), id, subject,
         { reason = reason, block = data.block, returnStake = data.returnStake == true,
-          anonymous = data.anonymous == true })
+          identity = identity })
     if not ok then
         if err == CH.ERR.CONTRACT_FROZEN then return frozenSaid(src, id, err) end
         return false, err, said(err, detail), detail
@@ -308,8 +434,11 @@ local function opReassign(src, data)
         .. 'operative tells them; the placer that staff gave it to another hitman.')
         :format(tostring(detail.alias or 'the new hitman'), #detail.removed,
             stakes > 0 and (' ($%d of stakes went to the placer)'):format(stakes) or '',
-            detail.stakeWaived and ' Their stake was waived.' or ' They put up the stake as on Accept.'),
-        { alias = detail.alias, removed = #detail.removed, stakeWaived = detail.stakeWaived }
+            (detail.stakeWaived and ' Their stake was waived.' or ' They put up the stake as on Accept.')
+                .. (detail.anonymous and ' They are on it anonymously, at no charge.'
+                    or ' The placer sees their name.')),
+        { alias = detail.alias, removed = #detail.removed, stakeWaived = detail.stakeWaived,
+          anonymous = detail.anonymous }
 end
 
 ---@param d table the wired modules

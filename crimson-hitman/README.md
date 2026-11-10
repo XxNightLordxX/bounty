@@ -188,6 +188,7 @@ Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays th
 
 - **The placer confirms**: once the hold is done, their card under Mine shows **Confirm handover** and **Decline** (two taps each, the second naming what it does) for `Config.Kidnap.ConfirmSeconds` (60), and their phone says so. The payout is made once they confirm. Nothing is sampled during the window: the hold is what proves the handover.
 - **Decline, or no answer**: a decline pays nothing; the contract stays open, and the hitman may tap **Deliver alive** again after `Config.Kidnap.RearmCooldownSeconds`, as after any failed handover. A window that runs out does the same, unless `Config.Kidnap.ConfirmMissed = 'pay'`, which pays as if confirmed. The hitman reads the same words for a decline and a timeout.
+- **Declines are capped** (`Config.Kidnap.MaxDeclines`, 2 as shipped; 0 = no limit): each decline, and each window left to run out under `'rearm'`, counts against the contract. Once a placer has used them all, the next handover held for its countdown pays without asking them (pay by default rather than a staff review, so an alive-only contract cannot be held open by declining for ever), and the placer is told why. Counted in memory: a restart, which ends every handover, starts the count again. A Confirm or Decline that arrives after the window closed (run out, rearmed or paid by the tick meanwhile) is answered *no handover* rather than reported as done.
 - **Anonymity**: the hitman is told the person who placed it confirms; the placer is told nothing of who holds the target. Only the placer is answered; anybody else asking is told not found.
 - **Holds**: a staff freeze stops a handover waiting on its confirm, and nothing is paid. The window stands still on the restart hold (a confirm is refused until it lifts) and while the app is paused (`Config.Staff.AppPaused`; a confirm still pays). A handover keeps the rule it was armed under if the switch is changed meanwhile.
 
@@ -388,7 +389,7 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 |---|---|---|
 | `access` | Read | What this staff member may do, and the Permissions list |
 | `overview` | Read | The overview: counts, money held, alerts, the server's state |
-| `contracts` | Read | The contract list and its search |
+| `contracts` | Read | The contract list and its search; `state = 'live'` (the page's default, *Live only*) lists every contract still running |
 | `contract` | Read | One contract's view and timeline |
 | `exportContract` | Read | One contract's record as text, for a ticket |
 | `playerView` | Read | A contract as one of its parties sees it |
@@ -402,7 +403,7 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `sanctions` | Read | Everybody suspended or protected now, each row with a handle Lift takes |
 | `settings` | Read | Every setting, its value and where it comes from |
 | `settingsHistory` | Read | Every setting change from the panel |
-| `diag` | Read | The diagnosis, as yourself, a player id or the player looked up (`ref`) |
+| `diag` | Read | The diagnosis, as yourself, a player id or the player looked up (`ref`); scrubbed of citizen ids and accounts for staff without `crimson.identity`, and the lines that come later name the `ref` they were run for, so the page draws them under that player only |
 | `console` | Developer | What this resource printed in the server console |
 | `whois` | Identity | Who is behind an anonymous party |
 | `void` | Moderate | Void a contract and refund it |
@@ -451,8 +452,8 @@ Added by `server/staff_reward.lua` and `server/staff_reassign.lua` through the p
 |---|---|---|
 | `rewardPreview` | Read | `{ id, by }`: the collection's reward now and after, the most it may be lowered by, what staff added, and why a change would be refused |
 | `rewardChange` | Write | `{ id, by, from, account, reason }`: raise (`by` above 0, `from = 'staff'` or `'placer'`, `account = 'cash'` or `'bank'`) or lower (`by` below 0) the reward; audit `staff_reward_changed` |
-| `reassignPreview` | Read | `{ id, ref }`: the operatives on it now (aliases), whether the stake is waived, and what would refuse the hitman looked up |
-| `reassignHitman` | Write | `{ id, ref, reason, block, returnStake, anonymous }`: take every operative off and assign the hitman the lookup named; audit `staff_reassign_hitman` (`staff_reassign_failed` when it could not finish) |
+| `reassignPreview` | Read | `{ id, ref, identity }`: the operatives on it now (aliases), whether the stake is waived, whether the hitman would go on anonymously, and what would refuse them: every check the reassignment asks before it takes anybody off, the same refusals |
+| `reassignHitman` | Write | `{ id, ref, reason, block, returnStake, identity }`: take every operative off and assign the hitman the lookup named; `identity` is `'anonymous'` (the default, no fee), `'named'` or `'carry'` (what they chose on their own earlier stint on it); the old `anonymous = false` still means named. Audit `staff_reassign_hitman` (`staff_reassign_failed` when it could not finish, with how many were put back) |
 
 ### Console output and Discord
 
@@ -514,8 +515,8 @@ first and the card is marked on the board.
 - **Pay** a player by hand (cash or bank, a reason, at most `Config.Staff.ManualPaymentMax`).
 - **Deadlines**: extend or shorten a live contract by up to `Config.Limits.StaffDeadlineMaxAdjustSeconds`, never under `StaffDeadlineMinLeftSeconds`.
 - **On a contract**: staff notes, remove an operative (stake to the placer as a walk-away, or returned), edit a player's text, export, *As a player sees it*.
-- **Change reward** on a live contract (`crimson.admin`, a reason, two clicks, at most `Config.Staff.RewardChangeMax` at once): a raise is *added by staff* (taken from nobody, and handed back to staff, never to the placer, if the contract is cancelled, expires, is bought out or voided), or charged to the placer's cash or bank if staff choose that and the placer is in the city; a cut comes off what staff added first, then the placer's own, each part going back to whoever funded it (queued for a placer who is away), never below `Config.Limits.MinContractReward` and never touching money already owed or being paid. Refused while a payout is being settled, a buyout waits out its delay, or the contract is on hold (unfreeze first). The placer and every operative are told staff changed it; nobody is named.
-- **Reassign** a live contract to another hitman (`crimson.admin`, a reason, two clicks): the hitman is named by a Players lookup and must be in the city and pass every check their own Accept would (job, eligibility, not the target, the placer or the target's guard, their limits, the stake rule). Every operative on it is taken off as **Remove** does (their stake to the placer, or returned; barred from taking it again unless staff untick it), all under the contract's own key, so nobody takes it from the board in between. The new hitman's stake is waived (`Config.Staff.ReassignStake = 'waive'`, as shipped) or charged as on Accept (`'charge'`).
+- **Change reward** on a live contract (`crimson.admin`, a reason, two clicks, at most `Config.Staff.RewardChangeMax` at once): a raise is *added by staff* (taken from nobody, and handed back to staff, never to the placer, if the contract is cancelled, expires, is bought out or voided), or charged to the placer's cash or bank if staff choose that and the placer is in the city; a cut comes off what staff added first, then the placer's own, each part going back to whoever funded it (queued for a placer who is away), never below `Config.Limits.MinContractReward` and never touching money already owed or being paid: the store cuts a line only while it is owed to nobody and being given to nobody, and the change stops at a claim that starts while it runs, so a claim's hitman is paid what the claim owed them. Refused while a payout is being settled, a buyout waits out its delay, or the contract is on hold (unfreeze first). The placer and every operative are told staff changed it; nobody is named.
+- **Reassign** a live contract to another hitman (`crimson.admin`, a reason, two clicks): the hitman is named by a Players lookup and must be in the city and pass every check their own Accept would (job, eligibility, not the target, the placer or the target's guard, their limits, the stake rule). Every operative on it is taken off as **Remove** does (their stake to the placer, or returned; barred from taking it again unless staff untick it), all under the contract's own key, so nobody takes it from the board in between. The new hitman's stake is waived (`Config.Staff.ReassignStake = 'waive'`, as shipped) or charged as on Accept (`'charge'`). They go on it **anonymously** and are never charged the anonymity fee, unless staff choose **Named to the placer** or **As they chose before** (their own earlier stint on it); only a server with a hitman's anonymity turned off names them anyway, as it names every hitman. Every check of the acceptance (the stake money, `MaxAcceptedPerHitman`, anonymity, a walk-away's wait) is asked before anybody is taken off, and the preview asks the same, so it refuses what the reassignment would. If the acceptance is still refused once the operatives are off (a balance or a limit that moved in between), every operative is put back on it with their stake still held and the bar this set lifted, and staff are told so.
 - **App pause** (`Config.Staff.AppPaused`): nothing can be placed or taken, and every clock is held, for an event.
 - **Daily summary** (`Config.Staff.DailySummary`, off) at `DailySummaryHour`; **alerts** past the `Config.Staff.Alert*` thresholds, posted to Discord with `Config.Alerts.ToDiscord`.
 - **Moderators** (`crimson.moderator`): read without identities, freeze, suspend, protect, void and move deadlines; settings, payments and settling stay with `crimson.admin`.
@@ -758,7 +759,9 @@ be handed over at the kill instead (0 as shipped: all at the drop-off).
 - **The body** is a stage the server keeps on the step (at the scene, then loaded), never an ox_inventory item or a prop a player holds: nothing to drop, trade, stash or duplicate, and nothing lost to a death or full pockets.
 - **The clock** (`TimeLimitMinutes`) runs only while the hitman is in the city and nothing holds the contract: a staff freeze on any party, the app pause and the restart hold stop it, keep the vehicle where it is, and refuse loading and dropping off. The hitman is told the time left as a band (over 20 minutes, 10 to 20, 5 to 10, under 5); staff see it to the second.
 - **On timeout** (`OnTimeout`): `pay` (as shipped, so nobody can grief a hitman out of a kill), `reduced` (they keep `ReducedPercent` of the money; items are paid whole; the rest goes back to the placer) or `refund` (all of it back to the placer).
-- **The vehicle** is a server-made networked vehicle, nobody's own, with no garage row and a `CHD` plate and a `crimsonDisposal` state bag, so nothing can store or sell it. Left more than `AbandonMetres` behind for `AbandonMinutes`, lost or destroyed, it is taken away and made again at the spawn spot, at most `MaxRespawns` times. It goes when the hitman leaves the city (made again when they are back) and at every stop.
+- **The clock's ceiling** (`MaxHoldMinutes`, 120 as shipped, never below `TimeLimitMinutes`): real minutes from the kill, counted whether the hitman is in the city or not, and through restarts. Past it the step times out as `OnTimeout` says even while the hitman is away (unless staff hold it), and from then on it no longer keeps its target off the board, so a hitman logging off over a body cannot shield the target from every new contract.
+- **The vehicle** is a server-made networked vehicle, nobody's own, with no garage row, a random plate (`CH` and six random characters, never one another step's vehicle has, so a key qbx_vehiclekeys gave for an earlier disposal vehicle opens no later one) and a `crimsonDisposal` state bag, so nothing can store or sell it. Left more than `AbandonMetres` behind for `AbandonMinutes`, lost or destroyed, it is taken away and made again at the spawn spot, at most `MaxRespawns` times. It goes when the hitman leaves the city (made again when they are back, not counted) and at every stop; every other loss counts as a respawn, a relog in between or not, so losing it and relogging does not make free vehicles.
+- **How the server keeps it** (OneSync entity rules): its orphan mode is set to keep it (`SetEntityOrphanMode(vehicle, 2)`, where the artifact has the native), since a server-made entity is otherwise deleted once nobody is in scope of it, and only this resource deletes it. It is put in the hitman's routing bucket when made, and moved with them if they change bucket, or a hitman in an instance never sees it. Population or cleanup resources that delete vehicles by plate or by distance should leave `crimsonDisposal` vehicles alone; one deleted anyway counts as lost.
 - **The target** cannot have a new contract placed on them while their body is being disposed of, whatever `Config.Roleplay.EmsRelisting` says; a revive or a respawn changes nothing about a payout already claimed.
 - **A restart** resumes the step where it was (`crimson_rp_rows`, kind `disposal`, in every store); the downtime is not counted. Turned off mid-step, every step finishes and pays at the next tick.
 
@@ -771,7 +774,7 @@ who the hitman is comes only with `crimson.identity`.
 
 | Op | Level | What it does |
 |---|---|---|
-| `disposalList` | read | Every disposal step: stage, exact seconds left, held, vehicle, respawns; the spots and the rules |
+| `disposalList` | read | Every disposal step: stage, exact seconds left, held, vehicle, respawns; the spots and the rules. Without `crimson.identity`, `held` says only the restart hold, the app pause and a freeze through a party they may see (never one through an anonymous placer or hitman) |
 | `disposalSkip` | write | Finish a step (`id`: a step or contract id) as if dropped off: the payout is released |
 | `disposalRespawn` | write | Make the vehicle again at the spawn spot (not counted as a respawn) |
 | `disposalSpotSet` | write | `spot` = `vehicle` or `drop`, typed (`x`, `y`, `z`, `heading`) or `here` (Use my position, read by the server) |
@@ -899,6 +902,7 @@ How many contracts a player may place, take or carry, and how one is finished: a
 | `Config.Kidnap.PlacerConfirms` | `false` | true = the placer taps Confirm handover before it pays |
 | `Config.Kidnap.ConfirmSeconds` | `60` | seconds the placer has to confirm (10-600) |
 | `Config.Kidnap.ConfirmMissed` | `'rearm'` | no answer in time: 'rearm' (nothing paid) \| 'pay' |
+| `Config.Kidnap.MaxDeclines` | `2` | declines (or missed windows) a contract gets; then it pays |
 | `Config.Reason.Mode` | `'freetext'` | 'preset' \| 'freetext' \| 'off' |
 | `Config.Reason.MaxLength` | `140` | characters (255 at most on mysql) |
 | `Config.Reason.MaxDigits` | `6` | digits allowed, so no phone numbers |
@@ -1279,6 +1283,7 @@ Map markers for each step of a contract, to the one party who acts on it (README
 | `Config.Disposal.AbandonMetres` | `300.0` | a vehicle left this far away ... |
 | `Config.Disposal.AbandonMinutes` | `5` | ... this long is taken back to the spawn spot |
 | `Config.Disposal.MaxRespawns` | `3` | times the vehicle is made again when lost |
+| `Config.Disposal.MaxHoldMinutes` | `120` | real minutes from the kill a step may stand, away or not |
 | `Config.Disposal.DespawnSeconds` | `10` | seconds after the drop-off it is taken away |
 
 ### Advanced and developer
@@ -1529,6 +1534,8 @@ The audit log records every money movement and every refused attempt:
 **1.1.0, the panel's reward, reassign and disposal controls (newest)**
 
 - The contract drawer's **Money** tab has **Change reward**: raise or lower by an amount, added by staff or charged to the placer, from cash or bank, with a reason; the server's figures (the reward before and after, what comes off staff's part and what goes back to the placer) are drawn before the button arms, and the armed button names them. **People** has **Reassign to another hitman**: the hitman looked up in Players, who comes off and whether the stake is waived said first, with the bar and the stakes to choose.
+- **Review fixes**: a cut of the reward never lands on a line a claim already owes its hitman; a disposal step stands at most `Config.Disposal.MaxHoldMinutes` (120) real minutes, away or not, and stops keeping its target off the board then; every lost disposal vehicle counts as a respawn, a relog in between or not; the disposal vehicle is kept by the server (orphan mode), in the hitman's routing bucket, with a random plate; a hitman staff assign is anonymous by default, with no fee; Reassign asks every check before anybody comes off and puts everybody back if the acceptance is refused after all; a placer gets `Config.Kidnap.MaxDeclines` (2) declines per contract, after which the next handover pays.
+- **Panel fixes**: *Why can't they see…* names no citizen id to staff without `crimson.identity`, and draws a diagnosis only under the player it was run for (Health keeps its own); the disposal list's *held* never points at an anonymous party; the reward's figures load even when an amount is typed at once; an armed **Refund**, **Pay** or **Pay amount** names the amount, the recipient and the account, and editing any of them disarms it; **Contracts** opens on *Live only*.
 - **Mission steps** (step markers, on, and body disposal, off as shipped): see [Mission steps](#mission-steps). Contracts, and Home while there is one, list every body being disposed of with **Skip** and **Respawn vehicle**; **Locations** sets the disposal vehicle spawn and the drop-off, with **Use my position**.
 - **Where the funds are kept** offers only **Abandon the bank** while Renewed-Banking is not answering, as the server allows nothing else then.
 - A staff assignment freezes the organisation cut its gate checked and refuses when the gate cannot answer, as Accept does; a declined or unconfirmed handover takes its circle off the map at once; the step-marker and body-disposal settings sit under *Completing a contract* in Game rules.

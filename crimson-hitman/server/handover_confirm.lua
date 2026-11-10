@@ -13,6 +13,10 @@
 --- decline pays nothing, and so does a window that runs out unless
 --- Config.Kidnap.ConfirmMissed is 'pay'; either way the contract stays open
 --- and the hitman may arm again after Config.Kidnap.RearmCooldownSeconds.
+--- A placer gets Config.Kidnap.MaxDeclines of those per contract (2 as
+--- shipped; a window left to run out under 'rearm' counts as one): past
+--- that the next handover held for its countdown pays without asking them,
+--- so an alive-only contract cannot be held open by declining for ever.
 ---
 --- One request, confirmHandover { id, decline }, answered in server/app.lua
 --- through the app's own gate (the source, the job blacklist, the flood
@@ -43,6 +47,13 @@ function HandoverConfirm.validate(warn)
         warn[#warn + 1] = ('Config.Kidnap.ConfirmMissed is %s; it has to be \'rearm\' or \'pay\'. Using '
             .. '\'rearm\'.'):format(tostring(k.ConfirmMissed))
         k.ConfirmMissed = 'rearm'
+    end
+    local most = k.MaxDeclines
+    if most ~= nil and (type(most) ~= 'number' or most ~= most or most < 0 or most > 20
+        or most ~= math.floor(most)) then
+        warn[#warn + 1] = ('Config.Kidnap.MaxDeclines is %s; it has to be a whole number from 0 to 20. '
+            .. 'Using 2.'):format(tostring(most))
+        k.MaxDeclines = 2
     end
 end
 

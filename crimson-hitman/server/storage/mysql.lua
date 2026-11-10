@@ -2229,9 +2229,15 @@ end
 
 --- Guarded amount change, in one statement so the check and the write
 --- cannot be interleaved. State is deliberately not written here.
-function MySQLStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
+--- `unowned`: see the memory backend, in the same statement.
+function MySQLStore.setEscrowAmount(id, expectedState, amount, expectedAmount, unowned)
     local affected
-    if expectedAmount ~= nil then
+    if expectedAmount ~= nil and unowned then
+        affected = db.update(
+            'UPDATE crimson_escrow SET amount = ? WHERE id = ? AND state = ? AND amount = ? '
+            .. 'AND owed_to IS NULL AND releasing_to IS NULL',
+            { amount, id, expectedState, expectedAmount })
+    elseif expectedAmount ~= nil then
         affected = db.update(
             'UPDATE crimson_escrow SET amount = ? WHERE id = ? AND state = ? AND amount = ?',
             { amount, id, expectedState, expectedAmount })

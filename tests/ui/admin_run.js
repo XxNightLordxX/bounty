@@ -1060,8 +1060,9 @@ async function main() {
     await settled();
     app.nav('contracts');
     await settled();
-    it('lists contracts newest first, with a page count', function () {
-      eq(app.last('contracts').data, { page: 1 });
+    it('lists contracts newest first, with a page count, live only by default (admin review nit)', function () {
+      eq(app.last('contracts').data, { page: 1, state: 'live' });
+      has(app.text(app.byId('dd-ct-state')), 'Live only');
       has(app.main(), 'ct00000001');
       has(app.main(), 'Page 1 of 3 · 61 contracts');
       has(app.main(), 'Anonymous');
@@ -1082,7 +1083,7 @@ async function main() {
     await settled();
     it('then asks once, for what was typed, from the first page', function () {
       eq(app.requests('contracts').length, asked + 1);
-      eq(app.last('contracts').data, { page: 1, query: 'Dan' });
+      eq(app.last('contracts').data, { page: 1, query: 'Dan', state: 'live' });
     });
     app.key(search, 'Enter');
     await settled();
@@ -1139,8 +1140,8 @@ async function main() {
     });
     app.click(app.button('Clear'));
     await settled();
-    it('Clear asks for everything again', function () {
-      eq(app.last('contracts').data, { page: 1 });
+    it('Clear asks for every live contract again, the default', function () {
+      eq(app.last('contracts').data, { page: 1, state: 'live' });
     });
     clean(app, 'contracts');
   })();
@@ -1280,6 +1281,16 @@ async function main() {
     app.type(app.drawer().querySelector('[data-bind="dr.amount.ct00000001:2"]'), '2,000');
     const payAgain = app.button('Pay amount', app.drawer());
     app.click(payAgain);
+    it('admin review F5: an armed Pay amount names the amount', function () {
+      has(app.text(payAgain), 'Click again: pay $2,000');
+    });
+    app.type(app.drawer().querySelector('[data-bind="dr.amount.ct00000001:2"]'), '9000');
+    it('admin review F5: and retyping it disarms, sending nothing', function () {
+      falsy(app.drawer().querySelector('.is-armed'));
+      eq(app.requests('settle').length, 0);
+    });
+    app.type(app.drawer().querySelector('[data-bind="dr.amount.ct00000001:2"]'), '2,000');
+    app.click(payAgain);
     app.click(payAgain);
     await settled();
     it('and pays exactly that amount on the second click, answered in the server\'s words', function () {
@@ -1375,13 +1386,33 @@ async function main() {
       has(app.main(), 'payer the target');
     });
     const first = app.byId('rv-rv00000001');
-    app.type(first.querySelector('[data-bind="rv.rv00000001.amount"]'), '500');
+    app.type(first.querySelector('[data-bind="rv.rv00000001.amount"]'), '100');
+    const early = app.button('Refund it', app.byId('rv-rv00000001'));
+    app.click(early);
+    await settled();
+    it('admin review F5: the armed Refund names the amount, the recipient and the account', function () {
+      has(app.text(early), 'Click again: refund $100 to payer');
+      has(app.text(early), 'from bank');
+    });
+    app.type(app.byId('rv-rv00000001').querySelector('[data-bind="rv.rv00000001.amount"]'), '99999');
+    it('admin review F5: retyping the amount after arming disarms it', function () {
+      falsy(app.byId('rv-rv00000001').querySelector('.is-armed'));
+    });
+    app.click(app.button('Refund it', app.byId('rv-rv00000001')));
+    await settled();
     pick(app, 'rv-account:rv00000001', 'cash');
+    await settled();
+    it('admin review F5: and so does picking another account; nothing was sent', function () {
+      falsy(app.byId('rv-rv00000001').querySelector('.is-armed'));
+      eq(app.requests('resolve').length, 0);
+    });
+    app.type(app.byId('rv-rv00000001').querySelector('[data-bind="rv.rv00000001.amount"]'), '500');
     const refund = app.button('Refund it', app.byId('rv-rv00000001'));
     app.click(refund);
     await settled();
     it('a refund takes two clicks', function () {
       eq(app.requests('resolve').length, 0);
+      has(app.text(refund), 'Click again: refund $500 to payer');
     });
     app.click(refund);
     await settled();
@@ -6713,10 +6744,140 @@ async function main() {
     await settled();
     it('RA: the second sends the lookup handle, the reason, the bar and the stakes', function () {
       eq(app.last('reassignHitman').data, { id: 'ct00000001', ref: 'p7_424242', reason: 'ticket 12', block: false,
-        returnStake: true });
+        returnStake: true, identity: 'anonymous' });
       has(app.text(app.drawer().querySelector('.answer')), 'Reassigned to Operative #2');
     });
     clean(app, 'reassign');
+  })();
+
+  await (async function () {
+    const app = boot(rewardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    await openDrawer(app);
+    app.tab('people');
+    await settled();
+    it('RA (review-x F4): the new hitman goes on anonymously unless staff choose otherwise', function () {
+      truthy(app.button('Anonymous (no fee)', app.drawer()));
+      truthy(app.button('Named to the placer', app.drawer()));
+      truthy(app.button('As they chose before', app.drawer()));
+    });
+    app.type(inDrawer(app, 'dr.ra.reason.ct00000001'), 'ticket 13');
+    const go = app.button('Reassign', app.drawer());
+    app.click(go);
+    await settled();
+    app.click(app.button('Named to the placer', app.drawer()));
+    await settled();
+    it('RA (review-x F4): choosing how they go on disarms the armed button', function () {
+      eq(app.requests('reassignHitman').length, 0);
+      falsy(app.drawer().querySelector('.is-armed'));
+    });
+    const again = app.button('Reassign', app.drawer());
+    app.click(again);
+    await settled();
+    app.click(again);
+    await settled();
+    it('RA (review-x F4): and the choice is sent', function () {
+      eq(app.last('reassignHitman').data.identity, 'named');
+    });
+    clean(app, 'reassign identity');
+  })();
+
+  /* ---- admin review F4: the reward's base read on a channel of its own ---- */
+  await (async function () {
+    let releaseBase = null;
+    const app = boot(rewardServer({
+      rewardPreview: function (data) {
+        const base = { max: 100000, slot: 2, reward: 8000, total: 8000, mostLower: 7999, staffAdded: 1000 };
+        if (data.by === undefined) {
+          return new Promise(function (resolve) { releaseBase = function () { resolve({ ok: true, data: base }); }; });
+        }
+        return { ok: true, data: Object.assign({}, base, { after: 8000 + data.by }) };
+      }
+    }));
+    app.open(ADMIN);
+    await settled();
+    await openDrawer(app);
+    app.tab('money');
+    await settled();
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '500');
+    app.fire(250);
+    await settled();
+    truthy(releaseBase, 'the base was asked');
+    releaseBase();
+    await settled();
+    it('admin review F4: an amount typed while the base read is in flight does not lose the base', function () {
+      lacks(app.text(app.drawer()), 'Reading the reward');
+      has(app.text(app.drawer()), '$100,000');
+    });
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '200000');
+    app.type(inDrawer(app, 'dr.rw.reason.ct00000001'), 'x');
+    app.click(app.button('Change reward', app.drawer()));
+    await settled();
+    it('admin review F4: and the cap is checked on the page from it', function () {
+      has(app.text(app.drawer().querySelector('.answer')), 'At most $100,000');
+      eq(app.requests('rewardChange').length, 0);
+    });
+    clean(app, 'reward base channel');
+  })();
+
+  /* ---- admin review F2: a player's diagnosis is theirs, Health's its own ---- */
+  await (async function () {
+    const pending = [];
+    const app = boot(standardServer({
+      player: function (data) {
+        const p = player();
+        p.data.player = Object.assign({}, p.data.player, { ref: 'p' + data.subject, name: 'Player ' + data.subject,
+          server: Number(data.subject) });
+        return p;
+      },
+      diag: function (data) {
+        if (data.ref === 'p11') {
+          return new Promise(function (resolve) {
+            pending.push(function () { resolve({ ok: true, data: { lines: ['identity: AS p11'] } }); });
+          });
+        }
+        return { ok: true, data: { lines: ['identity: AS ' + String(data.ref || 'yourself')] } };
+      }
+    }));
+    app.open(FULL);
+    await settled();
+    async function lookUp(id) {
+      app.nav('players');
+      await settled();
+      app.type(app.byId('pl-q'), id);
+      app.key(app.byId('pl-q'), 'Enter');
+      await settled();
+      app.nav('pdiag');
+      await settled();
+    }
+    await lookUp('11');
+    app.click(app.button('Run the diagnosis as them'));
+    await settled();
+    await lookUp('22');
+    pending.forEach(function (fn) { fn(); });
+    await settled();
+    it('admin review F2: a late answer for an earlier player is not drawn under the one looked up now', function () {
+      lacks(app.main(), 'AS p11');
+    });
+    app.click(app.button('Run the diagnosis as them'));
+    await settled();
+    app.message({ type: 'push', kind: 'diag', line: 'LATE line for p11', ref: 'p11' });
+    app.message({ type: 'push', kind: 'diag', line: 'from Health', });
+    app.message({ type: 'push', kind: 'diag', line: 'LATE line for p22', ref: 'p22' });
+    await settled();
+    it('admin review F2: pushes are drawn only under the player they were run for, Health\'s apart', function () {
+      has(app.main(), 'AS p22');
+      has(app.main(), 'LATE line for p22');
+      lacks(app.main(), 'LATE line for p11');
+      lacks(app.main(), 'from Health');
+    });
+    clean(app, 'player diagnosis');
   })();
 
   await (async function () {

@@ -20,10 +20,26 @@ local running = false
 --- [contractId .. ':' .. hitmanCid] = { outcome, reason, pending, parked, at }
 local outcomes = {}
 
+--- How many handovers each contract's placer has declined, or left to run
+--- out under ConfirmMissed 'rearm' (Config.Kidnap.MaxDeclines): [contractId]
+--- = count. In memory: a restart ends every handover with the resource.
+local declines = {}
+
 function Kidnap.init(deps)
     Storage, Identity, Contracts, Audit, Notify, Ledger =
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.notify, deps.ledger
     active = {}
+    declines = {}
+end
+
+--- Whether this contract's placer has used every decline they get
+--- (Config.Kidnap.MaxDeclines, 2 as shipped; 0 = no limit): the next
+--- handover held for its countdown then pays without asking them.
+---@param contractId string
+---@return boolean
+function Kidnap.declinesUsed(contractId)
+    local most = math.floor(tonumber(Config.Kidnap.MaxDeclines) or 0)
+    return most > 0 and (declines[contractId] or 0) >= most
 end
 
 local function key(contractId, hitmanCid) return contractId .. ':' .. hitmanCid end
@@ -469,6 +485,7 @@ function Kidnap.tick(deltaMs)
                 end
             elseif not contract or contract.state ~= CH.STATE.ACCEPTED then
                 active[k] = nil
+                if not contract or CH.TERMINAL[contract.state] then declines[state.contractId] = nil end
                 remember(k, { outcome = 'closed' })
                 Notify.toCitizen(state.hitmanCid, 'Handover ended',
                     'The contract closed before the handover finished.',
@@ -511,6 +528,20 @@ function Kidnap.tick(deltaMs)
                 if ok then
                     state.elapsedMs = state.elapsedMs + deltaMs
                     state.breaking = nil
+
+                    -- Declined (or left to run out) as many times as the
+                    -- placer may (Config.Kidnap.MaxDeclines): this one pays
+                    -- as if confirmed, and both are told it did.
+                    if state.elapsedMs >= (Config.Kidnap.CountdownSeconds * 1000)
+                        and state.confirm and not state.confirmed and Kidnap.declinesUsed(state.contractId) then
+                        state.confirmed = 'declines_used'
+                        Audit.action('kidnap_declines_used', state.hitmanCid, state.contractId,
+                            { declines = declines[state.contractId] })
+                        pcall(Notify.toCitizen, state.creatorCid, 'Handover paid',
+                            'You have declined this contract\'s handovers as many times as you may, so this '
+                                .. 'one was paid without asking you. Staff can see every handover on it.',
+                            { bypassBudget = true })
+                    end
 
                     if state.elapsedMs >= (Config.Kidnap.CountdownSeconds * 1000)
                         and state.confirm and not state.confirmed then
@@ -803,7 +834,9 @@ function Kidnap.notConfirmed(k, state, why)
     if active[k] ~= state then return end
     active[k] = nil
     lastFailure[k] = os.time()
-    Audit.action('kidnap_not_confirmed', state.hitmanCid, state.contractId, { reason = why })
+    declines[state.contractId] = (declines[state.contractId] or 0) + 1
+    Audit.action('kidnap_not_confirmed', state.hitmanCid, state.contractId,
+        { reason = why, declines = declines[state.contractId] })
     remember(k, { outcome = 'failed', reason = 'not_confirmed' })
     pcall(Notify.toCitizen, state.hitmanCid, 'Handover not confirmed',
         'The person who placed this contract did not confirm the handover, so nothing was paid. The '
@@ -841,6 +874,12 @@ function Kidnap.answer(contractId, cid, yes)
     if not pick then return false, CH.ERR.NO_HANDOVER end
     if Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
     if yes and Contracts.restartHeld and Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
+    -- The hold (Freeze) is a read, and the tick runs in its awaits: a window
+    -- it closed meanwhile (run out, rearmed or paid) is not answered as if
+    -- it were still open.
+    if active[pickKey] ~= pick or not pick.confirmLeftMs or pick.confirmed then
+        return false, CH.ERR.NO_HANDOVER
+    end
     if not yes then
         Kidnap.notConfirmed(pickKey, pick, 'declined')
         return true, nil, { declined = true }

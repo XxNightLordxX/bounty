@@ -245,7 +245,7 @@ function StaffContract.removeHitman(staff, contractId, hitmanId, reason, opts)
     remember(row)
 
     local ok, err, detail = Contracts.abandon({ cid = hitman.hitman_cid }, contractId,
-        { staff = true, returnStake = opts.returnStake == true })
+        { staff = true, returnStake = opts.returnStake == true, holdStake = opts.holdStake == true })
     if not ok then
         forget(row)
         local gone, why = pcall(Storage.deleteContractStaff, row.id)
@@ -268,7 +268,29 @@ function StaffContract.removeHitman(staff, contractId, hitmanId, reason, opts)
         { bypassBudget = true }, contractId)
     detail.alias = hitman.alias
     detail.blocked = opts.block == true
+    detail.record, detail.hitmanId = row.id, hitman.id
     return true, nil, detail
+end
+
+--- Take back a removal's record (its bar and its choice of where the stake
+--- goes): a staff reassignment that put the operative back on the contract
+--- after its new hitman was refused (server/staff_reassign.lua).
+---@param contractId string
+---@param recordId string the removal's record (removeHitman's detail.record)
+---@return boolean
+function StaffContract.liftRemoval(contractId, recordId)
+    local found
+    for _, row in ipairs(removals[contractId] or {}) do
+        if row.id == recordId then found = row end
+    end
+    if not found then return false end
+    forget(found)
+    local gone, why = pcall(Storage.deleteContractStaff, recordId)
+    if not gone then
+        Log.always(('a staff removal taken back on contract %s left its record (%s)')
+            :format(contractId, Util.dbError(why)))
+    end
+    return true
 end
 
 --- The checks a player's text gets, for the text staff typed.

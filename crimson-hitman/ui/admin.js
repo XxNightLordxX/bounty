@@ -376,7 +376,7 @@
     menu: null,             // the dropdown that is open
     overview: null, overviewAt: 0, overviewError: null, overviewTimer: null,
     pollGen: 0,             // the open whose overview refresh is running
-    contracts: { page: 1, state: '', rule: '', range: '', data: null, timer: null },
+    contracts: { page: 1, state: 'live', rule: '', range: '', data: null, timer: null },
     drawer: { id: null, data: null, answer: null, whois: null },
     stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
@@ -1375,7 +1375,7 @@
   DD['ct-state'] = {
     prefix: 'State',
     options: function () {
-      return [{ value: '', label: 'Any' }].concat(STATE_ORDER.map(function (s) {
+      return [{ value: 'live', label: 'Live only' }, { value: '', label: 'Any' }].concat(STATE_ORDER.map(function (s) {
         return { value: s, label: STATE_LABEL[s] };
       }));
     },
@@ -2083,7 +2083,8 @@
       var first = asList((reviewItem(id) || {}).parties)[0];
       return first ? String(first.role) : '';
     },
-    pick: function (v, id) { S.forms['rv.' + id + '.who'] = v; }
+    // A Refund or Pay armed for somebody else is no longer what was armed.
+    pick: function (v, id) { disarm(); S.forms['rv.' + id + '.who'] = v; }
   };
   DD['rv-account'] = {
     prefix: 'From',
@@ -2094,7 +2095,7 @@
     value: function (id) {
       return S.forms['rv.' + id + '.account'] || ((reviewItem(id) || {}).account) || 'bank';
     },
-    pick: function (v, id) { S.forms['rv.' + id + '.account'] = v; }
+    pick: function (v, id) { disarm(); S.forms['rv.' + id + '.account'] = v; }
   };
 
   function reviewItem(id) {
@@ -2922,14 +2923,17 @@
   /** Why can't they see...: the diagnosis, run as the player selected. */
   function playerDiagBody(d) {
     var t = S.tools;
+    var mine = t.pdiag && t.pdiag.ref === S.players.ref ? t.pdiag : null;
     var online = d.player && d.player.online;
     return card('Why can’t they see…', frag(
       h('p.about', 'Runs the app\'s own reads as them: why a contract, the board or a feature is not showing, '
         + 'with the server-wide checks. They have to be in the city.'),
       h('div.btn-row', btn('.is-primary', 'pl-diag', { disabled: !online || null,
         title: online ? null : 'They are not in the city now' }, 'Run the diagnosis as them', 'stethoscope')),
-      t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
-      t.diag ? linesBox(t.diag.lines, t.diag.later) : null));
+      // Only the diagnosis run for the player shown (by the lookup's handle),
+      // never one run for somebody looked up before.
+      mine && mine.error ? answerBox({ ok: false, text: mine.error }) : null,
+      mine && !mine.error ? linesBox(mine.lines, mine.later) : null));
   }
 
   function findBody() {
@@ -2973,7 +2977,7 @@
     SHELL[view] = function () { return h('section.view', h('div.stack', { id: 'pl-result' }, playerBody())); };
     LOAD[view] = function () {
       if (view === 'phistory') loadPlayerHistory();
-      if (view === 'pdiag') S.tools.diag = null;
+      if (view === 'pdiag') S.tools.pdiag = null;
     };
   });
 
@@ -4274,7 +4278,7 @@
     S.forms['ct.q'] = '';
     S.forms['ct.from'] = '';
     S.forms['ct.to'] = '';
-    S.contracts.state = '';
+    S.contracts.state = 'live';
     S.contracts.rule = '';
     S.contracts.range = '';
     S.contracts.page = 1;
@@ -4380,7 +4384,11 @@
       }
       return;
     }
-    if (!confirmed(node)) return;
+    // Named, and bound to the box it read: typing a new amount (or owner)
+    // after arming disarms it rather than sending what was typed.
+    var settleLabel = how === 'pay_amount' ? 'Click again: pay ' + money(data.amount) + ' of this line'
+      : how === 'return_owner' ? 'Click again: return it to ' + data.owner : null;
+    if (!armed(node, settleLabel, ['dr.amount.' + line, 'dr.owner.' + line])) return;
     var id = S.drawer.id;
     write('settle', data, 'settle:' + line, node).then(function (reply) {
       if (!reply) return;
@@ -4438,6 +4446,7 @@
     setHtml(byId('rv-list'), reviewList());
   };
   ACTIONS['rv-goods'] = function (node) {
+    disarm();
     var id = node.getAttribute('data-id');
     S.forms['rv.' + id + '.goods'] = node.getAttribute('data-value');
     setHtml(byId('rv-list'), reviewList());
@@ -4471,7 +4480,18 @@
       setHtml(byId('rv-list'), reviewList());
       return;
     }
-    if (!confirmed(node)) return;
+    // The armed label names what the second click sends: the amount, to
+    // whom and from which account. Typing in the amount, or picking another
+    // recipient or account, disarms it (the picks call disarm()).
+    var whoLabel = data.who;
+    asList((item && item.parties)).forEach(function (p) {
+      if (String(p.role) === String(data.who)) whoLabel = String(p.role) + ' · ' + String(p.who || '—');
+    });
+    var label = action === 'dismiss' ? null
+      : action === 'pay' ? 'Click again: pay it to ' + whoLabel
+        : data.goods ? 'Click again: refund every item and weapon to ' + whoLabel
+          : 'Click again: refund ' + money(data.amount) + ' to ' + whoLabel + ' from ' + data.account;
+    if (!armed(node, label, ['rv.' + id + '.amount', 'rv.' + id + '.note'])) return;
     write('resolve', data, 'resolve:' + id, node).then(function (reply) {
       if (!reply) return;
       S.reviews.answers[id] = { ok: reply.ok === true, text: words(reply) };
@@ -5211,7 +5231,8 @@
      moderator's (the staff ACE, or Config.Admin.ModeratorAce), as Freeze and
      Void are; Pay is the staff ACE's alone. Each takes a reason and the
      two-click confirm. Lift, which only gives back what a suspension or a
-     protection took, is one click. The history card only reads. */
+     protection took, takes the two clicks as well. The history card only
+     reads. */
 
   /** The moderator's ops: the staff ACE, or the moderator ACE. */
   function canModerate() { return S.access.canModerate === true || canWrite(); }
@@ -5794,8 +5815,16 @@
     var data = { id: id };
     if (by != null) data.by = by;
     else st.baseAsked = true;
-    return ask('rewardPreview', data, 'rewardPreview').then(function (reply) {
-      if (!reply || S.drawer.id !== id || S.drawer.rw !== st) return null;
+    // The base read and the per-amount preview on channels of their own: on
+    // one, a preview sent while the base was in flight dropped the base's
+    // reply, and baseAsked kept it from being asked again (the facts read
+    // "Reading the reward…" for good, and the cap check below had no max).
+    return ask('rewardPreview', data, by == null ? 'rewardBase' : 'rewardPreview').then(function (reply) {
+      if (!reply) {
+        if (by == null && S.drawer.rw === st) st.baseAsked = false;
+        return null;
+      }
+      if (S.drawer.id !== id || S.drawer.rw !== st) return null;
       var view = reply.ok ? (reply.data || {}) : { refused: reply.err || 'no_answer', message: words(reply) };
       if (by == null) { st.base = view; st.baseFor = id; }
       else { st.preview = view; st.previewBy = by; }
@@ -5958,7 +5987,7 @@
      refuse them before the button arms; reassignHitman is the staff ACE's. */
 
   function raState() {
-    if (!S.drawer.ra) S.drawer.ra = { block: 'block', stake: 'client', preview: null, previewRef: null, asking: null };
+    if (!S.drawer.ra) S.drawer.ra = { block: 'block', stake: 'client', identity: 'anonymous', preview: null, previewRef: null, asking: null };
     return S.drawer.ra;
   }
 
@@ -6016,6 +6045,12 @@
           { value: 'client', label: 'To the placer (as a walk-away)', disabled: !open, title: off.title },
           { value: 'return', label: 'Return the stakes', disabled: !open, title: off.title }
         ], st.stake)),
+      h('div.ct-row', h('span.ct-label', 'The new hitman'),
+        segmented('ra-identity', [
+          { value: 'anonymous', label: 'Anonymous (no fee)', disabled: !open, title: off.title },
+          { value: 'carry', label: 'As they chose before', disabled: !open, title: off.title },
+          { value: 'named', label: 'Named to the placer', disabled: !open, title: off.title }
+        ], st.identity)),
       h('div.inline-form.is-wide',
         field('dr.ra.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
           maxlength: '120', disabled: !open, 'aria-label': 'Reason for reassigning the contract' }),
@@ -6024,6 +6059,7 @@
 
   ACTIONS['ra-block'] = function (node) { disarm(); raState().block = node.getAttribute('data-value') || ''; drawDrawer(); };
   ACTIONS['ra-stake'] = function (node) { disarm(); raState().stake = node.getAttribute('data-value') || 'client'; drawDrawer(); };
+  ACTIONS['ra-identity'] = function (node) { disarm(); raState().identity = node.getAttribute('data-value') || 'anonymous'; drawDrawer(); };
 
   ACTIONS['ra-go'] = function (node) {
     var id = S.drawer.id;
@@ -6052,7 +6088,7 @@
     var label = 'Click again: give it to ' + who + (n ? ', taking off ' + n + ' operative' + (n === 1 ? '' : 's') : '');
     if (!armed(node, label, ['dr.ra.reason.' + id])) return;
     write('reassignHitman', { id: id, ref: ref, reason: reason, block: st.block === 'block',
-      returnStake: st.stake === 'return' }, 'reassign:' + id, node).then(function (reply) {
+      returnStake: st.stake === 'return', identity: st.identity || 'anonymous' }, 'reassign:' + id, node).then(function (reply) {
       if (!reply || S.drawer.id !== id) return;
       drawerAnswer(reply);
       if (reply.ok) {
@@ -6357,9 +6393,17 @@
     } else if (message.type === 'push' && message.kind === 'diag' && typeof message.line === 'string') {
       // A diagnosis line that had to wait for an answer (the photo address check).
       if (!S.open) return;
-      if (!S.tools.diag || S.tools.diag.error) S.tools.diag = { lines: [], later: [] };
-      // Drawn wherever the diagnosis shows: Health, Home, a player's card.
-      S.tools.diag.later = asList(S.tools.diag.later).concat([message.line]);
+      // One run for a player (by their lookup handle) goes to that player's
+      // diagnosis and only while it is theirs; one without, to Health's.
+      if (typeof message.ref === 'string') {
+        var pd = S.tools.pdiag;
+        if (!pd || pd.error || pd.ref !== message.ref) return;
+        pd.later = asList(pd.later).concat([message.line]);
+      } else {
+        if (!S.tools.diag || S.tools.diag.error) S.tools.diag = { lines: [], later: [] };
+        // Drawn wherever the server diagnosis shows: Health, Home.
+        S.tools.diag.later = asList(S.tools.diag.later).concat([message.line]);
+      }
       drawTools();
     }
   });
@@ -7244,13 +7288,17 @@
   /** Why can't they see...: the diagnosis as the player selected, by the
       lookup's handle (they have to be in the city). */
   ACTIONS['pl-diag'] = function () {
-    if (!S.players.ref) return;
-    S.tools.diag = { lines: ['Running…'], later: [] };
+    var ref = S.players.ref;
+    if (!ref) return;
+    var run = { ref: ref, lines: ['Running…'], later: [] };
+    S.tools.pdiag = run;
     drawTools();
-    ask('diag', { ref: S.players.ref }, 'diag').then(function (reply) {
-      if (!reply) return;
-      if (!reply.ok) S.tools.diag = { error: words(reply) };
-      else S.tools.diag = { lines: asList((reply.data || {}).lines), later: [] };
+    // Its own channel, apart from Health's server diagnosis.
+    ask('diag', { ref: ref }, 'pdiag').then(function (reply) {
+      // Dropped when another run, or another player, took its place.
+      if (!reply || S.tools.pdiag !== run) return;
+      if (!reply.ok) S.tools.pdiag = { ref: ref, error: words(reply) };
+      else S.tools.pdiag = { ref: ref, lines: asList((reply.data || {}).lines), later: run.later };
       drawTools();
     });
   };

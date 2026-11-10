@@ -746,6 +746,7 @@ local suites = {
     'admin_revamp_spec',
     'staff_reward_spec', 'handover_confirm_spec',
     'mission_steps_spec', 'disposal_spec',
+    'review_x_spec',
     'docs_spec',
 }
 

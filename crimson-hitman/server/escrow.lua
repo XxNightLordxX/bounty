@@ -2540,9 +2540,16 @@ end
 ---@param amount integer what it becomes
 ---@param reason string
 ---@param recipient string
+---@param guard function|nil asked last, with nothing awaited after it
+--- before the cut is written: false stops the cut (the caller's claim check)
 ---@return string|nil owedLineId nil when the line could not be lowered
 ---@return boolean delivered whether the difference reached them now
-function Escrow.reduceLine(contractId, line, amount, reason, recipient)
+---
+--- Only a line owed to nobody and being given to nobody is cut (the store's
+--- guard, `unowned`): a claim marks every line of its collection for its
+--- hitman (owed_to) before it releases any, and a cut landing between the
+--- marks and the release owed the hitman's money to the placer.
+function Escrow.reduceLine(contractId, line, amount, reason, recipient, guard)
     local original = line.amount or 0
     local returned = original - amount
     if returned <= 0 or amount < 0 or not recipient or not CH.MONEY_SOURCES[line.source] then
@@ -2558,7 +2565,8 @@ function Escrow.reduceLine(contractId, line, amount, reason, recipient)
         metadata = { splitFrom = line.id, stakeWas = original, stakeNow = amount, reward = true },
     }
     Storage.writeEscrow(contractId, { owed })
-    if not Storage.setEscrowAmount(line.id, CH.ESCROW_STATE.HELD, amount, original) then
+    if (guard and not guard()) or Escrow.claimRunning(contractId)
+        or not Storage.setEscrowAmount(line.id, CH.ESCROW_STATE.HELD, amount, original, true) then
         voidSplit(owed)
         return nil, false
     end

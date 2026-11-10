@@ -276,7 +276,32 @@ local function monitor(store, name)
         local real = store[fn]
         if type(real) == 'function' then
             store[fn] = function(...)
+                -- 10. A reward cut (Escrow.reduceLine: a split marked
+                -- `reward`) never lands on a line already owed to somebody,
+                -- or being given to somebody (review-x F1): a claim marks its
+                -- collection for its hitman first, and a cut after the marks
+                -- owed the hitman's money to the placer. Body disposal's own
+                -- splits of a payout owed to its hitman are not reward cuts.
+                local was
+                if fn == 'setEscrowAmount' and type(store.readEscrowLine) == 'function' then
+                    local okR, line = pcall(store.readEscrowLine, (...))
+                    if okR and type(line) == 'table' then
+                        was = { amount = line.amount, owed = line.owed_to or line.releasing_to,
+                            portion = line.portion, contract = line.contract_id }
+                    end
+                end
                 local results = { real(...) }
+                local lowered = select(3, ...)
+                if was and results[1] and was.owed and was.portion ~= CH.PORTION.OWED
+                    and type(lowered) == 'number' and lowered < (was.amount or 0) then
+                    local okE, lines = pcall(store.readEscrow, was.contract)
+                    for _, l in ipairs(okE and type(lines) == 'table' and lines or {}) do
+                        local mark = type(l.metadata) == 'table' and l.metadata or nil
+                        if mark and mark.reward and mark.splitFrom == (...) and mark.stakeNow == lowered then
+                            note('a reward cut landed on a line owed to somebody', tostring((...)))
+                        end
+                    end
+                end
                 local ok = pcall(audit, store)
                 if not ok then note('the monitor itself threw', fn) end
                 return table.unpack(results)

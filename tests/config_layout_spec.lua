@@ -51,6 +51,8 @@ local ADDED = {
         Enabled = false, VehicleModel = 'romero', VehicleSpawn = {}, DropOff = {}, PayNowPercent = 0,
         TimeLimitMinutes = 30, OnTimeout = 'pay', ReducedPercent = 50, LoadMetres = 3.0, DropMetres = 8.0,
         VehicleMetres = 10.0, AbandonMetres = 300.0, AbandonMinutes = 5, MaxRespawns = 3, DespawnSeconds = 10,
+        -- The real-time cap on a step (review-x F2).
+        MaxHoldMinutes = 120,
     },
     ['Cooldowns.disposal'] = { per = 10, burst = 6 },
     -- The Target limits section's day and week caps, shipped off.
@@ -106,6 +108,8 @@ local ADDED = {
     ['Kidnap.PlacerConfirms'] = false,
     ['Kidnap.ConfirmSeconds'] = 60,
     ['Kidnap.ConfirmMissed'] = 'rearm',
+    -- And how many declines a placer gets per contract (review-x F6).
+    ['Kidnap.MaxDeclines'] = 2,
     ['Cooldowns.report'] = { per = 600, burst = 3 },
     -- The roleplay features, each its own block and each off as shipped,
     -- reported block by block (differences splits the new section).

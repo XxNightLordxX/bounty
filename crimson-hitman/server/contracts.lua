@@ -1767,8 +1767,11 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
 
     local existing = Storage.readHitmen(contractId)
     local activeCount = 0
+    -- A staff reassignment's check (opts.vacating, by row id): the
+    -- operatives it is about to take off are not counted as holding it.
+    local vacating = opts and type(opts.vacating) == 'table' and opts.vacating or {}
     for i = 1, #existing do
-        if holds(existing[i]) then activeCount = activeCount + 1 end
+        if holds(existing[i]) and not vacating[existing[i].id] then activeCount = activeCount + 1 end
         -- Released from it for sitting on it, on this character or another:
         -- taking it straight back would make the release a reset.
         if existing[i].state == 'released' and (existing[i].hitman_cid == actor.cid
@@ -1841,7 +1844,9 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     local feeAccount = Config.Anonymity.FeeAccount or 'bank'
     local hitmanFee = math.floor(tonumber(Config.Anonymity.HitmanFee) or 0)
     local paidBefore = stint and previousAnon == true
-    local fee = (anonymous and not paidBefore and hitmanFee > 0) and hitmanFee or 0
+    -- A hitman staff assign is never charged for the anonymity staff chose
+    -- for them (server/staff_reassign.lua, opts.waiveFee).
+    local fee = (anonymous and not paidBefore and hitmanFee > 0 and not (opts and opts.waiveFee)) and hitmanFee or 0
 
     -- And the fee is one the dialog showed, as the stake is
     -- (stakeWasDisclosed): one raised from the admin panel while the dialog
@@ -1883,6 +1888,12 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     local stakeAccount = left.bank >= stake and 'bank' or 'cash'
     if stake > 0 and (left[stakeAccount] or 0) < stake then
         return false, CH.ERR.INSUFFICIENT, shortfall('stake', stake, 'bank_or_cash', fee, feeAccount)
+    end
+
+    -- Every check passed, nothing written: what a staff reassignment asks
+    -- before it takes anybody off the contract (opts.dryRun).
+    if opts and opts.dryRun then
+        return true, nil, { dryRun = true, anonymous = anonymous, renamed = renamed or nil }
     end
 
     local hitmanId = previous and previous.id
@@ -2194,7 +2205,10 @@ end
 --- An acceptance staff make for a hitman (server/staff_reassign.lua), from
 --- inside the contract's own key, which the caller holds: every rule
 --- Contracts.accept applies, the same afterwards, one acceptance at a time
---- per hitman. `opts.waiveStake` puts no stake up.
+--- per hitman. `opts.waiveStake` puts no stake up, `opts.waiveFee` charges
+--- no anonymity fee, `opts.vacating` ({ [hitman row id] = true }) counts
+--- those operatives as gone, and `opts.dryRun` runs every check and writes
+--- nothing (true, nil, { dryRun = true }).
 function Contracts.acceptHeld(actor, contractId, anonymous, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
@@ -2203,6 +2217,7 @@ function Contracts.acceptHeld(actor, contractId, anonymous, opts)
     -- hitman's hold, a gate that raised refusing, and the cut it checked
     -- the one frozen (Org.afterAccept, told inside the same hold).
     local gate = {}
+    local dry = type(opts) == 'table' and opts.dryRun == true
     local out = table.pack(Contracts.serialized({ 'hitman:' .. tostring(actor.cid) }, function()
         if Contracts.acceptGate then
             local ran, refused, data = pcall(Contracts.acceptGate, actor, contractId, opts, gate)
@@ -2213,9 +2228,10 @@ function Contracts.acceptHeld(actor, contractId, anonymous, opts)
             if refused then return false, refused, data end
         end
         local result = table.pack(acceptUnlocked(actor, contractId, anonymous, opts))
-        if result[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId, gate) end
+        if result[1] and not dry and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId, gate) end
         return table.unpack(result, 1, result.n)
     end))
+    if dry then return table.unpack(out, 1, out.n) end
     if out[1] and Contracts.onChanged then Contracts.onChanged() end
     if out[1] and Contracts.onAccepted then pcall(Contracts.onAccepted, contractId, actor.cid) end
     return table.unpack(out, 1, out.n)
@@ -2578,24 +2594,14 @@ local function walkAway(actor, contractId, opts)
     -- for a contract staked at nothing.
     local stake = heldStakes(contractId)[actor.cid] or 0
     local moved, returned = 0, 0
-    if stake > 0 and opts.staff and opts.returnStake then
-        -- Staff chose to give it back: to the hitman, as an ending gives an
-        -- active hitman theirs.
-        local _, released = Escrow.release(contractId, actor.cid,
-            { portion = CH.PORTION.STAKE, staker = actor.cid }, 'stake_returned')
-        returned = released and ((released.settled or 0) + (released.pending or 0)) or 0
-        if returned > 0 then
-            Audit.financial('stake_returned_by_staff', actor.cid, contractId,
-                { amount = stake, queued = (released.pending or 0) > 0 })
-        end
-    elseif stake > 0 then
-        local _, released = Escrow.release(contractId, contract.creator_cid,
-            { portion = CH.PORTION.STAKE, staker = actor.cid }, 'penalty_forfeited')
-        moved = released and ((released.settled or 0) + (released.pending or 0)) or 0
-        if moved > 0 then
-            Audit.financial('stake_forfeited', actor.cid, contractId,
-                { amount = stake, queued = (released.pending or 0) > 0, staff = opts.staff or nil })
-        end
+    -- A staff reassignment that takes everybody off before it accepts the
+    -- new hitman (opts.holdStake) leaves the stake where it is until that
+    -- acceptance stands (Contracts.settleWalkedStake), so a refusal can put
+    -- the operative back on it with it (Contracts.reinstateHitman). Held
+    -- meanwhile under the abandoned row, every ending reads it as the
+    -- removal recorded (walkedAway).
+    if stake > 0 and not opts.holdStake then
+        moved, returned = Contracts.settleWalkedStake(contract, actor.cid, stake, opts)
     end
 
     local remaining, active = 0, 0
@@ -2662,9 +2668,72 @@ local function walkAway(actor, contractId, opts)
         Notify.push(actor.cid, 'released', contractId)
         return true, nil, { stake = stake, forfeited = moved > 0 and stake or 0,
                             returned = returned > 0 and stake or 0, remaining = #others,
-                            state = after.state }
+                            state = after.state, held = (opts.holdStake and stake > 0) and stake or nil }
     end
     Audit.action('contract_abandoned', actor.cid, contractId, {})
+    return true
+end
+
+--- Hand over the stake of a hitman who walked away, or whom staff took off
+--- (walkAway): to the hitman where staff chose to give it back
+--- (opts.staff and opts.returnStake), else to the client.
+---@param contract table
+---@param cid string the hitman
+---@param stake integer what they have staked and still held
+---@param opts table { staff, returnStake }
+---@return integer moved lines to the client
+---@return integer returned lines to the hitman
+function Contracts.settleWalkedStake(contract, cid, stake, opts)
+    opts = opts or {}
+    local contractId = contract.id
+    local moved, returned = 0, 0
+    if stake > 0 and opts.staff and opts.returnStake then
+        -- Staff chose to give it back: to the hitman, as an ending gives an
+        -- active hitman theirs.
+        local _, released = Escrow.release(contractId, cid,
+            { portion = CH.PORTION.STAKE, staker = cid }, 'stake_returned')
+        returned = released and ((released.settled or 0) + (released.pending or 0)) or 0
+        if returned > 0 then
+            Audit.financial('stake_returned_by_staff', cid, contractId,
+                { amount = stake, queued = (released.pending or 0) > 0 })
+        end
+    elseif stake > 0 then
+        local _, released = Escrow.release(contractId, contract.creator_cid,
+            { portion = CH.PORTION.STAKE, staker = cid }, 'penalty_forfeited')
+        moved = released and ((released.settled or 0) + (released.pending or 0)) or 0
+        if moved > 0 then
+            Audit.financial('stake_forfeited', cid, contractId,
+                { amount = stake, queued = (released.pending or 0) > 0, staff = opts.staff or nil })
+        end
+    end
+    return moved, returned
+end
+
+--- Put an operative staff took off (opts.holdStake) back on the contract,
+--- their stake still held under the row: a staff reassignment whose new
+--- hitman was refused after all (server/staff_reassign.lua). Only a row
+--- still abandoned on a contract still live; an exclusive one put back on
+--- the board by the removal is reserved again. The caller holds the
+--- contract's key and lifts the bar the removal set.
+---@param contractId string
+---@param hitmanId string the hitman row's id
+---@return boolean reinstated
+function Contracts.reinstateHitman(contractId, hitmanId)
+    local contract = Storage.readContract(contractId)
+    if not contract or (contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED) then
+        return false
+    end
+    local row = Storage.readHitmanById and Storage.readHitmanById(hitmanId)
+    if not row or row.contract_id ~= contractId or row.state ~= 'abandoned' then return false end
+    if not Storage.updateHitman(hitmanId, { state = 'active' }) then return false end
+    heldIndex[contractId] = true
+    if contract.state == CH.STATE.ACTIVE then
+        Contracts.transition(contractId, CH.STATE.ACTIVE, CH.STATE.ACCEPTED, 'reinstated')
+    end
+    Audit.action('contract_reinstated', row.hitman_cid, contractId, { hitman = hitmanId })
+    if Contracts.onChanged then Contracts.onChanged() end
+    Notify.push(row.hitman_cid, 'improved', contractId)
+    Notify.push(contract.creator_cid, 'edited', contractId)
     return true
 end
 

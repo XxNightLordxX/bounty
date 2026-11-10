@@ -350,6 +350,12 @@ local CATALOGUE = {
       label = 'When the placer does not answer in time',
       about = '\'rearm\': nothing is paid and the hitman may arm again. \'pay\': paid as if confirmed.',
       inflight = AT_USE },
+    { key = 'Kidnap.MaxDeclines', section = 'limits', category = 'rules-limits', group = 'Handovers',
+      kind = 'number', integer = true, min = 0, max = 20, needs = 'Kidnap.PlacerConfirms',
+      label = 'Declines a contract\'s placer gets (0 no limit)',
+      about = 'Declines, and windows left to run out under \'rearm\', counted per contract. Past this the '
+          .. 'next handover held for its countdown pays without asking the placer.',
+      inflight = AT_USE },
 
     { key = 'Penalty.RequireDisclosureOnAccept', section = 'features', category = 'features', group = 'Stakes',
       kind = 'switch', label = 'Accept must echo the stake shown',

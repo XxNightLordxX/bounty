@@ -719,11 +719,15 @@ end
 
 --- Change a line's amount only if it is still in the expected state and
 --- still holds the amount the caller read. State is never written here:
---- it moves through claimEscrowLine alone.
-function Memory.setEscrowAmount(id, expectedState, amount, expectedAmount)
+--- it moves through claimEscrowLine alone. `unowned`: and only while the
+--- line is owed to nobody and no give names a recipient on it (owed_to and
+--- releasing_to both unset), so a cut never lands on a line a claim has
+--- already marked for its hitman (Escrow.reduceLine).
+function Memory.setEscrowAmount(id, expectedState, amount, expectedAmount, unowned)
     local line = db.escrow[id]
     if not line or line.state ~= expectedState then return false end
     if expectedAmount ~= nil and line.amount ~= expectedAmount then return false end
+    if unowned and (line.owed_to ~= nil or line.releasing_to ~= nil) then return false end
     line.amount = amount
     return true
 end

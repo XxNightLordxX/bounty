@@ -1050,6 +1050,9 @@ H.contracts = function(src, data)
     local canIdentify = identifies(src)
     local query = shortText(data.query, 64)
     local state = VALID_STATE[data.state] and data.state or nil
+    -- 'live': every contract still running (active, accepted, completing),
+    -- the list's default.
+    local live = data.state == 'live'
     local rule = (data.rule == CH.FULFILMENT_RULE.ALIVE or data.rule == CH.FULFILMENT_RULE.EITHER)
         and data.rule or nil
     local from = wholeNumber(data.from, 0)
@@ -1098,6 +1101,7 @@ H.contracts = function(src, data)
                     and tostring(contract.creator_name or ''):lower():find(lowered, 1, true) ~= nil)
         end
         if hit and state and contract.state ~= state then hit = false end
+        if hit and live and CH.TERMINAL[contract.state] then hit = false end
         if hit and rule and Util.fulfilmentRule(contract) ~= rule then hit = false end
         if hit and from and (tonumber(contract.created_at) or 0) < from then hit = false end
         if hit and to and (tonumber(contract.created_at) or 0) > to then hit = false end
@@ -2387,14 +2391,30 @@ H.diag = function(src, data)
     end
     -- The one check that waits for an answer (whether the public photo
     -- address leads here) says what it found after the report, pushed to
-    -- the open panel; and so does the subject's own page log, a list.
+    -- the open panel; and so does the subject's own page log, a list. Each
+    -- push names the lookup handle it was asked for (`ref`), so the page
+    -- draws it under that player and nobody else, and a run from Health
+    -- (no handle) apart from either.
+    --
+    -- And scrubbed as every other view is for staff without IdentityAce
+    -- (Panel.scrubText): the report's identity line names the subject's
+    -- citizen id, which a Players lookup hides from them.
+    local canIdentify = identifies(src)
+    local function shown(line)
+        line = tostring(line or '')
+        if canIdentify then return line end
+        return Panel.scrubText(line, false) or ''
+    end
+    local ref = data.subject == nil and type(data.ref) == 'string' and data.ref or nil
     local lines = deps.admin.diagnose(src, subject, function(said)
         local list = type(said) == 'table' and said or { said }
         for i = 1, #list do
-            Panel.push(src, { kind = 'diag', line = deps.admin.panelWords(list[i]) })
+            Panel.push(src, { kind = 'diag', line = shown(deps.admin.panelWords(list[i])), ref = ref })
         end
     end, { panel = true })
-    return true, nil, nil, { lines = lines }
+    local out = {}
+    for i, line in ipairs(lines or {}) do out[i] = shown(line) end
+    return true, nil, nil, { lines = out, ref = ref }
 end
 
 --------------------------------------------------------------------------

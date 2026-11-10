@@ -980,7 +980,8 @@ async function main() {
       truthy(menu.shown, 'the menu did not open');
       truthy(menu.right <= menu.W && menu.bottom <= menu.H, 'the menu ends at ' + Math.round(menu.right) + ','
         + Math.round(menu.bottom));
-      truthy(menu.options === 9, menu.options + ' options');
+      // Live only, Any and the eight states (Live only is the default: admin review nit).
+      truthy(menu.options === 10, menu.options + ' options');
     });
     await page.click('#dd-ct-state .dd-btn');
 

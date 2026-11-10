@@ -3193,11 +3193,13 @@ function JsonStore.claimEscrowLine(id, expected, next_)
     return true
 end
 
---- Guarded amount change; state is never written here.
-function JsonStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
+--- Guarded amount change; state is never written here. `unowned`: see the
+--- memory backend.
+function JsonStore.setEscrowAmount(id, expectedState, amount, expectedAmount, unowned)
     local line = db.escrow[id]
     if not line or line.state ~= expectedState then return false end
     if expectedAmount ~= nil and line.amount ~= expectedAmount then return false end
+    if unowned and (line.owed_to ~= nil or line.releasing_to ~= nil) then return false end
     line.amount = amount
     touch(true, line.contract_id)
     return true

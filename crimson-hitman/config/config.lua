@@ -154,6 +154,7 @@ Config.Kidnap = {
     PlacerConfirms         = false,  -- true = the placer taps Confirm handover before it pays
     ConfirmSeconds         = 60,     -- seconds the placer has to confirm (10-600)
     ConfirmMissed          = 'rearm', -- no answer in time: 'rearm' (nothing paid) | 'pay'
+    MaxDeclines            = 2,      -- declines (or missed windows) a contract gets; then it pays
 }
 
 Config.Reason = {
@@ -756,6 +757,7 @@ Config.Disposal = {
     AbandonMetres    = 300.0,     -- a vehicle left this far away ...
     AbandonMinutes   = 5,         -- ... this long is taken back to the spawn spot
     MaxRespawns      = 3,         -- times the vehicle is made again when lost
+    MaxHoldMinutes   = 120,       -- real minutes from the kill a step may stand, away or not
     DespawnSeconds   = 10,        -- seconds after the drop-off it is taken away
 }
 -- ============================================================================

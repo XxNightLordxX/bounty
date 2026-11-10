@@ -444,6 +444,10 @@ MissionSteps.CATALOGUE = {
     Row('Disposal.MaxRespawns', 'number', 'Times the vehicle is made again',
         'When it is lost, destroyed or abandoned. Staff can always make it again.', AT_USE,
         { integer = true, min = 0, max = 10 }),
+    Row('Disposal.MaxHoldMinutes', 'number', 'Longest a disposal may stand (real minutes)',
+        'From the kill, the hitman in the city or not. Past it the step times out as "When time runs out" says, '
+            .. 'and its target may be listed again. Never shorter than the time to dispose of the body.', AT_USE,
+        { integer = true, min = 10, max = 2880 }),
     Row('Disposal.DespawnSeconds', 'number', 'Taken away after the drop-off (s)',
         'Time to get out before the vehicle goes.', AT_USE, { integer = true, min = 0, max = 300 }),
 }
