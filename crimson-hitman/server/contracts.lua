@@ -527,6 +527,9 @@ local function everTakenUp(contractId)
     return false
 end
 
+--- The same, for the admin panel's Target limits status (server/panel.lua).
+Contracts.everTakenUp = everTakenUp
+
 --- All the reasons a contract may not be created, checked server-side before
 --- a single coin moves (§13.1, §12.5).
 ---@return boolean ok
@@ -551,16 +554,38 @@ function Contracts.canCreate(actor, targetActor)
     -- is staff. The target search lists them as it lists everybody.
     if Contracts.protectedByStaff(targetActor.cid) then return false, CH.ERR.TARGET_PROTECTED end
 
+    -- The target limits that apply to this target (server/targetlimits.lua):
+    -- the global ones, a job's override, a player's own, and what staff did
+    -- to their cooldowns. Memory only; with none set they are Config.Limits.
+    local tl = Contracts.targetLimitsFor and Contracts.targetLimitsFor(targetActor) or nil
+    local limit = tl and tl.values or Config.Limits
+    local adj, exempt = tl and tl.adj or nil, tl ~= nil and tl.exempt == true
+    local function counts(resolvedAt, samePlacer)
+        if not adj then return true end
+        local cleared
+        if samePlacer then cleared = adj.same_cleared_at else cleared = adj.cleared_at end
+        return not (cleared and resolvedAt <= cleared)
+    end
+
     -- Only the contracts these two are involved in matter here, so this asks
     -- for those rather than for the whole table. And of the finished ones,
     -- only those inside the longest of the waits below: one resolved before
     -- it can refuse nothing, and every placing read the whole thirty days of
     -- both players' history to find that out.
     local since = os.time() - math.max(0,
-        tonumber(Config.Limits.TargetCooldownAfterResolveSeconds) or 0,
+        tonumber(limit.TargetCooldownAfterResolveSeconds) or 0,
         tonumber(Config.Immunity.AfterBailoutSeconds) or 0,
-        tonumber(Config.Limits.SameCreatorSameTargetCooldownSeconds) or 0,
+        tonumber(limit.SameCreatorSameTargetCooldownSeconds) or 0,
         tonumber(Config.Amendments.CancelCooldownSeconds) or 0)
+    -- The target's own read reaches back over the day and week counts too,
+    -- where one is on (both off as shipped: the same read as before).
+    local perDay = exempt and 0 or (tonumber(limit.MaxContractsPerTargetPerDay) or 0)
+    local perWeek = exempt and 0 or (tonumber(limit.MaxContractsPerTargetPerWeek) or 0)
+    -- And over the wait after a completed contract, where that is the longest.
+    local namingSince = math.min(since,
+        os.time() - math.max(0, tonumber(limit.TargetCooldownAfterCompletionSeconds) or 0))
+    if perWeek > 0 then namingSince = math.min(namingSince, os.time() - 604800)
+    elseif perDay > 0 then namingSince = math.min(namingSince, os.time() - 86400) end
     local contracts = Storage.contractsBy(actor.cid, since)
 
     -- And the ones this player placed on their other characters. Every
@@ -574,7 +599,7 @@ function Contracts.canCreate(actor, targetActor)
         for i = 1, #alsoMine do contracts[#contracts + 1] = alsoMine[i] end
     end
 
-    local naming = Storage.contractsNaming(targetActor.cid, since)
+    local naming = Storage.contractsNaming(targetActor.cid, namingSince)
     for i = 1, #naming do contracts[#contracts + 1] = naming[i] end
 
     --- Whether this contract was placed by this player, on any character.
@@ -606,11 +631,20 @@ function Contracts.canCreate(actor, targetActor)
     local byCreator, byTarget = 0, 0
     local now = os.time()
     local counted = {}
+    local placedDay, placedWeek = 0, 0
 
     for i = 1, #contracts do
         local c = contracts[i]
         if counted[c.id] then goto continue end
         counted[c.id] = true
+        -- Placed on this target in the last day or week, whatever became of
+        -- it but a staff void, and not before staff reset the counts.
+        if (perDay > 0 or perWeek > 0) and c.target_cid == targetActor.cid and c.state ~= CH.STATE.VOIDED
+            and not (adj and adj.counts_reset_at and (tonumber(c.created_at) or 0) <= adj.counts_reset_at) then
+            local age = now - (tonumber(c.created_at) or 0)
+            if age < 86400 then placedDay = placedDay + 1 end
+            if age < 604800 then placedWeek = placedWeek + 1 end
+        end
         if LIVE_STATES[c.state] then
             if placedByThisPlayer(c) then byCreator = byCreator + 1 end
             if c.target_cid == targetActor.cid then
@@ -623,19 +657,24 @@ function Contracts.canCreate(actor, targetActor)
         else
             -- Cooldowns after a resolution, so a target cannot be re-listed
             -- the moment their last contract closes (§12.5).
-            if c.target_cid == targetActor.cid and c.resolved_at then
+            -- Not on a target exempt from the target limits, nor for a
+            -- contract resolved before staff reset their cooldown.
+            if c.target_cid == targetActor.cid and c.resolved_at and not exempt then
                 -- Buying your way out earns a longer breather than an
                 -- ordinary resolution: otherwise a creator simply re-lists
                 -- and the target pays again.
                 local since = now - c.resolved_at
                 local cooldown = (c.state == CH.STATE.BAILED_OUT)
                     and Config.Immunity.AfterBailoutSeconds
-                    or Config.Limits.TargetCooldownAfterResolveSeconds
+                    or limit.TargetCooldownAfterResolveSeconds
+                if not counts(c.resolved_at, false) then cooldown = 0 end
                 -- After a completed one, the longer wait where it is set
                 -- (Config.Limits.TargetCooldownAfterCompletionSeconds, off as
                 -- shipped: server/imp_staffeco.lua). Said in whole hours
                 -- left, and nothing else about the contract.
-                local afterCompletion = c.state == CH.STATE.COMPLETED and Imp.completionCooldown() or 0
+                local afterCompletion = c.state == CH.STATE.COMPLETED and counts(c.resolved_at, false)
+                    and (tl and (tonumber(limit.TargetCooldownAfterCompletionSeconds) or 0)
+                        or Imp.completionCooldown()) or 0
                 if afterCompletion > (tonumber(cooldown) or 0) and since < afterCompletion then
                     return false, CH.ERR.TARGET_RECENTLY_ON,
                         { hours = math.max(1, math.ceil((afterCompletion - since) / 3600)) }
@@ -656,7 +695,8 @@ function Contracts.canCreate(actor, targetActor)
                 -- Its own code. This is a policy wait of hours, and sharing
                 -- RATE_LIMITED with the token bucket told the creator to
                 -- "slow down" about it.
-                if placedByThisPlayer(c) and since < Config.Limits.SameCreatorSameTargetCooldownSeconds then
+                if placedByThisPlayer(c) and since < limit.SameCreatorSameTargetCooldownSeconds
+                    and counts(c.resolved_at, true) then
                     return false, CH.ERR.SAME_TARGET_TOO_SOON
                 end
             end
@@ -680,8 +720,17 @@ function Contracts.canCreate(actor, targetActor)
     if byCreator >= Config.Limits.MaxActiveContractsPerCreator then
         return false, CH.ERR.LIMIT_REACHED, { max = Config.Limits.MaxActiveContractsPerCreator }
     end
-    if byTarget >= Config.Limits.MaxActiveContractsPerTarget then
+    if not exempt and byTarget >= limit.MaxActiveContractsPerTarget then
         return false, CH.ERR.TARGET_HAS_ENOUGH
+    end
+    -- How many were placed on them in a day or a week (0, off, as shipped),
+    -- and a cooldown staff extended: in the same words as the cap and the
+    -- wait above, with no time, so nothing says a job or staff is behind it.
+    if (perDay > 0 and placedDay >= perDay) or (perWeek > 0 and placedWeek >= perWeek) then
+        return false, CH.ERR.TARGET_HAS_ENOUGH
+    end
+    if adj and tonumber(adj.until_at) and adj.until_at > now then
+        return false, CH.ERR.TARGET_RECENTLY_ON
     end
 
     -- New and freshly-connected players are not fair game.
@@ -702,6 +751,10 @@ end
 --- Set by server/rp_consequences.lua: whether a new contract on this target
 --- waits for them to be treated. nil: no such rule.
 Contracts.relistHold = nil
+
+--- Set by server/targetlimits.lua: the target limits that apply to one
+--- target (TargetLimits.forTarget). nil: Config.Limits alone.
+Contracts.targetLimitsFor = nil
 
 --- Set by server/rp_protection.lua: whether this player guards the person a
 --- contract is on (contract, cid) -> boolean. nil: no bodyguards.

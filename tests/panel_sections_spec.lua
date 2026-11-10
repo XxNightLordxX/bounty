@@ -10,6 +10,8 @@ local CHECK = require('crimson-hitman.server.main').checkCandidate
 local VALID = {
     ['rules-timers'] = true, ['rules-rewards'] = true, ['rules-limits'] = true,
     ['rules-targeting'] = true, features = true, developer = true,
+    -- The Target limits section's Defaults.
+    ['target-limits'] = true,
 }
 
 local function stack()

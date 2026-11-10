@@ -2290,9 +2290,9 @@ async function main() {
     const views = ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck', 'actions', 'tools',
       'timers', 'money', 'limits', 'targeting', 'features', 'logs', 'alerts', 'devsettings', 'console',
       'diagnostics', 'permissions'];
-    it('six sections, in order, each a button', function () {
+    it('seven sections, in order, each a button (Target limits after Rules)', function () {
       eq(app.$$('.nav-btn').map(function (b) { return b.getAttribute('data-group'); }),
-        ['live', 'actions', 'rules', 'features', 'logs', 'developer']);
+        ['live', 'actions', 'rules', 'targets', 'features', 'logs', 'developer']);
     });
     app.click(app.byId('grp-rules'));
     await settled();
@@ -2460,7 +2460,8 @@ async function main() {
     // categorises it.
     const settingsLua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'settings.lua'), 'utf8');
     const VIEW = { 'rules-timers': 'timers', 'rules-rewards': 'money', 'rules-limits': 'limits',
-      'rules-targeting': 'targeting', features: 'features', developer: 'devsettings' };
+      'rules-targeting': 'targeting', features: 'features', developer: 'devsettings',
+      'target-limits': 'tldefaults' };
     const wrong = [];
     help.forEach(function (c) {
       c.links.forEach(function (l) {
@@ -4529,8 +4530,8 @@ async function main() {
       group: 'Improvements: Proof items', label: 'Proof items', about: 'A hitman may hand over an id card.',
       kind: 'switch', live: true, inflight: 'Read at every handover.', value: false,
       default: false, shipped: false, hasShipped: true, source: 'config' });
-    view.data.limits.push({ key: 'Limits.TargetCooldownAfterCompletionSeconds', category: 'rules-timers',
-      group: 'Improvements: Completion cooldown',
+    view.data.limits.push({ key: 'Limits.TargetCooldownAfterCompletionSeconds', category: 'target-limits',
+      group: 'Target limits',
       label: 'Wait after a completed contract before its target is listed again (s, 0 = off)',
       kind: 'number', integer: true, min: 0, max: 2592000, live: true, inflight: 'Read at every placing.',
       value: 0, default: 0, source: 'config' });
@@ -4554,8 +4555,8 @@ async function main() {
     truthy(link, 'the completion cooldown link');
     app.click(link);
     await settled();
-    it('the completion cooldown link lands on its setting under Rules > Timers', function () {
-      eq(app.byId('nav-timers').getAttribute('aria-current'), 'page');
+    it('the completion cooldown link lands on its setting under Target limits > Defaults', function () {
+      eq(app.byId('nav-tldefaults').getAttribute('aria-current'), 'page');
       truthy(app.byId('st-row-Limits.TargetCooldownAfterCompletionSeconds').classList.contains('is-focus'));
     });
     app.nav('features');
@@ -4971,6 +4972,258 @@ async function main() {
       eq(app.requests('void').length, 0, 'voided the second contract on one click');
     });
     clean(app, 'sweep 5 review drawer arm');
+  })();
+
+  /* ---- Target limits (server/targetlimits.lua): its own section ---- */
+  const TL_KEYS = [
+    { key: 'TargetCooldownAfterResolveSeconds', label: 'Wait after a contract on them ends', unit: 's', min: 0,
+      max: 604800, value: 1800 },
+    { key: 'SameCreatorSameTargetCooldownSeconds', label: 'Wait before the same placer names them again', unit: 's',
+      min: 0, max: 604800, value: 7200 },
+    { key: 'TargetCooldownAfterCompletionSeconds', label: 'Wait after a completed contract on them', unit: 's',
+      min: 0, max: 2592000, value: 0 },
+    { key: 'MaxActiveContractsPerTarget', label: 'Live contracts on them at once', unit: 'contracts', min: 1,
+      max: 50, value: 2 },
+    { key: 'MaxContractsPerTargetPerDay', label: 'Contracts placed on them in 24 hours', unit: 'contracts', min: 0,
+      max: 100, value: 0 },
+    { key: 'MaxContractsPerTargetPerWeek', label: 'Contracts placed on them in 7 days', unit: 'contracts', min: 0,
+      max: 500, value: 0 }
+  ];
+  function tlServer(extra) {
+    return standardServer(Object.assign({
+      targetLimits: { ok: true, data: { keys: TL_KEYS, jobMax: 32, extendMax: 43200, overrideMaxHours: 8760,
+        ignored: 0, jobs: [{ job: 'police', limits: { TargetCooldownAfterResolveSeconds: 7200 }, at: NOW,
+          effective: { TargetCooldownAfterResolveSeconds: 7200, SameCreatorSameTargetCooldownSeconds: 7200,
+            TargetCooldownAfterCompletionSeconds: 0, MaxActiveContractsPerTarget: 2, MaxContractsPerTargetPerDay: 0,
+            MaxContractsPerTargetPerWeek: 0 } }] } },
+      targetJobSet: function (d) { return { ok: true, message: 'Targets working as ' + d.job + ' now have these limits.' }; },
+      targetJobRemove: { ok: true, message: 'Removed.' },
+      targetJobCount: function (d) { return { ok: true, data: { job: d.job, count: 3 } }; },
+      targetJobAction: function (d) { return { ok: true, message: d.job + ': 3 player(s) had their cooldowns reset.',
+        data: { done: 3, failed: 0 } }; },
+      targetStatus: { ok: true, data: { player: { name: XSS, online: true, ref: 'p1_123456' },
+        status: { live: 1, day: 2, week: 3, dayAll: 2, weekAll: 3, cooldownLeft: 1500,
+          cooldownRule: 'TargetCooldownAfterResolveSeconds', cooldownFrom: 'job', exempt: false, job: 'police',
+          jobFrom: 'now', source: { TargetCooldownAfterResolveSeconds: 'job' },
+          limits: { TargetCooldownAfterResolveSeconds: 7200, MaxActiveContractsPerTarget: 2 } } } },
+      targetReset: { ok: true, message: 'Their cooldown is cleared.' },
+      targetExtend: { ok: false, err: 'stale_lookup', message: 'That lookup is out of date, so nothing was changed. Look them up again.' },
+      targetCounts: { ok: true, message: 'Their day and week counts start again from now.' },
+      targetOverride: { ok: true, message: 'They are exempt from the target limits.' },
+      targetOverrideClear: { ok: false, err: 'not_active', message: 'Nothing like that is set, so nothing was changed.' },
+      targetContracts: { ok: true, data: { page: 1, pages: 1, total: 3, targets: 2, rows: [
+        { id: 'ct00000001', state: 'active', rule: 'alive', target: 'Dana Reyes', group: 't1', onTarget: 2,
+          client: 'Anonymous', anonymous: true, slots: 1, claimed: 0, created_at: NOW - 60, deadline_at: NOW + 3600 },
+        { id: 'ct00000002', state: 'accepted', rule: 'alive', target: 'Dana Reyes', group: 't1', onTarget: 2,
+          client: XSS, slots: 1, claimed: 0, created_at: NOW - 120, deadline_at: NOW + 3600, frozen: true },
+        { id: 'ct00000003', state: 'active', rule: 'either', target: XSS, group: 't2', onTarget: 1,
+          client: 'Vic Marlowe', slots: 1, claimed: 0, created_at: NOW - 30 }] } }
+    }, extra || {}));
+  }
+
+  await (async function targetLimitsSection() {
+    const app = boot(tlServer());
+    app.open(ADMIN);
+    await settled();
+    app.click(app.byId('grp-targets'));
+    await settled();
+    it('Target limits: its own section after Rules, opening on Defaults (the settings view)', function () {
+      eq(app.byId('nav-tldefaults').getAttribute('aria-current'), 'page');
+      eq(app.byId('nav-tljobs').hidden, false);
+      eq(app.byId('nav-tlplayer').hidden, false);
+      eq(app.byId('nav-tlcontracts').hidden, false);
+      eq(app.byId('nav-timers').hidden, true);
+      truthy(app.requests('settings').length >= 1, 'reads the settings');
+    });
+
+    app.nav('tljobs');
+    await settled();
+    it('Per job lists each job with its own and its effective values', function () {
+      has(app.main(), 'police');
+      has(app.main(), '2 h');
+      has(app.main(), 'in bold, the job');
+    });
+    app.type(app.byId('tj-job'), 'Police');
+    app.type(app.byId('tj-TargetCooldownAfterResolveSeconds'), '9000');
+    app.click(app.byId('tj-save'));
+    await settled();
+    it('Save job limits takes two clicks, naming the job', function () {
+      eq(app.requests('targetJobSet').length, 0, 'sent on one click');
+      truthy(app.byId('tj-save').classList.contains('is-armed'));
+      has(app.byId('tj-save').textContent, 'police');
+    });
+    app.click(app.byId('tj-save'));
+    await settled();
+    it('the second click sends the job and only the limits filled in', function () {
+      eq(app.last('targetJobSet').data, { job: 'police', limits: { TargetCooldownAfterResolveSeconds: 9000 } });
+    });
+    app.type(app.byId('tj-TargetCooldownAfterResolveSeconds'), '99999999');
+    app.click(app.byId('tj-save'));
+    await settled();
+    it('a value out of range is refused on the page, nothing sent', function () {
+      eq(app.requests('targetJobSet').length, 1);
+      has(app.main(), 'whole number from 0 to 604800');
+    });
+    const remove = app.button('Remove');
+    app.click(remove);
+    await settled();
+    it('Remove takes two clicks', function () {
+      eq(app.requests('targetJobRemove').length, 0);
+      app.click(app.button('Remove'));
+    });
+    await settled();
+    it('the second Remove sends the job', function () { eq(app.last('targetJobRemove').data, { job: 'police' }); });
+
+    const typedIn = app.byId('tja-job');
+    app.type(typedIn, 'police');
+    app.fire(250);
+    await settled();
+    it('the count arrives without redrawing the box being typed in', function () {
+      truthy(app.byId('tja-job') === typedIn, 'the job box was drawn again');
+      has(app.byId('tja-count').textContent, '3 players working police');
+    });
+    app.type(app.byId('tja-reason'), 'event');
+    app.click(app.button('Reset cooldowns'));
+    await settled();
+    it('a job action\'s confirm names the job and how many players it reaches', function () {
+      eq(app.last('targetJobCount').data, { job: 'police' });
+      eq(app.requests('targetJobAction').length, 0, 'sent on one click');
+      has(app.main(), 'Click again: reset 3 players working police');
+    });
+    app.click(app.button('Reset cooldowns'));
+    await settled();
+    it('the second click resets the whole job, with the reason', function () {
+      eq(app.last('targetJobAction').data, { job: 'police', action: 'reset', all: false, reason: 'event' });
+      has(app.main(), '3 player(s)');
+    });
+    app.click(app.button('Extend cooldowns'));
+    await settled();
+    it('Extend cooldowns for a job needs the minutes, and sends nothing without', function () {
+      eq(app.requests('targetJobAction').length, 1);
+      has(app.main(), 'Give the minutes to add');
+    });
+    clean(app, 'target limits per job');
+  })();
+
+  await (async function targetLimitsPlayer() {
+    const app = boot(tlServer());
+    app.open(access({ canWrite: false, canModerate: true, canIdentify: false }));
+    await settled();
+    app.nav('tlplayer');
+    await settled();
+    app.type(app.byId('tp-q'), 'Dana');
+    app.click(app.button('Look up'));
+    await settled();
+    it('Per player looks them up and shows their standing exactly, with the rule that set it', function () {
+      eq(app.last('targetStatus').data, { subject: 'Dana' });
+      has(app.main(), '25 min');
+      has(app.main(), 'job: police');
+      has(app.main(), 'from the job limits');
+      eq(app.body.querySelectorAll('img').length, 0, 'the name was escaped');
+    });
+    app.click(app.button('Reset cooldown'));
+    await settled();
+    it('a write without a reason is refused on the page', function () {
+      eq(app.requests('targetReset').length, 0);
+      has(app.main(), 'Give a reason');
+    });
+    app.type(app.byId('tp-reason'), 'ticket 12');
+    app.click(app.button('Reset cooldown'));
+    await settled();
+    it('Reset cooldown takes two clicks, as a moderator', function () {
+      eq(app.requests('targetReset').length, 0);
+    });
+    app.click(app.button('Reset cooldown'));
+    await settled();
+    it('the second click sends the lookup\'s ref, never the name', function () {
+      eq(app.last('targetReset').data, { ref: 'p1_123456', reason: 'ticket 12', all: false });
+    });
+    for (const [label, op] of [['Reset all', 'targetReset'], ['Reset counts', 'targetCounts']]) {
+      const before = app.requests(op).length;
+      app.click(app.button(label));
+      await settled();
+      it(label + ' takes two clicks', function () { eq(app.requests(op).length, before); });
+      app.click(app.button(label));
+      await settled();
+      it(label + ' sends on the second', function () { eq(app.requests(op).length, before + 1); });
+    }
+    app.type(app.byId('tp-min'), '30');
+    app.click(app.button('Extend by minutes'));
+    await settled();
+    app.click(app.button('Extend by minutes'));
+    await settled();
+    it('a refusal from the server is shown on the card (a stale lookup)', function () {
+      eq(app.last('targetExtend').data, { ref: 'p1_123456', reason: 'ticket 12', minutes: 30 });
+      has(app.main(), 'out of date');
+    });
+    app.click(app.button('Exempt from limits'));
+    await settled();
+    app.type(app.byId('tpo-hours'), '0');
+    app.click(app.button('Make exempt'));
+    await settled();
+    it('Make exempt takes two clicks', function () { eq(app.requests('targetOverride').length, 0); });
+    app.click(app.button('Make exempt'));
+    await settled();
+    it('then sends exempt for good', function () {
+      eq(app.last('targetOverride').data, { ref: 'p1_123456', reason: 'ticket 12', exempt: true, hours: 0 });
+    });
+    app.click(app.button('Lift their own limits'));
+    await settled();
+    app.click(app.button('Lift their own limits'));
+    await settled();
+    it('Lift their own limits: two clicks, and the refusal shown', function () {
+      eq(app.requests('targetOverrideClear').length, 1);
+      has(app.main(), 'Nothing like that is set');
+    });
+    clean(app, 'target limits per player');
+  })();
+
+  await (async function targetLimitsReadOnly() {
+    const app = boot(tlServer());
+    app.open(READER);
+    await settled();
+    app.nav('tlplayer');
+    await settled();
+    app.type(app.byId('tp-q'), 'Dana');
+    app.click(app.button('Look up'));
+    await settled();
+    it('a reader sees the standing and every write disabled', function () {
+      has(app.main(), '25 min');
+      truthy(app.button('Reset cooldown').disabled, 'Reset cooldown open to a reader');
+      truthy(app.button('Set their limits').disabled, 'override open to a reader');
+    });
+    app.nav('tljobs');
+    await settled();
+    it('a reader cannot save a job\'s limits', function () { truthy(app.byId('tj-save').disabled); });
+    clean(app, 'target limits read only');
+  })();
+
+  await (async function targetLimitsCurrent() {
+    const app = boot(tlServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('tlcontracts');
+    await settled();
+    it('Current contracts lists every live contract grouped by target, escaped', function () {
+      eq(app.last('targetContracts').data, { page: 1 });
+      eq(app.$$('tr.tl-group').length, 2);
+      eq(app.$$('tr.row').length, 3);
+      has(app.main(), 'On hold');
+      has(app.main(), '3 live contracts on 2 targets');
+      eq(app.body.querySelectorAll('img').length, 0, 'escaped');
+    });
+    app.type(app.byId('tc-q'), 'Dana');
+    app.fire(250);
+    await settled();
+    it('the search asks by target', function () { eq(app.last('targetContracts').data, { page: 1, query: 'Dana' }); });
+    app.click(app.$$('tr.row')[1]);
+    await settled();
+    it('a row opens the existing contract drawer, with its staff actions', function () {
+      eq(app.last('contract').data, { id: 'ct00000002' });
+      eq(app.drawer().hidden, false);
+      truthy(app.button('Void contract', app.drawer()), 'the drawer\'s own Void');
+    });
+    clean(app, 'target limits current contracts');
   })();
 
   console.log('');

@@ -494,6 +494,13 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] **Features** lists the core switches first, then Anonymity, the informants, the advisory, Staff tools, Roleplay and Improvements; every group in every settings section has a line saying what it does, and every number shows its unit ($, s, min, h, d, m, %)
 - [ ] **Staff actions** has **Undo a setting change**: change a setting, open History from that card, and undo it in two clicks
 - [ ] No text in the panel, the app or a notice calls the placer *the client*
+- [ ] **Target limits** sits after Rules with Defaults, Per job, Per player and Current contracts. With every limit as shipped (day and week caps 0), placing on the same person behaves exactly as before: a third live contract is refused, and a re-list inside 30 minutes is refused with *There was a contract on them very recently*
+- [ ] Set **Defaults > Contracts placed on one person in a rolling 24 hours** to 1: a second contract on the same person that day is refused with *That target already has as many contracts on them as this server allows*, even after the first is cancelled; set it back to 0
+- [ ] **Per job**: give `police` a wait of 7200 s after a contract ends; finish a contract on an on-duty officer and on a civilian: the civilian can be named again after 30 minutes, the officer not until 2 hours; the placer's refusal says nothing about the job. Restart: the job's limits are still there
+- [ ] **Per player**: look the officer up: the card shows the cooldown left to the minute, *from the job limits*. **Reset cooldown** (two clicks, a reason): a new placer can name them now, the placer who named them before still waits; **Reset all** clears that too. **Extend by minutes** 60: nobody can name them; **Reset counts** lets the day cap count from now. **Exempt from limits** for 1 hour: a third live contract on them is accepted. Every action is in Logs as `staff_target_*`
+- [ ] **Per job, at once**: type `police`; the count shows; **Reset cooldowns** arms naming *N players working police*, and the second click resets them; one `staff_target_job_reset` row in Logs carries the count. A moderator (`crimson.moderator`) can do this; a reader with an extra ACE cannot (the buttons are greyed, and the server refuses)
+- [ ] **Current contracts**: every live contract, grouped by target, with *On hold* on frozen ones; click a row: the usual contract view opens, with Extend / Shorten, Void, remove an operative and edit text, and without `crimson.identity` an anonymous placer still reads *Anonymous*
+- [ ] `resmon` while placing contracts with a job override and a player adjustment set stays as before (the limits are read from memory)
 
 ---
 

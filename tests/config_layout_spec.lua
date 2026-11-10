@@ -44,6 +44,9 @@ local CHANGED = {
 --- Settings added since the rewrite, by the path the comparison reports
 --- them under (a whole new section or record), with what they ship as.
 local ADDED = {
+    -- The Target limits section's day and week caps, shipped off.
+    ['Limits.MaxContractsPerTargetPerDay'] = 0,
+    ['Limits.MaxContractsPerTargetPerWeek'] = 0,
     ['LocationTip'] = {
         Enabled = false, Cost = 25000, Account = 'bank', RadiusMeters = 350, ShowMinutes = 10,
         CooldownMinutes = 10, MaxPurchasesPerContract = 3, NotifyTarget = true,
@@ -319,8 +322,10 @@ describe('the configuration as one short file', function()
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
             end
-            -- The completion cooldown (impC), new and shipped off.
-            if pair[1] == nil and path == 'Limits.TargetCooldownAfterCompletionSeconds' and pair[2] == 0 then
+            -- The completion cooldown (impC), and the Target limits day and
+            -- week caps, new and shipped off.
+            if pair[1] == nil and pair[2] == 0 and (path == 'Limits.TargetCooldownAfterCompletionSeconds'
+                or path == 'Limits.MaxContractsPerTargetPerDay' or path == 'Limits.MaxContractsPerTargetPerWeek') then
                 addedSince = true
             end
             -- The board's placer switch, and its whitelisted-job counterpart,
@@ -377,7 +382,8 @@ describe('the configuration as one short file', function()
         -- (informant fairness), impB's four (placer record, hitman heat,
         -- tiers, contract decay) and impC's three (proof items, serial
         -- scrubbing, weekly stats) with its completion cooldown line.
-        truthy(lines < 751, 'config.lua is ' .. lines .. ' lines')
+        -- And the Target limits' day and week caps, two lines.
+        truthy(lines < 753, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

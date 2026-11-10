@@ -314,6 +314,18 @@ resource (`GetParentResourceName()`):
 | `protect` | moderate | `{ ref, hours (0 for good, at most 8760), reason }` | `{ protected = { since, until?, reason, by? } }`; also `already` |
 | `unprotect` | moderate | `{ ref, reason? }` | —; also `not_active` |
 | `manualPay` | write | `{ ref, amount, account = 'cash'\|'bank', reason }` | `{ paid, owed }`; also `over_max`, `payments_off` |
+| `targetLimits` | read | — | `{ keys = [{ key, label, unit, min, max, value }], jobs = [{ job, limits, at, effective }], ignored, jobMax, extendMax, overrideMaxHours }` (server/targetlimits.lua) |
+| `targetStatus` | read | `{ subject }` or `{ ref }` | `{ player = { name, cid?, online, ref }, status = { live, day, week, dayAll, weekAll, cooldownLeft, cooldownRule, cooldownFrom = 'global'\|'job'\|'player', exempt, limits, source, job, jobFrom, adjustment? } }`; audited `admin_panel_target_status` |
+| `targetJobCount` | read | `{ job }` | `{ job, count }`: players in the city working it now, and those not in the city whom the latest contract on them in the last 7 days recorded as working it |
+| `targetContracts` | read | `{ query?, page }` | `{ rows = [{ id, state, rule, target, group, onTarget, client, anonymous, slots, claimed, frozen?, created_at, deadline_at }], page, pages, total, targets }`: unfinished contracts by target; `group` is the target's citizen id only with `crimson.identity` |
+| `targetJobSet` | write | `{ job, limits = { [key] = n } }` | —; audited `staff_target_job_set`; also `too_many` |
+| `targetJobRemove` | write | `{ job }` | —; audited `staff_target_job_removed`; also `not_active` |
+| `targetReset` | moderate | `{ ref, reason, all? }` | —; audited `staff_target_reset` |
+| `targetExtend` | moderate | `{ ref, reason, minutes }` or `{ ref, reason, untilAt }` | —; audited `staff_target_extend` |
+| `targetCounts` | moderate | `{ ref, reason }` | —; audited `staff_target_counts` |
+| `targetOverride` | moderate | `{ ref, reason, hours (0 for good), exempt? , limits? }` | —; audited `staff_target_override` |
+| `targetOverrideClear` | moderate | `{ ref, reason }` | —; audited `staff_target_clear`; also `not_active` |
+| `targetJobAction` | moderate | `{ job, action = 'reset'\|'extend'\|'counts', reason, minutes?, all? }` | `{ done, failed }`; one row audited `staff_target_job_<action>` with the count; also `nobody` |
 
 `ref` is the handle `player` answered with: bound on the server to the character that lookup found, for the staff member who made it, for ten minutes. Every write naming a player (`freeze`, `unfreeze`, `setPlaytime` and the five above) takes it, or `subject` as an exact citizen id (or a contract party, `contract:<id>:<role>`); a name or a server id is refused there, never matched again. A stale handle is refused `stale_lookup` ("Look them up again").
 

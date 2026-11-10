@@ -232,6 +232,7 @@ refused.
 | **Live** | How it works, Overview, Contracts, Players, Frozen players, Needs review, Stuck escrow | See what is happening; open a contract (timeline, escrow, parties, staff notes, **Extend** / **Shorten**, **Void**, remove an operative, edit text, export, *As a player sees it*); look a player up (history, freeze, suspend, protect, pay, playtime); settle money left for staff |
 | **Staff actions** | Actions, Tools, Announce | Find any staff action (each card opens where it is done, **Undo a setting change** included); Tools: run the diagnosis, flush the log, bring timers forward (test servers); Announce: one notice to every hitman holding a contract, or everybody with the app |
 | **Rules** | Timers, Rewards & money, Limits, Targeting | Tune the game. Every row shows its value with its unit, config.lua's value and where it comes from; a search box filters by name, key or group |
+| **Target limits** | Defaults, Per job, Per player, Current contracts | How often one person may have a contract placed on them: the global limits, a job's own (police wait longer), one player's cooldown reset or extended, counts reset, own limits or exempt; the same for every player of a job at once; and every live contract by target, each opening its contract view |
 | **Features** | Features | Switch features on and off, in this order: core, Anonymity, Informants, Advisory, Staff tools, Roleplay, Improvements. Each group says what it does |
 | **Logs & alerts** | Logs, Alerts & Discord | Search the audit log; acknowledge alerts; send a test alert |
 | **Developer** | Settings, Console, Diagnostics, Permissions, History | Debug, storage, rate limits, timings and the read-only values; the console; slow jobs; which ACE opens what; every setting change with **Undo** |
@@ -240,6 +241,56 @@ Without `crimson.identity`, an anonymous party is *Anonymous* everywhere,
 citizen ids read as the party's place (*the placer*, *the target*,
 *operative <alias>*) and searches never find a contract through an anonymous
 party. Every unmasking is its own audit row.
+
+### Target limits
+
+**Target limits** is its own section, after Rules. Every write in it takes
+two clicks, is rate-limited and audited, and waits for boot recovery, like
+every other write.
+
+- **Defaults**: the six limits every target has unless a job or a player
+  override says otherwise. `Config.Limits.TargetCooldownAfterResolveSeconds`
+  (wait after a contract on a person ends), `SameCreatorSameTargetCooldownSeconds`
+  (the same placer naming them again), `TargetCooldownAfterCompletionSeconds`
+  (after a completed one, 0 off), `MaxActiveContractsPerTarget` (live at
+  once), and two new caps, both 0 (off) as shipped:
+  `MaxContractsPerTargetPerDay` (placed on them in a rolling 24 hours) and
+  `MaxContractsPerTargetPerWeek` (a rolling 7 days). A contract counts toward
+  the day and week caps whatever became of it, unless staff voided it.
+  Changing these needs `crimson.admin`, like every setting.
+- **Per job**: add a qbx job name (`[a-z0-9_]+`, at most 32 characters) with
+  any of the six limits; a target working that job when the contract is
+  placed has those instead of the defaults. Each job shows its own values
+  and the effective ones. Kept in the store (`crimson_rp_rows`, kind
+  `tl_job`) and applied again at every start; a stored row that does not
+  check out is not applied and the start says why. Adding, changing and
+  removing one needs `crimson.admin`.
+- **Per player**: look a player up (as Players does). Their card shows the
+  live contracts on them, the contracts placed on them in the last 24 hours
+  and 7 days, the exact cooldown left and which rule sets it (global, job or
+  player), with *Reset cooldown* (they may be named now; the same placer's
+  wait holds unless you choose *Reset all*), *Extend cooldown* by minutes or
+  until a time, *Reset counts* (the day and week counts start from now), and
+  their own limits or *Exempt from limits*, for some hours or for good. Every
+  one takes a reason and needs `crimson.moderator` or `crimson.admin`. Kept
+  in `crimson_rp_rows` (kind `tl_player`) and pruned once every fact in them
+  has run out.
+- **Per job, at once**: the same Reset cooldowns, Extend cooldowns and
+  Reset counts for every player of one job. *Players of a job* are everybody
+  in the city working it now, and everybody not in the city whom the latest
+  contract placed on them in the last 7 days recorded as working it. The
+  confirm names the job and how many players it reaches; one audit row
+  records the action with the count. `crimson.moderator` or `crimson.admin`.
+- **Current contracts**: every live contract (open, taken, settling, on
+  hold) grouped by target, a page at a time, searchable by the target's name
+  or exact citizen id. A row opens the contract's own view, with every staff
+  action it has (Extend / Shorten, Void, remove an operative, edit text,
+  notes), under the same ACEs and the same scrubbing.
+
+Players are never told any of this: a refusal is the wording the target
+rules already use (*already has as many contracts on them as this server
+allows*, *there was a contract on them very recently*), with no time beyond
+what they see today, and nothing about a job or staff.
 
 ### Staff commands
 
@@ -321,6 +372,18 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `testAlert` | Write | Send a test alert to Discord |
 | `removePhotos` | Write | Remove the kill photos kept from before |
 | `setPlaytime` | Write | Correct one character's counted playtime |
+| `targetLimits` | Read | Target limits: the limits and every job's own |
+| `targetStatus` | Read | One player's standing as a target, exactly |
+| `targetJobCount` | Read | How many players a job action would reach |
+| `targetContracts` | Read | Every live contract, by target |
+| `targetJobSet` | Write | Add or change a job's own target limits |
+| `targetJobRemove` | Write | Remove a job's own target limits |
+| `targetReset` | Moderate | Reset a player's cooldown (or all of them) |
+| `targetExtend` | Moderate | Extend a player's cooldown by minutes or until a time |
+| `targetCounts` | Moderate | Reset a player's day and week counts |
+| `targetOverride` | Moderate | A player's own target limits, or exempt |
+| `targetOverrideClear` | Moderate | Lift a player's own target limits |
+| `targetJobAction` | Moderate | Reset, extend or reset counts for every player of a job |
 
 ### Console output and Discord
 
@@ -523,6 +586,8 @@ How many contracts a player may place, take or carry, and how one is finished: a
 | `Config.Limits.MaxActiveContractsPerCreator` | `3` | live contracts one player may place |
 | `Config.Limits.MaxAcceptedPerHitman` | `3` | live contracts one hitman may hold |
 | `Config.Limits.MaxActiveContractsPerTarget` | `2` | live contracts on one person |
+| `Config.Limits.MaxContractsPerTargetPerDay` | `0` | contracts placed on one person in a rolling 24 h; 0 = off |
+| `Config.Limits.MaxContractsPerTargetPerWeek` | `0` | contracts placed on one person in a rolling 7 days; 0 = off |
 | `Config.Limits.MaxHitmenPerContract` | `5` | hitmen on one competitive contract |
 | `Config.Completion.Fulfilment` | `'alive'` | 'alive' (live handover only) \| 'either' (a kill too) |
 | `Config.Completion.KillPhotos` | `false` | under 'either': true = a photo, false = at the scene |
@@ -1087,7 +1152,11 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, sweep 6 fixes (newest)**
+**1.1.0, Target limits (newest)**
+
+- The admin panel has a **Target limits** section: the six limits on how often one person may have a contract placed on them (two new, a day and a week cap, off as shipped), each job's own, one player's cooldown reset or extended, counts reset and own limits or exempt, the same for a whole job at once, and every live contract by target. See Admin panel, Target limits.
+
+**1.1.0, sweep 6 fixes**
 
 - Before anybody accepts, the **Edit** sheet also changes the buyout price, how the contract is completed and whether it is placed anonymously, each checked as placing checks it; **Cancel and place again** puts it on someone else. A target's **Buy out** is charged the price the dialog showed, and told the new one if the placer changed it meanwhile.
 - **Go dark** is offered and sold only while tips on that contract are; a paid window stays on the card to its end. Go-dark windows and an informant tip's showing and wait stand still while the contract is on hold, and through the restart hold and the restart.

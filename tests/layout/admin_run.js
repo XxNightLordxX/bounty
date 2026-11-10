@@ -365,6 +365,41 @@ function serverStub() {
         penaltyAmount: 25000, myAlias: 'Ghost of the Eastern Docks', creatorAnonymous: true,
         locationTip: { left: 2, waitSeconds: 0, note: REASON } } } }
   });
+  // Target limits (server/targetlimits.lua), with the longest things each holds.
+  const TL_KEYS = [
+    ['TargetCooldownAfterResolveSeconds', 'Wait after a contract on them ends', 's', 0, 604800, 1800],
+    ['SameCreatorSameTargetCooldownSeconds', 'Wait before the same placer names them again', 's', 0, 604800, 7200],
+    ['TargetCooldownAfterCompletionSeconds', 'Wait after a completed contract on them', 's', 0, 2592000, 0],
+    ['MaxActiveContractsPerTarget', 'Live contracts on them at once', 'contracts', 1, 50, 2],
+    ['MaxContractsPerTargetPerDay', 'Contracts placed on them in 24 hours', 'contracts', 0, 100, 0],
+    ['MaxContractsPerTargetPerWeek', 'Contracts placed on them in 7 days', 'contracts', 0, 500, 0]
+  ].map(function (k) { return { key: k[0], label: k[1], unit: k[2], min: k[3], max: k[4], value: k[5] }; });
+  const tlJobs = [];
+  for (let i = 0; i < 6; i++) {
+    tlJobs.push({ job: i === 0 ? 'a_long_job_name_of_32_characters' : 'job_' + i, at: NOW,
+      limits: { TargetCooldownAfterResolveSeconds: 604800, MaxContractsPerTargetPerWeek: 500 },
+      effective: { TargetCooldownAfterResolveSeconds: 604800, SameCreatorSameTargetCooldownSeconds: 7200,
+        TargetCooldownAfterCompletionSeconds: 2592000, MaxActiveContractsPerTarget: 50,
+        MaxContractsPerTargetPerDay: 100, MaxContractsPerTargetPerWeek: 500 } });
+  }
+  answers.targetLimits = { ok: true, data: { keys: TL_KEYS, jobs: tlJobs, ignored: 0, jobMax: 32,
+    extendMax: 43200, overrideMaxHours: 8760 } };
+  answers.targetJobCount = { ok: true, data: { job: 'a_long_job_name_of_32_characters', count: 1234 } };
+  answers.targetStatus = { ok: true, data: { player: { name: LONG, cid: 'TARGET01', online: true, ref: 'p1_1' },
+    status: { live: 2, day: 12, week: 140, dayAll: 20, weekAll: 300, cooldownLeft: 2591000,
+      cooldownRule: 'TargetCooldownAfterCompletionSeconds', cooldownFrom: 'job', exempt: false,
+      job: 'a_long_job_name_of_32_characters', jobFrom: 'last known',
+      source: { TargetCooldownAfterResolveSeconds: 'job', MaxContractsPerTargetPerDay: 'player' },
+      limits: { TargetCooldownAfterResolveSeconds: 604800, SameCreatorSameTargetCooldownSeconds: 7200,
+        TargetCooldownAfterCompletionSeconds: 2592000, MaxActiveContractsPerTarget: 50,
+        MaxContractsPerTargetPerDay: 100, MaxContractsPerTargetPerWeek: 500 },
+      adjustment: { until_at: NOW + 86400, override: { exempt: false, limits: {}, until_at: NOW + 3600,
+        reason: REASON } } } } };
+  answers.targetContracts = { ok: true, data: { page: 1, pages: 4, total: 100, targets: 40,
+    rows: rows.slice(0, 20).map(function (r, i) {
+      return Object.assign({}, r, { state: i % 2 ? 'active' : 'accepted', group: 't' + Math.floor(i / 3),
+        target: i < 3 ? LONG : r.target, onTarget: 3, frozen: i % 4 === 0 });
+    }) } };
   window.GetParentResourceName = function () { return 'crimson-hitman'; };
   window.__requests = [];
   window.fetch = function (url, options) {
@@ -483,7 +518,8 @@ const GROUP = { help: 'live', overview: 'live', contracts: 'live', players: 'liv
   stuck: 'live', actions: 'actions', tools: 'actions', timers: 'rules', money: 'rules', limits: 'rules',
   targeting: 'rules', features: 'features', logs: 'logs', alerts: 'logs', devsettings: 'developer',
   console: 'developer', diagnostics: 'developer', permissions: 'developer', announce: 'actions',
-  history: 'developer' };
+  history: 'developer', tldefaults: 'targets', tljobs: 'targets', tlplayer: 'targets',
+  tlcontracts: 'targets' };
 
 /* A view, as staff reach it: its section, then its sub-tab where it has a strip. */
 async function go(page, view) {
@@ -539,7 +575,7 @@ async function main() {
   ];
   const sections = ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck', 'actions', 'tools',
     'timers', 'money', 'limits', 'targeting', 'features', 'logs', 'alerts', 'devsettings', 'console', 'diagnostics',
-    'permissions', 'announce', 'history'];
+    'permissions', 'announce', 'history', 'tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'];
 
   for (const size of sizes) {
     const page = await openAt(browser, size.w, size.h);
@@ -569,6 +605,23 @@ async function main() {
         await page.fill('#pl-q', '123');
         await page.press('#pl-q', 'Enter');
         await page.waitForTimeout(120);
+      }
+      if (section === 'tlplayer') {
+        // Measured with a player looked up and Reset cooldown armed.
+        await page.fill('#tp-q', '123');
+        await page.press('#tp-q', 'Enter');
+        await page.waitForTimeout(120);
+        await page.fill('#tp-reason', REASON_LONG.slice(0, 120));
+        await page.click('button[data-act="tp-reset"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'tljobs') {
+        // Measured with a job typed, counted, and Reset all armed naming it.
+        await page.fill('#tja-job', 'a_long_job_name_of_32_characters');
+        await page.waitForTimeout(400);
+        await page.fill('#tja-reason', REASON_LONG.slice(0, 120));
+        await page.click('button[data-act="tja-reset-all"]');
+        await page.waitForTimeout(60);
       }
       if (section === 'tools') {
         await page.click('button[data-act="tl-diag"]');
@@ -627,6 +680,44 @@ async function main() {
       truthy(staffArmed.armed, 'Suspend was not armed');
       none(staffForms, 'staff forms');
     });
+
+    // Target limits: the armed write says what it does, and a row of
+    // Current contracts opens the contract's own drawer.
+    await go(page, 'tlplayer');
+    await page.fill('#tp-q', '123');
+    await page.press('#tp-q', 'Enter');
+    await page.waitForTimeout(120);
+    await page.fill('#tp-reason', 'ticket');
+    await page.click('button[data-act="tp-counts"]');
+    await page.waitForTimeout(60);
+    const tlArmed = await page.evaluate(function () {
+      const b = document.querySelector('button[data-act="tp-counts"]');
+      const cfm = b && b.querySelector('.cfm');
+      return { armed: !!b && b.classList.contains('is-armed'),
+               label: cfm && getComputedStyle(cfm).visibility === 'visible' ? cfm.textContent : '',
+               sent: window.__requests.filter(function (r) { return r.op === 'targetCounts'; }).length };
+    });
+    it(at + ': Target limits: a write armed says Click again, and sends nothing yet', function () {
+      truthy(tlArmed.armed, 'not armed');
+      truthy(/Click again/.test(tlArmed.label), tlArmed.label);
+      truthy(tlArmed.sent === 0, 'sent on one click');
+    });
+    await go(page, 'tlcontracts');
+    await page.waitForTimeout(150);
+    await page.click('#tl-cur tr.row');
+    await page.waitForTimeout(200);
+    const tlDrawer = await page.evaluate(function () {
+      const d = document.getElementById('drawer');
+      return { open: !d.hidden, asked: window.__requests.filter(function (r) { return r.op === 'contract'; }).length };
+    });
+    const tlDrawerFaults = await page.evaluate(measure, { tablesFit: size.tablesFit });
+    it(at + ': Target limits: a current contract opens the contract drawer, which fits', function () {
+      truthy(tlDrawer.open, 'the drawer did not open');
+      truthy(tlDrawer.asked > 0, 'the contract was not asked for');
+      none(tlDrawerFaults, 'drawer from Current contracts');
+    });
+    await page.click('#drawer [data-act="drawer-close"]');
+    await page.waitForTimeout(60);
 
     // The settings, grouped, with each control beside its words (on a
     // phone, below them).

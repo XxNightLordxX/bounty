@@ -277,6 +277,8 @@
       first: 'overview' },
     { id: 'actions', views: ['actions', 'tools', 'announce'] },
     { id: 'rules', views: ['timers', 'money', 'limits', 'targeting'] },
+    // How often one person may be targeted (server/targetlimits.lua).
+    { id: 'targets', views: ['tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'] },
     { id: 'features', views: ['features'] },
     { id: 'logs', views: ['logs', 'alerts'] },
     { id: 'developer', views: ['devsettings', 'console', 'diagnostics', 'permissions', 'history'], developer: true }
@@ -291,10 +293,11 @@
   /** The settings view each category is shown in. */
   var CATEGORY_VIEW = {
     'rules-timers': 'timers', 'rules-rewards': 'money', 'rules-limits': 'limits',
-    'rules-targeting': 'targeting', features: 'features', developer: 'devsettings'
+    'rules-targeting': 'targeting', features: 'features', developer: 'devsettings',
+    'target-limits': 'tldefaults'
   };
   var SETTING_VIEWS = { timers: true, money: true, limits: true, targeting: true, features: true,
-                        devsettings: true };
+                        devsettings: true, tldefaults: true };
 
   /** Ops that only read. A refusal of one as not_allowed means the staff
       member may no longer read at all (an ACE taken away while the panel was
@@ -302,7 +305,8 @@
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
                    alerts: true, console: true, frozen: true, exportContract: true, playerView: true,
-                   history: true, settingsHistory: true };
+                   history: true, settingsHistory: true,
+                   targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -2967,6 +2971,8 @@
     limits: 'How many contracts a player may place, take or carry, how one is completed and the other '
       + 'limits. Each value is checked the way the server checks config.lua at start.',
     targeting: 'Who may open the app, who can be targeted, and the whitelisted-job rules.',
+    tldefaults: 'How often one person may have a contract placed on them: the waits and caps every target has, '
+      + 'unless their job (Per job) or staff (Per player) give them their own. 0 is off where it says so.',
     features: 'The on and off switches. Every switch takes effect at once and is kept across restarts. What is '
       + 'already under way finishes under the rules it started with; only new actions are refused, and players '
       + 'are told the feature is turned off by the server.',
@@ -3027,6 +3033,7 @@
     'Staff tools': 'Pausing the whole app for an event, and the daily summary to the staff Discord.',
     'Staff alerts': 'When one player or one target goes past a threshold, one staff alert, and on Discord too.',
     'Contract limits': 'How long contracts run and how many a player may place, take or carry.',
+    'Target limits': 'The waits and caps on one person being targeted, by default. A job or a player may have their own.',
     'Server restart': 'How contracts pause before a txAdmin restart, and how long that pause may last.',
     'Ledger': 'What a player\'s Ledger keeps, and for how long.',
     'Immunity': 'Who cannot be a target yet: new characters and players just online.',
@@ -4894,6 +4901,8 @@
     S.menu = null;
     S.drawer = { id: null, data: null, answer: null, whois: null };
     S.stuck = { data: null, error: null, answers: {} };
+    if (S.tl) { clearTimeout(S.tl.curTimer); clearTimeout(S.tl.countTimer); }
+    tlReset();
   }
 
   /** The page's side of closing, however it closes. */
@@ -5546,7 +5555,7 @@
       text: 'Off as shipped (0). Set, nobody may place a contract on somebody for this long after '
         + 'a contract on them was completed, or for the ordinary wait after any contract if that '
         + 'is longer. The placer is told how many hours are left, and nothing else.',
-      links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', view: 'timers', label: 'The wait' }] },
+      links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', view: 'tldefaults', label: 'The wait' }] },
     { title: 'Improvements: Weapon serial scrubbing', icon: 'gun',
       text: 'Off as shipped. On, a weapon an anonymous placer put up reaches the hitman with a new '
         + 'random serial, so it cannot be traced back to them by its number. A refund to the placer '
@@ -5561,6 +5570,573 @@
       links: [{ key: 'Improvements.WeeklyStats.Enabled', view: 'features', label: 'Weekly stats on or off' },
         { key: 'Improvements.WeeklyStats.Day', view: 'timers', label: 'The day' },
         { key: 'Improvements.WeeklyStats.Hour', view: 'timers', label: 'The hour' }] });
+
+  /* ---------- Target limits ----------------------------------------------
+
+     Its own section (server/targetlimits.lua): Defaults (the six limits as
+     settings), Per job (a job's own limits, and one action for every player
+     of a job), Per player (one target's standing, exactly, and the staff
+     actions on it), and Current contracts (every live contract by target,
+     each row opening the contract's own view). Every write takes the
+     two-click confirm; a player's are named by the lookup made here. */
+
+  function tlReset() {
+    S.tl = { meta: null, error: null, jobAnswer: null, jobCount: null, jobCountFor: '', jobAnswerMany: null,
+             status: null, ref: null, answer: null, exempt: false, cur: null, curPage: 1, curTimer: null,
+             countTimer: null };
+  }
+  tlReset();
+
+  var TL_SOURCE = { global: 'global', job: 'job', player: 'player' };
+  /** The limits' short names, for the job table's columns. */
+  var TL_SHORT = {
+    TargetCooldownAfterResolveSeconds: 'After one ends', SameCreatorSameTargetCooldownSeconds: 'Same placer',
+    TargetCooldownAfterCompletionSeconds: 'After completed', MaxActiveContractsPerTarget: 'Live at once',
+    MaxContractsPerTargetPerDay: 'Per 24 h', MaxContractsPerTargetPerWeek: 'Per 7 days'
+  };
+
+  function tlKeys() { return asList(S.tl.meta && S.tl.meta.keys); }
+
+  /** A limit's value in words: seconds as a span, 0 as off where 0 is off. */
+  function tlValue(entry, value) {
+    var n = Number(value) || 0;
+    if (entry.unit === 's') {
+      if (n === 0) return 'off';
+      var d = Math.floor(n / 86400), hr = Math.floor((n % 86400) / 3600), mi = Math.floor((n % 3600) / 60);
+      var parts = [];
+      if (d) parts.push(d + ' d');
+      if (hr) parts.push(hr + ' h');
+      if (mi) parts.push(mi + ' min');
+      if (!parts.length) parts.push(n + ' s');
+      return parts.join(' ');
+    }
+    if (n === 0 && entry.min === 0) return 'off';
+    return num(n);
+  }
+
+  function loadTargetLimits() {
+    return ask('targetLimits', {}, 'targetLimits').then(function (reply) {
+      if (!reply) return;
+      if (reply.ok) { S.tl.meta = reply.data || {}; S.tl.error = null; }
+      else S.tl.error = words(reply);
+      drawTl();
+    });
+  }
+
+  function drawTl() {
+    if (S.section === 'tljobs') setHtml(byId('tl-jobs'), tlJobsBody());
+    if (S.section === 'tlplayer') setHtml(byId('tl-player'), tlPlayerBody());
+    if (S.section === 'tlcontracts') {
+      setHtml(byId('tl-cur'), tlCurrentRows());
+      setHtml(byId('tl-cur-pager'), tlCurrentPager());
+    }
+  }
+
+  /* ---- per job ---- */
+
+  function tlLimitFields(prefix, open) {
+    return h('div.tl-fields', tlKeys().map(function (k) {
+      return h('label.tl-field', h('span.tl-label', String(k.label) + (k.unit === 's' ? ' (seconds)' : '')),
+        field(prefix + '.' + k.key, { id: (prefix + '-' + k.key).replace(/\./g, '-'), class: 'is-short',
+          inputmode: 'numeric', maxlength: '7', disabled: !open, placeholder: 'default',
+          'aria-label': String(k.label) }));
+    }));
+  }
+
+  /** What the form asks for: { [key] = n } for every box filled, or a refusal. */
+  function tlLimitsTyped(prefix) {
+    var out = {}, bad = null, count = 0;
+    tlKeys().forEach(function (k) {
+      var raw = trim(S.forms[prefix + '.' + k.key]);
+      if (!raw) return;
+      if (!/^\d{1,7}$/.test(raw) || Number(raw) < k.min || Number(raw) > k.max) {
+        bad = bad || (String(k.label) + ' is a whole number from ' + k.min + ' to ' + k.max + '.');
+        return;
+      }
+      out[k.key] = Number(raw);
+      count++;
+    });
+    return { limits: out, bad: bad, count: count };
+  }
+
+  function tlJobTable() {
+    var jobs = asList(S.tl.meta && S.tl.meta.jobs);
+    if (!jobs.length) return empty('No job has limits of its own: every target has the defaults.');
+    var keys = tlKeys();
+    return h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', 'Job'), keys.map(function (k) {
+        return h('th', { title: String(k.label) }, TL_SHORT[k.key] || String(k.label));
+      }), h('th', ''))),
+      h('tbody', jobs.map(function (j) {
+        var own = j.limits || {}, eff = j.effective || {};
+        return h('tr',
+          h('td.mono.tl-job', String(j.job)),
+          keys.map(function (k) {
+            var mine = own[k.key] !== undefined && own[k.key] !== null;
+            return h('td' + (mine ? '.is-own' : ''), { title: mine ? 'This job\'s own' : 'The default' },
+              tlValue(k, eff[k.key]));
+          }),
+          h('td.nowrap', btn('.is-small.is-ghost', 'tj-edit', { 'data-value': String(j.job) }, 'Edit', 'pen'),
+            ' ', writeBtn('.is-small.is-danger', 'tj-remove', { 'data-value': String(j.job) }, 'Remove',
+              'Click again to remove ' + String(j.job), 'trash')));
+      }))));
+  }
+
+  /** Who a job action reaches, in words, once counted. */
+  function tlJobWho() {
+    var job = trim(S.forms['tja.job']).toLowerCase();
+    var count = S.tl.jobCountFor === job ? S.tl.jobCount : null;
+    return { count: count, text: count === null ? 'the players of ' + (job || 'that job')
+      : num(count) + ' player' + (count === 1 ? '' : 's') + ' working ' + job };
+  }
+
+  /** A job action's buttons, each confirm naming the job and the count:
+      drawn again on their own when the count comes, never the box being typed in. */
+  function tlManyButtons() {
+    var who = tlJobWho().text;
+    return frag(
+      modBtn('', 'tja-reset', { 'data-value': 'reset' }, 'Reset cooldowns', 'Click again: reset ' + who,
+        'arrow-rotate-left'),
+      modBtn('', 'tja-reset-all', { 'data-value': 'all' }, 'Reset all', 'Click again: reset all for ' + who,
+        'arrows-rotate'),
+      modBtn('', 'tja-extend', { 'data-value': 'extend' }, 'Extend cooldowns', 'Click again: extend ' + who,
+        'hourglass'),
+      modBtn('', 'tja-counts', { 'data-value': 'counts' }, 'Reset counts', 'Click again: reset counts for ' + who,
+        'eraser'));
+  }
+
+  function tlJobsBody() {
+    if (S.tl.error) return empty(S.tl.error);
+    if (!S.tl.meta) return loading('Reading the job limits…');
+    var open = writesOpen();
+    var many = modOpen();
+    var counted = tlJobWho();
+    return frag(
+      card('A job\'s own limits', frag(
+        h('p.note', 'A target working this job when the contract is placed (their qbx job name) has the limits '
+          + 'you fill in here instead of the defaults; leave a box empty to keep the default. Changing these '
+          + 'needs the staff ACE (Config.Admin.Ace).'),
+        h('div.inline-form.is-wide',
+          field('tj.job', { id: 'tj-job', class: 'is-short', maxlength: String((S.tl.meta.jobMax) || 32),
+            placeholder: 'Job name (police)', disabled: !open, 'aria-label': 'Job name' })),
+        tlLimitFields('tj', open),
+        h('div.btn-row', writeBtn('.is-primary', 'tj-save', { id: 'tj-save' }, 'Save job limits',
+          'Click again to save', 'floppy-disk')),
+        answerBox(S.tl.jobAnswer))),
+      card('Jobs with their own limits', tlJobTable(), '',
+        h('span.sub', 'what applies; in bold, the job\'s own (the rest are the defaults)')),
+      card('Every player of a job, at once', frag(
+        h('p.note', 'Reset or extend the cooldowns, or reset the day and week counts, of every player in the city '
+          + 'working this job now and every player not in the city whom the latest contract on them in the last '
+          + '7 days recorded as working it. One row goes in the log, with the count.'),
+        h('div.inline-form.is-wide',
+          field('tja.job', { id: 'tja-job', class: 'is-short', maxlength: '32', placeholder: 'Job name',
+            disabled: !many, 'data-live': 'tja-count', 'aria-label': 'Job name for a job action' }),
+          h('span.sub', { id: 'tja-count' }, counted.count === null ? '' : counted.text),
+          field('tja.min', { id: 'tja-min', class: 'is-short', inputmode: 'numeric', maxlength: '5',
+            placeholder: 'Minutes', disabled: !many, 'aria-label': 'Minutes to extend by' })),
+        h('div.inline-form.is-wide',
+          field('tja.reason', { id: 'tja-reason', class: 'is-grow', maxlength: '120', disabled: !many,
+            placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the job action' })),
+        h('div.btn-row.tl-many', { id: 'tja-buttons' }, tlManyButtons()),
+        answerBox(S.tl.jobAnswerMany))));
+  }
+
+  SHELL.tljobs = function () {
+    return h('section.view', h('p.hint', 'Limits for targets on one job, and one action for every player of a job.'),
+      h('div.stack', { id: 'tl-jobs' }, tlJobsBody()));
+  };
+  LOAD.tljobs = function () { loadTargetLimits(); };
+
+  function tlJobRefuse(slot, text) {
+    disarm();
+    S.tl[slot] = { ok: false, text: text };
+    drawTl();
+  }
+
+  ACTIONS['tj-edit'] = function (node) {
+    var job = node.getAttribute('data-value') || '';
+    var row = asList(S.tl.meta && S.tl.meta.jobs).filter(function (j) { return j.job === job; })[0];
+    S.forms['tj.job'] = job;
+    tlKeys().forEach(function (k) {
+      var v = row && row.limits ? row.limits[k.key] : undefined;
+      S.forms['tj.' + k.key] = v === undefined || v === null ? '' : String(v);
+    });
+    disarm();
+    drawTl();
+  };
+  ACTIONS['tj-save'] = function (node) {
+    var job = trim(S.forms['tj.job']).toLowerCase();
+    if (!/^[a-z0-9_]{1,32}$/.test(job)) {
+      return tlJobRefuse('jobAnswer', 'A job name is its qbx name: lower-case letters, digits and _.');
+    }
+    var typed = tlLimitsTyped('tj');
+    if (typed.bad) return tlJobRefuse('jobAnswer', typed.bad);
+    if (!typed.count) return tlJobRefuse('jobAnswer', 'Fill in at least one limit for the job.');
+    if (!confirmed(node, 'Click again: save limits for ' + job)) return;
+    write('targetJobSet', { job: job, limits: typed.limits }, 'tl:job:' + job, node).then(function (reply) {
+      if (!reply) return;
+      S.tl.jobAnswer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) loadTargetLimits(); else drawTl();
+    });
+  };
+  ACTIONS['tj-remove'] = function (node) {
+    var job = node.getAttribute('data-value') || '';
+    if (!confirmed(node)) return;
+    write('targetJobRemove', { job: job }, 'tl:job:' + job, node).then(function (reply) {
+      if (!reply) return;
+      S.tl.jobAnswer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) loadTargetLimits(); else drawTl();
+    });
+  };
+
+  /** How many players a job action reaches, asked as the job is typed. */
+  function tlJobCount() {
+    var job = trim(S.forms['tja.job']).toLowerCase();
+    if (!/^[a-z0-9_]{1,32}$/.test(job)) { S.tl.jobCount = null; S.tl.jobCountFor = ''; return Promise.resolve(); }
+    return ask('targetJobCount', { job: job }, 'targetJobCount').then(function (reply) {
+      if (!reply || !reply.ok || !reply.data) return;
+      S.tl.jobCount = Number(reply.data.count) || 0;
+      S.tl.jobCountFor = String(reply.data.job || job);
+      if (S.section !== 'tljobs') return;
+      var counted = tlJobWho();
+      var span = byId('tja-count');
+      if (span) span.textContent = counted.count === null ? '' : counted.text;
+      var buttons = byId('tja-buttons');
+      if (buttons) { setHtml(buttons, tlManyButtons()); rearm(buttons); }
+    });
+  }
+  LIVE['tja-count'] = function () {
+    clearTimeout(S.tl.countTimer);
+    S.tl.countTimer = setTimeout(function () { S.tl.countTimer = null; tlJobCount(); }, DEBOUNCE_MS);
+  };
+
+  function tlJobAction(node, action, all) {
+    var job = trim(S.forms['tja.job']).toLowerCase();
+    var reason = trim(S.forms['tja.reason']);
+    if (!/^[a-z0-9_]{1,32}$/.test(job)) return tlJobRefuse('jobAnswerMany', 'Give the job\'s qbx name first.');
+    var data = { job: job, action: action, all: all === true, reason: reason.slice(0, 120) };
+    if (action === 'extend') {
+      var min = wholeNumber(S.forms['tja.min']);
+      var most = Number(S.tl.meta && S.tl.meta.extendMax) || 43200;
+      if (!min || min > most) return tlJobRefuse('jobAnswerMany', 'Give the minutes to add, 1 to ' + most + '.');
+      data.minutes = min;
+    }
+    if (!reason) return tlJobRefuse('jobAnswerMany', 'Give a reason: it goes on the record.');
+    if (S.tl.jobCountFor !== job) {
+      // The confirm names how many it reaches: counted first.
+      tlJobCount();
+      return tlJobRefuse('jobAnswerMany', 'Counting the players of ' + job + ': click again once the count shows.');
+    }
+    if (!confirmed(node)) return;
+    write('targetJobAction', data, 'tl:jobaction:' + job, node).then(function (reply) {
+      if (!reply) return;
+      S.tl.jobAnswerMany = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      drawTl();
+    });
+  }
+  ACTIONS['tja-reset'] = function (node) { tlJobAction(node, 'reset', false); };
+  ACTIONS['tja-reset-all'] = function (node) { tlJobAction(node, 'reset', true); };
+  ACTIONS['tja-extend'] = function (node) { tlJobAction(node, 'extend', false); };
+  ACTIONS['tja-counts'] = function (node) { tlJobAction(node, 'counts', false); };
+
+  /* ---- per player ---- */
+
+  var TL_RULE = {
+    TargetCooldownAfterResolveSeconds: 'the wait after a contract on them ended',
+    TargetCooldownAfterCompletionSeconds: 'the wait after a completed contract',
+    'Immunity.AfterBailoutSeconds': 'the breather after a buyout',
+    staff: 'a cooldown staff extended'
+  };
+
+  function loadTargetStatus(again) {
+    var subject = trim(S.forms['tp.q']);
+    var byRef = again === true && S.tl.ref ? S.tl.ref : null;
+    if (!subject && !byRef) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
+    disarm();
+    var sent = byRef ? { ref: byRef } : { subject: subject.slice(0, 64) };
+    var keep = again === true ? S.tl.answer : null;
+    return ask('targetStatus', sent, 'targetStatus').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) {
+        S.tl.status = { error: words(reply) };
+        if (!byRef) S.tl.ref = null;
+        toast(words(reply), 'error');
+      } else {
+        S.tl.status = reply.data || {};
+        var p = S.tl.status.player || {};
+        S.tl.ref = typeof p.ref === 'string' ? p.ref : null;
+      }
+      S.tl.answer = keep;
+      drawTl();
+    });
+  }
+
+  function tlStatusCard(d) {
+    var st = d.status || {};
+    var p = d.player || {};
+    var keys = tlKeys();
+    var left = Number(st.cooldownLeft) || 0;
+    var adj = st.adjustment || {};
+    var ov = adj.override;
+    return frag(
+      h('div.person',
+        h('h2', String(p.name || 'No name on record')),
+        p.cid ? h('span.cid', String(p.cid)) : h('span.chip', 'citizen id hidden'),
+        p.online ? h('span.chip.is-live', 'in the city') : h('span.chip', 'offline'),
+        st.job ? h('span.chip.is-job', 'job: ' + String(st.job) + (st.jobFrom === 'last known' ? ' (last known)' : '')) : null,
+        st.exempt ? h('span.chip.is-warn', 'Exempt from limits') : null),
+      h('div.tiles.is-compact',
+        tile('Live on them', h('p.big', num(st.live) + ' / ' + (st.exempt ? '—' : num(st.limits && st.limits.MaxActiveContractsPerTarget)))),
+        tile('Placed, 24 hours', h('p.big', num(st.day))),
+        tile('Placed, 7 days', h('p.big', num(st.week))),
+        tile('Cooldown left', h('p.big' + (left > 0 ? '.is-warn' : ''), left > 0 ? exactSpan(left) : 'none'))),
+      left > 0 ? h('p.note', 'Set by ' + (TL_RULE[st.cooldownRule] || String(st.cooldownRule)) + ' (from the '
+        + (TL_SOURCE[st.cooldownFrom] || 'global') + ' limits).') : null,
+      Number(st.dayAll) !== Number(st.day) || Number(st.weekAll) !== Number(st.week)
+        ? h('p.note', 'Counted since staff reset the counts: ' + num(st.dayAll) + ' in 24 hours and ' + num(st.weekAll)
+          + ' in 7 days in all.') : null,
+      h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Limit'), h('th', 'Applies to them'), h('th', 'From'))),
+        h('tbody', keys.map(function (k) {
+          var from = st.source ? st.source[k.key] : 'global';
+          return h('tr', h('td', String(k.label)),
+            h('td', st.exempt ? 'exempt' : tlValue(k, st.limits ? st.limits[k.key] : 0)),
+            h('td', st.exempt ? 'player' : (TL_SOURCE[from] || 'global')));
+        })))),
+      ov ? h('p.sub', (ov.exempt ? 'Exempt from limits' : 'Their own limits') + ' '
+        + (ov.until_at ? 'until ' + when(ov.until_at) : 'for good') + (ov.reason ? ': ' + String(ov.reason) : '')) : null,
+      adj.until_at && Number(adj.until_at) > nowSeconds()
+        ? h('p.sub', 'Cooldown extended by staff until ' + when(adj.until_at)) : null);
+  }
+
+  function tlPlayerActions() {
+    var open = modOpen();
+    var ref = S.tl.ref;
+    var a = function (extra) { var o = extra || {}; o['data-ref'] = ref; return o; };
+    var keys = tlKeys();
+    return frag(
+      card('Staff actions on them', frag(
+        h('p.note', 'Every action takes a reason, goes on the record and needs the moderator ACE or the staff ACE. '
+          + 'Reset cooldown lets them be named now and keeps the same placer\'s wait; Reset all clears that too, '
+          + 'and any extension. Players are never told.'),
+        h('div.inline-form.is-wide',
+          field('tp.reason', { id: 'tp-reason', class: 'is-grow', maxlength: '120', disabled: !open,
+            placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the action' })),
+        h('div.btn-row.tl-many',
+          modBtn('', 'tp-reset', a(), 'Reset cooldown', 'Click again to reset', 'arrow-rotate-left'),
+          modBtn('', 'tp-reset-all', a(), 'Reset all', 'Click again to reset all', 'arrows-rotate'),
+          modBtn('', 'tp-counts', a(), 'Reset counts', 'Click again to reset the counts', 'eraser')),
+        h('div.inline-form.is-wide',
+          field('tp.min', { id: 'tp-min', class: 'is-short', inputmode: 'numeric', maxlength: '5', disabled: !open,
+            placeholder: 'Minutes', 'aria-label': 'Minutes to extend the cooldown by' }),
+          modBtn('', 'tp-extend', a(), 'Extend by minutes', 'Click again to extend', 'hourglass'),
+          field('tp.until', { id: 'tp-until', class: 'is-short', maxlength: '16', disabled: !open,
+            placeholder: 'YYYY-MM-DD HH:MM', 'aria-label': 'Hold the cooldown until' }),
+          modBtn('', 'tp-until-set', a(), 'Hold until', 'Click again to hold until then', 'calendar'))),
+        '', null),
+      card('Their own limits', frag(
+        h('p.note', 'Over the job\'s and the defaults, for some hours or for good (0). Leave a box empty to keep '
+          + 'what applies now. Exempt lifts every limit; a cooldown staff extended still holds.'),
+        h('div.inline-form.is-wide',
+          segmented('tpo-mode', [{ value: 'custom', label: 'Custom limits', disabled: !open },
+            { value: 'exempt', label: 'Exempt from limits', disabled: !open }], S.tl.exempt ? 'exempt' : 'custom'),
+          field('tpo.hours', { id: 'tpo-hours', class: 'is-short', inputmode: 'numeric', maxlength: '4',
+            disabled: !open, placeholder: 'Hours (0 = for good)', 'aria-label': 'Hours the override lasts' })),
+        S.tl.exempt ? null : tlLimitFields('tpo', open),
+        h('div.btn-row',
+          modBtn('.is-primary', 'tpo-set', a(), S.tl.exempt ? 'Make exempt' : 'Set their limits',
+            'Click again to set', 'user-shield'),
+          keys.length ? modBtn('', 'tpo-clear', a(), 'Lift their own limits', 'Click again to lift', 'unlock') : null))),
+      answerBox(S.tl.answer));
+  }
+
+  function tlPlayerBody() {
+    var d = S.tl.status;
+    if (!S.tl.meta && !S.tl.error) return loading('Reading the limits…');
+    if (!d) return empty('Look somebody up by their player id, citizen id or name, as Players does.');
+    if (d.error) return empty(d.error);
+    return frag(card('As a target', tlStatusCard(d)), tlPlayerActions());
+  }
+
+  SHELL.tlplayer = function () {
+    return h('section.view',
+      h('div.toolbar',
+        h('label.search', icon('magnifying-glass'),
+          field('tp.q', { id: 'tp-q', placeholder: 'Player id, citizen id or name', 'data-enter': 'tp-lookup',
+            'aria-label': 'Player id, citizen id or name' })),
+        btn('.is-primary', 'tp-lookup', {}, 'Look up', 'arrow-right')),
+      h('p.hint', 'Exact times, which players never see. Each lookup is on the record.'),
+      h('div.stack', { id: 'tl-player' }, tlPlayerBody()));
+  };
+  LOAD.tlplayer = function () { if (!S.tl.meta) loadTargetLimits(); };
+
+  ACTIONS['tp-lookup'] = function () {
+    S.tl.answer = null;
+    loadTargetStatus(false);
+  };
+
+  function tlRefuse(text) {
+    disarm();
+    S.tl.answer = { ok: false, text: text };
+    drawTl();
+  }
+
+  /** A write from the card: named by the lookup's handle, the answer kept,
+      and the card read again by the same handle once it went through. */
+  /** Each write from the card, by name, so every op the page asks for reads plainly. */
+  var TL_SEND = {
+    reset: function (d, node) { return write('targetReset', d, 'tl:player', node); },
+    counts: function (d, node) { return write('targetCounts', d, 'tl:player', node); },
+    extend: function (d, node) { return write('targetExtend', d, 'tl:player', node); },
+    override: function (d, node) { return write('targetOverride', d, 'tl:player', node); },
+    clear: function (d, node) { return write('targetOverrideClear', d, 'tl:player', node); }
+  };
+
+  function tlWrite(node, send, extra) {
+    if (!S.tl.ref) return tlRefuse('Look them up first.');
+    var reason = trim(S.forms['tp.reason']);
+    if (!reason) return tlRefuse('Give a reason: it goes on the record.');
+    if (!confirmed(node)) return;
+    var data = { ref: S.tl.ref, reason: reason.slice(0, 120) };
+    Object.keys(extra || {}).forEach(function (k) { data[k] = extra[k]; });
+    send(data, node).then(function (reply) {
+      if (!reply) return;
+      S.tl.answer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) loadTargetStatus(true); else drawTl();
+    });
+  }
+
+  ACTIONS['tp-reset'] = function (node) { tlWrite(node, TL_SEND.reset, { all: false }); };
+  ACTIONS['tp-reset-all'] = function (node) { tlWrite(node, TL_SEND.reset, { all: true }); };
+  ACTIONS['tp-counts'] = function (node) { tlWrite(node, TL_SEND.counts, {}); };
+  ACTIONS['tp-extend'] = function (node) {
+    var min = wholeNumber(S.forms['tp.min']);
+    var most = Number(S.tl.meta && S.tl.meta.extendMax) || 43200;
+    if (!min || min > most) return tlRefuse('Give the minutes to add, 1 to ' + most + '.');
+    tlWrite(node, TL_SEND.extend, { minutes: min });
+  };
+  ACTIONS['tp-until-set'] = function (node) {
+    var at = parseWhen(S.forms['tp.until'], false);
+    if (!at) return tlRefuse('Give the time as YYYY-MM-DD HH:MM.');
+    if (at <= nowSeconds()) return tlRefuse('That time has passed.');
+    tlWrite(node, TL_SEND.extend, { untilAt: at });
+  };
+  ACTIONS['tpo-mode'] = function (node) {
+    S.tl.exempt = node.getAttribute('data-value') === 'exempt';
+    disarm();
+    drawTl();
+  };
+  ACTIONS['tpo-set'] = function (node) {
+    var raw = trim(S.forms['tpo.hours']);
+    var max = Number(S.tl.meta && S.tl.meta.overrideMaxHours) || 8760;
+    if (!/^\d{1,4}$/.test(raw) || Number(raw) > max) return tlRefuse('Give the hours, 0 for good, up to ' + max + '.');
+    if (S.tl.exempt) return tlWrite(node, TL_SEND.override, { exempt: true, hours: Number(raw) });
+    var typed = tlLimitsTyped('tpo');
+    if (typed.bad) return tlRefuse(typed.bad);
+    if (!typed.count) return tlRefuse('Fill in at least one limit, or choose Exempt.');
+    tlWrite(node, TL_SEND.override, { exempt: false, limits: typed.limits, hours: Number(raw) });
+  };
+  ACTIONS['tpo-clear'] = function (node) { tlWrite(node, TL_SEND.clear, {}); };
+
+  /* ---- current contracts ---- */
+
+  function loadTlCurrent() {
+    clearTimeout(S.tl.curTimer);
+    S.tl.curTimer = null;
+    var data = { page: S.tl.curPage };
+    var q = trim(S.forms['tc.q']).slice(0, 64);
+    if (q) data.query = q;
+    return ask('targetContracts', data, 'targetContracts').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) { toast(words(reply), 'error'); S.tl.cur = { error: words(reply) }; }
+      else { S.tl.cur = reply.data || {}; S.tl.curPage = Number(S.tl.cur.page) || 1; }
+      drawTl();
+    });
+  }
+
+  function tlCurrentRows() {
+    var d = S.tl.cur;
+    if (!d) return loading('Reading the live contracts…');
+    if (d.error) return empty(d.error);
+    var rows = asList(d.rows);
+    if (!rows.length) return empty('No live contract matches.');
+    var out = [], last = null;
+    rows.forEach(function (row) {
+      if (row.group !== last) {
+        last = row.group;
+        out.push(h('tr.tl-group', h('td', { colspan: '6' }, icon('crosshairs'), ' ', String(row.target || '—'),
+          h('span.sub', ' · ' + num(row.onTarget) + ' live on them'))));
+      }
+      out.push(h('tr.row', { 'data-act': 'contract', 'data-id': String(row.id), tabindex: '0',
+        title: 'Open contract ' + row.id },
+        h('td.mono.nowrap', String(row.id)),
+        h('td', stateChip(row.state), row.frozen ? h('span.chip.is-warn.is-frozen', 'On hold') : null),
+        h('td.nowrap', RULE_LABEL[row.rule] || String(row.rule || '—')),
+        h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || 'Anonymous'))
+          : String(row.client || '—')),
+        h('td.num', num(row.claimed) + ' / ' + num(row.slots)),
+        h('td', { title: row.deadline_at ? when(row.deadline_at) : null },
+          row.deadline_at ? 'due ' + ago(row.deadline_at) : '—')));
+    });
+    return h('div.table-wrap', h('table.grid.is-rows',
+      h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), h('th', 'Rule'), h('th', 'Client'),
+        h('th.num', 'Payouts'), h('th', 'Deadline'))),
+      h('tbody', out)));
+  }
+
+  function tlCurrentPager() {
+    var d = S.tl.cur;
+    if (!d || d.error) return frag();
+    var page = Number(d.page) || 1, pages = Number(d.pages) || 1;
+    return frag(
+      btn('.is-small', 'tc-page', { 'data-value': String(page - 1), disabled: page <= 1 }, 'Previous', 'chevron-left'),
+      h('span.pager-text', 'Page ' + page + ' of ' + pages + ' · ' + num(d.total) + ' live contract'
+        + (Number(d.total) === 1 ? '' : 's') + ' on ' + num(d.targets) + ' target' + (Number(d.targets) === 1 ? '' : 's')),
+      btn('.is-small', 'tc-page', { 'data-value': String(page + 1), disabled: page >= pages }, 'Next', 'chevron-right'));
+  }
+
+  SHELL.tlcontracts = function () {
+    return h('section.view',
+      h('div.toolbar',
+        h('label.search', icon('magnifying-glass'),
+          field('tc.q', { id: 'tc-q', placeholder: 'Target name or citizen id', 'data-live': 'tc-search',
+            'data-enter': 'tc-search-now', 'aria-label': 'Search live contracts by target' }))),
+      h('p.hint', 'Every live contract (open, taken, settling, on hold), by target. A row opens the contract with '
+        + 'every staff action it has.'),
+      h('div.results', { id: 'tl-cur' }, tlCurrentRows()),
+      h('div.pager', { id: 'tl-cur-pager' }, tlCurrentPager()));
+  };
+  LOAD.tlcontracts = function () { loadTlCurrent(); };
+
+  ACTIONS['tc-search-now'] = function () { S.tl.curPage = 1; loadTlCurrent(); };
+  LIVE['tc-search'] = function () {
+    clearTimeout(S.tl.curTimer);
+    S.tl.curTimer = setTimeout(function () { S.tl.curTimer = null; S.tl.curPage = 1; loadTlCurrent(); }, DEBOUNCE_MS);
+  };
+  ACTIONS['tc-page'] = function (node) {
+    S.tl.curPage = Math.max(1, Number(node.getAttribute('data-value')) || 1);
+    loadTlCurrent();
+  };
+
+  STAFF_ACTIONS.push(
+    { title: 'Target limits', icon: 'user-clock', view: 'tlplayer', go: 'Open Per player',
+      text: 'How often one person may have a contract placed on them: the defaults, a job\'s own, and one '
+        + 'player\'s cooldown reset or extended, counts reset, own limits or exempt; the same for every player '
+        + 'of a job at once. Current contracts lists every live contract by target.',
+      also: { view: 'tljobs', go: 'Per job' } });
+
+  HELP.push(
+    { title: 'Target limits', icon: 'user-clock',
+      text: 'The limits on how often one person may be targeted. A player\'s own override wins, then their job\'s '
+        + '(the job they are working when the contract is placed), then the defaults. Day and week caps are off '
+        + 'as shipped. Players are told only what the target rules always said, never a time, a job or staff.',
+      links: [{ key: 'Limits.MaxContractsPerTargetPerDay', view: 'tldefaults', label: 'Day cap' },
+        { key: 'Limits.MaxContractsPerTargetPerWeek', view: 'tldefaults', label: 'Week cap' }] });
 
   /* Loaded to the end: admin.html's fallback, which gives the focus back
      when this file fails to load or throws while loading, stands down. */

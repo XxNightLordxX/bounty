@@ -132,7 +132,9 @@ Settings.DENY = DENY
 
 --- The categories a key is shown under in the panel: who uses it.
 Settings.CATEGORIES = { 'rules-timers', 'rules-rewards', 'rules-limits', 'rules-targeting', 'features',
-    'developer' }
+    'developer',
+    -- The Target limits section's Defaults (server/targetlimits.lua).
+    'target-limits' }
 
 --- Rewards & money, shown in these groups rather than the key's own.
 local MONEY = {
@@ -639,9 +641,24 @@ local CATALOGUE = {
     { key = 'Limits.MaxAcceptedPerHitman', section = 'limits', category = 'rules-limits', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts a hitman may hold',
       inflight = CAP },
-    { key = 'Limits.MaxActiveContractsPerTarget', section = 'limits', group = 'Contract limits',
-      category = 'rules-limits',
-      kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts on one target',
+    -- Target limits (the panel's own section, server/targetlimits.lua): how
+    -- often one person may have a contract placed on them. A job's or a
+    -- player's override is set there too, over these.
+    { key = 'Limits.MaxActiveContractsPerTarget', section = 'limits', group = 'Target limits',
+      category = 'target-limits',
+      kind = 'number', integer = true, min = 1, max = 50, label = 'Live contracts on one person at once',
+      inflight = CAP },
+    { key = 'Limits.MaxContractsPerTargetPerDay', section = 'limits', group = 'Target limits',
+      category = 'target-limits',
+      kind = 'number', integer = true, min = 0, max = 100,
+      label = 'Contracts placed on one person in a rolling 24 hours (0 = off)',
+      about = 'Every contract placed on them counts, whatever became of it, but one staff voided.',
+      inflight = CAP },
+    { key = 'Limits.MaxContractsPerTargetPerWeek', section = 'limits', group = 'Target limits',
+      category = 'target-limits',
+      kind = 'number', integer = true, min = 0, max = 500,
+      label = 'Contracts placed on one person in a rolling 7 days (0 = off)',
+      about = 'Every contract placed on them counts, whatever became of it, but one staff voided.',
       inflight = CAP },
     -- Never above the most a contract may be worth (Config.MaxContractValue,
     -- config.lua's only): offered up to 100,000,000, anything over that was
@@ -666,13 +683,14 @@ local CATALOGUE = {
     { key = 'Limits.SlotCooldownSeconds', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 0, max = 86400,
       label = 'Wait between one hitman\'s payouts (s)', inflight = AT_USE },
-    { key = 'Limits.TargetCooldownAfterResolveSeconds', section = 'limits', group = 'Contract limits',
-      category = 'rules-timers',
+    { key = 'Limits.TargetCooldownAfterResolveSeconds', section = 'limits', group = 'Target limits',
+      category = 'target-limits',
       kind = 'number', integer = true, min = 0, max = 604800,
-      label = 'Wait before a target is listed again (s)', inflight = AT_USE },
-    { key = 'Limits.SameCreatorSameTargetCooldownSeconds', section = 'limits', category = 'rules-timers',
-      group = 'Contract limits', kind = 'number', integer = true, min = 0, max = 604800,
-      label = 'Wait before one client lists one target again (s)', inflight = AT_USE },
+      label = 'Wait after a contract on a person ends before anybody names them again (seconds)',
+      inflight = AT_USE },
+    { key = 'Limits.SameCreatorSameTargetCooldownSeconds', section = 'limits', category = 'target-limits',
+      group = 'Target limits', kind = 'number', integer = true, min = 0, max = 604800,
+      label = 'Wait before the same placer names the same person again (seconds)', inflight = AT_USE },
     { key = 'Limits.ContractLifetimeSeconds', section = 'limits', category = 'rules-timers', group = 'Contract limits',
       kind = 'number', integer = true, min = 600, max = 2592000,
       label = 'Longest a contract may run (s)',
@@ -1788,7 +1806,7 @@ end
 --- Proof items, serial scrubbing, the weekly stats and the completion cooldown
 --- (server/imp_proof.lua, imp_scrub.lua, imp_weekly.lua, imp_staffeco.lua).
 local IMP_PROOF, IMP_SCRUB = 'Improvements: Proof items', 'Improvements: Serial scrubbing'
-local IMP_WEEKLY, IMP_COOLDOWN = 'Improvements: Weekly stats', 'Improvements: Completion cooldown'
+local IMP_WEEKLY = 'Improvements: Weekly stats'
 for _, entry in ipairs({
     { key = 'Improvements.ProofItems.Enabled', section = 'features', category = 'features', group = IMP_PROOF,
       kind = 'switch', label = 'Proof items',
@@ -1828,9 +1846,9 @@ for _, entry in ipairs({
       label = 'Hour the weekly stats are posted (server time, 0-23)',
       inflight = 'Read every tick: a week already posted is not posted again.' },
 
-    { key = 'Limits.TargetCooldownAfterCompletionSeconds', section = 'limits', category = 'rules-timers',
-      group = IMP_COOLDOWN, kind = 'number', integer = true, min = 0, max = 2592000,
-      label = 'Wait after a completed contract before its target is listed again (s, 0 = off)',
+    { key = 'Limits.TargetCooldownAfterCompletionSeconds', section = 'limits', category = 'target-limits',
+      group = 'Target limits', kind = 'number', integer = true, min = 0, max = 2592000,
+      label = 'Wait after a completed contract before its target is named again (seconds, 0 = off)',
       about = 'The longer of this and the wait after any contract. The placer is told the wait '
           .. 'in hours, nothing else.', inflight = AT_USE },
 }) do

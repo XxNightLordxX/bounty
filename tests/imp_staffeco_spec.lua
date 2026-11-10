@@ -555,8 +555,12 @@ describe('the improvements in the admin panel', function()
             'Improvements.ProofItems.MetadataKey', 'Improvements.ProofItems.HandoverRadius',
             'Improvements.SerialScrub.Enabled', 'Improvements.WeeklyStats.Enabled',
             'Improvements.WeeklyStats.Day', 'Improvements.WeeklyStats.Hour',
-            'Limits.TargetCooldownAfterCompletionSeconds',
         }
+        -- The completion cooldown moved to the Target limits section, with
+        -- the other waits on one person being targeted.
+        local cooldown = s.settings.entry('Limits.TargetCooldownAfterCompletionSeconds')
+        eq(cooldown.group, 'Target limits')
+        eq(cooldown.category, 'target-limits')
         for _, key in ipairs(keys) do
             local entry = s.settings.entry(key)
             truthy(entry, key .. ' is in the catalogue')

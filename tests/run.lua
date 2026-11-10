@@ -410,6 +410,8 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.locationtip'] = nil
     package.loaded['crimson-hitman.server.staffcontract'] = nil
     package.loaded['crimson-hitman.server.sanctions'] = nil
+    package.loaded['crimson-hitman.server.targetlimits'] = nil
+    package.loaded['server.targetlimits'] = nil
     package.loaded['crimson-hitman.server.payments'] = nil
     package.loaded['crimson-hitman.server.history'] = nil
     package.loaded['crimson-hitman.server.summary'] = nil
@@ -473,6 +475,7 @@ function _G.newStack()
     local freeze     = require('crimson-hitman.server.freeze')
     local staffContract = require('crimson-hitman.server.staffcontract')
     local sanctions  = require('crimson-hitman.server.sanctions')
+    local targetLimits = require('crimson-hitman.server.targetlimits')
     local payments   = require('crimson-hitman.server.payments')
     local history    = require('crimson-hitman.server.history')
     local summary    = require('crimson-hitman.server.summary')
@@ -547,6 +550,7 @@ function _G.newStack()
     staffContract.init({ storage = storage, audit = audit, notify = notify,
                          contracts = contracts, identity = identity })
     sanctions.init({ storage = storage, audit = audit, notify = notify })
+    targetLimits.init({ storage = storage, audit = audit, contracts = contracts })
     payments.init({ storage = storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
     settings.watch('Staff.AppPaused', freeze.syncAppPause)
@@ -618,6 +622,8 @@ function _G.newStack()
         staffContract = staffContract,
         -- Suspensions and protections, manual payments, the history card.
         sanctions = sanctions, payments = payments, history = history,
+        -- The Target limits section.
+        targetLimits = targetLimits,
         -- The staff tools.
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         -- The roleplay consequences.
@@ -648,6 +654,7 @@ function _G.newStack()
         alerts = alerts, meeting = meeting, playtime = playtime, locationTip = locationTip,
         freeze = freeze, staffContract = staffContract,
         sanctions = sanctions, payments = payments, history = history,
+        targetLimits = targetLimits,
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         rpConsequences = rpConsequences,
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
@@ -703,6 +710,7 @@ local suites = {
     'sweep5_spec', 'sweep5b_spec', 'sweep5c_spec',
     'meeting_blip_spec',
     'sweep6_spec',
+    'target_limits_spec',
     'docs_spec',
 }
 

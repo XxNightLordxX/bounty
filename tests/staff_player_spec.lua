@@ -597,6 +597,11 @@ describe('every panel op, for every level', function()
         announce = 'write', undoSetting = 'write', settingsHistory = 'read',
         addNote = 'write', removeHitman = 'write', editText = 'write',
         console = 'developer', whois = 'identity',
+        -- Target limits.
+        targetLimits = 'read', targetStatus = 'read', targetJobCount = 'read', targetContracts = 'read',
+        targetJobSet = 'write', targetJobRemove = 'write',
+        targetReset = 'moderate', targetExtend = 'moderate', targetCounts = 'moderate',
+        targetOverride = 'moderate', targetOverrideClear = 'moderate', targetJobAction = 'moderate',
     }
 
     it('maps each op to exactly one level, and every op the panel has is mapped here', function()

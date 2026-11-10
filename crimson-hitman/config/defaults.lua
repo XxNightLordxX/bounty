@@ -119,6 +119,8 @@ ConfigDefaults.Bailout = {
 ConfigDefaults.Limits.MaxActiveContractsPerCreator = 3  -- live contracts one player may place
 ConfigDefaults.Limits.MaxAcceptedPerHitman         = 3  -- live contracts one hitman may hold
 ConfigDefaults.Limits.MaxActiveContractsPerTarget  = 2  -- live contracts on one person
+ConfigDefaults.Limits.MaxContractsPerTargetPerDay  = 0  -- contracts placed on one person in a rolling 24 h; 0 = off
+ConfigDefaults.Limits.MaxContractsPerTargetPerWeek = 0  -- contracts placed on one person in a rolling 7 days; 0 = off
 ConfigDefaults.Limits.MaxHitmenPerContract         = 5  -- hitmen on one competitive contract
 
 ConfigDefaults.Completion = {

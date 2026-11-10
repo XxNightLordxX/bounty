@@ -39,7 +39,7 @@
     </button>
   </header>
   <div id="banner" class="banner" role="status" hidden></div>
-  <!-- Six sections, by who uses them; each holds the views it groups as
+  <!-- Seven sections, by who uses them; each holds the views it groups as
        sub-tabs (admin.js GROUPS). Developer is drawn only for staff who may
        open it, and is Permissions alone for everybody else. -->
   <nav id="nav" class="nav" aria-label="Sections">
@@ -53,6 +53,9 @@
     <button id="grp-rules" class="nav-btn" type="button" data-act="group" data-group="rules">
       <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl">Rules</span>
       <span id="count-settings" class="nav-count" hidden></span>
+    </button>
+    <button id="grp-targets" class="nav-btn" type="button" data-act="group" data-group="targets">
+      <i class="fa-solid fa-user-clock" aria-hidden="true"></i><span class="lbl">Target limits</span>
     </button>
     <button id="grp-features" class="nav-btn" type="button" data-act="group" data-group="features">
       <i class="fa-solid fa-toggle-on" aria-hidden="true"></i><span class="lbl">Features</span>
@@ -109,6 +112,18 @@
     </button>
     <button id="nav-targeting" class="sub-btn" type="button" data-act="section" data-section="targeting" hidden>
       <i class="fa-solid fa-crosshairs" aria-hidden="true"></i><span class="lbl">Targeting</span>
+    </button>
+    <button id="nav-tldefaults" class="sub-btn" type="button" data-act="section" data-section="tldefaults" hidden>
+      <i class="fa-solid fa-sliders" aria-hidden="true"></i><span class="lbl">Defaults</span>
+    </button>
+    <button id="nav-tljobs" class="sub-btn" type="button" data-act="section" data-section="tljobs" hidden>
+      <i class="fa-solid fa-briefcase" aria-hidden="true"></i><span class="lbl">Per job</span>
+    </button>
+    <button id="nav-tlplayer" class="sub-btn" type="button" data-act="section" data-section="tlplayer" hidden>
+      <i class="fa-solid fa-user-clock" aria-hidden="true"></i><span class="lbl">Per player</span>
+    </button>
+    <button id="nav-tlcontracts" class="sub-btn" type="button" data-act="section" data-section="tlcontracts" hidden>
+      <i class="fa-solid fa-list-check" aria-hidden="true"></i><span class="lbl">Current contracts</span>
     </button>
     <button id="nav-features" class="sub-btn" type="button" data-act="section" data-section="features" hidden>
       <i class="fa-solid fa-toggle-on" aria-hidden="true"></i><span class="lbl">Switches</span>

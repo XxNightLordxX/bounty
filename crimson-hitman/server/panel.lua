@@ -75,6 +75,14 @@ local OPS = {
     -- the page), the settings history every reader of the settings reads,
     -- and an undo of one change through the normal set path.
     announce = WRITE, settingsHistory = READ, undoSetting = WRITE,
+    -- Target limits (server/targetlimits.lua): the lists and one player's
+    -- standing are reads; a job's own limits are settings, the staff ACE's;
+    -- a player's cooldown, counts and override, and a job's players at
+    -- once, a moderator's, as protecting a player is.
+    targetLimits = READ, targetStatus = READ, targetJobCount = READ, targetContracts = READ,
+    targetJobSet = WRITE, targetJobRemove = WRITE,
+    targetReset = MOD, targetExtend = MOD, targetCounts = MOD, targetOverride = MOD,
+    targetOverrideClear = MOD, targetJobAction = MOD,
 }
 
 --- Every staff command (Config.Admin.Commands, but the panel's own) and the
@@ -116,6 +124,8 @@ local WAITS_FOR_RECOVERY = {
     removeHitman = true, editText = true,
     suspend = true, unsuspend = true, protect = true, unprotect = true, manualPay = true,
     undoSetting = true,
+    targetJobSet = true, targetJobRemove = true, targetReset = true, targetExtend = true,
+    targetCounts = true, targetOverride = true, targetOverrideClear = true, targetJobAction = true,
 }
 
 --- How long one overview is shared between requests. Each open panel asks
@@ -3181,6 +3191,338 @@ H.undoSetting = function(src, data)
     end
     return true, nil, ('Undone: %s is %s again (it was %s).'):format(key,
         deps.settings.describe(detail.value), deps.settings.describe(detail.old)), detail
+end
+
+--------------------------------------------------------------------------
+-- Target limits (server/targetlimits.lua): the section of its own
+--------------------------------------------------------------------------
+
+--- The limits as the page edits them: { [key] = number }. nil for anything
+--- but a small table; TargetLimits checks every key and value.
+local function limitsOf(value)
+    if type(value) ~= 'table' then return nil end
+    local out, n = {}, 0
+    for key, v in pairs(value) do
+        n = n + 1
+        if n > 16 or type(key) ~= 'string' then return nil end
+        out[key:sub(1, 64)] = tonumber(v) or v
+    end
+    return out
+end
+
+local TL_OFF = 'Target limits are not running on this server.'
+
+--- What a refused target limit write says.
+local function targetRefusal(err, detail)
+    if err == CH.ERR.BUSY then
+        return false, err, 'A change to them is still being saved. Try again in a moment.'
+    end
+    if err == 'not_active' then return false, err, 'Nothing like that is set, so nothing was changed.' end
+    if err == 'too_many' then
+        return false, err, ('At most %d jobs may have their own limits.'):format(deps.targetLimits.JOBS_MAX)
+    end
+    if err == CH.ERR.INVALID_INPUT then
+        local why = detail and detail.why
+        if why == 'job' then
+            return false, err, ('A job name is its qbx name: lower-case letters, digits and _, at most %d.')
+                :format(deps.targetLimits.JOB_MAX)
+        end
+        return false, err, 'Not changed: ' .. (why and tostring(why) or 'the server could not read that request')
+            .. '.'
+    end
+    return false, err, 'Not changed: the store did not take it. Try again in a moment.'
+end
+
+--- Every limit, as the page lists them, with the global value now.
+local function limitKeys()
+    local out = {}
+    for _, entry in ipairs(deps.targetLimits.KEYS) do
+        out[#out + 1] = { key = entry.key, label = entry.label, unit = entry.unit, min = entry.min,
+                          max = entry.max, value = tonumber(Config.Limits[entry.key]) or 0 }
+    end
+    return out
+end
+
+--- The section's lists: the limits, and every job with its own and what
+--- applies to that job's members as a result.
+H.targetLimits = function()
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local jobs = {}
+    for _, row in ipairs(TL.jobs()) do
+        jobs[#jobs + 1] = { job = row.job, limits = row.limits, at = row.at,
+                            effective = TL.effective(nil, row.job).values }
+    end
+    return true, nil, nil, { keys = limitKeys(), jobs = jobs, ignored = #deps.targetLimits.ignored(),
+                             jobMax = TL.JOB_MAX, extendMax = TL.EXTEND_MAX_MINUTES,
+                             overrideMaxHours = TL.OVERRIDE_MAX_HOURS }
+end
+
+--- Add or change one job's limits: { job, limits }.
+H.targetJobSet = function(src, data)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local limits = limitsOf(data.limits)
+    if not limits then return false, CH.ERR.INVALID_INPUT, 'Give at least one limit for the job.' end
+    local ok, err, detail = deps.targetLimits.setJob(staffOf(src), data.job, limits)
+    if not ok then return targetRefusal(err, detail) end
+    return true, nil, ('Targets working as %s now have these limits.'):format(detail.job)
+end
+
+--- Remove one job's limits: { job }.
+H.targetJobRemove = function(src, data)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local ok, err = deps.targetLimits.removeJob(staffOf(src), data.job)
+    if not ok then return targetRefusal(err) end
+    return true, nil, 'Removed: that job\'s members have the global limits again.'
+end
+
+--- The job a target is working now, or the one the latest contract on
+--- them recorded, and which it is.
+local function targetJobOf(cid, actor, contracts)
+    if actor and type(actor.job) == 'table' and actor.job.name then return tostring(actor.job.name), 'now' end
+    local best
+    for _, c in ipairs(contracts or {}) do
+        if c.target_cid == cid and c.target_job and (not best or (c.created_at or 0) > (best.created_at or 0)) then
+            best = c
+        end
+    end
+    return best and tostring(best.target_job) or nil, best and 'last known' or nil
+end
+
+--- One player as a target, exactly: { ref } from a lookup made here, or
+--- { subject } to look them up (as Players does), which gives the ref
+--- every write from this card names them by.
+H.targetStatus = function(src, data)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local canIdentify = identifies(src)
+    local who, whoErr, whoMessage
+    if data.ref ~= nil then
+        who, whoErr, whoMessage = fromPlayerRef(src, data.ref)
+    else
+        who, whoErr, whoMessage = playerSubject(data.subject, src)
+    end
+    if not who then return false, whoErr, whoMessage end
+    local cid = who.cid
+    local actor = who.actor or deps.identity.byCitizenId(cid)
+    local now = os.time()
+    local job0 = actor and type(actor.job) == 'table' and actor.job.name or nil
+    local eff = TL.effective(cid, job0).values
+    local back = math.max(TL.WEEK, tonumber(eff.TargetCooldownAfterResolveSeconds) or 0,
+        tonumber(eff.TargetCooldownAfterCompletionSeconds) or 0,
+        tonumber(Config.Immunity.AfterBailoutSeconds) or 0)
+    local contracts = deps.storage.contractsNaming(cid, now - back) or {}
+    local job, jobFrom = targetJobOf(cid, actor, contracts)
+    local status = deps.targetLimits.status(cid, job, contracts, deps.contracts.everTakenUp)
+    status.jobFrom = jobFrom
+    local name = actor and actor.name or nil
+    if not name then
+        for _, c in ipairs(contracts) do
+            if c.target_cid == cid then
+                name = c.target_name
+                break
+            end
+        end
+    end
+    if who.typed and not actor and not name and deps.identity.characterExists(cid) == false then
+        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character has it.'
+    end
+    deps.audit.staff('admin_panel_target_status', staffOf(src), nil, { subject = cid, typed = who.typed or nil })
+    return true, nil, nil, {
+        player = { cid = (canIdentify or who.typed) and cid or nil, name = name, online = actor ~= nil,
+                   ref = data.ref ~= nil and data.ref or playerRef(src, who) },
+        status = status,
+    }
+end
+
+--- One staff action on the player a lookup found: data.ref only, never a
+--- name or a player id matched again now.
+local function targetWrite(src, data, action, args, said)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    if data.ref == nil then return false, 'stale_lookup', STALE_LOOKUP end
+    local who, whoErr, whoMessage = fromPlayerRef(src, data.ref)
+    if not who then return false, whoErr, whoMessage end
+    local reason = shortText(data.reason, TL.REASON_MAX)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    args.reason = reason
+    args.name = who.actor and who.actor.name or nil
+    local ok, err, detail = deps.targetLimits.adjust(staffOf(src), who.cid, action, args)
+    if not ok then return targetRefusal(err, detail) end
+    return true, nil, said
+end
+
+H.targetReset = function(src, data)
+    local all = data.all == true
+    return targetWrite(src, data, 'reset', { all = all }, all
+        and 'Every cooldown on them is cleared, the same placer\'s wait and any extension too.'
+        or 'Their cooldown is cleared: they may be named again now. The same placer\'s wait still holds.')
+end
+
+H.targetExtend = function(src, data)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local most = TL.EXTEND_MAX_MINUTES
+    local minutes = wholeNumber(data.minutes, 1, most)
+    local untilAt = wholeNumber(data.untilAt, 1)
+    if not minutes and not untilAt then
+        return false, CH.ERR.INVALID_INPUT,
+            ('Give the minutes to add (1 to %d) or a time to hold them until.'):format(most)
+    end
+    if untilAt and (untilAt <= os.time() or untilAt > os.time() + most * 60) then
+        return false, CH.ERR.INVALID_INPUT, 'That time is in the past, or more than 30 days away.'
+    end
+    return targetWrite(src, data, 'extend', { minutes = not untilAt and minutes or nil, untilAt = untilAt },
+        'Their cooldown is extended: nobody may name them until it ends.')
+end
+
+H.targetCounts = function(src, data)
+    return targetWrite(src, data, 'counts', {}, 'Their day and week counts start again from now.')
+end
+
+H.targetOverride = function(src, data)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local hours = wholeNumber(data.hours, 0, TL.OVERRIDE_MAX_HOURS)
+    if not hours then return false, CH.ERR.INVALID_INPUT, 'Hours are a whole number, or 0 for good.' end
+    local exempt = data.exempt == true
+    local limits = exempt and {} or limitsOf(data.limits)
+    if not limits then return false, CH.ERR.INVALID_INPUT, 'Give the limits, or choose Exempt.' end
+    return targetWrite(src, data, 'override', { exempt = exempt, limits = limits, hours = hours },
+        exempt and 'They are exempt from the target limits.' or 'Their own limits are set.')
+end
+
+H.targetOverrideClear = function(src, data)
+    return targetWrite(src, data, 'clear', {},
+        'Their own limits are lifted: the job\'s or the global ones apply.')
+end
+
+--- Who a job action reaches: every player in the city working that job now,
+--- and every character not in the city whom the latest contract placed on
+--- them in the last 7 days recorded as working it. Citizen ids, sorted.
+local function jobPlayers(job)
+    local out, seen = {}, {}
+    for _, actor in ipairs(deps.identity.online() or {}) do
+        seen[actor.cid] = true
+        if type(actor.job) == 'table' and tostring(actor.job.name or ''):lower() == job then
+            out[#out + 1] = actor.cid
+        end
+    end
+    local since, latest = os.time() - deps.targetLimits.WEEK, {}
+    for _, c in ipairs(everyContract()) do
+        if (tonumber(c.created_at) or 0) >= since and c.target_cid and not seen[c.target_cid] then
+            local was = latest[c.target_cid]
+            if not was or (c.created_at or 0) > (was.created_at or 0) then latest[c.target_cid] = c end
+        end
+    end
+    for cid, c in pairs(latest) do
+        if tostring(c.target_job or ''):lower() == job then out[#out + 1] = cid end
+    end
+    table.sort(out)
+    return out
+end
+
+--- How many players a job action would reach, for the confirm: { job }.
+H.targetJobCount = function(src, data)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local job = TL.jobName(data.job)
+    if not job then return targetRefusal(CH.ERR.INVALID_INPUT, { why = 'job' }) end
+    return true, nil, nil, { job = job, count = #jobPlayers(job) }
+end
+
+--- One action on every player of a job: { job, action ('reset' | 'extend'
+--- | 'counts'), minutes, all, reason }. One audit row, with the count.
+H.targetJobAction = function(src, data)
+    local TL = deps.targetLimits
+    if not TL then return false, 'unavailable', TL_OFF end
+    local job = TL.jobName(data.job)
+    if not job then return targetRefusal(CH.ERR.INVALID_INPUT, { why = 'job' }) end
+    local action = (data.action == 'reset' or data.action == 'extend' or data.action == 'counts')
+        and data.action or nil
+    if not action then return false, CH.ERR.INVALID_INPUT, 'Reset, extend or reset the counts.' end
+    local reason = shortText(data.reason, TL.REASON_MAX)
+    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    local args = { reason = reason, all = (action == 'reset' and data.all == true) or nil }
+    if action == 'extend' then
+        args.minutes = wholeNumber(data.minutes, 1, TL.EXTEND_MAX_MINUTES)
+        if not args.minutes then
+            return false, CH.ERR.INVALID_INPUT,
+                ('Give the minutes to add, 1 to %d.'):format(TL.EXTEND_MAX_MINUTES)
+        end
+    end
+    local cids = jobPlayers(job)
+    if #cids == 0 then
+        return false, 'nobody', ('Nobody is working as %s, or was named on a contract in the last 7 days '
+            .. 'while working it, so nothing was changed.'):format(job)
+    end
+    local _, _, done = deps.targetLimits.adjustMany(staffOf(src), job, cids, action, args)
+    local what = (action == 'reset' and 'cooldowns reset') or (action == 'extend' and 'cooldowns extended')
+        or 'day and week counts reset'
+    return true, nil, ('%s: %d player(s) had their %s%s.'):format(job, done.done, what,
+        done.failed > 0 and (', %d could not be changed'):format(done.failed) or ''), done
+end
+
+--- Every live contract (open, taken, settling, and those on hold), by
+--- target, a page at a time: { query (a target's name, or their exact
+--- citizen id), page }. Each row opens the contract's own view, with its
+--- staff actions, as a row in Contracts does; scrubbed the same way.
+H.targetContracts = function(src, data)
+    local canIdentify = identifies(src)
+    local query = shortText(data.query, 64)
+    local lowered = query and query:lower()
+    local page = wholeNumber(data.page, 1, 100000) or 1
+    local rows = {}
+    for _, c in ipairs(deps.storage.unfinishedContracts() or {}) do
+        if not lowered or c.target_cid == query
+            or tostring(c.target_name or ''):lower():find(lowered, 1, true) then
+            rows[#rows + 1] = c
+        end
+    end
+    table.sort(rows, function(a, b)
+        local ta, tb = tostring(a.target_name or ''):lower(), tostring(b.target_name or ''):lower()
+        if ta ~= tb then return ta < tb end
+        if a.target_cid ~= b.target_cid then return tostring(a.target_cid) < tostring(b.target_cid) end
+        return newestFirst(a, b)
+    end)
+    local perTarget, targets = {}, 0
+    for _, c in ipairs(rows) do
+        local key = tostring(c.target_cid)
+        if not perTarget[key] then targets = targets + 1 end
+        perTarget[key] = (perTarget[key] or 0) + 1
+    end
+    local size = pageSize()
+    local pages = math.max(1, math.ceil(#rows / size))
+    if page > pages then page = pages end
+    local out, alias, seq = {}, {}, 0
+    for i = (page - 1) * size + 1, math.min(#rows, page * size) do
+        local c = rows[i]
+        -- Which target a row is on: their citizen id to staff with
+        -- IdentityAce, and to everybody else a number telling one from the next.
+        local group = tostring(c.target_cid)
+        if not canIdentify then
+            if not alias[group] then
+                seq = seq + 1
+                alias[group] = 't' .. seq
+            end
+            group = alias[group]
+        end
+        out[#out + 1] = {
+            id = c.id, state = c.state, rule = Util.fulfilmentRule(c), created_at = c.created_at,
+            deadline_at = c.deadline_at, target = c.target_name, group = group,
+            onTarget = perTarget[tostring(c.target_cid)],
+            client = (c.anon_creator == true and not canIdentify) and 'Anonymous' or c.creator_name,
+            anonymous = c.anon_creator == true,
+            slots = c.payout_slots, claimed = c.slots_claimed,
+            frozen = frozenShown(c, nil, canIdentify) ~= nil or nil,
+        }
+    end
+    if query then
+        deps.audit.staff('admin_panel_target_contracts', staffOf(src), nil, { query = query, rows = #rows })
+    end
+    return true, nil, nil, { rows = out, page = page, pages = pages, total = #rows, targets = targets }
 end
 
 --------------------------------------------------------------------------

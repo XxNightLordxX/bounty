@@ -768,3 +768,18 @@ ul, ol { padding: 0; list-style: none; }
   font-size: var(--t-sm); max-height: 18rem; overflow-y: auto; }
 .excerpt li { overflow-wrap: anywhere; }
 .grid.is-history td .chip { margin-top: 0.2rem; }
+
+/* Target limits: the limit boxes of a job's or a player's own limits, a
+   job's own value in its row, and a target's heading in Current contracts. */
+.tl-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.5rem 0.8rem;
+  margin: 0.5rem 0; }
+.tl-field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.tl-label { font-size: var(--t-sm); overflow-wrap: anywhere; }
+.grid td.is-own { font-weight: 600; }
+.grid tr.tl-group td { font-weight: 600; background: rgba(255, 255, 255, 0.03); overflow-wrap: anywhere; }
+/* A job action's confirm names the job and the count: it wraps rather than
+   widening the button past the card, and so does a long job name. */
+.tl-many .btn { max-width: 100%; white-space: normal; height: auto; padding-top: 0.3rem; padding-bottom: 0.3rem; }
+.tl-many .btn > .lbl, .tl-many .btn > .cfm { min-width: 0; overflow-wrap: anywhere; }
+.chip.is-job { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.grid td.tl-job { overflow-wrap: anywhere; max-width: 12rem; }

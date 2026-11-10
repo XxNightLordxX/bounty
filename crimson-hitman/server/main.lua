@@ -1463,6 +1463,9 @@ local function validateConfig(quiet)
     CrimsonBoot.require('server.imp_scrub').validate(warn)
     CrimsonBoot.require('server.imp_weekly').validate(warn)
     CrimsonBoot.require('server.imp_staffeco').checkCompletionCooldown(warn)
+    -- The day and week limits on contracts placed on one person
+    -- (server/targetlimits.lua), 0 (off) where config.lua has none.
+    CrimsonBoot.require('server.targetlimits').checkConfig(warn)
 
     if quiet then return #fatal == 0, fatal, warn end
 
@@ -1963,6 +1966,8 @@ function StartCrimsonHitman()
     local thresholds = CrimsonBoot.require('server.thresholds')
     local announce   = CrimsonBoot.require('server.announce')
     local reports    = CrimsonBoot.require('server.reports')
+    -- The admin panel's Target limits (job and player overrides).
+    local targetLimits = CrimsonBoot.require('server.targetlimits')
     -- The roleplay consequences of a completion (README, Optional
     -- features): witness heat, EMS before re-listing, city news and dirty
     -- money payouts, each off as shipped.
@@ -2042,6 +2047,9 @@ function StartCrimsonHitman()
     -- (server/sanctions.lua): read from the store once, here. Manual staff
     -- payments (server/payments.lua) pay or owe through the buyout path.
     sanctions.init({ storage = Storage, audit = audit, notify = notify })
+    -- Target limits' job and player overrides (server/targetlimits.lua):
+    -- read from the store once, here, and asked by every placing check.
+    targetLimits.init({ storage = Storage, audit = audit, contracts = contracts })
     payments.init({ storage = Storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
     -- The app pause follows its switch the moment it changes.
@@ -2135,6 +2143,8 @@ function StartCrimsonHitman()
         -- Suspensions and protections, manual payments and the player
         -- history card, for the admin panel, the app and the tick.
         sanctions = sanctions, payments = payments, history = history,
+        -- Target limits, for the admin panel and the tick's prune.
+        targetLimits = targetLimits,
         -- The staff tools: the daily summary, the alert thresholds, the
         -- notice to every hitman and players' reports.
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
@@ -2870,6 +2880,9 @@ local SCHEDULE = {
     -- charges and writes, on a tick of its own. It sleeps until its soonest
     -- step is due, and takes at most Decay.STEPS_PER_PASS a pass.
     ['imp_decay.tick'] = { every = 60, phase = 20 },
+    -- Target limit player adjustments whose every fact has run out, taken
+    -- out of the store (server/targetlimits.lua). Nothing while none has.
+    ['target_limits.prune'] = { every = 300, phase = 45 },
     -- Not here, and on every tick: the restart hold's end
     -- (freeze.restartTick), released on the tick it reaches
     -- Config.Restart.MaxHoldMinutes; a suspension's end (sanctions.tick),
@@ -2935,6 +2948,7 @@ function Tick()
     if modules.freeze and modules.freeze.restartTick then job('freeze.restartTick', modules.freeze.restartTick) end
     -- Suspensions and protections whose time has passed, written down as ended.
     if modules.sanctions then job('sanctions.tick', modules.sanctions.tick) end
+    if modules.targetLimits then every('target_limits.prune', modules.targetLimits.prune, now) end
     -- The app pause in line with its switch, however it was changed.
     if modules.freeze and modules.freeze.syncAppPause then every('freeze.syncAppPause', modules.freeze.syncAppPause, now) end
     -- The staff tools' own clocks: the once-a-day summary, and the alert
