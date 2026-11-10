@@ -758,8 +758,12 @@ do
             .. 'from, so a spec can force a look-up to find out or not',
         ['Protection.held']            = 'what the bodyguard jobs hold, for the conservation '
             .. 'checks (rpC_roleplay_spec)',
-        ['Protection.all']             = 'every bodyguard job kept, so a spec can assert on them',
         ['Intent.count']               = 'how many payouts are held for proof of intent',
+        -- The step markers and body disposal.
+        ['CrimsonMarkers.count']       = 'how many step markers the client has drawn',
+        ['Disposal.count']             = 'how many body disposals are in force',
+        ['Disposal.runtime']           = 'a disposal\'s vehicle and whether it was reached',
+        ['MissionSteps.shown']         = 'what each player\'s map was sent, so a spec can assert on it',
     }
 
     local function read_all(dir, filter)

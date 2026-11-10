@@ -44,6 +44,15 @@ local CHANGED = {
 --- Settings added since the rewrite, by the path the comparison reports
 --- them under (a whole new section or record), with what they ship as.
 local ADDED = {
+    -- The step markers, on, and body disposal, off (server/missionsteps.lua,
+    -- server/disposal.lua), with its rate-limit bucket.
+    ['StepMarkers'] = { Enabled = true, KillScene = true, Handover = true, Protection = true },
+    ['Disposal'] = {
+        Enabled = false, VehicleModel = 'romero', VehicleSpawn = {}, DropOff = {}, PayNowPercent = 0,
+        TimeLimitMinutes = 30, OnTimeout = 'pay', ReducedPercent = 50, LoadMetres = 3.0, DropMetres = 8.0,
+        VehicleMetres = 10.0, AbandonMetres = 300.0, AbandonMinutes = 5, MaxRespawns = 3, DespawnSeconds = 10,
+    },
+    ['Cooldowns.disposal'] = { per = 10, burst = 6 },
     -- The Target limits section's day and week caps, shipped off.
     ['Limits.MaxContractsPerTargetPerDay'] = 0,
     ['Limits.MaxContractsPerTargetPerWeek'] = 0,
@@ -348,6 +357,7 @@ describe('the configuration as one short file', function()
             -- ADDED says.
             if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report' or path == 'Organisation'
                 or path == 'Cooldowns.org' or path == 'Cooldowns.orgWrite'
+                or path == 'StepMarkers' or path == 'Disposal' or path == 'Cooldowns.disposal'
                 or ((path:match('^Roleplay%.') or path:match('^Improvements%.')) and ADDED[path] ~= nil)) then
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
@@ -422,8 +432,11 @@ describe('the configuration as one short file', function()
         -- within, and its two rate-limit buckets.
         -- And the placer's Confirm handover (three Kidnap lines) and the
         -- staff Change reward / Reassign bounds (two Staff lines); and the
-        -- organisation invite's wait, one line. Real length 817, plus margin.
-        truthy(lines < 820, 'config.lua is ' .. lines .. ' lines')
+        -- organisation invite's wait, one line.
+        -- And the Mission steps section: one header, the step markers' block
+        -- and body disposal's, and its rate-limit bucket. All of it is 850
+        -- lines; the cap is that plus a three-line margin.
+        truthy(lines < 853, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

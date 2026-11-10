@@ -170,6 +170,35 @@ local function auditAtRest(store)
         end
     end
 
+    -- Body disposal (server/disposal.lua): a step names a contract that
+    -- exists and a kill may complete, by the hitman on it; and the payout it
+    -- holds is owed to that hitman or, after a timeout's refund, the placer,
+    -- never to anybody else and never to nobody.
+    if type(store.readRpRows) == 'function' then
+        local known = {}
+        for _, c in ipairs(contracts) do known[c.id] = c end
+        local okD, steps = pcall(store.readRpRows, 'disposal')
+        for _, step in ipairs(okD and type(steps) == 'table' and steps or {}) do
+            local c = known[step.contract_id]
+            if not c then
+                note('a disposal step on no contract', tostring(step.id))
+            else
+                if c.fulfilment_rule == 'alive' then note('a disposal step where no kill counts', tostring(step.id)) end
+                if step.hitman_cid == c.target_cid or step.hitman_cid == c.creator_cid then
+                    note('a disposal step for the wrong party', tostring(step.id))
+                end
+                local okL, lines = pcall(store.readEscrow, c.id)
+                for _, l in ipairs(okL and lines or {}) do
+                    if l.portion == CH.PORTION.BASELINE and tonumber(l.slot) == tonumber(step.slot)
+                        and l.state == CH.ESCROW_STATE.HELD and l.owed_to ~= step.hitman_cid
+                        and l.owed_to ~= c.creator_cid then
+                        note('a disposal payout owed to somebody else', tostring(l.id))
+                    end
+                end
+            end
+        end
+    end
+
     -- The hitman organisation (server/org/): a cut is more than nothing and
     -- never more than the escrow line it was taken from, so a member and
     -- the funds between them never received more than was escrowed; and

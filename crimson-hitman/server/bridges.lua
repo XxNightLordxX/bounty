@@ -118,6 +118,10 @@ function Bridges.onPlayerDropped(modules, cid)
     -- Their game took its own meeting point markers off; drawn again on
     -- their return (Meeting.reshow).
     if modules.meeting and modules.meeting.forget then modules.meeting.forget(cid) end
+    -- And their step markers; a disposal vehicle of theirs goes, made again
+    -- when they are back (server/missionsteps.lua, server/disposal.lua).
+    if modules.missionSteps then modules.missionSteps.forget(cid) end
+    if modules.disposal then pcall(modules.disposal.playerLeft, cid) end
 
     -- Memory mode holds no durable escrow, so a creator disconnecting would
     -- strand it. Refund and close rather than risk losing their property.

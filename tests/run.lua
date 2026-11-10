@@ -447,6 +447,8 @@ function _G.newStack()
     for _, name in ipairs({ 'init', 'powers', 'engine', 'jobs', 'funds', 'boss_ops', 'staff_ops' }) do
         package.loaded['server.org.' .. name] = nil
     end
+    package.loaded['server.missionsteps'] = nil
+    package.loaded['server.disposal'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -503,6 +505,8 @@ function _G.newStack()
     local impScrub  = require('server.imp_scrub')
     local impWeekly = require('server.imp_weekly')
     local org       = require('server.org.init')
+    local missionSteps = require('server.missionsteps')
+    local disposal  = require('server.disposal')
 
     storage.open()
     -- As main.lua wires it, checked by the start-up checks themselves run
@@ -599,6 +603,12 @@ function _G.newStack()
     impWeekly.init({ storage = storage, audit = audit, alerts = alerts })
     org.init({ storage = storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
                contracts = contracts, settings = settings })
+    -- The step markers and body disposal, as main.lua wires them.
+    missionSteps.init({ identity = identity, storage = storage, death = death, kidnap = kidnap,
+                        rpProtection = rpProtection })
+    disposal.init({ storage = storage, identity = identity, audit = audit, notify = notify,
+                    escrow = escrow, contracts = contracts, death = death, freeze = freeze,
+                    missionSteps = missionSteps, ratelimit = ratelimit, app = app, panel = panel })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was
@@ -649,6 +659,8 @@ function _G.newStack()
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
         -- The hitman organisation.
         org = org,
+        -- The step markers and body disposal.
+        missionSteps = missionSteps, disposal = disposal,
     }
     app.init(wiring)
     admin.init(wiring)
@@ -680,6 +692,7 @@ function _G.newStack()
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
         org = org,
+        missionSteps = missionSteps, disposal = disposal,
     }
 end
 
@@ -732,6 +745,7 @@ local suites = {
     'review_mst_spec',
     'admin_revamp_spec',
     'staff_reward_spec', 'handover_confirm_spec',
+    'mission_steps_spec', 'disposal_spec',
     'docs_spec',
 }
 

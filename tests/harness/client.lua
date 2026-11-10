@@ -296,6 +296,13 @@ function Client.boot(opts)
     require('crimson-hitman.shared.util')
     require('crimson-hitman.shared.log')
 
+    -- The step markers first, as the manifest lists them: client/main.lua
+    -- draws the tip and the meeting point through CrimsonMarkers.
+    package.loaded['crimson-hitman.client.missionsteps'] = nil
+    local markersOk, markersErr = withPhone(require, 'crimson-hitman.client.missionsteps')
+    if not markersOk then error(markersErr, 0) end
+    Client.markers = _G.CrimsonMarkers
+
     package.loaded['crimson-hitman.client.main'] = nil
     local ok, app = withPhone(require, 'crimson-hitman.client.main')
 

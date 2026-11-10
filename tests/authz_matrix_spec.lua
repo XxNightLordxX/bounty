@@ -1048,6 +1048,34 @@ end
 CUSTOM.orgUse = 'the hitman organisation requests'
 MATRIX.orgUse = { custom = true, why = 'a spot used by whoever the server sees standing at it' }
 
+-- Body disposal's two actions (server/disposal.lua, off as shipped): they act
+-- only on a disposal step the caller is the hitman of, checked against where
+-- the server sees the caller and the vehicle; nobody else's call moves
+-- anything (disposal_spec, "hostile requests", has the step itself).
+CUSTOM.disposalAct = 'body disposal actions'
+MATRIX.disposalAct = { custom = true, why = 'only the hitman of a running disposal, where the server sees them' }
+
+describe('body disposal actions', function()
+    it('refuses every player with no disposal running, and moves nothing', function()
+        local s = newStack()
+        fixture(s)
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.clientEvents = {}
+            _G.source = src
+            local ok = pcall(Env.events['crimson-hitman:disposalAct'], { action = 'load', id = 'ct00000001' })
+            _G.source = nil
+            truthy(ok, 'never raises')
+            local reply
+            for _, e in ipairs(Env.clientEvents) do
+                if e.name == 'crimson-hitman:result' then reply = e.args[1] end
+            end
+            eq(reply and reply.ok, false, 'refused for ' .. src)
+            eq(reply and reply.err, CH.ERR.NOT_FOUND)
+        end
+        eq(s.disposal.count(), 0)
+    end)
+end)
+
 -- Registered in bridges.lua, which is how three events any player on the
 -- server can fire came to have no row at all: the completeness guard read
 -- app.lua and the block around it said "the whole net surface".

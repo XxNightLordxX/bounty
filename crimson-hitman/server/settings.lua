@@ -113,6 +113,12 @@ local DENY = {
         why = 'The address photos are served from.' .. EDIT_IN_CONFIG },
     ['Completion.KeptPhotoDays'] = { label = 'Days a saved photo is kept',
         why = 'nil keeps a saved photo until deleted.' .. EDIT_IN_CONFIG },
+    ['Disposal.VehicleSpawn'] = { label = 'Disposal vehicle spawn spot',
+        why = 'A place: set it with the panel\'s disposal spots (Use my position), which win over this.'
+        .. EDIT_IN_CONFIG },
+    ['Disposal.DropOff'] = { label = 'Disposal drop-off',
+        why = 'A place: set it with the panel\'s disposal spots (Use my position), which win over this.'
+        .. EDIT_IN_CONFIG },
     ['Kidnap.RestraintProvider'] = { label = 'Restraint export',
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['Immunity.PlaytimeProvider'] = { label = 'Playtime export',
@@ -134,7 +140,9 @@ Settings.DENY = DENY
 Settings.CATEGORIES = { 'rules-timers', 'rules-rewards', 'rules-limits', 'rules-targeting', 'features',
     'developer', 'organisation',
     -- The Target limits section's Defaults (server/targetlimits.lua).
-    'target-limits' }
+    'target-limits',
+    -- The step markers and body disposal (server/missionsteps.lua).
+    'mission-steps' }
 
 --- Rewards & money, shown in these groups rather than the key's own.
 local MONEY = {
@@ -1234,7 +1242,7 @@ local BUCKETS = {
     'load', 'search', 'wallet', 'create', 'accept', 'amend', 'informant', 'placerInformant', 'locationTip',
     'bailout', 'photo',
     'photoSubmit', 'photoView', 'photoDecide', 'message', 'progress', 'death', 'mugshot',
-    'image', 'diagnostic', 'admin', 'adminWrite', 'report', 'org', 'orgWrite',
+    'image', 'diagnostic', 'admin', 'adminWrite', 'report', 'org', 'orgWrite', 'disposal',
 }
 
 --- What each bucket gates: the buttons and events a player is refused once
@@ -1277,6 +1285,8 @@ local BUCKET_ABOUT = {
         .. 'and applications.',
     orgWrite = 'What a boss or member changes in the hitman organisation from the app: hiring, roles, '
         .. 'cuts, money, places, notices and applications.',
+    disposal = 'Loading a body and dropping it off (Config.Disposal). Refused without a word: the '
+        .. 'hitman tries again a moment later.',
 }
 
 --- The least the buckets the app cannot work without may be set to from
@@ -1890,6 +1900,11 @@ end
 -- The hitman organisation's own (server/org/settings_catalogue.lua), in
 -- their category, 'organisation'.
 for _, entry in ipairs(CrimsonBoot.require('server.org.settings_catalogue')) do
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+-- The step markers and body disposal (server/missionsteps.lua), in their
+-- category, 'mission-steps'.
+for _, entry in ipairs(CrimsonBoot.require('server.missionsteps').CATALOGUE) do
     CATALOGUE[#CATALOGUE + 1] = entry
 end
 

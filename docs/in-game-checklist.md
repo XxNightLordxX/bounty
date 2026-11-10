@@ -599,6 +599,21 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `Config.Organisation.RequireJobToAccept` on: a non-member's Accept is refused; a member's goes through; a suspended member's is refused until the suspension ends.
 - [ ] A sign-up spot shows an ox_target option to everybody within reach and nothing past `Config.Organisation.DrawMetres`; resmon for the resource stays at 0.00 ms idle with no spot near, and nothing remains after `stop crimson-hitman` or a logout.
 
+## 17. Mission steps
+
+- [ ] `Config.StepMarkers.Enabled` on (as shipped): kill the target as the hitman with `KillScene` on; a *Kill to verify* marker (sprite 303, red) appears at the body on the hitman's map only, not the target's or a bystander's, and goes when the kill is verified or lapses.
+- [ ] Arm a live handover with `Config.StepMarkers.Handover` on: an orange *Handover* circle of `Config.Kidnap.Radius` shows for the placer and the hitman only, and goes the moment the countdown ends, pays or fails.
+- [ ] A guard who takes a protection job (`Config.StepMarkers.Protection`) sees the *Protection meeting pin*; the target moves the pin and it moves; the job ends and it goes.
+- [ ] Each marker's sprite and colour looks right on the pause map (client/missionsteps.lua STYLES are blip ids to check: 303, 161, 487, 310, 67, 274); the tip and meeting point look as they did before.
+- [ ] With a marker showing, `restart crimson-hitman` or log out and back in: it is gone, then drawn again once the app is opened; resmon for the resource stays at 0.00 ms idle with markers drawn.
+- [ ] `Config.Disposal.Enabled` off (as shipped): a verified kill pays at once, as before, and nothing new is in resmon.
+- [ ] Staff set the vehicle spot and the drop-off with Use my position (disposalSpotSet, here), then turn `Config.Disposal.Enabled` on: a verified kill tells the hitman to get rid of the body (time as a band), a hearse appears at the spawn spot, locked, with keys for the hitman only (another player cannot drive it).
+- [ ] Load the body (ox_target at the body) with the hearse beside it: the body marker goes and the drop-off marker appears; without the hearse beside it, it says to bring the vehicle first.
+- [ ] Drop off at the drop-off with the hearse there: the payout arrives at once, the hearse is taken away about 10 s later; the placer's money is exactly the reward less the payout (or the whole reward back on a `refund` timeout).
+- [ ] Freeze the hitman (or pause the app) mid-step: loading and dropping off are refused, the time left stands still in disposalList, the hearse stays; unfreeze and it runs on.
+- [ ] Leave the hearse 300 m behind for 5 minutes: it is taken away and made again at the spawn spot; log the hitman out and back in mid-step: the hearse goes and comes back, the markers are drawn again.
+- [ ] `restart crimson-hitman` mid-step: the hearse goes, comes back once the hitman is in the city, and the step finishes as before; disposalSkip and disposalRespawn do what they say.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

@@ -403,6 +403,8 @@ describe('what this suite really covered', function()
         protectionWaypoint = 'rpC_roleplay_spec ("the guard gets the pin"), through the net event',
         -- The placer's Confirm handover (off as shipped), through the net event.
         confirmHandover = 'handover_confirm_spec ("pays once they confirm"), through the net event',
+        -- Body disposal (off as shipped): loading and dropping off a body.
+        disposalAct        = 'disposal_spec ("a disposal from the kill to the drop-off"), through the net event',
     }
     -- The hitman organisation's requests (off as shipped), each through the
     -- net event in org_powers_spec and org_places_spec, and refused to

@@ -28,6 +28,9 @@ client_scripts {
     -- The one way to the console (CrimsonLog): with Config.Debug off the
     -- client prints nothing to F8 but a staff command's own answer.
     'shared/log.lua',
+    -- The map markers for each step of a contract (CrimsonMarkers), before
+    -- client/main.lua, which draws the tip and the meeting point with them.
+    'client/missionsteps.lua',
     'client/main.lua',
     'client/mugshot.lua',
     -- The admin panel's page: opening it, closing it, its requests.

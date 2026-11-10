@@ -716,6 +716,67 @@ invited player their invite, with Accept and Decline (`orgInviteAnswer`).
 | `orgLayout` | S2 | `orgOfficeRule` | S3 |
 | `orgInviteAnswer` | the invited player | | |
 
+### Mission steps
+
+**Step markers** (`Config.StepMarkers`, on as shipped) put each step of a
+contract on the map of the one party who has to act on it, and nobody else:
+never the target, never a bystander, never the page. Every marker is a fixed
+point the server recorded (a death, an arm, a pin, a staff spot), never
+anybody's live position, so no marker can say where a hidden party is. Each
+comes off on every way its step ends, is drawn again when a player comes back
+(their app asks, as it does for tips and meeting points), and costs nothing
+while there is none: no thread, no loop, one look on the maintenance tick.
+
+| Marker | Who sees it | Taken off when |
+|---|---|---|
+| Informant tip (red circle) | The hitman who bought it | Its time runs out, the contract ends, the hitman leaves it |
+| Meeting point (yellow) | The placer and every active hitman | Cleared or moved, the last hitman leaves, the contract ends, `Config.Kidnap.MeetingPoint` off |
+| Kill to verify (`KillScene`) | The hitman the kill was attributed to, at the body | Verified, lapsed, the target revived, the hitman leaves, the contract ends |
+| Handover circle (`Handover`) | The placer and the hitman who armed it, at the point it was armed | The countdown ends in any way |
+| Protection pin (`Protection`) | The guard holding the job | The job ends or is cancelled; moved with the pin |
+| Body, disposal vehicle, drop-off (`Config.Disposal`) | The hitman disposing of the body | Loaded (body), reached (vehicle), dropped off, timed out, skipped by staff, switched off |
+| Broker, informant, organisation spots | As their own features say | As their own features say |
+
+A proof-item handover has no marker: it happens wherever the hitman meets the
+placer, and a fixed spot for it would be the placer's position.
+
+**Body disposal** (`Config.Disposal`, off as shipped). With it on and both
+spots set, a verified kill (never a live handover or a proof item, and only on
+a contract a kill may complete) claims its payout as always, and the payout
+waits in escrow for the hitman, as a payout held for proof of intent waits,
+until the body is dropped off. The hitman is sent a marker at the body (where
+the server recorded the death), the disposal vehicle (`VehicleModel`, a hearse
+as shipped) is made by the server at the spawn spot with a marker of its own,
+locked, with keys for the hitman alone (qbx_vehiclekeys). They bring it to the
+body and choose **Load the body** (ox_target): the server checks that they and
+the vehicle are both within `LoadMetres` / `VehicleMetres` of the body. They
+drive to the drop-off (its marker appears once loaded) and choose **Drop off
+the body**, checked the same way, and the payout is released; the vehicle is
+taken away `DespawnSeconds` later. `PayNowPercent` of a cash or bank payout can
+be handed over at the kill instead (0 as shipped: all at the drop-off).
+
+- **The body** is a stage the server keeps on the step (at the scene, then loaded), never an ox_inventory item or a prop a player holds: nothing to drop, trade, stash or duplicate, and nothing lost to a death or full pockets.
+- **The clock** (`TimeLimitMinutes`) runs only while the hitman is in the city and nothing holds the contract: a staff freeze on any party, the app pause and the restart hold stop it, keep the vehicle where it is, and refuse loading and dropping off. The hitman is told the time left as a band (over 20 minutes, 10 to 20, 5 to 10, under 5); staff see it to the second.
+- **On timeout** (`OnTimeout`): `pay` (as shipped, so nobody can grief a hitman out of a kill), `reduced` (they keep `ReducedPercent` of the money; items are paid whole; the rest goes back to the placer) or `refund` (all of it back to the placer).
+- **The vehicle** is a server-made networked vehicle, nobody's own, with no garage row and a `CHD` plate and a `crimsonDisposal` state bag, so nothing can store or sell it. Left more than `AbandonMetres` behind for `AbandonMinutes`, lost or destroyed, it is taken away and made again at the spawn spot, at most `MaxRespawns` times. It goes when the hitman leaves the city (made again when they are back) and at every stop.
+- **The target** cannot have a new contract placed on them while their body is being disposed of, whatever `Config.Roleplay.EmsRelisting` says; a revive or a respawn changes nothing about a payout already claimed.
+- **A restart** resumes the step where it was (`crimson_rp_rows`, kind `disposal`, in every store); the downtime is not counted. Turned off mid-step, every step finishes and pays at the next tick.
+
+#### Mission steps requests (admin panel)
+
+Through the panel's one way in; reads need a staff ACE, writes `crimson.admin`
+itself. The page for them comes with the panel rebuild's Locations section;
+the ops answer now.
+
+| Op | Level | What it does |
+|---|---|---|
+| `disposalList` | read | Every disposal step: stage, exact seconds left, held, vehicle, respawns; the spots and the rules |
+| `disposalSkip` | write | Finish a step (`id`: a step or contract id) as if dropped off: the payout is released |
+| `disposalRespawn` | write | Make the vehicle again at the spawn spot (not counted as a respawn) |
+| `disposalSpotSet` | write | `spot` = `vehicle` or `drop`, typed (`x`, `y`, `z`, `heading`) or `here` (Use my position, read by the server) |
+| `disposalSpotClear` | write | Clear a spot (config.lua's `VehicleSpawn` / `DropOff` apply again) |
+| `disposalMyPosition` | read | Where your character stands, read by the server |
+
 ## Permissions
 
 | ACE | Opens | Grant |
@@ -1193,6 +1254,32 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.RenameCooldownMinutes` | `1440` | minutes between two label changes by a boss |
 | `Config.Organisation.Limits.InviteMinutes` | `10` | minutes a boss's invite waits for the player to accept |
 
+### Mission steps
+
+Map markers for each step of a contract, to the one party who acts on it (README, Optional features), and body disposal: a verified kill paid once the body is dropped off. Disposal ships off; its spots are set by staff in the admin panel (disposalSpotSet) or below.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.StepMarkers.Enabled` | `true` | markers for each step, to the party who acts on it |
+| `Config.StepMarkers.KillScene` | `true` | the hitman: the body, until the kill is verified |
+| `Config.StepMarkers.Handover` | `true` | placer and hitman: the handover circle while it counts |
+| `Config.StepMarkers.Protection` | `true` | the guard: their client's meeting pin while on the job |
+| `Config.Disposal.Enabled` | `false` | a verified kill pays once the body is dropped off |
+| `Config.Disposal.VehicleModel` | `'romero'` | the disposal vehicle (the hearse) |
+| `Config.Disposal.VehicleSpawn` | `{}` | { x, y, z, h } where it is made; the panel's spot wins |
+| `Config.Disposal.DropOff` | `{}` | { x, y, z } the drop-off; the panel's spot wins |
+| `Config.Disposal.PayNowPercent` | `0` | of a cash or bank payout handed over at the kill |
+| `Config.Disposal.TimeLimitMinutes` | `30` | minutes of the hitman's time in the city to finish |
+| `Config.Disposal.OnTimeout` | `'pay'` | 'pay' \| 'reduced' \| 'refund' (to the placer) |
+| `Config.Disposal.ReducedPercent` | `50` | 'reduced': what the hitman keeps of the money (%) |
+| `Config.Disposal.LoadMetres` | `3.0` | how near the body the hitman stands to load it |
+| `Config.Disposal.DropMetres` | `8.0` | how near the drop-off the hitman stands |
+| `Config.Disposal.VehicleMetres` | `10.0` | how near the body or drop-off the vehicle is |
+| `Config.Disposal.AbandonMetres` | `300.0` | a vehicle left this far away ... |
+| `Config.Disposal.AbandonMinutes` | `5` | ... this long is taken back to the spawn spot |
+| `Config.Disposal.MaxRespawns` | `3` | times the vehicle is made again when lost |
+| `Config.Disposal.DespawnSeconds` | `10` | seconds after the drop-off it is taken away |
+
 ### Advanced and developer
 
 Logging, diagnostics, rate limits, json tuning and the timings of the kill and handover checks. The shipped values suit most servers.
@@ -1235,6 +1322,7 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 | `Config.Cooldowns.report` | `{ burst = 3, per = 600 }` | reporting a contract or a thread to staff |
 | `Config.Cooldowns.org` | `{ burst = 20, per = 10 }` | the organisation's reads (members, boss menu) |
 | `Config.Cooldowns.orgWrite` | `{ burst = 5, per = 10 }` | what a boss changes in the organisation |
+| `Config.Cooldowns.disposal` | `{ burst = 6, per = 10 }` | loading and dropping off a body |
 | `Config.Database.Json.WarnContractCount` | `2000` | json: warn above this many contracts |
 | `Config.Database.Json.MaxDirtyShardsPerFlush` | `25` | json: contract files one ordinary flush writes |
 | `Config.Limits.MaxDeadlineSkipSeconds` | `600` | longest the expiry pass sleeps |
@@ -1303,6 +1391,8 @@ a trade-off is left on purpose, it says which and why.
 | `imp_weekly.tick` (weekly stats) | 10 s, asleep until the post is due | 0.01 ms off and on | Works out the calendar once, then one comparison a tick; the week's totals are read only when it posts |
 | `rp.tick` (EMS before re-listing) | 10 s | 0.01 ms off, 0.01 ms on with nobody recovering | Looks only at targets killed on a contract, in memory; nothing while nobody is |
 | `rp_intent.sweep` (proof of intent) | 10 s | 0.01 ms, 0 statements with no hold | Reads only the contracts that have a hold. Trade-off: a held payout re-reads its proof at most every 5 s, kept because the hold gates money |
+| `disposal.tick` (body disposal) | 10 s | 0 statements with no step | Nothing while no step runs; one row write a step a minute while its clock runs |
+| `mission_steps.tick` (step markers) | 10 s | 0 statements | Memory only; nothing at all while no marker is drawn or due |
 | `rp_protection.sweep` (bodyguards) | 10 s | 0.01 ms, 0 statements with no job | Nothing while no job is kept; a job's contract is read only once it has left the snapshot of what is running (was a read a job a tick); **at most 25 settles a pass** |
 | `informant.retryUnsaved` | 10 s | 0.00 ms | In memory until a write the store refused is waiting |
 

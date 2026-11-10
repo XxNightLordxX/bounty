@@ -1666,6 +1666,24 @@ function Death.pendingCount()
     return n
 end
 
+--- Every kill still waiting to be verified, aged ones dropped as
+--- Death.getPending drops them: for the kill scene's map marker
+--- (server/missionsteps.lua), which is drawn for the hitman alone.
+---@return table[] { contractId, hitmanCid, victimCid, coords }
+function Death.pendingKills()
+    local out, keys = {}, {}
+    for key in pairs(pending) do keys[#keys + 1] = key end
+    for i = 1, #keys do
+        local record = pending[keys[i]]
+        local live = record and Death.getPending(record.contractId, record.hitmanCid)
+        if live then
+            out[#out + 1] = { contractId = live.contractId, hitmanCid = live.hitmanCid,
+                              victimCid = live.victimCid, coords = live.coords }
+        end
+    end
+    return out
+end
+
 --- Forget a player who disconnected.
 ---
 --- A pending kill goes with its HITMAN, not with its victim. It used to go

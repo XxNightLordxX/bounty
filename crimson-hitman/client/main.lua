@@ -776,49 +776,26 @@ end)
 --- One marker per contract, replaced when the point moves, and taken off
 --- when the server says so (crimson-hitman:meetingBlipClear: cleared, the
 --- contract over, this player no longer on it, the switch off), on logout
---- and as the resource stops. The page is never sent where it is.
-
---- [contractId] = blip
-local meetings = {}
-
-local MEETING_SPRITE = 162      -- the point-of-interest marker
-local MEETING_COLOUR = 5        -- yellow: apart from the tip's red circle
-local MEETING_NAME = 'Meeting point'
-
-local function removeMeetingBlip(contractId)
-    local blip = meetings[contractId]
-    if not blip then return end
-    meetings[contractId] = nil
-    if DoesBlipExist(blip) then RemoveBlip(blip) end
-end
-
-local function clearMeetingBlips()
-    for contractId in pairs(meetings) do removeMeetingBlip(contractId) end
-end
+--- and as the resource stops. The page is never sent where it is. Drawn by
+--- the one marker system every step uses (client/missionsteps.lua, kind
+--- 'meeting': the point-of-interest marker in yellow, apart from the tip's
+--- red circle), which also takes them all off at a logout and at the stop.
 
 RegisterNetEvent('crimson-hitman:meetingBlip', function(data)
     if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
     local x, y = tonumber(data.x), tonumber(data.y)
     if not x or not y then return end
-    removeMeetingBlip(data.id)
-    local blip = AddBlipForCoord(x + 0.0, y + 0.0, 0.0)
-    SetBlipSprite(blip, MEETING_SPRITE)
-    SetBlipColour(blip, MEETING_COLOUR)
-    SetBlipScale(blip, 0.9)
-    SetBlipAsShortRange(blip, false)
-    BeginTextCommandSetBlipName('STRING')
-    AddTextComponentSubstringPlayerName(MEETING_NAME)
-    EndTextCommandSetBlipName(blip)
-    meetings[data.id] = blip
+    CrimsonMarkers.set('meeting:' .. data.id, { kind = 'meeting', x = x, y = y })
 end)
 
 RegisterNetEvent('crimson-hitman:meetingBlipClear', function(data)
     if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
-    removeMeetingBlip(data.id)
+    CrimsonMarkers.remove('meeting:' .. data.id)
 end)
 
 -- Another character, or none: their meeting points are not this one's. The
 -- server draws them again for whoever logs in (Meeting.reshow).
+local function clearMeetingBlips() CrimsonMarkers.removePrefix('meeting:') end
 AddEventHandler('QBCore:Client:OnPlayerUnload', clearMeetingBlips)
 AddEventHandler('qbx_core:client:playerLoggedOut', clearMeetingBlips)
 AddEventHandler('onResourceStop', function(resource)
@@ -837,54 +814,20 @@ end)
 -- crimson-hitman:locationTipClear). Never sent to the page: Set GPS hands it
 -- the contract id, and the waypoint is set here.
 
---- [contractId] = { x, y, area = blip, centre = blip }: one per contract.
-local tips = {}
+--- Drawn by the one marker system (client/missionsteps.lua, kind 'tip': a
+--- see-through red circle with the plain round marker in its middle), which
+--- takes it off by itself when its time runs out, should the server's word
+--- not arrive: only this one, not a newer tip on the same contract.
 
-local TIP_COLOUR = 1       -- red
-local TIP_ALPHA = 90       -- of 255: see-through, so the streets show under it
-local TIP_SPRITE = 1       -- the plain round marker
-local TIP_NAME = 'Informant tip'
-
-local function removeTip(contractId)
-    local tip = tips[contractId]
-    if not tip then return end
-    tips[contractId] = nil
-    for _, blip in ipairs({ tip.area, tip.centre }) do
-        if blip and DoesBlipExist(blip) then RemoveBlip(blip) end
-    end
-end
-
-local function clearTips()
-    for contractId in pairs(tips) do removeTip(contractId) end
-end
+local function removeTip(contractId) CrimsonMarkers.remove('tip:' .. contractId) end
+local function clearTips() CrimsonMarkers.removePrefix('tip:') end
 
 RegisterNetEvent('crimson-hitman:locationTip', function(data)
     if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
     local x, y, radius = tonumber(data.x), tonumber(data.y), tonumber(data.radius)
     local seconds = tonumber(data.secondsLeft)
     if not x or not y or not radius or radius <= 0 or not seconds or seconds <= 0 then return end
-    removeTip(data.id)
-
-    local area = AddBlipForRadius(x + 0.0, y + 0.0, 0.0, radius + 0.0)
-    SetBlipColour(area, TIP_COLOUR)
-    SetBlipAlpha(area, TIP_ALPHA)
-
-    local centre = AddBlipForCoord(x + 0.0, y + 0.0, 0.0)
-    SetBlipSprite(centre, TIP_SPRITE)
-    SetBlipColour(centre, TIP_COLOUR)
-    SetBlipScale(centre, 0.8)
-    SetBlipAsShortRange(centre, false)
-    BeginTextCommandSetBlipName('STRING')
-    AddTextComponentSubstringPlayerName(TIP_NAME)
-    EndTextCommandSetBlipName(centre)
-
-    local tip = { x = x, y = y, area = area, centre = centre }
-    tips[data.id] = tip
-    -- Off by itself when its time runs out, should the server's word not
-    -- arrive: only this one, not a newer tip on the same contract.
-    SetTimeout(math.floor(seconds * 1000), function()
-        if tips[data.id] == tip then removeTip(data.id) end
-    end)
+    CrimsonMarkers.set('tip:' .. data.id, { kind = 'tip', x = x, y = y, radius = radius, secondsLeft = seconds })
 end)
 
 RegisterNetEvent('crimson-hitman:locationTipClear', function(data)
@@ -914,7 +857,7 @@ end)
 
 RegisterNUICallback('crimson:tipGps', function(data, cb)
     local id = type(data) == 'table' and data.id or nil
-    local tip = type(id) == 'string' and tips[id] or nil
+    local tip = type(id) == 'string' and CrimsonMarkers.get('tip:' .. id) or nil
     if not tip then return cb({ ok = false, event = 'tipGps', err = 'no_tip' }) end
     SetNewWaypoint(tip.x + 0.0, tip.y + 0.0)
     cb({ ok = true, event = 'tipGps' })

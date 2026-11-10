@@ -726,6 +726,38 @@ ConfigDefaults.Organisation = {
     },
 }
 -- ============================================================================
+--                               MISSION STEPS
+-- ============================================================================
+-- Map markers for each step of a contract, to the one party who acts on it
+-- (README, Optional features), and body disposal: a verified kill paid once
+-- the body is dropped off. Disposal ships off; its spots are set by staff
+-- in the admin panel (disposalSpotSet) or below.
+
+ConfigDefaults.StepMarkers = {
+    Enabled    = true,  -- markers for each step, to the party who acts on it
+    KillScene  = true,  -- the hitman: the body, until the kill is verified
+    Handover   = true,  -- placer and hitman: the handover circle while it counts
+    Protection = true,  -- the guard: their client's meeting pin while on the job
+}
+
+ConfigDefaults.Disposal = {
+    Enabled          = false,     -- a verified kill pays once the body is dropped off
+    VehicleModel     = 'romero',  -- the disposal vehicle (the hearse)
+    VehicleSpawn     = {},        -- { x, y, z, h } where it is made; the panel's spot wins
+    DropOff          = {},        -- { x, y, z } the drop-off; the panel's spot wins
+    PayNowPercent    = 0,         -- of a cash or bank payout handed over at the kill
+    TimeLimitMinutes = 30,        -- minutes of the hitman's time in the city to finish
+    OnTimeout        = 'pay',     -- 'pay' | 'reduced' | 'refund' (to the placer)
+    ReducedPercent   = 50,        -- 'reduced': what the hitman keeps of the money (%)
+    LoadMetres       = 3.0,       -- how near the body the hitman stands to load it
+    DropMetres       = 8.0,       -- how near the drop-off the hitman stands
+    VehicleMetres    = 10.0,      -- how near the body or drop-off the vehicle is
+    AbandonMetres    = 300.0,     -- a vehicle left this far away ...
+    AbandonMinutes   = 5,         -- ... this long is taken back to the spawn spot
+    MaxRespawns      = 3,         -- times the vehicle is made again when lost
+    DespawnSeconds   = 10,        -- seconds after the drop-off it is taken away
+}
+-- ============================================================================
 --                          ADVANCED AND DEVELOPER
 -- ============================================================================
 -- Logging, diagnostics, rate limits, json tuning and the timings of the
@@ -775,6 +807,7 @@ ConfigDefaults.Cooldowns = { -- per-player allowances: refill over `per` seconds
     report          = { per = 600, burst = 3 },   -- reporting a contract or a thread to staff
     org             = { per = 10, burst = 20 },   -- the organisation's reads (members, boss menu)
     orgWrite        = { per = 10, burst = 5 },    -- what a boss changes in the organisation
+    disposal        = { per = 10, burst = 6 },    -- loading and dropping off a body
 }
 
 ConfigDefaults.Database.Json.WarnContractCount      = 2000  -- json: warn above this many contracts

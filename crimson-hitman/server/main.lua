@@ -1481,6 +1481,9 @@ local function validateConfig(quiet)
     CrimsonBoot.require('server.handover_confirm').validate(warn)
     CrimsonBoot.require('server.staff_reward').validate(warn)
     CrimsonBoot.require('server.staff_reassign').validate(warn)
+    -- The step markers and body disposal (Config.StepMarkers, Config.Disposal).
+    CrimsonBoot.require('server.missionsteps').validate(warn)
+    CrimsonBoot.require('server.disposal').validate(warn)
 
     if quiet then return #fatal == 0, fatal, warn end
 
@@ -2010,6 +2013,9 @@ function StartCrimsonHitman()
     local impWeekly   = CrimsonBoot.require('server.imp_weekly')
     -- The hitman organisation (README, Optional features), off as shipped.
     local org         = CrimsonBoot.require('server.org.init')
+    -- Map markers for each step, and body disposal (off as shipped).
+    local missionSteps = CrimsonBoot.require('server.missionsteps')
+    local disposal    = CrimsonBoot.require('server.disposal')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -2130,6 +2136,14 @@ function StartCrimsonHitman()
     -- (Escrow.orgCut), the accept (Contracts.acceptGate) and its switch.
     org.init({ storage = Storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
                contracts = contracts, settings = settings })
+    -- After death, kidnap and the bodyguards, whose steps it draws, and after
+    -- the proof-of-intent hold and the EMS rule, which disposal chains ahead
+    -- of (Escrow.holdBack, Contracts.intentOnClaim, Contracts.relistHold).
+    missionSteps.init({ identity = identity, storage = Storage, death = death, kidnap = kidnap,
+                        rpProtection = rpProtection })
+    disposal.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
+                    escrow = escrow, contracts = contracts, death = death, freeze = freeze,
+                    missionSteps = missionSteps, ratelimit = ratelimit, app = app, panel = panel })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
@@ -2187,6 +2201,8 @@ function StartCrimsonHitman()
         -- The hitman organisation: the app's and the panel's requests, the
         -- job events the bridge hears.
         org = org,
+        -- The step markers and body disposal: the tick, a drop, a rejoin.
+        missionSteps = missionSteps, disposal = disposal,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -2999,6 +3015,10 @@ function Tick()
     -- the switches off too, so turning one off strands nothing.
     if modules.rpIntent then job('rp_intent.sweep', modules.rpIntent.sweep) end
     if modules.rpProtection then job('rp_protection.sweep', modules.rpProtection.sweep) end
+    -- Body disposal's clocks and vehicles, then the step markers that lapsed
+    -- on their own: nothing while no step is drawn or running.
+    if modules.disposal then job('disposal.tick', modules.disposal.tick) end
+    if modules.missionSteps then job('mission_steps.tick', modules.missionSteps.tick) end
     -- Informant purchases the store would not take when they were made,
     -- written again so their counts and waits survive a restart.
     if modules.informant and modules.informant.retryUnsaved then
@@ -3533,6 +3553,9 @@ AddEventHandler('onResourceStop', function(name)
     -- Everybody's time in the city counted up to now and handed over the
     -- same way, before the close writes json's file (Playtime.stop).
     if modules.playtime then pcall(modules.playtime.stop) end
+    -- Every disposal vehicle taken away; in memory mode, where the steps go
+    -- with the tables, each hold lifted first so the release below pays it.
+    if modules.disposal then pcall(modules.disposal.stop, Config.Database.Mode == 'memory') end
 
     -- Memory mode: release every open escrow before the tables vanish.
     if Config.Database.Mode == 'memory' then

@@ -1582,6 +1582,10 @@ function App.register()
         if deps.meeting and deps.meeting.reshow and type(result) == 'table' then
             result.meetings = deps.meeting.reshow(actor).shown
         end
+        -- And every step marker of theirs (server/missionsteps.lua).
+        if deps.missionSteps and type(result) == 'table' then
+            result.steps = deps.missionSteps.reshow(actor)
+        end
         return result
     end)
 

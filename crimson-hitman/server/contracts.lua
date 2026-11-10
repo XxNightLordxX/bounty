@@ -3481,7 +3481,9 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- earns is scaled (server/rp_reputation.lua). Neither may stop a claim.
     local intentHold, reputation
     if Contracts.intentOnClaim then
-        local asked, hold = pcall(Contracts.intentOnClaim, contract, hitmanCid, fulfilment)
+        -- With the claim's options, so a step that waits on the payout (the
+        -- body's disposal, server/disposal.lua) can tell a proof item apart.
+        local asked, hold = pcall(Contracts.intentOnClaim, contract, hitmanCid, fulfilment, opts)
         if asked then intentHold = hold end
     end
     if Contracts.reputationFor then
