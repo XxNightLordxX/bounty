@@ -56,7 +56,8 @@ Schema.TABLES = {
     },
     splits = {
         table = 'crimson_org_splits',
-        columns = { 'id', 'org_id', 'contract_id', 'cid', 'payout_pct', 'stake_pct', 'buyout_pct', 'created_at' },
+        columns = { 'id', 'org_id', 'contract_id', 'cid', 'payout_pct', 'stake_pct', 'buyout_pct', 'created_at',
+            'shown_name' },
         by = 'contract_id',
     },
     applications = {
@@ -148,11 +149,12 @@ Schema.SQL = {
         by = 'SELECT * FROM crimson_org_splits WHERE contract_id = ?',
         one = 'SELECT * FROM crimson_org_splits WHERE id = ?',
         upsert = [[INSERT INTO crimson_org_splits (id, org_id, contract_id, cid, payout_pct, stake_pct, buyout_pct,
-            created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE org_id = VALUES(org_id),
+            created_at, shown_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE org_id = VALUES(org_id),
             contract_id = VALUES(contract_id), cid = VALUES(cid), payout_pct = VALUES(payout_pct),
-            stake_pct = VALUES(stake_pct), buyout_pct = VALUES(buyout_pct), created_at = VALUES(created_at)]],
+            stake_pct = VALUES(stake_pct), buyout_pct = VALUES(buyout_pct), created_at = VALUES(created_at),
+            shown_name = VALUES(shown_name)]],
         insert = [[INSERT INTO crimson_org_splits (id, org_id, contract_id, cid, payout_pct, stake_pct, buyout_pct,
-            created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)]],
+            created_at, shown_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)]],
         delete = 'DELETE FROM crimson_org_splits WHERE id = ?',
     },
     applications = {
@@ -266,7 +268,9 @@ Schema.CREATE = {
         backend VARCHAR(8),
         INDEX idx_org_funds_org (org_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
-    -- The cut frozen onto a contract when a member accepted it.
+    -- The cut frozen onto a contract when a member accepted it, and the
+    -- name shown for them on it from then on (a codename, or NULL: their
+    -- name). Added to existing databases by migrate.
     [[CREATE TABLE IF NOT EXISTS crimson_org_splits (
         id VARCHAR(80) PRIMARY KEY,
         org_id VARCHAR(32) NOT NULL,
@@ -276,6 +280,7 @@ Schema.CREATE = {
         stake_pct INT DEFAULT 0,
         buyout_pct INT DEFAULT 0,
         created_at INT NOT NULL,
+        shown_name VARCHAR(48),
         INDEX idx_org_splits_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Sign-ups waiting for a boss or staff.

@@ -37,6 +37,8 @@ StaffOps.ACTIONS = {
     'org_external_reverted', 'org_funds_unrecorded', 'org_setup', 'org_funds_backend', 'org_member_invited',
     'org_invite_answered', 'org_application_superseded', 'org_cut_unavailable',
     'org_codename', 'org_salary', 'org_salary_max', 'org_payroll_run', 'org_payroll_skipped',
+    'org_salary_applied', 'org_payroll_unconfirmed', 'org_payroll_refund_failed', 'org_payroll_refunded',
+    'org_payroll_unmarked',
 }
 
 local function staff(src)

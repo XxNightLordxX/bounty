@@ -41,6 +41,17 @@ local State = nil
 --- The cut frozen on each contract a member took: [contract:cid] = row.
 local Splits = {}
 
+--- Contracts with no split for a member, already looked for, so a page
+--- shown again does not read the store again: [contract:cid] = true. Only
+--- Org.afterAccept writes a split, and it clears its key here; emptied
+--- whole when it grows large (Org.shownName).
+local NoSplit, NoSplitCount = {}, 0
+
+--- Salaries (Org.payrollTick) being paid in this process right now, so a second tick never
+--- takes one mid-payment for one the server stopped on: [ref] = true. And
+--- those paid here whose marker the store would not take: [ref] = true.
+local Paying, PaidHere = {}, {}
+
 --- When each member last accepted, for the cooldowns: [cid] = os.time().
 local LastAccept = {}
 
@@ -183,6 +194,10 @@ local function settingsOf(raw)
     s.payroll = type(s.payroll) == 'table' and s.payroll or {}
     s.payroll.salary = type(s.payroll.salary) == 'table' and s.payroll.salary or {}
     s.payroll.max = type(s.payroll.max) == 'table' and s.payroll.max or {}
+    -- A boss's salaries waiting for their first pay day, and salaries a
+    -- bank refused whose give-back to the funds is to be tried again.
+    s.payroll.pending = type(s.payroll.pending) == 'table' and s.payroll.pending or {}
+    s.payroll.refunds = type(s.payroll.refunds) == 'table' and s.payroll.refunds or {}
     return s
 end
 
@@ -258,9 +273,11 @@ end
 function Org.init(d)
     deps = d
     -- A member's codename where a hitman's name is shown (Org.shownName).
-    Util.shownHitmanName = function(cid, name) return Org.shownName(cid, name) end
+    Util.shownHitmanName = function(cid, name, contractId) return Org.shownName(cid, name, contractId) end
     State, Splits, LastAccept, Recent, Refs, RefSeq = nil, {}, {}, {}, {}, 0
+    NoSplit, NoSplitCount = {}, 0
     Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, nil, 0
+    Paying, PaidHere = {}, {}
     Jobs.reset()
     Funds.init({ storage = d.storage, audit = d.audit })
     -- The money path's two hooks, which read one switch while it is off.
@@ -970,19 +987,73 @@ function Org.codenamesOn()
     return Org.enabled() and Config.Organisation.Codenames == true
 end
 
---- The letters a codename is checked against the blocked words with: lower
---- case, letters only (so 'A.d-m 1n' still reads 'admn', and 'adm1n' as
---- 'admin' with the common digit swaps).
-local LEET = { ['0'] = 'o', ['1'] = 'i', ['3'] = 'e', ['4'] = 'a', ['5'] = 's', ['7'] = 't', ['@'] = 'a',
-    ['$'] = 's' }
-local function folded(text)
-    return (text:lower():gsub('.', function(c) return LEET[c] or c end):gsub('[^%a]', ''))
+--- The letters a codename is checked with: lower case, letters only, the
+--- look-alike swaps folded to one letter (1, l, i and ! to 'i'; 0 to 'o';
+--- 3 to 'e'; 4 and @ to 'a'; 5 and $ to 's'; 7 to 't'), and separators
+--- (spaces, - and _, any punctuation) dropped: so 'A.d-m 1n', 'Admln' and
+--- 'Po1ice' read 'admin' and 'poiice', as 'Police' does. 8 reads 'b', 'a'
+--- or 'ate' ('Moder8tor'), so a word or name is looked for in each reading.
+--- Blocked words and names are folded the same way before they are compared.
+local LEET = { ['0'] = 'o', ['1'] = 'i', ['l'] = 'i', ['!'] = 'i', ['|'] = 'i', ['3'] = 'e', ['4'] = 'a',
+    ['@'] = 'a', ['5'] = 's', ['$'] = 's', ['7'] = 't' }
+local EIGHT = { 'b', 'a', 'ate' }
+
+--- Every reading of a text (one per reading of 8), folded.
+---@param text string
+---@return string[]
+local function foldings(text)
+    local base = text:lower():gsub('.', function(c) return LEET[c] or c end)
+    if not base:find('8', 1, true) then return { (base:gsub('[^%a]', '')) } end
+    local out = {}
+    for _, as in ipairs(EIGHT) do
+        out[#out + 1] = (base:gsub('8', as):gsub('[^%a]', ''))
+    end
+    return out
+end
+
+--- A text folded once (its first reading), for comparing names.
+local function folded(text) return foldings(text)[1] end
+
+--- Whether two texts read the same once folded, in any reading of either.
+local function sameFolded(a, b)
+    if type(a) ~= 'string' or type(b) ~= 'string' then return false end
+    for _, x in ipairs(foldings(a)) do
+        if x ~= '' then
+            for _, y in ipairs(foldings(b)) do
+                if x == y then return true end
+            end
+        end
+    end
+    return false
+end
+
+--- The character names a codename may not read as, besides its own
+--- member's: every member's and applicant's (kept in memory) and every
+--- player's in the city now (Identity.online, asked only when a codename is
+--- set). A codename that reads as somebody's name would put that name on
+--- this member's contracts.
+local function namesInUse(org, cid)
+    local out = {}
+    for other, m in pairs(org.members) do
+        if other ~= cid and type(m.name) == 'string' then out[#out + 1] = m.name end
+    end
+    for _, a in pairs(org.applications or {}) do
+        if a.cid ~= cid and type(a.name) == 'string' then out[#out + 1] = a.name end
+    end
+    local ok, online = pcall(function() return deps.identity.online() end)
+    for _, actor in ipairs(ok and type(online) == 'table' and online or {}) do
+        if type(actor) == 'table' and actor.cid ~= cid and type(actor.name) == 'string' then
+            out[#out + 1] = actor.name
+        end
+    end
+    return out
 end
 
 --- A codename as typed, checked: its cleaned form, or nil and why not.
 --- Length (CodenameMinLength-CodenameMaxLength), letters, digits, spaces,
 --- - and _ only (starting with a letter or digit), none of the blocked
---- words (CodenameBlocked), and no other member's codename or name.
+--- words (CodenameBlocked), and, folded, no other member's codename and no
+--- character's name (namesInUse).
 ---@param org table
 ---@param text any
 ---@param cid string|nil the member it is for (their own does not clash)
@@ -995,19 +1066,22 @@ function Org.checkCodename(org, text, cid)
     local lo = math.max(1, math.floor(tonumber(cfg.CodenameMinLength) or 3))
     local hi = math.min(32, math.max(lo, math.floor(tonumber(cfg.CodenameMaxLength) or 20)))
     if #text < lo or #text > hi or not text:match('^[%w][%w _%-]*$') then return nil, ERR.INVALID end
-    local plain = folded(text)
+    local readings = foldings(text)
     for _, word in ipairs(type(cfg.CodenameBlocked) == 'table' and cfg.CodenameBlocked or {}) do
         local w = type(word) == 'string' and folded(word) or ''
-        if w ~= '' and plain:find(w, 1, true) then return nil, ERR.NAME_BLOCKED end
-    end
-    local key = text:lower()
-    for other, m in pairs(org.members) do
-        if other ~= cid then
-            if type(m.codename) == 'string' and m.codename:lower() == key then return nil, ERR.NAME_TAKEN end
-            -- Never somebody's own name: a codename that reads as another
-            -- member would put that member's name on this one's contracts.
-            if type(m.name) == 'string' and m.name:lower() == key then return nil, ERR.NAME_TAKEN end
+        if w ~= '' then
+            for _, plain in ipairs(readings) do
+                if plain:find(w, 1, true) then return nil, ERR.NAME_BLOCKED end
+            end
         end
+    end
+    for other, m in pairs(org.members) do
+        if other ~= cid and sameFolded(m.codename, text) then return nil, ERR.NAME_TAKEN end
+    end
+    -- Never somebody's own name: a codename that reads as another
+    -- character would put that character's name on this one's contracts.
+    for _, name in ipairs(namesInUse(org, cid)) do
+        if sameFolded(name, text) then return nil, ERR.NAME_TAKEN end
     end
     return text
 end
@@ -1061,16 +1135,57 @@ function Org.setCodename(who, cid, name)
     return true, nil, { codename = clean }
 end
 
---- The name to show for a hitman where their name is shown at all: their
---- codename while codenames are on and they have one, else their name.
+--- How a codename reads wherever it stands in for a name, so nobody takes
+--- it for a character's own: 'Viper (codename)'.
+---@param codename string
+---@return string
+function Org.codenameLabel(codename)
+    return codename .. ' (codename)'
+end
+
+--- The split kept for one hitman on one contract, if any (the name shown
+--- when they took it).
+local function shownSplit(contractId, cid)
+    local key = tostring(contractId) .. ':' .. tostring(cid)
+    if Splits[key] then return Splits[key] end
+    if NoSplit[key] then return nil end
+    local ok, row = pcall(deps.storage.readOrgRow, 'splits', key)
+    if ok and type(row) == 'table' then
+        Splits[key] = row
+        return row
+    end
+    if ok then
+        if NoSplitCount >= 5000 then NoSplit, NoSplitCount = {}, 0 end
+        NoSplit[key], NoSplitCount = true, NoSplitCount + 1
+    end
+    return nil
+end
+
+--- The name to show for a hitman where their name is shown at all. On a
+--- contract (`contractId`): the name shown when they took it, kept with
+--- their split (Org.afterAccept), so a codename shown once is never
+--- swapped for the real name later (a member who leaves, a codename
+--- cleared or changed, codenames turned off); a contract taken with no
+--- codename keeps the name. With no contract: their codename now, while
+--- codenames are on and they have one, else their name. A codename always
+--- reads as one (Org.codenameLabel).
 ---@param cid string|nil
 ---@param name string|nil the name the contract keeps
+---@param contractId string|nil
 ---@return string|nil
-function Org.shownName(cid, name)
-    if name == nil or not Org.codenamesOn() or type(cid) ~= 'string' then return name end
-    local org = State
-    local member = org and org.members[cid]
-    return member and type(member.codename) == 'string' and member.codename or name
+function Org.shownName(cid, name, contractId)
+    if name == nil or type(cid) ~= 'string' or not Org.enabled() then return name end
+    if contractId ~= nil then
+        local split = State and shownSplit(contractId, cid)
+        if split then
+            return type(split.shown_name) == 'string' and split.shown_name ~= '' and split.shown_name or name
+        end
+        -- No split: not a member when they took it; their name was shown.
+        return name
+    end
+    if not Org.codenamesOn() then return name end
+    local member = State and State.members[cid]
+    return member and type(member.codename) == 'string' and Org.codenameLabel(member.codename) or name
 end
 
 -- ============================================================================
@@ -1471,12 +1586,25 @@ function Org.afterAccept(actor, contractId, gate)
     end
     if not terms then return end
     local key = tostring(contractId) .. ':' .. actor.cid
+    -- The name shown for them on this contract from now on (Org.shownName):
+    -- the codename they carry as they take it. Taken up again, what was
+    -- shown the first time stays, so the placer never sees it change.
+    local before = Splits[key] or (not NoSplit[key] and select(2, pcall(deps.storage.readOrgRow, 'splits', key)))
+    local shown
+    if type(before) == 'table' then
+        shown = before.shown_name
+    else
+        local member = org.members[actor.cid]
+        shown = Org.codenamesOn() and member and type(member.codename) == 'string'
+            and Org.codenameLabel(member.codename) or nil
+    end
     local row = { id = key, org_id = org.id, contract_id = contractId, cid = actor.cid,
         payout_pct = terms.orgPercent, stake_pct = terms.stakePercent, buyout_pct = terms.buyoutPercent,
-        created_at = now() }
+        created_at = now(), shown_name = shown }
     local ok = pcall(deps.storage.writeOrgRow, 'splits', row)
     if ok then
         Splits[key] = row
+        if NoSplit[key] then NoSplit[key], NoSplitCount = nil, NoSplitCount - 1 end
         deps.audit.financial('org_split_frozen', actor.cid, contractId, { org = org.id,
             payout = row.payout_pct, stake = row.stake_pct, buyout = row.buyout_pct })
     end
@@ -1848,8 +1976,18 @@ end
 -- member is paid their role's salary from the funds, to their bank: the
 -- funds first (Funds.debit, one ledger row per member and pay day, by a
 -- reference made of both, so a restart part-way pays nobody twice), then
--- their bank, the funds given back where that refuses. A salary the funds
+-- their bank, then a marker row saying it was paid ('salary_paid'). Where
+-- the bank refuses, the funds are given back (':back'); a give-back that
+-- fails is audited and kept, and tried again every tick until it lands. A
+-- debit found again with no marker and no give-back (the server stopped
+-- between the two) is never paid again on a guess: it is audited and left
+-- for staff (review org_payroll_unconfirmed), once. A salary the funds
 -- cannot cover is skipped and the member told; the rest are still paid.
+-- A suspended member is not paid unless Config.Organisation.PaySuspended;
+-- one pay day pays at most Limits.PayrollPerDayMax in all (0: no cap but
+-- each role's). A salary a boss sets (P3) is paid from the pay day after
+-- the next one, and said so, so a boss cannot set a salary just before a
+-- pay day and have it paid out at once; staff's take effect at once.
 -- The pay day is kept with the organisation's settings, so a restart
 -- neither skips nor repeats one. The maintenance tick asks every tick; it
 -- compares one number until the pay day comes (Org.payrollTick).
@@ -1865,8 +2003,8 @@ local function payDays()
     return math.max(1, math.min(31, days))
 end
 
---- The most a boss may set a role's salary to: SalaryMax, or less where
---- staff set the role's own maximum.
+--- The most a role may be paid: SalaryMax, or less where staff set the
+--- role's own maximum. Bounds what a boss sets, and what is paid.
 ---@return integer
 function Org.salaryMax(org, grade)
     local cap = Powers.limit(org, 'SalaryMax')
@@ -1875,17 +2013,25 @@ function Org.salaryMax(org, grade)
     return math.max(0, cap)
 end
 
---- What a role is paid every pay day, within its staff maximum.
+--- What a role is paid every pay day, within Org.salaryMax as it is now:
+--- a salary set before staff lowered either bound is paid only up to it.
 ---@return integer
 function Org.salaryOf(org, grade)
     local pay = math.floor(tonumber(org.settings.payroll.salary[tostring(grade)]) or 0)
-    local own = tonumber(org.settings.payroll.max[tostring(grade)])
-    if own then pay = math.min(pay, math.floor(own)) end
-    return math.max(0, pay)
+    return math.max(0, math.min(pay, Org.salaryMax(org, grade)))
 end
 
---- A role's salary (P3): a role below the boss, up to Org.salaryMax.
---- Staff: any role, 0-1,000,000, within the role's own maximum if set.
+--- A salary a boss set that is not paid yet: { amount, from (the first pay
+--- day it is paid on), by, at }, or nil.
+---@return table|nil
+function Org.pendingSalary(org, grade)
+    local p = org.settings.payroll.pending[tostring(grade)]
+    return type(p) == 'table' and p or nil
+end
+
+--- A role's salary (P3): a role below the boss, up to Org.salaryMax, paid
+--- from the pay day after the next one. Staff: any role, up to
+--- Org.salaryMax, at once (and a boss's waiting change dropped).
 function Org.setSalary(who, grade, amount)
     local org = Org.current()
     if not org then return fail(ERR.OFF) end
@@ -1899,17 +2045,31 @@ function Org.setSalary(who, grade, amount)
     if not who.staff then
         local why = Engine.mayEditRole(org, who.cid, grade)
         if why then return fail(why == 'locked' and ERR.LOCKED or ERR.RANK) end
-        if amount > Org.salaryMax(org, grade) then return fail(ERR.BOUNDS, { max = Org.salaryMax(org, grade) }) end
-    else
-        local own = tonumber(org.settings.payroll.max[tostring(grade)])
-        if own and amount > own then return fail(ERR.BOUNDS, { max = math.floor(own) }) end
     end
+    local max = Org.salaryMax(org, grade)
+    if amount > max then return fail(ERR.BOUNDS, { max = max }) end
     local key = tostring(grade)
-    local before = tonumber(org.settings.payroll.salary[key]) or 0
-    org.settings.payroll.salary[key] = amount > 0 and amount or nil
+    local pay = org.settings.payroll
+    local before = tonumber(pay.salary[key]) or 0
+    if who.staff then
+        pay.salary[key] = amount > 0 and amount or nil
+        pay.pending[key] = nil
+        saveOrgRow()
+        record('org_salary', who, { grade = grade, from = before, to = amount })
+        return true, nil, { from = before, to = amount }
+    end
+    -- A boss's: the pay day after the next one, so nothing they set is
+    -- paid before the members and staff have seen it for a whole period.
+    local period = payDays() * 86400
+    local fromAt = (tonumber(pay.nextAt) or (now() + period)) + period
+    if amount == before then
+        pay.pending[key] = nil
+    else
+        pay.pending[key] = { amount = amount, from = fromAt, by = who.cid, at = now() }
+    end
     saveOrgRow()
-    record('org_salary', who, { grade = grade, from = before, to = amount })
-    return true, nil, { from = before, to = amount }
+    record('org_salary', who, { grade = grade, from = before, to = amount, fromPayDay = fromAt })
+    return true, nil, { from = before, to = amount, fromPayDay = amount ~= before and fromAt or nil }
 end
 
 --- Staff only: the most a role may be paid (false clears it: SalaryMax).
@@ -1938,37 +2098,125 @@ local function tell(cid, text)
     end
 end
 
---- Pay one member for one pay day. Answers 'paid', 'repeat' (paid before
---- this pay day: a restart part-way), 'skipped' (the funds could not cover
---- it) or 'failed' (the bank refused; the funds were given back).
+--- A salary's funds row found already written (Funds.debit 'repeat'): what
+--- became of it. Paid (its marker, or paid in this process), given back
+--- (':back'), or a give-back waiting to be tried again: 'repeat'. Left
+--- for staff before: 'repeat'. Otherwise the server stopped between the
+--- debit and the marker, and whether the bank took it is not known: never
+--- paid again on a guess, audited and left for staff once ('unconfirmed').
+local function settleRepeat(org, member, amount, period, ref)
+    if PaidHere[ref] or Funds.byRef(ref .. ':paid') or Funds.byRef(ref .. ':back')
+        or org.settings.payroll.refunds[ref] or Funds.byRef(ref .. ':review') then
+        return 'repeat'
+    end
+    local row = Funds.byRef(ref)
+    local debited = row and math.abs(math.floor(tonumber(row.amount) or 0)) or amount
+    deps.audit.financial('org_payroll_unconfirmed', member.cid, nil, { org = org.id, amount = debited,
+        period = period, ref = ref })
+    if deps.review and deps.review.open then
+        pcall(deps.review.open, { kind = 'org_payroll_unconfirmed', cids = { member = member.cid },
+            amount = debited, account = 'bank', known = { org = org.id, ref = ref, period = period } })
+    end
+    Funds.mark(org, ref .. ':review', { kind = 'salary_review', actor = member.cid,
+        reason = 'left for staff: not known whether the bank took it' })
+    return 'unconfirmed', nil, debited
+end
+
+--- Pay one member for one pay day. Answers 'paid', 'repeat' (dealt with
+--- before: a restart part-way), 'unconfirmed' (left for staff: see
+--- settleRepeat), 'skipped' (the funds could not cover it) or 'failed'
+--- (the bank refused; the funds were given back, or will be).
 local function payOne(org, member, amount, period)
     local ref = ('pay:%d:%s'):format(period, member.cid)
+    if Paying[ref] then return 'repeat' end
+    Paying[ref] = true
     local ok, ferr, repeated = Funds.debit(org, amount, { ref = ref, kind = 'salary', actor = member.cid,
         reason = 'grade ' .. tostring(member.grade), title = 'Salary' })
-    if repeated then return 'repeat' end
-    if not ok then return ferr == 'short' and 'skipped' or 'failed', ferr end
+    if repeated then
+        Paying[ref] = nil
+        return settleRepeat(org, member, amount, period, ref)
+    end
+    if not ok then
+        Paying[ref] = nil
+        return ferr == 'short' and 'skipped' or 'failed', ferr
+    end
     local paidOk, paid = pcall(function()
         return exports.qbx_core:AddMoney(member.cid, 'bank', amount, 'crimson-hitman organisation salary')
     end)
     if not paidOk or not paid then
-        Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,
+        local back, berr = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,
             reason = 'salary not paid', title = 'Salary returned' })
+        if not back then
+            -- Kept with the settings and tried again every tick (Org.payrollTick).
+            org.settings.payroll.refunds[ref] = { cid = member.cid, amount = amount, period = period }
+            saveOrgRow()
+            deps.audit.financial('org_payroll_refund_failed', member.cid, nil, { org = org.id, amount = amount,
+                period = period, ref = ref, why = berr or 'refused' })
+        end
+        Paying[ref] = nil
         return 'failed', 'bank'
     end
+    if not Funds.mark(org, ref .. ':paid', { kind = 'salary_paid', actor = member.cid, reason = 'paid to bank' }) then
+        PaidHere[ref] = true
+        deps.audit.financial('org_payroll_unmarked', member.cid, nil, { org = org.id, amount = amount,
+            period = period, ref = ref })
+    end
+    Paying[ref] = nil
     return 'paid'
+end
+
+--- Give back the salaries a bank refused whose give-back failed, where the
+--- funds can move: each once (its ':back' reference), audited.
+local function retryRefunds(org)
+    local pay = org.settings.payroll
+    if not next(pay.refunds) or not Funds.ready() then return end
+    local changed = false
+    for ref, r in pairs(pay.refunds) do
+        local amount = type(r) == 'table' and Funds.amount(r.amount)
+        if not amount then
+            pay.refunds[ref], changed = nil, true
+        else
+            local ok, _, repeated = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund',
+                actor = r.cid, reason = 'salary not paid', title = 'Salary returned' })
+            if ok or repeated then
+                pay.refunds[ref], changed = nil, true
+                deps.audit.financial('org_payroll_refunded', r.cid, nil, { org = org.id, amount = amount,
+                    period = r.period, ref = ref })
+            end
+        end
+    end
+    if changed then saveOrgRow() end
+end
+
+--- A boss's salaries due by this pay day, made the salary.
+local function applyPending(org, due)
+    local pay = org.settings.payroll
+    for key, p in pairs(pay.pending) do
+        if type(p) ~= 'table' or not org.roles[tonumber(key)] then
+            pay.pending[key] = nil
+        elseif (tonumber(p.from) or 0) <= due then
+            local amount = math.floor(tonumber(p.amount) or 0)
+            pay.salary[key] = amount > 0 and amount or nil
+            pay.pending[key] = nil
+            deps.audit.financial('org_salary_applied', p.by, nil, { org = org.id, grade = tonumber(key),
+                to = amount, period = due })
+        end
+    end
 end
 
 --- Pay day, where it is due: every member paid their role's salary from the
 --- funds, a short one skipped and told; the next pay day kept. Cheap until
---- then: one comparison. Restart-safe both ways (see the section above).
+--- then: one comparison (and a give-back to try again, where one waits).
+--- Restart-safe both ways (see the section above).
 ---@param at integer|nil os.time() (the tests)
----@return table|nil what happened { paid, skipped, failed, total } when it ran
+---@return table|nil what happened { paid, skipped, failed, unconfirmed, total } when it ran
 function Org.payrollTick(at)
     if not Org.payrollOn() then return nil end
     local org = State
     if not org then return nil end
     local ts = at or now()
     local pay = org.settings.payroll
+    if next(pay.refunds) then retryRefunds(org) end
     local due = tonumber(pay.nextAt)
     if not due then
         -- The first pay day: a whole period from when it was turned on.
@@ -1978,30 +2226,52 @@ function Org.payrollTick(at)
     end
     if ts < due then return nil end
     if not Funds.ready() then return nil end
+    applyPending(org, due)
     local list = {}
     for _, m in pairs(org.members) do list[#list + 1] = m end
     table.sort(list, function(a, b)
         if a.grade ~= b.grade then return a.grade > b.grade end
         return a.cid < b.cid
     end)
-    local out = { paid = 0, skipped = 0, failed = 0, total = 0, period = due }
+    local out = { paid = 0, skipped = 0, failed = 0, unconfirmed = 0, total = 0, period = due }
+    local cap = Powers.limit(org, 'PayrollPerDayMax')
+    local spent = 0
+    local paySuspended = Config.Organisation.PaySuspended == true
+    local function skip(m, amount, why, text)
+        out.skipped = out.skipped + 1
+        deps.audit.financial('org_payroll_skipped', m.cid, nil, { org = org.id, amount = amount,
+            period = due, why = why })
+        tell(m.cid, text)
+    end
     for _, m in ipairs(list) do
         local amount = Org.salaryOf(org, m.grade)
         if amount > 0 then
-            local result, why = payOne(org, m, amount, due)
-            if result == 'paid' then
-                out.paid, out.total = out.paid + 1, out.total + amount
-                tell(m.cid, ('Pay day: your salary of $%d was paid to your bank.'):format(amount))
-            elseif result == 'skipped' then
-                out.skipped = out.skipped + 1
-                deps.audit.financial('org_payroll_skipped', m.cid, nil, { org = org.id, amount = amount,
-                    period = due, why = 'short' })
-                tell(m.cid, ('Pay day: your salary of $%d was not paid; the organisation\'s funds were short.')
+            if not paySuspended and m.suspended_until and m.suspended_until > ts then
+                skip(m, amount, 'suspended', ('Pay day: your salary of $%d was not paid while you are suspended.')
                     :format(amount))
-            elseif result == 'failed' then
-                out.failed = out.failed + 1
-                deps.audit.financial('org_payroll_skipped', m.cid, nil, { org = org.id, amount = amount,
-                    period = due, why = why or 'refused' })
+            elseif cap > 0 and spent + amount > cap then
+                skip(m, amount, 'cap', ('Pay day: your salary of $%d was not paid; this pay day\'s salaries '
+                    .. 'reached the limit staff set.'):format(amount))
+            else
+                local result, why, debited = payOne(org, m, amount, due)
+                if result == 'paid' then
+                    spent = spent + amount
+                    out.paid, out.total = out.paid + 1, out.total + amount
+                    tell(m.cid, ('Pay day: your salary of $%d was paid to your bank.'):format(amount))
+                elseif result == 'repeat' then
+                    -- Paid (or given back) before a restart: counts toward the cap.
+                    spent = spent + amount
+                elseif result == 'unconfirmed' then
+                    spent = spent + (debited or amount)
+                    out.unconfirmed = out.unconfirmed + 1
+                elseif result == 'skipped' then
+                    skip(m, amount, 'short', ('Pay day: your salary of $%d was not paid; the organisation\'s '
+                        .. 'funds were short.'):format(amount))
+                elseif result == 'failed' then
+                    out.failed = out.failed + 1
+                    deps.audit.financial('org_payroll_skipped', m.cid, nil, { org = org.id, amount = amount,
+                        period = due, why = why or 'refused' })
+                end
             end
         end
     end
@@ -2013,12 +2283,13 @@ function Org.payrollTick(at)
     pay.lastAt = due
     saveOrgRow()
     deps.audit.financial('org_payroll_run', nil, nil, { org = org.id, period = due, paid = out.paid,
-        skipped = out.skipped, failed = out.failed, total = out.total, nextAt = nextAt })
-    if out.skipped > 0 then
-        -- Those who can see the funds hear that some were short.
+        skipped = out.skipped, failed = out.failed, unconfirmed = out.unconfirmed, total = out.total,
+        nextAt = nextAt })
+    if out.skipped > 0 or out.unconfirmed > 0 then
+        -- Those who can see the funds hear that some were not paid.
         for cid in pairs(org.members) do
             if Engine.holds(org, cid, 'C8') then
-                tell(cid, ('Pay day: %d salary(ies) could not be paid; the funds were short.'):format(out.skipped))
+                tell(cid, ('Pay day: %d salary(ies) could not be paid.'):format(out.skipped + out.unconfirmed))
             end
         end
     end
@@ -2569,7 +2840,12 @@ function Org.roles(who)
             editable = who.staff or (grade < own and not r.locked) or nil,
             cut = org.settings.cuts.byRole[tostring(grade)], access = org.settings.access[tostring(grade)],
             salary = Org.payrollOn() and Org.salaryOf(org, grade) or nil,
-            salaryMax = Org.payrollOn() and Org.salaryMax(org, grade) or nil }
+            salaryMax = Org.payrollOn() and Org.salaryMax(org, grade) or nil,
+            -- A boss's change waiting for its first pay day.
+            salaryNext = Org.payrollOn() and Org.pendingSalary(org, grade) and Org.pendingSalary(org, grade).amount
+                or nil,
+            salaryNextAt = Org.payrollOn() and Org.pendingSalary(org, grade) and Org.pendingSalary(org, grade).from
+                or nil }
     end
     table.sort(out, function(a, b) return a.grade > b.grade end)
     return true, nil, { rows = out }
@@ -2609,7 +2885,10 @@ function Org.staffView(viewer)
         powers = Powers.LIST, warnings = Jobs.checkConvars(),
         codenames = Org.codenamesOn() or nil,
         payroll = Org.payrollOn() and { nextAt = org.settings.payroll.nextAt, lastAt = org.settings.payroll.lastAt,
-            salary = Util.copy(org.settings.payroll.salary), max = Util.copy(org.settings.payroll.max) } or nil,
+            salary = Util.copy(org.settings.payroll.salary), max = Util.copy(org.settings.payroll.max),
+            pending = Util.copy(org.settings.payroll.pending), refunds = Util.copy(org.settings.payroll.refunds),
+            paySuspended = Config.Organisation.PaySuspended == true,
+            perDayMax = Powers.limit(org, 'PayrollPerDayMax') } or nil,
     }
 end
 

@@ -85,6 +85,10 @@ local list = {
       kind = 'switch', label = 'Payroll',
       about = 'Every pay day each member is paid their role\'s salary from the funds; one the funds cannot '
           .. 'cover is skipped and told.', inflight = 'Read at the next pay day; nothing already paid changes.' },
+    { key = 'Organisation.PaySuspended', section = 'features', category = 'organisation', group = GROUP,
+      kind = 'switch', label = 'Pay suspended members',
+      about = 'Off: a member suspended on pay day is not paid that pay day, and told.',
+      inflight = 'Read at the next pay day; nothing already paid changes.' },
     { key = 'Organisation.PayrollDays', section = 'limits', category = 'organisation', group = GROUP,
       kind = 'number', integer = true, min = 1, max = 31, label = 'Days between pay days',
       about = 'How often salaries are paid.', inflight = 'Used for the pay day after the next one.' },
@@ -127,6 +131,7 @@ local ABOUT = {
     RenameCooldownMinutes = 'Minutes between two label changes by a boss.',
     InviteMinutes = 'Minutes a boss\'s invite waits for the player to accept it in the app.',
     SalaryMax = 'Most salary a boss may set per role per pay day ($).',
+    PayrollPerDayMax = 'Most paid in salaries in all on one pay day ($); 0 is no cap but each role\'s.',
     CodenameCooldownMinutes = 'Minutes between two changes a member makes to their own codename.',
 }
 local keys = {}

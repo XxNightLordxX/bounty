@@ -2135,7 +2135,7 @@ function StartCrimsonHitman()
     -- After escrow, contracts and settings: it hooks the payout
     -- (Escrow.orgCut), the accept (Contracts.acceptGate) and its switch.
     org.init({ storage = Storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
-               contracts = contracts, settings = settings })
+               contracts = contracts, settings = settings, review = review })
     -- After death, kidnap and the bodyguards, whose steps it draws, and after
     -- the proof-of-intent hold and the EMS rule, which disposal chains ahead
     -- of (Escrow.holdBack, Contracts.intentOnClaim, Contracts.relistHold).

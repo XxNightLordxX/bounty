@@ -65,6 +65,9 @@ Review.KINDS = {
         .. 'what did not arrive',
     location_tip_refund_failed = 'an informant tip that could not be delivered was owed back, '
         .. 'and could not be credited: refund what did not arrive',
+    org_payroll_unconfirmed = 'an organisation salary left the funds and the server stopped before '
+        .. 'it said whether the member\'s bank took it: check the member\'s bank (the transaction '
+        .. '"crimson-hitman organisation salary"); pay them if it never arrived, else dismiss',
     escrow_take_unverified = 'escrow was taken and the store would not say whether it was '
         .. 'written. The server hands every line it took back to whom it came from by itself '
         .. 'once the database answers; Refund does the same now. An older one without that '

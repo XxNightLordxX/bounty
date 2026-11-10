@@ -807,7 +807,7 @@ function Amendments.openFor(actor, contractId)
             -- else, and always for one who took it anonymously, the alias.
             if hitman and hitman.anon ~= true and type(hitman.hitman_name) == 'string'
                 and actor.cid == contract.creator_cid then
-                proposerName = Util.shownHitmanName(hitman.hitman_cid, hitman.hitman_name)
+                proposerName = Util.shownHitmanName(hitman.hitman_cid, hitman.hitman_name, contractId)
             end
         end
 

@@ -245,6 +245,31 @@ function Funds.byRef(ref)
     return row
 end
 
+--- The kinds of row that move nothing: markers written beside a movement
+--- to say what became of it (a salary paid on to the member's bank, or left
+--- for staff), amount 0, so no balance or sum counts them.
+Funds.MARKS = { salary_paid = true, salary_review = true }
+
+--- Write a marker once per reference (Funds.MARKS): true when it is
+--- written, or was already.
+---@param org table
+---@param ref string
+---@param spec table { kind, actor, reason }
+---@return boolean
+function Funds.mark(org, ref, spec)
+    if type(ref) ~= 'string' or type(spec) ~= 'table' or not Funds.MARKS[spec.kind] then return false end
+    ref = ref:sub(1, 96)
+    if known[ref] then return true end
+    local row = { id = ref, org_id = org.id, kind = spec.kind, amount = 0, actor = spec.actor,
+        reason = spec.reason, created_at = os.time(), backend = Funds.backend() }
+    local wrote = pcall(Storage.insertOrgRowOnce, 'funds', row)
+    if not wrote then return false end
+    -- Inserted now, or there already: either way it is written.
+    known[ref] = row
+    absent[ref] = nil
+    return true
+end
+
 local function history(org, title, amount, actor, kind)
     if not Funds.usesBank() then return end
     pcall(function()
@@ -471,10 +496,14 @@ function Funds.ledger(org, limit)
         return tostring(a.id) > tostring(b.id)
     end)
     local out = {}
-    for i = 1, math.min(#rows, limit or 50) do
+    for i = 1, #rows do
+        if #out >= (limit or 50) then break end
         local r = rows[i]
-        out[#out + 1] = { kind = r.kind, amount = math.floor(tonumber(r.amount) or 0), at = r.created_at,
-            reason = r.reason, contract = r.contract_id, actor = r.actor }
+        -- Markers move nothing and are not shown.
+        if not Funds.MARKS[r.kind] then
+            out[#out + 1] = { kind = r.kind, amount = math.floor(tonumber(r.amount) or 0), at = r.created_at,
+                reason = r.reason, contract = r.contract_id, actor = r.actor }
+        end
     end
     return out
 end

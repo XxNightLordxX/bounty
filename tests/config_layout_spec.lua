@@ -228,6 +228,8 @@ local ADDED = {
         -- Codenames and payroll (plan R6, R10), each its own switch, off.
         Codenames = false, CodenameMinLength = 3, CodenameMaxLength = 20,
         CodenameBlocked = { 'admin', 'staff', 'moderator', 'police' }, Payroll = false, PayrollDays = 7,
+        -- Whether suspended members are paid (the organisation review), off.
+        PaySuspended = false,
         Roles = { '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no',
             '2, lieutenant, Lieutenant, 0, no', '3, boss, Boss, 0, yes' },
         Limits = {
@@ -237,7 +239,7 @@ local ADDED = {
             WithdrawPerDay = 100000, CutMaxPercent = 25, TotalCutCapPercent = 40, StakeCutMaxPercent = 25,
             BuyoutCutMaxPercent = 25, OfficeMoveMetres = 150.0, LocationCooldownMinutes = 60,
             MaxSignupSpots = 2, MaxMeetingSpots = 5, NoticeMaxLength = 500, RenameCooldownMinutes = 1440,
-            InviteMinutes = 10, SalaryMax = 1000, CodenameCooldownMinutes = 1440,
+            InviteMinutes = 10, SalaryMax = 1000, CodenameCooldownMinutes = 1440, PayrollPerDayMax = 0,
         },
     },
     ['Cooldowns.org'] = { per = 10, burst = 20 },
@@ -447,7 +449,8 @@ describe('the configuration as one short file', function()
         -- lines; the cap is that plus a three-line margin.
         -- And the organisation's codenames and payroll (six lines and two
         -- staff bounds), and the panel-set NPC places' block (four lines).
-        truthy(lines < 866, 'config.lua is ' .. lines .. ' lines')
+        -- And the payroll's PaySuspended switch and PayrollPerDayMax bound.
+        truthy(lines < 868, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

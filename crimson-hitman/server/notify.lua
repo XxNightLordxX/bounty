@@ -911,7 +911,10 @@ end
 ---@param returning boolean|nil the hitman is taking it up again after a stint of their own
 --- on it (Contracts.accept): not news to officers twice, whatever a restart forgot
 function Notify.contractAccepted(contract, hitmanRecord, activeHitmen, returning)
-    local shown = Util.shownHitmanName(hitmanRecord.hitman_cid, hitmanRecord.hitman_name)
+    -- Taken up again: the name shown the first time (kept with the
+    -- contract); a first acceptance: the one about to be kept with it.
+    local shown = Util.shownHitmanName(hitmanRecord.hitman_cid, hitmanRecord.hitman_name,
+        returning and contract.id or nil)
     local who = hitmanRecord.anon and 'an operative' or shown
     local body = ('Your contract on %s has been accepted by %s. %d operative%s now active.')
         :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and ' is' or 's are')

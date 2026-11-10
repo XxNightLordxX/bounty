@@ -556,7 +556,9 @@ CREATE TABLE IF NOT EXISTS crimson_org_funds (
     INDEX idx_org_funds_org (org_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- The cut frozen onto a contract when a member accepted it.
+-- The cut frozen onto a contract when a member accepted it, and the name
+-- shown for them on it from then on (a codename, or NULL: their name).
+-- Added to existing databases by migrate.
 CREATE TABLE IF NOT EXISTS crimson_org_splits (
     id VARCHAR(80) PRIMARY KEY,
     org_id VARCHAR(32) NOT NULL,
@@ -566,6 +568,7 @@ CREATE TABLE IF NOT EXISTS crimson_org_splits (
     stake_pct INT DEFAULT 0,
     buyout_pct INT DEFAULT 0,
     created_at INT NOT NULL,
+    shown_name VARCHAR(48),
     INDEX idx_org_splits_contract (contract_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

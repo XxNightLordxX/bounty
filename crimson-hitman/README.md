@@ -676,23 +676,48 @@ character that loaded before the job was registered (a late start).
   picks their own codename in the tab, or a boss holding M7 gives one to a
   member below them (then only the boss or staff change it). Each is checked
   on the server: `CodenameMinLength` to `CodenameMaxLength` characters,
-  letters, digits, spaces, `-` and `_`, none of `CodenameBlocked` (any case,
-  with punctuation and the common digit swaps folded), and no other member's
-  codename or name; a member's own change waits
+  letters, digits, spaces, `-` and `_`, none of `CodenameBlocked`, and it may
+  not read as another member's codename or as any character's name (every
+  member's and applicant's, and every player's in the city when it is set).
+  Both sides are folded before they are compared: any case, separators
+  (spaces, `-`, `_`, punctuation) dropped, and the look-alikes `1`/`l`/`i`,
+  `0`/`o`, `3`/`e`, `4`/`a`, `5`/`s`, `7`/`t`, `8`/`b` (also read as `a` and
+  `ate`), `@`/`a` and `$`/`s` read as one, so `Po1ice`, `Admln` and `P 11`
+  are caught. A member's own change waits
   `Config.Organisation.Limits.CodenameCooldownMinutes`. It is shown in the
   organisation's roster and, to a placer (and a target where names are
   shown), in place of the hitman's name, only where that name would have been
-  shown at all: a hitman who took a contract anonymously is still an
-  operative, and nobody in the organisation is told the name behind it.
+  shown at all, and always marked as one: `Viper (codename)`. A hitman who
+  took a contract anonymously is still an operative, and nobody in the
+  organisation is told the name behind it. The name shown is kept with the
+  contract when it is taken (`crimson_org_splits.shown_name`), so leaving,
+  being fired, a changed or cleared codename, or codenames turned off later
+  never shows the real name on a contract that showed the codename.
 - **Payroll** (`Config.Organisation.Payroll`, off as shipped). A boss holding
   P3 sets each role below them a salary, up to
   `Config.Organisation.Limits.SalaryMax` or the lower maximum staff set for
-  that role (`orgSalary` with `max`). Every `PayrollDays` each member is paid
-  their role's salary from the funds into their bank: one ledger row per
-  member and pay day, by a reference made of both, so a restart part-way
-  pays nobody twice and the funds fall by exactly what the members gained. A
+  that role (`orgSalary` with `max`). A boss's change is paid from the pay day
+  after the next one (the roles screen says so) and is on the record
+  (`org_salary`, then `org_salary_applied`); a change staff make takes effect
+  at once. What is paid is always held to those two bounds as they are on
+  the pay day, so lowering either lowers a salary already set. Every
+  `PayrollDays` each member is paid their role's salary from the funds into
+  their bank: one ledger row per member and pay day, by a reference made of
+  both, so a restart part-way pays nobody twice and the funds fall by exactly
+  what the members gained; a marker row follows once the bank took it. A
   salary the funds cannot cover is skipped and the member told (and those
-  who can see the funds); the rest are still paid. The pay day is kept with
+  who can see the funds); the rest are still paid. A member suspended on pay
+  day is skipped and told unless `Config.Organisation.PaySuspended`, and one
+  pay day pays at most `Config.Organisation.Limits.PayrollPerDayMax` in all
+  (0: no cap beyond each role's; members past it, from the lowest rank up,
+  are skipped and told). Where the bank refuses a salary it goes back to the
+  funds; a give-back that fails is on the record
+  (`org_payroll_refund_failed`) and tried again every tick until it lands
+  (`org_payroll_refunded`). If the server stops after a salary left the funds
+  and before the bank's answer was marked, the next run never pays it again
+  on a guess: it is on the record (`org_payroll_unconfirmed`) and left for
+  staff in the review queue (`/ch-stuck`, kind `org_payroll_unconfirmed`):
+  check the member's bank, then pay or dismiss. The pay day is kept with
   the organisation, so a restart neither skips nor repeats one; a server down
   for longer than a period pays once, not for every period missed. Until the
   pay day the maintenance tick compares one number. Every pay day is on the
@@ -1301,6 +1326,7 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.CodenameBlocked` | `{ 'admin', 'staff', 'moderator', … 4 in all }` | words a codename may not contain (any case; spaces, digits and punctuation ignored) |
 | `Config.Organisation.Payroll` | `false` | every pay day each member is paid their role's salary from the funds |
 | `Config.Organisation.PayrollDays` | `7` | days between two pay days |
+| `Config.Organisation.PaySuspended` | `false` | whether a member suspended on pay day is paid that pay day; off, they are skipped and told |
 | `Config.Organisation.Roles` | `{ '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no', '2, lieutenant, Lieutenant, 0, no', … 4 in all }` | the roles made with it: 'grade, name, label, pay, boss' |
 | `Config.Organisation.Limits.MaxMembers` | `20` | members at most |
 | `Config.Organisation.Limits.HireRadius` | `5.0` | metres a hire stands from the boss |
@@ -1328,6 +1354,7 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.RenameCooldownMinutes` | `1440` | minutes between two label changes by a boss |
 | `Config.Organisation.Limits.InviteMinutes` | `10` | minutes a boss's invite waits for the player to accept |
 | `Config.Organisation.Limits.SalaryMax` | `1000` | most salary a boss sets per role per pay day ($); staff may set a lower one per role |
+| `Config.Organisation.Limits.PayrollPerDayMax` | `0` | most paid in salaries in all on one pay day ($); members past it are skipped and told; 0 = no cap beyond each role's |
 | `Config.Organisation.Limits.CodenameCooldownMinutes` | `1440` | minutes between two changes a member makes to their own codename |
 
 ### Mission steps

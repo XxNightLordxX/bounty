@@ -526,7 +526,8 @@ local function namedOperatives(contract, hitmen)
     for i = 1, #hitmen do
         local h = hitmen[i]
         if h.state == 'active' and h.anon ~= true and type(h.hitman_name) == 'string' then
-            named[#named + 1] = { alias = h.alias, name = Util.shownHitmanName(h.hitman_cid, h.hitman_name) }
+            named[#named + 1] = { alias = h.alias,
+                name = Util.shownHitmanName(h.hitman_cid, h.hitman_name, contract.id) }
         end
     end
     return #named > 0 and named or nil
@@ -725,7 +726,7 @@ function Projection.contract(contract, viewerCid, opts)
             if h.state == 'active' then
                 out.hitmen[#out.hitmen + 1] = {
                     alias = h.alias,
-                    name  = (not h.anon) and Util.shownHitmanName(h.hitman_cid, h.hitman_name) or nil,
+                    name  = (not h.anon) and Util.shownHitmanName(h.hitman_cid, h.hitman_name, contract.id) or nil,
                     claims = h.claims or 0,
                     -- A record, not an identity. For an anonymous hitman
                     -- only the coarse standing crosses: exact counters are a

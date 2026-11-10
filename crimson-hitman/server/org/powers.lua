@@ -146,7 +146,8 @@ Powers.LIMIT_KEYS = {
     MaxSignupSpots = { min = 0, max = 20 }, MaxMeetingSpots = { min = 0, max = 50 },
     NoticeMaxLength = { min = 0, max = 2000 }, RenameCooldownMinutes = { min = 0, max = 43200 },
     InviteMinutes = { min = 1, max = 1440 },
-    SalaryMax = { min = 0, max = 1000000 }, CodenameCooldownMinutes = { min = 0, max = 43200 },
+    SalaryMax = { min = 0, max = 1000000 }, PayrollPerDayMax = { min = 0, max = 100000000 },
+    CodenameCooldownMinutes = { min = 0, max = 43200 },
 }
 
 --- One staff bound, clamped, from the organisation's own value or config.

@@ -703,6 +703,7 @@ Config.Organisation = {
     CodenameBlocked    = { 'admin', 'staff', 'moderator', 'police' }, -- words a codename may not contain
     Payroll            = false,                  -- a salary per role, paid from the funds every pay day
     PayrollDays        = 7,                      -- days between two pay days
+    PaySuspended       = false,                  -- suspended members are paid their salary too
     Roles              = { -- the roles made with it: 'grade, name, label, pay, boss'
         '0, recruit, Recruit, 0, no',
         '1, operative, Operative, 0, no',
@@ -736,6 +737,7 @@ Config.Organisation = {
         RenameCooldownMinutes    = 1440,    -- minutes between two label changes by a boss
         InviteMinutes            = 10,      -- minutes a boss's invite waits for the player to accept
         SalaryMax                = 1000,    -- most salary a boss sets per role per pay day ($)
+        PayrollPerDayMax         = 0,       -- most paid in salaries in all on one pay day ($); 0 = no cap
         CodenameCooldownMinutes  = 1440,    -- minutes between two own codename changes
     },
 }

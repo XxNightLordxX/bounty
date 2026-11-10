@@ -79,7 +79,9 @@ describe('salaries', function()
         local s, _, org = world()
         W.allow(s, 3, 'P3')
         truthy(s.org.setSalary(BOSS, 0, 500))
-        eq(s.org.salaryOf(org, 0), 500)
+        -- A boss's change waits for the pay day after the next one.
+        eq(s.org.salaryOf(org, 0), 0)
+        eq(s.org.pendingSalary(org, 0).amount, 500)
         local ok, err, extra = s.org.setSalary(BOSS, 0, 1001)
         falsy(ok)
         eq(err, 'org_bounds', 'over SalaryMax (1000)')
@@ -89,6 +91,8 @@ describe('salaries', function()
         eq(select(2, s.org.setSalary(BOSS, 0, -1)), 'invalid_input')
         eq(select(2, s.org.setSalary(BOSS, 0, 1.5)), 'invalid_input')
         -- Staff's own maximum for a role caps it further, for bosses and staff.
+        truthy(s.org.setSalary(W.STAFF, 0, 500))
+        eq(s.org.salaryOf(org, 0), 500, 'staff\'s at once')
         truthy(s.org.setSalaryMax(W.STAFF, 0, 200))
         eq(select(2, s.org.setSalary(BOSS, 0, 300)), 'org_bounds')
         eq(s.org.salaryOf(org, 0), 200, 'what was set before is paid within the new maximum')
@@ -128,7 +132,9 @@ describe('salaries', function()
             { grade = 0 }, 'nonsense', 12 }) do
             local reply = W.call('orgSalary', 11, payload)
             truthy(reply, 'answered')
-            if reply.ok then eq(s.org.salaryOf(org, 0), 500, 'only a string the server read as 500') end
+            if reply.ok then
+                eq(s.org.pendingSalary(org, 0).amount, 500, 'only a string the server read as 500')
+            end
         end
         local _ = org
     end)

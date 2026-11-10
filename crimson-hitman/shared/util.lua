@@ -481,12 +481,14 @@ end
 --- the contract keeps. The hitman organisation (server/org/init.lua,
 --- Config.Organisation.Codenames) puts its own in place on the server, a
 --- member's codename where they have one; never called for one who took a
---- contract anonymously.
+--- contract anonymously. With the contract's id, the name shown when they
+--- took it, so a codename once shown stays.
 ---@param cid string|nil
 ---@param name string|nil
+---@param contractId string|nil
 ---@return string|nil
-function Util.shownHitmanName(cid, name)
-    local _ = cid
+function Util.shownHitmanName(cid, name, contractId)
+    local _, _ = cid, contractId
     return name
 end
 

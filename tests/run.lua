@@ -602,7 +602,7 @@ function _G.newStack()
     escrow.scrubSerial = impScrub.scrub
     impWeekly.init({ storage = storage, audit = audit, alerts = alerts })
     org.init({ storage = storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
-               contracts = contracts, settings = settings })
+               contracts = contracts, settings = settings, review = review })
     -- The step markers and body disposal, as main.lua wires them.
     missionSteps.init({ identity = identity, storage = storage, death = death, kidnap = kidnap,
                         rpProtection = rpProtection })
@@ -749,6 +749,7 @@ local suites = {
     'mission_steps_spec', 'disposal_spec',
     'review_x_spec',
     'org_phone_spec', 'org_payroll_spec', 'org_codename_spec',
+    'org_phone_review_spec',
     'capability_inventory_spec',
     'docs_spec',
 }

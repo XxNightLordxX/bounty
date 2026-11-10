@@ -156,8 +156,8 @@ describe('where a codename is shown', function()
         local text = ''
         for _, h in ipairs(seen) do text = text .. tostring(h.name) .. ' ' .. tostring(h.alias) .. ';' end
         eq(text:find('Rook', 1, true), nil, 'never the real name: ' .. text)
-        eq(seen[1].name, 'Jackdaw', 'the codename in place of the name')
-        eq(s.org.shownName('HITMAN01', 'Rook Ash'), 'Jackdaw')
+        eq(seen[1].name, 'Jackdaw (codename)', 'the codename in place of the name, marked as one')
+        eq(s.org.shownName('HITMAN01', 'Rook Ash'), 'Jackdaw (codename)')
     end)
 
     it('never names a hitman who took it anonymously, codename or not', function()

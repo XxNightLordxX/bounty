@@ -3642,7 +3642,7 @@
 
   function viewOrgHome(view, m) {
     var head = orgCard(m.label || 'The organisation', 'i-briefcase');
-    head.appendChild(el('div', 'target', m.codename ? m.codename : (m.role || 'Member')));
+    head.appendChild(el('div', 'target', m.codename ? m.codename + ' (codename)' : (m.role || 'Member')));
     head.appendChild(el('div', 'hint', 'Your role: ' + (m.role || 'Member')));
     if (m.suspendedUntil) {
       head.appendChild(el('div', 'hint org-warn', suspendedText({ untilAt: m.suspendedUntil,
@@ -3722,8 +3722,10 @@
       return box;
     }
     box.appendChild(el('div', 'hint', m.codename
-      ? 'Shown in the organisation, and to a placer where your name would be shown: ' + m.codename + '.'
-      : 'Pick one. It is shown in the organisation, and to a placer where your name would be shown.'));
+      ? 'Shown in the organisation, and to a placer where your name would be shown, marked as a codename: '
+        + m.codename + ' (codename). A contract keeps the one shown when you took it.'
+      : 'Pick one. It is shown in the organisation, and to a placer where your name would be shown, marked '
+        + 'as a codename. It may not read as any character\'s name.'));
     box.appendChild(orgField('codename.own', 'Codename', 'text', 'Letters and digits', 32));
     var row = orgRow();
     row.appendChild(orgTwoTap('primary', 'Set codename', 'codename', 'Tap again to set it', function () {
@@ -4003,12 +4005,15 @@
     if (orgHolds('P3')) {
       box.appendChild(orgField(key + 'salary', 'Salary every pay day ($' + (typeof r.salaryMax === 'number'
         ? ', up to ' + money(r.salaryMax) : '') + ')', 'number', String(Number(r.salary) || 0)));
+      if (typeof r.salaryNext === 'number') {
+        box.appendChild(el('div', 'hint', 'Changing to ' + money(r.salaryNext) + ' from the pay day after next.'));
+      }
       var rs = orgRow();
       rs.appendChild(orgTwoTap('ghost', 'Set salary', key + 'salary', 'Tap again to set the salary', function () {
         var amount = orgNumber(key + 'salary');
         if (amount === null) { return say('Write the salary as a whole number of dollars.'); }
         orgWrite(key + 'salary', function () { return post('orgSalary', { grade: r.grade, amount: amount }); },
-          'Salary set. It is paid from the funds every pay day.');
+          'Salary set. A change takes effect from the pay day after next.');
       }, 'P3'));
       box.appendChild(rs);
     }
