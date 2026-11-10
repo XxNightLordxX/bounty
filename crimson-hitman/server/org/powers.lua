@@ -33,6 +33,8 @@ Powers.LIST = {
       about = 'Bar a member from accepting contracts for a time.' },
     { code = 'M6', area = 'members', label = 'Member limits', limits = { 'MemberMaxAtOnce', 'MemberCooldownMaxMinutes' },
       about = 'Set a member\'s contracts at once and cooldown between accepts.' },
+    { code = 'M7', area = 'members', label = 'Assign codenames', feature = 'Codenames',
+      about = 'Give a member below you a codename (Config.Organisation.Codenames).' },
     -- Roles
     { code = 'R1', area = 'roles', label = 'Create roles', office = true, limits = { 'MaxRoles', 'PayMax' },
       about = 'Add a role below your rank.' },
@@ -47,6 +49,8 @@ Powers.LIST = {
       about = 'Set the pay per pay-cycle of roles below your rank.' },
     { code = 'P2', area = 'pay', label = 'Bonus pay', limits = { 'BonusMax', 'BonusPerDay' },
       about = 'Pay a member a one-off bonus from the funds, with a reason.' },
+    { code = 'P3', area = 'pay', label = 'Set salaries', feature = 'Payroll', limits = { 'SalaryMax' },
+      about = 'Set the salary each role below you is paid from the funds every pay day.' },
     -- Money and cuts
     { code = 'C1', area = 'money', label = 'Organisation cut', office = true, limits = { 'CutMaxPercent', 'TotalCutCapPercent' },
       about = 'Set the share of each member payout that goes to the funds.' },
@@ -142,6 +146,7 @@ Powers.LIMIT_KEYS = {
     MaxSignupSpots = { min = 0, max = 20 }, MaxMeetingSpots = { min = 0, max = 50 },
     NoticeMaxLength = { min = 0, max = 2000 }, RenameCooldownMinutes = { min = 0, max = 43200 },
     InviteMinutes = { min = 1, max = 1440 },
+    SalaryMax = { min = 0, max = 1000000 }, CodenameCooldownMinutes = { min = 0, max = 43200 },
 }
 
 --- One staff bound, clamped, from the organisation's own value or config.

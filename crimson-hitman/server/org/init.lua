@@ -72,6 +72,7 @@ Org.ERR = {
     SHORT = 'org_short', BUSY = 'org_busy', MEMBERS_ONLY = 'org_members_only',
     RULE = 'org_rule', ALREADY = 'org_already', OFF_DUTY = 'org_off_duty',
     NOT_HELD = 'org_not_held', BANK_DOWN = 'org_bank_down', INVALID = CH.ERR.INVALID_INPUT,
+    NAME_TAKEN = 'org_name_taken', NAME_BLOCKED = 'org_name_blocked', FEATURE_OFF = 'org_feature_off',
 }
 local ERR = Org.ERR
 
@@ -97,6 +98,9 @@ local MESSAGES = {
     org_off_duty = 'Go on duty first.',
     org_not_held = 'You can only pass on a power you hold yourself.',
     org_bank_down = 'The organisation\'s bank account cannot be reached right now; nothing was moved.',
+    org_name_taken = 'Another member already goes by that codename.',
+    org_name_blocked = 'That codename is not allowed. Pick another.',
+    org_feature_off = 'Staff have not switched that on for the organisation.',
     invalid_input = 'Check what was entered.',
 }
 
@@ -172,6 +176,13 @@ local function settingsOf(raw)
     s.picks = type(s.picks) == 'table' and s.picks or {}
     s.layout = type(s.layout) == 'table' and s.layout or {}
     s.moves = type(s.moves) == 'table' and s.moves or {}
+    -- Codenames (Config.Organisation.Codenames): who gave each and when.
+    s.codenames = type(s.codenames) == 'table' and s.codenames or {}
+    -- Payroll (Config.Organisation.Payroll): salary and staff max by grade,
+    -- and when the next pay day falls.
+    s.payroll = type(s.payroll) == 'table' and s.payroll or {}
+    s.payroll.salary = type(s.payroll.salary) == 'table' and s.payroll.salary or {}
+    s.payroll.max = type(s.payroll.max) == 'table' and s.payroll.max or {}
     return s
 end
 
@@ -246,6 +257,8 @@ end
 
 function Org.init(d)
     deps = d
+    -- A member's codename where a hitman's name is shown (Org.shownName).
+    Util.shownHitmanName = function(cid, name) return Org.shownName(cid, name) end
     State, Splits, LastAccept, Recent, Refs, RefSeq = nil, {}, {}, {}, {}, 0
     Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, nil, 0
     Jobs.reset()
@@ -689,7 +702,8 @@ function Org.hire(who, target, grade)
     if not target.source or not ok or not a or not b
         or GetPlayerRoutingBucket(who.source) ~= GetPlayerRoutingBucket(target.source)
         or (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 + (a.z - b.z) ^ 2 > radius * radius then
-        return fail(ERR.RULE, nil)
+        return fail(ERR.RULE, { message = ('They must be in the city and standing beside you (within %s m).')
+            :format(tostring(radius)) })
     end
     if inviteOf(target.cid) then return fail(ERR.ALREADY) end
     local minutes = Powers.limit(org, 'InviteMinutes')
@@ -925,15 +939,138 @@ function Org.memberStaff(who, cid, fields)
     if fields.codename ~= nil then
         if fields.codename == false or fields.codename == '' then
             member.codename = nil
-        elseif type(fields.codename) == 'string' and fields.codename:match('^[%w _%-]+$') and #fields.codename <= 32 then
-            member.codename = fields.codename
+            org.settings.codenames[cid] = nil
         else
-            return fail(ERR.INVALID)
+            local clean, why = Org.checkCodename(org, fields.codename, cid)
+            if not clean then return fail(why) end
+            member.codename = clean
+            org.settings.codenames[cid] = { by = 'staff', at = now() }
         end
+        saveOrgRow()
     end
     saveMember(member)
     record('org_member_staff', who, { member = cid, locked = member.locked, codename = member.codename })
     return true
+end
+
+-- ============================================================================
+--                              CODENAMES
+-- ============================================================================
+-- Config.Organisation.Codenames (off as shipped). A member picks their own,
+-- or a boss holding M7 (Assign codenames) gives one to a member below them;
+-- one given by a boss or staff is theirs to change, not the member's. Shown
+-- inside the organisation, and to placers and targets in place of the
+-- member's name only where their name would have been shown at all: a
+-- hitman who took a contract anonymously is still nobody. Off, nothing
+-- reads one and every name is shown as before.
+
+--- Whether codenames are on now.
+---@return boolean
+function Org.codenamesOn()
+    return Org.enabled() and Config.Organisation.Codenames == true
+end
+
+--- The letters a codename is checked against the blocked words with: lower
+--- case, letters only (so 'A.d-m 1n' still reads 'admn', and 'adm1n' as
+--- 'admin' with the common digit swaps).
+local LEET = { ['0'] = 'o', ['1'] = 'i', ['3'] = 'e', ['4'] = 'a', ['5'] = 's', ['7'] = 't', ['@'] = 'a',
+    ['$'] = 's' }
+local function folded(text)
+    return (text:lower():gsub('.', function(c) return LEET[c] or c end):gsub('[^%a]', ''))
+end
+
+--- A codename as typed, checked: its cleaned form, or nil and why not.
+--- Length (CodenameMinLength-CodenameMaxLength), letters, digits, spaces,
+--- - and _ only (starting with a letter or digit), none of the blocked
+--- words (CodenameBlocked), and no other member's codename or name.
+---@param org table
+---@param text any
+---@param cid string|nil the member it is for (their own does not clash)
+---@return string|nil clean
+---@return string|nil err
+function Org.checkCodename(org, text, cid)
+    if type(text) ~= 'string' then return nil, ERR.INVALID end
+    text = Util.toValidUtf8(text):gsub('^%s+', ''):gsub('%s+$', ''):gsub('%s+', ' ')
+    local cfg = Config.Organisation
+    local lo = math.max(1, math.floor(tonumber(cfg.CodenameMinLength) or 3))
+    local hi = math.min(32, math.max(lo, math.floor(tonumber(cfg.CodenameMaxLength) or 20)))
+    if #text < lo or #text > hi or not text:match('^[%w][%w _%-]*$') then return nil, ERR.INVALID end
+    local plain = folded(text)
+    for _, word in ipairs(type(cfg.CodenameBlocked) == 'table' and cfg.CodenameBlocked or {}) do
+        local w = type(word) == 'string' and folded(word) or ''
+        if w ~= '' and plain:find(w, 1, true) then return nil, ERR.NAME_BLOCKED end
+    end
+    local key = text:lower()
+    for other, m in pairs(org.members) do
+        if other ~= cid then
+            if type(m.codename) == 'string' and m.codename:lower() == key then return nil, ERR.NAME_TAKEN end
+            -- Never somebody's own name: a codename that reads as another
+            -- member would put that member's name on this one's contracts.
+            if type(m.name) == 'string' and m.name:lower() == key then return nil, ERR.NAME_TAKEN end
+        end
+    end
+    return text
+end
+
+--- Set a codename: a member's own (`cid` nil or theirs), or (M7) one for a
+--- member below the boss. `name` false clears it.
+---@param who table
+---@param cid string|nil
+---@param name string|false
+function Org.setCodename(who, cid, name)
+    local org = Org.current()
+    if not org then return fail(ERR.OFF) end
+    if Config.Organisation.Codenames ~= true then return fail(ERR.FEATURE_OFF) end
+    local own = not who.staff and (cid == nil or cid == who.cid)
+    if who.staff and cid == nil then return fail(ERR.NOT_FOUND) end
+    if own then
+        cid = who.cid
+        if not org.members[cid] then return fail(ERR.NOT_MEMBER) end
+    else
+        local err = Org.authorize(org, who, 'M7')
+        if err then return fail(err) end
+    end
+    local member = type(cid) == 'string' and org.members[cid]
+    if not member then return fail(ERR.NOT_FOUND) end
+    local meta = org.settings.codenames[cid]
+    if own then
+        -- One a boss or staff gave stays theirs to change.
+        if meta and meta.by ~= 'self' then return fail(ERR.LOCKED) end
+        if meta and meta.at and now() - meta.at < Powers.limit(org, 'CodenameCooldownMinutes') * 60 then
+            return fail(ERR.COOLDOWN)
+        end
+    elseif not who.staff then
+        local why = Engine.mayActOn(org, who.cid, cid)
+        if why then return fail(why == 'self' and ERR.SELF or why == 'locked' and ERR.LOCKED or ERR.RANK) end
+        if meta and meta.by == 'staff' then return fail(ERR.LOCKED) end
+    end
+    local clean
+    if name ~= false then
+        local why
+        clean, why = Org.checkCodename(org, name, cid)
+        if not clean then return fail(why) end
+        if clean == member.codename then return true, nil, { codename = clean, unchanged = true } end
+    end
+    local before = member.codename
+    member.codename = clean
+    org.settings.codenames[cid] = clean and { by = who.staff and 'staff' or (own and 'self' or 'boss'), at = now() }
+        or nil
+    saveMember(member)
+    saveOrgRow()
+    record('org_codename', who, { member = cid, own = own or nil, set = clean ~= nil, changed = before ~= nil or nil })
+    return true, nil, { codename = clean }
+end
+
+--- The name to show for a hitman where their name is shown at all: their
+--- codename while codenames are on and they have one, else their name.
+---@param cid string|nil
+---@param name string|nil the name the contract keeps
+---@return string|nil
+function Org.shownName(cid, name)
+    if name == nil or not Org.codenamesOn() or type(cid) ~= 'string' then return name end
+    local org = State
+    local member = org and org.members[cid]
+    return member and type(member.codename) == 'string' and member.codename or name
 end
 
 -- ============================================================================
@@ -1705,6 +1842,190 @@ function Org.fundsBackend(who, to, abandon)
 end
 
 -- ============================================================================
+--                              PAYROLL
+-- ============================================================================
+-- Config.Organisation.Payroll (off as shipped). Every PayrollDays each
+-- member is paid their role's salary from the funds, to their bank: the
+-- funds first (Funds.debit, one ledger row per member and pay day, by a
+-- reference made of both, so a restart part-way pays nobody twice), then
+-- their bank, the funds given back where that refuses. A salary the funds
+-- cannot cover is skipped and the member told; the rest are still paid.
+-- The pay day is kept with the organisation's settings, so a restart
+-- neither skips nor repeats one. The maintenance tick asks every tick; it
+-- compares one number until the pay day comes (Org.payrollTick).
+
+--- Whether payroll is on now.
+---@return boolean
+function Org.payrollOn()
+    return Org.enabled() and Config.Organisation.Payroll == true
+end
+
+local function payDays()
+    local days = math.floor(tonumber(Config.Organisation.PayrollDays) or 7)
+    return math.max(1, math.min(31, days))
+end
+
+--- The most a boss may set a role's salary to: SalaryMax, or less where
+--- staff set the role's own maximum.
+---@return integer
+function Org.salaryMax(org, grade)
+    local cap = Powers.limit(org, 'SalaryMax')
+    local own = tonumber(org.settings.payroll.max[tostring(grade)])
+    if own then cap = math.min(cap, math.floor(own)) end
+    return math.max(0, cap)
+end
+
+--- What a role is paid every pay day, within its staff maximum.
+---@return integer
+function Org.salaryOf(org, grade)
+    local pay = math.floor(tonumber(org.settings.payroll.salary[tostring(grade)]) or 0)
+    local own = tonumber(org.settings.payroll.max[tostring(grade)])
+    if own then pay = math.min(pay, math.floor(own)) end
+    return math.max(0, pay)
+end
+
+--- A role's salary (P3): a role below the boss, up to Org.salaryMax.
+--- Staff: any role, 0-1,000,000, within the role's own maximum if set.
+function Org.setSalary(who, grade, amount)
+    local org = Org.current()
+    if not org then return fail(ERR.OFF) end
+    if Config.Organisation.Payroll ~= true then return fail(ERR.FEATURE_OFF) end
+    local err = Org.authorize(org, who, 'P3')
+    if err then return fail(err) end
+    grade = math.floor(tonumber(grade) or -1)
+    if not org.roles[grade] then return fail(ERR.NOT_FOUND) end
+    amount = tonumber(amount)
+    if not amount or amount ~= math.floor(amount) or amount < 0 or amount > 1000000 then return fail(ERR.INVALID) end
+    if not who.staff then
+        local why = Engine.mayEditRole(org, who.cid, grade)
+        if why then return fail(why == 'locked' and ERR.LOCKED or ERR.RANK) end
+        if amount > Org.salaryMax(org, grade) then return fail(ERR.BOUNDS, { max = Org.salaryMax(org, grade) }) end
+    else
+        local own = tonumber(org.settings.payroll.max[tostring(grade)])
+        if own and amount > own then return fail(ERR.BOUNDS, { max = math.floor(own) }) end
+    end
+    local key = tostring(grade)
+    local before = tonumber(org.settings.payroll.salary[key]) or 0
+    org.settings.payroll.salary[key] = amount > 0 and amount or nil
+    saveOrgRow()
+    record('org_salary', who, { grade = grade, from = before, to = amount })
+    return true, nil, { from = before, to = amount }
+end
+
+--- Staff only: the most a role may be paid (false clears it: SalaryMax).
+function Org.setSalaryMax(who, grade, amount)
+    local org = Org.current()
+    if not org then return fail(ERR.OFF) end
+    if not who.staff then return fail(ERR.NO_POWER) end
+    grade = math.floor(tonumber(grade) or -1)
+    if not org.roles[grade] then return fail(ERR.NOT_FOUND) end
+    local key = tostring(grade)
+    if amount == false then
+        org.settings.payroll.max[key] = nil
+    else
+        amount = tonumber(amount)
+        if not amount or amount ~= math.floor(amount) or amount < 0 or amount > 1000000 then return fail(ERR.INVALID) end
+        org.settings.payroll.max[key] = amount
+    end
+    saveOrgRow()
+    record('org_salary_max', who, { grade = grade, max = org.settings.payroll.max[key] or false })
+    return true
+end
+
+local function tell(cid, text)
+    if deps.notify and deps.notify.toCitizen and deps.identity.byCitizenId(cid) then
+        pcall(deps.notify.toCitizen, cid, (State and State.label) or 'Organisation', text)
+    end
+end
+
+--- Pay one member for one pay day. Answers 'paid', 'repeat' (paid before
+--- this pay day: a restart part-way), 'skipped' (the funds could not cover
+--- it) or 'failed' (the bank refused; the funds were given back).
+local function payOne(org, member, amount, period)
+    local ref = ('pay:%d:%s'):format(period, member.cid)
+    local ok, ferr, repeated = Funds.debit(org, amount, { ref = ref, kind = 'salary', actor = member.cid,
+        reason = 'grade ' .. tostring(member.grade), title = 'Salary' })
+    if repeated then return 'repeat' end
+    if not ok then return ferr == 'short' and 'skipped' or 'failed', ferr end
+    local paidOk, paid = pcall(function()
+        return exports.qbx_core:AddMoney(member.cid, 'bank', amount, 'crimson-hitman organisation salary')
+    end)
+    if not paidOk or not paid then
+        Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,
+            reason = 'salary not paid', title = 'Salary returned' })
+        return 'failed', 'bank'
+    end
+    return 'paid'
+end
+
+--- Pay day, where it is due: every member paid their role's salary from the
+--- funds, a short one skipped and told; the next pay day kept. Cheap until
+--- then: one comparison. Restart-safe both ways (see the section above).
+---@param at integer|nil os.time() (the tests)
+---@return table|nil what happened { paid, skipped, failed, total } when it ran
+function Org.payrollTick(at)
+    if not Org.payrollOn() then return nil end
+    local org = State
+    if not org then return nil end
+    local ts = at or now()
+    local pay = org.settings.payroll
+    local due = tonumber(pay.nextAt)
+    if not due then
+        -- The first pay day: a whole period from when it was turned on.
+        pay.nextAt = ts + payDays() * 86400
+        saveOrgRow()
+        return nil
+    end
+    if ts < due then return nil end
+    if not Funds.ready() then return nil end
+    local list = {}
+    for _, m in pairs(org.members) do list[#list + 1] = m end
+    table.sort(list, function(a, b)
+        if a.grade ~= b.grade then return a.grade > b.grade end
+        return a.cid < b.cid
+    end)
+    local out = { paid = 0, skipped = 0, failed = 0, total = 0, period = due }
+    for _, m in ipairs(list) do
+        local amount = Org.salaryOf(org, m.grade)
+        if amount > 0 then
+            local result, why = payOne(org, m, amount, due)
+            if result == 'paid' then
+                out.paid, out.total = out.paid + 1, out.total + amount
+                tell(m.cid, ('Pay day: your salary of $%d was paid to your bank.'):format(amount))
+            elseif result == 'skipped' then
+                out.skipped = out.skipped + 1
+                deps.audit.financial('org_payroll_skipped', m.cid, nil, { org = org.id, amount = amount,
+                    period = due, why = 'short' })
+                tell(m.cid, ('Pay day: your salary of $%d was not paid; the organisation\'s funds were short.')
+                    :format(amount))
+            elseif result == 'failed' then
+                out.failed = out.failed + 1
+                deps.audit.financial('org_payroll_skipped', m.cid, nil, { org = org.id, amount = amount,
+                    period = due, why = why or 'refused' })
+            end
+        end
+    end
+    -- The next pay day: one period on, or (a server down for longer than a
+    -- period) one period from now. Missed pay days are not paid twice over.
+    local nextAt = due + payDays() * 86400
+    if nextAt <= ts then nextAt = ts + payDays() * 86400 end
+    pay.nextAt = nextAt
+    pay.lastAt = due
+    saveOrgRow()
+    deps.audit.financial('org_payroll_run', nil, nil, { org = org.id, period = due, paid = out.paid,
+        skipped = out.skipped, failed = out.failed, total = out.total, nextAt = nextAt })
+    if out.skipped > 0 then
+        -- Those who can see the funds hear that some were short.
+        for cid in pairs(org.members) do
+            if Engine.holds(org, cid, 'C8') then
+                tell(cid, ('Pay day: %d salary(ies) could not be paid; the funds were short.'):format(out.skipped))
+            end
+        end
+    end
+    return out
+end
+
+-- ============================================================================
 --                              LOCATIONS
 -- ============================================================================
 
@@ -1778,7 +2099,7 @@ function Org.placeSpot(who, spec)
     local at
     if spec.here or not who.staff then
         at = Org.positionOf(who.source)
-        if not at then return fail(ERR.RULE) end
+        if not at then return fail(ERR.RULE, { message = 'The server cannot see where you stand right now.' }) end
     else
         local x, y, z = tonumber(spec.x), tonumber(spec.y), tonumber(spec.z)
         if not x or not y or not z then return fail(ERR.INVALID) end
@@ -1793,7 +2114,9 @@ function Org.placeSpot(who, spec)
     local label = spec.label == nil and (existing and existing.label or kind) or cleanName(spec.label, 64)
     if not label then return fail(ERR.INVALID) end
     if not who.staff then
-        if inSafeZone(at.x, at.y) then return fail(ERR.RULE) end
+        if inSafeZone(at.x, at.y) then
+            return fail(ERR.RULE, { message = 'Not here: this is a safe zone staff keep clear of organisation spots.' })
+        end
         local moved = org.settings.moves[kind .. ':' .. who.cid]
         if moved and now() - moved < Powers.limit(org, 'LocationCooldownMinutes') * 60 then
             return fail(ERR.COOLDOWN)
@@ -1965,7 +2288,7 @@ function Org.apply(actor, text)
     text = text and Util.toValidUtf8(text):gsub('%c', ' '):sub(1, 255) or nil
     if text and text:find('[<>]') then return fail(ERR.INVALID) end
     if Config.Organisation.ApplyAtSignupOnly ~= false and not atSignup(org, actor.source) then
-        return fail(ERR.RULE)
+        return fail(ERR.RULE, { message = 'Applications are taken only at a sign-up spot: stand at one, then apply.' })
     end
     local row = { id = ('app:%s:%d:%d'):format(org.id, now(), math.random(1000, 9999)):sub(1, 48), org_id = org.id,
         cid = actor.cid, name = actor.name, body = text, state = 'open', created_at = now() }
@@ -2099,7 +2422,9 @@ local function memberView(org, viewer, m, full)
     local role = org.roles[m.grade]
     local online = deps.identity.byCitizenId(m.cid) ~= nil
     local out = {
-        ref = Org.refFor(viewer, m.cid), name = m.codename or m.name, grade = m.grade,
+        ref = Org.refFor(viewer, m.cid),
+        name = (Org.codenamesOn() and m.codename) or m.name, grade = m.grade,
+        codename = Org.codenamesOn() and m.codename or nil,
         role = role and role.label or nil, online = online, lastSeen = m.last_seen,
         joined = m.joined_at, suspendedUntil = m.suspended_until, locked = m.locked or nil,
         boss = role and role.is_boss or nil,
@@ -2113,10 +2438,47 @@ local function memberView(org, viewer, m, full)
         for code, entry in pairs(m.denies) do out.denies[code] = entry.by == 'staff' and 'staff' or 'boss' end
         out.limits = m.limits
         out.held = Engine.held(org, m.cid)
+        out.realName = m.name
     end
     return out
 end
 Org.memberView = memberView
+
+--- Every power's name and area, by code, and Take contracts.
+---@return table [code] = { label, area }
+function Org.powerNames()
+    local out = { [Powers.TAKE] = { label = 'Take contracts', area = 'contracts' } }
+    for _, p in ipairs(Powers.LIST) do out[p.code] = { label = p.label, area = p.area, feature = p.feature } end
+    return out
+end
+
+--- Whether the organisation has a boss office set (and on).
+---@return boolean
+function Org.hasOffice(org)
+    for _, l in pairs(org.locations) do
+        if l.kind == 'office' and l.enabled ~= false then return true end
+    end
+    return false
+end
+
+--- Whether a player's app shows the Organisation tab, and as what: a
+--- 'member', an 'applicant' (an open application), an 'invitee' (a boss's
+--- invite waiting), or 'signup' (standing at a sign-up spot, where they
+--- may apply). nil for anybody else, and while it is off. Read with every
+--- board reply, so it costs a table lookup or two; the sign-up spots are
+--- looked at only for a non-member and only where one is set.
+---@param cid string
+---@param src integer|nil
+---@return string|nil
+function Org.tabFor(cid, src)
+    local org = Org.current()
+    if not org or type(cid) ~= 'string' then return nil end
+    if org.members[cid] then return 'member' end
+    for _, a in pairs(org.applications) do if a.cid == cid then return 'applicant' end end
+    if inviteOf(cid) then return 'invitee' end
+    if src and atSignup(org, src) then return 'signup' end
+    return nil
+end
 
 --- What a player's own Organisation tab shows: their place, what they hold,
 --- the notice and the cut they would accept at. Off: { enabled = false }.
@@ -2128,18 +2490,43 @@ function Org.mine(actor)
         local open = false
         for _, a in pairs(org.applications) do if a.cid == actor.cid then open = true end end
         return { enabled = true, member = false, label = org.label, applied = open or nil,
-            invite = Org.inviteFor(actor.cid) }
+            invite = Org.inviteFor(actor.cid),
+            -- Where they may apply from: anywhere, or only at a sign-up spot
+            -- (and whether they stand at one now, by the server's own look).
+            signupOnly = Config.Organisation.ApplyAtSignupOnly ~= false or nil,
+            atSignup = (Config.Organisation.ApplyAtSignupOnly ~= false and atSignup(org, actor.source)) or nil }
     end
     local role = org.roles[member.grade]
     local held = Engine.held(org, actor.cid)
-    local office = {}
-    for code in pairs(held) do if Engine.needsOffice(org, code) then office[code] = true end end
+    local office, bounds = {}, {}
+    for code in pairs(held) do
+        if Engine.needsOffice(org, code) then office[code] = true end
+        -- The staff bounds of the powers they hold, for the boss menu to
+        -- say before it is asked (the server checks them again).
+        local spec = Powers.BY_CODE[code]
+        for _, key in ipairs(spec and spec.limits or {}) do bounds[key] = Powers.limit(org, key) end
+    end
     return {
         enabled = true, member = true, label = org.label, grade = member.grade, role = role and role.label,
-        powers = held, officeOnly = office, inOffice = Org.inOffice(org, actor.source),
+        powers = held, officeOnly = office, inOffice = Org.inOffice(org, actor.source), bounds = bounds,
+        -- What each power is called, for the powers editor of a boss who
+        -- may pass some on (R4, D2) or set the office rule (S3): the ones
+        -- they do not hold are shown
+        -- greyed, as staff not having given them.
+        powerNames = (held.R4 or held.D2 or held.S3) and Org.powerNames() or nil,
         notice = org.settings.notice and org.settings.notice.text or nil,
         terms = Org.termsFor(actor.cid), suspendedUntil = member.suspended_until,
         limits = member.limits, layout = org.settings.layout,
+        hasOffice = Org.hasOffice(org) or nil,
+        -- Codenames and payroll, each only while switched on.
+        codenames = Org.codenamesOn() or nil,
+        codename = Org.codenamesOn() and member.codename or nil,
+        codenameGiven = Org.codenamesOn() and org.settings.codenames[actor.cid] ~= nil
+            and org.settings.codenames[actor.cid].by ~= 'self' or nil,
+        payroll = Org.payrollOn() and { salary = Org.salaryOf(org, member.grade),
+            nextIn = org.settings.payroll.nextAt and math.max(0, org.settings.payroll.nextAt - now()) or nil } or nil,
+        -- Placeholder: a member's own record lands here (plan R11).
+        stats = nil,
     }
 end
 
@@ -2165,7 +2552,7 @@ function Org.roles(who)
     if not who.staff then
         local any = false
         if not org.members[who.cid] then return fail(ERR.NOT_MEMBER) end
-        for _, code in ipairs({ 'M1', 'R1', 'R2', 'R3', 'R4', 'P1', 'C2', 'K1', 'K3' }) do
+        for _, code in ipairs({ 'M1', 'R1', 'R2', 'R3', 'R4', 'P1', 'P3', 'C2', 'K1', 'K3' }) do
             if Engine.holds(org, who.cid, code) then any = true end
         end
         if not any then return fail(ERR.NO_POWER) end
@@ -2180,7 +2567,9 @@ function Org.roles(who)
         out[#out + 1] = { grade = grade, name = r.name, label = r.label, pay = r.pay, boss = r.is_boss or nil,
             locked = r.locked or nil, members = Engine.countAt(org, grade), powers = powers,
             editable = who.staff or (grade < own and not r.locked) or nil,
-            cut = org.settings.cuts.byRole[tostring(grade)], access = org.settings.access[tostring(grade)] }
+            cut = org.settings.cuts.byRole[tostring(grade)], access = org.settings.access[tostring(grade)],
+            salary = Org.payrollOn() and Org.salaryOf(org, grade) or nil,
+            salaryMax = Org.payrollOn() and Org.salaryMax(org, grade) or nil }
     end
     table.sort(out, function(a, b) return a.grade > b.grade end)
     return true, nil, { rows = out }
@@ -2218,6 +2607,9 @@ function Org.staffView(viewer)
         balance = Funds.balance(org), bank = Funds.usesBank(), fundsBackend = Funds.backend(),
         fundsReady = Funds.ready(), applications = apps and apps.rows or {},
         powers = Powers.LIST, warnings = Jobs.checkConvars(),
+        codenames = Org.codenamesOn() or nil,
+        payroll = Org.payrollOn() and { nextAt = org.settings.payroll.nextAt, lastAt = org.settings.payroll.lastAt,
+            salary = Util.copy(org.settings.payroll.salary), max = Util.copy(org.settings.payroll.max) } or nil,
     }
 end
 

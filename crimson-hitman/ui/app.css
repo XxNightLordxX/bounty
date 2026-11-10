@@ -1465,6 +1465,7 @@ html.is-whitelisted-view main {
 .tab[data-tab="place"]  { --icon: var(--svg-fileplus); }
 .tab[data-tab="onme"]   { --icon: var(--svg-eye); }
 .tab[data-tab="ledger"] { --icon: var(--svg-book); }
+.tab[data-tab="org"]    { --icon: var(--svg-briefcase); }
 .tab.is-active { color: var(--ink); }
 .tab.is-active::after {
   content: '';
@@ -1876,3 +1877,37 @@ button.is-held { opacity: 0.55; }
 .edit-sheet > .sheet-changes { flex: none; max-height: 6.5rem; overflow-y: auto; margin: 0.4rem 0 0; }
 .edit-sheet > .hint { flex: none; }
 .edit-sheet .hint.is-refusal { color: var(--crimson-bright); }
+
+/* ---------- the Organisation tab ----------
+   The hitman organisation's member page and boss menu (Config.Organisation,
+   off as shipped; the tab exists only while the board says it is for this
+   player). Cards like any other; rows of buttons that wrap; a choice drawn
+   as a row of tiles, the picked one lit; the second tap of a write in gold,
+   as the tip's is. */
+.card.org-card { margin-bottom: 0.65rem; overflow-wrap: anywhere; }
+.org-card-title {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-weight: 700; color: var(--ink); margin-bottom: 0.35rem;
+}
+.org-card-title::before { width: 1.05rem; height: 1.05rem; color: var(--ink-dim); }
+.org-notice { white-space: pre-wrap; color: var(--ink); line-height: 1.45; }
+.hint.org-office { color: var(--gold); display: flex; gap: 0.45rem; align-items: flex-start; }
+.hint.org-warn { color: var(--rose); }
+.row.org-actions, .row.org-back, .row.org-menu, .row.org-choice { margin-top: 0.5rem; }
+.row.org-back { margin: 0 0 0.4rem; }
+.row.org-menu > button, .row.org-choice > button { flex: 1 1 8rem; min-width: 0; white-space: normal; }
+.row.org-actions > button { min-width: 0; white-space: normal; }
+.row.org-choice > button { font-size: var(--t-sm); padding: 0.45rem 0.6rem; }
+.row.org-choice > button.is-on { color: var(--ink); background: #2d2621; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.org-screen button.is-armed, .org-card button.is-armed, .org-member button.is-armed, .org-role button.is-armed {
+  color: #1b1408; background: var(--gold); border-color: var(--gold);
+}
+button.ghost.org-row { width: 100%; justify-content: flex-start; text-align: left; white-space: normal; }
+.org-member > .meta, .org-role > .meta { margin-top: 0.4rem; }
+.org-powers { margin-top: 0.6rem; border-top: 1px solid var(--line-soft); padding-top: 0.4rem; }
+.org-power { padding: 0.35rem 0; border-bottom: 1px solid var(--line-soft); }
+.org-power:last-child { border-bottom: none; }
+.org-power-name { color: var(--ink); font-size: var(--t-sm); font-weight: 600; }
+.org-power-name.org-grey { color: var(--ink-faint); }
+.hint.org-ledger { margin-top: 0.15rem; font-family: var(--f-mono); font-size: 0.72rem; }
+.org-card textarea, .org-card input { width: 100%; box-sizing: border-box; }

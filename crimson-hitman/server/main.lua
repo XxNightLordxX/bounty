@@ -2108,7 +2108,7 @@ function StartCrimsonHitman()
     -- The roleplay features: where the broker and informant NPCs stand, the
     -- rumours and briefings, the burner phone, the informant in person and
     -- the reason rules (server/rp_*.lua).
-    rpPlaces.init({ settings = settings })
+    rpPlaces.init({ settings = settings, storage = Storage, audit = audit })
     rpRumours.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
                      projection = projection, app = app })
     rpBurner.init({ audit = audit })
@@ -2259,6 +2259,9 @@ function StartCrimsonHitman()
         -- player brought in step where it does not.
         CrimsonBoot.require('server.org.boss_ops').register(modules)
         CrimsonBoot.require('server.org.staff_ops').register(modules)
+        -- The broker's and informant's places set from Locations
+        -- (Config.Roleplay.NpcPlaces).
+        rpPlaces.addOps(panel)
         -- The panel's Change reward and Reassign (README, Staff tools).
         CrimsonBoot.require('server.staff_reward').register(modules)
         CrimsonBoot.require('server.staff_reassign').register(modules)
@@ -2747,6 +2750,8 @@ local MONEY_JOBS = {
     ['contracts.releaseIdleHolds'] = true, ['contracts.retryStuckClaims'] = true,
     -- A payment the database did not confirm, which the server settles.
     ['review.decide'] = true,
+    -- The organisation's pay day (Config.Organisation.Payroll).
+    ['org.payroll'] = true,
 }
 
 --- Jobs called on every tick that do their work less often by a gate of
@@ -3006,6 +3011,9 @@ function Tick()
     if modules.summary then job('summary.tick', modules.summary.tick) end
     -- The weekly stats (Config.Improvements.WeeklyStats): nothing while off.
     if modules.impWeekly then job('imp_weekly.tick', modules.impWeekly.tick) end
+    -- The organisation's pay day (Config.Organisation.Payroll): nothing while
+    -- off, and one comparison until the pay day comes (Org.payrollTick).
+    if modules.org and modules.org.payrollTick then job('org.payroll', modules.org.payrollTick) end
     if modules.thresholds then every('thresholds.sweep', modules.thresholds.sweep, now) end
     -- Targets recovering from a kill on a contract, looked at
     -- (Config.Roleplay.EmsRelisting): nothing while it is off.

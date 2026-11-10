@@ -54,6 +54,8 @@ Informant.RULES = {
 ---@param warn string[]
 function Informant.validate(warn)
     Places.checkBlock('InformantNpc', Informant.RULES, warn)
+    -- The broker's and informant's places set from the panel (rp_places.lua).
+    Places.checkBlock('NpcPlaces', { Enabled = { kind = 'switch', default = false } }, warn)
 end
 
 return Informant

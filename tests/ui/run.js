@@ -14514,6 +14514,355 @@ async function main() {
   })();
 
   /* ================================================================
+     The Organisation tab (Config.Organisation, off as shipped): shown only
+     where the board says so, a member's page, and a boss menu of only the
+     powers the server says they hold; every write two taps, every refusal
+     worded.
+     ================================================================ */
+  await (async function organisationTab() {
+    function listing(orgTab) {
+      return function () {
+        const b = JSON.parse(JSON.stringify(BOARD));
+        if (orgTab) { b.data.orgTab = orgTab; }
+        return b;
+      };
+    }
+    function orgTabs(app) {
+      return app.document.querySelectorAll('.tab').filter(function (t) { return t.dataset.tab === 'org'; });
+    }
+    function buttons(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    function button(app, label) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON' && n.textContent === label; })[0];
+    }
+    function type(app, idPart, value) {
+      const node = app.view.all().filter(function (n) {
+        return (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA') && String(n.id || '').indexOf(idPart) !== -1;
+      })[0];
+      if (!node) { throw new Error('no field ' + idPart); }
+      node.value = value;
+      node.oninput();
+    }
+    const ALL = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'D2', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2', 'P3',
+      'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
+      'S1', 'S2', 'S3'];
+    function powers(list) {
+      const out = {};
+      list.forEach(function (c) { out[c] = true; });
+      return out;
+    }
+    function names() {
+      const out = { TAKE: { label: 'Take contracts' } };
+      ALL.concat(['D3']).forEach(function (c) { out[c] = { label: 'Power ' + c }; });
+      out.M7.feature = 'Codenames';
+      out.P3.feature = 'Payroll';
+      return out;
+    }
+    function memberMine(held, extra) {
+      const data = { enabled: true, member: true, label: 'Crimson Contractors', grade: 3, role: 'Boss',
+        powers: powers(held), officeOnly: {}, inOffice: true, hasOffice: true, notice: 'Meet at nine',
+        terms: { orgPercent: 10, youKeepPercent: 90, stakePercent: 0, buyoutPercent: 0 },
+        bounds: { WithdrawMax: 50000, CutMaxPercent: 25, TotalCutCapPercent: 40, HireRadius: 5, HireMaxGrade: 1 },
+        layout: { labels: {}, hidden: {} }, powerNames: names() };
+      Object.keys(extra || {}).forEach(function (k) { data[k] = extra[k]; });
+      return { ok: true, data: data };
+    }
+    const MEMBERS = { ok: true, data: { rows: [
+      { ref: 'm1_1111', name: 'Kestrel', grade: 0, role: 'Recruit', online: true },
+      { ref: 'm2_2222', name: 'P12', grade: 2, role: 'Lieutenant', online: false, suspendedUntil: 9999999999 }] } };
+    const ROLES = { ok: true, data: { rows: [
+      { grade: 3, name: 'boss', label: 'Boss', pay: 0, boss: true, members: 1, powers: {} },
+      { grade: 2, name: 'lieutenant', label: 'Lieutenant', pay: 10, members: 1, powers: { M1: { by: 'boss' } },
+        editable: true, salary: 50, salaryMax: 1000 },
+      { grade: 0, name: 'recruit', label: 'Recruit', pay: 0, members: 1, powers: {}, editable: true }] } };
+    async function openOrg(mine, more) {
+      const responses = { list: listing('member'), mine: MINE, ledger: LEDGER, orgMine: mine,
+        orgMembers: MEMBERS, orgRoles: ROLES,
+        orgFunds: { ok: true, data: { balance: 12345, rows: [{ kind: 'deposit', amount: 500, reason: 'bank' }] } },
+        orgSpots: { ok: true, data: { rows: [{ id: 'hitman:meeting:1', kind: 'meeting', label: 'Docks' }] } },
+        orgApplications: { ok: true, data: { rows: [{ id: 'app:1', name: 'Ada', body: 'Let me in' }] } } };
+      Object.keys(more || {}).forEach(function (k) { responses[k] = more[k]; });
+      const app = boot(responses);
+      await settle(); await settle(); await settle();
+      tab(app, 'org');
+      await settle(); await settle(); await settle();
+      // Everything the page asked for, from the harness's own record.
+      Object.defineProperty(app, 'orgSent', { get: function () {
+        return app.sent.filter(function (x) { return x.name.indexOf('org') === 0; });
+      } });
+      return app;
+    }
+    async function screen(app, label) {
+      click(app, label);
+      await settle(); await settle(); await settle();
+    }
+
+    // Visibility.
+    const outside = boot({ list: listing(null), mine: MINE, ledger: LEDGER });
+    await settle(); await settle(); await settle();
+    it('ORG TAB: no Organisation tab for a player the board does not name (off, or outside it)', function () {
+      eq(orgTabs(outside).length, 0);
+      eq(outside.sent.filter(function (s) { return s.name === 'orgMine'; }).length, 0, 'nothing asked');
+      drewCleanly(outside);
+    });
+    let tabFor = 'member';
+    const toggling = boot({ list: function () { return listing(tabFor)(); }, mine: MINE, ledger: LEDGER,
+      orgMine: memberMine([]) });
+    await settle(); await settle(); await settle();
+    const hadTab = orgTabs(toggling).length;
+    tab(toggling, 'org');
+    await settle(); await settle();
+    const onOrg = toggling.view.textContent;
+    tabFor = null;
+    tab(toggling, 'board');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: shown to a member, and taken away once the board stops naming them', function () {
+      eq(hadTab, 1, 'one Org tab');
+      truthy(onOrg.indexOf('Crimson Contractors') !== -1, onOrg);
+      eq(orgTabs(toggling).length, 0, 'gone');
+      drewCleanly(toggling);
+    });
+
+    // A plain member.
+    const plain = await openOrg(memberMine([], { role: 'Recruit', grade: 0, payroll: { salary: 250, nextIn: 7200 } }));
+    it('ORG TAB: a member sees their role, the notice, their cut, salary and record, and no boss menu', function () {
+      const text = plain.view.textContent;
+      truthy(text.indexOf('Your role: Recruit') !== -1, text);
+      truthy(text.indexOf('Meet at nine') !== -1, 'the notice');
+      truthy(text.indexOf('10% of your payout goes to its funds') !== -1, 'the cut');
+      truthy(text.indexOf('Salary: $250 every pay day') !== -1, 'the salary');
+      truthy(text.indexOf('Your record') !== -1, 'the record placeholder');
+      eq(text.indexOf('Boss menu'), -1, 'no menu with no power');
+      drewCleanly(plain);
+    });
+
+    // A boss with a few powers: only those screens.
+    const few = await openOrg(memberMine(['M1', 'M3']));
+    it('ORG TAB: the boss menu holds only the screens of the powers held', function () {
+      const b = buttons(few);
+      truthy(b.indexOf('Members') !== -1, b.join('|'));
+      ['Roles', 'Money', 'Contracts', 'Places', 'Notices', 'Applications', 'Settings'].forEach(function (s) {
+        eq(b.indexOf(s), -1, s + ' not offered');
+      });
+    });
+    await screen(few, 'Members');
+    click(few, 'Kestrel · Recruit');
+    await settle(); await settle();
+    type(few, 'freason', 'Late again');
+    click(few, 'Fire');
+    await settle();
+    const firedAfterOne = few.orgSent.filter(function (s) { return s.name === 'orgFire'; }).length;
+    const armedFire = buttons(few).filter(function (t) { return t.indexOf('Tap again to fire') === 0; }).length;
+    click(few, 'Tap again to fire Kestrel');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: Members lists the roster, and Fire takes two taps with the member\'s handle and a reason', function () {
+      eq(firedAfterOne, 0, 'nothing on the first tap');
+      eq(armedFire, 1, 'armed');
+      const fired = few.orgSent.filter(function (s) { return s.name === 'orgFire'; });
+      eq(fired.length, 1);
+      eq(fired[0].body.member, 'm1_1111');
+      eq(fired[0].body.reason, 'Late again');
+      eq(Object.keys(fired[0].body).sort().join(','), 'member,reason', 'no name, no cid');
+      falsy(buttons(few).indexOf('Set role') !== -1, 'no Set role without M4');
+      drewCleanly(few);
+    });
+
+    // A refusal in the server's words, and one with none.
+    const refused = await openOrg(memberMine(['M1', 'M3']), {
+      orgFire: function () { return { ok: false, err: 'org_rank', data: { message: 'Only below your own rank, boss.' } }; } });
+    await screen(refused, 'Members');
+    click(refused, 'Kestrel · Recruit');
+    await settle();
+    type(refused, 'freason', 'x');
+    click(refused, 'Fire');
+    await settle();
+    click(refused, 'Tap again to fire Kestrel');
+    await settle(); await settle(); await settle();
+    const serverWords = refused.notice();
+    const bare = await openOrg(memberMine(['M1', 'M3']), {
+      orgFire: function () { return { ok: false, err: 'org_last_boss' }; } });
+    await screen(bare, 'Members');
+    click(bare, 'Kestrel · Recruit');
+    await settle();
+    type(bare, 'freason', 'x');
+    click(bare, 'Fire');
+    await settle();
+    click(bare, 'Tap again to fire Kestrel');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: a refusal is the server\'s message where it sent one, the page\'s words otherwise', function () {
+      eq(serverWords, 'Only below your own rank, boss.');
+      truthy(bare.notice().indexOf('nobody in its top boss role') !== -1, bare.notice());
+    });
+
+    // The office.
+    const away = await openOrg(memberMine(['C7', 'C8'], { officeOnly: { C7: true }, inOffice: false }));
+    it('ORG TAB: an office-only power away from the office is explained on the menu', function () {
+      truthy(away.view.textContent.indexOf('work only at the boss office') !== -1, away.view.textContent);
+    });
+    await screen(away, 'Money');
+    it('ORG TAB: and greyed with why on its screen, sending nothing', function () {
+      truthy(away.view.textContent.indexOf('This needs the boss office') !== -1, away.view.textContent);
+      const w = button(away, 'Withdraw');
+      truthy(w && w.disabled, 'Withdraw greyed');
+      w.onclick();
+      eq(away.orgSent.filter(function (s) { return s.name === 'orgWithdraw'; }).length, 0);
+      truthy(away.view.textContent.indexOf('$12,345') !== -1, 'the balance drawn');
+    });
+
+    // Every screen with every power.
+    const all = await openOrg(memberMine(ALL, { codenames: true, payroll: { salary: 0 } }));
+    const shots = {};
+    for (const s of ['Members', 'Roles', 'Money', 'Contracts', 'Places', 'Notices', 'Applications', 'Settings']) {
+      await screen(all, s);
+      shots[s] = { text: all.view.textContent, buttons: buttons(all) };
+      click(all, 'Back');
+      await settle();
+    }
+    it('ORG TAB: every boss screen draws, each with its own controls', function () {
+      truthy(shots.Members.buttons.indexOf('Invite') !== -1, 'hire');
+      truthy(shots.Members.text.indexOf('within 5 m') !== -1, 'the hire radius said');
+      truthy(shots.Roles.buttons.indexOf('Create role') !== -1, 'create role');
+      truthy(shots.Money.buttons.indexOf('Deposit') !== -1 && shots.Money.buttons.indexOf('Withdraw') !== -1
+        && shots.Money.buttons.indexOf('Pay bonus') !== -1, 'money: ' + shots.Money.buttons.join('|'));
+      truthy(shots.Money.text.indexOf('Percent (0 to 25)') !== -1, 'the cut bound said');
+      truthy(shots.Contracts.buttons.indexOf('Save rules') !== -1 && shots.Contracts.buttons.indexOf('Pin it') !== -1,
+        'contracts');
+      truthy(shots.Places.buttons.indexOf('Move the office here') !== -1
+        && shots.Places.buttons.indexOf('Add a meeting spot here') !== -1, 'places');
+      truthy(shots.Places.text.indexOf('Docks') !== -1, 'the spots listed');
+      truthy(shots.Notices.buttons.indexOf('Post') !== -1, 'notices');
+      truthy(shots.Applications.text.indexOf('Let me in') !== -1 && shots.Applications.buttons.indexOf('Accept') !== -1,
+        'applications');
+      truthy(shots.Settings.buttons.indexOf('Rename') !== -1 && shots.Settings.buttons.indexOf('Save names') !== -1,
+        'settings');
+      drewCleanly(all);
+    });
+
+    // Places here: the server reads where they stand; the page sends none.
+    await screen(all, 'Places');
+    click(all, 'Add a meeting spot here');
+    await settle();
+    click(all, 'Tap again to add it here');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: Place here sends the kind (and a name), never a position', function () {
+      const placed = all.orgSent.filter(function (s) { return s.name === 'orgPlaceHere'; });
+      eq(placed.length, 1);
+      eq(placed[0].body.kind, 'meeting');
+      eq(placed[0].body.x, undefined);
+      eq(placed[0].body.y, undefined);
+    });
+    click(all, 'Back');
+    await settle();
+
+    // Roles: the powers editor greys what the boss does not hold.
+    const someRoles = await openOrg(memberMine(['R4', 'M1']));
+    await screen(someRoles, 'Roles');
+    click(someRoles, 'Lieutenant · rank 2');
+    await settle(); await settle();
+    const rolesText = someRoles.view.textContent;
+    click(someRoles, 'Take');
+    await settle();
+    click(someRoles, 'Tap again to take it');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: the role powers editor offers only powers held, greying the rest', function () {
+      truthy(rolesText.indexOf('Staff have not given you this.') !== -1, rolesText);
+      truthy(rolesText.indexOf('Power M1 — given') !== -1, 'what the role has');
+      eq(rolesText.indexOf('Power M7'), -1, 'codenames off: not listed');
+      const sentP = someRoles.orgSent.filter(function (s) { return s.name === 'orgRolePowers'; });
+      eq(sentP.length, 1);
+      eq(sentP[0].body.grade, 2);
+      eq(sentP[0].body.power, 'M1');
+      eq(sentP[0].body.on, false);
+    });
+
+    // Money writes carry a nonce and only the fields the server reads.
+    await screen(all, 'Money');
+    type(all, 'wd-amount', '300');
+    type(all, 'wd-reason', 'rent');
+    click(all, 'Withdraw');
+    await settle();
+    click(all, 'Tap again to withdraw');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: a withdrawal sends the amount, the reason and a nonce, after two taps', function () {
+      const w = all.orgSent.filter(function (s) { return s.name === 'orgWithdraw'; });
+      eq(w.length, 1);
+      eq(w[0].body.amount, 300);
+      eq(w[0].body.reason, 'rent');
+      truthy(/^[A-Za-z0-9_-]{1,32}$/.test(w[0].body.nonce), 'a nonce the server takes: ' + w[0].body.nonce);
+    });
+
+    // Codename, own.
+    const named = await openOrg(memberMine([], { codenames: true }));
+    type(named, 'codename-own', 'Night Owl');
+    click(named, 'Set codename');
+    await settle();
+    click(named, 'Tap again to set it');
+    await settle(); await settle(); await settle();
+    const given = await openOrg(memberMine([], { codenames: true, codename: 'Ghost', codenameGiven: true }));
+    it('ORG TAB: a member sets their own codename with two taps; one given to them is not theirs to change', function () {
+      const c = named.orgSent.filter(function (s) { return s.name === 'orgCodename'; });
+      eq(c.length, 1);
+      eq(c[0].body.codename, 'Night Owl');
+      eq(c[0].body.member, undefined, 'their own: no member named');
+      truthy(given.view.textContent.indexOf('Given to you: Ghost') !== -1, given.view.textContent);
+      eq(buttons(given).indexOf('Set codename'), -1);
+    });
+
+    // Outside it: at a sign-up spot, and invited.
+    const applyAnswers = [];
+    const signup = boot({ list: listing('signup'), mine: MINE, ledger: LEDGER,
+      orgMine: { ok: true, data: { enabled: true, member: false, label: 'Crimson Contractors', signupOnly: true,
+        atSignup: true } },
+      orgApply: function (body) { applyAnswers.push(body); return { ok: true, data: { id: 'a1' } }; } });
+    await settle(); await settle(); await settle();
+    tab(signup, 'org');
+    await settle(); await settle();
+    type(signup, 'apply-text', 'Ready');
+    click(signup, 'Apply');
+    await settle();
+    const appliedAfterOne = applyAnswers.length;
+    click(signup, 'Tap again to apply');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: a player at a sign-up spot applies with two taps', function () {
+      eq(appliedAfterOne, 0);
+      eq(applyAnswers.length, 1);
+      eq(applyAnswers[0].text, 'Ready');
+      drewCleanly(signup);
+    });
+    const invited = boot({ list: function () {
+      const b = listing('invitee')();
+      b.data.orgInvite = { id: 'inv9', label: 'Crimson Contractors', role: 'Recruit', expiresIn: 300 };
+      return b;
+    }, mine: MINE, ledger: LEDGER,
+      orgMine: { ok: true, data: { enabled: true, member: false, label: 'Crimson Contractors',
+        invite: { id: 'inv9' } } } });
+    await settle(); await settle(); await settle();
+    tab(invited, 'org');
+    await settle(); await settle();
+    it('ORG TAB: an invited player sees the invite, with Accept and Decline', function () {
+      truthy(invited.view.textContent.indexOf('You are invited to join Crimson Contractors') !== -1,
+        invited.view.textContent);
+      truthy(buttons(invited).indexOf('Accept') !== -1 && buttons(invited).indexOf('Decline') !== -1);
+    });
+
+    it('ORG TAB: the page words every org_* refusal the server can send', function () {
+      const lua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'org', 'init.lua'), 'utf8');
+      const codes = {};
+      (lua.match(/'org_[a-z_]+'/g) || []).forEach(function (c) { codes[c.slice(1, -1)] = true; });
+      const page = fs.readFileSync(APP, 'utf8');
+      const map = page.slice(page.indexOf('var ERRORS = {'), page.indexOf('};', page.indexOf('var ERRORS = {')));
+      const missing = Object.keys(codes).filter(function (c) {
+        return c.indexOf('org_') === 0 && !/^org_(split|cut|member|role|grant|limits|office_rule|access|pick|funds|bonus|location|notice|applied|application|renamed|layout|external|setup|invite|codename|salary|payroll|created)/.test(c)
+          && map.indexOf(c + ':') === -1;
+      });
+      truthy(Object.keys(codes).length > 20, 'read the codes');
+      eq(missing.join(','), '', 'unworded');
+    });
+  })();
+
+  /* ================================================================
      The placer's Confirm handover (Config.Kidnap.PlacerConfirms).
      ================================================================ */
   await (async function handoverConfirm() {

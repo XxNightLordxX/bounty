@@ -1646,6 +1646,10 @@ for _, entry in ipairs({
     { key = 'Roleplay.InformantNpc.Blip', section = 'features', category = 'features', group = RP_INFORMANT,
       kind = 'switch', label = 'Informant on the map', about = 'A map blip where the informant NPC stands.',
       inflight = NPC_MOVES },
+    { key = 'Roleplay.NpcPlaces.Enabled', section = 'features', category = 'features', group = RP_INFORMANT,
+      kind = 'switch', label = 'Broker and informant placed from the panel',
+      about = 'The places staff set in Locations (Use my position) are used instead of the Locations lists, '
+          .. 'which stay the defaults while none is set.', inflight = NPC_MOVES },
 
     { key = 'Roleplay.ReasonQuality.Enabled', section = 'features', category = 'features', group = RP_REASON,
       kind = 'switch', label = 'Reason quality',

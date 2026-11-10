@@ -68,6 +68,26 @@ local list = {
     { key = 'Organisation.DrawMetres', section = 'limits', category = 'organisation', group = GROUP,
       kind = 'number', min = 5, max = 200, label = 'Distance spots are drawn at (m)',
       about = 'Players\' games draw a spot from this far.', inflight = 'Sent with the next change of spots.' },
+    { key = 'Organisation.Codenames', section = 'features', category = 'organisation', group = GROUP,
+      kind = 'switch', label = 'Codenames',
+      about = 'Members pick a codename (or a boss gives one), shown inside the organisation and to placers '
+          .. 'instead of their name, only where their name would be shown at all.', inflight = AT_USE },
+    { key = 'Organisation.CodenameMinLength', section = 'limits', category = 'organisation', group = GROUP,
+      kind = 'number', integer = true, min = 1, max = 32, label = 'Shortest codename (characters)',
+      about = 'Codenames shorter than this are refused.', inflight = AT_USE },
+    { key = 'Organisation.CodenameMaxLength', section = 'limits', category = 'organisation', group = GROUP,
+      kind = 'number', integer = true, min = 1, max = 32, label = 'Longest codename (characters)',
+      about = 'Codenames longer than this are refused.', inflight = AT_USE },
+    { key = 'Organisation.CodenameBlocked', section = 'limits', category = 'organisation', group = GROUP,
+      kind = 'list', array = true, names = 'phrase', label = 'Words a codename may not contain',
+      about = 'Any case; spaces, digits and punctuation are ignored when it is checked.', inflight = AT_USE },
+    { key = 'Organisation.Payroll', section = 'features', category = 'organisation', group = GROUP,
+      kind = 'switch', label = 'Payroll',
+      about = 'Every pay day each member is paid their role\'s salary from the funds; one the funds cannot '
+          .. 'cover is skipped and told.', inflight = 'Read at the next pay day; nothing already paid changes.' },
+    { key = 'Organisation.PayrollDays', section = 'limits', category = 'organisation', group = GROUP,
+      kind = 'number', integer = true, min = 1, max = 31, label = 'Days between pay days',
+      about = 'How often salaries are paid.', inflight = 'Used for the pay day after the next one.' },
     { key = 'Organisation.JobName', section = 'readonly', category = 'organisation', group = GROUP, kind = 'text',
       label = 'Job name', readonly = 'What every member holds in qbx_core: changed, they would lose it. Set it in '
           .. 'config.lua before the organisation is first turned on.' },
@@ -106,6 +126,8 @@ local ABOUT = {
     NoticeMaxLength = 'Characters in the board notice.',
     RenameCooldownMinutes = 'Minutes between two label changes by a boss.',
     InviteMinutes = 'Minutes a boss\'s invite waits for the player to accept it in the app.',
+    SalaryMax = 'Most salary a boss may set per role per pay day ($).',
+    CodenameCooldownMinutes = 'Minutes between two changes a member makes to their own codename.',
 }
 local keys = {}
 for key in pairs(Powers.LIMIT_KEYS) do keys[#keys + 1] = key end

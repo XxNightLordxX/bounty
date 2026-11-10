@@ -412,6 +412,10 @@ describe('what this suite really covered', function()
     for _, name in ipairs({ 'orgMine', 'orgMembers', 'orgRoles', 'orgFunds', 'orgApplications', 'orgSpots', 'orgHire', 'orgFire', 'orgSetRole', 'orgSuspend', 'orgMemberLimits', 'orgMemberGrant', 'orgRoleCreate', 'orgRoleEdit', 'orgRoleDelete', 'orgRolePowers', 'orgRolePay', 'orgBonus', 'orgSetCut', 'orgDeposit', 'orgWithdraw', 'orgAccess', 'orgPick', 'orgRoleCooldown', 'orgPlaceHere', 'orgRemoveSpot', 'orgNotice', 'orgDecide', 'orgApply', 'orgInviteAnswer', 'orgRename', 'orgLayout', 'orgOfficeRule' }) do
         ELSEWHERE[name] = 'org_powers_spec / org_places_spec / org_money_spec / org_review_spec, through the net event'
     end
+    -- Codenames and payroll (off as shipped), through the net event in
+    -- org_powers_spec ("answers ok to a boss holding the power") and their own specs.
+    ELSEWHERE.orgCodename = 'org_powers_spec / org_codename_spec, through the net event'
+    ELSEWHERE.orgSalary = 'org_powers_spec / org_payroll_spec, through the net event'
 
     it('got an ok from every handler the server registers', function()
         local App = require('crimson-hitman.server.app')

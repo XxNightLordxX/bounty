@@ -371,7 +371,7 @@ function Comms.threads(actor, contractId)
                     alias  = h.alias,
                     -- A hitman's real name appears only when they chose to
                     -- be seen; their citizen id never appears at all.
-                    name   = (not h.anon) and h.hitman_name or nil,
+                    name   = (not h.anon) and Util.shownHitmanName(h.hitman_cid, h.hitman_name) or nil,
                     -- For the unread dot: the newest message to this viewer,
                     -- already in the thread they can open.
                     lastMessageAt = Comms.lastMessageAt(contract.id, h.hitman_cid, actor.cid),

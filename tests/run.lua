@@ -583,7 +583,7 @@ function _G.newStack()
     meeting.init({ storage = storage, notify = notify, audit = audit, identity = identity,
                    projection = projection })
     playtime.init({ storage = storage, identity = identity })
-    rpPlaces.init({ settings = settings })
+    rpPlaces.init({ settings = settings, storage = storage, audit = audit })
     rpRumours.init({ storage = storage, identity = identity, audit = audit, notify = notify,
                      projection = projection, app = app })
     rpBurner.init({ audit = audit })
@@ -668,6 +668,7 @@ function _G.newStack()
     alerts.init(wiring)
     require('server.org.boss_ops').register(wiring)
     require('server.org.staff_ops').register(wiring)
+    rpPlaces.addOps(panel)
     require('server.staff_reward').register(wiring)
     require('server.staff_reassign').register(wiring)
     org.boot()
@@ -747,6 +748,7 @@ local suites = {
     'staff_reward_spec', 'handover_confirm_spec',
     'mission_steps_spec', 'disposal_spec',
     'review_x_spec',
+    'org_phone_spec', 'org_payroll_spec', 'org_codename_spec',
     'capability_inventory_spec',
     'docs_spec',
 }

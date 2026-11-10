@@ -757,7 +757,34 @@
     tip_cant_place: 'Your informant can\'t place them right now.',
     tip_not_found: 'Your informant couldn\'t find them. Your money was given back.',
     not_tipped: 'Nobody has been tipped off about you on this contract.',
-    already_dark: 'You have already gone dark.'
+    already_dark: 'You have already gone dark.',
+    // The hitman organisation (server/org/init.lua, Org.ERR). The server
+    // sends its own words with each, which the Organisation tab shows first;
+    // these are for a reply that came without them.
+    org_off: 'The organisation is switched off.',
+    org_not_member: 'You are not a member of the organisation.',
+    org_no_power: 'Staff have not given you this.',
+    org_office: 'That needs the boss office: go there first.',
+    org_rank: 'Only below your own rank.',
+    org_self: 'Not on yourself.',
+    org_locked: 'Staff have locked that.',
+    org_last_boss: 'The organisation would be left with nobody in its top boss role.',
+    org_bounds: 'Outside the bounds staff set.',
+    org_cooldown: 'Too soon: wait a while first.',
+    org_limit: 'At the limit staff set.',
+    org_not_found: 'Not found. Refresh and try again.',
+    org_refused: 'That could not be done; nothing was changed.',
+    org_short: 'The funds do not hold that much.',
+    org_busy: 'Already being done. Try again in a moment.',
+    org_members_only: 'Only members of the organisation may accept contracts.',
+    org_rule: 'The organisation\'s rules do not allow that.',
+    org_already: 'Already so.',
+    org_off_duty: 'Go on duty first.',
+    org_not_held: 'You can only pass on a power you hold yourself.',
+    org_bank_down: 'The organisation\'s bank account cannot be reached right now; nothing was moved.',
+    org_name_taken: 'Another member already goes by that codename.',
+    org_name_blocked: 'That codename is not allowed. Pick another.',
+    org_feature_off: 'Staff have not switched that on for the organisation.'
   };
 
   /* The requests that can move money, each a handler in server/app.lua
@@ -3290,6 +3317,1129 @@
     row.appendChild(answer(false));
     box.appendChild(row);
     return box;
+  }
+
+  /* ---------- the Organisation tab ----------
+
+     The hitman organisation (server/org/, Config.Organisation, off as
+     shipped). The tab exists only while the board's reply says it is for
+     this player (orgTab: a member, an applicant, an invitee, or a player
+     standing at a sign-up spot); off, or for anybody else, it is not even
+     in the tab bar. What it shows is what orgMine answers: a member's
+     place, the notice, their cut and salary, and a boss menu holding only
+     the powers the server says they hold after Boss permissions. Every
+     write takes two taps; every refusal is the server's own words where it
+     sent some, and this page's (ERRORS) otherwise. Positions are never
+     sent: Place here is read by the server where it sees the player. */
+
+  state.org = {
+    mine: null, failed: null, screen: null, data: {}, dataFailed: {}, form: {},
+    armed: null, open: {}
+  };
+  var orgSeq = 0;
+  var orgNonceSeq = 0;
+
+  /* The boss menu's screens, the powers each is for, and the layout tab
+     (Org.layout, S2) that renames or hides it. */
+  var ORG_SCREENS = [
+    { id: 'members', label: 'Members', layout: 'members',
+      powers: ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'D2'] },
+    { id: 'roles', label: 'Roles', layout: 'roles', powers: ['R1', 'R2', 'R3', 'R4', 'P1', 'P3'] },
+    { id: 'money', label: 'Money', layout: 'funds',
+      powers: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'P2'] },
+    { id: 'contracts', label: 'Contracts', layout: 'contracts', powers: ['K1', 'K2', 'K3'] },
+    { id: 'places', label: 'Places', layout: 'locations', powers: ['L1', 'L2', 'L3'] },
+    { id: 'notices', label: 'Notices', layout: 'notices', powers: ['N1'] },
+    { id: 'applications', label: 'Applications', layout: 'notices', powers: ['N2'] },
+    { id: 'settings', label: 'Settings', layout: 'settings', powers: ['S1', 'S2', 'S3'] }
+  ];
+  var ORG_SPOT_WORDS = { office: 'Boss office', signup: 'Sign-up spot', meeting: 'Meeting spot',
+    npc: 'Contact', place: 'Place' };
+
+  function orgTabWanted() {
+    var b = state.board;
+    return state.mode !== 'whitelisted' && !!(b && typeof b.orgTab === 'string' && b.orgTab);
+  }
+
+  /* The tab itself: made when it is for this player, taken away when it is
+     not, so a player outside the organisation has the same five tabs. */
+  function syncOrgTab() {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+    var mine = tabs.filter(function (t) { return t.dataset.tab === 'org'; })[0];
+    var want = orgTabWanted();
+    if (want && !mine && tabs.length) {
+      var tab = el('button', 'tab', 'Org');
+      tab.dataset.tab = 'org';
+      tab.setAttribute('role', 'tab');
+      tabs[0].parentNode.appendChild(tab);
+      wireTab(tab);
+    } else if (!want && mine) {
+      if (mine.parentNode) { mine.parentNode.removeChild(mine); }
+      if (state.tab === 'org') { state.tab = 'board'; }
+    }
+  }
+
+  function orgWords(r) {
+    return (r && r.data && typeof r.data.message === 'string' && r.data.message)
+      || (r && ERRORS[r.err]) || 'Not done. Try again.';
+  }
+
+  function orgHolds(code) {
+    var m = state.org.mine;
+    if (!m || !m.powers || m.powers[code] !== true) { return false; }
+    if (code === 'M7' && !m.codenames) { return false; }
+    if (code === 'P3' && !m.payroll) { return false; }
+    return true;
+  }
+
+  /* An office-only power, held, with the server not seeing them there. */
+  function orgAway(code) {
+    var m = state.org.mine;
+    return !!(m && m.officeOnly && m.officeOnly[code] && !m.inOffice);
+  }
+
+  function orgBound(key) {
+    var b = state.org.mine && state.org.mine.bounds;
+    return b && typeof b[key] === 'number' ? b[key] : null;
+  }
+
+  function orgScreenShown(screen) {
+    var m = state.org.mine;
+    var hidden = m && m.layout && m.layout.hidden && asList(m.layout.hidden[screen.layout]);
+    if (hidden && hidden.indexOf(m.grade) !== -1) { return false; }
+    return screen.powers.some(orgHolds);
+  }
+
+  function orgScreenLabel(screen) {
+    var labels = state.org.mine && state.org.mine.layout && state.org.mine.layout.labels;
+    var own = labels && labels[screen.layout];
+    return screen.id !== 'applications' && typeof own === 'string' && own ? own : screen.label;
+  }
+
+  function loadOrg() {
+    orgSeq += 1;
+    var current = orgSeq;
+    return post('orgMine', {}).then(function (r) {
+      if (current !== orgSeq) { return; }
+      if (r && r.ok && r.data && typeof r.data === 'object') {
+        state.org.mine = r.data;
+        state.org.failed = null;
+      } else {
+        state.org.failed = orgWords(r);
+      }
+      redrawFor(['org']);
+      if (state.org.screen && state.org.mine && state.org.mine.member) { loadOrgScreen(state.org.screen); }
+    });
+  }
+
+  /* One read a screen draws, kept by key, its refusal kept in its place. */
+  function orgRead(key, request) {
+    return request().then(function (r) {
+      if (r && r.ok && r.data && typeof r.data === 'object') {
+        state.org.data[key] = r.data;
+        delete state.org.dataFailed[key];
+      } else {
+        state.org.dataFailed[key] = orgWords(r);
+      }
+      redrawFor(['org']);
+    });
+  }
+
+  function loadOrgScreen(id) {
+    var wantMembers = orgHolds('M1') && (id === 'members' || (id === 'money' && (orgHolds('P2') || orgHolds('C3')))
+      || (id === 'contracts' && orgHolds('K2')));
+    var wantRoles = id === 'roles' || (id === 'members' && (orgHolds('M2') || orgHolds('M4')))
+      || (id === 'money' && orgHolds('C2')) || id === 'contracts';
+    if (wantMembers) { orgRead('members', function () { return post('orgMembers', {}); }); }
+    if (wantRoles) { orgRead('roles', function () { return post('orgRoles', {}); }); }
+    if (id === 'money' && orgHolds('C8')) { orgRead('funds', function () { return post('orgFunds', { limit: 20 }); }); }
+    if (id === 'places') { orgRead('spots', function () { return post('orgSpots', {}); }); }
+    if (id === 'applications') { orgRead('applications', function () { return post('orgApplications', {}); }); }
+  }
+
+  /* A write: once at a time, its answer said, and what the tab shows read
+     again either way (a refusal is often the world having moved on). */
+  function orgWrite(key, request, okText) {
+    once('org:' + key, function () {
+      return request().then(function (r) {
+        if (!r || !r.ok) {
+          say(orgWords(r));
+        } else {
+          say(typeof okText === 'function' ? okText(r) : (okText || 'Done.'), 'ok');
+        }
+        return loadOrg();
+      });
+    });
+  }
+
+  function orgNonce() {
+    orgNonceSeq += 1;
+    return 'n' + Date.now().toString(36) + '_' + orgNonceSeq;
+  }
+
+  /* A write's button: the first tap arms it (and says what the second
+     does), the second within three seconds runs it. Drawn disabled, with
+     why under it, while an office-only power is away from the office. */
+  function orgTwoTap(className, label, key, armedLabel, run, office) {
+    if (isBusy('org:' + key)) {
+      var busy = el('button', className, 'Working…');
+      busy.disabled = true;
+      busy.classList.toggle('is-busy', true);
+      return busy;
+    }
+    var armed = state.org.armed === key;
+    var b = el('button', className, armed ? armedLabel : label);
+    if (armed) { b.classList.toggle('is-armed', true); }
+    var away = office ? orgAway(office) : false;
+    if (away) { b.disabled = true; }
+    b.onclick = function () {
+      if (b.disabled) { return; }
+      if (state.org.armed !== key) {
+        state.org.armed = key;
+        setTimeout(function () {
+          if (state.org.armed === key) { state.org.armed = null; redraw(); }
+        }, TIP_CONFIRM_MS);
+        return redraw();
+      }
+      state.org.armed = null;
+      run();
+    };
+    return b;
+  }
+
+  /* Why an office-only power's buttons are greyed: said once per card. */
+  function orgOfficeNote(code) {
+    if (!orgAway(code)) { return null; }
+    var note = el('div', 'hint org-office ico i-briefcase', state.org.mine.hasOffice
+      ? 'This needs the boss office. Go there, then tap Refresh.'
+      : 'This needs the boss office, and staff have not set one yet.');
+    return note;
+  }
+
+  function orgField(key, label, kind, placeholder, max) {
+    var input = document.createElement(kind === 'area' ? 'textarea' : 'input');
+    if (kind !== 'area') { input.type = kind === 'number' ? 'number' : 'text'; }
+    if (kind === 'number') { input.inputMode = 'numeric'; input.min = 0; }
+    input.id = 'org-' + key.replace(/[^A-Za-z0-9]/g, '-');
+    input.value = state.org.form[key] !== undefined ? state.org.form[key] : '';
+    if (placeholder) { input.placeholder = placeholder; }
+    if (max && kind !== 'number') { input.maxLength = max; }
+    input.oninput = function () { state.org.form[key] = input.value; };
+    return labelled(label, input);
+  }
+
+  function orgText(key) { return String(state.org.form[key] === undefined ? '' : state.org.form[key]).trim(); }
+
+  function orgNumber(key) {
+    var raw = orgText(key);
+    if (raw === '' || !/^\d+$/.test(raw)) { return null; }
+    return parseInt(raw, 10);
+  }
+
+  /* A choice drawn as buttons (a native select draws wrongly in CEF). */
+  function orgChoice(key, options, fallback) {
+    var row = el('div', 'row org-choice');
+    var current = state.org.form[key] !== undefined ? state.org.form[key] : fallback;
+    options.forEach(function (o) {
+      var b = el('button', 'ghost', o.label);
+      if (current === o.value) { b.classList.toggle('is-on', true); }
+      b.onclick = function () { state.org.form[key] = o.value; redraw(); };
+      row.appendChild(b);
+    });
+    return row;
+  }
+
+  function orgChosen(key, fallback) {
+    return state.org.form[key] !== undefined ? state.org.form[key] : fallback;
+  }
+
+  function orgCard(title, icon) {
+    var node = el('div', 'card org-card');
+    node.appendChild(el('div', 'org-card-title ico ' + (icon || 'i-briefcase'), title));
+    return node;
+  }
+
+  function orgRow() { return el('div', 'row org-actions'); }
+
+  function orgPending(view, key) {
+    if (state.org.dataFailed[key]) {
+      view.appendChild(el('div', 'hint', state.org.dataFailed[key]));
+      return true;
+    }
+    if (!state.org.data[key]) {
+      view.appendChild(el('div', 'empty is-pending', 'Asking the server…'));
+      return true;
+    }
+    return false;
+  }
+
+  function orgRoles() { return asList(state.org.data.roles && state.org.data.roles.rows); }
+  function orgMembers() { return asList(state.org.data.members && state.org.data.members.rows); }
+
+  function orgRoleOptions(editableOnly, maxGrade) {
+    return orgRoles().filter(function (r) {
+      return (!editableOnly || r.editable) && (maxGrade === null || maxGrade === undefined || r.grade <= maxGrade);
+    }).map(function (r) { return { value: r.grade, label: String(r.label || r.name || r.grade) }; });
+  }
+
+  function orgMemberOptions() {
+    return orgMembers().map(function (m) { return { value: m.ref, label: String(m.name || 'A member') }; });
+  }
+
+  function viewOrg(view) {
+    var o = state.org;
+    if (o.failed && !o.mine) {
+      var failed = el('div', 'card');
+      failed.appendChild(el('div', 'hint', o.failed));
+      var again = el('button', 'ghost ico i-refresh', 'Try again');
+      again.onclick = function () { o.failed = null; loadOrg(); render(); };
+      failed.appendChild(again);
+      view.appendChild(failed);
+      return;
+    }
+    if (!o.mine) {
+      view.appendChild(el('div', 'empty is-pending', 'Asking the server…'));
+      return;
+    }
+    var m = o.mine;
+    if (m.enabled === false) {
+      view.appendChild(el('div', 'empty', ERRORS.org_off));
+      return;
+    }
+    if (!m.member) { return viewOrgOutside(view, m); }
+    if (o.screen) {
+      var screen = ORG_SCREENS.filter(function (s) { return s.id === o.screen; })[0];
+      if (screen && orgScreenShown(screen)) { return viewOrgScreen(view, screen); }
+      o.screen = null;
+    }
+    viewOrgHome(view, m);
+  }
+
+  /* An invitee, an applicant, or a player at a sign-up spot. */
+  function viewOrgOutside(view, m) {
+    var invite = inviteBanner();
+    if (invite) { view.appendChild(invite); return; }
+    var box = orgCard(m.label || 'The organisation', 'i-briefcase');
+    if (m.applied) {
+      box.appendChild(el('div', 'hint', 'Your application is waiting for an answer. You will be told.'));
+      view.appendChild(box);
+      return;
+    }
+    box.appendChild(el('div', 'hint', m.signupOnly && !m.atSignup
+      ? 'Applications are taken only at a sign-up spot. Stand at one, then apply.'
+      : 'Ask to join. A boss reads it and answers.'));
+    box.appendChild(orgField('apply.text', 'A few words (optional)', 'area', 'Why you', 255));
+    var row = orgRow();
+    row.appendChild(orgTwoTap('primary', 'Apply', 'apply', 'Tap again to apply', function () {
+      var text = orgText('apply.text');
+      orgWrite('apply', function () {
+        return post('orgApply', text ? { text: text } : {});
+      }, 'Applied. You will be told the answer.');
+    }));
+    box.appendChild(row);
+    view.appendChild(box);
+  }
+
+  function viewOrgHome(view, m) {
+    var head = orgCard(m.label || 'The organisation', 'i-briefcase');
+    head.appendChild(el('div', 'target', m.codename ? m.codename : (m.role || 'Member')));
+    head.appendChild(el('div', 'hint', 'Your role: ' + (m.role || 'Member')));
+    if (m.suspendedUntil) {
+      head.appendChild(el('div', 'hint org-warn', suspendedText({ untilAt: m.suspendedUntil,
+        reason: 'by the organisation' })));
+    }
+    if (m.terms) {
+      head.appendChild(el('div', 'hint', orgCutText(m.terms)));
+      if (Number(m.terms.stakePercent) > 0) {
+        head.appendChild(el('div', 'hint', 'Of a stake you win, ' + m.terms.stakePercent + '% goes to the funds.'));
+      }
+      if (Number(m.terms.buyoutPercent) > 0) {
+        head.appendChild(el('div', 'hint', 'Of a buyout paid to you, ' + m.terms.buyoutPercent
+          + '% goes to the funds.'));
+      }
+    }
+    if (m.payroll) {
+      var pay = Number(m.payroll.salary) || 0;
+      head.appendChild(el('div', 'hint', pay > 0
+        ? 'Salary: ' + money(pay) + ' every pay day' + (m.payroll.nextIn
+          ? ', the next in about ' + durationText(Math.max(1, Math.ceil(Number(m.payroll.nextIn) / 60))) : '') + '.'
+        : 'Your role has no salary.'));
+    }
+    var limits = m.limits || {};
+    if (limits.maxAtOnce || limits.cooldownMinutes) {
+      head.appendChild(el('div', 'hint', 'Your limits: ' + (limits.maxAtOnce ? limits.maxAtOnce + ' at once' : '')
+        + (limits.maxAtOnce && limits.cooldownMinutes ? ', ' : '')
+        + (limits.cooldownMinutes ? limits.cooldownMinutes + ' min between accepts' : '') + '.'));
+    }
+    view.appendChild(head);
+
+    var notice = orgCard('Notice board', 'i-flag');
+    notice.appendChild(el('div', m.notice ? 'org-notice' : 'hint', m.notice || 'No notice posted.'));
+    view.appendChild(notice);
+
+    if (m.codenames) { view.appendChild(orgCodenameCard(m)); }
+
+    // A member's own record in the organisation: kept by a later feature
+    // (plan R11). Said, rather than left out, so the place is known.
+    var stats = orgCard('Your record', 'i-pencil');
+    stats.appendChild(el('div', 'hint', m.stats ? String(m.stats) : 'Not kept yet.'));
+    view.appendChild(stats);
+
+    var screens = ORG_SCREENS.filter(orgScreenShown);
+    if (screens.length) {
+      var menu = orgCard('Boss menu', 'i-users');
+      var away = Object.keys(m.officeOnly || {}).some(orgAway);
+      if (away) {
+        menu.appendChild(el('div', 'hint org-office', m.hasOffice
+          ? 'Some of your powers work only at the boss office. Go there, then tap Refresh.'
+          : 'Some of your powers need the boss office, and staff have not set one yet.'));
+      }
+      var row = el('div', 'row org-menu');
+      screens.forEach(function (s) {
+        var b = el('button', 'ghost', orgScreenLabel(s));
+        b.onclick = function () {
+          state.org.screen = s.id;
+          state.org.armed = null;
+          render();
+          loadOrgScreen(s.id);
+        };
+        row.appendChild(b);
+      });
+      menu.appendChild(row);
+      view.appendChild(menu);
+    }
+    var refresh = el('button', 'ghost ico i-refresh', 'Refresh');
+    refresh.onclick = function () { loadOrg(); };
+    var foot = orgRow();
+    foot.appendChild(refresh);
+    view.appendChild(foot);
+  }
+
+  function orgCodenameCard(m) {
+    var box = orgCard('Codename', 'i-user');
+    if (m.codenameGiven) {
+      box.appendChild(el('div', 'hint', 'Given to you: ' + (m.codename || '') + '. Only whoever gave it changes it.'));
+      return box;
+    }
+    box.appendChild(el('div', 'hint', m.codename
+      ? 'Shown in the organisation, and to a placer where your name would be shown: ' + m.codename + '.'
+      : 'Pick one. It is shown in the organisation, and to a placer where your name would be shown.'));
+    box.appendChild(orgField('codename.own', 'Codename', 'text', 'Letters and digits', 32));
+    var row = orgRow();
+    row.appendChild(orgTwoTap('primary', 'Set codename', 'codename', 'Tap again to set it', function () {
+      var name = orgText('codename.own');
+      if (!name) { return say('Write the codename first.'); }
+      orgWrite('codename', function () { return post('orgCodename', { codename: name }); }, 'Codename set.');
+    }));
+    if (m.codename) {
+      row.appendChild(orgTwoTap('ghost', 'Clear', 'codename:clear', 'Tap again to clear', function () {
+        orgWrite('codename:clear', function () { return post('orgCodename', { codename: false }); },
+          'Codename cleared.');
+      }));
+    }
+    box.appendChild(row);
+    return box;
+  }
+
+  function viewOrgScreen(view, screen) {
+    var bar = el('div', 'row org-back');
+    var back = el('button', 'ghost', 'Back');
+    back.onclick = function () { state.org.screen = null; state.org.armed = null; render(); };
+    bar.appendChild(back);
+    var refresh = el('button', 'ghost ico i-refresh', 'Refresh');
+    refresh.onclick = function () { loadOrg(); };
+    bar.appendChild(refresh);
+    view.appendChild(bar);
+    view.appendChild(el('div', 'section', orgScreenLabel(screen)));
+    ({
+      members: orgMembersScreen, roles: orgRolesScreen, money: orgMoneyScreen,
+      contracts: orgContractsScreen, places: orgPlacesScreen, notices: orgNoticesScreen,
+      applications: orgApplicationsScreen, settings: orgSettingsScreen
+    })[screen.id](view);
+  }
+
+  /* ---- Members: hire, and each member's actions by the powers held ---- */
+
+  function orgMembersScreen(view) {
+    if (orgHolds('M2')) {
+      var hire = orgCard('Hire', 'i-usercheck');
+      var radius = orgBound('HireRadius');
+      hire.appendChild(el('div', 'hint', 'Invite a player standing beside you'
+        + (radius ? ' (within ' + radius + ' m)' : '') + ' by the ID over their head. They accept in their own app.'));
+      var office = orgOfficeNote('M2');
+      if (office) { hire.appendChild(office); }
+      hire.appendChild(orgField('hire.target', 'Their ID', 'number', 'e.g. 42'));
+      var maxGrade = orgBound('HireMaxGrade');
+      var options = orgRoleOptions(true, maxGrade);
+      if (options.length) {
+        hire.appendChild(el('div', 'hint', 'Role'));
+        hire.appendChild(orgChoice('hire.grade', options, options[options.length - 1].value));
+      }
+      var row = orgRow();
+      row.appendChild(orgTwoTap('primary', 'Invite', 'hire', 'Tap again to invite', function () {
+        var target = orgNumber('hire.target');
+        if (!target) { return say('Write their ID: the number over their head.'); }
+        var grade = orgChosen('hire.grade', options.length ? options[options.length - 1].value : undefined);
+        orgWrite('hire', function () {
+          return post('orgHire', grade === undefined ? { target: target } : { target: target, grade: grade });
+        }, 'Invited. They have a while to accept it in their app.');
+      }, 'M2'));
+      hire.appendChild(row);
+      view.appendChild(hire);
+    }
+    if (!orgHolds('M1')) {
+      view.appendChild(el('div', 'hint', 'The member list needs View members, which staff have not given you.'));
+      return;
+    }
+    if (orgPending(view, 'members')) { return; }
+    var rows = orgMembers();
+    if (!rows.length) { view.appendChild(el('div', 'empty', 'No members.')); return; }
+    rows.forEach(function (m) { view.appendChild(orgMemberCard(m)); });
+  }
+
+  function orgMemberCard(m) {
+    var open = state.org.open.member === m.ref;
+    var box = el('div', 'card org-card org-member');
+    var head = el('button', 'ghost org-row', String(m.name || 'A member') + ' · ' + String(m.role || ''));
+    head.onclick = function () { state.org.open.member = open ? null : m.ref; state.org.armed = null; render(); };
+    box.appendChild(head);
+    var meta = el('div', 'meta');
+    meta.appendChild(chip(m.online ? 'In the city' : 'Away', 'plain', 'i-user'));
+    if (m.boss) { meta.appendChild(chip('Boss', 'role', 'i-shield')); }
+    if (m.suspendedUntil) { meta.appendChild(chip('Suspended', 'hot', 'i-clock')); }
+    if (m.locked) { meta.appendChild(chip('Locked by staff', 'plain', 'i-lock')); }
+    box.appendChild(meta);
+    if (!open) { return box; }
+    var key = 'm:' + m.ref + ':';
+
+    if (orgHolds('M4')) {
+      var roles = orgRoleOptions(true);
+      box.appendChild(el('div', 'hint', 'Role'));
+      if (roles.length) { box.appendChild(orgChoice(key + 'grade', roles, m.grade)); }
+      var r1 = orgRow();
+      r1.appendChild(orgTwoTap('ghost', 'Set role', key + 'role', 'Tap again to set the role', function () {
+        var grade = orgChosen(key + 'grade', m.grade);
+        orgWrite(key + 'role', function () { return post('orgSetRole', { member: m.ref, grade: grade }); },
+          'Role set.');
+      }, 'M4'));
+      box.appendChild(r1);
+      var note4 = orgOfficeNote('M4');
+      if (note4) { box.appendChild(note4); }
+    }
+    if (orgHolds('M7')) {
+      box.appendChild(orgField(key + 'codename', 'Codename', 'text', m.codename || 'Letters and digits', 32));
+      var r7 = orgRow();
+      r7.appendChild(orgTwoTap('ghost', 'Give codename', key + 'codename', 'Tap again to give it', function () {
+        var name = orgText(key + 'codename');
+        if (!name) { return say('Write the codename first.'); }
+        orgWrite(key + 'codename', function () {
+          return post('orgCodename', { member: m.ref, codename: name });
+        }, 'Codename given.');
+      }, 'M7'));
+      box.appendChild(r7);
+    }
+    if (orgHolds('M5')) {
+      var maxH = orgBound('SuspendMaxHours');
+      box.appendChild(orgField(key + 'hours', 'Suspend for (hours' + (maxH !== null ? ', up to ' + maxH : '')
+        + '; 0 lifts it)', 'number', '0'));
+      box.appendChild(orgField(key + 'sreason', 'Reason', 'text', 'Why', 160));
+      var r5 = orgRow();
+      r5.appendChild(orgTwoTap('ghost', 'Suspend', key + 'suspend', 'Tap again to suspend', function () {
+        var hours = orgNumber(key + 'hours');
+        if (hours === null) { return say('Write the hours: a whole number, 0 to lift it.'); }
+        orgWrite(key + 'suspend', function () {
+          return post('orgSuspend', { member: m.ref, hours: hours, reason: orgText(key + 'sreason') });
+        }, hours > 0 ? 'Suspended from contracts.' : 'Suspension lifted.');
+      }, 'M5'));
+      box.appendChild(r5);
+    }
+    if (orgHolds('M6')) {
+      box.appendChild(orgField(key + 'atonce', 'Contracts at once' + (orgBound('MemberMaxAtOnce') !== null
+        ? ' (up to ' + orgBound('MemberMaxAtOnce') + ')' : ''), 'number', 'no limit'));
+      box.appendChild(orgField(key + 'cooldown', 'Minutes between accepts' + (orgBound('MemberCooldownMaxMinutes')
+        !== null ? ' (up to ' + orgBound('MemberCooldownMaxMinutes') + ')' : ''), 'number', 'none'));
+      var r6 = orgRow();
+      r6.appendChild(orgTwoTap('ghost', 'Set limits', key + 'limits', 'Tap again to set the limits', function () {
+        var data = { member: m.ref };
+        var atOnce = orgNumber(key + 'atonce');
+        var cooldown = orgNumber(key + 'cooldown');
+        if (atOnce !== null) { data.maxAtOnce = atOnce; }
+        if (cooldown !== null) { data.cooldownMinutes = cooldown; }
+        orgWrite(key + 'limits', function () { return post('orgMemberLimits', data); }, 'Limits set.');
+      }, 'M6'));
+      box.appendChild(r6);
+    }
+    if (orgHolds('D2')) { box.appendChild(orgGrantsFor(m, key)); }
+    if (orgHolds('M3')) {
+      box.appendChild(orgField(key + 'freason', 'Reason for firing', 'text', 'Why', 160));
+      var r3 = orgRow();
+      r3.appendChild(orgTwoTap('danger', 'Fire', key + 'fire', 'Tap again to fire ' + String(m.name || 'them'),
+        function () {
+          var reason = orgText(key + 'freason');
+          if (!reason) { return say('Give a reason for firing them.'); }
+          state.org.open.member = null;
+          orgWrite(key + 'fire', function () { return post('orgFire', { member: m.ref, reason: reason }); },
+            'Fired.');
+        }, 'M3'));
+      box.appendChild(r3);
+      var note3 = orgOfficeNote('M3');
+      if (note3) { box.appendChild(note3); }
+    }
+    return box;
+  }
+
+  /* The powers this boss holds, each grantable or deniable to a member
+     below them; any other is shown greyed, as staff not having given it. */
+  function orgPowerList() {
+    var names = state.org.mine && state.org.mine.powerNames;
+    var out = [];
+    if (!names) { return out; }
+    Object.keys(names).sort().forEach(function (code) {
+      var p = names[code] || {};
+      if (p.feature === 'Codenames' && !state.org.mine.codenames) { return; }
+      if (p.feature === 'Payroll' && !state.org.mine.payroll) { return; }
+      out.push({ code: code, label: String(p.label || code), held: code === 'TAKE' || orgHolds(code) });
+    });
+    return out;
+  }
+
+  function orgGrantsFor(m, key) {
+    var wrap = el('div', 'org-powers');
+    wrap.appendChild(el('div', 'hint', 'Their own powers: grant or deny one you hold.'));
+    orgPowerList().forEach(function (p) {
+      var line = el('div', 'org-power');
+      line.appendChild(el('div', p.held ? 'org-power-name' : 'org-power-name org-grey', p.label));
+      if (!p.held) {
+        line.appendChild(el('div', 'hint', 'Staff have not given you this.'));
+        wrap.appendChild(line);
+        return;
+      }
+      var row = orgRow();
+      [['grant', 'Grant'], ['deny', 'Deny'], ['clear', 'Clear']].forEach(function (pair) {
+        row.appendChild(orgTwoTap('ghost', pair[1], key + 'g:' + p.code + ':' + pair[0], 'Tap again: ' + pair[0],
+          function () {
+            orgWrite(key + 'g:' + p.code + ':' + pair[0], function () {
+              return post('orgMemberGrant', { member: m.ref, power: p.code, state: pair[0] });
+            }, 'Saved.');
+          }));
+      });
+      line.appendChild(row);
+      wrap.appendChild(line);
+    });
+    return wrap;
+  }
+
+  /* ---- Roles: create, edit, delete, powers, pay, salary ---- */
+
+  function orgRolesScreen(view) {
+    if (orgPending(view, 'roles')) { return; }
+    if (orgHolds('R1')) {
+      var create = orgCard('New role', 'i-plus');
+      var noteR1 = orgOfficeNote('R1');
+      if (noteR1) { create.appendChild(noteR1); }
+      create.appendChild(orgField('role.grade', 'Rank (a number below yours)', 'number', '1'));
+      create.appendChild(orgField('role.label', 'Name', 'text', 'Runner', 64));
+      create.appendChild(orgField('role.pay', 'Pay per pay-cycle ($' + (orgBound('PayMax') !== null
+        ? ', up to ' + money(orgBound('PayMax')) : '') + ')', 'number', '0'));
+      var rc = orgRow();
+      rc.appendChild(orgTwoTap('primary', 'Create role', 'role:create', 'Tap again to create it', function () {
+        var grade = orgNumber('role.grade');
+        var label = orgText('role.label');
+        if (grade === null || !label) { return say('Give the role a rank and a name.'); }
+        var name = label.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32) || 'role';
+        orgWrite('role:create', function () {
+          return post('orgRoleCreate', { grade: grade, name: name, label: label, pay: orgNumber('role.pay') || 0 });
+        }, 'Role created.');
+      }, 'R1'));
+      create.appendChild(rc);
+      view.appendChild(create);
+    }
+    orgRoles().forEach(function (r) { view.appendChild(orgRoleCard(r)); });
+  }
+
+  function orgRoleCard(r) {
+    var open = state.org.open.role === r.grade;
+    var box = el('div', 'card org-card org-role');
+    var head = el('button', 'ghost org-row', String(r.label || r.name) + ' · rank ' + r.grade);
+    head.onclick = function () { state.org.open.role = open ? null : r.grade; state.org.armed = null; render(); };
+    box.appendChild(head);
+    var meta = el('div', 'meta');
+    meta.appendChild(chip((Number(r.members) || 0) + ' member' + (Number(r.members) === 1 ? '' : 's'), 'plain',
+      'i-users'));
+    meta.appendChild(chip('Pay ' + money(Number(r.pay) || 0), 'plain', 'i-coin'));
+    if (r.salary !== undefined && r.salary !== null) {
+      meta.appendChild(chip('Salary ' + money(Number(r.salary) || 0), 'plain', 'i-coin'));
+    }
+    if (r.boss) { meta.appendChild(chip('Boss role', 'role', 'i-shield')); }
+    box.appendChild(meta);
+    if (!open) { return box; }
+    if (!r.editable) {
+      box.appendChild(el('div', 'hint', r.locked ? ERRORS.org_locked : 'At or above your rank: only staff change it.'));
+      return box;
+    }
+    var key = 'r:' + r.grade + ':';
+    if (orgHolds('R2')) {
+      box.appendChild(orgField(key + 'label', 'Name', 'text', String(r.label || ''), 64));
+      var r2 = orgRow();
+      r2.appendChild(orgTwoTap('ghost', 'Rename', key + 'edit', 'Tap again to rename', function () {
+        var label = orgText(key + 'label');
+        if (!label) { return say('Write the new name.'); }
+        orgWrite(key + 'edit', function () { return post('orgRoleEdit', { grade: r.grade, label: label }); },
+          'Renamed.');
+      }, 'R2'));
+      box.appendChild(r2);
+    }
+    if (orgHolds('P1')) {
+      box.appendChild(orgField(key + 'pay', 'Pay per pay-cycle ($' + (orgBound('PayMax') !== null
+        ? ', up to ' + money(orgBound('PayMax')) : '') + ')', 'number', String(Number(r.pay) || 0)));
+      var rp = orgRow();
+      rp.appendChild(orgTwoTap('ghost', 'Set pay', key + 'pay', 'Tap again to set the pay', function () {
+        var pay = orgNumber(key + 'pay');
+        if (pay === null) { return say('Write the pay as a whole number of dollars.'); }
+        orgWrite(key + 'pay', function () { return post('orgRolePay', { grade: r.grade, pay: pay }); }, 'Pay set.');
+      }, 'P1'));
+      box.appendChild(rp);
+    }
+    if (orgHolds('P3')) {
+      box.appendChild(orgField(key + 'salary', 'Salary every pay day ($' + (typeof r.salaryMax === 'number'
+        ? ', up to ' + money(r.salaryMax) : '') + ')', 'number', String(Number(r.salary) || 0)));
+      var rs = orgRow();
+      rs.appendChild(orgTwoTap('ghost', 'Set salary', key + 'salary', 'Tap again to set the salary', function () {
+        var amount = orgNumber(key + 'salary');
+        if (amount === null) { return say('Write the salary as a whole number of dollars.'); }
+        orgWrite(key + 'salary', function () { return post('orgSalary', { grade: r.grade, amount: amount }); },
+          'Salary set. It is paid from the funds every pay day.');
+      }, 'P3'));
+      box.appendChild(rs);
+    }
+    if (orgHolds('R4')) {
+      var powers = el('div', 'org-powers');
+      powers.appendChild(el('div', 'hint', 'Powers of this role: give or take one you hold.'));
+      var noteR4 = orgOfficeNote('R4');
+      if (noteR4) { powers.appendChild(noteR4); }
+      var has = r.powers || {};
+      orgPowerList().forEach(function (p) {
+        var line = el('div', 'org-power');
+        var on = !!has[p.code];
+        line.appendChild(el('div', p.held ? 'org-power-name' : 'org-power-name org-grey',
+          p.label + (on ? ' — given' : '')));
+        if (!p.held) {
+          line.appendChild(el('div', 'hint', 'Staff have not given you this.'));
+        } else {
+          var row = orgRow();
+          row.appendChild(orgTwoTap('ghost', on ? 'Take' : 'Give', key + 'p:' + p.code,
+            on ? 'Tap again to take it' : 'Tap again to give it', function () {
+              orgWrite(key + 'p:' + p.code, function () {
+                return post('orgRolePowers', { grade: r.grade, power: p.code, on: !on });
+              }, on ? 'Taken from the role.' : 'Given to the role.');
+            }, 'R4'));
+          line.appendChild(row);
+        }
+        powers.appendChild(line);
+      });
+      box.appendChild(powers);
+    }
+    if (orgHolds('R3')) {
+      var r3 = orgRow();
+      r3.appendChild(orgTwoTap('danger', 'Delete role', key + 'delete', 'Tap again to delete it', function () {
+        state.org.open.role = null;
+        orgWrite(key + 'delete', function () { return post('orgRoleDelete', { grade: r.grade }); }, 'Role deleted.');
+      }, 'R3'));
+      box.appendChild(r3);
+      if (Number(r.members) > 0) { box.appendChild(el('div', 'hint', 'Only an empty role can be deleted.')); }
+    }
+    return box;
+  }
+
+  /* ---- Money: the funds, deposits, withdrawals, bonuses and cuts ---- */
+
+  function orgMoneyScreen(view) {
+    if (orgHolds('C8')) {
+      var funds = orgCard('Funds', 'i-coin');
+      if (!orgPending(funds, 'funds')) {
+        var f = state.org.data.funds;
+        funds.appendChild(el('div', 'target', f.ready === false ? 'Not available right now'
+          : money(Number(f.balance) || 0)));
+        var rows = asList(f.rows);
+        if (!rows.length) { funds.appendChild(el('div', 'hint', 'Nothing moved yet.')); }
+        rows.slice(0, 20).forEach(function (row) {
+          var amount = Number(row.amount) || 0;
+          funds.appendChild(el('div', 'hint org-ledger', (amount < 0 ? '−' : '+') + money(Math.abs(amount))
+            + ' · ' + String(row.kind || '') + (row.reason ? ' · ' + String(row.reason) : '')
+            + (row.created_at ? ' · ' + (agoText(row.created_at) || '') : '')));
+        });
+      }
+      view.appendChild(funds);
+    }
+    if (orgHolds('C6')) {
+      var dep = orgCard('Deposit', 'i-coin');
+      dep.appendChild(orgField('dep.amount', 'Amount ($)', 'number', '0'));
+      dep.appendChild(orgChoice('dep.account', [{ value: 'bank', label: 'From bank' },
+        { value: 'cash', label: 'From cash' }], 'bank'));
+      var rd = orgRow();
+      rd.appendChild(orgTwoTap('primary', 'Deposit', 'deposit', 'Tap again to deposit', function () {
+        var amount = orgNumber('dep.amount');
+        if (!amount) { return say('Write an amount above zero.'); }
+        var nonce = orgNonce();
+        orgWrite('deposit', function () {
+          return post('orgDeposit', { amount: amount, account: orgChosen('dep.account', 'bank'), nonce: nonce });
+        }, 'Deposited into the funds.');
+      }));
+      dep.appendChild(rd);
+      view.appendChild(dep);
+    }
+    if (orgHolds('C7')) {
+      var wd = orgCard('Withdraw', 'i-coin');
+      var noteC7 = orgOfficeNote('C7');
+      if (noteC7) { wd.appendChild(noteC7); }
+      wd.appendChild(orgField('wd.amount', 'Amount ($' + (orgBound('WithdrawMax') !== null
+        ? ', up to ' + money(orgBound('WithdrawMax')) : '') + ')', 'number', '0'));
+      wd.appendChild(orgField('wd.reason', 'Reason', 'text', 'What it is for', 160));
+      var rw = orgRow();
+      rw.appendChild(orgTwoTap('primary', 'Withdraw', 'withdraw', 'Tap again to withdraw', function () {
+        var amount = orgNumber('wd.amount');
+        var reason = orgText('wd.reason');
+        if (!amount || !reason) { return say('Write an amount above zero and a reason.'); }
+        var nonce = orgNonce();
+        orgWrite('withdraw', function () {
+          return post('orgWithdraw', { amount: amount, reason: reason, nonce: nonce });
+        }, 'Withdrawn to your cash.');
+      }, 'C7'));
+      wd.appendChild(rw);
+      view.appendChild(wd);
+    }
+    if (orgHolds('P2')) {
+      var bonus = orgCard('Bonus', 'i-coin');
+      var members = orgMemberOptions();
+      if (!orgHolds('M1')) {
+        bonus.appendChild(el('div', 'hint', 'Picking a member needs View members, which staff have not given you.'));
+      } else if (!members.length) {
+        orgPending(bonus, 'members');
+      } else {
+        bonus.appendChild(orgChoice('bonus.member', members, undefined));
+        bonus.appendChild(orgField('bonus.amount', 'Amount ($' + (orgBound('BonusMax') !== null
+          ? ', up to ' + money(orgBound('BonusMax')) : '') + ')', 'number', '0'));
+        bonus.appendChild(orgField('bonus.reason', 'Reason', 'text', 'What it is for', 160));
+        var rb = orgRow();
+        rb.appendChild(orgTwoTap('primary', 'Pay bonus', 'bonus', 'Tap again to pay it', function () {
+          var who = orgChosen('bonus.member', undefined);
+          var amount = orgNumber('bonus.amount');
+          var reason = orgText('bonus.reason');
+          if (!who || !amount || !reason) { return say('Pick a member, write an amount and a reason.'); }
+          var nonce = orgNonce();
+          orgWrite('bonus', function () {
+            return post('orgBonus', { member: who, amount: amount, reason: reason, nonce: nonce });
+          }, 'Bonus paid to their bank.');
+        }));
+        bonus.appendChild(rb);
+      }
+      view.appendChild(bonus);
+    }
+    var cutKinds = [['C1', 'payout', 'Organisation cut of every payout', 'CutMaxPercent'],
+      ['C4', 'stake', 'Cut of a stake a member wins', 'StakeCutMaxPercent'],
+      ['C5', 'buyout', 'Cut of a buyout paid to a member', 'BuyoutCutMaxPercent']];
+    cutKinds.forEach(function (k) {
+      if (!orgHolds(k[0])) { return; }
+      var box = orgCard(k[2], 'i-coin');
+      var note = orgOfficeNote(k[0]);
+      if (note) { box.appendChild(note); }
+      var max = orgBound(k[3]);
+      var total = orgBound('TotalCutCapPercent');
+      var cap = max !== null && total !== null ? Math.min(max, total) : (max !== null ? max : total);
+      box.appendChild(orgField('cut.' + k[1], 'Percent' + (cap !== null ? ' (0 to ' + cap + ')' : ''), 'number', '0'));
+      box.appendChild(el('div', 'hint', 'Contracts already accepted keep the cut they were accepted at.'));
+      var row = orgRow();
+      row.appendChild(orgTwoTap('ghost', 'Set cut', 'cut:' + k[1], 'Tap again to set the cut', function () {
+        var pct = orgNumber('cut.' + k[1]);
+        if (pct === null) { return say('Write a whole percent.'); }
+        orgWrite('cut:' + k[1], function () { return post('orgSetCut', { kind: k[1], percent: pct }); }, 'Cut set.');
+      }, k[0]));
+      box.appendChild(row);
+      view.appendChild(box);
+    });
+    if (orgHolds('C2')) { view.appendChild(orgTargetCut('role')); }
+    if (orgHolds('C3')) { view.appendChild(orgTargetCut('member')); }
+  }
+
+  function orgTargetCut(kind) {
+    var code = kind === 'role' ? 'C2' : 'C3';
+    var box = orgCard(kind === 'role' ? 'Cut by role' : 'Cut for one member', 'i-coin');
+    var note = orgOfficeNote(code);
+    if (note) { box.appendChild(note); }
+    var options = kind === 'role' ? orgRoleOptions(true) : orgMemberOptions();
+    if (kind === 'member' && !orgHolds('M1')) {
+      box.appendChild(el('div', 'hint', 'Picking a member needs View members, which staff have not given you.'));
+      return box;
+    }
+    if (!options.length) {
+      box.appendChild(el('div', 'hint', kind === 'role' ? 'No role below yours.' : 'No member to pick yet.'));
+      return box;
+    }
+    box.appendChild(orgChoice('tcut.' + kind, options, undefined));
+    var cap = orgBound('CutMaxPercent');
+    box.appendChild(orgField('tcut.' + kind + '.pct', 'Percent' + (cap !== null ? ' (0 to ' + cap + ')' : ''),
+      'number', '0'));
+    var row = orgRow();
+    function send(percent, label) {
+      var target = orgChosen('tcut.' + kind, undefined);
+      if (target === undefined) { return say(kind === 'role' ? 'Pick a role first.' : 'Pick a member first.'); }
+      var data = kind === 'role' ? { kind: 'role', grade: target, percent: percent }
+        : { kind: 'member', member: target, percent: percent };
+      orgWrite('tcut:' + kind, function () { return post('orgSetCut', data); }, label);
+    }
+    row.appendChild(orgTwoTap('ghost', 'Set cut', 'tcut:' + kind + ':set', 'Tap again to set the cut', function () {
+      var pct = orgNumber('tcut.' + kind + '.pct');
+      if (pct === null) { return say('Write a whole percent.'); }
+      send(pct, 'Cut set.');
+    }, code));
+    row.appendChild(orgTwoTap('ghost', 'Use the default', 'tcut:' + kind + ':clear', 'Tap again to clear it',
+      function () { send(false, 'Their own cut cleared.'); }, code));
+    box.appendChild(row);
+    return box;
+  }
+
+  /* ---- Contracts: access rules, boss picks, cooldowns ---- */
+
+  function orgContractsScreen(view) {
+    if (orgHolds('K1') || orgHolds('K3')) {
+      if (orgPending(view, 'roles')) { return; }
+    }
+    var roles = orgRoleOptions(true);
+    if (orgHolds('K1')) {
+      var box = orgCard('Who may take what', 'i-flag');
+      box.appendChild(el('div', 'hint', 'Only ever stricter than the server\'s own rules, which still apply first.'));
+      if (!roles.length) {
+        box.appendChild(el('div', 'hint', 'No role below yours.'));
+      } else {
+        box.appendChild(orgChoice('acc.grade', roles, roles[0].value));
+        box.appendChild(orgField('acc.maxReward', 'Most a contract may pay ($, blank for no limit)', 'number', ''));
+        box.appendChild(orgField('acc.maxAtOnce', 'Contracts at once (blank for no limit)', 'number', ''));
+        box.appendChild(el('div', 'hint', 'How they may be finished'));
+        box.appendChild(orgChoice('acc.rule', [{ value: '', label: 'Any' }, { value: 'alive', label: 'Alive only' },
+          { value: 'either', label: 'Either' }], ''));
+        box.appendChild(el('div', 'hint', 'Targets on whitelisted jobs'));
+        box.appendChild(orgChoice('acc.whitelisted', [{ value: true, label: 'Allowed' },
+          { value: false, label: 'Not allowed' }], true));
+        var row = orgRow();
+        row.appendChild(orgTwoTap('primary', 'Save rules', 'access', 'Tap again to save the rules', function () {
+          var rules = {};
+          var maxReward = orgNumber('acc.maxReward');
+          var atOnce = orgNumber('acc.maxAtOnce');
+          var rule = orgChosen('acc.rule', '');
+          rules.maxReward = maxReward === null ? false : maxReward;
+          rules.maxAtOnce = atOnce === null ? false : atOnce;
+          rules.rule = rule ? rule : false;
+          rules.whitelisted = orgChosen('acc.whitelisted', true) === true;
+          var grade = orgChosen('acc.grade', roles[0].value);
+          orgWrite('access', function () { return post('orgAccess', { grade: grade, rules: rules }); },
+            'Rules saved.');
+        }));
+        box.appendChild(row);
+      }
+      view.appendChild(box);
+    }
+    if (orgHolds('K3')) {
+      var cd = orgCard('Cooldown between accepts', 'i-clock');
+      if (!roles.length) {
+        cd.appendChild(el('div', 'hint', 'No role below yours.'));
+      } else {
+        cd.appendChild(orgChoice('cd.grade', roles, roles[0].value));
+        var cap = orgBound('MemberCooldownMaxMinutes');
+        cd.appendChild(orgField('cd.minutes', 'Minutes' + (cap !== null ? ' (up to ' + cap + ')' : '')
+          + ', blank for none', 'number', ''));
+        var rc = orgRow();
+        rc.appendChild(orgTwoTap('ghost', 'Set cooldown', 'cooldown', 'Tap again to set it', function () {
+          var minutes = orgNumber('cd.minutes');
+          var grade = orgChosen('cd.grade', roles[0].value);
+          orgWrite('cooldown', function () {
+            return post('orgRoleCooldown', { grade: grade, minutes: minutes === null ? false : minutes });
+          }, 'Cooldown set.');
+        }));
+        cd.appendChild(rc);
+      }
+      view.appendChild(cd);
+    }
+    if (orgHolds('K2')) {
+      var pick = orgCard('Boss pick', 'i-crosshair');
+      pick.appendChild(el('div', 'hint', 'Pin a contract on the board to a member. It is a recommendation: they '
+        + 'still take it themselves.'));
+      pick.appendChild(orgField('pick.id', 'Contract id', 'text', 'ct00000001', 64));
+      var members = orgMemberOptions();
+      if (members.length) { pick.appendChild(orgChoice('pick.member', members, undefined)); }
+      var rp = orgRow();
+      rp.appendChild(orgTwoTap('ghost', 'Pin it', 'pick', 'Tap again to pin it', function () {
+        var id = orgText('pick.id');
+        var who = orgChosen('pick.member', undefined);
+        if (!id) { return say('Write the contract\'s id.'); }
+        orgWrite('pick', function () {
+          return post('orgPick', who === undefined ? { id: id } : { id: id, member: who });
+        }, who === undefined ? 'Pick cleared.' : 'Pinned.');
+      }));
+      pick.appendChild(rp);
+      view.appendChild(pick);
+    }
+  }
+
+  /* ---- Places: the office, sign-up and meeting spots, set where they stand ---- */
+
+  function orgPlacesScreen(view) {
+    view.appendChild(el('div', 'hint', 'Places are set where you stand: the server reads your position, and the '
+      + 'phone sends none.'));
+    [['L1', 'office', 'Move the office here', 'Tap again to move it here'],
+      ['L2', 'signup', 'Put a sign-up spot here', 'Tap again to put it here'],
+      ['L3', 'meeting', 'Add a meeting spot here', 'Tap again to add it here']].forEach(function (k) {
+      if (!orgHolds(k[0])) { return; }
+      var box = orgCard(ORG_SPOT_WORDS[k[1]], 'i-pin');
+      if (k[1] !== 'office') { box.appendChild(orgField('spot.' + k[1], 'Name', 'text', ORG_SPOT_WORDS[k[1]], 64)); }
+      if (k[1] === 'office' && orgBound('OfficeMoveMetres') !== null) {
+        box.appendChild(el('div', 'hint', 'Within ' + orgBound('OfficeMoveMetres') + ' m of where staff put it.'));
+      }
+      var note = orgOfficeNote(k[0]);
+      if (note) { box.appendChild(note); }
+      var row = orgRow();
+      row.appendChild(orgTwoTap('primary', k[2], 'spot:' + k[1], k[3], function () {
+        var label = orgText('spot.' + k[1]);
+        orgWrite('spot:' + k[1], function () {
+          return post('orgPlaceHere', label ? { kind: k[1], label: label } : { kind: k[1] });
+        }, 'Placed where you stand.');
+        orgRead('spots', function () { return post('orgSpots', {}); });
+      }, k[0]));
+      box.appendChild(row);
+      view.appendChild(box);
+    });
+    if (orgPending(view, 'spots')) { return; }
+    var rows = asList(state.org.data.spots.rows);
+    if (!rows.length) { view.appendChild(el('div', 'empty', 'No places set.')); return; }
+    rows.forEach(function (s) {
+      var box = el('div', 'card org-card');
+      box.appendChild(el('div', 'org-card-title ico i-pin', String(s.label || ORG_SPOT_WORDS[s.kind] || 'Place')));
+      box.appendChild(el('div', 'hint', ORG_SPOT_WORDS[s.kind] || 'Place'));
+      var power = s.kind === 'signup' ? 'L2' : s.kind === 'meeting' ? 'L3' : null;
+      if (power && orgHolds(power)) {
+        var row = orgRow();
+        row.appendChild(orgTwoTap('danger', 'Remove', 'spot:rm:' + s.id, 'Tap again to remove it', function () {
+          orgWrite('spot:rm:' + s.id, function () { return post('orgRemoveSpot', { id: s.id }); }, 'Removed.');
+          orgRead('spots', function () { return post('orgSpots', {}); });
+        }, power));
+        box.appendChild(row);
+      }
+      view.appendChild(box);
+    });
+  }
+
+  /* ---- Notices ---- */
+
+  function orgNoticesScreen(view) {
+    var box = orgCard('Board notice', 'i-flag');
+    var cap = orgBound('NoticeMaxLength');
+    box.appendChild(orgField('notice.text', 'Notice' + (cap !== null ? ' (up to ' + cap + ' characters)' : ''),
+      'area', state.org.mine.notice || 'Write the notice', cap || 500));
+    box.appendChild(orgChoice('notice.broadcast', [{ value: false, label: 'Board only' },
+      { value: true, label: 'Also message every member' }], false));
+    var row = orgRow();
+    row.appendChild(orgTwoTap('primary', 'Post', 'notice', 'Tap again to post it', function () {
+      var text = orgText('notice.text');
+      if (!text) { return say('Write the notice first.'); }
+      orgWrite('notice', function () {
+        return post('orgNotice', { text: text, broadcast: orgChosen('notice.broadcast', false) === true });
+      }, 'Notice posted.');
+    }));
+    if (state.org.mine.notice) {
+      row.appendChild(orgTwoTap('ghost', 'Take it down', 'notice:clear', 'Tap again to take it down', function () {
+        orgWrite('notice:clear', function () { return post('orgNotice', { text: false }); }, 'Notice taken down.');
+      }));
+    }
+    box.appendChild(row);
+    view.appendChild(box);
+  }
+
+  /* ---- Applications ---- */
+
+  function orgApplicationsScreen(view) {
+    if (orgPending(view, 'applications')) { return; }
+    var rows = asList(state.org.data.applications.rows);
+    if (!rows.length) { view.appendChild(el('div', 'empty', 'No applications waiting.')); return; }
+    rows.forEach(function (a) {
+      var box = orgCard(String(a.name || 'A player'), 'i-user');
+      box.appendChild(el('div', 'hint', a.body ? String(a.body) : 'No words given.'));
+      var row = orgRow();
+      row.appendChild(orgTwoTap('primary', 'Accept', 'app:' + a.id + ':yes', 'Tap again to accept', function () {
+        orgWrite('app:' + a.id + ':yes', function () { return post('orgDecide', { id: a.id, accept: true }); },
+          'Accepted: they join in the lowest role.');
+        orgRead('applications', function () { return post('orgApplications', {}); });
+      }));
+      row.appendChild(orgTwoTap('ghost', 'Reject', 'app:' + a.id + ':no', 'Tap again to reject', function () {
+        orgWrite('app:' + a.id + ':no', function () { return post('orgDecide', { id: a.id, accept: false }); },
+          'Rejected.');
+        orgRead('applications', function () { return post('orgApplications', {}); });
+      }));
+      box.appendChild(row);
+      view.appendChild(box);
+    });
+  }
+
+  /* ---- Settings: the label, the menu's layout, the office rule ---- */
+
+  var ORG_LAYOUT_TABS = [['members', 'Members'], ['roles', 'Roles'], ['funds', 'Money'],
+    ['contracts', 'Contracts'], ['locations', 'Places'], ['notices', 'Notices'], ['settings', 'Settings']];
+
+  function orgSettingsScreen(view) {
+    var m = state.org.mine;
+    if (orgHolds('S1')) {
+      var box = orgCard('Organisation name', 'i-briefcase');
+      box.appendChild(orgField('rename', 'Name', 'text', m.label || '', 64));
+      var row = orgRow();
+      row.appendChild(orgTwoTap('primary', 'Rename', 'rename', 'Tap again to rename', function () {
+        var label = orgText('rename');
+        if (!label) { return say('Write the new name.'); }
+        orgWrite('rename', function () { return post('orgRename', { label: label }); }, 'Renamed.');
+      }));
+      box.appendChild(row);
+      view.appendChild(box);
+    }
+    if (orgHolds('S2')) {
+      var lay = orgCard('Boss menu names', 'i-layers');
+      lay.appendChild(el('div', 'hint', 'Rename the menu\'s screens for everybody in the organisation. Blank keeps '
+        + 'the name it has.'));
+      var labels = (m.layout && m.layout.labels) || {};
+      ORG_LAYOUT_TABS.forEach(function (t) {
+        lay.appendChild(orgField('layout.' + t[0], t[1], 'text', String(labels[t[0]] || t[1]), 24));
+      });
+      var rl = orgRow();
+      rl.appendChild(orgTwoTap('ghost', 'Save names', 'layout', 'Tap again to save the names', function () {
+        var out = {};
+        ORG_LAYOUT_TABS.forEach(function (t) {
+          var v = orgText('layout.' + t[0]);
+          if (v) { out[t[0]] = v; } else if (labels[t[0]]) { out[t[0]] = labels[t[0]]; }
+        });
+        var hidden = (m.layout && m.layout.hidden) || {};
+        orgWrite('layout', function () {
+          return post('orgLayout', { layout: { labels: out, hidden: hidden } });
+        }, 'Names saved.');
+      }));
+      lay.appendChild(rl);
+      view.appendChild(lay);
+    }
+    if (orgHolds('S3')) {
+      var office = orgCard('Powers that need the office', 'i-briefcase');
+      office.appendChild(el('div', 'hint', 'Ask for the office for more of your powers. One staff made need it '
+        + 'cannot be lifted here.'));
+      orgPowerList().filter(function (p) { return p.held && p.code !== 'TAKE'; }).forEach(function (p) {
+        var needs = !!(m.officeOnly && m.officeOnly[p.code]);
+        var line = el('div', 'org-power');
+        line.appendChild(el('div', 'org-power-name', p.label + (needs ? ' — office only' : ' — anywhere')));
+        var row = orgRow();
+        row.appendChild(orgTwoTap('ghost', needs ? 'Anywhere' : 'Office only', 'office:' + p.code,
+          'Tap again to change it', function () {
+            orgWrite('office:' + p.code, function () {
+              return post('orgOfficeRule', { power: p.code, on: !needs });
+            }, 'Saved.');
+          }));
+        line.appendChild(row);
+        office.appendChild(line);
+      });
+      view.appendChild(office);
+    }
   }
 
   /* Placing and accepting, which the app pause and a suspension refuse. */
@@ -9980,6 +11130,8 @@
        into Cash could be left at 50. Any field is found again by its id,
        with the caret where it was. */
     var typing = typingIn(document.activeElement);
+    // The Organisation tab in the bar or not, as the board last said.
+    syncOrgTab();
     var drawn = Diag.guard('render:' + state.tab, draw);
     if (drawn !== Diag.FAILED) {
       if (typing) { refocus(typing); }
@@ -10091,7 +11243,7 @@
     ({
       board: viewBoard, mine: viewMine, place: viewPlace,
       onme: viewOnMe, ledger: viewLedger, thread: viewThread,
-      jobview: viewJobView
+      jobview: viewJobView, org: viewOrg
     })[state.tab](view);
 
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
@@ -10286,6 +11438,8 @@
         }
         var settingsWere = JSON.stringify(settings());
         state.board = r.data;
+        // The Organisation tab follows the board's word on it at once.
+        syncOrgTab();
         keepAnswer('board', seen.text, r.data);
         stampClocks(r.data.contracts);
         // The Protection tab, when that is the one open, read with it.
@@ -10502,7 +11656,9 @@
     };
   }
 
-  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
+  /* A tab's tap. A function of its own, for the Organisation tab, which is
+     made later, when the board says it is for this player (syncOrgTab). */
+  function wireTab(tab) {
     tab.onclick = function () {
       // The whitelisted-job view is one screen; its bar is not drawn.
       if (state.mode === 'whitelisted') { return; }
@@ -10550,8 +11706,10 @@
       // again.
       if (state.tab === 'board' || state.tab === 'mine' || state.tab === 'onme') refresh(null, { quiet: true });
       else if (state.tab === 'ledger') refresh({ ledger: true }, { quiet: true });
+      else if (state.tab === 'org') { state.org.armed = null; loadOrg(); }
     };
-  });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), wireTab);
 
   // The client tells the page each server reply came (its event and
   // outcome, never its data) as well as resolving the fetch that asked for

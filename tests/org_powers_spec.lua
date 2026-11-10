@@ -31,10 +31,10 @@ describe('the powers as constants', function()
         end
         for _, code in ipairs({ 'M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2',
             'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
-            'S1', 'S2', 'S3', 'D2', 'D3' }) do
+            'S1', 'S2', 'S3', 'D2', 'D3', 'M7', 'P3' }) do
             truthy(codes[code], code)
         end
-        eq(#Powers.LIST, 33, 'the 31 area powers and D2, D3 (D1 is R4)')
+        eq(#Powers.LIST, 35, 'the 31 area powers, D2, D3 (D1 is R4), and M7, P3 (codenames, payroll)')
         eq(Powers.resolve('D1'), 'R4')
         eq(Powers.resolve('TAKE'), nil, 'TAKE is no boss power')
         eq(Powers.resolve('TAKE', true), 'TAKE')
@@ -53,7 +53,9 @@ describe('Boss permissions: the ceiling', function()
                     power = 'M1', state = 'grant', on = true, amount = 10, reason = 'r', id = 'x', target = 13,
                     label = 'X', layout = {}, rules = { maxReward = 1 }, minutes = 1, text = 'hi' })
                 falsy(reply.ok, entry.name .. ' refused')
-                truthy(reply.err == 'org_no_power' or reply.err == 'org_not_found' or reply.err == 'invalid_input',
+                -- Codenames and payroll are off here: their own switch says so first.
+                truthy(reply.err == 'org_no_power' or reply.err == 'org_not_found' or reply.err == 'invalid_input'
+                    or reply.err == 'org_feature_off',
                     entry.name .. ': ' .. tostring(reply.err))
                 truthy(reply.data and reply.data.message, entry.name .. ' says why')
             end
@@ -350,7 +352,11 @@ end)
 
 describe('every phone request, through its net event', function()
     it('answers ok to a boss holding the power, at the office, for each one', function()
-        local s, f, org = world({ configure = function() Config.Organisation.Funds = 'internal' end })
+        local s, f, org = world({ configure = function()
+            Config.Organisation.Funds = 'internal'
+            Config.Organisation.Codenames = true
+            Config.Organisation.Payroll = true
+        end })
         for _, p in ipairs(require('server.org.powers').LIST) do W.allow(s, 3, p.code) end
         truthy(s.org.setLimits(W.STAFF, { LocationCooldownMinutes = 0 }))
         W.office(s)
@@ -379,6 +385,8 @@ describe('every phone request, through its net event', function()
         ok('orgSuspend', { member = recruit, hours = 1, reason = 'late' })
         ok('orgMemberLimits', { member = recruit, maxAtOnce = 1, cooldownMinutes = 5 })
         ok('orgMemberGrant', { member = recruit, power = 'M1', state = 'grant' })
+        ok('orgCodename', { member = recruit, codename = 'Nightjar' })
+        ok('orgSalary', { grade = 0, amount = 100 })
         ok('orgDeposit', { amount = 5000, account = 'bank', nonce = 'd1' })
         ok('orgFunds', {})
         ok('orgWithdraw', { amount = 100, reason = 'rent', nonce = 'w1' })

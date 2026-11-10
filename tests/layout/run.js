@@ -1947,6 +1947,116 @@ async function main() {
     });
   }
 
+  /* ---- the Organisation tab (Config.Organisation) ----
+   *
+   * A boss holding every power: the member page and each boss screen at
+   * phone width, with the sixth tab in the bar. Nothing outside its card,
+   * nothing sideways, the tab bar's six tabs still thumb-sized. */
+  function orgStub() {
+    const all = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'D2', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2', 'P3',
+      'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
+      'S1', 'S2', 'S3'];
+    const held = {};
+    const names = { TAKE: { label: 'Take contracts' } };
+    all.forEach(function (c) { held[c] = true; names[c] = { label: 'A power with a long name ' + c }; });
+    const answers = {
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], orgTab: 'member',
+        orgTerms: { orgPercent: 15, youKeepPercent: 85, stakePercent: 5, buyoutPercent: 5 } } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      ledger: { ok: true, data: { entries: [], record: { completed: 0, placed: 0, survived: 0, standing: 'Unproven' } } },
+      orgMine: { ok: true, data: { enabled: true, member: true, label: 'The Featherstonehaugh-Cholmondeley Syndicate',
+        grade: 3, role: 'Boss', codenames: true, codename: 'Nightjar', powers: held, powerNames: names,
+        officeOnly: { C7: true, M2: true }, inOffice: false, hasOffice: true,
+        notice: 'Meet at the docks at nine. Bring nothing that rattles, and leave the phones in the car, all of them.',
+        terms: { orgPercent: 15, youKeepPercent: 85, stakePercent: 5, buyoutPercent: 5 },
+        payroll: { salary: 1000, nextIn: 86400 }, limits: { maxAtOnce: 2, cooldownMinutes: 30 },
+        bounds: { WithdrawMax: 50000, CutMaxPercent: 25, TotalCutCapPercent: 40, HireRadius: 5, HireMaxGrade: 1,
+          SuspendMaxHours: 72, MemberMaxAtOnce: 3, MemberCooldownMaxMinutes: 120, PayMax: 500, BonusMax: 10000,
+          NoticeMaxLength: 500, OfficeMoveMetres: 150 },
+        layout: { labels: {}, hidden: {} } } },
+      orgMembers: { ok: true, data: { rows: [
+        { ref: 'm1_1', name: 'Maximilian Featherstonehaugh-Cholmondeley', grade: 0, role: 'Recruit', online: true,
+          suspendedUntil: 9999999999, locked: true },
+        { ref: 'm2_2', name: 'Kestrel', grade: 2, role: 'Lieutenant', online: false, boss: true }] } },
+      orgRoles: { ok: true, data: { rows: [
+        { grade: 3, name: 'boss', label: 'Boss', pay: 0, boss: true, members: 1, powers: {} },
+        { grade: 2, name: 'lieutenant', label: 'Lieutenant of the Outer Docks', pay: 500, members: 1,
+          powers: { M1: { by: 'boss' } }, editable: true, salary: 1000, salaryMax: 1000 },
+        { grade: 0, name: 'recruit', label: 'Recruit', pay: 0, members: 1, powers: {}, editable: true }] } },
+      orgFunds: { ok: true, data: { balance: 1234567, rows: [
+        { kind: 'withdraw', amount: -50000, reason: 'A reason long enough to wrap twice over the card' },
+        { kind: 'cut', amount: 1250, reason: 'payout' }] } },
+      orgSpots: { ok: true, data: { rows: [{ id: 's1', kind: 'meeting', label: 'Under the pier, by the third pylon' },
+        { id: 's2', kind: 'office', label: 'Office' }] } },
+      orgApplications: { ok: true, data: { rows: [{ id: 'a1', name: 'Ada Quill', body: 'Steady hands, quiet mouth.' }] } }
+    };
+    window.fetch = function (url) {
+      const name = url.split('/crimson:')[1];
+      return Promise.resolve({ json: function () { return Promise.resolve(answers[name] || { ok: true }); } });
+    };
+  }
+
+  const orgShots = [];
+  const op = await browser.newPage({ viewport: { width: 390, height: 720 } });
+  await op.addInitScript(orgStub);
+  await op.goto('file://' + UI);
+  await op.waitForTimeout(300);
+  const orgBar = await op.evaluate(function () {
+    const tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+    return { count: tabs.length, smallest: Math.min.apply(Math, tabs.map(function (t) {
+      return Math.min(t.getBoundingClientRect().width, t.getBoundingClientRect().height); })),
+      label: (tabs.filter(function (t) { return t.dataset.tab === 'org'; })[0] || {}).textContent };
+  });
+  async function orgMeasure(name) {
+    const escaped = await escapedFrom(op);
+    const sideways = await op.evaluate(function () {
+      const main = document.querySelector('main');
+      return main.scrollWidth > main.clientWidth + 1 || document.documentElement.scrollWidth > window.innerWidth + 1;
+    });
+    const small = await op.evaluate(function () {
+      return Array.prototype.slice.call(document.querySelectorAll('main button')).filter(function (b) {
+        const r = b.getBoundingClientRect();
+        return r.width > 0 && (r.height < 30 || r.width < 30);
+      }).map(function (b) { return b.textContent; });
+    });
+    orgShots.push({ name: name, escaped: escaped, sideways: sideways, small: small });
+  }
+  await op.click('[data-tab="org"]');
+  await op.waitForTimeout(250);
+  await orgMeasure('home');
+  for (const screen of ['Members', 'Roles', 'Money', 'Contracts', 'Places', 'Notices', 'Applications', 'Settings']) {
+    await op.evaluate(function (label) {
+      const b = Array.prototype.slice.call(document.querySelectorAll('main button'))
+        .filter(function (n) { return n.textContent === label; })[0];
+      if (b) { b.click(); }
+    }, screen);
+    await op.waitForTimeout(200);
+    // Open the first row of a list, where it has one, so its actions are measured too.
+    await op.evaluate(function () {
+      const row = document.querySelector('main button.org-row');
+      if (row) { row.click(); }
+    });
+    await op.waitForTimeout(150);
+    await orgMeasure(screen);
+    await op.evaluate(function () {
+      const b = Array.prototype.slice.call(document.querySelectorAll('main button'))
+        .filter(function (n) { return n.textContent === 'Back'; })[0];
+      if (b) { b.click(); }
+    });
+    await op.waitForTimeout(120);
+  }
+  await op.close();
+  it('the Organisation tab at 390px: a sixth tab, still thumb-sized', function () {
+    truthy(orgBar.count === 6, 'six tabs: ' + orgBar.count);
+    truthy(orgBar.label === 'Org', 'labelled Org: ' + orgBar.label);
+    atLeast(orgBar.smallest, 44, 'the smallest tab');
+  });
+  it('the Organisation tab at 390px: the member page and every boss screen fit, nothing sideways', function () {
+    truthy(orgShots.length === 9, 'every screen measured: ' + orgShots.map(function (s) { return s.name; }).join(','));
+    const bad = orgShots.filter(function (s) { return s.escaped.length || s.sideways || s.small.length; });
+    truthy(bad.length === 0, JSON.stringify(bad).slice(0, 1500));
+  });
+
   await browser.close();
 
   console.log('');

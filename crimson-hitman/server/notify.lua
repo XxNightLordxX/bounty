@@ -911,7 +911,8 @@ end
 ---@param returning boolean|nil the hitman is taking it up again after a stint of their own
 --- on it (Contracts.accept): not news to officers twice, whatever a restart forgot
 function Notify.contractAccepted(contract, hitmanRecord, activeHitmen, returning)
-    local who = hitmanRecord.anon and 'an operative' or hitmanRecord.hitman_name
+    local shown = Util.shownHitmanName(hitmanRecord.hitman_cid, hitmanRecord.hitman_name)
+    local who = hitmanRecord.anon and 'an operative' or shown
     local body = ('Your contract on %s has been accepted by %s. %d operative%s now active.')
         :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and ' is' or 's are')
     -- Live transfer only: the hitman comes to the person who placed it, so
@@ -921,7 +922,7 @@ function Notify.contractAccepted(contract, hitmanRecord, activeHitmen, returning
     if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
         body = ("A hitman%s took your contract on %s. They'll bring the target to you "
             .. 'alive — stay in the city%s.%s')
-            :format(hitmanRecord.anon and '' or (' (' .. tostring(hitmanRecord.hitman_name) .. ')'),
+            :format(hitmanRecord.anon and '' or (' (' .. tostring(shown) .. ')'),
                 tostring(contract.target_name),
                 Config.Relay.Enabled == true and ' and watch your messages' or '',
                 (tonumber(activeHitmen) or 0) > 1

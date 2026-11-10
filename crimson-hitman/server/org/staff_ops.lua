@@ -36,6 +36,7 @@ StaffOps.ACTIONS = {
     'org_notice', 'org_applied', 'org_application', 'org_renamed', 'org_layout', 'org_external_adopted',
     'org_external_reverted', 'org_funds_unrecorded', 'org_setup', 'org_funds_backend', 'org_member_invited',
     'org_invite_answered', 'org_application_superseded', 'org_cut_unavailable',
+    'org_codename', 'org_salary', 'org_salary_max', 'org_payroll_run', 'org_payroll_skipped',
 }
 
 local function staff(src)
@@ -321,6 +322,20 @@ OPS.orgFundsBackend = { 'write', function(src, data)
     if not ok then return said(ok, err, extra, message) end
     return true, nil, ('The funds are kept in %s now; %d carried across.'):format(
         to == 'bank' and 'Renewed-Banking' or 'the ledger', extra.carried or 0), extra
+end }
+
+-- Payroll ------------------------------------------------------------------------
+
+--- A role's salary, and (max) the most it may be paid: Config.Organisation.Payroll.
+OPS.orgSalary = { 'write', function(src, data)
+    local grade = tonumber(data.grade)
+    if data.max ~= nil then
+        if data.max ~= false and type(data.max) ~= 'number' then
+            return false, Org.ERR.INVALID, 'A whole number of dollars, or false to clear it.'
+        end
+        return said(Org.setSalaryMax(staff(src), grade, data.max))
+    end
+    return said(Org.setSalary(staff(src), grade, data.amount))
 end }
 
 -- Contracts ------------------------------------------------------------------

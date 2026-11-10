@@ -791,6 +791,9 @@ function App.register()
             -- And a boss's invite waiting for this player to accept or
             -- decline (Org.inviteFor): the organisation and role, never who.
             listing.orgInvite = deps.org and deps.org.inviteFor and deps.org.inviteFor(actor.cid) or nil
+            -- Whether the app shows the Organisation tab, and as what
+            -- (Org.tabFor): nil for everybody else and while it is off.
+            listing.orgTab = deps.org and deps.org.tabFor and deps.org.tabFor(actor.cid, actor.source) or nil
         end
         return listing
     end)

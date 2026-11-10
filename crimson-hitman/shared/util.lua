@@ -477,6 +477,19 @@ end
 --- whose target is on a whitelisted job). Read at every use; anything but
 --- true is off, and the target sees aliases only. Never an operative who
 --- accepted anonymously.
+--- The name shown for a hitman where their name is shown at all: the one
+--- the contract keeps. The hitman organisation (server/org/init.lua,
+--- Config.Organisation.Codenames) puts its own in place on the server, a
+--- member's codename where they have one; never called for one who took a
+--- contract anonymously.
+---@param cid string|nil
+---@param name string|nil
+---@return string|nil
+function Util.shownHitmanName(cid, name)
+    local _ = cid
+    return name
+end
+
 ---@param protected boolean|nil the target is on a whitelisted job
 ---@return boolean
 function Util.operativeNamesShown(protected)

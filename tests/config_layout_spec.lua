@@ -180,6 +180,8 @@ local ADDED = {
             '1984.0, 3054.0, 47.2, 240.0' },
         RotateHours = 3, Model = 'a_m_y_hipster_01', Scenario = 'WORLD_HUMAN_LEANING', Blip = false,
     },
+    -- The broker's and informant's places set from the panel's Locations.
+    ['Roleplay.NpcPlaces'] = { Enabled = false },
     ['Roleplay.ReasonQuality'] = {
         Enabled = false, MinLength = 15, MinWords = 3,
         LowEffort = { 'rdm', 'idk', 'cuz', 'no reason', 'test', 'because' },
@@ -223,6 +225,9 @@ local ADDED = {
         JobName = 'hitman', JobLabel = 'Crimson Contractors', JobType = 'hitman', DefaultDuty = true,
         SetPrimaryOnHire = true, QbxBossFlag = false, ExternalChanges = 'adopt', Funds = 'auto',
         OfficeRadius = 5.0, DrawMetres = 40.0, ApplyAtSignupOnly = true, NpcModel = 'g_m_m_armboss_01',
+        -- Codenames and payroll (plan R6, R10), each its own switch, off.
+        Codenames = false, CodenameMinLength = 3, CodenameMaxLength = 20,
+        CodenameBlocked = { 'admin', 'staff', 'moderator', 'police' }, Payroll = false, PayrollDays = 7,
         Roles = { '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no',
             '2, lieutenant, Lieutenant, 0, no', '3, boss, Boss, 0, yes' },
         Limits = {
@@ -232,7 +237,7 @@ local ADDED = {
             WithdrawPerDay = 100000, CutMaxPercent = 25, TotalCutCapPercent = 40, StakeCutMaxPercent = 25,
             BuyoutCutMaxPercent = 25, OfficeMoveMetres = 150.0, LocationCooldownMinutes = 60,
             MaxSignupSpots = 2, MaxMeetingSpots = 5, NoticeMaxLength = 500, RenameCooldownMinutes = 1440,
-            InviteMinutes = 10,
+            InviteMinutes = 10, SalaryMax = 1000, CodenameCooldownMinutes = 1440,
         },
     },
     ['Cooldowns.org'] = { per = 10, burst = 20 },
@@ -440,7 +445,9 @@ describe('the configuration as one short file', function()
         -- And the Mission steps section: one header, the step markers' block
         -- and body disposal's, and its rate-limit bucket. All of it is 850
         -- lines; the cap is that plus a three-line margin.
-        truthy(lines < 853, 'config.lua is ' .. lines .. ' lines')
+        -- And the organisation's codenames and payroll (six lines and two
+        -- staff bounds), and the panel-set NPC places' block (four lines).
+        truthy(lines < 866, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

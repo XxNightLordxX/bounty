@@ -564,6 +564,10 @@ Config.Roleplay.InformantNpc = {
     Blip        = false,                  -- show the informant on the map
 }
 
+Config.Roleplay.NpcPlaces = {
+    Enabled = false,  -- broker and informant placed from the panel (Locations)
+}
+
 Config.Roleplay.ReasonQuality = {
     Enabled         = false,     -- hold free-text reasons to the rules below
     MinLength       = 15,        -- least characters in a reason
@@ -693,6 +697,12 @@ Config.Organisation = {
     DrawMetres         = 40.0,                   -- metres at which a spot is drawn
     ApplyAtSignupOnly  = true,                   -- applications only at a sign-up spot
     NpcModel           = 'g_m_m_armboss_01',     -- the ped drawn at an NPC spot
+    Codenames          = false,                  -- members carry a codename, shown instead of their name
+    CodenameMinLength  = 3,                      -- least characters in a codename
+    CodenameMaxLength  = 20,                     -- most characters in a codename
+    CodenameBlocked    = { 'admin', 'staff', 'moderator', 'police' }, -- words a codename may not contain
+    Payroll            = false,                  -- a salary per role, paid from the funds every pay day
+    PayrollDays        = 7,                      -- days between two pay days
     Roles              = { -- the roles made with it: 'grade, name, label, pay, boss'
         '0, recruit, Recruit, 0, no',
         '1, operative, Operative, 0, no',
@@ -725,6 +735,8 @@ Config.Organisation = {
         NoticeMaxLength          = 500,     -- characters in the board notice
         RenameCooldownMinutes    = 1440,    -- minutes between two label changes by a boss
         InviteMinutes            = 10,      -- minutes a boss's invite waits for the player to accept
+        SalaryMax                = 1000,    -- most salary a boss sets per role per pay day ($)
+        CodenameCooldownMinutes  = 1440,    -- minutes between two own codename changes
     },
 }
 -- ============================================================================

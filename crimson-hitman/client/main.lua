@@ -639,6 +639,16 @@ local UI_EVENTS = {
     -- The hitman organisation (Config.Organisation, off as shipped): the
     -- invited player's answer to a boss's hire, from the board's banner.
     'orgInviteAnswer',
+    -- And the app's Organisation tab: what a member sees, applying, and the
+    -- boss menu's requests, each checked on the server against the power
+    -- held after Boss permissions, the office and the rank rules
+    -- (server/org/boss_ops.lua). Positions are never sent from here: Place
+    -- here is read by the server where it sees this player stand.
+    'orgMine', 'orgApply', 'orgMembers', 'orgRoles', 'orgFunds', 'orgApplications', 'orgSpots',
+    'orgHire', 'orgFire', 'orgSetRole', 'orgSuspend', 'orgMemberLimits', 'orgMemberGrant', 'orgCodename',
+    'orgRoleCreate', 'orgRoleEdit', 'orgRoleDelete', 'orgRolePowers', 'orgRolePay', 'orgSalary',
+    'orgBonus', 'orgSetCut', 'orgDeposit', 'orgWithdraw', 'orgAccess', 'orgPick', 'orgRoleCooldown',
+    'orgPlaceHere', 'orgRemoveSpot', 'orgNotice', 'orgDecide', 'orgRename', 'orgLayout', 'orgOfficeRule',
 }
 
 --------------------------------------------------------------------------

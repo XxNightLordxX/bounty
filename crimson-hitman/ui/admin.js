@@ -357,7 +357,8 @@
                    history: true, settingsHistory: true, sanctions: true,
                    targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true,
                    orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, orgMyPosition: true,
-                   rewardPreview: true, reassignPreview: true, disposalList: true, disposalMyPosition: true };
+                   rewardPreview: true, reassignPreview: true, disposalList: true, disposalMyPosition: true,
+                   rpPlaceList: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -4158,7 +4159,7 @@
     'Suspensions and protections': 4, 'Moderators': 4 };
   var HELP_BLOCKS = ['Roleplay.WitnessHeat', 'Roleplay.EmsRelisting', 'Roleplay.CityNews', 'Roleplay.DirtyPayouts',
     'Roleplay.ProofOfIntent', 'Roleplay.Reputation', 'Roleplay.Protection', 'Roleplay.HitOnHitman',
-    'Roleplay.Rumours', 'Roleplay.BurnerPhone', 'Roleplay.InformantNpc', 'Roleplay.ReasonQuality',
+    'Roleplay.Rumours', 'Roleplay.BurnerPhone', 'Roleplay.InformantNpc', 'Roleplay.NpcPlaces', 'Roleplay.ReasonQuality',
     'Improvements.TipWarningDelay', 'Improvements.TipLimits', 'Improvements.TipHoldFirst',
     'Improvements.InformantSecondTry', 'Improvements.TipSafeZones', 'Improvements.GoDark',
     'Improvements.PlacerRecord', 'Improvements.HitmanHeat', 'Improvements.Tiers', 'Improvements.ContractDecay',
@@ -6495,6 +6496,13 @@
         + 'Anywhere else it is refused with "Find the informant first." and nothing is charged.',
       links: [{ key: 'Roleplay.InformantNpc.Enabled', view: 'features', label: 'Informant in person' },
         { key: 'Roleplay.InformantNpc.Locations', view: 'limits', label: 'Informant places' }] },
+    { title: 'Roleplay: Broker and informant placed from the panel', icon: 'location-dot',
+      text: 'Off as shipped. On, the broker and the informant NPC stand where staff placed them in Locations, '
+        + 'Broker and informant places (stand there in game and press Use my position), rotating among '
+        + 'those as their RotateHours say. Their Locations lists in the settings stay the defaults: they '
+        + 'are used while no place is set, and again after Reset to config or with this off.',
+      links: [{ key: 'Roleplay.NpcPlaces.Enabled', view: 'features', label: 'Placed from the panel on or off' },
+        { key: 'Roleplay.Rumours.Locations', view: 'limits', label: 'Broker defaults' }] },
     { title: 'Roleplay: Reason quality', icon: 'pen',
       text: 'Off as shipped. On, a typed reason needs a least length and number of words, on top of the '
         + 'other reason rules. A reason with a low-effort phrase (rdm, idk, test) is refused, or placed '
@@ -7580,6 +7588,96 @@
     disposalWrite('disposalRespawn', { id: node.getAttribute('data-id') }, 'list', node);
   };
 
+  /* ---- Locations: the broker's and informant's places (Config.Roleplay.NpcPlaces) ----
+     The places staff set by standing there (rpPlaceSet, here: the server
+     reads where they stand), and the config Locations lists they replace
+     while any is set. Each write takes two clicks. */
+  S.rpPlaces = { data: null, error: null, errCode: null, answers: {} };
+  var RP_NPCS = [{ id: 'broker', label: 'Broker NPC', icon: 'user-secret' },
+    { id: 'informant', label: 'Informant NPC', icon: 'user-secret' }];
+
+  function loadRpPlaces() {
+    return ask('rpPlaceList', {}, 'rpPlaces').then(function (reply) {
+      if (!reply) return;
+      if (reply.ok) { S.rpPlaces.data = reply.data || {}; S.rpPlaces.error = null; S.rpPlaces.errCode = null; }
+      else { S.rpPlaces.error = words(reply); S.rpPlaces.errCode = reply.err || null; }
+      if (S.section === 'locations') drawOrg();
+    });
+  }
+
+  function rpPlacesBody() {
+    var d = S.rpPlaces.data;
+    if (!d) {
+      return S.rpPlaces.error ? (S.rpPlaces.errCode === 'unknown_op' ? empty('This server has no panel-set NPC places.')
+        : empty(S.rpPlaces.error)) : loading('Reading the broker and informant places…');
+    }
+    var sw = settingEntry('Roleplay.NpcPlaces.Enabled');
+    var npcs = d.npcs || {};
+    return frag(
+      h('p.hint', 'Where the broker (Rumours) and the informant NPC stand. Stand on the spot in game and press Save '
+        + 'where I stand: the server reads where you are. With none set, each uses its Locations list in the settings '
+        + 'below, which stays the default.'),
+      !d.enabled ? card('Placed from the panel is off', frag(
+        h('p.about', 'Off as shipped (Config.Roleplay.NpcPlaces): the broker and informant use their Locations lists. '
+          + 'Turn it on to place them here; nothing set here is lost by turning it off.'),
+        sw ? h('div.st-row', { id: 'st-row-' + sw.key, 'data-key': sw.key }, settingInner(sw))
+          : loading('Reading the switch…')), '.is-warn.rp-off') : null,
+      RP_NPCS.map(function (k) {
+        var n = npcs[k.id] || {};
+        var rows = asList(n.rows);
+        var defaults = asList(n.defaults);
+        var pre = 'rpp.' + k.id + '.';
+        return card(frag(icon(k.icon), ' ', k.label), frag(
+          h('p.sub', (n.on ? 'Its feature is on. ' : 'Its feature is off. ') + (n.using === 'panel'
+            ? 'Standing at the places set here.' : 'Standing at its Locations list (the defaults).')),
+          rows.length ? h('div.table-wrap', h('table.grid',
+            h('thead', h('tr', h('th', 'Name'), h('th', 'x, y, z, heading'), h('th', 'On'), h('th', ''))),
+            h('tbody', rows.map(function (r) {
+              return h('tr', h('td.name', String(r.label || '—')),
+                h('td.mono', fmt(r.x) + ', ' + fmt(r.y) + ', ' + fmt(r.z) + ', ' + fmt(r.heading, 0)),
+                h('td', r.enabled === false ? 'off' : 'on'),
+                h('td', writeBtn('.is-small.is-danger', 'rpp-remove', { 'data-id': String(r.id), 'data-value': k.id },
+                  'Remove', 'Click again: remove ' + String(r.label || 'it'), 'trash-can')));
+            })))) : empty('None set here.'),
+          h('p.sub', 'Defaults (Locations list): ' + (defaults.length ? defaults.map(function (p) {
+            return fmt(p.x) + ', ' + fmt(p.y) + ', ' + fmt(p.z);
+          }).join(' · ') : 'none')),
+          d.enabled ? h('div.toolbar',
+            field(pre + 'label', { class: 'is-mid', maxlength: '40', placeholder: 'Name (optional)', 'aria-label': 'Name' }),
+            writeBtn('.is-primary.is-small', 'rpp-here', { 'data-value': k.id }, 'Save where I stand',
+              'Click again: place the ' + k.id + ' where you stand', 'street-view'),
+            rows.length ? writeBtn('.is-small.is-ghost', 'rpp-reset', { 'data-value': k.id }, 'Reset to config',
+              'Click again: remove every place set here', 'rotate-left') : null) : null,
+          answerBox(S.rpPlaces.answers[k.id])), '.rp-place');
+      }));
+  }
+
+  function rpPlaceWrite(op, data, slot, node) {
+    return write(op, data, 'rpPlaces:' + slot, node).then(function (reply) {
+      if (!reply) return null;
+      S.rpPlaces.answers[slot] = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      loadRpPlaces();
+      return reply;
+    });
+  }
+
+  ACTIONS['rpp-here'] = function (node) {
+    var k = node.getAttribute('data-value');
+    if (!armed(node)) return;
+    var label = trim(S.forms['rpp.' + k + '.label']);
+    rpPlaceWrite('rpPlaceSet', label ? { npc: k, here: true, label: label } : { npc: k, here: true }, k, node);
+  };
+  ACTIONS['rpp-remove'] = function (node) {
+    if (!armed(node)) return;
+    rpPlaceWrite('rpPlaceRemove', { id: node.getAttribute('data-id') }, node.getAttribute('data-value'), node);
+  };
+  ACTIONS['rpp-reset'] = function (node) {
+    var k = node.getAttribute('data-value');
+    if (!armed(node)) return;
+    rpPlaceWrite('rpPlaceReset', { npc: k }, k, node);
+  };
+
   /** Locations: the two disposal spots, each with Use my position. */
   function disposalSpotsBody() {
     var d = S.disposal.data;
@@ -7740,6 +7838,8 @@
   AFTER_SETTINGS.push(function () {
     // The switch turned on or off from the card: what the server holds now.
     var e = settingEntry('Organisation.Enabled');
+    var rp = settingEntry('Roleplay.NpcPlaces.Enabled');
+    if (rp && S.rpPlaces.data && (rp.value === true) !== (S.rpPlaces.data.enabled === true)) loadRpPlaces();
     if (e && S.org.data && (e.value === true) !== (S.org.data.enabled === true)) { loadOrg(); return; }
     drawOrg();
   });
@@ -8665,6 +8765,8 @@
         : on ? SPOT_KINDS.map(function (k) { return spotCard(k, spots.filter(function (s) { return s.kind === k.id; })); })
         : (d.enabled && !d.loaded ? empty('The organisation is on and not read yet: Hitman organisation, Setup.')
           : offCard('Its places (boss office, sign-up and meeting spots) are set here once it is on.')),
+      h('h3.st-group-title', 'Broker and informant places'),
+      rpPlacesBody(),
       h('h3.st-group-title', 'Body disposal'),
       disposalSpotsBody(),
       h('h3.st-group-title', 'Places in the settings'),
@@ -8747,7 +8849,7 @@
       if (!S.settings.data && (view === 'orgsetup' || view === 'locations' || view === 'bplimits' || view === 'bpmatrix')) {
         loadSettings();
       }
-      if (view === 'locations') loadDisposal();
+      if (view === 'locations') { loadDisposal(); loadRpPlaces(); }
       // The ledger and the log only of an organisation that is on.
       ready.then(function () {
         if (S.section !== view || !orgOn()) return;

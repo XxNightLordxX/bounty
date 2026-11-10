@@ -538,6 +538,7 @@ All off as shipped, each `Config.Roleplay.<Feature>.Enabled`.
 | **Rumours and a broker** (`Rumours`) | New contracts show only as rumours (area, reward band) until the broker NPC, or a player on a broker job, briefs the hitman for `BriefValidMinutes` |
 | **Burner phone** (`BurnerPhone`) | Placing, accepting and every contract action (turning contract decay off included) need the item; it may be used up on placing or accepting. Sell it through sc-blackmarket |
 | **The informant in person** (`InformantNpc`) | Every informant purchase only beside the informant NPC, which moves between its places |
+| **Broker and informant placed from the panel** (`NpcPlaces`) | Staff place the broker and the informant in the admin panel's Locations by standing there (Use my position, read by the server); each rotates among the places set as its `RotateHours` says. Kept by the store with the other spots staff set, on every backend. The `Locations` lists stay the defaults: used while none is set, after Reset to config, and with this off |
 | **Reason quality** (`ReasonQuality`) | A typed reason needs a least length and number of words; low-effort phrases are refused or placed and sent to Needs review |
 
 ### Improvements
@@ -604,10 +605,11 @@ character that loaded before the job was registered (a late start).
   it again restores them. The organisation is never left without a member in
   its top boss role, unless staff do it. Every rule is checked on the server
   for every request.
-- **The 33 powers** (the plan's 31 area powers and D2, D3; D1 is R4):
+- **The 35 powers** (the plan's 31 area powers, D2, D3, and M7, P3 for
+  codenames and payroll; D1 is R4):
   M1 view members, M2 hire, M3 fire, M4 promote/demote, M5 suspend from
-  contracts, M6 member limits; R1 create, R2 edit, R3 delete roles, R4 set role
-  powers; P1 role pay, P2 bonus; C1 organisation cut, C2 cut by role, C3 cut per
+  contracts, M6 member limits, M7 assign codenames; R1 create, R2 edit, R3
+  delete roles, R4 set role powers; P1 role pay, P2 bonus, P3 set salaries; C1 organisation cut, C2 cut by role, C3 cut per
   member, C4 cut on stakes, C5 cut on buyouts, C6 deposit, C7 withdraw, C8 view
   funds; K1 contract access rules, K2 boss pick, K3 role cooldowns; L1 move the
   office, L2 sign-up spot, L3 meeting spots; N1 notice, N2 applications; S1
@@ -651,6 +653,50 @@ character that loaded before the job was registered (a late start).
   use them: sign-up spots for everybody, the rest for members. A boss may move
   the office near staff's point, and place sign-up and meeting spots, where they
   stand, never in a safe zone.
+- **The phone's Organisation tab.** Shown in the app's tab bar (as *Org*)
+  only while the organisation is on and the board says it is for this
+  player: a member, an applicant, an invited player, or a player standing at
+  a sign-up spot (who applies from it). Anybody else has the same five tabs
+  as before, and nothing more is asked of the server. A member sees the
+  organisation, their role (and codename), the board notice, their cut and,
+  with payroll on, their salary. A boss sees a **boss menu** with only the
+  screens of the powers the server says they hold: **Members** (hire by the
+  ID over a nearby player's head, fire, set a role, suspend, limits, a
+  codename, their own grants and denies), **Roles** (create, rename, delete,
+  pay, salary, and a powers checklist where a power they do not hold is
+  greyed as *Staff have not given you this*), **Money** (the funds and ledger,
+  deposit, withdraw, bonus, every cut with its staff bound), **Contracts**
+  (access rules, cooldowns, boss picks), **Places** (the office, sign-up and
+  meeting spots, placed where they stand: the server reads the position, the
+  phone sends none), **Notices**, **Applications** and **Settings** (the
+  label, the menu's names, the office rule). Every write takes two taps; every
+  refusal is the server's own words; a power that needs the office is greyed,
+  with why, while the server does not see them there.
+- **Codenames** (`Config.Organisation.Codenames`, off as shipped). A member
+  picks their own codename in the tab, or a boss holding M7 gives one to a
+  member below them (then only the boss or staff change it). Each is checked
+  on the server: `CodenameMinLength` to `CodenameMaxLength` characters,
+  letters, digits, spaces, `-` and `_`, none of `CodenameBlocked` (any case,
+  with punctuation and the common digit swaps folded), and no other member's
+  codename or name; a member's own change waits
+  `Config.Organisation.Limits.CodenameCooldownMinutes`. It is shown in the
+  organisation's roster and, to a placer (and a target where names are
+  shown), in place of the hitman's name, only where that name would have been
+  shown at all: a hitman who took a contract anonymously is still an
+  operative, and nobody in the organisation is told the name behind it.
+- **Payroll** (`Config.Organisation.Payroll`, off as shipped). A boss holding
+  P3 sets each role below them a salary, up to
+  `Config.Organisation.Limits.SalaryMax` or the lower maximum staff set for
+  that role (`orgSalary` with `max`). Every `PayrollDays` each member is paid
+  their role's salary from the funds into their bank: one ledger row per
+  member and pay day, by a reference made of both, so a restart part-way
+  pays nobody twice and the funds fall by exactly what the members gained. A
+  salary the funds cannot cover is skipped and the member told (and those
+  who can see the funds); the rest are still paid. The pay day is kept with
+  the organisation, so a restart neither skips nor repeats one; a server down
+  for longer than a period pays once, not for every period missed. Until the
+  pay day the maintenance tick compares one number. Every pay day is on the
+  record (`org_payroll_run`, `org_payroll_skipped`).
 
 **server.cfg.** Keep `set qbx:cleanPlayerGroups false` (true deletes the
 organisation's members at every qbx_core start) and `set
@@ -687,6 +733,7 @@ clicks, naming what it sets.
 | `orgFundsMove` | write | Deposit, withdraw or bonus, with a reason and a nonce |
 | `orgFundsBackend` | write | Keep the funds in the ledger or Renewed-Banking (`backend`), the balance carried across; `abandon` leaves a bank that is down |
 | `orgAccess`, `orgPick` | write | A role's access rules; a boss pick |
+| `orgSalary` | write | A role's salary (`amount`), or the most it may be paid (`max`, false clears it): payroll |
 | `orgLocationSet`, `orgLocationRemove` | write | A spot, typed or `here` (Use my position); remove one |
 | `orgApplication` | write | Accept or reject an application |
 
@@ -694,9 +741,10 @@ clicks, naming what it sets.
 
 lb-phone app requests through the app's own gate, `org` and `orgWrite` rate
 limits; each needs the power named, held after Boss permissions, at the office
-where it needs one. The phone's Organisation tab comes later; the requests
-answer now. The board already shows a member their cut on every card and an
-invited player their invite, with Accept and Decline (`orgInviteAnswer`).
+where it needs one. The app's Organisation tab asks them; the board also shows
+a member their cut on every card, an invited player their invite, with Accept
+and Decline (`orgInviteAnswer`), and says whether the tab is for this player
+(`orgTab`).
 
 | Request | Power | Request | Power |
 |---|---|---|---|
@@ -715,7 +763,8 @@ invited player their invite, with Accept and Decline (`orgInviteAnswer`).
 | `orgRemoveSpot` | L2, L3 | `orgNotice` | N1 |
 | `orgApplications`, `orgDecide` | N2 | `orgRename` | S1 |
 | `orgLayout` | S2 | `orgOfficeRule` | S3 |
-| `orgInviteAnswer` | the invited player | | |
+| `orgInviteAnswer` | the invited player | `orgCodename` | a member's own; M7 for another's |
+| `orgSalary` | P3 | | |
 
 ### Mission steps
 
@@ -780,6 +829,19 @@ who the hitman is comes only with `crimson.identity`.
 | `disposalSpotSet` | write | `spot` = `vehicle` or `drop`, typed (`x`, `y`, `z`, `heading`) or `here` (Use my position, read by the server) |
 | `disposalSpotClear` | write | Clear a spot (config.lua's `VehicleSpawn` / `DropOff` apply again) |
 | `disposalMyPosition` | read | Where your character stands, read by the server |
+
+#### Roleplay places requests (admin panel)
+
+The broker's and informant's places set from Locations
+(`Config.Roleplay.NpcPlaces`, off as shipped; off, every write says so).
+Reads need a staff ACE, writes `crimson.admin`; every write takes two clicks.
+
+| Op | Level | What it does |
+|---|---|---|
+| `rpPlaceList` | read | For each NPC: the places set here, its config defaults, and which it stands at |
+| `rpPlaceSet` | write | `npc` = `broker` or `informant`, `here` (read by the server) or typed `x`, `y`, `z`, `heading`; `label`, `enabled`; `id` moves one |
+| `rpPlaceRemove` | write | Remove one place (`id`) |
+| `rpPlaceReset` | write | Remove every place of one NPC (`npc`): its config list applies again |
 
 ## Permissions
 
@@ -1149,6 +1211,7 @@ Optional roleplay features, each its own block and each off as shipped (README, 
 | `Config.Roleplay.InformantNpc.Model` | `'a_m_y_hipster_01'` | the informant NPC's ped model |
 | `Config.Roleplay.InformantNpc.Scenario` | `'WORLD_HUMAN_LEANING'` | what the NPC does while standing |
 | `Config.Roleplay.InformantNpc.Blip` | `false` | show the informant on the map |
+| `Config.Roleplay.NpcPlaces.Enabled` | `false` | the broker and informant stand where staff placed them in the panel's Locations (Use my position); their `Locations` lists stay the defaults while none is set |
 | `Config.Roleplay.ReasonQuality.Enabled` | `false` | hold free-text reasons to the rules below |
 | `Config.Roleplay.ReasonQuality.MinLength` | `15` | least characters in a reason |
 | `Config.Roleplay.ReasonQuality.MinWords` | `3` | least words in a reason |
@@ -1232,6 +1295,12 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.DrawMetres` | `40.0` | metres at which a spot is drawn |
 | `Config.Organisation.ApplyAtSignupOnly` | `true` | applications only at a sign-up spot |
 | `Config.Organisation.NpcModel` | `'g_m_m_armboss_01'` | the ped drawn at an NPC spot |
+| `Config.Organisation.Codenames` | `false` | members carry a codename, shown inside the organisation and to placers in place of their name (only where their name is shown at all) |
+| `Config.Organisation.CodenameMinLength` | `3` | least characters in a codename |
+| `Config.Organisation.CodenameMaxLength` | `20` | most characters in a codename |
+| `Config.Organisation.CodenameBlocked` | `{ 'admin', 'staff', 'moderator', … 4 in all }` | words a codename may not contain (any case; spaces, digits and punctuation ignored) |
+| `Config.Organisation.Payroll` | `false` | every pay day each member is paid their role's salary from the funds |
+| `Config.Organisation.PayrollDays` | `7` | days between two pay days |
 | `Config.Organisation.Roles` | `{ '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no', '2, lieutenant, Lieutenant, 0, no', … 4 in all }` | the roles made with it: 'grade, name, label, pay, boss' |
 | `Config.Organisation.Limits.MaxMembers` | `20` | members at most |
 | `Config.Organisation.Limits.HireRadius` | `5.0` | metres a hire stands from the boss |
@@ -1258,6 +1327,8 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.NoticeMaxLength` | `500` | characters in the board notice |
 | `Config.Organisation.Limits.RenameCooldownMinutes` | `1440` | minutes between two label changes by a boss |
 | `Config.Organisation.Limits.InviteMinutes` | `10` | minutes a boss's invite waits for the player to accept |
+| `Config.Organisation.Limits.SalaryMax` | `1000` | most salary a boss sets per role per pay day ($); staff may set a lower one per role |
+| `Config.Organisation.Limits.CodenameCooldownMinutes` | `1440` | minutes between two changes a member makes to their own codename |
 
 ### Mission steps
 

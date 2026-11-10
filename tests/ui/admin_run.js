@@ -5224,7 +5224,7 @@ async function main() {
       const titles = ordered.map(function (c) { return c.title; });
       const rp = titles.filter(function (t) { return /^Roleplay: /.test(t); });
       const imp = titles.filter(function (t) { return /^Improvements: /.test(t); });
-      eq(rp.length, 12, 'twelve roleplay cards: ' + rp.join(', '));
+      eq(rp.length, 13, 'thirteen roleplay cards (with the NPC places set from the panel): ' + rp.join(', '));
       eq(imp.length, 14, 'thirteen improvements and the completion cooldown: ' + imp.join(', '));
       truthy(titles.indexOf(rp[0]) > titles.indexOf('Moderators'), 'Roleplay after the staff tools');
       truthy(titles.indexOf(imp[0]) > titles.indexOf(rp[rp.length - 1]), 'Improvements after Roleplay');
@@ -6906,6 +6906,74 @@ async function main() {
       falsy(app.drawer().querySelector('.is-armed'));
     });
     clean(app, 'reassign refused');
+  })();
+
+  /* ---- Locations: the broker and informant placed from the panel (Config.Roleplay.NpcPlaces) ---- */
+  await (async function () {
+    const view = function (enabled, rows) {
+      return { ok: true, data: { enabled: enabled, readable: true, npcs: {
+        broker: { on: true, using: rows.length ? 'panel' : 'config', rows: rows,
+          defaults: [{ x: -1212.4, y: -1500.2, z: 4.4, h: 90 }], key: 'Roleplay.Rumours.Locations' },
+        informant: { on: false, using: 'config', rows: [], defaults: [], key: 'Roleplay.InformantNpc.Locations' } } } };
+    };
+    const off = boot(standardServer({ orgGet: orgOff(), rpPlaceList: view(false, []) }));
+    off.open(ADMIN);
+    await settled();
+    off.nav('locations');
+    await settled();
+    it('RPP: Locations lists the broker and informant, off as shipped, with the config defaults', function () {
+      eq(off.requests('rpPlaceList').length, 1);
+      const text = off.main();
+      has(text, 'Broker and informant places');
+      has(text, 'Placed from the panel is off');
+      has(text, 'Defaults (Locations list): -1212.4, -1500.2, 4.4');
+      eq(off.$$('[data-act="rpp-here"]').length, 0, 'nothing to place while off');
+    });
+    clean(off, 'npc places off');
+
+    const placed = [{ id: 'rpplace-broker-1', label: 'Pier', x: 1.5, y: 2, z: 3, heading: 90, enabled: true }];
+    const app = boot(standardServer({ orgGet: orgOff(), rpPlaceList: view(true, placed),
+      rpPlaceSet: { ok: true, message: 'Place saved.' }, rpPlaceRemove: { ok: true, message: 'Place removed.' },
+      rpPlaceReset: { ok: true, message: 'The config list applies again.' } }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('locations');
+    await settled();
+    it('RPP: on, each NPC shows the places set here and which list it stands at', function () {
+      const text = app.main();
+      has(text, 'Standing at the places set here.');
+      has(text, 'Pier');
+      has(text, '1.5, 2, 3, 90');
+    });
+    const by = function (act, k) {
+      return app.$$('[data-act="' + act + '"]').filter(function (b) { return b.getAttribute('data-value') === k; })[0];
+    };
+    const here = by('rpp-here', 'informant');
+    app.click(here);
+    it('RPP: Save where I stand arms first, sending nothing', function () {
+      eq(app.requests('rpPlaceSet').length, 0);
+      has(app.text(here), 'Click again: place the informant where you stand');
+    });
+    app.click(here);
+    await settled();
+    it('RPP: and then sends only the NPC and here: the server reads the position', function () {
+      eq(app.last('rpPlaceSet').data, { npc: 'informant', here: true });
+    });
+    const rm = app.$$('[data-act="rpp-remove"]')[0];
+    app.click(rm);
+    app.click(rm);
+    await settled();
+    it('RPP: Remove takes two clicks and names the place', function () {
+      eq(app.last('rpPlaceRemove').data, { id: 'rpplace-broker-1' });
+    });
+    const reset = by('rpp-reset', 'broker');
+    app.click(reset);
+    app.click(reset);
+    await settled();
+    it('RPP: Reset to config takes two clicks', function () {
+      eq(app.last('rpPlaceReset').data, { npc: 'broker' });
+    });
+    clean(app, 'npc places on');
   })();
 
   /* ---- body disposal: the steps on Contracts and Home, the spots in Locations ---- */

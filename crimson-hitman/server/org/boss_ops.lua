@@ -84,6 +84,18 @@ local REQUESTS = {
     { 'orgMemberLimits', 'orgWrite', 'M6', function(actor, p)
         return answer(Org.memberLimits(who(actor), memberOf(actor, p), p.maxAtOnce, p.cooldownMinutes))
     end },
+    -- A codename (Config.Organisation.Codenames): one's own with no member,
+    -- or (M7) a member's below the boss. false clears it.
+    { 'orgCodename', 'orgWrite', 'M7', function(actor, p)
+        local cid = nil
+        if p.member ~= nil then
+            cid = memberOf(actor, p)
+            if not cid then return answer(false, Org.ERR.NOT_FOUND) end
+        end
+        local name = p.codename == false and false or str(p.codename, 64)
+        if name == nil then return answer(false, Org.ERR.INVALID) end
+        return answer(Org.setCodename(who(actor), cid, name))
+    end },
     { 'orgMemberGrant', 'orgWrite', 'D2', function(actor, p)
         return answer(Org.memberGrant(who(actor), memberOf(actor, p), str(p.power, 4), str(p.state, 8)))
     end },
@@ -104,6 +116,10 @@ local REQUESTS = {
     end },
     { 'orgRolePay', 'orgWrite', 'P1', function(actor, p)
         return answer(Org.rolePay(who(actor), tonumber(p.grade), p.pay))
+    end },
+    -- A role's salary (Config.Organisation.Payroll).
+    { 'orgSalary', 'orgWrite', 'P3', function(actor, p)
+        return answer(Org.setSalary(who(actor), tonumber(p.grade), p.amount))
     end },
     -- Pay and money -----------------------------------------------------
     { 'orgBonus', 'orgWrite', 'P2', function(actor, p)
