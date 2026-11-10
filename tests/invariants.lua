@@ -141,14 +141,19 @@ local function auditAtRest(store)
     -- The hitman organisation (server/org/): a cut is more than nothing and
     -- never more than the escrow line it was taken from, so a member and
     -- the funds between them never received more than was escrowed; and
-    -- the internal ledger never holds less than nothing.
+    -- the internal ledger (its own rows, never the bank's) never holds less
+    -- than nothing.
     if type(store.readOrgRows) == 'function' then
         local okF, funds = pcall(store.readOrgRows, 'funds')
         if okF and type(funds) == 'table' then
             local totals = {}
             for _, row in ipairs(funds) do
                 local amount = tonumber(row.amount) or 0
-                totals[row.org_id] = (totals[row.org_id] or 0) + amount
+                -- The ledger's balance is the sum of its own rows; the
+                -- bank's rows are Renewed-Banking's history.
+                if row.backend == 'internal' then
+                    totals[row.org_id] = (totals[row.org_id] or 0) + amount
+                end
                 if row.kind == 'cut' then
                     if amount <= 0 then note('an organisation cut of nothing', tostring(row.id)) end
                     local lineId = tostring(row.id):match('^cut:(.+)$')
@@ -159,12 +164,8 @@ local function auditAtRest(store)
                     end
                 end
             end
-            local banked = GetResourceState('Renewed-Banking') == 'started'
-                and not (type(Config.Organisation) == 'table' and Config.Organisation.Funds == 'internal')
-            if not banked then
-                for org, total in pairs(totals) do
-                    if total < 0 then note('organisation funds below zero', tostring(org)) end
-                end
+            for org, total in pairs(totals) do
+                if total < 0 then note('organisation funds below zero', tostring(org)) end
             end
         end
     end

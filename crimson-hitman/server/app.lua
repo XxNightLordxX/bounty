@@ -781,6 +781,9 @@ function App.register()
             -- A member's cut, shown before they accept (server/org/init.lua):
             -- nil for everybody else, and while the organisation is off.
             listing.orgTerms = deps.org and deps.org.termsFor(actor.cid) or nil
+            -- And a boss's invite waiting for this player to accept or
+            -- decline (Org.inviteFor): the organisation and role, never who.
+            listing.orgInvite = deps.org and deps.org.inviteFor and deps.org.inviteFor(actor.cid) or nil
         end
         return listing
     end)

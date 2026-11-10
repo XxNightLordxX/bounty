@@ -141,6 +141,7 @@ Powers.LIMIT_KEYS = {
     OfficeMoveMetres = { min = 0, max = 5000, float = true }, LocationCooldownMinutes = { min = 0, max = 10080 },
     MaxSignupSpots = { min = 0, max = 20 }, MaxMeetingSpots = { min = 0, max = 50 },
     NoticeMaxLength = { min = 0, max = 2000 }, RenameCooldownMinutes = { min = 0, max = 43200 },
+    InviteMinutes = { min = 1, max = 1440 },
 }
 
 --- One staff bound, clamped, from the organisation's own value or config.

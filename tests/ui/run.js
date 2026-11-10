@@ -14317,6 +14317,89 @@ async function main() {
     })();
   })();
 
+  /* Organisation review M5: a member's cut on the board card, and the
+     acceptance echoing the figure shown. */
+  await (async function orgCutShownAndEchoed() {
+    let accepted = null;
+    function listing() {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      b.data.orgTerms = { orgPercent: 15, youKeepPercent: 85, stakePercent: 0, buyoutPercent: 0 };
+      return b;
+    }
+    const app = boot({ list: listing, mine: MINE, ledger: LEDGER,
+      accept: function (body) { accepted = body; return { ok: true, data: { myAnonymous: false } }; } });
+    await settle(); await settle();
+    const card = app.view.textContent;
+    click(app, 'Accept contract');
+    const dialog = app.view.textContent;
+    const take = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && (n.textContent === 'Accept' || n.textContent === 'Under my name');
+    })[0];
+    if (take) { take.onclick(); }
+    await settle(); await settle();
+    it('ORG M5: the board card tells a member the organisation\'s cut before they accept', function () {
+      truthy(card.indexOf('Organisation cut: 15% of your payout goes to its funds; you keep 85%.') !== -1, card);
+      truthy(dialog.indexOf('Organisation cut: 15%') !== -1, dialog);
+    });
+    it('ORG M5: the acceptance sends back the cut it showed', function () {
+      truthy(accepted, 'accepted');
+      eq(accepted.shown.orgCut, 15);
+    });
+
+    const plain = boot({ list: BOARD, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('ORG M5: no cut line for anybody else, and none sent', function () {
+      falsy(plain.view.textContent.indexOf('Organisation cut') !== -1, plain.view.textContent);
+    });
+  })();
+
+  /* Organisation review L2: a boss's invite on the board, answered with
+     two taps each way. */
+  await (async function orgInviteTwoTap() {
+    const answers = [];
+    let invited = true;
+    function listing() {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      if (invited) { b.data.orgInvite = { id: 'inv1_1234', label: 'Crimson Contractors', role: 'Recruit', expiresIn: 540 }; }
+      return b;
+    }
+    const app = boot({ list: listing, mine: MINE, ledger: LEDGER,
+      orgInviteAnswer: function (body) { answers.push(body); invited = false; return { ok: true, data: { accepted: body.accept } }; } });
+    await settle(); await settle();
+    const text = app.view.textContent;
+    click(app, 'Accept');
+    await settle();
+    const armedText = app.view.textContent;
+    const sentAfterOne = answers.length;
+    click(app, 'Tap again to accept');
+    await settle(); await settle(); await settle();
+    it('ORG L2: shows the invite with the organisation, role and time left, never who sent it', function () {
+      truthy(text.indexOf('You are invited to join Crimson Contractors as Recruit.') !== -1, text);
+      truthy(text.indexOf('runs out in about') !== -1, text);
+    });
+    it('ORG L2: Accept takes a second tap, and only then answers', function () {
+      eq(sentAfterOne, 0, 'nothing sent on the first tap');
+      truthy(armedText.indexOf('Tap again to accept') !== -1, armedText);
+      eq(answers.length, 1);
+      eq(answers[0].id, 'inv1_1234');
+      eq(answers[0].accept, true);
+      falsy(app.view.textContent.indexOf('You are invited') !== -1, 'gone after the answer');
+    });
+
+    invited = true;
+    const second = boot({ list: listing, mine: MINE, ledger: LEDGER,
+      orgInviteAnswer: function (body) { answers.push(body); invited = false; return { ok: true, data: {} }; } });
+    await settle(); await settle();
+    click(second, 'Decline');
+    await settle();
+    click(second, 'Tap again to decline');
+    await settle(); await settle();
+    it('ORG L2: Decline takes a second tap too', function () {
+      eq(answers.length, 2);
+      eq(answers[1].accept, false);
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

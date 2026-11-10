@@ -159,6 +159,10 @@ local REQUESTS = {
     { 'orgApply', 'orgWrite', 'any', function(actor, p)
         return answer(Org.apply(actor, p.text ~= nil and str(p.text, 600) or nil))
     end },
+    -- The invited player's own answer to a boss's hire (Org.answerInvite).
+    { 'orgInviteAnswer', 'orgWrite', 'any', function(actor, p)
+        return answer(Org.answerInvite(actor, str(p.id, 48), p.accept))
+    end },
     -- Settings ----------------------------------------------------------
     { 'orgRename', 'orgWrite', 'S1', function(actor, p)
         return answer(Org.rename(who(actor), str(p.label, 128)))

@@ -508,16 +508,30 @@ qbx_core's own `jobs.lua`), roles with `UpsertJobGrade`, members with
 so it works for players who are away too. A start that comes after players
 loaded brings every online member back in step. A change made elsewhere
 (`/setjob`, another resource) is adopted into the table, or put back with
-`Config.Organisation.ExternalChanges = 'revert'`.
+`Config.Organisation.ExternalChanges = 'revert'`, the same whether it was made
+while the player was online, away, or while the organisation was off (found
+at their next login). A removal qbx_core cannot be believed about is always
+put back: the job kept by name only, `qbx:cleanPlayerGroups` on, or a
+character that loaded before the job was registered (a late start).
 
 - **Roles and members.** Staff run everything from the panel: roles (order,
   name, label, pay, boss), hiring, roles, firing (with a reason), per-member
-  grants and denies, a lock against boss edits, a codename.
+  grants and denies, a lock against boss edits, a codename. A staff hire is
+  made at once and never made the player's primary job.
+- **Joining.** A boss's hire is an **invite**: the player standing by them
+  sees it on the app's board (the organisation and the role, never who asked)
+  and taps Accept or Decline, twice to be sure, within
+  `Config.Organisation.Limits.InviteMinutes`. Only an accepted invite (or an
+  accepted application) makes them a member, and only then is the job made
+  their primary one (`SetPrimaryOnHire`); the hire is checked again as they
+  accept. Becoming a member any way closes every open application of theirs,
+  so a stale one is never accepted over the record they have.
 - **Boss permissions.** Every boss power is **off for every boss** until staff
   allow it for a boss role or one boss (Allow / Deny / Inherit). Staff can
   always do everything themselves. A boss passes on only what they hold, only
   to roles and members below their rank (level with it only with D3, never
-  above), never to or on themselves, never past a staff lock; revoking a power
+  above), never to or on themselves, never past a staff lock (a grant or deny
+  staff made, on a member or a role, is staff's alone to change); revoking a power
   from a boss makes every grant they made of it inactive at once, and allowing
   it again restores them. The organisation is never left without a member in
   its top boss role, unless staff do it. Every rule is checked on the server
@@ -534,20 +548,35 @@ loaded brings every online member back in step. A change made elsewhere
   **boss office** by default (the server's own position, `OfficeRadius`).
   Every bound is `Config.Organisation.Limits`, and staff may set an
   organisation's own.
-- **Funds.** Renewed-Banking's society account for the job when it is started
-  (`Config.Organisation.Funds = 'auto'`), this resource's ledger otherwise.
-  Every movement is one ledger row written once, so a retry never pays twice;
-  only whole amounts above zero ever reach Renewed-Banking (it would take a
-  negative one).
+- **Funds.** Renewed-Banking's society account for the job when it is
+  installed (`Config.Organisation.Funds = 'auto'`), this resource's ledger
+  otherwise, **chosen once**, the first time the organisation is read, and kept
+  (changing `Funds` later does not move them). While the bank is chosen and
+  Renewed-Banking is not started, every deposit, withdrawal, bonus and cut is
+  refused and the balance shows as unknown: nothing is paid from, or into, a
+  ledger the bank does not see. Staff move the funds to the other side with
+  `orgFundsBackend`, which carries the balance across in two ledger rows (with
+  `abandon`, leaving a bank that is down, nothing is carried). Every movement
+  is one ledger row written once, marked with the side it moved, so a retry
+  never pays twice and the ledger's balance is only its own rows; money is
+  reserved before anything is awaited, so two withdrawals at once never
+  overdraw it or pass a day's cap together; only whole amounts above zero ever
+  reach Renewed-Banking (it would take a negative one).
 - **Cuts.** A share of a member's payout (and of a stake they win, or a buyout
-  premium paid to them) goes to the funds. It is frozen on the contract when
-  the member accepts it, shown to them on the board before they do
-  (`orgTerms`), and taken out of the payout when it is paid, once per escrow
-  line: what was escrowed is what the member and the funds received.
+  premium paid to them) goes to the funds. It is shown to the member on every
+  board card before they accept (`orgTerms`), echoed back by the accept (a cut
+  changed since is refused, `terms_changed`), frozen on the contract at the
+  figure checked, and taken out of the payout when it is paid, once per escrow
+  line, as cash, bank or a dirty item, and still after a restart with the
+  organisation off: what was escrowed is what the member and the funds
+  received.
 - **Accepting.** With `RequireJobToAccept`, only members may accept (with
   `AcceptNeedsPower`, only roles given *Take contracts*; with `OnDutyOnly`, on
   duty). Members are always held to a suspension, their own and their role's
-  limits and access rules, which are only ever stricter than the server's.
+  limits and access rules, which are only ever stricter than the server's,
+  checked one acceptance at a time per member; a check that cannot be made
+  refuses the acceptance. A boss pick (K2) answers the same for every member,
+  so it never says who placed an anonymous contract.
 - **Places.** The boss office, sign-up spots, meeting spots, NPCs and other
   places are set by staff with **Use my position** (the server reads where the
   staff member stands) and drawn as ox_target spots only for the players who may
@@ -587,6 +616,7 @@ rebuild; the ops answer now.
 | `bossPermsSet`, `bossPermsRevokeAll`, `bossLimits`, `bossOfficeRule` | write | Boss permissions cells (one or a batch), revoke a column, bounds, the office list |
 | `orgCuts` | write | A cut: payout, role, member, stake, buyout |
 | `orgFundsMove` | write | Deposit, withdraw or bonus, with a reason and a nonce |
+| `orgFundsBackend` | write | Keep the funds in the ledger or Renewed-Banking (`backend`), the balance carried across; `abandon` leaves a bank that is down |
 | `orgAccess`, `orgPick` | write | A role's access rules; a boss pick |
 | `orgLocationSet`, `orgLocationRemove` | write | A spot, typed or `here` (Use my position); remove one |
 | `orgApplication` | write | Accept or reject an application |
@@ -596,7 +626,8 @@ rebuild; the ops answer now.
 lb-phone app requests through the app's own gate, `org` and `orgWrite` rate
 limits; each needs the power named, held after Boss permissions, at the office
 where it needs one. The phone's Organisation tab comes later; the requests
-answer now.
+answer now. The board already shows a member their cut on every card and an
+invited player their invite, with Accept and Decline (`orgInviteAnswer`).
 
 | Request | Power | Request | Power |
 |---|---|---|---|
@@ -615,6 +646,7 @@ answer now.
 | `orgRemoveSpot` | L2, L3 | `orgNotice` | N1 |
 | `orgApplications`, `orgDecide` | N2 | `orgRename` | S1 |
 | `orgLayout` | S2 | `orgOfficeRule` | S3 |
+| `orgInviteAnswer` | the invited player | | |
 
 ## Permissions
 
@@ -1053,10 +1085,10 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.JobLabel` | `'Crimson Contractors'` | the job's label in qbx_core |
 | `Config.Organisation.JobType` | `'hitman'` | the qbx_core job type |
 | `Config.Organisation.DefaultDuty` | `true` | on duty when the job is set |
-| `Config.Organisation.SetPrimaryOnHire` | `true` | a hire makes it their primary job |
+| `Config.Organisation.SetPrimaryOnHire` | `true` | an accepted invite or application makes it their primary job |
 | `Config.Organisation.QbxBossFlag` | `false` | mark boss roles isboss in qbx_core too |
 | `Config.Organisation.ExternalChanges` | `'adopt'` | 'adopt' \| 'revert' job changes made elsewhere |
-| `Config.Organisation.Funds` | `'auto'` | 'auto' (Renewed-Banking if started) \| 'internal' |
+| `Config.Organisation.Funds` | `'auto'` | 'auto' (Renewed-Banking if installed) \| 'internal', chosen once |
 | `Config.Organisation.OfficeRadius` | `5.0` | metres from the boss office that count |
 | `Config.Organisation.DrawMetres` | `40.0` | metres at which a spot is drawn |
 | `Config.Organisation.ApplyAtSignupOnly` | `true` | applications only at a sign-up spot |
@@ -1086,6 +1118,7 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.MaxMeetingSpots` | `5` | organisation meeting spots at most |
 | `Config.Organisation.Limits.NoticeMaxLength` | `500` | characters in the board notice |
 | `Config.Organisation.Limits.RenameCooldownMinutes` | `1440` | minutes between two label changes by a boss |
+| `Config.Organisation.Limits.InviteMinutes` | `10` | minutes a boss's invite waits for the player to accept |
 
 ### Advanced and developer
 

@@ -2359,6 +2359,14 @@
         + (advised('accepted') ? ' Accepting it alerts every officer in the city.' : '')));
     }
 
+    // A member of the hitman organisation is told its cut of their payout on
+    // every card before they accept (the board's orgTerms, theirs alone),
+    // and the acceptance sends the same figure back (acceptContract).
+    var orgTerms = context === 'board' ? orgTermsNow() : null;
+    if (orgTerms) {
+      node.appendChild(el('div', 'hint org-cut ico i-briefcase', orgCutText(orgTerms)));
+    }
+
     // The placer's half of a live handover, on their own card once it is
     // taken: the hitman comes to them, so they have to be in the city to be
     // met. The phone notice that it was taken says the same (Notify
@@ -3209,6 +3217,74 @@
     return (state.board && state.board.holds) || {};
   }
 
+  /* The organisation's cut for this player, from the board's reply
+     (server: the 'list' handler's orgTerms): a member's only, none while
+     the organisation is off. */
+  function orgTermsNow() {
+    var t = state.board && state.board.orgTerms;
+    return t && typeof t.orgPercent === 'number' ? t : null;
+  }
+
+  /* One short line: what of a payout goes to the organisation's funds. */
+  function orgCutText(t) {
+    var pct = Number(t.orgPercent) || 0;
+    if (pct <= 0) { return 'Organisation cut: none — you keep all of your payout.'; }
+    return 'Organisation cut: ' + pct + '% of your payout goes to its funds; you keep '
+      + (100 - pct) + '%.';
+  }
+
+  /* A boss's invite to join the organisation, waiting for this player
+     (server: the board's orgInvite): the organisation and the role, never
+     who asked. Accept and Decline each take a second tap. */
+  var inviteArmed = null;   // 'accept' | 'decline' while it waits for its second tap
+  function inviteBanner() {
+    var inv = state.board && state.board.orgInvite;
+    if (!inv || typeof inv.id !== 'string') { return null; }
+    var box = el('div', 'notice gold org-invite');
+    var minutes = Math.max(1, Math.ceil((Number(inv.expiresIn) || 0) / 60));
+    box.appendChild(el('div', null, 'You are invited to join ' + (inv.label || 'the organisation')
+      + (inv.role ? ' as ' + inv.role : '') + '. It runs out in about '
+      + durationText(minutes) + '.'));
+    var row = el('div', 'row org-invite-actions');
+    var key = 'orgInvite:' + inv.id;
+    function answer(accept) {
+      var which = accept ? 'accept' : 'decline';
+      var label = accept ? 'Accept' : 'Decline';
+      if (isBusy(key)) {
+        return actionButton(accept ? 'primary' : 'ghost', label, key, accept ? 'Joining\u2026' : 'Declining\u2026');
+      }
+      var armed = inviteArmed === which;
+      var b = el('button', (accept ? 'primary' : 'ghost') + (armed ? ' is-armed' : ''),
+        armed ? 'Tap again to ' + which : label);
+      b.onclick = function () {
+        if (inviteArmed !== which) {
+          inviteArmed = which;
+          setTimeout(function () {
+            if (inviteArmed === which) { inviteArmed = null; redraw(); }
+          }, TIP_CONFIRM_MS);
+          return redraw();
+        }
+        inviteArmed = null;
+        once(key, function () {
+          return post('orgInviteAnswer', { id: inv.id, accept: accept }).then(function (r) {
+            if (!r.ok) {
+              say((r.data && r.data.message) || 'That invite is no longer open.');
+              return refresh();
+            }
+            say(accept ? 'You have joined ' + (inv.label || 'the organisation') + '.'
+              : 'Invite declined.', 'ok');
+            return refresh();
+          });
+        });
+      };
+      return b;
+    }
+    row.appendChild(answer(true));
+    row.appendChild(answer(false));
+    box.appendChild(row);
+    return box;
+  }
+
   /* Placing and accepting, which the app pause and a suspension refuse. */
   function takingPaused() {
     var h = holdsNow();
@@ -4027,6 +4103,9 @@
     // The fee the dialog shows, kept with it and sent back with the tap:
     // the server refuses rather than charges a fee that has moved since.
     var shownFee = anonymityFee('hitman');
+    // And the organisation's cut the card and the dialog showed: the server
+    // refuses an acceptance at a cut that has moved since.
+    var shownTerms = orgTermsNow();
 
     function take(anonymous) {
       // Through `once`, keyed as the board's button is drawn, so the button
@@ -4042,8 +4121,11 @@
         // And the time left as it was shown, the band the stake is forfeit
         // to: shorter now, the server refuses rather than takes the stake.
         timeLeft: contract.timeLeft,
-        // And the anonymity fee and its account, as the dialog said them.
-        shown: { hitmanFee: shownFee, feeAccount: feeAccount }
+        // And the anonymity fee and its account, as the dialog said them,
+        // and the organisation's cut where one was shown.
+        shown: shownTerms
+          ? { hitmanFee: shownFee, feeAccount: feeAccount, orgCut: Number(shownTerms.orgPercent) || 0 }
+          : { hitmanFee: shownFee, feeAccount: feeAccount }
       }).then(function (r) {
         if (!r.ok) {
           // Told and shown. A message saying the figure changed, with the
@@ -4146,6 +4228,7 @@
       // hitman's name.
       var offered = anonymityOffered('hitman', contract.targetProtected === true);
       shownFee = offered ? anonymityFee('hitman') : 0;
+      shownTerms = orgTermsNow();
       // Only what accepting does, under the switches now. "Law enforcement
       // has already been advised" read today's switch, not whether a
       // bulletin went for this contract.
@@ -4178,6 +4261,8 @@
             ? ' Anonymity costs ' + money(shownFee) + ' from your '
               + feeAccount + '.'
             : '')
+          // The organisation's cut, as the card said it.
+          + (shownTerms ? ' ' + orgCutText(shownTerms) : '')
           // Taken whole from one account, which nothing said until a
           // player with half in each was refused.
           + (contract.penaltyAmount > 0
@@ -9857,6 +9942,10 @@
         || state.tab === 'onme') {
       var banner = holdBanner();
       if (banner) { view.appendChild(banner); }
+    }
+    if (state.tab === 'board') {
+      var invite = inviteBanner();
+      if (invite) { view.appendChild(invite); }
     }
 
     ({

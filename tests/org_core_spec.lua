@@ -198,11 +198,13 @@ describe('the job in qbx_core', function()
 end)
 
 describe('members', function()
-    it('hires online, primary job and all, and fires', function()
+    it('hires online, never as their primary job (they did not ask), and fires', function()
         local s = W.world()
+        QbxJobs.calls = {}
         truthy(s.org.hire(W.STAFF, { cid = 'BOSS0001', name = 'P11', source = 11 }, 3))
         eq(QbxJobs.groups.BOSS0001.hitman, 3)
-        eq(Env.players[11].PlayerData.job.name, 'hitman', 'primary (SetPrimaryOnHire)')
+        eq(QbxJobs.count('SetPlayerPrimaryJob'), 0, 'SetPrimaryOnHire is for joining by choice')
+        exports.qbx_core:SetPlayerPrimaryJob('BOSS0001', 'hitman')
         eq(Env.players[11].PlayerData.job.onduty, true, 'defaultDuty')
         truthy(s.org.fire(W.STAFF, 'BOSS0001', 'gone'))
         eq(QbxJobs.groups.BOSS0001.hitman, nil)
@@ -257,8 +259,8 @@ describe('members', function()
         eq(QbxJobs.groups.TARGET01.hitman, nil, 'a stranger taken out again')
     end)
 
-    it('brings a member in step at login', function()
-        local s = W.world()
+    it('brings a member in step at login (ExternalChanges = revert; adopt is org_review_spec L3)', function()
+        local s = W.world({ configure = function() Config.Organisation.ExternalChanges = 'revert' end })
         W.crew(s)
         QbxJobs.groups.LIEUT001 = nil
         Env.players[12].PlayerData.jobs = {}
@@ -348,8 +350,11 @@ describe('the accept gate', function()
         local s, f, c = setup(function() Config.Organisation.OnDutyOnly = true end)
         local _ = f
         truthy(s.org.hire(W.STAFF, { cid = 'HITMAN01', name = 'Rook', source = 3 }, 0))
-        Env.players[3].PlayerData.job.onduty = false
         local ok, err = s.contracts.accept(s.identity.resolve(3), c.id)
+        eq(err, 'org_off_duty', 'not their primary job')
+        exports.qbx_core:SetPlayerPrimaryJob('HITMAN01', 'hitman')
+        Env.players[3].PlayerData.job.onduty = false
+        ok, err = s.contracts.accept(s.identity.resolve(3), c.id)
         eq(err, 'org_off_duty')
         Env.players[3].PlayerData.job.onduty = true
         truthy(s.org.suspend(W.STAFF, 'HITMAN01', 2, 'late'))

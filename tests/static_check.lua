@@ -246,6 +246,10 @@ for name in clientSrc:gmatch("RegisterNUICallback%('crimson:([%w_]+)'") do
     clientEvents[name] = true
 end
 for name in appSrc:gmatch("handler%('([%w_]+)'") do serverHandlers[name] = true end
+-- And the organisation's requests, which server/org/boss_ops.lua adds to the
+-- same gate (App.addHandler), each a row { 'name', 'bucket', ... }.
+local bossOpsSrc = read('crimson-hitman/server/org/boss_ops.lua') or ''
+for name in bossOpsSrc:gmatch("{ '(org[%w_]+)', 'org[%w]*'") do serverHandlers[name] = true end
 
 for name in uiSrc:gmatch("post%('([%w_]+)'") do
     if not clientEvents[name] then

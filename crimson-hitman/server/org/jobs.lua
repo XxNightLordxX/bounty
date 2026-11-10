@@ -181,6 +181,15 @@ function Jobs.heldBy(org, src)
     return tonumber(grade), primary
 end
 
+--- Whether qbx:cleanPlayerGroups is on: qbx_core then deletes the members
+--- of a job not registered yet at its start, so a removal it shows is not
+--- one anybody made.
+---@return boolean
+function Jobs.cleansGroups()
+    local clean = tostring(GetConvar('qbx:cleanPlayerGroups', 'false')):lower()
+    return clean == 'true' or clean == '1'
+end
+
 --------------------------------------------------------------------------
 -- Start-up checks, said once
 --------------------------------------------------------------------------

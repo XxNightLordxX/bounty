@@ -1882,7 +1882,9 @@ end
 --- pause began, os.time(), server/freeze.lua); and 'imp_weekly_day' (the
 --- day the weekly stats were last posted, yyyymmdd, server/imp_weekly.lua);
 --- and 'imp_serial_secret' (the secret scrubbed serials are worked out with,
---- server/imp_scrub.lua). 0 or absent is none.
+--- server/imp_scrub.lua); and 'org_funds_backend' (where the organisation's
+--- funds are kept, 1 the ledger or 2 Renewed-Banking, server/org/funds.lua).
+--- 0 or absent is none.
 ---@return table [key] = integer
 function Memory.readStaffMeta()
     local out = {}

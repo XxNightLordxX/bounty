@@ -3637,7 +3637,8 @@ function MySQLStore.readStaffMeta()
         SELECT meta_key, meta_value FROM crimson_meta
         WHERE meta_key IN ('staff_summary_day', 'staff_pause_since', 'imp_weekly_day',
                            'imp_serial_secret', 'imp_serial_secret_1', 'imp_serial_secret_2',
-                           'imp_serial_secret_3', 'imp_serial_secret_4', 'imp_serial_secret_5')
+                           'imp_serial_secret_3', 'imp_serial_secret_4', 'imp_serial_secret_5',
+                           'org_funds_backend')
     ]]) or {}
     local out = {}
     for i = 1, #rows do out[rows[i].meta_key] = tonumber(rows[i].meta_value) or 0 end

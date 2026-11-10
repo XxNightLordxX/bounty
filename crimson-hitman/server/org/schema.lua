@@ -51,7 +51,7 @@ Schema.TABLES = {
     },
     funds = {
         table = 'crimson_org_funds',
-        columns = { 'id', 'org_id', 'kind', 'amount', 'actor', 'reason', 'contract_id', 'created_at' },
+        columns = { 'id', 'org_id', 'kind', 'amount', 'actor', 'reason', 'contract_id', 'created_at', 'backend' },
         by = 'org_id',
     },
     splits = {
@@ -135,12 +135,12 @@ Schema.SQL = {
         all = 'SELECT * FROM crimson_org_funds',
         by = 'SELECT * FROM crimson_org_funds WHERE org_id = ?',
         one = 'SELECT * FROM crimson_org_funds WHERE id = ?',
-        upsert = [[INSERT INTO crimson_org_funds (id, org_id, kind, amount, actor, reason, contract_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE org_id = VALUES(org_id),
+        upsert = [[INSERT INTO crimson_org_funds (id, org_id, kind, amount, actor, reason, contract_id, created_at,
+            backend) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE org_id = VALUES(org_id),
             kind = VALUES(kind), amount = VALUES(amount), actor = VALUES(actor), reason = VALUES(reason),
-            contract_id = VALUES(contract_id), created_at = VALUES(created_at)]],
-        insert = [[INSERT INTO crimson_org_funds (id, org_id, kind, amount, actor, reason, contract_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)]],
+            contract_id = VALUES(contract_id), created_at = VALUES(created_at), backend = VALUES(backend)]],
+        insert = [[INSERT INTO crimson_org_funds (id, org_id, kind, amount, actor, reason, contract_id, created_at,
+            backend) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)]],
         delete = 'DELETE FROM crimson_org_funds WHERE id = ?',
     },
     splits = {
@@ -250,9 +250,10 @@ Schema.CREATE = {
         INDEX idx_org_locations_org (org_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Its funds ledger: every movement in or out, by a reference that is
-    -- written once (a cut by its escrow line, a withdrawal by its request).
-    -- With Renewed-Banking running the balance is the society account's,
-    -- and these rows are the history; without it the balance is their sum.
+    -- written once (a cut by its escrow line, a withdrawal by its request),
+    -- marked with the backend it moved. With Renewed-Banking chosen the
+    -- balance is the society account's, and its rows are the history; with
+    -- the ledger the balance is the sum of the ledger's own rows.
     [[CREATE TABLE IF NOT EXISTS crimson_org_funds (
         id VARCHAR(96) PRIMARY KEY,
         org_id VARCHAR(32) NOT NULL,
@@ -262,6 +263,7 @@ Schema.CREATE = {
         reason VARCHAR(160),
         contract_id VARCHAR(32),
         created_at INT NOT NULL,
+        backend VARCHAR(8),
         INDEX idx_org_funds_org (org_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- The cut frozen onto a contract when a member accepted it.

@@ -634,6 +634,9 @@ local UI_EVENTS = {
     -- Improvements (Config.Improvements): handing over a proof item, checked
     -- on the server where it sees both players stand.
     'proofItem',
+    -- The hitman organisation (Config.Organisation, off as shipped): the
+    -- invited player's answer to a boss's hire, from the board's banner.
+    'orgInviteAnswer',
 }
 
 --------------------------------------------------------------------------

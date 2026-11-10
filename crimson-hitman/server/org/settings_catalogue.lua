@@ -40,7 +40,9 @@ local list = {
       kind = 'switch', label = 'On duty when the job is set',
       about = 'qbx_core\'s defaultDuty for the job.', inflight = 'Told to qbx_core at the next job sync.' },
     { key = 'Organisation.SetPrimaryOnHire', section = 'features', category = 'organisation', group = GROUP,
-      kind = 'switch', label = 'A hire makes it their primary job', about = 'Otherwise it is one more job they hold.',
+      kind = 'switch', label = 'Joining makes it their primary job',
+      about = 'An invite the player accepted, or their application accepted, makes the job their primary one; '
+          .. 'otherwise it is one more job they hold. A staff hire never does.',
       inflight = AT_USE },
     { key = 'Organisation.QbxBossFlag', section = 'features', category = 'organisation', group = GROUP,
       kind = 'switch', label = 'Mark boss roles isboss in qbx_core',
@@ -56,9 +58,10 @@ local list = {
           .. 'as the table has it.', inflight = AT_USE },
     { key = 'Organisation.Funds', section = 'limits', category = 'organisation', group = GROUP,
       kind = 'choice', choices = { 'auto', 'internal' }, label = 'Where the funds are kept',
-      about = '"auto": Renewed-Banking\'s society account when it is started, this resource\'s ledger otherwise. '
-          .. '"internal": always the ledger.',
-      inflight = 'Read at every movement: a balance in one is not moved to the other.' },
+      about = '"auto": Renewed-Banking\'s society account when it is installed, this resource\'s ledger otherwise. '
+          .. '"internal": always the ledger. Chosen once, the first time the organisation is read, and kept.',
+      inflight = 'Read only for that first choice. Staff move the funds between the two with the funds backend '
+          .. 'switch, which carries the balance across; while the bank is chosen and not started, nothing moves.' },
     { key = 'Organisation.OfficeRadius', section = 'limits', category = 'organisation', group = GROUP,
       kind = 'number', min = 1, max = 50, label = 'Boss office radius (m)',
       about = 'How near the office a boss must stand for powers that need it.', inflight = AT_USE },
@@ -102,6 +105,7 @@ local ABOUT = {
     MaxSignupSpots = 'Sign-up spots at most.', MaxMeetingSpots = 'Organisation meeting spots at most.',
     NoticeMaxLength = 'Characters in the board notice.',
     RenameCooldownMinutes = 'Minutes between two label changes by a boss.',
+    InviteMinutes = 'Minutes a boss\'s invite waits for the player to accept it in the app.',
 }
 local keys = {}
 for key in pairs(Powers.LIMIT_KEYS) do keys[#keys + 1] = key end

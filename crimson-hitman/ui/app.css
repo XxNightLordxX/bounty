@@ -1856,6 +1856,13 @@ button.is-held { opacity: 0.55; }
 .card > .notice.handover-live { font-weight: 700; }
 /* The proof-of-intent rule on a hitman's card while it can still be met. */
 .card > .hint.intent-rule { margin-top: 0.6rem; overflow-wrap: anywhere; }
+/* A member's organisation cut on a board card, before they accept. */
+.card > .hint.org-cut { margin-top: 0.6rem; overflow-wrap: anywhere; }
+/* A boss's invite to join the organisation, at the top of the board. */
+.notice.org-invite { flex-wrap: wrap; overflow-wrap: anywhere; }
+.notice.org-invite > div:first-child { flex: 1 1 0; min-width: 0; }
+.notice.org-invite > .row.org-invite-actions { flex: 1 1 100%; gap: 0.5rem; margin-top: 0.5rem; }
+.notice.org-invite > .row.org-invite-actions > button { flex: 1 1 0; min-width: 0; white-space: normal; }
 /* The Edit sheet: everything about an untaken contract on one screen. */
 .edit-sheet > .sheet-body { flex: 1 1 auto; min-height: 5rem; overflow-y: auto; }
 .edit-sheet > .sheet-body > .field { margin: 0.8rem 0 0; }

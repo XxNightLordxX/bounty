@@ -2097,22 +2097,34 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- this one.
     if Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
     -- The hitman organisation's rules (server/org/init.lua, off as shipped):
-    -- members only, a suspension, a role's access rules. Nothing is taken
-    -- before it answers.
-    if Contracts.acceptGate then
-        local ran, refused, data = pcall(Contracts.acceptGate, actor, contractId, opts)
-        if ran and refused then return false, refused, data end
-    end
+    -- members only, a suspension, a role's access rules, the cut shown.
+    -- Nothing is taken before it answers. Asked while this acceptance holds
+    -- the player, so two of theirs at once cannot both pass a limit or a
+    -- cooldown, and the cut it checked is the one frozen (Org.afterAccept,
+    -- told inside the same hold). A gate that raised refuses: a rule that
+    -- could not be checked is not passed.
+    local gate = {}
     local out = table.pack(Contracts.serialized({ 'contract:' .. contractId, 'hitman:' .. tostring(actor.cid) },
-        acceptUnlocked, actor, contractId, anonymous, opts))
+        function()
+            if Contracts.acceptGate then
+                local ran, refused, data = pcall(Contracts.acceptGate, actor, contractId, opts, gate)
+                if not ran then
+                    Log.problem(('the organisation\'s accept gate raised for %s: %s'):format(contractId, tostring(refused)))
+                    return false, CH.ERR.SERVER_ERROR
+                end
+                if refused then return false, refused, data end
+            end
+            local result = table.pack(acceptUnlocked(actor, contractId, anonymous, opts))
+            -- And a member's cut frozen on it (Org.afterAccept).
+            if result[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId, gate) end
+            return table.unpack(result, 1, result.n)
+        end))
     -- An operative on it may start its clock: with nobody holding it, it
     -- does not run (the expiry pass).
     if out[1] and Contracts.onChanged then Contracts.onChanged() end
     -- A meeting point already set goes on the new hitman's map, with what to
     -- do (Meeting.joined, through Bridges.install). Never stops the accept.
     if out[1] and Contracts.onAccepted then pcall(Contracts.onAccepted, contractId, actor.cid) end
-    -- And a member's cut frozen on it (Org.afterAccept).
-    if out[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId) end
     return table.unpack(out, 1, out.n)
 end
 

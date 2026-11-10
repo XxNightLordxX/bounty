@@ -211,6 +211,7 @@ local ADDED = {
             WithdrawPerDay = 100000, CutMaxPercent = 25, TotalCutCapPercent = 40, StakeCutMaxPercent = 25,
             BuyoutCutMaxPercent = 25, OfficeMoveMetres = 150.0, LocationCooldownMinutes = 60,
             MaxSignupSpots = 2, MaxMeetingSpots = 5, NoticeMaxLength = 500, RenameCooldownMinutes = 1440,
+            InviteMinutes = 10,
         },
     },
     ['Cooldowns.org'] = { per = 10, burst = 20 },

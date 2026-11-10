@@ -2013,16 +2013,20 @@ function Escrow.deliver(recipientCid, line)
         if ran and type(spec) == 'table' and type(spec.item) == 'string' then asItem = spec end
     end
 
+    -- The organisation's cut of a member's payout, taken into its funds
+    -- first (Escrow.orgCut): the line is then given less it, so what was
+    -- escrowed is what the member and the funds received between them. For
+    -- a cash or bank line however it is given: paid as a dirty item too, a
+    -- cut taken on an earlier cash try is never given again (Escrow.stillOwed
+    -- counts it out the same way).
+    local cut = 0
+    if Escrow.orgCut and (line.source == 'cash' or line.source == 'bank') then
+        local ran, taken = pcall(Escrow.orgCut, recipientCid, line)
+        if ran then cut = math.max(0, math.floor(tonumber(taken) or 0)) end
+    end
+
     if (line.source == 'cash' or line.source == 'bank') and not asItem then
         local account, amount = line.source, line.amount
-        -- The organisation's cut of a member's payout, taken into its funds
-        -- first (Escrow.orgCut): the line is then given less it, so what was
-        -- escrowed is what the member and the funds received between them.
-        local cut = 0
-        if Escrow.orgCut then
-            local ran, taken = pcall(Escrow.orgCut, recipientCid, line)
-            if ran then cut = math.max(0, math.floor(tonumber(taken) or 0)) end
-        end
         if already > 0 or cut > 0 then
             amount = (tonumber(amount) or 0) - already - cut
             if amount <= 0 then return true end
@@ -2067,7 +2071,7 @@ function Escrow.deliver(recipientCid, line)
     -- did arrive kept on the line so only the rest is ever given (afterRaise).
     local name, count, metadata
     if asItem then
-        name, count = asItem.item, line.amount
+        name, count = asItem.item, (tonumber(line.amount) or 0) - cut
     elseif line.source == 'dirty' then
         name, count = dirtyItemOf(line), line.amount
     elseif line.source == CH.SOURCE.ITEM then
@@ -2084,7 +2088,7 @@ function Escrow.deliver(recipientCid, line)
     else
         return false
     end
-    if already > 0 then
+    if already > 0 or (asItem and cut > 0) then
         count = (tonumber(count) or 0) - already
         if count <= 0 then return true end
     end

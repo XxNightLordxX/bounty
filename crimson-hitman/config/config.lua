@@ -679,10 +679,10 @@ Config.Organisation = {
     JobLabel           = 'Crimson Contractors',  -- the job's label in qbx_core
     JobType            = 'hitman',               -- the qbx_core job type
     DefaultDuty        = true,                   -- on duty when the job is set
-    SetPrimaryOnHire   = true,                   -- a hire makes it their primary job
+    SetPrimaryOnHire   = true,                   -- an accepted invite or application makes it their primary job
     QbxBossFlag        = false,                  -- mark boss roles isboss in qbx_core too
     ExternalChanges    = 'adopt',                -- 'adopt' | 'revert' job changes made elsewhere
-    Funds              = 'auto',                 -- 'auto' (Renewed-Banking if started) | 'internal'
+    Funds              = 'auto',                 -- 'auto' (Renewed-Banking if installed) | 'internal', chosen once
     OfficeRadius       = 5.0,                    -- metres from the boss office that count
     DrawMetres         = 40.0,                   -- metres at which a spot is drawn
     ApplyAtSignupOnly  = true,                   -- applications only at a sign-up spot
@@ -718,6 +718,7 @@ Config.Organisation = {
         MaxMeetingSpots          = 5,       -- organisation meeting spots at most
         NoticeMaxLength          = 500,     -- characters in the board notice
         RenameCooldownMinutes    = 1440,    -- minutes between two label changes by a boss
+        InviteMinutes            = 10,      -- minutes a boss's invite waits for the player to accept
     },
 }
 -- ============================================================================

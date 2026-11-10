@@ -48,6 +48,16 @@ local LastAccept = {}
 --- [cid] = { fires = { ts }, promotions = { ts } }
 local Recent = {}
 
+--- Hires a boss offered, waiting for the player to accept them in the app:
+--- [cid] = { id, cid, grade, by (the boss's cid), at, expires }. Kept in
+--- memory only: a restart forgets them, and the boss asks again.
+local Invites = {}
+
+--- When each player last loaded (Org.playerLoaded), against when the job
+--- was registered this process (Jobs.register), by a sequence: a player
+--- who loaded after it is one qbx_core could show the job to.
+local LoadedSeq, RegisteredSeq, Seq = {}, nil, 0
+
 --- Member handles given to each viewer: [viewerCid] = { [ref] = { cid, at } }
 local Refs, RefSeq = {}, 0
 local REF_SECONDS, REFS_PER_VIEWER = 1800, 200
@@ -61,7 +71,7 @@ Org.ERR = {
     LIMIT = 'org_limit', NOT_FOUND = 'org_not_found', REFUSED = 'org_refused',
     SHORT = 'org_short', BUSY = 'org_busy', MEMBERS_ONLY = 'org_members_only',
     RULE = 'org_rule', ALREADY = 'org_already', OFF_DUTY = 'org_off_duty',
-    NOT_HELD = 'org_not_held', INVALID = CH.ERR.INVALID_INPUT,
+    NOT_HELD = 'org_not_held', BANK_DOWN = 'org_bank_down', INVALID = CH.ERR.INVALID_INPUT,
 }
 local ERR = Org.ERR
 
@@ -86,6 +96,7 @@ local MESSAGES = {
     org_already = 'Already so.',
     org_off_duty = 'Go on duty first.',
     org_not_held = 'You can only pass on a power you hold yourself.',
+    org_bank_down = 'The organisation\'s bank account cannot be reached right now; nothing was moved.',
     invalid_input = 'Check what was entered.',
 }
 
@@ -236,6 +247,7 @@ end
 function Org.init(d)
     deps = d
     State, Splits, LastAccept, Recent, Refs, RefSeq = nil, {}, {}, {}, {}, 0
+    Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, nil, 0
     Jobs.reset()
     Funds.init({ storage = d.storage, audit = d.audit })
     -- The money path's two hooks, which read one switch while it is off.
@@ -244,8 +256,10 @@ function Org.init(d)
         d.escrow.orgTaken = function(line) return Funds.taken(line and line.id) end
     end
     if d.contracts then
-        d.contracts.acceptGate = function(actor, contractId, opts) return Org.acceptGate(actor, contractId, opts) end
-        d.contracts.afterAccept = function(actor, contractId) return Org.afterAccept(actor, contractId) end
+        d.contracts.acceptGate = function(actor, contractId, opts, out)
+            return Org.acceptGate(actor, contractId, opts, out)
+        end
+        d.contracts.afterAccept = function(actor, contractId, gate) return Org.afterAccept(actor, contractId, gate) end
     end
     if d.settings and d.settings.watch then
         d.settings.watch('Organisation.Enabled', function() Org.boot(true) end)
@@ -274,7 +288,10 @@ function Org.boot(live)
         return false
     end
     Jobs.checkConvars()
-    Jobs.register(State)
+    if Jobs.register(State) then
+        Seq = Seq + 1
+        RegisteredSeq = Seq
+    end
     Funds.ensureAccount(State)
     Org.resync()
     Org.pushSpotsAll()
@@ -359,7 +376,22 @@ function Org.reconcile(src)
         member.last_seen = now()
         if actor.name then member.name = actor.name end
         if grade ~= member.grade then
-            Jobs.setMember(org, actor.cid, member.grade, primary)
+            -- A change made while this resource did not hear it (the player
+            -- away, or the organisation off) is a change made elsewhere, as
+            -- one heard live is (Org.external, ExternalChanges). Put back as
+            -- the table has it only where qbx_core cannot be believed about
+            -- a removal: the job kept by name only, qbx:cleanPlayerGroups on
+            -- (it deletes the members of a job not yet registered at its
+            -- start), or a character that loaded before the job was
+            -- registered this process (a late start), whom qbx_core does not
+            -- show the job to.
+            if grade == nil and (primary or Jobs.cleansGroups() or not Org.loadedSinceRegister(src)) then
+                Jobs.setMember(org, actor.cid, member.grade, primary)
+            else
+                if dirty then pcall(saveMember, member) end
+                Org.external(actor, grade)
+                return
+            end
         elseif primary then
             -- qbx_core keeps an unknown primary job by name with
             -- unemployed's label and grade until it is set again.
@@ -389,13 +421,21 @@ function Org.external(actor, grade)
     if adopt then
         if grade == nil then
             org.members[actor.cid] = nil
+            org.ceiling.member[actor.cid] = nil
+            Invites[actor.cid] = nil
             pcall(deps.storage.deleteOrgRow, 'members', memberId(actor.cid))
+            pcall(function()
+                for _, g in ipairs(deps.storage.readOrgRows('grants', org.id) or {}) do
+                    if g.subject == 'member' and g.subject_id == actor.cid then deps.storage.deleteOrgRow('grants', g.id) end
+                end
+            end)
         else
             member = member or { id = memberId(actor.cid), org_id = org.id, cid = actor.cid, name = actor.name,
                 grants = {}, denies = {}, limits = {}, locked = false, joined_at = now() }
             member.grade = grade
             org.members[actor.cid] = member
             pcall(saveMember, member)
+            Org.closeApplications(org, actor.cid, 'external')
         end
         deps.audit.staff('org_external_adopted', actor.cid, nil, { org = org.id, grade = grade })
     else
@@ -420,9 +460,23 @@ function Org.onGroupUpdate(src, groupName, grade)
     Org.external(actor, grade ~= nil and math.floor(tonumber(grade) or 0) or nil)
 end
 
+--- Whether a player loaded after the job was registered this process: what
+--- qbx_core says of their job can then be believed (Org.reconcile).
+---@param src integer
+---@return boolean
+function Org.loadedSinceRegister(src)
+    local at = LoadedSeq[tonumber(src) or -1]
+    return RegisteredSeq ~= nil and at ~= nil and at > RegisteredSeq
+end
+
 --- A character in, or a job change (QBCore:Server:OnJobUpdate).
 function Org.playerLoaded(src)
     if not Org.current() then return end
+    src = tonumber(src)
+    if src then
+        Seq = Seq + 1
+        LoadedSeq[src] = Seq
+    end
     Org.reconcile(src)
     Org.pushSpots(src)
 end
@@ -541,9 +595,68 @@ end
 --                              MEMBERS
 -- ============================================================================
 
---- Hire a citizen at a grade. A boss (M2) hires a player standing within
---- Limits.HireRadius of them, into a grade no higher than HireMaxGrade and
---- below their own; staff hire anybody into any role.
+--- Close every open application of one citizen, who is a member now (or
+--- whose application a hire overtook): never accepted later over the
+--- member record they have.
+---@param org table
+---@param cid string
+---@param by string|nil who made them a member
+function Org.closeApplications(org, cid, by)
+    for id, a in pairs(org.applications) do
+        if a.cid == cid then
+            a.state, a.decided_by, a.decided_at = 'superseded', by, now()
+            pcall(deps.storage.writeOrgRow, 'applications', a)
+            org.applications[id] = nil
+        end
+    end
+end
+
+--- Make a citizen a member at a grade, told to qbx_core.
+local function enrol(org, target, grade, primary)
+    local member = { id = memberId(target.cid), org_id = org.id, cid = target.cid, name = target.name,
+        grade = grade, grants = {}, denies = {}, limits = {}, locked = false, joined_at = now(),
+        last_seen = target.source and now() or nil }
+    local done, code = Jobs.setMember(org, target.cid, grade, primary)
+    if not done then return nil, code end
+    org.members[target.cid] = member
+    saveMember(member)
+    Invites[target.cid] = nil
+    Org.closeApplications(org, target.cid, 'hired')
+    return member
+end
+
+--- The invite waiting for a citizen, if one is and it has not run out.
+local function inviteOf(cid)
+    local invite = type(cid) == 'string' and Invites[cid] or nil
+    if invite and invite.expires <= now() then
+        Invites[cid] = nil
+        return nil
+    end
+    return invite
+end
+
+--- Why a boss may not hire into a grade now (nil: they may): the rules a
+--- hire is checked by, but the distance, asked again as an invite is
+--- accepted.
+local function bossMayHire(org, bossCid, targetCid, grade)
+    if not org.roles[grade] then return ERR.NOT_FOUND end
+    if not org.members[bossCid] or not Engine.holds(org, bossCid, 'M2') then return ERR.NO_POWER end
+    if targetCid == bossCid then return ERR.SELF end
+    local count = 0
+    for _ in pairs(org.members) do count = count + 1 end
+    if count >= Powers.limit(org, 'MaxMembers') then return ERR.LIMIT end
+    if grade > Powers.limit(org, 'HireMaxGrade') then return ERR.BOUNDS end
+    if Engine.mayAssignGrade(org, bossCid, grade) then return ERR.RANK end
+    return nil
+end
+
+--- Hire a citizen at a grade. Staff hire anybody into any role at once (it
+--- is not made their primary job: they did not ask). A boss (M2) invites a
+--- player standing within Limits.HireRadius of them, into a grade no
+--- higher than HireMaxGrade and below their own: the player accepts it in
+--- the app within Limits.InviteMinutes (Org.answerInvite), and only then
+--- are they hired, the job made their primary one where
+--- Config.Organisation.SetPrimaryOnHire says so.
 ---@param who table
 ---@param target table { cid, name, source|nil }
 ---@param grade integer|nil
@@ -554,40 +667,89 @@ function Org.hire(who, target, grade)
     if err then return fail(err) end
     if type(target) ~= 'table' or type(target.cid) ~= 'string' then return fail(ERR.INVALID) end
     if org.members[target.cid] then return fail(ERR.ALREADY) end
-    local count = 0
-    for _ in pairs(org.members) do count = count + 1 end
     if grade == nil then
         for g in pairs(org.roles) do if grade == nil or g < grade then grade = g end end
     end
     grade = math.floor(tonumber(grade) or -1)
     if not org.roles[grade] then return fail(ERR.NOT_FOUND) end
-    if not who.staff then
-        if target.cid == who.cid then return fail(ERR.SELF) end
-        if count >= Powers.limit(org, 'MaxMembers') then return fail(ERR.LIMIT) end
-        if grade > Powers.limit(org, 'HireMaxGrade') then return fail(ERR.BOUNDS) end
-        local why = Engine.mayAssignGrade(org, who.cid, grade)
-        if why then return fail(ERR.RANK) end
-        -- In person: the server's own positions, never the client's.
-        local radius = Powers.limit(org, 'HireRadius')
-        local ok, a, b = pcall(function()
-            return GetEntityCoords(GetPlayerPed(who.source)), GetEntityCoords(GetPlayerPed(target.source))
-        end)
-        if not target.source or not ok or not a or not b
-            or GetPlayerRoutingBucket(who.source) ~= GetPlayerRoutingBucket(target.source)
-            or (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 + (a.z - b.z) ^ 2 > radius * radius then
-            return fail(ERR.RULE, nil)
-        end
+    if who.staff then
+        local member, code = enrol(org, target, grade, false)
+        if not member then return fail(ERR.REFUSED, { qbx = code }) end
+        record('org_member_hired', who, { member = target.cid, grade = grade })
+        if target.source then Org.pushSpots(target.source) end
+        return true, nil, { grade = grade }
     end
-    local member = { id = memberId(target.cid), org_id = org.id, cid = target.cid, name = target.name,
-        grade = grade, grants = {}, denies = {}, limits = {}, locked = false, joined_at = now(),
-        last_seen = target.source and now() or nil }
-    local done, code = Jobs.setMember(org, target.cid, grade, Config.Organisation.SetPrimaryOnHire ~= false)
-    if not done then return fail(ERR.REFUSED, { qbx = code }) end
-    org.members[target.cid] = member
-    saveMember(member)
-    record('org_member_hired', who, { member = target.cid, grade = grade })
-    if target.source then Org.pushSpots(target.source) end
-    return true, nil, { grade = grade }
+    local why = bossMayHire(org, who.cid, target.cid, grade)
+    if why then return fail(why) end
+    -- In person: the server's own positions, never the client's.
+    local radius = Powers.limit(org, 'HireRadius')
+    local ok, a, b = pcall(function()
+        return GetEntityCoords(GetPlayerPed(who.source)), GetEntityCoords(GetPlayerPed(target.source))
+    end)
+    if not target.source or not ok or not a or not b
+        or GetPlayerRoutingBucket(who.source) ~= GetPlayerRoutingBucket(target.source)
+        or (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 + (a.z - b.z) ^ 2 > radius * radius then
+        return fail(ERR.RULE, nil)
+    end
+    if inviteOf(target.cid) then return fail(ERR.ALREADY) end
+    local minutes = Powers.limit(org, 'InviteMinutes')
+    RefSeq = RefSeq + 1
+    local invite = { id = ('inv%d_%d'):format(RefSeq, math.random(1000, 9999)), cid = target.cid, grade = grade,
+        by = who.cid, at = now(), expires = now() + minutes * 60 }
+    Invites[target.cid] = invite
+    record('org_member_invited', who, { member = target.cid, grade = grade })
+    -- The organisation and the role, never who asked.
+    if deps.notify and deps.notify.toCitizen then
+        local role = org.roles[grade]
+        pcall(deps.notify.toCitizen, target.cid, org.label or 'Organisation',
+            ('You are invited to join as %s. Open the app to accept or decline within %d minutes.')
+                :format(role and role.label or 'a member', minutes))
+    end
+    return true, nil, { invited = true, grade = grade, expiresAt = invite.expires }
+end
+
+--- What a player is shown of an invite waiting for them: the organisation,
+--- the role and how long it has left. Never who sent it.
+---@param cid string
+---@return table|nil { id, label, role, expiresIn }
+function Org.inviteFor(cid)
+    local org = Org.current()
+    if not org or org.members[cid] then return nil end
+    local invite = inviteOf(cid)
+    if not invite then return nil end
+    local role = org.roles[invite.grade]
+    return { id = invite.id, label = org.label, role = role and role.label or nil,
+        expiresIn = math.max(0, invite.expires - now()) }
+end
+
+--- The invited player's answer, from their own app. Accepted, the hire is
+--- checked again as it stands now (the boss still holding Hire, the grade
+--- still theirs to give, room in the organisation) and made.
+---@param actor table the player answering (the engine's source)
+---@param id string the invite's id
+---@param accept boolean
+function Org.answerInvite(actor, id, accept)
+    local org = Org.current()
+    if not org then return fail(ERR.OFF) end
+    if type(actor) ~= 'table' or type(actor.cid) ~= 'string' then return fail(ERR.INVALID) end
+    if type(accept) ~= 'boolean' then return fail(ERR.INVALID) end
+    local invite = inviteOf(actor.cid)
+    if not invite or invite.id ~= id then return fail(ERR.NOT_FOUND) end
+    Invites[actor.cid] = nil
+    local boss = { cid = invite.by, source = nil }
+    if not accept then
+        record('org_invite_answered', boss, { member = actor.cid, accepted = false })
+        return true, nil, { accepted = false }
+    end
+    if org.members[actor.cid] then return fail(ERR.ALREADY) end
+    local why = bossMayHire(org, invite.by, actor.cid, invite.grade)
+    if why then return fail(why == ERR.LIMIT and ERR.LIMIT or ERR.RULE) end
+    local member, code = enrol(org, { cid = actor.cid, name = actor.name, source = actor.source }, invite.grade,
+        Config.Organisation.SetPrimaryOnHire ~= false)
+    if not member then return fail(ERR.REFUSED, { qbx = code }) end
+    record('org_member_hired', boss, { member = actor.cid, grade = invite.grade, invited = true })
+    if actor.source then Org.pushSpots(actor.source) end
+    return true, nil, { accepted = true, grade = invite.grade }
 end
 
 --- Remove a member. A boss (M3): below their rank, with a reason, once per
@@ -730,9 +892,10 @@ function Org.memberGrant(who, cid, code, state)
         local why = Engine.mayActOn(org, who.cid, cid)
         if why then return fail(why == 'self' and ERR.SELF or why == 'locked' and ERR.LOCKED or ERR.RANK) end
         if Engine.mayDelegate(org, who.cid, code, 'D2') then return fail(ERR.NOT_HELD) end
-        -- A deny set by staff is staff's: a boss does not lift it.
-        local held = member.denies[code]
-        if state ~= 'deny' and held and held.by == 'staff' then return fail(ERR.LOCKED) end
+        -- A grant or deny set by staff is staff's: a boss neither lifts nor
+        -- overwrites it (a deny written over it would be the boss's to clear).
+        local denied, granted = member.denies[code], member.grants[code]
+        if (denied and denied.by == 'staff') or (granted and granted.by == 'staff') then return fail(ERR.LOCKED) end
     end
     local by = who.staff and 'staff' or who.cid
     local before = { grant = member.grants[code] and member.grants[code].by, deny = member.denies[code] and member.denies[code].by }
@@ -918,7 +1081,9 @@ function Org.rolePower(who, grade, code, on)
         local why = Engine.mayEditRole(org, who.cid, grade)
         if why then return fail(why == 'locked' and ERR.LOCKED or ERR.RANK) end
         if Engine.mayDelegate(org, who.cid, code, 'R4') then return fail(ERR.NOT_HELD) end
-        if not on and held and held.by == 'staff' then return fail(ERR.LOCKED) end
+        -- Staff's own entry stays staff's: turned on over it, it would be the
+        -- boss's to turn off.
+        if held and held.by == 'staff' then return fail(ERR.LOCKED) end
         if not on and held and held.by ~= who.cid then
             local granter = org.members[held.by]
             if granter and granter.grade >= org.members[who.cid].grade then return fail(ERR.RANK) end
@@ -1150,14 +1315,24 @@ local function splitOf(contractId, cid)
     return Splits[key]
 end
 
---- After an acceptance: the member's cut frozen on the contract.
-function Org.afterAccept(actor, contractId)
+--- After an acceptance: the member's cut frozen on the contract, the one
+--- the gate checked (and the page showed) before anything was awaited,
+--- never read again after the acceptance's own awaits. Run while the
+--- acceptance still holds the member (Contracts.accept), so their next one
+--- counts this one's cooldown.
+---@param gate table|nil what Org.acceptGate kept: { terms }
+function Org.afterAccept(actor, contractId, gate)
     local org = Org.current()
     if not org or type(actor) ~= 'table' then return end
     LastAccept[actor.cid] = now()
-    local member = org.members[actor.cid]
-    if not member then return end
-    local terms = Org.termsFor(actor.cid)
+    local terms
+    if type(gate) == 'table' then
+        -- Nobody the gate saw as a member is cut, whatever happened since.
+        terms = gate.terms
+    elseif org.members[actor.cid] then
+        terms = Org.termsFor(actor.cid)
+    end
+    if not terms then return end
     local key = tostring(contractId) .. ':' .. actor.cid
     local row = { id = key, org_id = org.id, contract_id = contractId, cid = actor.cid,
         payout_pct = terms.orgPercent, stake_pct = terms.stakePercent, buyout_pct = terms.buyoutPercent,
@@ -1199,9 +1374,17 @@ function Org.cutFor(recipientCid, line)
     pct = math.max(0, math.min(100, math.floor(pct)))
     local cut = math.floor(amount * pct / 100)
     if cut <= 0 then return 0 end
-    local ok = Funds.credit(org, cut, { ref = 'cut:' .. line.id, kind = 'cut', actor = recipientCid,
+    local ok, ferr = Funds.credit(org, cut, { ref = 'cut:' .. line.id, kind = 'cut', actor = recipientCid,
         contract = line.contract_id, reason = kind, title = 'Contract cut' })
-    if not ok then return Funds.taken(line.id) end
+    if not ok then
+        -- The bank chosen and not started: the member is paid whole rather
+        -- than kept waiting on another resource, and it is on the record.
+        if ferr == 'bank_down' then
+            deps.audit.financial('org_cut_unavailable', recipientCid, line.contract_id, { org = org.id,
+                line = line.id, kind = kind, percent = pct, amount = cut })
+        end
+        return Funds.taken(line.id)
+    end
     deps.audit.financial('org_cut', recipientCid, line.contract_id, { org = org.id, line = line.id,
         kind = kind, percent = pct, amount = cut, of = amount })
     return cut
@@ -1220,9 +1403,10 @@ end
 --- once. On, members are held to their suspension, their own and their
 --- role's limits and access rules; with RequireJobToAccept, everybody else
 --- is refused.
+--- `out` keeps the cut checked here, for Org.afterAccept to freeze.
 ---@return string|nil err
 ---@return table|nil data
-function Org.acceptGate(actor, contractId, opts)
+function Org.acceptGate(actor, contractId, opts, out)
     if not Org.enabled() then return nil end
     local org = State
     if not org or type(actor) ~= 'table' then return nil end
@@ -1274,10 +1458,13 @@ function Org.acceptGate(actor, contractId, opts)
     if wait > 0 and LastAccept[actor.cid] and now() - LastAccept[actor.cid] < wait * 60 then
         return ERR.COOLDOWN, { retryAfter = wait * 60 - (now() - LastAccept[actor.cid]) }
     end
-    local shown = shownCut(opts)
-    if shown and opts.checkDisclosure and shown ~= Org.payoutPercent(org, member) then
-        return CH.ERR.TERMS_CHANGED, { orgCut = Org.payoutPercent(org, member) }
+    -- The cut, read once: the one the page must have shown (its board card
+    -- says it, and the accept echoes it), and the one frozen.
+    local terms = Org.termsFor(actor.cid)
+    if type(opts) == 'table' and opts.checkDisclosure and shownCut(opts) ~= terms.orgPercent then
+        return CH.ERR.TERMS_CHANGED, { orgCut = terms.orgPercent }
     end
+    if type(out) == 'table' then out.terms = terms end
     return nil
 end
 
@@ -1343,7 +1530,10 @@ function Org.pick(who, contractId, cid)
     local contract = deps.storage.readContract(contractId)
     if not contract or CH.TERMINAL[contract.state] then return fail(ERR.NOT_FOUND) end
     if cid ~= nil and (type(cid) ~= 'string' or not org.members[cid]) then return fail(ERR.NOT_FOUND) end
-    if cid and (cid == contract.creator_cid or cid == contract.target_cid) then return fail(ERR.RULE) end
+    -- Answered alike for every member, its own parties included: a refusal
+    -- for one of them would tell a boss who placed an anonymous contract
+    -- (and which member is its target). Picked, they still cannot take it:
+    -- the acceptance refuses its own parties.
     org.settings.picks[contractId] = cid
     saveOrgRow()
     record('org_pick', who, { member = cid }, contractId)
@@ -1353,6 +1543,15 @@ end
 -- ============================================================================
 --                              FUNDS
 -- ============================================================================
+
+--- A refusal from Funds, as the organisation words it.
+local function fundsErr(ferr)
+    if ferr == 'short' then return ERR.SHORT end
+    if ferr == 'busy' then return ERR.BUSY end
+    if ferr == 'limit' then return ERR.LIMIT end
+    if ferr == 'bank_down' then return ERR.BANK_DOWN end
+    return ERR.REFUSED
+end
 
 local function nonceRef(prefix, who, nonce)
     if nonce == nil then return prefix .. ':' .. tostring(who.cid or 'staff') .. ':' .. now() .. ':' .. math.random(1000, 9999) end
@@ -1371,7 +1570,8 @@ function Org.fundsView(who, limit)
     if not who.staff then
         for _, r in ipairs(rows) do r.actor = nil end
     end
-    return true, nil, { balance = Funds.balance(org), bank = Funds.usesBank(), rows = rows }
+    return true, nil, { balance = Funds.balance(org), bank = Funds.usesBank(), backend = Funds.backend(),
+        ready = Funds.ready(), rows = rows }
 end
 
 --- A member's own money into the funds (C6): taken from them first, given
@@ -1386,6 +1586,7 @@ function Org.deposit(who, amount, account, nonce)
     local ref = nonceRef('dep', who, nonce)
     if not amount or not account or not ref then return fail(ERR.INVALID) end
     if Funds.byRef(ref) then return true, nil, { repeated = true } end
+    if not Funds.ready() then return fail(ERR.BANK_DOWN) end
     local actor = deps.identity.resolve(who.source)
     if not actor or actor.cid ~= who.cid then return fail(ERR.NOT_MEMBER) end
     if not Util.charge(actor.player, account, amount) then return fail(CH.ERR.INSUFFICIENT) end
@@ -1393,7 +1594,7 @@ function Org.deposit(who, amount, account, nonce)
         reason = account, title = 'Member deposit' })
     if not ok then
         Util.credit(actor.player, account, amount)
-        return fail(ferr == 'busy' and ERR.BUSY or ERR.REFUSED)
+        return fail(ferr == 'busy' and ERR.BUSY or ferr == 'bank_down' and ERR.BANK_DOWN or ERR.REFUSED)
     end
     record('org_funds_deposit', who, { amount = amount, account = account })
     return true, nil, { amount = amount }
@@ -1412,17 +1613,18 @@ function Org.withdraw(who, amount, reason, nonce)
     local ref = nonceRef('wd', who, nonce)
     if not amount or not reason or not ref then return fail(ERR.INVALID) end
     if Funds.byRef(ref) then return true, nil, { repeated = true } end
+    -- The day's cap is checked by Funds.debit as it reserves the money, so
+    -- two withdrawals at once both count (their rows are not written yet).
+    local cap
     if not who.staff then
         if amount > Powers.limit(org, 'WithdrawMax') then return fail(ERR.BOUNDS) end
-        if Funds.spentSince(org, who.cid, 'withdraw', now() - 86400) + amount > Powers.limit(org, 'WithdrawPerDay') then
-            return fail(ERR.LIMIT)
-        end
+        cap = { limit = Powers.limit(org, 'WithdrawPerDay'), since = now() - 86400 }
     end
     local actor = not who.staff and deps.identity.resolve(who.source) or nil
     if not who.staff and (not actor or actor.cid ~= who.cid) then return fail(ERR.NOT_MEMBER) end
     local ok, ferr = Funds.debit(org, amount, { ref = ref, kind = 'withdraw', actor = who.cid, reason = reason,
-        title = 'Organisation withdrawal' })
-    if not ok then return fail(ferr == 'short' and ERR.SHORT or ferr == 'busy' and ERR.BUSY or ERR.REFUSED) end
+        title = 'Organisation withdrawal', cap = cap })
+    if not ok then return fail(fundsErr(ferr)) end
     if actor then
         local paid = Util.credit(actor.player, 'cash', amount)
         if not paid then
@@ -1446,7 +1648,7 @@ function Org.staffDeposit(who, amount, reason, nonce)
     if not amount or not reason or not ref then return fail(ERR.INVALID) end
     local ok, ferr, repeated = Funds.credit(org, amount, { ref = ref, kind = 'staff', actor = who.cid,
         reason = reason, title = 'Staff deposit' })
-    if not ok then return fail(ferr == 'busy' and ERR.BUSY or ERR.REFUSED) end
+    if not ok then return fail(fundsErr(ferr)) end
     if not repeated then record('org_funds_staff_deposit', who, { amount = amount, reason = reason }) end
     return true, nil, { amount = amount, repeated = repeated }
 end
@@ -1465,16 +1667,15 @@ function Org.bonus(who, cid, amount, reason, nonce)
     if not member then return fail(ERR.NOT_FOUND) end
     if not amount or not reason or not ref then return fail(ERR.INVALID) end
     if Funds.byRef(ref) then return true, nil, { repeated = true } end
+    local cap
     if not who.staff then
         if cid == who.cid then return fail(ERR.SELF) end
         if amount > Powers.limit(org, 'BonusMax') then return fail(ERR.BOUNDS) end
-        if Funds.spentSince(org, who.cid, 'bonus', now() - 86400) + amount > Powers.limit(org, 'BonusPerDay') then
-            return fail(ERR.LIMIT)
-        end
+        cap = { limit = Powers.limit(org, 'BonusPerDay'), since = now() - 86400 }
     end
     local ok, ferr = Funds.debit(org, amount, { ref = ref, kind = 'bonus', actor = who.cid, reason = reason,
-        title = 'Bonus' })
-    if not ok then return fail(ferr == 'short' and ERR.SHORT or ferr == 'busy' and ERR.BUSY or ERR.REFUSED) end
+        title = 'Bonus', cap = cap })
+    if not ok then return fail(fundsErr(ferr)) end
     local paidOk, paid = pcall(function()
         return exports.qbx_core:AddMoney(cid, 'bank', amount, 'crimson-hitman organisation bonus')
     end)
@@ -1485,6 +1686,22 @@ function Org.bonus(who, cid, amount, reason, nonce)
     end
     record('org_bonus', who, { member = cid, amount = amount, reason = reason })
     return true, nil, { amount = amount }
+end
+
+--- Staff only: keep the funds in the other backend ('internal' | 'bank'),
+--- the balance carried across (Funds.switch). `abandon` leaves a bank that
+--- is not started with what it holds.
+function Org.fundsBackend(who, to, abandon)
+    local org = Org.current()
+    if not org then return fail(ERR.OFF) end
+    if not who.staff then return fail(ERR.NO_POWER) end
+    local ok, ferr, done = Funds.switch(org, to, { actor = who.cid, abandon = abandon == true })
+    if not ok then
+        return fail(ferr == 'already' and ERR.ALREADY or ferr == 'invalid' and ERR.INVALID or fundsErr(ferr))
+    end
+    record('org_funds_backend', who, { from = done.from, to = done.to, carried = done.carried,
+        abandoned = done.abandoned })
+    return true, nil, done
 end
 
 -- ============================================================================
@@ -1781,6 +1998,13 @@ function Org.decide(who, id, accept)
     local row = type(id) == 'string' and org.applications[id:sub(1, 48)]
     if not row then return fail(ERR.NOT_FOUND) end
     if type(accept) ~= 'boolean' then return fail(ERR.INVALID) end
+    -- One who is a member already (hired or adopted since they applied): the
+    -- application is closed, never accepted over the record they have.
+    if org.members[row.cid] then
+        Org.closeApplications(org, row.cid, 'member')
+        record('org_application_superseded', who, { member = row.cid })
+        return fail(ERR.ALREADY)
+    end
     if accept then
         if row.cid == who.cid then return fail(ERR.SELF) end
         local members = 0
@@ -1789,12 +2013,11 @@ function Org.decide(who, id, accept)
         local lowest
         for g in pairs(org.roles) do if not lowest or g < lowest then lowest = g end end
         if not lowest then return fail(ERR.NOT_FOUND) end
-        local done, code = Jobs.setMember(org, row.cid, lowest, Config.Organisation.SetPrimaryOnHire ~= false)
-        if not done then return fail(ERR.REFUSED, { qbx = code }) end
-        local member = { id = memberId(row.cid), org_id = org.id, cid = row.cid, name = row.name, grade = lowest,
-            grants = {}, denies = {}, limits = {}, locked = false, joined_at = now() }
-        org.members[row.cid] = member
-        saveMember(member)
+        -- They asked to join, so the job is made their primary one where
+        -- Config says so, as an invite they accept is.
+        local member, code = enrol(org, { cid = row.cid, name = row.name }, lowest,
+            Config.Organisation.SetPrimaryOnHire ~= false)
+        if not member then return fail(ERR.REFUSED, { qbx = code }) end
     end
     row.state, row.decided_by, row.decided_at = accept and 'accepted' or 'rejected', who.cid, now()
     deps.storage.writeOrgRow('applications', row)
@@ -1904,7 +2127,8 @@ function Org.mine(actor)
     if not member then
         local open = false
         for _, a in pairs(org.applications) do if a.cid == actor.cid then open = true end end
-        return { enabled = true, member = false, label = org.label, applied = open or nil }
+        return { enabled = true, member = false, label = org.label, applied = open or nil,
+            invite = Org.inviteFor(actor.cid) }
     end
     local role = org.roles[member.grade]
     local held = Engine.held(org, actor.cid)
@@ -1990,7 +2214,8 @@ function Org.staffView(viewer)
         roles = roles and roles.rows or {}, members = members and members.rows or {}, ceiling = ceiling,
         spots = spots, cuts = Util.copy(org.settings.cuts), limits = limits, officeStaff = officeStaff,
         officeBoss = org.settings.officeBoss, notice = org.settings.notice, access = org.settings.access,
-        balance = Funds.balance(org), bank = Funds.usesBank(), applications = apps and apps.rows or {},
+        balance = Funds.balance(org), bank = Funds.usesBank(), fundsBackend = Funds.backend(),
+        fundsReady = Funds.ready(), applications = apps and apps.rows or {},
         powers = Powers.LIST, warnings = Jobs.checkConvars(),
     }
 end

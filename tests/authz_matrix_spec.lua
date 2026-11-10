@@ -1024,7 +1024,7 @@ local CUSTOM = {
 -- permissions, the office), which org_powers_spec walks power by power; the
 -- block below holds every one of them shut to every player while it is off,
 -- and to a player outside it while it is on.
-local ORG_REQUESTS = { 'orgMine', 'orgMembers', 'orgRoles', 'orgFunds', 'orgApplications', 'orgSpots', 'orgHire', 'orgFire', 'orgSetRole', 'orgSuspend', 'orgMemberLimits', 'orgMemberGrant', 'orgRoleCreate', 'orgRoleEdit', 'orgRoleDelete', 'orgRolePowers', 'orgRolePay', 'orgBonus', 'orgSetCut', 'orgDeposit', 'orgWithdraw', 'orgAccess', 'orgPick', 'orgRoleCooldown', 'orgPlaceHere', 'orgRemoveSpot', 'orgNotice', 'orgDecide', 'orgApply', 'orgRename', 'orgLayout', 'orgOfficeRule' }
+local ORG_REQUESTS = { 'orgMine', 'orgMembers', 'orgRoles', 'orgFunds', 'orgApplications', 'orgSpots', 'orgHire', 'orgFire', 'orgSetRole', 'orgSuspend', 'orgMemberLimits', 'orgMemberGrant', 'orgRoleCreate', 'orgRoleEdit', 'orgRoleDelete', 'orgRolePowers', 'orgRolePay', 'orgBonus', 'orgSetCut', 'orgDeposit', 'orgWithdraw', 'orgAccess', 'orgPick', 'orgRoleCooldown', 'orgPlaceHere', 'orgRemoveSpot', 'orgNotice', 'orgDecide', 'orgApply', 'orgInviteAnswer', 'orgRename', 'orgLayout', 'orgOfficeRule' }
 for _, name in ipairs(ORG_REQUESTS) do
     CUSTOM[name] = 'the hitman organisation requests'
     MATRIX[name] = { custom = true, why = 'the organisation\'s own rule: a member holding the power' }

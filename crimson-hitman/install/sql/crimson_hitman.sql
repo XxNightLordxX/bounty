@@ -539,9 +539,10 @@ CREATE TABLE IF NOT EXISTS crimson_org_locations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Its funds ledger: every movement in or out, by a reference that is
--- written once (a cut by its escrow line, a withdrawal by its request).
--- With Renewed-Banking running the balance is the society account's,
--- and these rows are the history; without it the balance is their sum.
+-- written once (a cut by its escrow line, a withdrawal by its request),
+-- marked with the backend it moved. With Renewed-Banking chosen the
+-- balance is the society account's, and its rows are the history; with
+-- the ledger the balance is the sum of the ledger's own rows.
 CREATE TABLE IF NOT EXISTS crimson_org_funds (
     id VARCHAR(96) PRIMARY KEY,
     org_id VARCHAR(32) NOT NULL,
@@ -551,6 +552,7 @@ CREATE TABLE IF NOT EXISTS crimson_org_funds (
     reason VARCHAR(160),
     contract_id VARCHAR(32),
     created_at INT NOT NULL,
+    backend VARCHAR(8),
     INDEX idx_org_funds_org (org_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

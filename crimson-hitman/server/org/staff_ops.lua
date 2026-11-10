@@ -34,7 +34,8 @@ StaffOps.ACTIONS = {
     'org_cut_set', 'org_cut', 'org_split_frozen', 'org_access', 'org_pick', 'org_funds_deposit',
     'org_funds_withdraw', 'org_funds_staff_deposit', 'org_bonus', 'org_location_set', 'org_location_removed',
     'org_notice', 'org_applied', 'org_application', 'org_renamed', 'org_layout', 'org_external_adopted',
-    'org_external_reverted', 'org_funds_unrecorded', 'org_setup',
+    'org_external_reverted', 'org_funds_unrecorded', 'org_setup', 'org_funds_backend', 'org_member_invited',
+    'org_invite_answered', 'org_application_superseded', 'org_cut_unavailable',
 }
 
 local function staff(src)
@@ -308,6 +309,18 @@ OPS.orgFundsMove = { 'write', function(src, data)
         return said(Org.bonus(who, memberCid(src, data), data.amount, reason, data.nonce))
     end
     return false, Org.ERR.INVALID, 'Deposit, withdraw or bonus.'
+end }
+
+--- Keep the funds in the other backend: { backend = 'internal' | 'bank',
+--- abandon = true to leave a Renewed-Banking that is not started }. The
+--- balance is carried across in two ledger rows.
+OPS.orgFundsBackend = { 'write', function(src, data)
+    local to = data.backend
+    if to ~= 'internal' and to ~= 'bank' then return false, Org.ERR.INVALID, 'internal or bank.' end
+    local ok, err, extra, message = Org.fundsBackend(staff(src), to, data.abandon == true)
+    if not ok then return said(ok, err, extra, message) end
+    return true, nil, ('The funds are kept in %s now; %d carried across.'):format(
+        to == 'bank' and 'Renewed-Banking' or 'the ledger', extra.carried or 0), extra
 end }
 
 -- Contracts ------------------------------------------------------------------

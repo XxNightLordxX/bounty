@@ -76,18 +76,42 @@ from `GetEntityCoords(GetPlayerPed(src))`), then the rank rules
 asks whether that granter still holds the power and still outranks the holder,
 so revoking cascades without touching a row.
 
-Money: `funds.lua` writes one `crimson_org_funds` row per movement under a
-reference written once (`insertOrgRowOnce`), then moves Renewed-Banking's
-account (credit: row first, taken back if the account refuses; debit: account
-first, refused on a shortfall). The cut is two hooks on the payout path:
+Money: `funds.lua` picks its backend once (`Funds.pick`, kept as staff meta
+`org_funds_backend`: 1 the ledger, 2 Renewed-Banking) and only the staff op
+`orgFundsBackend` (`Funds.switch`) changes it, carrying the balance across in
+two `switch` rows. Every movement is one `crimson_org_funds` row under a
+reference written once (`insertOrgRowOnce`), marked with its `backend`; the
+ledger's balance is the sum of its own (`internal`) rows only. Credit: row
+first, then the account, the row taken back if the account refuses. Debit: the
+day's cap (`spec.cap`, counting debits reserved and not written yet), the
+balance and the reservation in one step before any await, then the account
+and the row, the reservation given back if the row is not written. With the
+bank chosen and Renewed-Banking not started every movement answers
+`bank_down` (`org_bank_down`). The cut is two hooks on the payout path:
 `Escrow.orgCut(recipient, line)` in `Escrow.deliver` credits the funds once per
-line (reference `cut:<line id>`) and the member is given the line less it, and
-`Escrow.orgTaken(line)` in `Escrow.stillOwed` keeps a later give (a retry, a
-staff pay) from paying that part again. The split is frozen per contract and
-member (`crimson_org_splits`) by `Contracts.afterAccept`; `Contracts.acceptGate`
-runs before anything is taken. `tests/invariants.lua` holds every cut to its
-line and the internal ledger above zero. Off, both hooks read one switch and
-`Funds.taken` (memory only), and no request reads anything.
+line (reference `cut:<line id>`) and the member is given the line less it, as
+cash, bank or a dirty item, and `Escrow.orgTaken(line)` in `Escrow.stillOwed`
+keeps a later give (a retry, a staff pay) from paying that part again;
+`Funds.taken` reads the cut row from the store when the ledger was not loaded
+(the organisation off since the start). The split is frozen per contract and
+member (`crimson_org_splits`) by `Contracts.afterAccept` at the figure
+`Contracts.acceptGate` checked (handed over in the gate's `out` table); both
+run inside the acceptance's own hold on `contract:` and `hitman:` keys, so one
+member's acceptances are gated one at a time, and a gate that raises refuses
+(`server_error`). A page acceptance must echo the cut the board showed
+(`shown.orgCut`). `tests/invariants.lua` holds every cut to its line and the
+internal ledger above zero. Off, both hooks read one switch and `Funds.taken`,
+and no request reads anything.
+
+Joining: a boss's `Org.hire` is an invite held in memory (`Invites`, expiring
+after `Limits.InviteMinutes`), shown to the player as the board's `orgInvite`
+and in `orgMine`, answered by `orgInviteAnswer` (`Org.answerInvite`, the hire
+checked again); a staff hire is made at once without `SetPlayerPrimaryJob`.
+Any enrolment closes the citizen's open applications (`superseded`).
+`Org.reconcile` treats a grade qbx_core holds differently from the table as an
+outside change (`Org.external`), except a removal it cannot be believed about:
+the job kept by name only, `qbx:cleanPlayerGroups` on, or a character that
+loaded before the job was registered this process (`Org.loadedSinceRegister`).
 
 ### The event and handler order
 

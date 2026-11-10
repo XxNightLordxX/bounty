@@ -353,6 +353,10 @@ function serverStub() {
 
   // What refuses writes, where a test set it before the page loaded (S1).
   if (window.__holds) { answers.list.data.holds = window.__holds; }
+  // The most crowded board there is: a member of the hitman organisation,
+  // with its cut on every card and a boss's invite waiting (org review).
+  answers.list.data.orgTerms = { orgPercent: 15, youKeepPercent: 85, stakePercent: 0, buyoutPercent: 0 };
+  answers.list.data.orgInvite = { id: 'inv1_1234', label: 'Crimson Contractors', role: 'Recruit', expiresIn: 540 };
 
   window.fetch = function (url) {
     const name = url.split('/crimson:')[1];
@@ -558,6 +562,31 @@ async function main() {
     truthy(boardEscapees.length === 0,
       boardEscapees.length + ' element(s) outside their card: '
       + boardEscapees.slice(0, 4).join(' | '));
+  });
+
+  const orgBoard = await page.evaluate(function () {
+    const main = document.querySelector('main');
+    const invite = document.querySelector('.notice.org-invite');
+    const buttons = invite ? Array.prototype.slice.call(invite.querySelectorAll('button')) : [];
+    return {
+      cutLines: document.querySelectorAll('.card > .hint.org-cut').length,
+      cards: document.querySelectorAll('.card').length,
+      invite: !!invite,
+      inviteButtons: buttons.map(function (b) {
+        const r = b.getBoundingClientRect();
+        return { h: Math.round(r.height), right: Math.round(r.right) };
+      }),
+      inviteRight: invite ? Math.round(invite.getBoundingClientRect().right) : 0,
+      sideways: main.scrollWidth > main.clientWidth + 1
+    };
+  });
+  it('ORG: puts the organisation cut on every board card, and the invite with two thumb-sized answers', function () {
+    truthy(orgBoard.cutLines === orgBoard.cards && orgBoard.cards > 0, JSON.stringify(orgBoard));
+    truthy(orgBoard.invite, 'the invite banner');
+    truthy(orgBoard.inviteButtons.length === 2, JSON.stringify(orgBoard.inviteButtons));
+    truthy(orgBoard.inviteButtons.every(function (b) { return b.h >= 36 && b.right <= orgBoard.inviteRight; }),
+      JSON.stringify(orgBoard));
+    truthy(!orgBoard.sideways, 'the board scrolls sideways');
   });
 
   it('gives the board a scroll rather than clipping it', function () {
