@@ -477,6 +477,32 @@ describe('organisation review: the accept gate', function()
         eq(err, CH.ERR.SERVER_ERROR)
     end)
 
+    it('a staff assignment (Contracts.acceptHeld) freezes the cut the gate checked, as Accept does', function()
+        local s, f = setup()
+        truthy(s.org.setCut(W.STAFF, 'payout', nil, 10))
+        local c = W.place(s, f.creator)
+        local restore = during(s, 'confirmHitman', function() return true end,
+            function() assert(s.org.setCut(W.STAFF, 'payout', nil, 40)) end)
+        local ok, err = s.contracts.serialized({ 'contract:' .. c.id }, s.contracts.acceptHeld,
+            s.identity.resolve(3), c.id, false, { staffAssigned = true, waiveStake = true })
+        restore()
+        truthy(ok, tostring(err))
+        eq(s.storage.readOrgRow('splits', c.id .. ':HITMAN01').payout_pct, 10, 'the cut the gate checked')
+    end)
+
+    it('a staff assignment refuses when the gate raises, as Accept does', function()
+        local s, f = setup(function() Config.Organisation.RequireJobToAccept = true end)
+        local c = W.place(s, f.creator)
+        local real = s.contracts.acceptGate
+        s.contracts.acceptGate = function() error('store down') end
+        local ok, err = s.contracts.serialized({ 'contract:' .. c.id }, s.contracts.acceptHeld,
+            s.identity.resolve(3), c.id, false, { staffAssigned = true, waiveStake = true })
+        s.contracts.acceptGate = real
+        falsy(ok)
+        eq(err, CH.ERR.SERVER_ERROR)
+        eq(s.storage.readHitman(c.id, 'HITMAN01'), nil, 'nobody put on it')
+    end)
+
     it('L5 a member\'s second acceptance counts the first one\'s cooldown, however close', function()
         local s, f = setup()
         truthy(s.org.memberLimits(W.STAFF, 'HITMAN01', 5, 30))

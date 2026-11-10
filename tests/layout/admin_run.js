@@ -462,6 +462,25 @@ function serverStub() {
     return out;
   })() } };
   answers.orgMyPosition = { ok: true, data: { x: -1234.567, y: 4567.891, z: 30.12, heading: 359.4 } };
+  // The drawer's Change reward and Reassign, with the largest figures.
+  answers.rewardPreview = function (data) {
+    const base = { max: 100000000, slot: 3, reward: 1234567890, total: 1234567890, mostLower: 1234567889,
+      staffAdded: 987654321 };
+    if (data.by === undefined) return { ok: true, data: base };
+    return { ok: true, data: Object.assign(base, { after: 1234567890 + data.by,
+      toStaff: data.by < 0 ? 987654321 : undefined, toPlacer: data.by < 0 ? 12345678 : undefined }) };
+  };
+  answers.reassignPreview = { ok: true, data: { stakeWaived: false, stake: 25000,
+    operatives: ['Ghost of the Eastern Docks', 'Second of the Western Quays', LONG] } };
+  // Body disposal: steps with the longest ids and every chip, and both spots.
+  answers.disposalList = { ok: true, data: { enabled: true, limitSeconds: 86400, onTimeout: 'reduced',
+    spots: { vehicle: { x: -1234.5, y: 4567.8, z: 30.1, h: 359.4 } },
+    steps: rows.slice(0, 6).map(function (r, i) {
+      return { id: 'disposal:' + r.id + ':' + (i + 1), contract: r.id, slot: i + 1, hitman: 'HITMAN0' + i,
+        stage: i % 2 ? 'loaded' : 'body', secondsLeft: 86399 - i * 3600, held: i % 2 === 0, vehicle: i % 3 !== 0,
+        respawns: i };
+    }) } };
+  answers.disposalMyPosition = { ok: true, data: { x: -1234.567, y: 4567.891, z: 30.12, heading: 359.4 } };
   answers.sanctions = { ok: true, data: {
     suspended: rows.slice(0, 6).map(function (r, i) {
       return { ref: 'f' + i, name: i === 0 ? LONG : 'Dana Reyes ' + i, cid: 'CITIZEN' + i, online: i % 2 === 0,
@@ -778,6 +797,16 @@ async function main() {
       if (section === 'locations') {
         await page.click('button[data-act="loc-mypos"][data-value="signup"]');
         await page.waitForTimeout(120);
+        // And the drop-off filled from where staff stand, its Save armed.
+        await page.click('button[data-act="dsp-mypos"][data-value="drop"]');
+        await page.waitForTimeout(120);
+        await page.click('button[data-act="dsp-save"][data-value="drop"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'contracts') {
+        // Measured with a disposal step's Skip armed.
+        await page.click('button[data-act="dp-skip"]');
+        await page.waitForTimeout(60);
       }
       if (section === 'alerts') {
         // Measured with Acknowledge all shown armed, its confirm showing.
@@ -1109,6 +1138,66 @@ async function main() {
     it(at + ': the drawer with a party\'s card open fits, nothing cut off or too small', function () {
       none(inTools, 'drawer with the player view');
     });
+
+    // Change reward (Money) and Reassign (People): every control inside the
+    // drawer, the figures drawn before the armed button, and each armed
+    // naming what it does.
+    const staffMoney = function (args) {
+      const cls = args.cls, act = args.act;
+      const d = document.getElementById('drawer').getBoundingClientRect();
+      const out = { outside: [], count: 0, label: '' };
+      document.querySelectorAll('#drawer ' + cls + ' button, #drawer ' + cls + ' input, #drawer ' + cls + ' dd, #drawer '
+        + cls + ' p').forEach(function (n) {
+        const r = n.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return;
+        out.count++;
+        if (r.left < d.left - 0.5 || r.right > d.right + 0.5) {
+          out.outside.push((n.getAttribute('data-act') || n.getAttribute('data-bind') || n.tagName) + ' '
+            + Math.round(r.left) + '..' + Math.round(r.right));
+        }
+        if ((n.tagName === 'BUTTON' || n.tagName === 'INPUT') && r.height < 28) {
+          out.outside.push((n.getAttribute('data-act') || n.getAttribute('data-bind')) + ' is ' + r.height + 'px tall');
+        }
+      });
+      const b = document.querySelector('#drawer [data-act="' + act + '"]');
+      const cfm = b && b.querySelector('.cfm');
+      out.armed = !!b && b.classList.contains('is-armed');
+      out.label = cfm && getComputedStyle(cfm).visibility === 'visible' ? cfm.textContent : '';
+      out.sideways = document.getElementById('drawer').scrollWidth > document.getElementById('drawer').clientWidth + 1;
+      return out;
+    };
+    await page.click('#drawer [data-act="dr-tab"][data-value="money"]');
+    await page.waitForTimeout(150);
+    await page.fill('#drawer [data-bind="dr.rw.amt.ct10000001"]', '99999999');
+    await page.waitForTimeout(450);
+    await page.fill('#drawer [data-bind="dr.rw.reason.ct10000001"]', REASON_LONG.slice(0, 120));
+    await page.click('#drawer [data-act="rw-change"]');
+    await page.waitForTimeout(60);
+    const reward = await page.evaluate(staffMoney, { cls: '.ct-reward', act: 'rw-change' });
+    const rewardFaults = await page.evaluate(measure, { tablesFit: size.tablesFit, scope: '#drawer' });
+    it(at + ': Change reward fits inside the drawer, its figures drawn and the armed button naming them', function () {
+      truthy(reward.count >= 10, reward.count + ' controls');
+      none(reward.outside, 'change reward');
+      truthy(!reward.sideways, 'the drawer scrolls sideways');
+      truthy(reward.armed && /Click again: raise it from \$1,234,567,890 to \$1,334,567,889/.test(reward.label), reward.label);
+      none(rewardFaults, 'drawer with Change reward');
+    });
+    await page.click('#drawer [data-act="dr-tab"][data-value="people"]');
+    await page.waitForTimeout(150);
+    await page.fill('#drawer [data-bind="dr.ra.reason.ct10000001"]', REASON_LONG.slice(0, 120));
+    await page.click('#drawer [data-act="ra-go"]');
+    await page.waitForTimeout(60);
+    const reassign = await page.evaluate(staffMoney, { cls: '.ct-reassign', act: 'ra-go' });
+    const reassignFaults = await page.evaluate(measure, { tablesFit: size.tablesFit, scope: '#drawer' });
+    it(at + ': Reassign fits inside the drawer, the hitman looked up and who comes off said, armed naming them', function () {
+      truthy(reassign.count >= 6, reassign.count + ' controls');
+      none(reassign.outside, 'reassign');
+      truthy(!reassign.sideways, 'the drawer scrolls sideways');
+      truthy(reassign.armed && /Click again: give it to .+, taking off 3 operatives/.test(reassign.label), reassign.label);
+      none(reassignFaults, 'drawer with Reassign');
+    });
+    await page.click('#drawer [data-act="dr-tab"][data-value="summary"]');
+    await page.waitForTimeout(60);
 
     // An armed button keeps its size, so a second click lands on it.
     const armed = await page.evaluate(function () {

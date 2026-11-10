@@ -2779,6 +2779,9 @@ local AREA_OF_GROUP = {
     ['Edit in config.lua'] = 'engine', ['Kept in the store, not on this list'] = 'engine',
     ['Target limits'] = 'targets',
     ['Organisation'] = 'organisation', ['Organisation: Boss limits'] = 'organisation',
+    -- The step markers and body disposal (server/missionsteps.lua): steps
+    -- of completing a contract.
+    ['Step markers'] = 'completing', ['Body disposal'] = 'completing',
 }
 Settings.AREA_OF_GROUP = AREA_OF_GROUP
 

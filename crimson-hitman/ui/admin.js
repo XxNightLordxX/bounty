@@ -356,7 +356,8 @@
                    alerts: true, console: true, frozen: true, exportContract: true, playerView: true,
                    history: true, settingsHistory: true, sanctions: true,
                    targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true,
-                   orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, orgMyPosition: true };
+                   orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, orgMyPosition: true,
+                   rewardPreview: true, reassignPreview: true, disposalList: true, disposalMyPosition: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -1496,10 +1497,11 @@
         ? 'You see who is behind anonymous parties. Every search and every contract you open is on the record.'
         : 'Anonymous placers and operatives show as Anonymous, and a search by citizen id or name never '
           + 'finds a contract through a party who stayed anonymous.'),
+      h('div.stack', { id: 'dp-list' }, disposalBody('contracts')),
       h('div.results', { id: 'ct-results' }, contractRows()),
       h('div.pager', { id: 'ct-pager' }, contractPager()));
   };
-  LOAD.contracts = function () { loadContracts(); };
+  LOAD.contracts = function () { loadContracts(); loadDisposal(); };
 
   /* ---- the contract drawer ---- */
 
@@ -1553,6 +1555,7 @@
     if (scrim) scrim.hidden = !S.drawer.id;
     if (!S.drawer.id) return;
     setHtml(drawer, drawerBody());
+    drawerNeeds();
   }
 
   function personCell(person) {
@@ -1847,13 +1850,15 @@
 
     var body;
     if (tab === 'money') {
-      body = frag(actions, stuckPart, stub ? null : card('Payouts', slotSummary(escrow, c)), escrowCard);
+      body = frag(actions, stuckPart, stub ? null : card('Payouts', slotSummary(escrow, c)),
+        staff && !stub ? card('Change reward', rewardBody(d), '.ct-reward') : null, escrowCard);
     } else if (tab === 'people') {
       body = frag(
         canIdentify() ? h('div.drawer-actions', btn('.is-ghost', 'whois', { 'data-id': id }, 'Whois', 'user-secret'))
           : null,
         whois, operatives,
         staff ? card('Remove an operative', removeBody(d, staff), '.ct-remove') : null,
+        staff ? card('Reassign to another hitman', reassignBody(d), '.ct-reassign') : null,
         staff ? card('As a player sees it', playerViewBody(d), '.ct-view') : null);
     } else if (tab === 'notes') {
       body = staff ? frag(card('Staff notes', notesBody(staff), '.ct-notes'),
@@ -2049,13 +2054,15 @@
       shows('stuck') ? h('section.ib-part', h('h3.st-group-title', 'Money waiting for staff (stuck escrow)'),
         h('div.stack', { id: 'sk-list' }, stuckBody())) : null,
       shows('alerts') ? h('section.ib-part', h('h3.st-group-title', 'Open alerts'),
-        h('div.stack', { id: 'al-list' }, alertsBody())) : null);
+        h('div.stack', { id: 'al-list' }, alertsBody())) : null,
+      S.inbox === 'all' ? h('section.ib-part', h('div.stack', { id: 'dp-list' }, disposalBody('home'))) : null);
   };
   LOAD.inbox = function () {
     loadOverview(false);
     if (shows('reviews')) loadReviews();
     if (shows('stuck')) loadStuck();
     if (shows('alerts')) { S.alerts.state = 'open'; loadAlerts(); }
+    if (S.inbox === 'all') loadDisposal();
     drawCounts();
   };
 
@@ -5754,6 +5761,329 @@
     });
   };
 
+  /* -- change the reward (server/staff_reward.lua) --
+
+     Raise or lower the collection being paid next by a whole number of
+     dollars: a raise added by staff or charged to the placer, from cash or
+     bank; a lowering off what staff added first, then back to the placer.
+     The server's figures (rewardPreview, a read) are drawn before the
+     button arms, and the armed label names them; rewardChange, the staff
+     ACE's, is what decides. */
+
+  function rwState() {
+    if (!S.drawer.rw) {
+      S.drawer.rw = { dir: 'raise', from: 'staff', account: 'bank', base: null, baseFor: null, baseAsked: false,
+        preview: null, previewBy: null, timer: null };
+    }
+    return S.drawer.rw;
+  }
+
+  /** The signed dollars typed, or null: whole and above 0, the direction its sign. */
+  function rewardBy() {
+    var st = rwState();
+    var n = wholeNumber(S.forms['dr.rw.amt.' + S.drawer.id]);
+    if (!n || n <= 0) return null;
+    return st.dir === 'lower' ? -n : n;
+  }
+
+  /** rewardPreview for `by` (null: the collection as it is). */
+  function loadRewardPreview(by) {
+    var id = S.drawer.id;
+    var st = rwState();
+    if (!id) return Promise.resolve(null);
+    var data = { id: id };
+    if (by != null) data.by = by;
+    else st.baseAsked = true;
+    return ask('rewardPreview', data, 'rewardPreview').then(function (reply) {
+      if (!reply || S.drawer.id !== id || S.drawer.rw !== st) return null;
+      var view = reply.ok ? (reply.data || {}) : { refused: reply.err || 'no_answer', message: words(reply) };
+      if (by == null) { st.base = view; st.baseFor = id; }
+      else { st.preview = view; st.previewBy = by; }
+      var box = byId('dr-rw-preview');
+      if (by == null || !box) drawDrawer();
+      else setHtml(box, rewardPreviewText());
+      return view;
+    });
+  }
+
+  function rewardWho(st) {
+    return st.from === 'placer' ? 'charged to the placer\'s ' + st.account : 'added by staff (' + st.account + ')';
+  }
+
+  /** What the change typed would do, in the server's figures. */
+  function rewardPreviewText() {
+    var st = rwState();
+    var by = rewardBy();
+    if (by == null) return h('span', 'Type a whole number of dollars to see the reward after.');
+    var v = st.previewBy === by ? st.preview : null;
+    if (!v) return h('span', 'Reading what that would do…');
+    if (v.refused) return h('span.is-warn', String(v.message || 'Not possible now.'));
+    var parts = [h('span', 'Collection ' + num(v.slot) + ': ', h('b', money(v.reward)), ' → ', h('b', money(v.after)))];
+    if (by > 0) parts.push(h('span', ', ' + rewardWho(st) + '.'));
+    else {
+      parts.push(h('span', '. ' + money(v.toStaff || 0) + ' of what staff added comes off; '
+        + money(v.toPlacer || 0) + ' goes back to the placer.'));
+    }
+    if (Number(v.max) && Math.abs(by) > Number(v.max)) {
+      parts.push(h('span.is-warn', ' At most ' + money(v.max) + ' at once (Config.Staff.RewardChangeMax).'));
+    }
+    return frag(parts);
+  }
+
+  function rewardBody(d) {
+    var id = S.drawer.id;
+    var c = d.contract || {};
+    var st = rwState();
+    if (c.state !== 'active' && c.state !== 'accepted') {
+      return h('p.note', 'Only a live contract (active or accepted) has a reward to change.');
+    }
+    var base = st.baseFor === id ? st.base : null;
+    var open = writesOpen();
+    var off = { disabled: !open, title: open ? null : whyNoWrite() };
+    var facts = !base ? loading('Reading the reward…')
+      : base.refused ? h('p.note.is-warn', String(base.message || 'Its reward cannot be changed now.'))
+        : h('dl.facts',
+          h('dt', 'Collection'), h('dd', num(base.slot)),
+          h('dt', 'Its reward'), h('dd', money(base.reward)),
+          h('dt', 'Added by staff'), h('dd', money(base.staffAdded || 0)),
+          h('dt', 'Lowered by at most'), h('dd', money(base.mostLower || 0)),
+          h('dt', 'One change at most'), h('dd', Number(base.max) ? money(base.max) : 'off (Config.Staff.RewardChangeMax is 0)'));
+    var dirOpts = [{ value: 'raise', label: 'Raise', disabled: !open, title: off.title },
+                   { value: 'lower', label: 'Lower', disabled: !open, title: off.title }];
+    return frag(
+      h('p.note', 'Changes the reward of the collection paid next. The placer and the operatives are told it '
+        + 'changed, by staff; nobody is named.'),
+      facts,
+      h('div.ct-row', h('span.ct-label', 'Change'), segmented('rw-dir', dirOpts, st.dir),
+        field('dr.rw.amt.' + id, { class: 'is-short', placeholder: '$ amount', inputmode: 'numeric', maxlength: '9',
+          'data-live': 'rw-preview', disabled: !open, 'aria-label': 'Dollars to change the reward by' })),
+      st.dir === 'raise' ? h('div.ct-row', h('span.ct-label', 'Paid by'),
+        segmented('rw-from', [
+          { value: 'staff', label: 'Added by staff', disabled: !open, title: off.title },
+          { value: 'placer', label: 'Charged to the placer', disabled: !open, title: off.title }
+        ], st.from)) : null,
+      st.dir === 'raise' ? h('div.ct-row', h('span.ct-label', 'Account'),
+        segmented('rw-account', [
+          { value: 'bank', label: 'Bank', disabled: !open, title: off.title },
+          { value: 'cash', label: 'Cash', disabled: !open, title: off.title }
+        ], st.account)) : null,
+      h('p.note', { id: 'dr-rw-preview', 'aria-live': 'polite' }, rewardPreviewText()),
+      h('div.inline-form.is-wide',
+        field('dr.rw.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
+          maxlength: '120', disabled: !open, 'aria-label': 'Reason for changing the reward' }),
+        writeBtn('.is-primary', 'rw-change', {}, 'Change reward', 'Click again to change', 'sack-dollar')));
+  }
+
+  function rewardPicked() {
+    var st = rwState();
+    disarm();
+    st.preview = null;
+    st.previewBy = null;
+    drawDrawer();
+    var by = rewardBy();
+    if (by != null) loadRewardPreview(by);
+  }
+  ACTIONS['rw-dir'] = function (node) { rwState().dir = node.getAttribute('data-value') === 'lower' ? 'lower' : 'raise'; rewardPicked(); };
+  ACTIONS['rw-from'] = function (node) { disarm(); rwState().from = node.getAttribute('data-value') === 'placer' ? 'placer' : 'staff'; drawDrawer(); };
+  ACTIONS['rw-account'] = function (node) { disarm(); rwState().account = node.getAttribute('data-value') === 'cash' ? 'cash' : 'bank'; drawDrawer(); };
+  LIVE['rw-preview'] = function () {
+    var st = rwState();
+    clearTimeout(st.timer);
+    setHtml(byId('dr-rw-preview'), rewardPreviewText());
+    st.timer = setTimeout(function () {
+      st.timer = null;
+      var by = rewardBy();
+      if (by != null && st.previewBy !== by) loadRewardPreview(by);
+    }, DEBOUNCE_MS);
+  };
+
+  ACTIONS['rw-change'] = function (node) {
+    var id = S.drawer.id;
+    if (!id) return;
+    var st = rwState();
+    var by = rewardBy();
+    var reason = trim(S.forms['dr.rw.reason.' + id]).slice(0, 120);
+    var max = Number((st.base || {}).max) || 0;
+    var problem = by == null ? 'Type a whole number of dollars above 0.'
+      : max && Math.abs(by) > max ? 'At most ' + money(max) + ' at once (Config.Staff.RewardChangeMax).'
+        : !reason ? 'Give a reason: it goes on the record.' : null;
+    if (problem) {
+      disarm();
+      S.drawer.answer = { ok: false, text: problem };
+      drawDrawer();
+      return;
+    }
+    var v = st.previewBy === by ? st.preview : null;
+    if (!v) {
+      // The figures first: the button arms once they are drawn.
+      disarm();
+      loadRewardPreview(by);
+      return;
+    }
+    if (v.refused) {
+      disarm();
+      S.drawer.answer = { ok: false, text: String(v.message || 'Not possible now.') };
+      drawDrawer();
+      return;
+    }
+    var label = by > 0
+      ? 'Click again: raise it from ' + money(v.reward) + ' to ' + money(v.after) + ', ' + rewardWho(st)
+      : 'Click again: lower it from ' + money(v.reward) + ' to ' + money(v.after);
+    if (!armed(node, label, ['dr.rw.amt.' + id, 'dr.rw.reason.' + id])) return;
+    var data = { id: id, by: by, reason: reason };
+    if (by > 0) { data.from = st.from; data.account = st.account; }
+    write('rewardChange', data, 'reward:' + id, node).then(function (reply) {
+      if (!reply || S.drawer.id !== id) return;
+      drawerAnswer(reply);
+      if (reply.ok) {
+        S.forms['dr.rw.amt.' + id] = '';
+        S.forms['dr.rw.reason.' + id] = '';
+        st.preview = null;
+        st.previewBy = null;
+        st.base = null;
+        st.baseFor = null;
+        st.baseAsked = false;
+      }
+      drawDrawer();
+      loadContract();
+    });
+  };
+
+  /* -- reassign to another hitman (server/staff_reassign.lua) --
+
+     The hitman is the player looked up in Players (by the handle that
+     lookup gave, never a typed id): every operative on it is taken off as
+     Remove does, and the new one put through every Accept check. The
+     preview (reassignPreview, a read) says who comes off and what would
+     refuse them before the button arms; reassignHitman is the staff ACE's. */
+
+  function raState() {
+    if (!S.drawer.ra) S.drawer.ra = { block: 'block', stake: 'client', preview: null, previewRef: null, asking: null };
+    return S.drawer.ra;
+  }
+
+  function loadReassignPreview() {
+    var id = S.drawer.id;
+    var st = raState();
+    var ref = S.players.ref;
+    if (!id || !ref) return Promise.resolve(null);
+    st.asking = ref;
+    return ask('reassignPreview', { id: id, ref: ref }, 'reassignPreview').then(function (reply) {
+      if (!reply || S.drawer.id !== id || S.drawer.ra !== st) return null;
+      st.asking = null;
+      st.preview = reply.ok ? (reply.data || {}) : { refused: reply.err || 'no_answer', message: words(reply) };
+      st.previewRef = ref;
+      drawDrawer();
+      return st.preview;
+    });
+  }
+
+  function reassignBody(d) {
+    var id = S.drawer.id;
+    var c = d.contract || {};
+    var st = raState();
+    if (c.state !== 'active' && c.state !== 'accepted') {
+      return h('p.note', 'Only a live contract (active or accepted) can be given to another hitman.');
+    }
+    var open = writesOpen();
+    var off = { disabled: !open, title: open ? null : whyNoWrite() };
+    if (!hasPlayer()) {
+      return frag(h('p.note', 'Look the hitman up in Players first (the header\'s Player chip). The contract stays '
+        + 'open over it; come back to this tab and reassign to them.'),
+        h('div.btn-row', btn('.is-small', 'section', { 'data-section': 'players' }, 'Find the hitman in Players',
+          'magnifying-glass')));
+    }
+    var who = String((S.players.data.player || {}).name || 'them');
+    var v = st.previewRef === S.players.ref ? st.preview : null;
+    var ops = v ? asList(v.operatives) : [];
+    var said = !v ? loading('Checking whether ' + who + ' can take it…')
+      : frag(
+        h('p', ops.length ? 'Taken off it: ' + ops.join(', ') + ', each as Remove operative does.'
+          : 'Nobody is on it now.'),
+        h('p', v.stakeWaived ? 'Their stake is waived (Config.Staff.ReassignStake).'
+          : 'They put up the ' + money(v.stake) + ' stake, as on Accept.'),
+        v.refused ? h('p.note.is-warn', String(v.message || 'They cannot take it now.')) : null);
+    return frag(
+      h('div.ct-row', h('span.ct-label', 'New hitman'), h('span.chip.is-live', icon('user'), ' ', who)),
+      said,
+      h('div.ct-row', h('span.ct-label', 'Those taken off'),
+        segmented('ra-block', [
+          { value: 'block', label: 'Bar them from it', disabled: !open, title: off.title },
+          { value: '', label: 'They may take it again', disabled: !open, title: off.title }
+        ], st.block)),
+      h('div.ct-row', h('span.ct-label', 'Their stakes'),
+        segmented('ra-stake', [
+          { value: 'client', label: 'To the placer (as a walk-away)', disabled: !open, title: off.title },
+          { value: 'return', label: 'Return the stakes', disabled: !open, title: off.title }
+        ], st.stake)),
+      h('div.inline-form.is-wide',
+        field('dr.ra.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
+          maxlength: '120', disabled: !open, 'aria-label': 'Reason for reassigning the contract' }),
+        writeBtn('.is-danger', 'ra-go', {}, 'Reassign', 'Click again to reassign', 'right-left')));
+  }
+
+  ACTIONS['ra-block'] = function (node) { disarm(); raState().block = node.getAttribute('data-value') || ''; drawDrawer(); };
+  ACTIONS['ra-stake'] = function (node) { disarm(); raState().stake = node.getAttribute('data-value') || 'client'; drawDrawer(); };
+
+  ACTIONS['ra-go'] = function (node) {
+    var id = S.drawer.id;
+    if (!id) return;
+    var st = raState();
+    var reason = trim(S.forms['dr.ra.reason.' + id]).slice(0, 120);
+    var problem = !hasPlayer() ? 'Look the hitman up in Players first.'
+      : !reason ? 'Give a reason: it goes on the record.' : null;
+    if (problem) {
+      disarm();
+      S.drawer.answer = { ok: false, text: problem };
+      drawDrawer();
+      return;
+    }
+    var ref = S.players.ref;
+    var v = st.previewRef === ref ? st.preview : null;
+    if (!v) { disarm(); loadReassignPreview(); return; }
+    if (v.refused) {
+      disarm();
+      S.drawer.answer = { ok: false, text: String(v.message || 'They cannot take it now.') };
+      drawDrawer();
+      return;
+    }
+    var who = String((S.players.data.player || {}).name || 'them');
+    var n = asList(v.operatives).length;
+    var label = 'Click again: give it to ' + who + (n ? ', taking off ' + n + ' operative' + (n === 1 ? '' : 's') : '');
+    if (!armed(node, label, ['dr.ra.reason.' + id])) return;
+    write('reassignHitman', { id: id, ref: ref, reason: reason, block: st.block === 'block',
+      returnStake: st.stake === 'return' }, 'reassign:' + id, node).then(function (reply) {
+      if (!reply || S.drawer.id !== id) return;
+      drawerAnswer(reply);
+      if (reply.ok) {
+        S.forms['dr.ra.reason.' + id] = '';
+        st.preview = null;
+        st.previewRef = null;
+        if (S.section === 'contracts') loadContracts();
+      }
+      drawDrawer();
+      loadContract();
+    });
+  };
+
+  /** What a tab needs read before it can say anything: the reward as it is
+      (Money), whether the looked-up hitman can take it (People). Each asked
+      once per contract, per player looked up. */
+  function drawerNeeds() {
+    var d = S.drawer.data;
+    if (!S.drawer.id || !d || !d.staff || !d.contract || d.contract.neverStored) return;
+    var live = d.contract.state === 'active' || d.contract.state === 'accepted';
+    if (!live) return;
+    var tab = S.drawer.tab || 'summary';
+    if (tab === 'money') {
+      var rw = rwState();
+      if (rw.baseFor !== S.drawer.id && !rw.baseAsked) loadRewardPreview(null);
+    } else if (tab === 'people' && hasPlayer()) {
+      var ra = raState();
+      if (ra.previewRef !== S.players.ref && ra.asking !== S.players.ref) loadReassignPreview();
+    }
+  }
+
   /* -- edit a player's text -- */
 
   function textBody(d, staff) {
@@ -7100,6 +7430,211 @@
   }
   AFTER_SETTINGS.push(function () { if (!SETTING_VIEWS[S.section]) focusRow(); });
 
+  /* ---------- body disposal (server/disposal.lua) ------------------------
+
+     Config.Disposal, off as shipped: a verified kill's payout waits until
+     the body is loaded and dropped off. Contracts and Home list every step
+     in force (disposalList, a read: the exact time left, whether its clock
+     is held, the vehicle), each with Skip (finish it as if dropped off: the
+     payout is handed over) and Respawn vehicle (made again at the spawn
+     spot), both the staff ACE's, two clicks naming the contract. Locations
+     sets the two spots (disposalSpotSet, typed or where the staff member
+     stands; disposalSpotClear). Who the hitman is comes only with the
+     identity ACE. */
+
+  S.disposal = { data: null, error: null, errCode: null, answers: {}, pos: null, posAt: 0 };
+
+  var DISPOSAL_SPOTS = [
+    { id: 'vehicle', label: 'Disposal vehicle spawn', one: 'the vehicle spawn', icon: 'truck' },
+    { id: 'drop', label: 'Body drop-off', one: 'the drop-off', icon: 'flag-checkered' }
+  ];
+  var DISPOSAL_STAGE = { body: 'Body not loaded yet', loaded: 'Loaded, on the way to the drop-off' };
+  var DISPOSAL_TIMEOUT = { pay: 'paid in full', reduced: 'paid in part, the rest back to the placer',
+    refund: 'refunded to the placer' };
+
+  function loadDisposal() {
+    return ask('disposalList', {}, 'disposal').then(function (reply) {
+      if (!reply) return;
+      if (reply.ok) { S.disposal.data = reply.data || {}; S.disposal.error = null; S.disposal.errCode = null; }
+      else { S.disposal.error = words(reply); S.disposal.errCode = reply.err || null; }
+      drawDisposal();
+    });
+  }
+
+  function drawDisposal() {
+    var list = byId('dp-list');
+    if (list) setHtml(list, disposalBody(S.section === 'contracts' ? 'contracts' : 'home'));
+    if (S.section === 'locations') drawOrg();
+  }
+
+  function disposalSteps() { return asList((S.disposal.data || {}).steps); }
+
+  /** The steps in force; on Home only while there is one. */
+  function disposalBody(where) {
+    var d = S.disposal.data;
+    var steps = disposalSteps();
+    if (where === 'home' && !steps.length) return frag();
+    if (!d) {
+      // A server without disposal answers unknown_op: nothing to say here.
+      return where === 'contracts' && S.disposal.error && S.disposal.errCode !== 'unknown_op'
+        ? h('p.note.is-error', 'Body disposal could not be read: ' + S.disposal.error) : frag();
+    }
+    if (!steps.length) {
+      return where === 'contracts' && d.enabled
+        ? h('p.note', 'Body disposal is on: nobody is disposing of a body right now.') : frag();
+    }
+    var timeout = DISPOSAL_TIMEOUT[d.onTimeout] || String(d.onTimeout || 'paid in full');
+    return card('Body disposal in progress (' + num(steps.length) + ')', frag(
+      h('p.about', 'A verified kill\'s payout waits until the body is dropped off. Each has '
+        + exactSpan(d.limitSeconds) + ' in all; on running out it is ' + timeout + '. Skip finishes one as if the '
+        + 'body was dropped off; Respawn vehicle makes the vehicle again at the spawn spot.'),
+      h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Contract'), h('th', 'Stage'), h('th', 'Time left'), h('th', ''))),
+        h('tbody', steps.map(function (step) {
+          var cid = String(step.contract || '');
+          return h('tr',
+            h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': cid }, cid),
+              h('span.sub', ' payout ' + num(step.slot)),
+              canIdentify() && step.hitman ? h('div.sub.mono', String(step.hitman)) : null),
+            h('td', DISPOSAL_STAGE[step.stage] || String(step.stage || '—'),
+              h('div.sub', 'vehicle ' + (step.vehicle ? 'there' : 'not made'), Number(step.respawns) > 0
+                ? h('span.chip', num(step.respawns) + ' respawn' + (Number(step.respawns) === 1 ? '' : 's')) : null)),
+            h('td.nowrap', exactSpan(step.secondsLeft), step.held ? h('div', h('span.chip.is-warn', 'clock held')) : null),
+            h('td', h('div.inline-form',
+              writeBtn('.is-small', 'dp-skip', { 'data-id': String(step.id), 'data-contract': cid }, 'Skip',
+                'Click again to skip', 'forward'),
+              writeBtn('.is-small.is-ghost', 'dp-respawn', { 'data-id': String(step.id), 'data-contract': cid },
+                'Respawn vehicle', 'Click again to respawn', 'truck'))));
+        })))),
+      answerBox(S.disposal.answers.list)), '.dp-steps',
+      btn('.is-small.is-ghost', 'dp-refresh', {}, 'Refresh', 'rotate'));
+  }
+
+  function disposalWrite(op, data, slot, node) {
+    return write(op, data, 'disposal:' + slot, node).then(function (reply) {
+      if (!reply) return null;
+      S.disposal.answers[slot] = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      loadDisposal();
+      return reply;
+    });
+  }
+
+  ACTIONS['dp-refresh'] = function () { loadDisposal(); };
+  ACTIONS['dp-skip'] = function (node) {
+    var cid = node.getAttribute('data-contract');
+    if (!armed(node, 'Click again: finish the disposal on ' + cid + ' and hand over its payout')) return;
+    disposalWrite('disposalSkip', { id: node.getAttribute('data-id') }, 'list', node);
+  };
+  ACTIONS['dp-respawn'] = function (node) {
+    var cid = node.getAttribute('data-contract');
+    if (!armed(node, 'Click again: make the vehicle for ' + cid + ' again at the spawn spot')) return;
+    disposalWrite('disposalRespawn', { id: node.getAttribute('data-id') }, 'list', node);
+  };
+
+  /** Locations: the two disposal spots, each with Use my position. */
+  function disposalSpotsBody() {
+    var d = S.disposal.data;
+    if (!d) {
+      return S.disposal.error ? (S.disposal.errCode === 'unknown_op' ? empty('This server has no body disposal.')
+        : empty(S.disposal.error)) : loading('Reading the disposal spots…');
+    }
+    var spots = d.spots || {};
+    var pos = S.disposal.pos;
+    return frag(
+      h('p.hint', 'Where the disposal vehicle is made, and where the body is dropped off (Config.Disposal'
+        + (d.enabled ? ', on' : ', off as shipped') + '). Stand there in game and press Use my position, or type the '
+        + 'figures; each save takes two clicks.'),
+      pos ? h('p.note', 'Your position: x ' + fmt(pos.x) + ', y ' + fmt(pos.y) + ', z ' + fmt(pos.z) + ', heading '
+        + fmt(pos.heading, 0) + ' (read ' + ago(S.disposal.posAt) + ')') : null,
+      answerBox(S.disposal.answers.pos),
+      DISPOSAL_SPOTS.map(function (k) {
+        var now = spots[k.id];
+        var pre = 'dsp.' + k.id + '.';
+        return card(frag(icon(k.icon), ' ', k.label), frag(
+          h('p', now ? frag('Now: ', h('span.mono', fmt(now.x) + ', ' + fmt(now.y) + ', ' + fmt(now.z) + ', heading '
+            + fmt(now.h, 0))) : 'Not set: body disposal cannot start a step until it is.'),
+          h('div.toolbar',
+            ['x', 'y', 'z', 'h'].map(function (f) {
+              return field(pre + f, { class: 'is-short', inputmode: 'decimal', placeholder: f === 'h' ? 'heading' : f,
+                'aria-label': f === 'h' ? 'Heading' : f });
+            }),
+            btn('.is-small', 'dsp-mypos', { 'data-value': k.id }, 'Use my position', 'location-crosshairs'),
+            writeBtn('.is-primary.is-small', 'dsp-save', { 'data-value': k.id }, 'Save', 'Click again to save', 'check'),
+            writeBtn('.is-small', 'dsp-here', { 'data-value': k.id }, 'Save where I stand',
+              'Click again: save where you stand', 'street-view'),
+            now ? writeBtn('.is-small.is-danger', 'dsp-clear', { 'data-value': k.id }, 'Clear',
+              'Click again to clear', 'eraser') : null),
+          answerBox(S.disposal.answers['spot:' + k.id])), '.dp-spot');
+      }));
+  }
+
+  function spotName(k) {
+    for (var i = 0; i < DISPOSAL_SPOTS.length; i++) if (DISPOSAL_SPOTS[i].id === k) return DISPOSAL_SPOTS[i].one;
+    return 'the spot';
+  }
+  function spotRefuse(k, text) {
+    disarm();
+    S.disposal.answers['spot:' + k] = { ok: false, text: text };
+    drawOrg();
+  }
+
+  ACTIONS['dsp-mypos'] = function (node) {
+    var k = node.getAttribute('data-value');
+    ask('disposalMyPosition', {}, 'disposalPos').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) { S.disposal.answers.pos = { ok: false, text: words(reply) }; drawOrg(); return; }
+      var pos = reply.data || {};
+      S.disposal.answers.pos = null;
+      S.disposal.pos = pos;
+      S.disposal.posAt = nowSeconds();
+      var pre = 'dsp.' + k + '.';
+      S.forms[pre + 'x'] = fmt(pos.x);
+      S.forms[pre + 'y'] = fmt(pos.y);
+      S.forms[pre + 'z'] = fmt(pos.z);
+      S.forms[pre + 'h'] = fmt(pos.heading, 0);
+      disarm();
+      drawOrg();
+    });
+  };
+  ACTIONS['dsp-save'] = function (node) {
+    var k = node.getAttribute('data-value');
+    var pre = 'dsp.' + k + '.';
+    var t = ['x', 'y', 'z', 'h'].map(function (f) { return trim(S.forms[pre + f]); });
+    if (t.slice(0, 3).some(function (v) { return v === '' || !isFinite(Number(v)); })) {
+      spotRefuse(k, 'Give x, y and z as numbers, or press Use my position.');
+      return;
+    }
+    if (t[3] !== '' && !isFinite(Number(t[3]))) { spotRefuse(k, 'The heading is a number from 0 to 360.'); return; }
+    var data = { spot: k, x: Number(t[0]), y: Number(t[1]), z: Number(t[2]), heading: t[3] === '' ? 0 : Number(t[3]) };
+    var label = 'Click again: save ' + spotName(k) + ' at ' + fmt(data.x) + ', ' + fmt(data.y) + ', ' + fmt(data.z);
+    if (!armed(node, label, ['x', 'y', 'z', 'h'].map(function (f) { return pre + f; }))) return;
+    disposalWrite('disposalSpotSet', data, 'spot:' + k, node).then(function (reply) {
+      if (reply && reply.ok) ['x', 'y', 'z', 'h'].forEach(function (f) { delete S.forms[pre + f]; });
+    });
+  };
+  ACTIONS['dsp-here'] = function (node) {
+    var k = node.getAttribute('data-value');
+    if (!armed(node, 'Click again: save ' + spotName(k) + ' where you stand')) return;
+    disposalWrite('disposalSpotSet', { spot: k, here: true }, 'spot:' + k, node);
+  };
+  ACTIONS['dsp-clear'] = function (node) {
+    var k = node.getAttribute('data-value');
+    if (!armed(node, 'Click again: clear ' + spotName(k))) return;
+    disposalWrite('disposalSpotClear', { spot: k }, 'spot:' + k, node);
+  };
+
+  STAFF_ACTIONS.push(
+    { title: 'Change a reward or give a contract to another hitman', icon: 'sack-dollar', view: 'contracts',
+      go: 'Contracts',
+      text: 'Open the contract: Money, Change reward raises or lowers the collection paid next (added by staff or '
+        + 'charged to the placer), with the figures before it arms. People, Reassign gives it to the hitman you '
+        + 'looked up in Players, taking off whoever is on it.' },
+    { title: 'Help with a body disposal', icon: 'truck', view: 'contracts', go: 'Contracts',
+      text: 'Every body being disposed of is listed on Contracts (and on Home while there is one): Skip pays it as '
+        + 'if dropped off, Respawn vehicle makes the vehicle again. The vehicle spawn and the drop-off are set in '
+        + 'Locations.', also: { view: 'locations', go: 'Locations' } });
+
   /* ---------- Hitman organisation, Boss permissions, Locations ----------
 
      The organisation's staff ops (server/org/staff_ops.lua), each through
@@ -7643,9 +8178,14 @@
     return card('Where the funds are kept', frag(
       h('p.about', 'Now: ' + (now === 'bank' ? 'Renewed-Banking\'s society account' : 'this resource\'s own ledger')
         + (ready ? '.' : ', which is not answering.') + ' Switching moves the balance to the other, on the record.'),
-      h('div.btn-row', writeBtn('', 'org-backend', { 'data-value': other }, 'Switch to ' + otherName,
-        'Click again: move the funds to ' + otherName, 'right-left')),
-      !ready ? h('div.org-abandon',
+      // A switch carries the balance across, so it needs Renewed-Banking
+      // answering on both sides (Funds.switch): while the bank is down the
+      // only way off it is Abandon, and the server refuses a plain switch.
+      h('div.btn-row', writeBtn('', 'org-backend', { 'data-value': other,
+        title: ready ? null : 'The bank is not answering: a switch would carry nothing across. Abandon it below.' },
+        'Switch to ' + otherName, 'Click again: move the funds to ' + otherName, 'right-left', false,
+        ready ? undefined : false)),
+      !ready && now === 'bank' ? h('div.org-abandon',
         h('p.note.is-error', 'The bank is down. Abandon leaves it carrying nothing: the funds start again from $0 in '
           + otherName + ', and whatever the bank holds is not moved or counted. Only do this if the bank will not '
           + 'come back.'),
@@ -8077,6 +8617,8 @@
         : on ? SPOT_KINDS.map(function (k) { return spotCard(k, spots.filter(function (s) { return s.kind === k.id; })); })
         : (d.enabled && !d.loaded ? empty('The organisation is on and not read yet: Hitman organisation, Setup.')
           : offCard('Its places (boss office, sign-up and meeting spots) are set here once it is on.')),
+      h('h3.st-group-title', 'Body disposal'),
+      disposalSpotsBody(),
       h('h3.st-group-title', 'Places in the settings'),
       S.settings.data ? placeSettings() : loading('Reading the settings…'));
   }
@@ -8157,6 +8699,7 @@
       if (!S.settings.data && (view === 'orgsetup' || view === 'locations' || view === 'bplimits' || view === 'bpmatrix')) {
         loadSettings();
       }
+      if (view === 'locations') loadDisposal();
       // The ledger and the log only of an organisation that is on.
       ready.then(function () {
         if (S.section !== view || !orgOn()) return;

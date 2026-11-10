@@ -1026,3 +1026,12 @@ ul, ol { padding: 0; list-style: none; }
 .bp-btn.is-off { color: var(--ink-faint); }
 
 .org-abandon { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.6rem; }
+
+/* The drawer's Change reward and Reassign, and the body disposal steps: an
+   armed confirm names the figures, the hitman or the contract, and wraps
+   inside its card rather than widening it. */
+.ct-reward .btn, .ct-reassign .btn, .dp-steps .btn { max-width: 100%; white-space: normal; height: auto;
+  padding-top: 0.3rem; padding-bottom: 0.3rem; }
+.ct-reward .btn > .lbl, .ct-reward .btn > .cfm, .ct-reassign .btn > .lbl, .ct-reassign .btn > .cfm,
+.dp-steps .btn > .lbl, .dp-steps .btn > .cfm { min-width: 0; overflow-wrap: anywhere; }
+.dp-steps .grid td .sub { display: block; }

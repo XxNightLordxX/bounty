@@ -6471,6 +6471,502 @@ async function main() {
     clean(app, 'org read only');
   })();
 
+  /* ---- the contract drawer: Change reward (rewardPreview, rewardChange) ---- */
+
+  function staffTools() {
+    return { notes: [], removals: [], edits: [], noteMax: 300, removable: true,
+      text: { editable: false, mode: 'freetext', max: 120, edited: false } };
+  }
+  function rewardServer(extra) {
+    return standardServer(Object.assign({
+      contract: contractDetail({ staff: staffTools() }),
+      rewardPreview: function (data) {
+        const base = { max: 100000, slot: 2, reward: 8000, total: 8000, mostLower: 7999, staffAdded: 1000 };
+        if (data.by === undefined) return { ok: true, data: base };
+        const out = Object.assign({}, base, { after: 8000 + data.by });
+        if (data.by < 0) { out.toStaff = Math.min(1000, -data.by); out.toPlacer = -data.by - out.toStaff; }
+        return { ok: true, data: out };
+      },
+      rewardChange: { ok: true, message: 'Reward raised from $8000 to $9500, added by staff.' },
+      reassignPreview: { ok: true, data: { stakeWaived: true, stake: 2500, operatives: ['Ghost'] } },
+      reassignHitman: { ok: true, message: 'Reassigned to Operative #2; 1 operative(s) taken off it.' }
+    }, extra || {}));
+  }
+  async function openDrawer(app) {
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+  }
+  function inDrawer(app, bindName) { return app.drawer().querySelector('[data-bind="' + bindName + '"]'); }
+
+  await (async function () {
+    const app = boot(rewardServer());
+    app.open(ADMIN);
+    await settled();
+    await openDrawer(app);
+    it('RW: no reward figures are asked before the Money tab opens', function () {
+      eq(app.requests('rewardPreview').length, 0);
+    });
+    app.tab('money');
+    await settled();
+    it('RW: the Money tab reads the reward as it is, and shows its figures', function () {
+      eq(app.requests('rewardPreview').length, 1);
+      eq(app.last('rewardPreview').data, { id: 'ct00000001' });
+      const text = app.text(app.drawer());
+      has(text, 'Change reward');
+      has(text, 'Its reward');
+      has(text, '$8,000');
+      has(text, 'Added by staff');
+      has(text, '$1,000');
+      has(text, '$100,000');
+    });
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '1500');
+    app.fire(250);
+    await settled();
+    it('RW: typing an amount asks what it would do, and draws the server\'s figures', function () {
+      eq(app.last('rewardPreview').data, { id: 'ct00000001', by: 1500 });
+      const box = app.byId('dr-rw-preview');
+      has(app.text(box), '$8,000');
+      has(app.text(box), '$9,500');
+      has(app.text(box), 'added by staff (bank)');
+    });
+    const change = app.button('Change reward', app.drawer());
+    app.click(change);
+    await settled();
+    it('RW: no reason, nothing sent and nothing armed', function () {
+      eq(app.requests('rewardChange').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'Give a reason');
+    });
+    app.type(inDrawer(app, 'dr.rw.reason.ct00000001'), 'ticket 7');
+    const armedChange = app.button('Change reward', app.drawer());
+    app.click(armedChange);
+    await settled();
+    it('RW: the first click arms, naming the figures before and after and who pays', function () {
+      eq(app.requests('rewardChange').length, 0);
+      has(app.text(armedChange), 'Click again: raise it from $8,000 to $9,500, added by staff (bank)');
+    });
+    app.click(armedChange);
+    await settled();
+    it('RW: the second sends the signed amount, who pays, the account and the reason', function () {
+      eq(app.last('rewardChange').data, { id: 'ct00000001', by: 1500, reason: 'ticket 7', from: 'staff', account: 'bank' });
+      has(app.text(app.drawer().querySelector('.answer')), 'Reward raised from $8000 to $9500');
+    });
+
+    // Charged to the placer, from cash.
+    app.click(app.button('Charged to the placer', app.drawer()));
+    app.click(app.button('Cash', app.drawer()));
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '2000');
+    app.type(inDrawer(app, 'dr.rw.reason.ct00000001'), 'their idea');
+    app.fire(250);
+    await settled();
+    const placer = app.button('Change reward', app.drawer());
+    app.click(placer);
+    it('RW: a raise charged to the placer says so on the armed button', function () {
+      has(app.text(placer), 'Click again: raise it from $8,000 to $10,000, charged to the placer\'s cash');
+    });
+    app.click(placer);
+    await settled();
+    it('RW: and sends from placer and cash', function () {
+      eq(app.last('rewardChange').data, { id: 'ct00000001', by: 2000, reason: 'their idea', from: 'placer', account: 'cash' });
+    });
+
+    // Lowering.
+    app.click(app.button('Lower', app.drawer()));
+    await settled();
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '1500');
+    app.type(inDrawer(app, 'dr.rw.reason.ct00000001'), 'too high');
+    app.fire(250);
+    await settled();
+    it('RW: a lowering previews what comes off staff\'s lines and what goes back to the placer', function () {
+      eq(app.last('rewardPreview').data, { id: 'ct00000001', by: -1500 });
+      const box = app.text(app.byId('dr-rw-preview'));
+      has(box, '$6,500');
+      has(box, '$1,000 of what staff added comes off');
+      has(box, '$500 goes back to the placer');
+      lacks(app.text(app.drawer()), 'Charged to the placer', 'no payer for a lowering');
+    });
+    const lower = app.button('Change reward', app.drawer());
+    app.click(lower);
+    app.click(lower);
+    await settled();
+    it('RW: and sends a negative amount with no payer or account', function () {
+      has(app.text(lower), 'Change reward');
+      eq(app.last('rewardChange').data, { id: 'ct00000001', by: -1500, reason: 'too high' });
+    });
+
+    // Clicked before the figures arrived: they are read first, nothing armed.
+    const asked = app.requests('rewardPreview').length;
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '700');
+    app.type(inDrawer(app, 'dr.rw.reason.ct00000001'), 'r');
+    const early = app.button('Change reward', app.drawer());
+    const sentBefore = app.requests('rewardChange').length;
+    app.click(early);
+    await settled();
+    it('RW: a click before the figures for that amount reads them first, arming nothing', function () {
+      eq(app.requests('rewardPreview').length, asked + 1);
+      eq(app.last('rewardPreview').data, { id: 'ct00000001', by: -700 });
+      eq(app.requests('rewardChange').length, sentBefore);
+      falsy(app.drawer().querySelector('.is-armed'), 'nothing armed');
+    });
+    clean(app, 'change reward');
+  })();
+
+  await (async function () {
+    const app = boot(rewardServer({
+      rewardPreview: function (data) {
+        if (data.by === undefined) return { ok: true, data: { max: 1000, slot: 1, reward: 5000, mostLower: 4999, staffAdded: 0 } };
+        return { ok: true, data: { max: 1000, slot: 1, reward: 5000, after: 5000 + data.by,
+          refused: 'claim_running', message: 'A payout on it is being settled right now. Try again in a moment.' } };
+      }
+    }));
+    app.open(ADMIN);
+    await settled();
+    await openDrawer(app);
+    app.tab('money');
+    await settled();
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '5000');
+    app.type(inDrawer(app, 'dr.rw.reason.ct00000001'), 'x');
+    app.click(app.button('Change reward', app.drawer()));
+    await settled();
+    it('RW: over the most one change moves is refused before anything is asked', function () {
+      eq(app.requests('rewardChange').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'At most $1,000 at once');
+    });
+    app.type(inDrawer(app, 'dr.rw.amt.ct00000001'), '500');
+    app.fire(250);
+    await settled();
+    app.click(app.button('Change reward', app.drawer()));
+    await settled();
+    it('RW: a refusal in the figures is said, and the button never arms', function () {
+      has(app.text(app.byId('dr-rw-preview')), 'being settled right now');
+      has(app.text(app.drawer().querySelector('.answer')), 'being settled right now');
+      eq(app.requests('rewardChange').length, 0);
+      falsy(app.drawer().querySelector('.is-armed'));
+    });
+    clean(app, 'change reward refused');
+  })();
+
+  await (async function () {
+    const app = boot(rewardServer());
+    app.open(READER);
+    await settled();
+    await openDrawer(app);
+    app.tab('money');
+    await settled();
+    it('RW: a reader sees the figures and a disabled Change reward', function () {
+      has(app.text(app.drawer()), '$8,000');
+      truthy(app.button('Change reward', app.drawer()).disabled, 'disabled without the staff ACE');
+    });
+    app.tab('people');
+    await settled();
+    it('RA: and a disabled Reassign once a hitman is looked up (or the way to look one up)', function () {
+      has(app.text(app.drawer()), 'Reassign to another hitman');
+    });
+    clean(app, 'reader drawer');
+  })();
+
+  /* ---- the contract drawer: Reassign (reassignPreview, reassignHitman) ---- */
+  await (async function () {
+    const app = boot(rewardServer());
+    app.open(ADMIN);
+    await settled();
+    await openDrawer(app);
+    app.tab('people');
+    await settled();
+    it('RA: with nobody looked up, the card says to look the hitman up first, and asks nothing', function () {
+      has(app.text(app.drawer()), 'Look the hitman up in Players first');
+      truthy(app.button('Find the hitman in Players', app.drawer()));
+      eq(app.requests('reassignPreview').length, 0);
+    });
+    app.click(app.button('Find the hitman in Players', app.drawer()));
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    app.tab('people');
+    await settled();
+    it('RA: with a player looked up, it checks them by the lookup\'s handle and says who comes off', function () {
+      eq(app.last('reassignPreview').data, { id: 'ct00000001', ref: 'p7_424242' });
+      const text = app.text(app.drawer());
+      has(text, 'Dana Reyes');
+      has(text, 'Taken off it: Ghost');
+      has(text, 'Their stake is waived');
+    });
+    app.click(app.button('Reassign', app.drawer()));
+    await settled();
+    it('RA: no reason, nothing sent', function () {
+      eq(app.requests('reassignHitman').length, 0);
+      has(app.text(app.drawer().querySelector('.answer')), 'Give a reason');
+    });
+    app.type(inDrawer(app, 'dr.ra.reason.ct00000001'), 'ticket 12');
+    app.click(app.button('Return the stakes', app.drawer()));
+    app.click(app.button('They may take it again', app.drawer()));
+    const go = app.button('Reassign', app.drawer());
+    app.click(go);
+    await settled();
+    it('RA: the first click arms, naming the hitman and how many come off', function () {
+      eq(app.requests('reassignHitman').length, 0);
+      has(app.text(go), 'Click again: give it to Dana Reyes, taking off 1 operative');
+    });
+    app.click(go);
+    await settled();
+    it('RA: the second sends the lookup handle, the reason, the bar and the stakes', function () {
+      eq(app.last('reassignHitman').data, { id: 'ct00000001', ref: 'p7_424242', reason: 'ticket 12', block: false,
+        returnStake: true });
+      has(app.text(app.drawer().querySelector('.answer')), 'Reassigned to Operative #2');
+    });
+    clean(app, 'reassign');
+  })();
+
+  await (async function () {
+    const app = boot(rewardServer({
+      reassignPreview: { ok: true, data: { stakeWaived: false, stake: 2500, operatives: {},
+        refused: 'self_target', message: 'That player is its target.' } }
+    }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    await openDrawer(app);
+    app.tab('people');
+    await settled();
+    app.type(inDrawer(app, 'dr.ra.reason.ct00000001'), 'x');
+    app.click(app.button('Reassign', app.drawer()));
+    await settled();
+    it('RA: a hitman the server would refuse is said so, the stake as charged, and nothing arms or is sent', function () {
+      has(app.text(app.drawer()), 'That player is its target.');
+      has(app.text(app.drawer()), 'They put up the $2,500 stake');
+      has(app.text(app.drawer()), 'Nobody is on it now.');
+      eq(app.requests('reassignHitman').length, 0);
+      falsy(app.drawer().querySelector('.is-armed'));
+    });
+    clean(app, 'reassign refused');
+  })();
+
+  /* ---- body disposal: the steps on Contracts and Home, the spots in Locations ---- */
+  function disposalServer(extra) {
+    const server = standardServer(Object.assign({
+      orgGet: orgOff(),
+      disposalList: { ok: true, data: { enabled: true, limitSeconds: 1800, onTimeout: 'reduced',
+        spots: { vehicle: { x: 1.5, y: 2, z: 3, h: 90 } },
+        steps: [{ id: 'disposal:ct00000001:1', contract: 'ct00000001', slot: 1, hitman: 'HITMAN01', stage: 'body',
+          secondsLeft: 1510, held: true, vehicle: true, respawns: 1, spent: 290 }] } },
+      disposalSkip: { ok: true, message: 'Finished: the payout is being handed over.' },
+      disposalRespawn: { ok: true, message: 'The vehicle is back at the spawn spot.' },
+      disposalMyPosition: { ok: true, data: { x: 321.04, y: 654, z: 31, heading: 182 } },
+      disposalSpotSet: { ok: true, message: 'Spot saved.' },
+      disposalSpotClear: { ok: true, message: 'Spot cleared.' }
+    }, extra || {}));
+    return server;
+  }
+
+  await (async function () {
+    const app = boot(disposalServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    it('DP: Contracts lists every body being disposed of, with the exact time left and its clock', function () {
+      eq(app.requests('disposalList').length, 1);
+      const text = app.main();
+      has(text, 'Body disposal in progress (1)');
+      has(text, 'Body not loaded yet');
+      has(text, '25 min 10 s');
+      has(text, 'clock held');
+      has(text, '1 respawn');
+      has(text, 'paid in part, the rest back to the placer');
+      lacks(text, 'HITMAN01', 'no hitman without the identity ACE');
+    });
+    const skip = app.button('Skip');
+    app.click(skip);
+    await settled();
+    it('DP: Skip arms, naming the contract and what it does', function () {
+      eq(app.requests('disposalSkip').length, 0);
+      has(app.text(skip), 'Click again: finish the disposal on ct00000001 and hand over its payout');
+    });
+    app.click(skip);
+    await settled();
+    it('DP: and sends the step, then reads the list again', function () {
+      eq(app.last('disposalSkip').data, { id: 'disposal:ct00000001:1' });
+      eq(app.requests('disposalList').length, 2);
+      has(app.main(), 'Finished: the payout is being handed over.');
+    });
+    const respawn = app.button('Respawn vehicle');
+    app.click(respawn);
+    it('DP: Respawn vehicle arms naming the contract', function () {
+      has(app.text(respawn), 'Click again: make the vehicle for ct00000001 again at the spawn spot');
+    });
+    app.click(respawn);
+    await settled();
+    it('DP: and sends the step', function () { eq(app.last('disposalRespawn').data, { id: 'disposal:ct00000001:1' }); });
+    app.click(app.$$('[data-act="contract"]').filter(function (n) { return n.tagName === 'BUTTON'; })[0]);
+    await settled();
+    it('DP: its contract id opens the contract', function () { eq(app.last('contract').data, { id: 'ct00000001' }); });
+    clean(app, 'disposal on contracts');
+  })();
+
+  await (async function () {
+    const app = boot(disposalServer(), { fresh: true });
+    app.open(FULL);
+    await settled();
+    it('DP: Home lists the steps too while there is one, the hitman with the identity ACE', function () {
+      truthy(app.requests('disposalList').length >= 1, 'read on Home');
+      has(app.main(), 'Body disposal in progress (1)');
+      has(app.main(), 'HITMAN01');
+    });
+    clean(app, 'disposal on home');
+
+    const quiet = boot(disposalServer({ disposalList: { ok: true, data: { enabled: true, steps: {}, spots: {},
+      limitSeconds: 1800, onTimeout: 'pay' } } }), { fresh: true });
+    quiet.open(ADMIN);
+    await settled();
+    it('DP: and nothing on Home while nobody is disposing of a body', function () {
+      lacks(quiet.main(), 'Body disposal');
+    });
+    quiet.nav('contracts');
+    await settled();
+    it('DP: Contracts says it is on with nobody at it', function () {
+      has(quiet.main(), 'Body disposal is on: nobody is disposing of a body right now.');
+    });
+    clean(quiet, 'disposal quiet');
+
+    const old = boot(standardServer({ orgGet: orgOff() }));
+    old.open(ADMIN);
+    await settled();
+    old.nav('contracts');
+    await settled();
+    old.nav('locations');
+    await settled();
+    it('DP: a server without disposal: nothing on Contracts, and Locations says it has none', function () {
+      has(old.main(), 'This server has no body disposal.');
+      eq(old.$$('[data-act="dp-skip"]').length, 0);
+    });
+    clean(old, 'no disposal');
+  })();
+
+  await (async function () {
+    const app = boot(disposalServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('locations');
+    await settled();
+    it('DP: Locations has the disposal vehicle spawn and the drop-off, each as it is now', function () {
+      const text = app.main();
+      has(text, 'Disposal vehicle spawn');
+      has(text, 'Body drop-off');
+      has(text, 'Now: 1.5, 2, 3, heading 90');
+      has(text, 'Not set: body disposal cannot start a step until it is.');
+    });
+    const spotButtons = function (act, k) {
+      return app.$$('[data-act="' + act + '"]').filter(function (b) { return b.getAttribute('data-value') === k; })[0];
+    };
+    app.click(spotButtons('dsp-save', 'drop'));
+    await settled();
+    it('DP: Save with no figures sends nothing', function () {
+      eq(app.requests('disposalSpotSet').length, 0);
+      has(app.main(), 'Give x, y and z as numbers');
+    });
+    app.click(spotButtons('dsp-mypos', 'drop'));
+    await settled();
+    it('DP: Use my position asks the server where staff stand and fills the drop-off', function () {
+      eq(app.requests('disposalMyPosition').length, 1);
+      eq(app.requests('orgMyPosition').length, 0, 'the disposal\'s own read');
+      eq(app.$('[data-bind="dsp.drop.x"]').value, '321');
+      eq(app.$('[data-bind="dsp.drop.h"]').value, '182');
+    });
+    const save = spotButtons('dsp-save', 'drop');
+    app.click(save);
+    it('DP: Save arms naming the spot and the point', function () {
+      eq(app.requests('disposalSpotSet').length, 0);
+      has(app.text(save), 'Click again: save the drop-off at 321, 654, 31');
+    });
+    app.click(save);
+    await settled();
+    it('DP: and sends the spot with its figures', function () {
+      eq(app.last('disposalSpotSet').data, { spot: 'drop', x: 321, y: 654, z: 31, heading: 182 });
+    });
+    const here = spotButtons('dsp-here', 'vehicle');
+    app.click(here);
+    it('DP: Save where I stand arms naming the spot', function () {
+      has(app.text(here), 'Click again: save the vehicle spawn where you stand');
+    });
+    app.click(here);
+    await settled();
+    it('DP: and sends here', function () { eq(app.last('disposalSpotSet').data, { spot: 'vehicle', here: true }); });
+    const clear = spotButtons('dsp-clear', 'vehicle');
+    app.click(clear);
+    app.click(clear);
+    await settled();
+    it('DP: Clear takes two clicks and sends the spot', function () {
+      eq(app.last('disposalSpotClear').data, { spot: 'vehicle' });
+    });
+    clean(app, 'disposal spots');
+
+    const reader = boot(disposalServer());
+    reader.open(READER);
+    await settled();
+    reader.nav('locations');
+    await settled();
+    it('DP: a reader sees the spots and every disposal write disabled', function () {
+      has(reader.main(), 'Disposal vehicle spawn');
+      ['dsp-save', 'dsp-here', 'dsp-clear'].forEach(function (act) {
+        reader.$$('[data-act="' + act + '"]').forEach(function (b) { truthy(b.disabled, act + ' disabled'); });
+      });
+      truthy(!reader.$$('[data-act="dsp-mypos"]')[0].disabled, 'Use my position is a read');
+    });
+    reader.nav('contracts');
+    await settled();
+    it('DP: and Skip and Respawn disabled', function () {
+      truthy(reader.button('Skip').disabled);
+      truthy(reader.button('Respawn vehicle').disabled);
+    });
+    clean(reader, 'disposal reader');
+  })();
+
+  /* ---- where the funds are kept, as the server switches them ---- */
+  await (async function () {
+    const app = boot(orgServer({ orgFunds: { ok: true, data: { balance: 900, backend: 'internal', ready: true, rows: [] } } }));
+    app.open(FULL);
+    await settled();
+    app.nav('orgfunds');
+    await settled();
+    it('FB: on the ledger: Switch to Renewed-Banking, enabled, and no Abandon', function () {
+      const sw = app.$$('[data-act="org-backend"]');
+      eq(sw.length, 1);
+      eq(sw[0].getAttribute('data-value'), 'bank');
+      falsy(sw[0].disabled);
+      lacks(app.main(), 'Abandon the bank');
+    });
+    app.server.orgFunds = { ok: true, data: { backend: 'bank', ready: false, rows: [] } };
+    app.click(app.button('Refresh'));
+    await settled();
+    it('FB: on a bank that is down: the plain switch is disabled, saying why, and Abandon is the way off', function () {
+      const sw = app.$$('[data-act="org-backend"]');
+      const plain = sw.filter(function (b) { return b.getAttribute('data-how') !== 'abandon'; })[0];
+      const abandon = sw.filter(function (b) { return b.getAttribute('data-how') === 'abandon'; })[0];
+      truthy(plain.disabled, 'a switch would be refused bank_down');
+      has(plain.getAttribute('title'), 'Abandon it below');
+      eq(abandon.getAttribute('data-value'), 'internal');
+      falsy(abandon.disabled);
+    });
+    app.server.orgFunds = { ok: true, data: { backend: 'bank', ready: true, rows: [] } };
+    app.click(app.button('Refresh'));
+    await settled();
+    const back = app.$$('[data-act="org-backend"]')[0];
+    app.click(back);
+    app.click(back);
+    await settled();
+    it('FB: on a bank that answers: Switch to the ledger sends internal, no abandon', function () {
+      eq(app.last('orgFundsBackend').data, { backend: 'internal' });
+      lacks(app.main(), 'Abandon the bank');
+    });
+    clean(app, 'funds backend');
+  })();
+
   /* ---- a recovery finishing enables the write buttons where they are ---- */
   await (async function () {
     const server = standardServer({ overview: overview({ recovery: 'recovering' }) });

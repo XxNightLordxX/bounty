@@ -892,8 +892,14 @@ local function AddOps(panel)
         disposalList = READ, disposalSkip = WRITE, disposalRespawn = WRITE,
         disposalSpotSet = WRITE, disposalSpotClear = WRITE, disposalMyPosition = READ,
     }
-    panel.extend('disposalList', READ, function()
-        return true, nil, nil, { enabled = Disposal.enabled(), steps = Disposal.list(),
+    panel.extend('disposalList', READ, function(src)
+        -- Who the hitman is goes only to staff with the identity ACE, as
+        -- every other list of the panel's names them.
+        local steps = Disposal.list()
+        if not (panel.identifies and panel.identifies(src)) then
+            for _, step in ipairs(steps) do step.hitman = nil end
+        end
+        return true, nil, nil, { enabled = Disposal.enabled(), steps = steps,
             spots = { vehicle = Disposal.spot('vehicle'), drop = Disposal.spot('drop') },
             limitSeconds = LimitSeconds(), onTimeout = Cfg().OnTimeout or 'pay' }
     end)

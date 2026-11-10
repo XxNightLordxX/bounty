@@ -2281,6 +2281,13 @@ do
     for name in (read('crimson-hitman/server/org/staff_ops.lua') or ''):gmatch('\nOPS%.([%a_][%w_]*)%s*=') do
         extra[name] = true
     end
+    -- And the other modules' (Change reward, Reassign, body disposal),
+    -- each added with panel.extend('<op>', ...).
+    for _, file in ipairs({ 'staff_reward', 'staff_reassign', 'disposal' }) do
+        for name in (read('crimson-hitman/server/' .. file .. '.lua') or ''):gmatch("%.extend%('([%a_][%w_]*)'") do
+            extra[name] = true
+        end
+    end
     for _, call in ipairs({ "ask%('([%w_]+)'", "write%('([%w_]+)'" }) do
         for name in code:gmatch(call) do
             used[name] = true

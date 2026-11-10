@@ -2199,15 +2199,25 @@ function Contracts.acceptHeld(actor, contractId, anonymous, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
-    if Contracts.acceptGate then
-        local ran, refused, data = pcall(Contracts.acceptGate, actor, contractId, opts)
-        if ran and refused then return false, refused, data end
-    end
-    local out = table.pack(Contracts.serialized({ 'hitman:' .. tostring(actor.cid) },
-        acceptUnlocked, actor, contractId, anonymous, opts))
+    -- The organisation's gate as Contracts.accept asks it: inside this
+    -- hitman's hold, a gate that raised refusing, and the cut it checked
+    -- the one frozen (Org.afterAccept, told inside the same hold).
+    local gate = {}
+    local out = table.pack(Contracts.serialized({ 'hitman:' .. tostring(actor.cid) }, function()
+        if Contracts.acceptGate then
+            local ran, refused, data = pcall(Contracts.acceptGate, actor, contractId, opts, gate)
+            if not ran then
+                Log.problem(('the organisation\'s accept gate raised for %s: %s'):format(contractId, tostring(refused)))
+                return false, CH.ERR.SERVER_ERROR
+            end
+            if refused then return false, refused, data end
+        end
+        local result = table.pack(acceptUnlocked(actor, contractId, anonymous, opts))
+        if result[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId, gate) end
+        return table.unpack(result, 1, result.n)
+    end))
     if out[1] and Contracts.onChanged then Contracts.onChanged() end
     if out[1] and Contracts.onAccepted then pcall(Contracts.onAccepted, contractId, actor.cid) end
-    if out[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId) end
     return table.unpack(out, 1, out.n)
 end
 

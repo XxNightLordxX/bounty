@@ -267,14 +267,14 @@ can do what* (every ACE, and how to grant it).
 
 | Section | Tabs | Use it to |
 |---|---|---|
-| **Home** | Inbox, Overview, Announce | The inbox lists what waits for staff in one place, with a chip and a count for each: **Needs review** (refund, pay or dismiss), **Money waiting** (escrow lines left for you to settle: Pay, Pay amount, Return, Delivered) and the open **Alerts** (Acknowledge). The overview counts contracts, operatives, money held and owed, and who is frozen, suspended or protected, with the setup problems for staff who can change things. Announce sends one notice to every hitman holding a contract, or everybody with the app |
+| **Home** | Inbox, Overview, Announce | The inbox lists what waits for staff in one place, with a chip and a count for each: **Needs review** (refund, pay or dismiss), **Money waiting** (escrow lines left for you to settle: Pay, Pay amount, Return, Delivered) and the open **Alerts** (Acknowledge); and, while a body is being disposed of, every such step with **Skip** and **Respawn vehicle**. The overview counts contracts, operatives, money held and owed, and who is frozen, suspended or protected, with the setup problems for staff who can change things. Announce sends one notice to every hitman holding a contract, or everybody with the app |
 | **Players** | Find & summary, then for the player looked up Contracts, Measures, Money, Playtime, History, *Why can't they see…*; and Frozen, Suspended, Protected | Look a player up (player id, citizen id or name; recent lookups are one click). Measures: **Freeze**, **Suspend**, **Protect**, and their standing in Target limits. Money: what they are owed, notices for their next login, **Pay**. *Why can't they see…* runs the diagnosis as them. The three lists hold everybody frozen, suspended or protected now, each with **Unfreeze** or **Lift** |
-| **Contracts** | All contracts | Search and filter, then open one. The drawer has tabs: **Summary** (terms, the deadline with **Extend** / **Shorten**, open proposals), **Money** (lines waiting for staff, payouts, escrow lines; its tab counts the lines waiting), **People** (operatives, **Remove an operative**, *As a player sees it*, Whois), **Notes & text** (staff notes, **Edit text**) and **Record** (timeline, export). **Void** is under **More** |
+| **Contracts** | All contracts | Search and filter, then open one. Above the list, every body being disposed of ([body disposal](#mission-steps)) with the exact time left, **Skip** and **Respawn vehicle**. The drawer has tabs: **Summary** (terms, the deadline with **Extend** / **Shorten**, open proposals), **Money** (lines waiting for staff, payouts, **Change reward** with the server's figures before it arms, escrow lines; its tab counts the lines waiting), **People** (operatives, **Remove an operative**, **Reassign to another hitman** looked up in Players, *As a player sees it*, Whois), **Notes & text** (staff notes, **Edit text**) and **Record** (timeline, export). **Void** is under **More** |
 | **Target limits** | Defaults, Per job, Per player, Contracts on someone | See [Target limits](#target-limits) |
 | **Game rules** | Areas, Changed from the panel, Change history | Every rules and features setting by the area of the game it is about (who can use the app, placing contracts, anonymity, rewards, completing, buyouts, informants, police, messages, roleplay extras, staff tools): an area's switches first, then its numbers and lists. Chips narrow it to **Switches**, **Timers**, **Money**, **Limits**, **Lists** or **Changed**, across every area when none is picked. A row shows its label with its unit, its control and Save or Reset; **Details** shows its `Config` key, what it does, what happens to things under way and where its value comes from. **Undo all panel changes** is on *Changed from the panel*; every change, with **Undo**, on *Change history* |
 | **Hitman organisation** | Setup, Roles & pay, Members, Applications, Funds & cuts, Contract access, Notices, Org audit | See [Organisation](#organisation). Off as shipped: every tab is one card saying so, with its switch |
 | **Boss permissions** | Matrix, Limits, Delegation & office, Grant history | The ceiling on what bosses may do: powers by boss role and by one boss (**Allow**, **Deny** or **Inherit role**), every change listed before one **Save** that sends them together; **Revoke all** and **Copy from** per column; each power's limits; which powers need the boss office; every grant, with **Undo** on a role's |
-| **Locations** | Map points | The organisation's places (boss office, sign-up, meeting and handover spots, NPC spots), and the places that are settings (broker and informant NPC places, tip safe zones, rumour districts, witness areas, the prison zone). **Use my position** fills a row from where your character stands, read by the server |
+| **Locations** | Map points | The organisation's places (boss office, sign-up, meeting and handover spots, NPC spots), body disposal's vehicle spawn and drop-off (**Save**, **Save where I stand**, **Clear**), and the places that are settings (broker and informant NPC places, tip safe zones, rumour districts, witness areas, the prison zone). **Use my position** fills a row from where your character stands, read by the server |
 | **Logs** | Audit log, Alerts | Search the audit log (and flush it); acknowledge alerts, see where Discord stands, send a test alert |
 | **Developer** | Health, Engine settings, Console, Test tools | Storage, recovery, kill photos, slow jobs and the diagnosis; debug, storage, rate limits and the read-only values; the console; **Bring timers forward** (test servers) and **Flush the audit log** |
 
@@ -765,8 +765,9 @@ be handed over at the kill instead (0 as shipped: all at the drop-off).
 #### Mission steps requests (admin panel)
 
 Through the panel's one way in; reads need a staff ACE, writes `crimson.admin`
-itself. The page for them comes with the panel rebuild's Locations section;
-the ops answer now.
+itself. The page draws them on Contracts and Home (the steps, **Skip**,
+**Respawn vehicle**) and in Locations (the two spots, **Use my position**);
+who the hitman is comes only with `crimson.identity`.
 
 | Op | Level | What it does |
 |---|---|---|
@@ -1525,7 +1526,14 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, Confirm handover, Change reward, Reassign (newest)**
+**1.1.0, the panel's reward, reassign and disposal controls (newest)**
+
+- The contract drawer's **Money** tab has **Change reward**: raise or lower by an amount, added by staff or charged to the placer, from cash or bank, with a reason; the server's figures (the reward before and after, what comes off staff's part and what goes back to the placer) are drawn before the button arms, and the armed button names them. **People** has **Reassign to another hitman**: the hitman looked up in Players, who comes off and whether the stake is waived said first, with the bar and the stakes to choose.
+- **Mission steps** (step markers, on, and body disposal, off as shipped): see [Mission steps](#mission-steps). Contracts, and Home while there is one, list every body being disposed of with **Skip** and **Respawn vehicle**; **Locations** sets the disposal vehicle spawn and the drop-off, with **Use my position**.
+- **Where the funds are kept** offers only **Abandon the bank** while Renewed-Banking is not answering, as the server allows nothing else then.
+- A staff assignment freezes the organisation cut its gate checked and refuses when the gate cannot answer, as Accept does; a declined or unconfirmed handover takes its circle off the map at once; the step-marker and body-disposal settings sit under *Completing a contract* in Game rules.
+
+**1.1.0, Confirm handover, Change reward, Reassign**
 
 - **Confirm handover** (`Config.Kidnap.PlacerConfirms`, off as shipped): the placer taps Confirm handover on their card before a live handover pays; a decline or no answer pays nothing and the hitman may arm again. See Roles and how a contract works, Confirm handover.
 - The contract view's staff tools gain **Change reward** (raise, added by staff or charged to the placer, or lower, back to whoever funded it) and **Reassign** (to a hitman looked up under Players, through every Accept check). See Optional features, Staff tools, and Admin panel, Reward and reassign requests.

@@ -374,7 +374,12 @@ function MissionSteps.init(deps)
     end
     -- The handover: drawn as it is armed, off as it ends.
     After(kidnap, 'arm', function(out, contractId, hitmanCid) NoteArm(out, contractId, hitmanCid) end)
-    for _, name in ipairs({ 'cancel', 'clearContract', 'clearPlayer' }) do After(kidnap, name, refresh) end
+    -- And a handover the placer declined, or did not confirm in time
+    -- (Config.Kidnap.PlacerConfirms): the countdown is gone with no tick
+    -- after it, so its circle is taken off here.
+    for _, name in ipairs({ 'cancel', 'clearContract', 'clearPlayer', 'answer', 'notConfirmed' }) do
+        After(kidnap, name, refresh)
+    end
     After(kidnap, 'tick', function() if next(Arms) ~= nil then MissionSteps.refresh() end end)
     -- The guard's pin: drawn as the job is taken, moved with it, off as it ends.
     for _, name in ipairs({ 'accept', 'movePin', 'cancel', 'sweep', 'prune' }) do After(protection, name, refresh) end

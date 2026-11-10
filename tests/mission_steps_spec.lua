@@ -163,8 +163,9 @@ end)
 describe('the handover circle', function()
     local AT = { x = 200.0, y = 200.0, z = 30.0 }
 
-    local function armed()
+    local function armed(configure)
         local s, f = stack()
+        if configure then configure() end
         local c = taken(s, f)
         for _, src in ipairs({ 1, 2, 3 }) do at(src, AT) end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
@@ -203,6 +204,19 @@ describe('the handover circle', function()
         local _, cleared = sent()
         truthy(cleared[1] and cleared[1]['handover:' .. c.id])
         truthy(cleared[3] and cleared[3]['handover:' .. c.id])
+    end)
+
+    it('comes off for both when the placer declines it (Config.Kidnap.PlacerConfirms)', function()
+        local s, f, c = armed(function() Config.Kidnap.PlacerConfirms = true end)
+        local ticks = math.floor((Config.Kidnap.CountdownSeconds * 1000) / Config.Kidnap.TickMs) + 2
+        for _ = 1, ticks do s.kidnap.tick(Config.Kidnap.TickMs) end
+        truthy(s.kidnap.placerConfirm(c.id), 'waiting on the placer')
+        Env.clientEvents = {}
+        truthy(s.kidnap.answer(c.id, f.creator.cid, false), 'declined')
+        eq(s.kidnap.activeCount(), 0, 'no countdown left, so no tick after it')
+        local _, cleared = sent()
+        truthy(cleared[1] and cleared[1]['handover:' .. c.id], 'the placer\'s circle')
+        truthy(cleared[3] and cleared[3]['handover:' .. c.id], 'the hitman\'s circle')
     end)
 
     it('is not drawn with its switch off', function()
