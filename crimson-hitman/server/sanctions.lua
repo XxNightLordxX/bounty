@@ -119,6 +119,26 @@ function Sanctions.suspended(cid) return current('suspend', cid) end
 ---@return table|nil
 function Sanctions.protected(cid) return current('protect', cid) end
 
+--- Every suspension or protection in force now, newest first: the admin
+--- panel's Suspended and Protected lists. One whose time has passed is not
+--- listed, before the tick ends it.
+---@param kind string 'suspend' | 'protect'
+---@return table[] rows as the store keeps them
+function Sanctions.listOpen(kind)
+    local out = {}
+    if not KINDS[kind] or (counts[kind] or 0) == 0 then return out end
+    for cid in pairs(open[kind]) do
+        local row = current(kind, cid)
+        if row then out[#out + 1] = row end
+    end
+    table.sort(out, function(a, b)
+        local x, y = tonumber(a.created_at) or 0, tonumber(b.created_at) or 0
+        if x ~= y then return x > y end
+        return tostring(a.cid) < tostring(b.cid)
+    end)
+    return out
+end
+
 --- How many players are suspended right now: the daily summary's count
 --- (server/summary.lua). One whose time has passed is not, before the tick
 --- ends it.

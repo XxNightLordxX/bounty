@@ -69,6 +69,8 @@ local OPS = {
     -- Suspending a player from contracts, and protecting one from them
     -- (server/sanctions.lua): a moderator's, as the freeze is.
     suspend = MOD, unsuspend = MOD, protect = MOD, unprotect = MOD,
+    -- Everybody suspended or protected now, as the frozen list is: a read.
+    sanctions = READ,
     -- Paying a player by hand (server/payments.lua): money staff choose.
     manualPay = WRITE,
     -- The staff tools: a notice to every hitman (a write, asked twice on
@@ -961,6 +963,13 @@ local function buildOverview()
     local players, unknown = 0, false
     if deps.freeze then players, unknown = deps.freeze.count() end
     out.frozen = { players = players or 0, unknown = unknown == true or nil }
+    -- And everybody suspended or protected now (server/sanctions.lua):
+    -- counts only, for the overview; the lists are the sanctions op's.
+    if deps.sanctions and deps.sanctions.listOpen then
+        local okS, suspended = pcall(deps.sanctions.listOpen, 'suspend')
+        local okP, protected = pcall(deps.sanctions.listOpen, 'protect')
+        out.sanctions = { suspended = okS and #suspended or nil, protected = okP and #protected or nil }
+    end
     -- The whole app paused by staff (Config.Staff.AppPaused), and since when.
     out.appPaused = deps.freeze and deps.freeze.appPausedSince and deps.freeze.appPausedSince() or nil
     return out
@@ -2022,6 +2031,34 @@ H.frozen = function(src)
     return true, nil, nil, { rows = rows }
 end
 
+--- Everybody suspended from contracts and everybody protected from them,
+--- now, newest first: Players' Suspended and Protected lists. Each row
+--- carries the list's handle (an 'f' one, as the frozen list's), so Lift on
+--- a row names them by it; the citizen id and who set it only with
+--- IdentityAce.
+H.sanctions = function(src)
+    local Sanctions = deps.sanctions
+    if not Sanctions or not Sanctions.listOpen then
+        return false, 'unavailable', 'Suspensions and protections are not available on this server.'
+    end
+    local canIdentify = identifies(src)
+    local out = {}
+    for _, kind in ipairs({ 'suspend', 'protect' }) do
+        local rows = {}
+        for _, row in ipairs(Sanctions.listOpen(kind)) do
+            local actor = deps.identity.byCitizenId(row.cid)
+            rows[#rows + 1] = {
+                ref = freezeRef(row.cid), name = (actor and actor.name) or row.name,
+                cid = canIdentify and row.cid or nil, online = actor ~= nil,
+                since = row.created_at, ['until'] = row.until_at, reason = row.reason,
+                by = canIdentify and row.by_cid or nil,
+            }
+        end
+        out[kind == 'suspend' and 'suspended' or 'protected'] = rows
+    end
+    return true, nil, nil, out
+end
+
 H.freeze = function(src, data)
     if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
     local reason = shortText(data.reason, 120)
@@ -2181,7 +2218,7 @@ end
 --- all of it these, rebuilt and sent whole at every open of the section and
 --- after every change. The value, where it comes from, who set it and
 --- whether it applies, and the most it may be, are sent every time.
-local SCHEMA_FIELDS = { 'group', 'label', 'about', 'category', 'money', 'shipped', 'hasShipped',
+local SCHEMA_FIELDS = { 'group', 'label', 'about', 'category', 'money', 'area', 'shipped', 'hasShipped',
     'kind', 'choices', 'min', 'integer', 'live', 'inflight', 'readonly', 'destroys', 'stricter',
     'strict', 'whole', 'default' }
 
@@ -2331,6 +2368,17 @@ H.diag = function(src, data)
     local subject = data.subject ~= nil and wholeNumber(data.subject, 1, 65535) or nil
     if data.subject ~= nil and not subject then
         return false, CH.ERR.INVALID_INPUT, 'Give a player id, or nothing to run it as yourself.'
+    end
+    -- Or the player Players looked up (their lookup handle), so staff need
+    -- not type the id again: run as them while they are in the city.
+    if data.ref ~= nil and data.subject == nil then
+        local who, whoErr, whoMessage = fromPlayerRef(src, data.ref)
+        if not who then return false, whoErr, whoMessage end
+        if not who.actor then
+            return false, CH.ERR.NOT_FOUND, 'They are not in the city now: the diagnosis runs as a player '
+                .. 'who is online.'
+        end
+        subject = who.actor.source
     end
     -- The one check that waits for an answer (whether the public photo
     -- address leads here) says what it found after the report, pushed to
@@ -3024,10 +3072,21 @@ H.suspend = function(src, data)
         { suspended = Panel.sanctionView('suspend', who.cid, identifies(src)) }
 end
 
+--- Who a lift names: a row of the Suspended or Protected list ('f'
+--- handles, as the frozen list's), or as every other write (writeSubject).
+local function listedSubject(data, src)
+    if type(data.ref) == 'string' and data.ref:sub(1, 1) == 'f' then
+        local cid = freezeRefs[data.ref:sub(1, 16)]
+        if not cid then return nil, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
+        return { cid = cid, actor = deps.identity.byCitizenId(cid) }
+    end
+    return writeSubject(data, src)
+end
+
 H.unsuspend = function(src, data)
     local Sanctions = deps.sanctions
     if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
-    local who, whoErr, whoMessage = writeSubject(data, src)
+    local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.lift('suspend', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not suspended.') end
@@ -3062,7 +3121,7 @@ end
 H.unprotect = function(src, data)
     local Sanctions = deps.sanctions
     if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
-    local who, whoErr, whoMessage = writeSubject(data, src)
+    local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Sanctions.lift('protect', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not protected.') end

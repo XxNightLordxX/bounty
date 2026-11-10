@@ -2214,6 +2214,7 @@ function Org.staffView(viewer)
         roles = roles and roles.rows or {}, members = members and members.rows or {}, ceiling = ceiling,
         spots = spots, cuts = Util.copy(org.settings.cuts), limits = limits, officeStaff = officeStaff,
         officeBoss = org.settings.officeBoss, notice = org.settings.notice, access = org.settings.access,
+        layout = org.settings.layout,
         balance = Funds.balance(org), bank = Funds.usesBank(), fundsBackend = Funds.backend(),
         fundsReady = Funds.ready(), applications = apps and apps.rows or {},
         powers = Powers.LIST, warnings = Jobs.checkConvars(),

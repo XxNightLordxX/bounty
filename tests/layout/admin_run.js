@@ -1,6 +1,9 @@
 /* Renders ui/admin.html (the staff panel, /hitmanadmin) in a real browser
  * and measures it, at the desktop window sizes it is opened in: 1280 and
- * 1920 wide, and 1024, where it has to stay usable.
+ * 1920 wide, 1024, where it has to stay usable, and a phone's 390, where
+ * the sidebar folds into one menu and the drawer takes the whole screen.
+ * Every view of every section is measured, the organisation's, Boss
+ * permissions' and Locations' included.
  *
  * The UI suite drives the page's behaviour through a DOM shim with no
  * layout engine, so a control that is present and correct and drawn off the
@@ -400,6 +403,88 @@ function serverStub() {
       return Object.assign({}, r, { state: i % 2 ? 'active' : 'accepted', group: 't' + Math.floor(i / 3),
         target: i < 3 ? LONG : r.target, onTarget: 3, frozen: i % 4 === 0 });
     }) } };
+  // The hitman organisation, with the longest things each part holds.
+  const POWERS = [];
+  ['members', 'roles', 'pay', 'money', 'contracts', 'locations', 'notices', 'settings', 'delegation'].forEach(function (a, i) {
+    for (let j = 0; j < 3; j++) {
+      POWERS.push({ code: a.charAt(0).toUpperCase() + i + '' + j, area: a, label: 'A power with a long name ' + i + j,
+        about: 'Lets the boss do something that takes a sentence long enough to wrap across the cell.',
+        office: j === 0, limits: j === 1 ? ['WithdrawMax', 'MaxMembers'] : undefined });
+    }
+  });
+  const ORG_MEMBERS = [];
+  for (let i = 0; i < 12; i++) {
+    ORG_MEMBERS.push({ ref: 'm' + i + '_1000', name: i === 0 ? LONG : 'Member ' + i, grade: i < 2 ? 3 : 1,
+      role: i < 2 ? 'Boss of the whole outfit' : 'Hitman', online: i % 2 === 0, joined: NOW - 86400 * i,
+      lastSeen: NOW - 600 * i, boss: i < 2 || undefined, locked: i === 3 || undefined,
+      suspendedUntil: i === 4 ? NOW + 3600 : undefined, grants: i === 5 ? { M00: { by: 'staff' } } : {},
+      denies: {}, limits: { maxAtOnce: 2 }, held: { M00: true } });
+  }
+  answers.orgGet = { ok: true, data: { enabled: true, loaded: true, job: 'hitman', label: 'The ' + LONG,
+    type: 'leo', requireJob: true,
+    roles: [
+      { grade: 3, name: 'boss', label: 'Boss of the whole outfit', pay: 125000, boss: true, members: 2,
+        powers: { M00: { by: 'staff' } }, cut: 10, access: {} },
+      { grade: 2, name: 'lieutenant_with_a_long_name', label: 'Lieutenant ' + LONG, pay: 5000, boss: true, members: 0,
+        powers: {} },
+      { grade: 1, name: 'hitman', label: 'Hitman', pay: 100, members: 10, powers: {} }],
+    members: ORG_MEMBERS,
+    ceiling: { role: { 3: { M00: 'allow', M01: 'allow' } }, member: { m0_1000: { C30: 'deny' }, m5_1000: { M00: 'allow' } } },
+    spots: [{ id: 'hitman:office:1', kind: 'office', label: 'Back room of ' + LONG, x: -1234.56, y: 4567.89, z: 30.12,
+      heading: 359, radius: 12.5, blip: true, enabled: true },
+      { id: 'hitman:meeting:1', kind: 'meeting', label: 'Docks', x: 1.5, y: -2.5, z: 3, heading: 0, radius: 2,
+        blip: false, enabled: false }],
+    cuts: { payout: 10, stake: 5, buyout: 0, byRole: { 1: 5 }, byMember: { X: 3 } },
+    limits: { MaxMembers: 30, WithdrawMax: 5000, TotalCutCapPercent: 40, CutMaxPercent: 25, StakeCutMaxPercent: 20,
+      BuyoutCutMaxPercent: 20, NoticeMaxLength: 400, HireRadius: 3.5, PayMax: 100000 },
+    officeStaff: { M00: true, C30: true }, officeBoss: { R10: true },
+    notice: { text: REASON + ' ' + REASON, at: NOW - 120 },
+    access: { 1: { maxReward: 2000000000, rule: 'alive', maxAtOnce: 50, cooldownMinutes: 10080 } },
+    balance: 1234567890, bank: true,
+    applications: [{ id: 'hitman:app:1', name: LONG, body: REASON + ' ' + REASON, at: NOW - 300 }],
+    powers: POWERS, warnings: ['qbx:max_jobs_per_player is 1: members lose their other job when hired.'],
+    layout: { labels: { members: 'Crew' }, hidden: { funds: [1] } } } };
+  answers.orgFunds = { ok: true, data: { balance: 1234567890, bank: true, rows: (function () {
+    const out = [];
+    for (let i = 0; i < 15; i++) {
+      out.push({ kind: ['staff_deposit', 'withdraw', 'cut', 'bonus'][i % 4], amount: 125000 * (i + 1), at: NOW - i * 600,
+        reason: REASON, contract: i % 3 ? 'ct' + String(10000000 + i) : null, actor: 'ADMIN001' });
+    }
+    return out;
+  })() } };
+  answers.orgAudit = { ok: true, data: { rows: (function () {
+    const out = [];
+    for (let i = 0; i < 20; i++) {
+      out.push({ ts: NOW - i * 60, action: i % 2 ? 'org_grant' : 'org_member_role_with_a_long_name',
+        by: 'a staff member', detail: { subject: 'role', id: '3', power: 'M00', before: 'off', after: 'allow',
+          reason: REASON } });
+    }
+    return out;
+  })() } };
+  answers.orgMyPosition = { ok: true, data: { x: -1234.567, y: 4567.891, z: 30.12, heading: 359.4 } };
+  answers.sanctions = { ok: true, data: {
+    suspended: rows.slice(0, 6).map(function (r, i) {
+      return { ref: 'f' + i, name: i === 0 ? LONG : 'Dana Reyes ' + i, cid: 'CITIZEN' + i, online: i % 2 === 0,
+        since: NOW - 600 * i, until: i % 2 ? NOW + 86400 : null, reason: REASON, by: 'ADMIN001' };
+    }),
+    protected: [{ ref: 'f9', name: LONG, since: NOW - 60, reason: REASON }] } };
+  // The organisation's settings and the places, with the longest labels.
+  settings.features.push({ key: 'Organisation.Enabled', category: 'organisation', group: 'Organisation',
+    area: 'organisation', label: 'Hitman organisation', kind: 'switch', live: true, value: true, default: false,
+    source: 'panel', about: 'A real qbx_core job with roles, a boss menu and Boss permissions.' });
+  settings.limits.push({ key: 'Organisation.Limits.WithdrawMax', category: 'organisation',
+    group: 'Organisation: Boss limits', area: 'organisation', label: 'Largest withdrawal ($)', kind: 'number',
+    integer: true, min: 0, max: 10000000, live: true, value: 5000, default: 5000, source: 'config' });
+  settings.limits.push({ key: 'Roleplay.Rumours.Locations', category: 'rules-limits', group: 'Roleplay: Rumours and broker',
+    area: 'extras', label: 'Broker NPC places', kind: 'list', whole: true, live: true,
+    value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'], default: [], source: 'config' });
+  settings.limits.push({ key: 'Improvements.TipSafeZones.Zones', category: 'rules-targeting',
+    group: 'Improvements: Tip safe zones', area: 'informants', label: 'Safe zones (x, y, radius, name)', kind: 'list',
+    whole: true, live: true, value: ['300, -590, 80, Pillbox Hill Medical Center and the car park'], default: [],
+    source: 'config' });
+  settings.limits.push({ key: 'Limits.JailZone.x', category: 'rules-limits', group: 'Contract limits', area: 'placing',
+    label: 'Prison grounds centre, x', kind: 'number', min: -10000, max: 10000, live: true, value: 1700, default: 1700,
+    source: 'config' });
   window.GetParentResourceName = function () { return 'crimson-hitman'; };
   window.__requests = [];
   window.fetch = function (url, options) {
@@ -513,20 +598,12 @@ function measure(opts) {
   return out;
 }
 
-/* Which section each view is a sub-tab of (ui/admin.js GROUPS). */
-const GROUP = { help: 'live', overview: 'live', contracts: 'live', players: 'live', frozen: 'live', reviews: 'live',
-  stuck: 'live', actions: 'actions', tools: 'actions', timers: 'rules', money: 'rules', limits: 'rules',
-  targeting: 'rules', features: 'features', logs: 'logs', alerts: 'logs', devsettings: 'developer',
-  console: 'developer', diagnostics: 'developer', permissions: 'developer', announce: 'actions',
-  history: 'developer', tldefaults: 'targets', tljobs: 'targets', tlplayer: 'targets',
-  tlcontracts: 'targets' };
-
-/* A view, as staff reach it: its section, then its sub-tab where it has a strip. */
+/* A view, as a link or the sidebar reaches it: through the page's own show,
+   which takes the old names too (ui/admin.js ALIASES). The sidebar's own
+   buttons are measured on their own below. */
 async function go(page, view) {
-  await page.click('#grp-' + GROUP[view]);
+  await page.evaluate(function (v) { window.CH_ADMIN_SHOW(v); }, view);
   await page.waitForTimeout(40);
-  const tab = await page.$('#nav-' + view);
-  if (tab && await tab.isVisible()) await tab.click();
 }
 
 async function openAt(browser, width, height) {
@@ -534,7 +611,7 @@ async function openAt(browser, width, height) {
   await page.route('https://cdnjs.cloudflare.com/**', function (route) { return route.abort(); });
   await page.addInitScript(serverStub);
   await page.goto('file://' + PAGE);
-  await page.waitForFunction(function () { return !!document.querySelector('#nav-overview'); });
+  await page.waitForFunction(function () { return window.CH_ADMIN_READY === true; });
   await page.waitForTimeout(200);
   return page;
 }
@@ -573,9 +650,14 @@ async function main() {
     // A phone: every section, nothing sideways; tables scroll in their frame.
     { w: 390, h: 844, tablesFit: false, phone: true }
   ];
-  const sections = ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck', 'actions', 'tools',
-    'timers', 'money', 'limits', 'targeting', 'features', 'logs', 'alerts', 'devsettings', 'console', 'diagnostics',
-    'permissions', 'announce', 'history', 'tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'];
+  // Every view of every section (the old names among them land where their
+  // items are now), and a selected player's tabs once one is looked up.
+  const sections = ['inbox', 'overview', 'announce', 'players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime',
+    'phistory', 'pdiag', 'frozen', 'suspended', 'protected', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
+    'tlcontracts', 'rules', 'changed', 'history', 'timers', 'money', 'limits', 'targeting', 'features',
+    'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit',
+    'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'logs', 'alerts', 'health', 'devsettings',
+    'console', 'tools', 'help', 'howto', 'permissions'];
 
   for (const size of sizes) {
     const page = await openAt(browser, size.w, size.h);
@@ -596,6 +678,41 @@ async function main() {
       truthy(frame.width >= frame.W * 0.9 - 1 || frame.width >= 1700, 'the panel is ' + Math.round(frame.width) + 'px wide');
       truthy(frame.closeInside, 'the close button is outside the panel');
       truthy(!frame.overlap, 'the title runs under the badges');
+    });
+
+    // The sidebar: its sections, under their group headings, each opening on
+    // a click; on a phone, folded into one menu button.
+    const sidebar = await page.evaluate(function () {
+      const nav = document.getElementById('nav');
+      const menu = document.getElementById('nav-menu');
+      return { navShown: getComputedStyle(nav).display !== 'none', menuShown: getComputedStyle(menu).display !== 'none',
+        heads: Array.prototype.map.call(document.querySelectorAll('.nav-head'), function (n) { return n.textContent; }) };
+    });
+    if (size.phone) {
+      await page.click('#nav-menu');
+      await page.waitForTimeout(60);
+    }
+    await page.click('#grp-rules');
+    await page.waitForTimeout(150);
+    const afterClick = await page.evaluate(function () {
+      const sub = document.getElementById('subnav');
+      const tabs = sub.querySelectorAll('.sub-btn');
+      const tops = Array.prototype.map.call(tabs, function (t) { return Math.round(t.getBoundingClientRect().top); });
+      return { here: (document.querySelector('.crumb.is-here') || {}).textContent,
+        oneLine: tops.every(function (t) { return t === tops[0]; }),
+        navShown: getComputedStyle(document.getElementById('nav')).display !== 'none' };
+    });
+    it(at + ': the sidebar holds its sections under Daily, Setup, Records and Developer'
+      + (size.phone ? ', folded into one menu' : ''), function () {
+      truthy(sidebar.heads.join(',') === 'Daily,Setup,Records,Developer', sidebar.heads.join(','));
+      if (size.phone) {
+        truthy(!sidebar.navShown && sidebar.menuShown, 'the sidebar is not folded into its menu');
+        truthy(!afterClick.navShown, 'the menu stays open after a section is picked');
+      } else {
+        truthy(sidebar.navShown && !sidebar.menuShown, 'the sidebar is not shown');
+      }
+      truthy(afterClick.here === 'Areas', 'Game rules did not open: ' + afterClick.here);
+      if (size.phone) truthy(afterClick.oneLine, 'the sub-tabs wrap onto more than one line');
     });
 
     for (const section of sections) {
@@ -623,8 +740,43 @@ async function main() {
         await page.click('button[data-act="tja-reset-all"]');
         await page.waitForTimeout(60);
       }
-      if (section === 'tools') {
+      if (section === 'health') {
         await page.click('button[data-act="tl-diag"]');
+        await page.waitForTimeout(120);
+      }
+      if (section === 'pdiag') {
+        await page.click('button[data-act="pl-diag"]');
+        await page.waitForTimeout(120);
+      }
+      if (section === 'rules') {
+        // An area open, with a row's Details open.
+        await page.click('button[data-act="gr-area"][data-value="other"]');
+        await page.waitForTimeout(60);
+        await page.click('.st-row button[data-act="st-details"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'help') {
+        await page.click('button[data-act="help-all"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'orgroles') {
+        await page.click('button[data-act="org-role-open"][data-id="3"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'orgmembers') {
+        await page.click('button[data-act="org-member-open"][data-id="m0_1000"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'bpmatrix') {
+        // Measured with changes waiting, and Save armed naming them.
+        await page.click('button[data-act="bp-cell"][data-id="role:3"][data-power="M02"]');
+        await page.click('button[data-act="bp-cell"][data-id="member:m0_1000"][data-power="M00"]');
+        await page.waitForTimeout(40);
+        await page.click('button[data-act="bp-save"]');
+        await page.waitForTimeout(60);
+      }
+      if (section === 'locations') {
+        await page.click('button[data-act="loc-mypos"][data-value="signup"]');
         await page.waitForTimeout(120);
       }
       if (section === 'alerts') {
@@ -664,6 +816,8 @@ async function main() {
     await page.fill('#pl-q', '456');
     await page.press('#pl-q', 'Enter');
     await page.waitForTimeout(150);
+    await go(page, 'pmeasures');
+    await page.waitForTimeout(100);
     await page.click('button[data-act="ps-days"][data-value="7"]');
     await page.waitForTimeout(60);
     await page.fill('#ps-reason', 'Contract spam');
@@ -673,12 +827,16 @@ async function main() {
     const staffArmed = await page.evaluate(function () {
       const b = document.querySelector('button[data-act="ps-suspend"]');
       return { armed: b && b.classList.contains('is-armed'), forms: !!document.getElementById('pp-amount')
-        && !!document.getElementById('pay-amount') && !!document.getElementById('ps-days') };
+        && !!document.getElementById('ps-days') };
     });
+    await go(page, 'pmoney');
+    await page.waitForTimeout(100);
+    const payForm = await page.evaluate(measure, { tablesFit: size.tablesFit });
+    const payDrawn = await page.evaluate(function () { return !!document.getElementById('pay-amount'); });
     it(at + ': a player\'s Suspend, Protect and Pay forms fit, with Suspend armed', function () {
-      truthy(staffArmed.forms, 'the three forms are drawn');
+      truthy(staffArmed.forms && payDrawn, 'the three forms are drawn');
       truthy(staffArmed.armed, 'Suspend was not armed');
-      none(staffForms, 'staff forms');
+      none(staffForms.concat(payForm), 'staff forms');
     });
 
     // Target limits: the armed write says what it does, and a row of
@@ -800,6 +958,8 @@ async function main() {
     // The contract drawer.
     await page.click('#ct-results tr.row');
     await page.waitForTimeout(200);
+    await page.click('#drawer [data-act="dr-more"]');
+    await page.waitForTimeout(60);
     const drawer = await page.evaluate(function () {
       const d = document.getElementById('drawer');
       const r = d.getBoundingClientRect();
@@ -807,24 +967,28 @@ async function main() {
       const head = d.querySelector('.drawer-head').getBoundingClientRect();
       const close = d.querySelector('[data-act="drawer-close"]').getBoundingClientRect();
       const voidBtn = d.querySelector('[data-act="void"]').getBoundingClientRect();
-      const nav = document.getElementById('nav-overview');
+      const nav = document.getElementById('grp-home');
       const navR = nav.getBoundingClientRect();
-      const atNav = document.elementFromPoint(navR.left + navR.width / 2, navR.top + navR.height / 2);
+      const atNav = navR.width > 0 ? document.elementFromPoint(navR.left + navR.width / 2, navR.top + navR.height / 2) : null;
       return { width: r.width, left: r.left, right: r.right, top: r.top, bottom: r.bottom,
                mainLeft: main.left, mainRight: main.right, mainTop: main.top, mainBottom: main.bottom,
                headTop: head.top, closeRight: close.right, voidTop: voidBtn.top, voidBottom: voidBtn.bottom,
-               H: window.innerHeight, navClear: !!atNav && nav.contains(atNav),
+               W: window.innerWidth, H: window.innerHeight, navClear: !!atNav && nav.contains(atNav),
                sideways: d.scrollWidth > d.clientWidth + 1 };
     });
-    it(at + ': the drawer lies over the section, leaves the navigation in reach, and is wide enough to read', function () {
-      truthy(drawer.left >= drawer.mainLeft - 0.5 && drawer.right <= drawer.mainRight + 0.5, 'the drawer spills out of the section');
-      truthy(drawer.top >= drawer.mainTop - 0.5 && drawer.bottom <= drawer.mainBottom + 0.5, 'the drawer is taller than the section');
-      truthy(drawer.width >= (size.phone ? drawer.mainRight - drawer.mainLeft - 1 : 520),
-        'the drawer is ' + Math.round(drawer.width) + 'px wide');
-      truthy(drawer.navClear, 'the drawer or its scrim covers the navigation');
+    it(at + (size.phone ? ': the drawer takes the whole screen' : ': the drawer lies over the section, leaves the '
+      + 'navigation in reach, and is wide enough to read'), function () {
+      if (size.phone) {
+        truthy(drawer.left <= 0.5 && drawer.right >= drawer.W - 0.5 && drawer.top <= 0.5, 'the drawer is not full-screen');
+      } else {
+        truthy(drawer.left >= drawer.mainLeft - 0.5 && drawer.right <= drawer.mainRight + 0.5, 'the drawer spills out of the section');
+        truthy(drawer.top >= drawer.mainTop - 0.5 && drawer.bottom <= drawer.mainBottom + 0.5, 'the drawer is taller than the section');
+        truthy(drawer.width >= 520, 'the drawer is ' + Math.round(drawer.width) + 'px wide');
+        truthy(drawer.navClear, 'the drawer or its scrim covers the navigation');
+      }
       truthy(!drawer.sideways, 'the drawer scrolls sideways');
     });
-    it(at + ': its close and its void are on screen as it opens', function () {
+    it(at + ': its close, and its void under More, are on screen as it opens', function () {
       truthy(drawer.closeRight <= drawer.right + 0.5, 'close is off the drawer');
       truthy(drawer.voidBottom <= drawer.H && drawer.voidTop >= drawer.headTop, 'void is not on the first screen');
     });
@@ -834,7 +998,7 @@ async function main() {
     });
     // Look up / Freeze beside each party (S8): every one inside the drawer,
     // tall enough to hit, its label whole, beside the longest names there are.
-    const parties = await page.evaluate(function () {
+    const partiesOn = function () {
       const d = document.getElementById('drawer').getBoundingClientRect();
       return Array.prototype.slice.call(document.querySelectorAll('#drawer [data-act="party-lookup"]'))
         .map(function (b) {
@@ -842,7 +1006,13 @@ async function main() {
           return { subject: b.getAttribute('data-subject'), inside: r.left >= d.left - 0.5 && r.right <= d.right + 0.5,
             tall: r.height >= 24, whole: b.scrollWidth <= b.clientWidth + 1 };
         });
-    });
+    };
+    let parties = await page.evaluate(partiesOn);
+    await page.click('#drawer [data-act="dr-tab"][data-value="people"]');
+    await page.waitForTimeout(60);
+    parties = parties.concat(await page.evaluate(partiesOn));
+    await page.click('#drawer [data-act="dr-tab"][data-value="summary"]');
+    await page.waitForTimeout(60);
     it(at + ': Look up / Freeze sits beside each party, inside the drawer and whole', function () {
       truthy(parties.length >= 3, 'beside the client, the target and the operatives: ' + JSON.stringify(parties));
       none(parties.filter(function (p) { return !p.inside || !p.tall || !p.whole; })
@@ -890,9 +1060,7 @@ async function main() {
 
     // The staff tools: every control inside the drawer, and a party's card
     // drawn in it, its longest values wrapped, never past its edge.
-    await page.click('#drawer [data-act="ct-view"][data-value="hitman:hm1"]');
-    await page.waitForTimeout(150);
-    const tools = await page.evaluate(function () {
+    const toolsOn = function () {
       const d = document.getElementById('drawer').getBoundingClientRect();
       const out = { outside: [], count: 0 };
       document.querySelectorAll('#drawer .ct-notes *, #drawer .ct-remove *, #drawer .ct-text *, '
@@ -911,14 +1079,33 @@ async function main() {
       out.view = !!view;
       out.sideways = document.getElementById('drawer').scrollWidth > document.getElementById('drawer').clientWidth + 1;
       return out;
-    });
+    };
+    // The staff tools are on People (remove, the player view), Notes & text
+    // and Record (export): each tab measured in turn.
+    const tools = { outside: [], count: 0, view: false, sideways: false };
+    const inTools = [];
+    for (const tab of ['notes', 'record', 'people']) {
+      await page.click('#drawer [data-act="dr-tab"][data-value="' + tab + '"]');
+      await page.waitForTimeout(80);
+      if (tab === 'people') {
+        await page.click('#drawer [data-act="ct-view"][data-value="hitman:hm1"]');
+        await page.waitForTimeout(150);
+      }
+      const got = await page.evaluate(toolsOn);
+      tools.outside = tools.outside.concat(got.outside);
+      tools.count += got.count;
+      tools.view = tools.view || got.view;
+      tools.sideways = tools.sideways || got.sideways;
+      (await page.evaluate(measure, { tablesFit: size.tablesFit, scope: '#drawer' })).forEach(function (f) {
+        inTools.push(tab + ': ' + f);
+      });
+    }
     it(at + ': the staff tools and a party\'s card fit inside the drawer', function () {
       truthy(tools.view, 'the card was not drawn');
       truthy(tools.count > 20, tools.count + ' controls');
       truthy(tools.outside.length === 0, tools.outside.join(', '));
       truthy(!tools.sideways, 'the drawer scrolls sideways');
     });
-    const inTools = await page.evaluate(measure, { tablesFit: size.tablesFit, scope: '#drawer' });
     it(at + ': the drawer with a party\'s card open fits, nothing cut off or too small', function () {
       none(inTools, 'drawer with the player view');
     });

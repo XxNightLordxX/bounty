@@ -287,8 +287,22 @@ function player() {
   } };
 }
 
+/* Each row's feature area, as server/settings.lua sends it (Settings.areaOf). */
+const AREA_OF_GROUP = { 'Rewards': 'rewards', 'Buyouts': 'buyouts', 'The app': 'access', 'Completion': 'completing',
+  'Messages and calls': 'messages', 'Contract limits': 'placing', 'Stakes': 'placing', 'Advisory job lists': 'police',
+  'Notifications': 'messages', 'Rate limits': 'engine', 'Staff': 'staff', 'Edit in config.lua': 'engine',
+  'Target limits': 'targets', 'Organisation': 'organisation', 'Organisation: Boss limits': 'organisation' };
+function withAreas(data) {
+  ['features', 'limits', 'readonly'].forEach(function (list) {
+    (data[list] || []).forEach(function (row) {
+      if (row.area === undefined) row.area = AREA_OF_GROUP[row.group] || 'other';
+    });
+  });
+  return data;
+}
+
 function settingsView(extra) {
-  return { ok: true, data: Object.assign({
+  return { ok: true, data: withAreas(Object.assign({
     features: [
       { key: 'Sources.cash.enabled', category: 'features', group: 'Rewards', label: 'Cash rewards', about: 'Cash may be put up.',
         kind: 'switch', live: true, inflight: 'Things already under way finish under the rules they started with.',
@@ -351,6 +365,43 @@ function settingsView(extra) {
         source: 'config' }
     ],
     overrides: 2
+  }, extra || {})) };
+}
+
+/* The organisation, as server/org/staff_ops.lua's orgGet answers
+   (Org.staffView): switched off, or on with two roles, two members, a
+   ceiling, spots, cuts and limits. */
+const POWERS = [
+  { code: 'M1', area: 'members', label: 'View members', about: 'See the member list.' },
+  { code: 'M2', area: 'members', label: 'Hire', office: true, limits: ['MaxMembers', 'HireRadius'], about: 'Add a player.' },
+  { code: 'C7', area: 'money', label: 'Withdraw funds', office: true, limits: ['WithdrawMax'], about: 'Take money out.' },
+  { code: 'N1', area: 'notices', label: 'Post notice ' + XSS, limits: ['NoticeMaxLength'], about: 'Edit the notice.' }
+];
+function orgOff() { return { ok: true, data: { enabled: false, job: 'hitman' } }; }
+function orgOn(extra) {
+  return { ok: true, data: Object.assign({
+    enabled: true, loaded: true, job: 'hitman', label: 'The Crimson ' + XSS, type: 'leo', requireJob: true,
+    roles: [
+      { grade: 3, name: 'boss', label: 'Boss', pay: 500, boss: true, members: 1, powers: { M1: { by: 'staff' } },
+        editable: true },
+      { grade: 1, name: 'hitman', label: 'Hitman ' + XSS, pay: 100, members: 1, powers: {}, editable: true }
+    ],
+    members: [
+      { ref: 'm1_1111', name: 'Kai Holt', grade: 3, role: 'Boss', online: true, joined: NOW - 86400, lastSeen: NOW - 60,
+        boss: true, grants: {}, denies: {}, limits: {}, held: { M1: true } },
+      { ref: 'm2_2222', name: XSS, grade: 1, role: 'Hitman', online: false, joined: NOW - 3600, lastSeen: NOW - 600,
+        grants: { M1: { by: 'staff' } }, denies: {}, limits: { maxAtOnce: 2 }, held: {} }
+    ],
+    ceiling: { role: { 3: { M1: 'allow' } }, member: { m1_1111: { C7: 'deny' } } },
+    spots: [{ id: 'hitman:office:1', kind: 'office', label: 'Back room ' + XSS, x: 10.5, y: -20.25, z: 30, heading: 90,
+      radius: 2, blip: true, enabled: true }],
+    cuts: { payout: 10, stake: 0, buyout: 0, byRole: { 1: 5 }, byMember: {} },
+    limits: { MaxMembers: 30, HireRadius: 3, WithdrawMax: 5000, NoticeMaxLength: 400, TotalCutCapPercent: 40,
+      CutMaxPercent: 25, StakeCutMaxPercent: 20, BuyoutCutMaxPercent: 20 },
+    officeStaff: { M2: true, C7: true }, officeBoss: {}, notice: { text: 'Meet at ' + XSS, at: NOW - 120 },
+    access: { 1: { maxReward: 50000, rule: 'alive' } }, balance: 12500, bank: false,
+    applications: [{ id: 'hitman:app:1', name: 'Rook ' + XSS, body: 'I am quiet ' + XSS, at: NOW - 300 }],
+    powers: POWERS, warnings: [], layout: { labels: { members: 'Crew' }, hidden: { funds: [1] } }
   }, extra || {}) };
 }
 
@@ -416,6 +467,13 @@ function boot(server, opts) {
     addEventListener: function (type, fn) { (windowListeners[type] = windowListeners[type] || []).push(fn); }
   };
   if (opts && opts.storage) window.localStorage = opts.storage;
+  // Most of these tests start on Home's Overview, as the panel once
+  // opened: a remembered view says so. opts.fresh opens it as a first open
+  // does, with nothing remembered (on Home's Inbox).
+  else if (!(opts && opts.fresh)) {
+    const kept = { 'crimson-hitman.admin.nav': JSON.stringify({ view: (opts && opts.start) || 'overview', sub: {} }) };
+    window.localStorage = { getItem: function (k) { return kept[k] || null; }, setItem: function (k, v) { kept[k] = v; } };
+  }
 
   const sandbox = {
     document: document,
@@ -529,11 +587,42 @@ function boot(server, opts) {
     main: function () { return document.getElementById('main').textContent; },
     drawer: function () { return document.getElementById('drawer'); },
     toasts: function () { return document.getElementById('toasts').textContent; },
-    /** A view by its sub-tab: the old Features & limits is Features now,
-        its limits under Rules, its read-only values under Developer. */
+    /** A view by its sub-tab when it is on the strip; any other (another
+        section's, or an old name that redirects) the way a link reaches
+        it, through the page's own show. */
     nav: function (section) {
-      const view = { settings: 'features' }[section] || section;
-      app.click(document.getElementById('nav-' + view));
+      const node = document.getElementById('nav-' + section);
+      if (node && app.visible(node)) { app.click(node); return; }
+      try { window.CH_ADMIN_SHOW(section); } catch (err) { thrown.push(err); throw err; }
+    },
+    /** A section by its sidebar button. */
+    group: function (id) { app.click(document.getElementById('grp-' + id)); },
+    /** One of the contract drawer's tabs: summary, money, people, notes, record. */
+    tab: function (id) {
+      const node = document.getElementById('drawer').querySelectorAll('[data-act="dr-tab"]')
+        .filter(function (b) { return b.getAttribute('data-value') === id; })[0];
+      if (!node) throw new Error('no drawer tab ' + id);
+      app.click(node);
+    },
+    /** One of Game rules' areas ('' for every area). */
+    area: function (id) {
+      const node = document.body.querySelectorAll('[data-act="gr-area"]')
+        .filter(function (b) { return b.getAttribute('data-value') === id; })[0];
+      if (!node) throw new Error('no area ' + id);
+      app.click(node);
+    },
+    /** One of Game rules' type chips ('' for all). */
+    type_: function (value) {
+      const node = document.body.querySelectorAll('[data-act="gr-type"]')
+        .filter(function (b) { return b.getAttribute('data-value') === value; })[0];
+      if (!node) throw new Error('no type chip ' + value);
+      app.click(node);
+    },
+    /** The drawer's More: where Void is. */
+    more: function () {
+      const node = document.getElementById('drawer').querySelectorAll('[data-act="dr-more"]')[0];
+      if (!node) throw new Error('no More in the drawer');
+      app.click(node);
     }
   };
   return app;
@@ -588,26 +677,26 @@ async function main() {
       has(app.main(), 'Active 3');
       has(app.main(), '$15,000');
       has(app.main(), '$50,000');
-      has(app.main(), 'Waiting for staff');
-      has(app.main(), 'left for you to settle, of 2 listed', 'what staff settle, not every line listed');
-      has(app.main(), '1 need nothing from you', 'and the rest said apart');
+      has(app.main(), 'Inbox8waiting for you', 'the inbox: reviews, money left for staff and alerts');
+      has(app.main(), 'Needs review 3');
+      has(app.main(), 'Money waiting 1', 'what staff settle, not every line listed');
+      has(app.main(), '1 more line listed need nothing from you', 'and the rest said apart');
       has(app.main(), 'Operatives3on contracts now, holding 2 contracts', 'operatives, and the contracts they hold');
       has(app.main(), 'Alive only', 'the rule new contracts are placed under');
-      has(app.main(), 'expiry', 'the slowest job');
-      has(app.main(), '7.20 ms');
-      has(app.main(), 'photo hosts: 0', 'the diagnosis warnings');
-      has(app.main(), '400.0 KB', 'served photos, with their size');
-      has(app.main(), 'On, kept on server', 'where kill photos are kept, while they are on');
+      has(app.main(), 'photo hosts: 0', 'the setup problems, for staff who can change things');
+      lacks(app.main(), '7.20 ms', 'the slow jobs are Developer, Health\'s');
+      lacks(app.main(), '400.0 KB', 'and the kill photos\' bytes');
     });
     it('posts to its own resource, as GetParentResourceName names it', function () {
       truthy(app.urls[0].indexOf('https://crimson-hitman-renamed/adminRequest') === 0, app.urls[0]);
     });
-    it('counts open review items and the lines left for staff on the navigation', function () {
-      eq(app.byId('count-reviews').textContent, '3');
-      eq(app.byId('count-reviews').hidden, false);
-      eq(app.byId('count-stuck').textContent, '1', 'beside Stuck escrow: left for staff, not every line listed');
+    it('counts what waits on the sidebar: the inbox on Home, changed settings, open alerts', function () {
+      eq(app.byId('count-home').textContent, '8', 'reviews 3, money left for staff 1, alerts 4');
+      eq(app.byId('count-home').hidden, false);
+      eq(app.byId('count-inbox').textContent, '8', 'and on the Inbox sub-tab');
       eq(app.byId('count-overview'), null, 'and not beside the overview');
-      eq(app.byId('count-settings').textContent, '2');
+      eq(app.byId('count-rules').textContent, '2', 'Game rules: changed from the panel');
+      eq(app.byId('count-logs').textContent, '4', 'Logs: open alerts');
     });
     it('marks what this staff member may do', function () {
       has(app.text(app.byId('badges')), 'Can change');
@@ -772,8 +861,13 @@ async function main() {
     await settled();
     it('reads empty lists sent as {} and a recovering server without throwing', function () {
       clean(app, 'empty overview');
-      has(app.main(), 'Kill photosOff', 'kill photos switched off, said as that');
       has(app.main(), 'Not listed while the server is recovering');
+    });
+    app.nav('health');
+    await settled();
+    it('and Developer, Health reads them the same way', function () {
+      clean(app, 'empty health');
+      has(app.main(), 'Kill photosOff', 'kill photos switched off, said as that');
       has(app.main(), 'No job has run yet');
       has(app.main(), 'Nothing that wants doing');
     });
@@ -803,6 +897,8 @@ async function main() {
     await settled();
     app.click(app.$('tr.row'));
     await settled();
+    app.more();
+    app.tab('money');
     it('read-only staff: void and every settle are disabled, saying why', function () {
       const drawer = app.drawer();
       eq(app.button('Void contract', drawer).disabled, true);
@@ -887,12 +983,17 @@ async function main() {
     await settled();
     it('with identity: the citizen ids the server sent are shown', function () {
       has(app.text(app.drawer()), 'CREATOR1');
+    });
+    app.tab('people');
+    it('with identity: and the operatives\' on People', function () {
       has(app.text(app.drawer()), 'HITMAN01');
     });
+    app.tab('summary');
     it('with identity: and the meeting point the server sent, where the client stood', function () {
       has(app.text(app.drawer()), 'Meeting point');
       has(app.text(app.drawer()), 'x 1234, y -568');
     });
+    app.tab('people');
     app.click(app.button('Whois', app.drawer()));
     await settled();
     it('and whois answers in the drawer', function () {
@@ -1091,8 +1192,25 @@ async function main() {
       eq(drawer.hidden, false);
       eq(app.byId('scrim').hidden, false);
     });
+    // One tab drawn at a time: each read in turn.
+    const tabText = {};
+    ['summary', 'money', 'people', 'notes', 'record'].forEach(function (t) { app.tab(t); tabText[t] = app.text(drawer); });
+    it('the drawer opens on Summary and draws only the tab open', function () {
+      has(tabText.summary, 'Terms');
+      lacks(tabText.summary, 'Escrow lines', 'Money\'s, not drawn on Summary');
+      lacks(tabText.summary, 'escrow_deliver_parked', 'nor the timeline');
+      has(tabText.money, 'Escrow lines');
+      has(tabText.people, 'Operatives');
+      has(tabText.record, 'Timeline');
+    });
+    it('Money shows how many lines wait for staff on its tab', function () {
+      const money = drawer.querySelectorAll('[data-act="dr-tab"]').filter(function (b) {
+        return b.getAttribute('data-value') === 'money'; })[0];
+      has(app.text(money), '3');
+    });
+    app.tab('money');
     it('the drawer has the terms, payouts, escrow lines, operatives, proposals and the timeline', function () {
-      const text = app.text(drawer);
+      const text = tabText.summary + tabText.money + tabText.people + tabText.record;
       ['Terms', 'Payouts', 'Escrow lines', 'Operatives', 'Open proposals', 'Timeline', 'Waiting for staff']
         .forEach(function (part) { has(text, part); });
       has(text, '$8,000 bank', 'what a line holds');
@@ -1119,6 +1237,10 @@ async function main() {
       has(app.text(lines[2]), 'ending unfinished; it settles itself within a minute');
     });
 
+    it('Void is not on the drawer until More is opened', function () {
+      eq(drawer.querySelectorAll('[data-act="void"]').length, 0);
+    });
+    app.more();
     const voidBtn = app.button('Void contract', drawer);
     app.type(drawer.querySelector('[data-bind="dr.reason"]'), 'Duplicate of ct00000002');
     app.click(voidBtn);
@@ -1202,9 +1324,11 @@ async function main() {
     await settled();
     app.click(app.$('tr.row'));
     await settled();
+    app.tab('money');
     it('a contract read while recovering says its stuck lines are not listed', function () {
       has(app.text(app.drawer()), 'Not listed while the server is recovering');
     });
+    app.tab('summary');
     it('and a closed contract offers no void', function () {
       has(app.text(app.drawer()), 'a closed contract is never voided');
       eq(app.drawer().querySelectorAll('button').filter(function (b) { return b.getAttribute('data-act') === 'void'; }).length, 0);
@@ -1295,7 +1419,8 @@ async function main() {
     it('and goes with the note', function () {
       eq(app.last('resolve').data, { id: 'rv00000001', action: 'dismiss', note: 'Contract shows the buyout' });
     });
-    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'all'; })[0]);
+    app.click(app.$$('.seg-btn').filter(function (b) {
+      return b.getAttribute('data-act') === 'rv-all' && b.getAttribute('data-value') === 'all'; })[0]);
     await settled();
     it('All asks for the resolved ones too', function () {
       eq(app.last('reviews').data, { all: true });
@@ -1410,13 +1535,25 @@ async function main() {
     app.open(ADMIN);
     await settled();
     it('counts the open alerts on the navigation and on the overview', function () {
+      eq(app.byId('count-logs').textContent, '4');
+      eq(app.byId('count-logs').hidden, false);
+      has(app.main(), 'Alerts 4');
+    });
+    app.click(app.button('Alerts 4'));
+    await settled();
+    it('the overview\'s count opens the inbox on its open alerts, with Logs keeping the rest', function () {
+      eq(app.last('alerts').data, { state: 'open' });
+      eq(app.$$('article.al').length, 4);
+      has(app.main(), 'Acknowledged ones, Discord and the test alert are in Logs, Alerts.');
+      lacks(app.main(), 'Send a test alert');
+    });
+    app.group('logs');
+    app.nav('alerts');
+    await settled();
+    it('Logs, Alerts counts them on its sub-tab', function () {
       eq(app.byId('count-alerts').textContent, '4');
       eq(app.byId('count-alerts').hidden, false);
-      eq(app.byId('ov-alerts').textContent, '4');
-      has(app.main(), 'open alerts, not acknowledged yet');
     });
-    app.click(app.button('Open Alerts'));
-    await settled();
     it('opens on the open alerts, newest first, each with its level, count and contract', function () {
       eq(app.last('alerts').data, { state: 'open' });
       const cards = app.$$('article.al');
@@ -1814,16 +1951,29 @@ async function main() {
     it('looks somebody up by player id', function () {
       eq(app.last('player').data, { subject: '12' });
     });
-    it('and shows their record, contracts, what they are owed and their notices', function () {
+    it('and shows their summary, with a tab for each part of their card', function () {
       const text = app.main();
       has(text, 'Dana Reyes');
       has(text, 'TARGET01');
       has(text, 'in the city · player 12');
       has(text, '80%');
+      ['pcontracts', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag'].forEach(function (view) {
+        truthy(app.byId('nav-' + view), 'the ' + view + ' tab');
+      });
+    });
+    app.nav('pmoney');
+    await settled();
+    it('Money: what they are owed and their notices', function () {
+      const text = app.main();
+      has(text, 'Dana Reyes', 'who it is, above every tab');
       has(text, 'ct00000005:2');
       has(text, '1 delivery pending');
       has(text, 'Contract closed');
-      has(text, 'ct00000001');
+    });
+    app.nav('pcontracts');
+    await settled();
+    it('Contracts: theirs', function () {
+      has(app.main(), 'ct00000001');
     });
     app.click(app.button('Whois'));
     await settled();
@@ -1849,7 +1999,11 @@ async function main() {
     it('without identity the record is said to be held back, not drawn as zeros', function () {
       has(app.main(), 'Their record is not shown');
       lacks(app.main(), 'Success rate');
-      has(app.main(), '1 delivery pending', 'what may be shown still is');
+    });
+    app.nav('pmoney');
+    await settled();
+    it('and what may be shown still is', function () {
+      has(app.main(), '1 delivery pending');
     });
     clean(app, 'no record');
   })();
@@ -1864,6 +2018,8 @@ async function main() {
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
     await settled();
+    app.nav('pplaytime');
+    await settled();
     it('shows the hours counted, what is needed and whether they are from before the count', function () {
       const text = app.main();
       has(text, 'Playtime');
@@ -1873,7 +2029,9 @@ async function main() {
       has(text, 'Too new to be named as a target until the count reaches 5 h.');
       has(text, 'in the city: counting');
     });
-    app.type(app.byId('pl-q'), 'SOMEONE2');
+    // What is typed in the header search now names nobody: the card's
+    // writes go by the lookup's handle.
+    app.type(app.byId('gs-q'), 'SOMEONE2');
     app.type(app.byId('pl-hours'), '6');
     app.click(app.button('Set hours'));
     await settled();
@@ -1916,6 +2074,8 @@ async function main() {
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
     await settled();
+    app.nav('pplaytime');
+    await settled();
     it('says a character from before counts as having played enough where the tracker is what the rule reads', function () {
       has(app.main(), 'they count as having played enough, whatever the hours say');
       lacks(app.main(), 'not these hours');
@@ -1934,6 +2094,8 @@ async function main() {
     await settled();
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    app.nav('pplaytime');
     await settled();
     it('where the rule reads elsewhere, says so and nothing about these hours deciding', function () {
       has(app.main(), 'The new-player rule reads their QBox metadata for them, not these hours.');
@@ -2117,8 +2279,9 @@ async function main() {
 
     app.nav('money');
     await settled();
-    it('Rewards & money groups each money setting under its money group', function () {
-      has(app.text(app.$('.st-group[data-group="escrow"]')), 'Largest stake, as a share');
+    it('the old Rewards & money lands on Game rules with its rows, each setting under its group', function () {
+      has(app.text(app.$('.st-group[data-group="stakes"]')), 'Largest stake, as a share');
+      has(app.text(app.$('.gr-old')), 'Rewards & money');
     });
     app.type(app.byId('st-row-Penalty.MaxFractionOfEscrow').querySelector('input'), '0.75');
     app.click(app.button('Save', app.byId('st-row-Penalty.MaxFractionOfEscrow')));
@@ -2129,8 +2292,10 @@ async function main() {
     });
 
     // A job list: names added and removed, saved on the second click.
-    app.nav('targeting');
+    app.nav('rules');
     await settled();
+    app.type_('');
+    app.area('police');
     const jobs = function () { return app.byId('st-row-Advisory.RecipientJobNames'); };
     app.type(jobs().querySelector('input'), 'sheriff');
     app.click(app.button('Add', jobs()));
@@ -2201,32 +2366,39 @@ async function main() {
     app.nav('limits');
     await settled();
     app.type(app.byId('st-q'), 'hitman may hold');
-    it('the search finds a label', function () {
-      eq(app.byId('st-row-Limits.MaxAcceptedPerHitman').hidden, false);
-      eq(app.byId('st-row-Completion.Fulfilment').hidden, true);
+    it('the search finds a label, and draws only what matches', function () {
+      truthy(app.byId('st-row-Limits.MaxAcceptedPerHitman'));
+      falsy(app.byId('st-row-Completion.Fulfilment'));
     });
+    app.type_('');
     app.type(app.byId('st-q'), 'completion.fulf');
     it('a key', function () {
-      eq(app.byId('st-row-Completion.Fulfilment').hidden, false);
-      eq(app.byId('st-row-Limits.MaxAcceptedPerHitman').hidden, true);
+      truthy(app.byId('st-row-Completion.Fulfilment'));
+      falsy(app.byId('st-row-Limits.MaxAcceptedPerHitman'));
     });
     app.type(app.byId('st-q'), 'contract limits');
     it('a group', function () {
-      eq(app.byId('st-row-Limits.MaxAcceptedPerHitman').hidden, false);
-      eq(app.byId('st-row-Completion.Fulfilment').hidden, true);
+      truthy(app.byId('st-row-Limits.MaxAcceptedPerHitman'));
+      falsy(app.byId('st-row-Completion.Fulfilment'));
     });
     app.nav('features');
     await settled();
-    it('and keeps what was typed from section to section', function () {
+    it('and keeps what was typed from view to view', function () {
       eq(app.byId('st-q').value, 'contract limits');
-      eq(app.byId('st-none').hidden, false, 'saying nothing matches');
+      has(app.main(), 'No setting matches; clear the filter.', 'saying nothing matches');
     });
     app.type(app.byId('st-q'), 'cash may be put');
     it('and a description', function () {
-      eq(app.byId('st-row-Sources.cash.enabled').hidden, false);
-      eq(app.byId('st-row-Bailout.Enabled').hidden, true);
+      truthy(app.byId('st-row-Sources.cash.enabled'));
+      falsy(app.byId('st-row-Bailout.Enabled'));
     });
-    const all = app.button('Reset all to config.lua');
+    app.nav('changed');
+    await settled();
+    it('Changed from the panel lists every setting changed, wherever it lives', function () {
+      truthy(app.byId('st-row-Bailout.Enabled') || app.byId('st-row-Advisory.RecipientJobNames'), 'a changed row');
+      falsy(app.byId('st-row-Sources.cash.enabled'), 'and none that is not');
+    });
+    const all = app.button('Undo all panel changes');
     app.click(all);
     await settled();
     it('reset all takes two clicks', function () { eq(app.requests('resetSettings').length, 0); });
@@ -2236,14 +2408,15 @@ async function main() {
       eq(app.requests('resetSettings').length, 1);
       has(app.toasts(), 'Every setting is back to what config.lua says (2 were changed).');
     });
-    app.type(app.byId('st-q'), '');
-
     app.nav('devsettings');
+    await settled();
+    app.type(app.byId('st-q'), '');
     await settled();
     it('Developer holds the read-only values: one shows why, and no control', function () {
       const row = app.byId('st-row-Admin.Enabled');
       has(app.text(row), 'would lock you out');
-      eq(row.querySelectorAll('button').length, 0);
+      eq(row.querySelectorAll('button').filter(function (b) {
+        return b.getAttribute('data-act') !== 'st-details'; }).length, 0, 'no control but its Details');
       eq(row.querySelectorAll('input').length, 0);
     });
     it('but one whose stored value was not applied can have that value reset away', function () {
@@ -2282,47 +2455,133 @@ async function main() {
     clean(app, 'settings');
   })();
 
-  /* ---- the sections ---- */
+  /* ---- the sections: sidebar groups, sub-tabs, breadcrumbs, old names ---- */
   await (async function () {
-    const app = boot(standardServer());
+    const app = boot(standardServer({ orgGet: orgOff() }));
     app.open(ADMIN);
     await settled();
-    const views = ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck', 'actions', 'tools',
-      'timers', 'money', 'limits', 'targeting', 'features', 'logs', 'alerts', 'devsettings', 'console',
-      'diagnostics', 'permissions'];
-    it('seven sections, in order, each a button (Target limits after Rules)', function () {
+    const crumb = function () { const here = app.$('.crumb.is-here'); return here ? here.textContent : ''; };
+    it('the sidebar holds the sections in their groups: Daily, Setup, Records, Developer', function () {
       eq(app.$$('.nav-btn').map(function (b) { return b.getAttribute('data-group'); }),
-        ['live', 'actions', 'rules', 'targets', 'features', 'logs', 'developer']);
+        ['home', 'players', 'contracts', 'targets', 'rules', 'org', 'bossperms', 'locations', 'logs', 'developer']);
+      eq(app.$$('.nav-head').map(function (n) { return n.textContent; }), ['Daily', 'Setup', 'Records', 'Developer']);
+      truthy(app.byId('help-btn'), 'Help is the header\'s');
+      eq(app.byId('help-btn').getAttribute('data-act'), 'help-btn');
     });
-    app.click(app.byId('grp-rules'));
+    app.group('rules');
     await settled();
     it('a section opens on its first sub-tab, showing only its own', function () {
-      eq(app.byId('nav-timers').getAttribute('aria-current'), 'page');
-      eq(app.byId('nav-money').hidden, false);
-      eq(app.byId('nav-overview').hidden, true);
+      eq(app.byId('nav-rules').getAttribute('aria-current'), 'page');
+      truthy(app.byId('nav-changed'), 'its other sub-tabs');
+      eq(app.byId('nav-overview'), null, 'and none of another section');
     });
-    const reached = [];
-    for (const view of views) {
+    it('the breadcrumb says where you are', function () {
+      has(app.text(app.byId('crumbs')), 'Game rules');
+      eq(crumb(), 'Areas');
+    });
+    const views = { inbox: 'Inbox', overview: 'Overview', announce: 'Announce', players: 'Find & summary',
+      frozen: 'Frozen', suspended: 'Suspended', protected: 'Protected', contracts: 'All contracts',
+      tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player', tlcontracts: 'Contracts on someone',
+      rules: 'Areas', changed: 'Changed from the panel', history: 'Change history', orgsetup: 'Setup',
+      orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
+      orgaccess: 'Contract access', orgnotices: 'Notices', orgaudit: 'Org audit', bpmatrix: 'Matrix',
+      bplimits: 'Limits', bpoffice: 'Delegation & office', bphistory: 'Grant history', locations: 'Map points',
+      logs: 'Audit log', alerts: 'Alerts', health: 'Health', devsettings: 'Engine settings', console: 'Console',
+      tools: 'Test tools', help: 'How it works', howto: 'How do I…', permissions: 'Who can do what' };
+    const reached = [], drew = [];
+    for (const view of Object.keys(views)) {
       app.nav(view);
       await settled();
-      if (app.byId('nav-' + view).getAttribute('aria-current') === 'page' && app.main().length > 20) reached.push(view);
+      if (crumb() === views[view]) reached.push(view);
+      if (app.main().length > 20) drew.push(view);
     }
-    it('every view the panel had is still a sub-tab, and the new ones too', function () {
-      eq(reached, views);
+    it('every view is reachable, says so on its breadcrumb, and draws something', function () {
+      eq(reached, Object.keys(views));
+      eq(drew, Object.keys(views));
+      clean(app, 'every view');
     });
-    app.nav('limits');
-    await settled();
-    app.click(app.byId('grp-live'));
-    await settled();
-    app.click(app.byId('grp-rules'));
-    await settled();
-    it('and on the one last open in it after', function () {
-      eq(app.byId('nav-limits').getAttribute('aria-current'), 'page');
+    // Every old view's name lands where its items are now.
+    const OLD = { help: 'How it works', overview: 'Overview', contracts: 'All contracts', players: 'Find & summary',
+      frozen: 'Frozen', reviews: 'Inbox', stuck: 'Inbox', actions: 'How do I…', tools: 'Test tools',
+      announce: 'Announce', timers: 'Timers (was Rules, Timers)', money: 'Money (was Rules, Rewards & money)',
+      limits: 'Limits (was Rules, Limits)', targeting: 'Targeting (was Rules, Targeting)',
+      features: 'Switches (was Features)', settings: 'Switches (was Features)', logs: 'Audit log', alerts: 'Alerts', devsettings: 'Engine settings', console: 'Console',
+      diagnostics: 'Health', permissions: 'Who can do what', history: 'Change history', tldefaults: 'Defaults',
+      tljobs: 'Per job', tlplayer: 'Per player', tlcontracts: 'Contracts on someone' };
+    const landed = {};
+    for (const old of Object.keys(OLD)) {
+      app.window.CH_ADMIN_SHOW(old);
+      await settled();
+      landed[old] = crumb();
+    }
+    it('every old view name redirects to its new place', function () {
+      eq(landed, OLD);
     });
-    app.click(app.byId('grp-features'));
+    app.window.CH_ADMIN_SHOW('timers');
+    await settled();
+    it('an old settings tab lands on Game rules with the rows it held, saying so', function () {
+      has(app.text(app.$('.gr-old')), 'Showing what the old Timers (was Rules, Timers) tab held');
+    });
+    app.window.CH_ADMIN_SHOW('stuck');
+    await settled();
+    it('and an old inbox tab on the inbox with its filter chosen', function () {
+      eq(app.$$('[data-act="ib-filter"]').filter(function (b) { return b.getAttribute('aria-pressed') === 'true'; })[0]
+        .getAttribute('data-value'), 'stuck');
+      truthy(app.byId('sk-list'), 'Money waiting drawn');
+      falsy(app.byId('rv-list'), 'and Needs review not');
+    });
+    app.nav('history');
+    await settled();
+    app.group('home');
+    await settled();
+    app.group('rules');
+    await settled();
+    it('a section opens on the sub-tab last open in it', function () {
+      eq(app.byId('nav-history').getAttribute('aria-current'), 'page');
+    });
+    app.group('contracts');
     await settled();
     it('a section of one view has no strip of sub-tabs', function () { eq(app.byId('subnav').hidden, true); });
+    app.group('players');
+    await settled();
+    it('Players shows a selected player\'s tabs only once somebody is looked up', function () {
+      eq(app.byId('nav-pmeasures'), null);
+      truthy(app.byId('nav-frozen'));
+    });
+    app.window.CH_ADMIN_SHOW('pmeasures');
+    await settled();
+    it('and a player\'s tab asked for with nobody selected is Find', function () {
+      eq(crumb(), 'Find & summary');
+    });
     clean(app, 'the sections');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer(), { fresh: true });
+    app.open(ADMIN);
+    await settled();
+    it('a first open, with nothing remembered, is Home\'s Inbox, which reads the overview first', function () {
+      eq(app.byId('nav-inbox').getAttribute('aria-current'), 'page');
+      eq(app.sent[0].op, 'overview');
+      truthy(app.requests('reviews').length && app.requests('stuck').length && app.requests('alerts').length,
+        'and the three lists it shows');
+      has(app.main(), 'Needs review');
+      has(app.main(), 'Money waiting for staff');
+      has(app.main(), 'Open alerts');
+    });
+    it('the inbox counts each list on its filter chip', function () {
+      eq(app.byId('count-reviews').textContent, '3');
+      eq(app.byId('count-stuck').textContent, '1', 'left for staff, not every line listed');
+      eq(app.byId('count-ialerts').textContent, '4');
+    });
+    app.click(app.$$('[data-act="ib-filter"]').filter(function (b) { return b.getAttribute('data-value') === 'reviews'; })[0]);
+    await settled();
+    it('a filter chip shows its list alone', function () {
+      truthy(app.byId('rv-list'));
+      falsy(app.byId('sk-list'));
+      falsy(app.byId('al-list'));
+    });
+    clean(app, 'inbox');
   })();
 
   await (async function () {
@@ -2332,21 +2591,29 @@ async function main() {
     const first = boot(standardServer(), { storage: storage });
     first.open(ADMIN);
     await settled();
-    first.nav('targeting');
+    first.nav('history');
     await settled();
     const again = boot(standardServer(), { storage: storage });
     again.open(ADMIN);
     await settled();
     it('the last section and sub-tab are remembered in this browser', function () {
-      eq(again.byId('nav-targeting').getAttribute('aria-current'), 'page');
+      eq(again.byId('nav-history').getAttribute('aria-current'), 'page');
       eq(again.byId('grp-rules').getAttribute('aria-current'), 'page');
+    });
+    kept['crimson-hitman.admin.nav'] = JSON.stringify({ view: 'targeting', sub: { rules: 'limits', live: 'stuck' } });
+    const old = boot(standardServer(), { storage: storage });
+    old.open(ADMIN);
+    await settled();
+    it('a view remembered under an old name opens where it is now', function () {
+      eq(old.byId('nav-rules').getAttribute('aria-current'), 'page');
+      clean(old, 'an old remembered view');
     });
     const broken = boot(standardServer(), { storage: { getItem: function () { throw new Error('denied'); },
       setItem: function () { throw new Error('denied'); } } });
     broken.open(ADMIN);
     await settled();
     it('and storage that throws is no storage, never a fault', function () {
-      eq(broken.byId('nav-overview').getAttribute('aria-current'), 'page');
+      eq(broken.byId('nav-inbox').getAttribute('aria-current'), 'page');
       clean(broken, 'storage that throws');
     });
   })();
@@ -2384,32 +2651,31 @@ async function main() {
     clean(app, 'developer ACE alone');
   })();
 
-  /* ---- Developer, and Permissions ---- */
+  /* ---- Developer, and Help > Who can do what ---- */
   await (async function () {
     const server = standardServer();
     const app = boot(server);
     app.open(access({ canWrite: false, canIdentify: false, canDevelop: false,
       permissions: PERMISSIONS.map(function (p) { return Object.assign({}, p, { held: p.ace === 'crimson.admin' }); }) }));
     await settled();
-    it('without the developer ACE the section is Permissions alone', function () {
-      has(app.text(app.byId('grp-developer')), 'Permissions & history');
-      lacks(app.text(app.byId('grp-developer')), 'Developer');
+    it('without the developer ACE there is no Developer section', function () {
+      eq(app.byId('grp-developer').hidden, true);
+      eq(app.byId('nh-developer').hidden, true, 'nor its heading');
     });
-    app.click(app.byId('grp-developer'));
+    app.click(app.byId('help-btn'));
     await settled();
-    it('with no console, diagnostics or developer settings in it', function () {
-      eq(app.byId('nav-console').hidden, true);
-      eq(app.byId('nav-devsettings').hidden, true);
-      eq(app.byId('nav-diagnostics').hidden, true);
-      eq(app.byId('nav-permissions').getAttribute('aria-current'), 'page');
+    it('Help opens How it works, How do I and Who can do what', function () {
+      eq(app.byId('nav-help').getAttribute('aria-current'), 'page');
+      truthy(app.byId('nav-howto'));
+      truthy(app.byId('nav-permissions'));
     });
     app.nav('console');
     await settled();
-    it('and a developer view asked for anyway is Permissions, with nothing asked of the server', function () {
+    it('and a developer view asked for anyway is Who can do what, with nothing asked of the server', function () {
       eq(app.byId('nav-permissions').getAttribute('aria-current'), 'page');
       eq(app.requests('console').length, 0);
     });
-    it('Permissions lists each ACE, whether it is held, and how to grant one that is not', function () {
+    it('Who can do what lists each ACE, whether it is held, and how to grant one that is not', function () {
       const rows = app.$$('.perm-row');
       eq(rows.map(function (r) { return r.getAttribute('data-ace'); }),
         ['crimson.admin', 'crimson.identity', 'crimson.developer', 'crimson.moderator']);
@@ -2458,27 +2724,42 @@ async function main() {
     });
     // Every link names the view its key is shown in, as server/settings.lua
     // categorises it.
-    const settingsLua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'settings.lua'), 'utf8');
-    const VIEW = { 'rules-timers': 'timers', 'rules-rewards': 'money', 'rules-limits': 'limits',
-      'rules-targeting': 'targeting', features: 'features', developer: 'devsettings',
-      'target-limits': 'tldefaults' };
+    const settingsLua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'settings.lua'), 'utf8')
+      + fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'org', 'settings_catalogue.lua'), 'utf8');
+    // The old tab names still reach Game rules (ALIASES), so a link may
+    // name either; what it may not name is another section.
+    const VIEW = { 'rules-timers': ['timers', 'rules'], 'rules-rewards': ['money', 'rules'],
+      'rules-limits': ['limits', 'rules'], 'rules-targeting': ['targeting', 'rules'], features: ['features', 'rules'],
+      developer: ['devsettings'], 'target-limits': ['tldefaults'], organisation: ['orgsetup'] };
     const wrong = [];
     help.forEach(function (c) {
       c.links.forEach(function (l) {
         const at = settingsLua.indexOf("key = '" + l.key + "'");
         const cat = at === -1 ? null : /category = '([\w-]+)'/.exec(settingsLua.slice(at, at + 400));
-        if (!cat || VIEW[cat[1]] !== l.view) wrong.push(l.key + ' -> ' + l.view + ' (' + (cat && cat[1]) + ')');
+        if (!cat || (VIEW[cat[1]] || []).indexOf(l.view) === -1) wrong.push(l.key + ' -> ' + l.view + ' (' + (cat && cat[1]) + ')');
       });
     });
     it('every link names the section its setting is in', function () { eq(wrong, []); });
+    it('How it works is an accordion: a card\'s words are drawn only once it is opened', function () {
+      eq(app.$$('button[data-act="help-jump"]').length, 0);
+      eq(app.$$('.help-card.is-open').length, 0);
+    });
+    app.click(app.$$('[data-act="help-toggle"]').filter(function (b) {
+      return b.getAttribute('data-value') === 'Police advisories'; })[0]);
+    it('and opening one draws it', function () {
+      eq(app.$$('.help-card.is-open').length, 1);
+      has(app.main(), 'officers are told by an advisory');
+    });
     const link = app.$$('button[data-act="help-jump"]').filter(function (b) {
       return b.getAttribute('data-key') === 'Advisory.RecipientJobNames';
     })[0];
     app.click(link);
     await settled();
-    it('and lands on that setting, marked', function () {
-      eq(app.byId('nav-targeting').getAttribute('aria-current'), 'page');
+    it('and a link lands on that setting in Game rules, in its area, marked and opened', function () {
+      eq(app.byId('nav-rules').getAttribute('aria-current'), 'page');
       truthy(app.byId('st-row-Advisory.RecipientJobNames').classList.contains('is-focus'));
+      falsy(app.byId('st-row-Advisory.RecipientJobNames').querySelector('.st-details').hidden, 'its Details open');
+      has(app.text(app.byId('crumbs')), 'Police & city news');
     });
     clean(app, 'how it works');
   })();
@@ -2572,11 +2853,13 @@ async function main() {
     const app = boot(server);
     app.open(FULL);
     await settled();
-    app.click(app.button('Open Stuck escrow'));
+    app.click(app.button('Money waiting 1'));
     await settled();
-    it('the overview opens Stuck escrow, where every waiting line is listed', function () {
+    it('the overview opens the inbox on Money waiting, where every waiting line is listed', function () {
       eq(app.last('stuck').op, 'stuck');
-      eq(app.byId('nav-stuck').getAttribute('aria-current'), 'page');
+      eq(app.byId('nav-inbox').getAttribute('aria-current'), 'page');
+      eq(app.$$('[data-act="ib-filter"]').filter(function (b) { return b.getAttribute('aria-pressed') === 'true'; })[0]
+        .getAttribute('data-value'), 'stuck');
       has(app.main(), 'ct00000001:2');
       has(app.main(), 'owe00000003');
       has(app.main(), 'ct00000009:1');
@@ -2584,7 +2867,8 @@ async function main() {
       has(app.main(), '5 left for you to settle, of 6 listed');
       has(app.main(), 'Arrival unknown');
       has(app.main(), 'Never given: only Pay settles it');
-      has(app.main(), '2 money events no rule could settle wait in the review queue');
+      lacks(app.main(), 'money events no rule could settle wait in the review queue',
+        'the queue is the inbox\'s own filter now, not a second card here');
     });
     const item = function (id) {
       return app.$$('li').filter(function (li) {
@@ -2692,7 +2976,6 @@ async function main() {
     await settled();
     it('lists nothing while the server recovers, and says so', function () {
       has(app.main(), 'Not listed while the server is recovering from the restart.');
-      has(app.main(), 'Open the queue');
       eq(app.byId('banner').hidden, false);
     });
     clean(app, 'stuck, recovering');
@@ -2801,10 +3084,19 @@ async function main() {
         await settled();
         const refresh = app.button('Bring timers forward');
         if (!refresh.disabled) { app.click(refresh); sweep(app, 'refresh armed'); app.click(refresh); await settled(); }
+        if (!app.button('Flush the audit log').disabled) { app.click(app.button('Flush the audit log')); await settled(); }
+        app.nav('health');
+        await settled();
         app.click(app.button('Run the diagnosis'));
         await settled();
-        if (!app.button('Flush the audit log').disabled) { app.click(app.button('Flush the audit log')); await settled(); }
         sweep(app, 'the tools, run');
+        // The new sections too: the organisation, Boss permissions and Locations.
+        for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit',
+          'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'suspended', 'protected', 'howto']) {
+          app.nav(view);
+          await settled();
+          sweep(app, view);
+        }
         clean(app, 'the sweep');
       })();
     }
@@ -2862,7 +3154,7 @@ async function main() {
     const planted = boot(standardServer({ diag: { ok: true, data: { lines: ['-> see /ch-stuck'] } } }));
     planted.open(FULL);
     await settled();
-    planted.nav('tools');
+    planted.nav('health');
     await settled();
     planted.click(planted.button('Run the diagnosis'));
     await settled();
@@ -2974,6 +3266,11 @@ async function main() {
       eq(app.requests('refresh').length, 1);
       has(app.main(), 'cooldowns cleared');
     });
+    it('Test tools holds the timer refresh and the flush, and points to the diagnosis', function () {
+      has(app.main(), 'The diagnosis is under Health');
+    });
+    app.nav('health');
+    await settled();
     app.type(app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'tl.subject'; })[0], '12');
     app.click(app.button('Run the diagnosis'));
     await settled();
@@ -2985,6 +3282,8 @@ async function main() {
     it('and a line that had to wait is added when it comes', function () {
       has(app.main(), 'photo links: yes');
     });
+    app.nav('tools');
+    await settled();
     const flush = app.button('Flush the audit log');
     app.click(flush);
     await settled();
@@ -3058,6 +3357,7 @@ async function main() {
     await settled();
     app.click(app.$$('[data-act="contract"]')[0]);
     await settled();
+    app.tab('money');
     it('and so does the contract\'s view', function () {
       has(app.text(app.drawer()), 'Not listed: recovery failed at the last start');
       lacks(app.text(app.drawer()), 'while the server is recovering');
@@ -3071,7 +3371,7 @@ async function main() {
     app.open(FULL);
     await settled();
     it('says the stuck listing could not be read when it raised', function () {
-      has(app.main(), 'The list could not be read just now');
+      has(app.main(), 'Money waiting could not be read just now');
       lacks(app.main(), 'while the server is recovering');
     });
     clean(app, 'listing raised');
@@ -3100,6 +3400,7 @@ async function main() {
       return b.getAttribute('data-act') === 'contract' && b.getAttribute('data-id') === 'ct00000001';
     })[0]);
     await settled();
+    app.tab('money');
     const pay = app.$$('button').filter(function (b) {
       return b.getAttribute('data-act') === 'settle' && b.getAttribute('data-line') === 'ct00000001:2'
         && b.getAttribute('data-how') === 'pay' && b.getAttribute('data-where') === 'drawer';
@@ -3121,10 +3422,10 @@ async function main() {
     const app = boot(standardServer());
     app.open(FULL);
     await settled();
-    app.click(app.button('Run it'));
+    app.click(app.button('Run the diagnosis'));
     await settled();
-    it('Run it runs the diagnosis, under Developer for staff who have it', function () {
-      eq(app.byId('nav-diagnostics').getAttribute('aria-current'), 'page');
+    it('Run the diagnosis runs it, under Developer, Health for staff who have it', function () {
+      eq(app.byId('nav-health').getAttribute('aria-current'), 'page');
       eq(app.requests('diag').length, 1);
       has(app.main(), 'photo hosts: 0');
     });
@@ -3172,6 +3473,7 @@ async function main() {
     await settled();
     app.click(app.$$('[data-act="contract"]')[0]);
     await settled();
+    app.more();
     const voidBtn = app.button('Void contract', app.drawer());
     app.click(voidBtn);
     app.click(voidBtn);
@@ -3197,8 +3499,10 @@ async function main() {
     const app = boot(standardServer({ settings: view }));
     app.open(FULL);
     await settled();
-    app.nav('limits');
+    app.nav('rules');
     await settled();
+    app.type_('');
+    app.area('other');
     const row = function (key) { return app.byId('st-row-' + key); };
     const sets = app.requests('setSetting').length;
     app.type(row('Ledger.PhotoRetentionDays').querySelector('input'), '9');
@@ -3449,7 +3753,7 @@ async function main() {
     app.open(ADMIN);
     await settled();
     it('counts frozen players on the overview', function () {
-      has(app.main(), 'Frozen players');
+      has(app.main(), 'Measures on players');
       has(app.text(app.byId('ov-frozen')), '2');
     });
     app.nav('contracts');
@@ -3457,14 +3761,21 @@ async function main() {
     it('badges a frozen contract in the list, and only that one', function () {
       eq(app.$$('.is-frozen').length, 1);
     });
-    app.nav('players');
+    app.nav('frozen');
     await settled();
-    it('asks for the frozen list when Players opens', function () {
+    it('asks for the frozen list when Players, Frozen opens', function () {
       truthy(app.requests('frozen').length >= 1, 'asked');
       has(app.main(), 'Nobody is frozen.');
     });
+    app.nav('players');
+    await settled();
+    it('and not on Find, which has no list under it any more', function () {
+      eq(app.requests('frozen').length, 1);
+    });
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    app.nav('pmeasures');
     await settled();
     it('offers Freeze, with a reason field, on the player looked up', function () {
       truthy(app.button('Freeze'), 'Freeze');
@@ -3491,7 +3802,7 @@ async function main() {
       has(app.main(), 'Dana Reyes is frozen.');
       truthy(app.button('Unfreeze'), 'Unfreeze once frozen');
       truthy(app.$$('.is-frozen').length >= 1, 'the Frozen badge');
-      has(app.main(), 'Frozen players');
+      truthy(app.requests('frozen').length >= 2, 'the frozen list read again');
     });
     app.click(app.button('Unfreeze'));
     await settled();
@@ -3516,6 +3827,8 @@ async function main() {
     await settled();
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    app.nav('pmeasures');
     await settled();
     it('a reader is shown Freeze disabled, and it sends nothing', function () {
       const button = app.button('Freeze');
@@ -3563,9 +3876,15 @@ async function main() {
     await settled();
     app.click(app.$('tr.row'));
     await settled();
-    markupFrom(app, 'the staff tools', found);
+    const toolText = [];
+    ['people', 'notes', 'record'].forEach(function (t) {
+      app.tab(t);
+      markupFrom(app, 'the staff tools (' + t + ')', found);
+      toolText.push(app.text(app.drawer()));
+    });
+    app.tab('notes');
     it('the contract view has the five staff tools, the notes and history escaped', function () {
-      const text = app.text(app.drawer());
+      const text = toolText.join(' ');
       ['Staff notes', 'Remove an operative', 'Edit text', 'Export the record', 'As a player sees it'].forEach(function (t) {
         has(text, t);
       });
@@ -3600,6 +3919,7 @@ async function main() {
     });
 
     // Remove an operative.
+    app.tab('people');
     app.type(app.drawer().querySelector('[data-bind="dr.rm.reason.ct00000001"]'), 'combat logging');
     app.click(app.button('Remove', app.drawer()));
     await settled();
@@ -3626,6 +3946,7 @@ async function main() {
     });
 
     // Edit text.
+    app.tab('notes');
     app.type(app.drawer().querySelector('[data-bind="dr.tx.text.ct00000001"]'), 'Settling a score');
     app.click(app.button('Replace', app.drawer()));
     await settled();
@@ -3643,6 +3964,7 @@ async function main() {
     });
 
     // Export.
+    app.tab('record');
     app.click(app.button('Copy the record', app.drawer()));
     await settled();
     it('Copy the record asks for it and puts it on the clipboard, as plain text', function () {
@@ -3662,6 +3984,7 @@ async function main() {
     });
 
     // The player view.
+    app.tab('people');
     app.click(app.button('Target', app.drawer()));
     await settled();
     it('the target\'s card is asked for, and drawn, escaped, with its edited mark', function () {
@@ -3693,15 +4016,20 @@ async function main() {
     app.click(app.$('tr.row'));
     await settled();
     it('a reader sees the notes and the history, and every tool that writes disabled', function () {
-      ['Add note', 'Remove', 'Replace'].forEach(function (label) {
+      app.tab('notes');
+      ['Add note', 'Replace'].forEach(function (label) {
         truthy(app.button(label, app.drawer()).disabled, label + ' disabled');
       });
-      falsy(app.button('Copy the record', app.drawer()).disabled, 'exporting is not a write');
-      falsy(app.button('Placer', app.drawer()).disabled, 'looking is not a write');
       app.click(app.button('Add note', app.drawer()));
+      app.tab('people');
+      truthy(app.button('Remove', app.drawer()).disabled, 'Remove disabled');
+      falsy(app.button('Placer', app.drawer()).disabled, 'looking is not a write');
       app.click(app.button('Remove', app.drawer()));
+      app.tab('record');
+      falsy(app.button('Copy the record', app.drawer()).disabled, 'exporting is not a write');
       eq(app.requests('addNote').length + app.requests('removeHitman').length, 0);
     });
+    app.tab('people');
     app.click(app.button('Placer', app.drawer()));
     await settled();
     it('a card not shown says why', function () {
@@ -3720,12 +4048,18 @@ async function main() {
     app.click(app.$('tr.row'));
     await settled();
     it('a closed contract offers no Remove, and a server with no reason no Replace', function () {
+      const none = function () {
+        return app.drawer().querySelectorAll('button').filter(function (b) {
+          const act = b.getAttribute('data-act') || '';
+          return act === 'ct-remove' || act === 'ct-text';
+        }).length;
+      };
+      app.tab('people');
       has(app.text(app.drawer()), 'Only a live contract (active or accepted) has operatives to remove.');
+      eq(none(), 0);
+      app.tab('notes');
       has(app.text(app.drawer()), 'This server keeps no reason on a contract.');
-      eq(app.drawer().querySelectorAll('button').filter(function (b) {
-        const act = b.getAttribute('data-act') || '';
-        return act === 'ct-remove' || act === 'ct-text';
-      }).length, 0);
+      eq(none(), 0);
     });
     clean(app, 'staff tools closed');
   })();
@@ -3791,14 +4125,26 @@ async function main() {
     app.open(ADMIN);
     await settled();
     await lookUp(app);
-    it('a lookup draws Suspend, Protect, Pay and the history card, and asks for the history', function () {
+    it('a lookup asks for no history until its tab opens', function () {
+      eq(app.requests('history').length, 0);
+    });
+    app.nav('pmeasures');
+    await settled();
+    it('Measures draws Freeze, Suspend and Protect, and a way to their target limits', function () {
       has(app.main(), 'Suspend from contracts');
       has(app.main(), 'Protect from contracts');
-      has(app.main(), 'Pay');
-      has(app.main(), 'History');
-      eq(app.last('history').data, { ref: 'p7_424242' });
       has(app.main(), 'Their live contracts are not touched: freeze them for that.');
       has(app.main(), 'Contracts already on them are not touched: freeze them for that.');
+      truthy(app.button('Open them in Target limits'));
+    });
+    app.nav('pmoney');
+    await settled();
+    it('Money draws Pay', function () { has(app.main(), 'Pay'); });
+    app.nav('phistory');
+    await settled();
+    it('History asks for it as its tab opens, by the lookup\'s handle', function () {
+      eq(app.last('history').data, { ref: 'p7_424242' });
+      has(app.main(), 'History');
     });
     it('the history card shows the counts, money by kind and each measure with its dates, escaped', function () {
       has(app.main(), 'Bought out');
@@ -3811,6 +4157,8 @@ async function main() {
       lacks(app.main(), 'Client', 'no names column without the identity ACE');
     });
 
+    app.nav('pmeasures');
+    await settled();
     app.click(app.button('Suspend'));
     await settled();
     it('refuses a suspension with no days chosen, sending nothing', function () {
@@ -3886,6 +4234,8 @@ async function main() {
       eq(app.last('protect').data, { ref: 'p7_424242', hours: 0, reason: 'Off duty staff' });
     });
 
+    app.nav('pmoney');
+    await settled();
     app.type(app.byId('pay-amount'), '250000');
     app.type(app.byId('pay-reason'), 'Lost to a bug');
     app.click(app.button('Pay'));
@@ -3919,10 +4269,16 @@ async function main() {
       has(app.text(app.byId('badges')), 'Moderator');
     });
     await lookUp(app);
-    it('a moderator may freeze, suspend and protect, and not pay', function () {
+    app.nav('pmeasures');
+    await settled();
+    it('a moderator may freeze, suspend and protect', function () {
       falsy(app.button('Freeze').disabled, 'Freeze');
       falsy(app.button('Suspend').disabled, 'Suspend');
       falsy(app.button('Protect').disabled, 'Protect');
+    });
+    app.nav('pmoney');
+    await settled();
+    it('and not pay', function () {
       truthy(app.button('Pay').disabled, 'Pay is the staff ACE\'s');
       app.click(app.button('Pay'));
       app.click(app.button('Pay'));
@@ -3933,6 +4289,7 @@ async function main() {
     await settled();
     app.click(app.$('tr.row'));
     await settled();
+    app.more();
     it('a moderator may void and move a deadline from the contract view', function () {
       falsy(app.button('Void contract', app.drawer()).disabled, 'Void');
     });
@@ -3944,13 +4301,21 @@ async function main() {
     app.open(READER);
     await settled();
     await lookUp(app);
-    it('a reader sees Suspend, Protect and Pay disabled, and they send nothing', function () {
-      ['Suspend', 'Protect', 'Pay'].forEach(function (label) {
+    const disabledFor = {};
+    for (const [view, labels] of [['pmeasures', ['Suspend', 'Protect']], ['pmoney', ['Pay']]]) {
+      app.nav(view);
+      await settled();
+      labels.forEach(function (label) {
         const button = app.button(label);
-        truthy(button.disabled, label + ' disabled for a reader');
+        disabledFor[label] = button.disabled;
         app.click(button);
         app.click(button);
       });
+    }
+    app.nav('phistory');
+    await settled();
+    it('a reader sees Suspend, Protect and Pay disabled, and they send nothing', function () {
+      eq(disabledFor, { Suspend: true, Protect: true, Pay: true });
       eq(app.requests('suspend').length + app.requests('protect').length + app.requests('manualPay').length, 0);
       has(app.main(), 'History', 'the history card reads for them too');
     });
@@ -3965,6 +4330,8 @@ async function main() {
     app.open(FULL);
     await settled();
     await lookUp(app);
+    app.nav('phistory');
+    await settled();
     it('with the identity ACE the history card names the parties, and how many were anonymous', function () {
       has(app.main(), 'Vic Marlowe');
       has(app.main(), XSS);
@@ -3985,11 +4352,16 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.click(app.byId('grp-actions'));
+    app.nav('howto');
     await settled();
-    it('Staff actions has an Announce sub-tab, and a card pointing to it', function () {
-      eq(app.byId('nav-announce').hidden, false);
+    it('How do I has a card pointing to Announce', function () {
       has(app.main(), 'Announce');
+      truthy(app.button('Go: Home, Announce'));
+    });
+    app.group('home');
+    await settled();
+    it('and Home has its sub-tab', function () {
+      truthy(app.byId('nav-announce'));
     });
     app.nav('announce');
     await settled();
@@ -4143,11 +4515,11 @@ async function main() {
     const app = boot(server);
     app.open(access({ canWrite: false, canIdentify: false, canDevelop: false }));
     await settled();
-    app.click(app.byId('grp-developer'));
+    app.group('rules');
     await settled();
-    it('staff without the Developer section still have Settings history beside Permissions', function () {
-      eq(app.byId('nav-permissions').getAttribute('aria-current'), 'page');
-      eq(app.byId('nav-history').hidden, false);
+    it('staff without the Developer section have the settings history under Game rules', function () {
+      eq(app.byId('grp-developer').hidden, true);
+      truthy(app.byId('nav-history'), 'Change history');
     });
     app.nav('history');
     await settled();
@@ -4246,14 +4618,15 @@ async function main() {
     });
     app.nav('help');
     await settled();
+    app.click(app.button('Open all'));
     it('How it works has a card for each roleplay feature, linking to its settings', function () {
       const text = app.text(app.$('#panel'));
       ['Witness heat', 'EMS before re-listing', 'City news', 'Dirty money payouts'].forEach(function (t) {
         has(text, t);
       });
       truthy(app.$$('button[data-act="help-jump"]').some(function (b) {
-        return b.getAttribute('data-key') === 'Roleplay.DirtyPayouts.Item' && b.getAttribute('data-view') === 'money';
-      }), 'a link to the item, under Rewards & money');
+        return b.getAttribute('data-key') === 'Roleplay.DirtyPayouts.Item';
+      }), 'a link to the item');
     });
     clean(app, 'roleplay settings');
   })();
@@ -4274,6 +4647,7 @@ async function main() {
     await settled();
     app.nav('help');
     await settled();
+    app.click(app.button('Open all'));
     const help = app.window.CH_ADMIN_HELP;
     it('How it works has a card for each rpC roleplay feature, linking to its settings', function () {
       ['proof of intent', 'reputation', 'bodyguards', 'hit on the hitman'].forEach(function (w) {
@@ -4289,8 +4663,8 @@ async function main() {
     truthy(link, 'the hold time link');
     app.click(link);
     await settled();
-    it('a roleplay help link lands on its setting under Rules > Timers', function () {
-      eq(app.byId('nav-timers').getAttribute('aria-current'), 'page');
+    it('a roleplay help link lands on its setting in Game rules', function () {
+      eq(app.byId('nav-rules').getAttribute('aria-current'), 'page');
       truthy(app.byId('st-row-Roleplay.ProofOfIntent.HoldMaxMinutes').classList.contains('is-focus'));
     });
     app.nav('features');
@@ -4317,8 +4691,12 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('limits');
+    app.nav('locations');
     await settled();
+    it('a place list is edited in Locations, not Game rules', function () {
+      truthy(app.byId('st-row-Roleplay.Rumours.Locations'));
+      truthy(app.button('Use my position for a new line'), 'with Use my position');
+    });
     const row = function () { return app.byId('st-row-Roleplay.Rumours.Locations'); };
     app.type(row().querySelector('input'), '1240.6, -3179.2, 7.1, 270.0');
     app.click(app.button('Add', row()));
@@ -4342,6 +4720,7 @@ async function main() {
     });
     app.nav('help');
     await settled();
+    app.click(app.button('Open all'));
     it('How it works has a card for each roleplay feature', function () {
       ['Rumours and the broker', 'Burner phone', 'The informant in person', 'Reason quality'].forEach(function (t) {
         has(app.main(), t);
@@ -4440,7 +4819,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('targeting');
+    app.nav('locations');
     await settled();
     const row = function () { return app.byId('st-row-Improvements.TipSafeZones.Zones'); };
     app.type(row().querySelector('input'), '300, -590, 80, Pillbox Hill');
@@ -4455,6 +4834,7 @@ async function main() {
     });
     app.nav('help');
     await settled();
+    app.click(app.button('Open all'));
     it('How it works has a card for each informant fairness option', function () {
       ['Tip warning delay', 'Tip limits', 'Hold before a tip', 'Informant second try', 'Tip safe zones',
         'Go dark'].forEach(function (t) { has(app.main(), t); });
@@ -4498,6 +4878,7 @@ async function main() {
     });
     app.nav('help');
     await settled();
+    app.click(app.button('Open all'));
     const help = app.window.CH_ADMIN_HELP;
     it('How it works has a card for each board improvement, linking to its settings', function () {
       ['placer record', 'hitman heat', 'tiered board', 'contract decay'].forEach(function (w) {
@@ -4516,8 +4897,8 @@ async function main() {
     truthy(link, 'the decay switch link');
     app.click(link);
     await settled();
-    it('an improvement help link lands on its switch under Features', function () {
-      eq(app.byId('nav-features').getAttribute('aria-current'), 'page');
+    it('an improvement help link lands on its switch in Game rules', function () {
+      eq(app.byId('nav-rules').getAttribute('aria-current'), 'page');
       truthy(app.byId('st-row-Improvements.ContractDecay.Enabled').classList.contains('is-focus'));
     });
     clean(app, 'improvements impB');
@@ -4540,6 +4921,7 @@ async function main() {
     await settled();
     app.nav('help');
     await settled();
+    app.click(app.button('Open all'));
     const help = app.window.CH_ADMIN_HELP;
     it('How it works has a card for each improvement, linking to its settings', function () {
       ['Proof items', 'Completion cooldown', 'Weapon serial scrubbing', 'Weekly stats to Discord'].forEach(function (t) {
@@ -4653,12 +5035,14 @@ async function main() {
       overview: overview({ overrides: 0 }) }));
     app.open(FULL);
     await settled();
-    it('S13: the overview\'s settings link says what it opens, not a bare 0', function () {
+    app.nav('health');
+    await settled();
+    it('S13: Health\'s settings link says what it opens, not a bare 0', function () {
       const link = app.$$('button').filter(function (b) {
-        return b.getAttribute('data-section') === 'settings' && b.className.indexOf('link') !== -1;
+        return b.getAttribute('data-section') === 'changed' && b.className.indexOf('link') !== -1;
       })[0];
       truthy(link, 'the link');
-      eq(link.textContent.trim(), 'None changed — open Settings');
+      eq(link.textContent.trim(), 'None changed — open Game rules');
     });
     app.nav('contracts');
     await settled();
@@ -4668,21 +5052,32 @@ async function main() {
     it('S13: says the mode with a capital, as every other term', function () {
       has(drawerText, 'ModeExclusive');
     });
-    const parties = app.drawer().querySelectorAll('button').filter(function (b) {
-      return b.getAttribute('data-act') === 'party-lookup';
-    });
+    const partyButtons = function () {
+      return app.drawer().querySelectorAll('button').filter(function (b) {
+        return b.getAttribute('data-act') === 'party-lookup';
+      });
+    };
+    // The client and the target on Summary, the operatives on People.
+    const onSummary = partyButtons();
+    app.tab('people');
+    const parties = onSummary.concat(partyButtons());
+    app.tab('summary');
     it('S8: offers Look up / Freeze beside every party, by role (IdentityAce: anonymous ones too)', function () {
       eq(parties.map(function (b) { return b.getAttribute('data-subject'); }),
         ['contract:ct00000001:client', 'contract:ct00000001:target', 'contract:ct00000001:op:hm1',
          'contract:ct00000001:op:hm2']);
       has(app.text(parties[0]), 'Look up / Freeze');
     });
-    app.click(parties[1]);
+    app.click(partyButtons()[1]);
     await settled();
-    it('S8: which opens Players on them, asked by the contract and the role, no citizen id', function () {
+    it('S8: which opens Players on them, on Measures, asked by the contract and the role, no citizen id', function () {
       eq(app.last('player').data.subject, 'contract:ct00000001:target');
       has(app.main(), 'Freeze');
+      eq(app.byId('nav-pmeasures').getAttribute('aria-current'), 'page');
+      eq(app.drawer().hidden, false, 'and the contract stays open over it');
     });
+    app.nav('players');
+    await settled();
     app.type(app.byId('pl-q'), 'Dana Reyes');
     app.key(app.byId('pl-q'), 'Enter');
     await settled();
@@ -4707,10 +5102,14 @@ async function main() {
     app.click(app.$$('[data-act="contract"]')[0]);
     await settled();
     it('S8: offers nobody anonymous to staff without IdentityAce: the client and an anonymous operative', function () {
-      const subjects = app.drawer().querySelectorAll('button').filter(function (b) {
-        return b.getAttribute('data-act') === 'party-lookup';
-      }).map(function (b) { return b.getAttribute('data-subject'); });
-      eq(subjects, ['contract:ct00000001:target']);
+      const subjects = function () {
+        return app.drawer().querySelectorAll('button').filter(function (b) {
+          return b.getAttribute('data-act') === 'party-lookup';
+        }).map(function (b) { return b.getAttribute('data-subject'); });
+      };
+      const first = subjects();
+      app.tab('people');
+      eq(first.concat(subjects()), ['contract:ct00000001:target']);
     });
     clean(app, 'anonymous parties');
   })();
@@ -4787,6 +5186,7 @@ async function main() {
     });
     app.nav('help');
     await settled();
+    app.click(app.button('Open all'));
     it('How it works: every optional feature has a card, titled by its area, in config.lua\'s order', function () {
       const ordered = app.window.CH_ADMIN_HELP_ORDERED();
       eq(app.$$('.help-card').length, ordered.length);
@@ -4834,6 +5234,8 @@ async function main() {
     const first = app.last('player').data;
     // Somebody else is typed in the box after the lookup.
     app.type(app.byId('pl-q'), 'Someone Else');
+    app.nav('pmoney');
+    await settled();
     app.type(app.byId('pay-amount'), '100');
     app.type(app.byId('pay-reason'), 'refund');
     app.click(app.button('Pay'));
@@ -4848,8 +5250,14 @@ async function main() {
     });
     it('sweep 4 D2: and reads the card again by that handle, not by the box', function () {
       eq(app.last('player').data, { ref: 'p8_1' });
-      eq(app.last('history').data, { ref: 'p9_2' }, 'the history by the handle the reread gave');
     });
+    app.nav('phistory');
+    await settled();
+    it('sweep 4 D2: the history by the handle the reread gave', function () {
+      eq(app.last('history').data, { ref: 'p9_2' });
+    });
+    app.nav('pmeasures');
+    await settled();
     app.type(app.byId('ps-reason'), 'spam');
     app.click(app.button('3 days'));
     await settled();
@@ -4877,6 +5285,8 @@ async function main() {
     app.open(ADMIN);
     await settled();
     await lookUp(app);
+    app.nav('pmoney');
+    await settled();
     app.type(app.byId('pay-amount'), '100');
     app.type(app.byId('pay-reason'), 'refund');
     app.click(app.button('Pay'));
@@ -4915,14 +5325,19 @@ async function main() {
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
     await settled();
+    app.nav('pmeasures');
+    await settled();
     app.click(app.button('Unfreeze'));
     await settled();
     it('sweep 5 review: Unfreeze on the first player is armed', function () {
       eq(app.requests('unfreeze').length, 0);
       truthy(app.button('Unfreeze').classList.contains('is-armed'));
     });
-    app.type(app.byId('pl-q'), '13');
-    app.key(app.byId('pl-q'), 'Enter');
+    // Another player, from the header search, while Measures is open.
+    app.type(app.byId('gs-q'), '13');
+    app.key(app.byId('gs-q'), 'Enter');
+    await settled();
+    app.nav('pmeasures');
     await settled();
     it('sweep 5 review: looking up another player leaves nothing armed', function () {
       eq(app.last('player').data, { subject: '13' });
@@ -4952,6 +5367,7 @@ async function main() {
     await settled();
     app.click(app.$$('tr.row')[0]);
     await settled();
+    app.more();
     app.type(app.drawer().querySelector('[data-bind="dr.reason"]'), 'Duplicate');
     app.click(app.button('Void contract', app.drawer()));
     await settled();
@@ -4961,8 +5377,12 @@ async function main() {
     });
     app.click(app.$$('tr.row')[1]);
     await settled();
-    it('sweep 5 review: opening another contract leaves nothing armed', function () {
+    it('sweep 5 review: opening another contract closes its More, and leaves nothing armed', function () {
       eq(app.last('contract').data, { id: 'ct00000002' });
+      eq(app.drawer().querySelectorAll('[data-act="void"]').length, 0, 'the void form is not carried over');
+    });
+    app.more();
+    it('sweep 5 review: its own Void is not armed', function () {
       falsy(app.button('Void contract', app.drawer()).classList.contains('is-armed'), 'still armed');
     });
     app.type(app.drawer().querySelector('[data-bind="dr.reason"]'), 'Duplicate');
@@ -5027,12 +5447,12 @@ async function main() {
     await settled();
     app.click(app.byId('grp-targets'));
     await settled();
-    it('Target limits: its own section after Rules, opening on Defaults (the settings view)', function () {
+    it('Target limits: its own section under Daily, opening on Defaults (the settings view)', function () {
       eq(app.byId('nav-tldefaults').getAttribute('aria-current'), 'page');
-      eq(app.byId('nav-tljobs').hidden, false);
-      eq(app.byId('nav-tlplayer').hidden, false);
-      eq(app.byId('nav-tlcontracts').hidden, false);
-      eq(app.byId('nav-timers').hidden, true);
+      truthy(app.byId('nav-tljobs'));
+      truthy(app.byId('nav-tlplayer'));
+      truthy(app.byId('nav-tlcontracts'));
+      eq(app.byId('nav-rules'), null, 'and nothing of Game rules');
       truthy(app.requests('settings').length >= 1, 'reads the settings');
     });
 
@@ -5218,12 +5638,877 @@ async function main() {
     it('the search asks by target', function () { eq(app.last('targetContracts').data, { page: 1, query: 'Dana' }); });
     app.click(app.$$('tr.row')[1]);
     await settled();
+    app.more();
     it('a row opens the existing contract drawer, with its staff actions', function () {
       eq(app.last('contract').data, { id: 'ct00000002' });
       eq(app.drawer().hidden, false);
       truthy(app.button('Void contract', app.drawer()), 'the drawer\'s own Void');
     });
     clean(app, 'target limits current contracts');
+  })();
+
+  /* ======================================================================
+     The new layout: header search, the context chips, the lists of
+     Players, the organisation, Boss permissions and Locations.
+     ====================================================================== */
+
+  /** The organisation's catalogue rows, as server/org/settings_catalogue.lua adds them. */
+  function orgSettings(on) {
+    const view = settingsView();
+    view.data.features.push({ key: 'Organisation.Enabled', category: 'organisation', group: 'Organisation',
+      area: 'organisation', label: 'Hitman organisation', kind: 'switch', live: true, value: !!on, default: false,
+      shipped: false, hasShipped: true, source: 'config', about: 'A real qbx_core job.' });
+    view.data.limits.push({ key: 'Organisation.OfficeRadius', category: 'organisation', group: 'Organisation',
+      area: 'organisation', label: 'Boss office radius (m)', kind: 'number', min: 1, max: 50, live: true, value: 5,
+      default: 5, source: 'config' });
+    view.data.limits.push({ key: 'Organisation.Limits.WithdrawMax', category: 'organisation',
+      group: 'Organisation: Boss limits', area: 'organisation', label: 'Largest withdrawal ($)', kind: 'number',
+      integer: true, min: 0, max: 10000000, live: true, value: 5000, default: 5000, source: 'config' });
+    view.data.limits.push({ key: 'Organisation.Limits.MaxMembers', category: 'organisation',
+      group: 'Organisation: Boss limits', area: 'organisation', label: 'Members at most', kind: 'number',
+      integer: true, min: 1, max: 500, live: true, value: 30, default: 30, source: 'config' });
+    view.data.limits.push({ key: 'Roleplay.Rumours.Locations', category: 'rules-limits',
+      group: 'Roleplay: Rumours and broker', area: 'extras', label: 'Broker NPC places', kind: 'list', whole: true,
+      live: true, value: [], default: [], source: 'config' });
+    view.data.limits.push({ key: 'Limits.JailZone.x', category: 'rules-limits', group: 'Contract limits',
+      area: 'placing', label: 'Prison grounds centre, x', kind: 'number', min: -10000, max: 10000, live: true,
+      value: 1700, default: 1700, source: 'config' });
+    view.data.limits.push({ key: 'Limits.JailZone.y', category: 'rules-limits', group: 'Contract limits',
+      area: 'placing', label: 'Prison grounds centre, y', kind: 'number', min: -10000, max: 10000, live: true,
+      value: 2600, default: 2600, source: 'config' });
+    return view;
+  }
+
+  function orgServer(extra) {
+    const server = standardServer(Object.assign({
+      settings: orgSettings(true), orgGet: orgOn(),
+      orgFunds: { ok: true, data: { balance: 12500, bank: false, rows: [
+        { kind: 'staff_deposit', amount: 5000, at: NOW - 60, reason: 'Seed ' + XSS, actor: 'ADMIN001' }] } },
+      orgAudit: function (data) {
+        return { ok: true, data: { rows: [{ ts: NOW - 30, action: data.action || 'org_grant', by: 'a staff member',
+          detail: { subject: 'role', id: '3', power: 'M2', before: 'off', after: 'allow', note: XSS } }] } };
+      },
+      orgMyPosition: { ok: true, data: { x: 123.456, y: -654.321, z: 30.04, heading: 182.6 } }
+    }, extra || {}));
+    ['orgSetup', 'orgRename', 'orgLayout', 'orgNotice', 'orgRoleSet', 'orgRoleRemove', 'orgRolePowers',
+      'orgMemberHire', 'orgMemberRole', 'orgMemberFire', 'orgMemberSuspend', 'orgMemberLimits', 'orgMemberOverride',
+      'bossPermsSet', 'bossPermsRevokeAll', 'bossLimits', 'bossOfficeRule', 'orgCuts', 'orgFundsMove', 'orgAccess',
+      'orgPick', 'orgLocationSet', 'orgLocationRemove', 'orgApplication', 'orgFundsBackend'].forEach(function (op) {
+      if (server[op] === undefined) server[op] = { ok: true, message: op + ' done.' };
+    });
+    return server;
+  }
+
+  /* ---- the header search ---- */
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.key(app.body, '/');
+    it('/ goes to the header search', function () {
+      truthy(app.document.activeElement === app.byId('gs-q'), 'the search box has the focus');
+    });
+    app.type(app.byId('gs-q'), 'buyout');
+    await settled();
+    const hits = function () { return app.byId('gs-results').querySelectorAll('.gs-hit'); };
+    it('typing lists settings, actions and sections that match, from the settings read once', function () {
+      truthy(app.requests('settings').length >= 1, 'the settings read for the index');
+      const text = app.text(app.byId('gs-results'));
+      has(text, 'Buyouts', 'a setting');
+      has(text, 'Look up “buyout” as a player', 'and a player lookup last');
+      falsy(app.byId('gs-results').hidden);
+      truthy(hits().length <= 20, 'at most twenty');
+    });
+    app.type(app.byId('gs-q'), 'messages');
+    await settled();
+    it('a setting\'s label in the list is text, never markup', function () {
+      has(app.text(app.byId('gs-results')), XSS);
+      eq(app.byId('gs-results').querySelectorAll('img').length, 0);
+    });
+    app.click(hits().filter(function (b) { return b.getAttribute('data-value') === 'Relay.Enabled'; })[0]);
+    await settled();
+    it('a setting hit opens its row in its area, marked, the search closed', function () {
+      eq(app.byId('nav-rules').getAttribute('aria-current'), 'page');
+      truthy(app.byId('st-row-Relay.Enabled').classList.contains('is-focus'));
+      eq(app.byId('gs-results').hidden, true);
+      has(app.text(app.byId('crumbs')), 'Phone messages & notifications');
+    });
+    app.type(app.byId('gs-q'), 'ct00000001');
+    app.key(app.byId('gs-q'), 'Enter');
+    await settled();
+    it('Enter on a contract id opens the contract', function () {
+      eq(app.last('contract').data, { id: 'ct00000001' });
+      eq(app.drawer().hidden, false);
+    });
+    app.click(app.button('Close', app.drawer()));
+    await settled();
+    app.type(app.byId('gs-q'), '12');
+    app.key(app.byId('gs-q'), 'Enter');
+    await settled();
+    it('Enter on a player id looks them up, on Players', function () {
+      eq(app.last('player').data, { subject: '12' });
+      eq(app.byId('nav-players').getAttribute('aria-current'), 'page');
+    });
+    app.type(app.byId('gs-q'), 'zzqqxx');
+    await settled();
+    it('with nothing matching, Enter would look it up as a player', function () {
+      has(app.text(app.byId('gs-results')), 'Look up “zzqqxx” as a player');
+    });
+    app.keyUp(app.byId('gs-q'), 'Escape');
+    await settled();
+    it('Escape in the search clears it, and the panel stays open', function () {
+      eq(app.byId('panel').hidden, false);
+      eq(app.byId('gs-results').hidden, true);
+      eq(app.byId('gs-q').value, '');
+    });
+    app.key(app.body, 'k');
+    it('k alone types nothing anywhere; Ctrl+K goes to the search', function () {
+      app.document.activeElement = null;
+      markup.dispatch(app.body, 'keydown', { key: 'k', ctrlKey: true });
+      truthy(app.document.activeElement === app.byId('gs-q'), 'the search box has the focus');
+    });
+    app.type(app.byId('gs-q'), 'freeze');
+    await settled();
+    it('an action hit opens where it is done', function () {
+      const action = hits().filter(function (b) { return b.getAttribute('data-act') === 'gs-action'; })[0];
+      truthy(action, 'an action');
+      app.click(action);
+    });
+    await settled();
+    it('(Players, for a freeze)', function () { eq(app.byId('grp-players').getAttribute('aria-current'), 'page'); });
+    clean(app, 'header search');
+  })();
+
+  /* ---- the context: the selected player and the contract stay put ---- */
+  await (async function () {
+    const clock = { ms: Date.now() };
+    const app = boot(standardServer(), { clock: clock });
+    app.open(ADMIN);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('a lookup puts the player in a header chip, with the minutes left of its handle', function () {
+      eq(app.byId('ctx').hidden, false);
+      has(app.text(app.byId('ctx')), 'Player: Dana Reyes');
+      has(app.text(app.byId('ctx')), '10 min');
+      has(app.text(app.byId('crumbs')), 'Dana Reyes (in city · 12)');
+    });
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    it('and stays there in another section, beside the contract opened', function () {
+      has(app.text(app.byId('ctx')), 'Player: Dana Reyes');
+      has(app.text(app.byId('ctx')), 'Contract: ct00000001');
+    });
+    app.nav('logs');
+    await settled();
+    it('the drawer stays open over any section until it is closed', function () {
+      eq(app.drawer().hidden, false);
+      eq(app.byId('nav-logs').getAttribute('aria-current'), 'page');
+    });
+    app.click(app.button('Close', app.drawer()));
+    await settled();
+    const reads = app.requests('contract').length;
+    app.click(app.$$('[data-act="ctx-contract"]')[0]);
+    await settled();
+    it('the contract chip opens it again after it is closed', function () {
+      eq(app.drawer().hidden, false);
+      eq(app.requests('contract').length, reads + 1);
+    });
+    app.click(app.$$('[data-act="ctx-player"]')[0]);
+    await settled();
+    it('the player chip opens their card', function () {
+      eq(app.byId('grp-players').getAttribute('aria-current'), 'page');
+      has(app.main(), 'Dana Reyes');
+    });
+    clock.ms += 11 * 60 * 1000;
+    app.fire(30000);
+    await settled();
+    it('once the handle has run out, the chip asks for a lookup again', function () {
+      has(app.text(app.byId('ctx')), 'look up again');
+      truthy(app.$$('[data-act="ctx-relookup"]').length, 'a re-lookup');
+    });
+    app.click(app.$$('[data-act="ctx-relookup"]')[0]);
+    await settled();
+    it('which looks them up again as typed', function () {
+      eq(app.last('player').data, { subject: '12' });
+      has(app.text(app.byId('ctx')), '10 min');
+    });
+    app.click(app.$$('[data-act="ctx-player-clear"]')[0]);
+    await settled();
+    app.click(app.$$('[data-act="ctx-contract-clear"]')[0]);
+    await settled();
+    it('each chip clears itself; the contract\'s closes the drawer too', function () {
+      eq(app.byId('ctx').hidden, true);
+      eq(app.drawer().hidden, true);
+      eq(app.byId('nav-pmeasures'), null, 'no player tabs without a player');
+    });
+    clean(app, 'context chips');
+  })();
+
+  /* ---- Players: Suspended, Protected, and why can't they see ---- */
+  await (async function () {
+    const server = standardServer({
+      sanctions: { ok: true, data: {
+        suspended: [{ ref: 'f1', name: 'Dana ' + XSS, since: NOW - 600, until: NOW + 86400, reason: 'Spam ' + XSS,
+          online: true }],
+        protected: [{ ref: 'f2', name: 'Vic Marlowe', cid: 'CREATOR1', since: NOW - 60, reason: 'Event guest' }] } },
+      unsuspend: { ok: true, message: 'Suspension lifted.' },
+      unprotect: { ok: false, err: 'not_active', message: 'They are not protected.' }
+    });
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.nav('suspended');
+    await settled();
+    it('Suspended lists everybody suspended now, escaped, each with Lift', function () {
+      eq(app.last('sanctions').op, 'sanctions');
+      has(app.main(), 'Spam ' + XSS);
+      eq(app.$$('img').length, 0);
+      truthy(app.button('Lift'));
+    });
+    const lift = app.button('Lift');
+    app.click(lift);
+    await settled();
+    it('Lift takes two clicks, naming who', function () {
+      eq(app.requests('unsuspend').length, 0);
+      has(app.text(lift), 'Click again: lift for Dana ' + XSS);
+    });
+    app.click(lift);
+    await settled();
+    it('and lifts by the list\'s handle, then reads the list again', function () {
+      eq(app.last('unsuspend').data, { ref: 'f1' });
+      truthy(app.requests('sanctions').length >= 2);
+    });
+    app.nav('protected');
+    await settled();
+    it('Protected lists the protected, with an Open for a citizen id staff may see', function () {
+      has(app.main(), 'Vic Marlowe');
+      has(app.main(), 'for good');
+      truthy(app.button('Open'));
+    });
+    app.click(app.button('Lift'));
+    app.click(app.button('Lift'));
+    await settled();
+    it('a refused lift says so on its row', function () {
+      has(app.main(), 'They are not protected.');
+    });
+    app.click(app.button('Open'));
+    await settled();
+    it('Open looks them up by their citizen id', function () {
+      eq(app.last('player').data, { subject: 'CREATOR1' });
+    });
+    app.nav('pdiag');
+    await settled();
+    app.click(app.button('Run the diagnosis as them'));
+    await settled();
+    it('Why can\'t they see runs the diagnosis by the lookup\'s handle', function () {
+      eq(app.last('diag').data, { ref: 'p7_424242' });
+      has(app.main(), 'photo hosts: 0 -> add one');
+    });
+    app.nav('pmeasures');
+    await settled();
+    app.click(app.button('Open them in Target limits'));
+    await settled();
+    it('Measures opens their standing in Target limits by the same lookup', function () {
+      eq(app.byId('nav-tlplayer').getAttribute('aria-current'), 'page');
+      eq(app.last('targetStatus').data, { ref: 'p7_424242' });
+    });
+    clean(app, 'players lists');
+  })();
+
+  /* ---- the organisation, switched off ---- */
+  await (async function () {
+    const server = standardServer({ orgGet: orgOff(), settings: orgSettings(false) });
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    const views = ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'bpmatrix', 'bplimits'];
+    const off = {};
+    for (const view of views) {
+      app.nav(view);
+      await settled();
+      off[view] = app.main().indexOf('The hitman job is switched off') !== -1 && !!app.byId('st-row-Organisation.Enabled');
+    }
+    it('every organisation and Boss permissions view is one card saying it is off, with its switch', function () {
+      views.forEach(function (v) { truthy(off[v], v); });
+      eq(app.requests('orgFunds').length, 0, 'nothing more asked of an organisation that is off');
+    });
+    app.nav('orgsetup');
+    await settled();
+    const sw = app.byId('st-row-Organisation.Enabled').querySelector('.switch');
+    app.click(sw);
+    await settled();
+    it('the switch takes two clicks, naming the value', function () {
+      eq(app.requests('setSetting').length, 0);
+      has(app.text(sw.querySelector('.cfm')), 'Click again: turn On');
+    });
+    server.settings = orgSettings(true);
+    server.orgGet = orgOn();
+    const asked = app.requests('orgGet').length;
+    app.click(sw);
+    await settled();
+    it('and once it is on, the organisation is read again and drawn', function () {
+      eq(app.last('setSetting').data, { key: 'Organisation.Enabled', value: true });
+      truthy(app.requests('orgGet').length > asked, 'read again');
+      has(app.main(), 'The job');
+      has(app.main(), 'Create / sync job');
+    });
+    app.nav('locations');
+    await settled();
+    clean(app, 'organisation off');
+  })();
+
+  /* ---- the organisation, on ---- */
+  await (async function () {
+    const server = orgServer();
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.nav('orgsetup');
+    await settled();
+    const found = [];
+    markupFrom(app, 'org setup', found);
+    it('Setup says what the job is, escaped, with Create / sync, Rename and the boss menu', function () {
+      eq(found, []);
+      has(app.main(), 'The Crimson ' + XSS);
+      has(app.main(), '2 · 1 in the city');
+      has(app.main(), "this resource's own ledger");
+      truthy(app.byId('st-row-Organisation.OfficeRadius'), 'its own settings');
+      falsy(app.byId('st-row-Organisation.Limits.WithdrawMax'), 'but not the boss limits, which are Boss permissions\'');
+    });
+    const sync = app.button('Create / sync job');
+    app.click(sync);
+    it('Create / sync takes two clicks, naming the job', function () {
+      eq(app.requests('orgSetup').length, 0);
+      has(app.text(sync), 'Click again: register hitman in qbx_core');
+    });
+    app.click(sync);
+    await settled();
+    it('and asks once on the second', function () { eq(app.requests('orgSetup').length, 1); });
+    app.type(app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'org.label'; })[0], 'Night Shift');
+    const rename = app.button('Rename');
+    app.click(rename);
+    it('Rename arms with the label it sets', function () {
+      eq(app.requests('orgRename').length, 0);
+      has(app.text(rename), 'Click again: rename to Night Shift');
+    });
+    app.type(app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'org.label'; })[0], 'Night Shift 2');
+    it('typing again disarms it', function () { falsy(rename.classList.contains('is-armed')); });
+    app.click(app.button('Rename'));
+    app.click(app.button('Rename'));
+    await settled();
+    it('and renames to what was typed last', function () {
+      eq(app.last('orgRename').data, { label: 'Night Shift 2' });
+      has(app.toasts(), 'orgRename done.');
+    });
+    app.click(app.$$('[data-act="org-tab-hide"]').filter(function (b) {
+      return b.getAttribute('data-value') === 'notices' && b.getAttribute('data-id') === '1'; })[0]);
+    app.click(app.button('Save the boss menu'));
+    app.click(app.button('Save the boss menu'));
+    await settled();
+    it('the boss menu saves its labels and hidden tabs, keeping what was set before', function () {
+      eq(app.last('orgLayout').data, { layout: { labels: { members: 'Crew' }, hidden: { funds: [1], notices: [1] } } });
+    });
+
+    // Roles & pay.
+    app.nav('orgroles');
+    await settled();
+    it('Roles lists each role with its pay and members', function () {
+      has(app.main(), 'Hitman ' + XSS);
+      has(app.main(), '$500');
+      eq(app.$$('img').length, 0);
+    });
+    app.click(app.$$('[data-act="org-role-open"]').filter(function (b) { return b.getAttribute('data-id') === '3'; })[0]);
+    await settled();
+    it('a role opens its editor and its power checklist, marking powers above the ceiling', function () {
+      has(app.main(), 'Role: Boss');
+      has(app.main(), 'within the ceiling', 'M1 is allowed for this role');
+      has(app.main(), 'above the ceiling');
+      truthy(app.button('Remove role').disabled, 'not while it holds members');
+    });
+    const give = app.$$('[data-act="org-role-power"]').filter(function (b) { return b.getAttribute('data-power') === 'M2'; })[0];
+    app.click(give);
+    it('giving a power arms, naming it and the role', function () {
+      eq(app.requests('orgRolePowers').length, 0);
+      has(app.text(give), 'Click again: give Hire to Boss');
+    });
+    app.click(give);
+    await settled();
+    it('and sends the grade, the power and on', function () {
+      eq(app.last('orgRolePowers').data, { grade: 3, power: 'M2', on: true });
+      truthy(app.requests('orgGet').length >= 2, 'the organisation read again');
+    });
+    server.orgRoleSet = { ok: false, err: 'org_bounds', message: 'Outside the bounds staff set.' };
+    app.type(app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'org.role.3.pay'; })[0], '9000');
+    app.click(app.button('Save role'));
+    app.click(app.button('Save role'));
+    await settled();
+    it('a role saved sends what was typed, and a refusal shows the server\'s words on the card', function () {
+      eq(app.last('orgRoleSet').data, { grade: 3, name: 'boss', label: 'Boss', pay: 9000 });
+      has(app.main(), 'Outside the bounds staff set.');
+    });
+    server.orgRoleSet = { ok: true, message: 'Role added.' };
+    app.click(app.button('Add role'));
+    it('adding a role with no grade is refused before it is sent', function () {
+      has(app.main(), 'Give the role a whole grade from 0 to 100.');
+    });
+    const bind = function (b) { return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === b; })[0]; };
+    app.type(bind('org.new.grade'), '2');
+    app.type(bind('org.new.name'), 'lieutenant');
+    app.type(bind('org.new.label'), 'Lieutenant');
+    app.type(bind('org.new.pay'), '250');
+    const add = app.button('Add role');
+    app.click(add);
+    it('adding one arms, naming the label and grade', function () { has(app.text(add), 'Click again: add Lieutenant at grade 2'); });
+    app.click(add);
+    await settled();
+    it('and sends it', function () {
+      eq(app.last('orgRoleSet').data, { grade: 2, name: 'lieutenant', label: 'Lieutenant', isBoss: false, pay: 250 });
+    });
+
+    // Members.
+    app.nav('orgmembers');
+    await settled();
+    app.click(app.button('Hire'));
+    it('Hire without a player selected or a citizen id says how, and sends nothing', function () {
+      has(app.main(), 'Look a player up in Players first');
+      eq(app.requests('orgMemberHire').length, 0);
+    });
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    app.nav('orgmembers');
+    await settled();
+    const hire = app.button('Hire');
+    app.click(hire);
+    it('with a player selected, Hire names them and the role', function () {
+      has(app.text(hire), 'Click again: hire Dana Reyes as Hitman ' + XSS);
+    });
+    app.click(hire);
+    await settled();
+    it('and hires them by the lookup\'s handle', function () {
+      eq(app.last('orgMemberHire').data, { grade: 1, ref: 'p7_424242' });
+    });
+    app.click(app.$$('[data-act="org-member-open"]').filter(function (b) { return b.getAttribute('data-id') === 'm2_2222'; })[0]);
+    await settled();
+    it('Manage opens one member, their name escaped', function () {
+      has(app.main(), 'Member: ' + XSS);
+      eq(app.$$('img').length, 0);
+    });
+    app.click(app.$$('[data-act="org-member-grade"]').filter(function (b) {
+      return b.getAttribute('data-id') === 'm2_2222' && b.getAttribute('data-value') === '3'; })[0]);
+    const setRole = app.button('Set role');
+    app.click(setRole);
+    app.click(setRole);
+    await settled();
+    it('Set role sends the member\'s handle and the grade', function () {
+      eq(app.last('orgMemberRole').data, { member: 'm2_2222', grade: 3 });
+    });
+    app.click(app.$$('[data-act="org-member-open"]').filter(function (b) { return b.getAttribute('data-id') === 'm2_2222'; })[0]);
+    app.click(app.$$('[data-act="org-member-open"]').filter(function (b) { return b.getAttribute('data-id') === 'm2_2222'; })[0]);
+    await settled();
+    app.click(app.button('Fire'));
+    it('Fire needs a reason', function () {
+      eq(app.requests('orgMemberFire').length, 0);
+      has(app.main(), 'Give a reason: it goes on the record.');
+    });
+    app.type(bind('org.m.m2_2222.freason'), 'Talked');
+    app.click(app.button('Fire'));
+    app.click(app.button('Fire'));
+    await settled();
+    it('and fires with it on two clicks', function () {
+      eq(app.last('orgMemberFire').data, { member: 'm2_2222', reason: 'Talked' });
+    });
+
+    // Applications.
+    app.nav('orgapps');
+    await settled();
+    it('Applications shows each, escaped', function () {
+      has(app.main(), 'I am quiet ' + XSS);
+      eq(app.$$('img').length, 0);
+    });
+    app.click(app.button('Accept'));
+    app.click(app.button('Accept'));
+    await settled();
+    it('Accept, on two clicks, sends the application and true', function () {
+      eq(app.last('orgApplication').data, { id: 'hitman:app:1', accept: true });
+    });
+
+    // Funds & cuts.
+    app.nav('orgfunds');
+    await settled();
+    it('Funds shows the balance and the ledger, escaped, no actor without the identity ACE', function () {
+      eq(app.last('orgFunds').data, { limit: 50 });
+      has(app.main(), '$12,500');
+      has(app.main(), 'Seed ' + XSS);
+      eq(app.$$('img').length, 0);
+    });
+    app.type(bind('org.funds.amount'), '2500');
+    app.type(bind('org.funds.reason'), 'Float');
+    const move = app.$$('[data-act="org-funds"]')[0];
+    app.click(move);
+    it('a deposit arms with the amount', function () { has(app.text(move), 'Click again: deposit $2,500'); });
+    server.orgFundsMove = function () { return new Promise(function () {}); };
+    app.click(move);
+    await settled();
+    const firstNonce = app.last('orgFundsMove').data.nonce;
+    server.orgFundsMove = { ok: true, message: 'Deposited.' };
+    it('and sends direction, amount, reason and a nonce', function () {
+      const sent = app.last('orgFundsMove').data;
+      eq([sent.direction, sent.amount, sent.reason], ['deposit', 2500, 'Float']);
+      truthy(typeof firstNonce === 'string' && firstNonce.length > 4, 'a nonce');
+    });
+    app.type(bind('org.cut.payout'), '60');
+    app.click(app.$$('[data-act="org-cut"]').filter(function (b) { return b.getAttribute('data-value') === 'payout'; })[0]);
+    it('a cut over the staff cap is refused before it is sent', function () {
+      eq(app.requests('orgCuts').length, 0);
+      has(app.main(), 'At most 40%');
+    });
+    app.type(bind('org.cut.payout'), '15');
+    const cut = app.$$('[data-act="org-cut"]').filter(function (b) { return b.getAttribute('data-value') === 'payout'; })[0];
+    app.click(cut);
+    it('a cut arms naming its percent', function () { has(app.text(cut), 'Click again: set the payout cut to 15%'); });
+    app.click(cut);
+    await settled();
+    it('and sends it', function () { eq(app.last('orgCuts').data, { kind: 'payout', percent: 15 }); });
+
+    // Where the funds are kept.
+    const switchTo = app.$$('[data-act="org-backend"]')[0];
+    app.click(switchTo);
+    it('switching where the funds are kept arms, naming where they go', function () {
+      eq(app.requests('orgFundsBackend').length, 0);
+      has(app.text(switchTo), 'Click again: move the funds to Renewed-Banking');
+    });
+    app.click(switchTo);
+    await settled();
+    it('and sends the backend', function () { eq(app.last('orgFundsBackend').data, { backend: 'bank' }); });
+    server.orgFunds = { ok: true, data: { backend: 'bank', ready: false, rows: [] } };
+    app.click(app.button('Refresh'));
+    await settled();
+    it('a bank that is down: the balance is unknown, and Abandon is offered with its warning', function () {
+      has(app.main(), 'Unknown');
+      has(app.main(), 'Abandon leaves it carrying nothing');
+    });
+    const abandon = app.button('Abandon the bank');
+    app.click(abandon);
+    it('Abandon arms, saying it starts from $0', function () {
+      has(app.text(abandon), 'Click again: abandon the bank, start from $0 in this resource\'s own ledger');
+    });
+    app.click(abandon);
+    await settled();
+    it('and sends the backend with abandon', function () {
+      eq(app.last('orgFundsBackend').data, { backend: 'internal', abandon: true });
+    });
+
+    // Contract access and the notice.
+    app.nav('orgaccess');
+    await settled();
+    app.click(app.$$('[data-act="org-access"]').filter(function (b) { return b.getAttribute('data-id') === '1'; })[0]);
+    app.click(app.$$('[data-act="org-access"]').filter(function (b) { return b.getAttribute('data-id') === '1'; })[0]);
+    await settled();
+    it('Contract access saves a role\'s rules, clearing what is empty', function () {
+      eq(app.last('orgAccess').data, { grade: 1, rules: { maxReward: 50000, maxAtOnce: false, cooldownMinutes: false,
+        rule: 'alive', whitelisted: true } });
+    });
+    app.nav('orgnotices');
+    await settled();
+    it('Notices shows the notice, escaped', function () {
+      has(app.main(), 'Meet at ' + XSS);
+      eq(app.$$('img').length, 0);
+    });
+    app.type(bind('org.notice'), 'Quiet week');
+    app.click(app.button('And message every member'));
+    app.click(app.button('Post'));
+    app.click(app.button('Post'));
+    await settled();
+    it('Post sends the text and whether every member is messaged', function () {
+      eq(app.last('orgNotice').data, { text: 'Quiet week', broadcast: true });
+    });
+    app.nav('orgaudit');
+    await settled();
+    it('Org audit reads the log, escaped', function () {
+      eq(app.last('orgAudit').data, { limit: 100 });
+      has(app.main(), XSS);
+      eq(app.$$('img').length, 0);
+    });
+    clean(app, 'organisation on');
+  })();
+
+  /* ---- Boss permissions ---- */
+  await (async function () {
+    const server = orgServer();
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.nav('bpmatrix');
+    await settled();
+    const cell = function (col, power) {
+      return app.$$('[data-act="bp-cell"]').filter(function (b) {
+        return b.getAttribute('data-id') === col && b.getAttribute('data-power') === power; })[0];
+    };
+    it('the matrix has a column per boss role and per boss with a ceiling of their own', function () {
+      truthy(cell('role:3', 'M1'), 'the Boss role');
+      truthy(cell('member:m1_1111', 'C7'), 'Kai Holt, who has a cell of their own');
+      falsy(cell('role:1', 'M1'), 'not a role that is not boss');
+      has(app.text(cell('role:3', 'M1')), 'Allow');
+      has(app.text(cell('member:m1_1111', 'C7')), 'Deny');
+      has(app.text(cell('member:m1_1111', 'M1')), 'Inherit role');
+      has(app.main(), 'Post notice ' + XSS);
+      eq(app.$$('img').length, 0);
+    });
+    app.click(cell('role:3', 'M2'));
+    app.click(cell('member:m1_1111', 'M1'));
+    app.click(cell('member:m1_1111', 'C7'));
+    await settled();
+    it('cells change locally and are listed before anything is saved', function () {
+      eq(app.requests('bossPermsSet').length, 0);
+      truthy(cell('role:3', 'M2').classList.contains('is-pending'));
+      has(app.main(), 'Changes to save (3)');
+      has(app.main(), '+ Hire for Boss');
+      has(app.main(), '+ View members for Kai Holt');
+      has(app.main(), '↺ Withdraw funds for Kai Holt (inherit role)');
+    });
+    app.click(cell('role:3', 'M2'));
+    it('a cell clicked back to what is saved leaves the list', function () {
+      has(app.main(), 'Changes to save (2)');
+    });
+    app.click(cell('role:3', 'M2'));
+    const save = app.button('Save 3 changes');
+    app.click(save);
+    it('Save takes two clicks, naming how many', function () {
+      eq(app.requests('bossPermsSet').length, 0);
+      has(app.text(save), 'Click again: save 3 changes');
+    });
+    server.bossPermsSet = { ok: false, err: 'org_not_found', message: 'Cell 2: that member handle is out of date.' };
+    app.click(save);
+    await settled();
+    it('the second sends every change as one batch', function () {
+      eq(app.requests('bossPermsSet').length, 1);
+      eq(app.last('bossPermsSet').data, { cells: [
+        { subject: 'member', id: 'm1_1111', power: 'M1', state: 'allow' },
+        { subject: 'member', id: 'm1_1111', power: 'C7', state: 'inherit' },
+        { subject: 'role', id: 3, power: 'M2', state: 'allow' }] });
+    });
+    it('and a refusal keeps the changes, saying why', function () {
+      has(app.main(), 'Cell 2: that member handle is out of date.');
+      has(app.main(), 'Changes to save (3)');
+    });
+    server.bossPermsSet = { ok: true, message: '3 cell(s) saved.' };
+    app.click(app.button('Save 3 changes'));
+    app.click(app.button('Save 3 changes'));
+    await settled();
+    it('saved, the list empties and the matrix is read again', function () {
+      has(app.main(), 'Nothing changed yet');
+      has(app.toasts(), '3 cell(s) saved.');
+    });
+    const revoke = app.$$('[data-act="bp-revoke"]').filter(function (b) { return b.getAttribute('data-id') === 'role:3'; })[0];
+    app.click(revoke);
+    it('Revoke all arms, naming the column', function () {
+      eq(app.requests('bossPermsRevokeAll').length, 0);
+      has(app.text(revoke), 'Click again: revoke every power from Boss');
+    });
+    app.click(revoke);
+    await settled();
+    it('and revokes that column', function () { eq(app.last('bossPermsRevokeAll').data, { subject: 'role', id: 3 }); });
+    pick(app, 'bp-add', 'm2_2222');
+    await settled();
+    it('an individual boss can be added as a column', function () {
+      truthy(cell('member:m2_2222', 'M1'), 'their column');
+    });
+    pick(app, 'bp-copy:member:m2_2222', 'role:3');
+    await settled();
+    it('and filled by copying another column', function () {
+      has(app.text(cell('member:m2_2222', 'M1')), 'Allow');
+      truthy(cell('member:m2_2222', 'M1').classList.contains('is-pending'));
+    });
+    app.click(app.button('Discard'));
+
+    app.nav('bplimits');
+    await settled();
+    const limitInput = function (k) { return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'bp.lim.' + k; })[0]; };
+    app.type(limitInput('WithdrawMax'), '20000000');
+    app.click(app.$$('[data-act="bp-limit"]').filter(function (b) { return b.getAttribute('data-id') === 'WithdrawMax'; })[0]);
+    it('a limit outside its range is refused before it is sent', function () {
+      eq(app.requests('bossLimits').length, 0);
+      has(app.main(), 'WithdrawMax is from 0 to 10000000.');
+    });
+    app.type(limitInput('WithdrawMax'), '2500');
+    const lim = app.$$('[data-act="bp-limit"]').filter(function (b) { return b.getAttribute('data-id') === 'WithdrawMax'; })[0];
+    app.click(lim);
+    it('a limit arms with the value and the one now', function () { has(app.text(lim), 'Click again: WithdrawMax to 2,500 (now 5,000)'); });
+    app.click(lim);
+    await settled();
+    it('and sends that one limit', function () { eq(app.last('bossLimits').data, { limits: { WithdrawMax: 2500 } }); });
+
+    app.nav('bpoffice');
+    await settled();
+    const office = app.$$('[data-act="bp-office"]').filter(function (b) { return b.getAttribute('data-power') === 'C7'; })[0];
+    app.click(office);
+    app.click(office);
+    await settled();
+    it('the office requirement toggles a power, on two clicks', function () {
+      eq(app.last('bossOfficeRule').data, { power: 'C7', on: false });
+    });
+    app.nav('bphistory');
+    await settled();
+    it('Grant history reads the grants, escaped', function () {
+      eq(app.last('orgAudit').data, { limit: 100, action: 'org_grant' });
+      eq(app.$$('img').length, 0);
+    });
+    const undo = app.button('Undo');
+    app.click(undo);
+    it('Undo arms, naming the power and the value it puts back', function () { has(app.text(undo), 'Click again: Hire back to off'); });
+    app.click(undo);
+    await settled();
+    it('and sets that one role cell back', function () {
+      eq(app.last('bossPermsSet').data, { cells: [{ subject: 'role', id: 3, power: 'M2', state: 'off' }] });
+    });
+    clean(app, 'boss permissions');
+  })();
+
+  /* ---- Locations ---- */
+  await (async function () {
+    const server = orgServer();
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.nav('locations');
+    await settled();
+    const found = [];
+    markupFrom(app, 'locations', found);
+    it('Locations lists every kind of place, the organisation\'s and the settings\', escaped', function () {
+      eq(found, []);
+      has(app.main(), 'Boss office');
+      has(app.main(), 'Back room ' + XSS);
+      has(app.main(), '10.5, -20.2, 30, 90');
+      has(app.main(), 'No sign-up spot yet. Stand there in game and press Use my position.');
+      truthy(app.byId('st-row-Roleplay.Rumours.Locations'), 'the broker\\\'s places');
+      truthy(app.byId('st-row-Limits.JailZone.x'), 'and the prison zone');
+    });
+    const kind = function (act, k) {
+      return app.$$('[data-act="' + act + '"]').filter(function (b) { return b.getAttribute('data-value') === k; })[0];
+    };
+    app.click(kind('loc-mypos', 'signup'));
+    await settled();
+    const bind = function (b) { return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === b; })[0]; };
+    it('Use my position asks the server where you stand, and fills the row', function () {
+      eq(app.last('orgMyPosition').op, 'orgMyPosition');
+      eq(bind('loc.signup.x').value, '123.5');
+      eq(bind('loc.signup.y').value, '-654.3');
+      eq(bind('loc.signup.h').value, '183');
+      has(app.main(), 'Your position: x 123.5');
+    });
+    app.click(kind('loc-save', 'signup'));
+    it('a spot with no name is refused before it is sent', function () {
+      has(app.main(), 'Give the place a name.');
+      eq(app.requests('orgLocationSet').length, 0);
+    });
+    app.type(bind('loc.signup.label'), 'Pier board');
+    const save = kind('loc-save', 'signup');
+    app.click(save);
+    it('Save arms, naming the place and where', function () { has(app.text(save), 'Click again: save Pier board at 123.5, -654.3'); });
+    app.click(save);
+    await settled();
+    it('and sends the typed figures', function () {
+      eq(app.last('orgLocationSet').data, { kind: 'signup', label: 'Pier board', blip: false, enabled: true,
+        x: 123.5, y: -654.3, z: 30, heading: 183 });
+    });
+    app.type(bind('loc.meeting.label'), 'Docks');
+    const here = kind('loc-here', 'meeting');
+    app.click(here);
+    app.click(here);
+    await settled();
+    it('Save where I stand lets the server read the position itself', function () {
+      eq(app.last('orgLocationSet').data, { kind: 'meeting', label: 'Docks', blip: false, enabled: true, here: true });
+    });
+    const remove = app.$$('[data-act="loc-remove"]')[0];
+    app.click(remove);
+    it('Remove arms, naming the place', function () { has(app.text(remove), 'Click again: remove Back room ' + XSS); });
+    app.click(remove);
+    await settled();
+    it('and removes it by its id', function () { eq(app.last('orgLocationRemove').data, { id: 'hitman:office:1' }); });
+    app.click(app.button('Use my position for a new line'));
+    await settled();
+    it('a list of places gets a line from where you stand, to add and save as any line', function () {
+      eq(bind('stl.Roleplay.Rumours.Locations').value, '123.5, -654.3, 30, 183');
+    });
+    app.click(app.button('Use my position for the centre'));
+    await settled();
+    it('and the prison zone its centre', function () {
+      eq(bind('st.Limits.JailZone.x').value, '123.5');
+      eq(bind('st.Limits.JailZone.y').value, '-654.3');
+    });
+    clean(app, 'locations');
+  })();
+
+  /* ---- read-only staff: every new write is disabled, and sends nothing ---- */
+  await (async function () {
+    const server = orgServer();
+    const app = boot(server);
+    app.open(READER);
+    await settled();
+    const writes = [];
+    for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'bpmatrix',
+      'bplimits', 'bpoffice', 'locations']) {
+      app.nav(view);
+      await settled();
+      app.$$('[data-gate]').forEach(function (b) {
+        writes.push(view + ':' + b.getAttribute('data-act') + ':' + (b.disabled ? 'off' : 'ON'));
+      });
+    }
+    it('a reader sees every organisation, Boss permissions and Locations write disabled', function () {
+      truthy(writes.length > 20, writes.length + ' writes drawn');
+      eq(writes.filter(function (w) { return /:ON$/.test(w); }), []);
+      eq(app.$$('[data-act="bp-cell"]').filter(function (b) { return !b.disabled; }).length, 0);
+    });
+    clean(app, 'org read only');
+  })();
+
+  /* ---- a recovery finishing enables the write buttons where they are ---- */
+  await (async function () {
+    const server = standardServer({ overview: overview({ recovery: 'recovering' }) });
+    const app = boot(server);
+    app.open(access({ recovery: 'recovering' }));
+    await settled();
+    app.nav('tools');
+    await settled();
+    const refresh = app.button('Bring timers forward');
+    it('while recovering, a write is disabled', function () { truthy(refresh.disabled); });
+    server.overview = overview({ recovery: 'ready' });
+    const clears = app.byId('main')._clears || 0;
+    app.fire(30000);
+    await settled();
+    it('and once it finishes, the same button is enabled, with no redraw of the section', function () {
+      falsy(app.button('Bring timers forward').disabled);
+      truthy(app.button('Bring timers forward') === refresh, 'the same node');
+      eq((app.byId('main')._clears || 0) - clears, 0, 'the section was not drawn again');
+    });
+    clean(app, 'recovery gates');
+  })();
+
+  /* ---- every write button the new views draw takes two clicks ---- */
+  await (async function () {
+    const app = boot(orgServer());
+    app.open(FULL);
+    await settled();
+    const single = [];
+    for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices',
+      'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'suspended', 'protected', 'inbox', 'changed']) {
+      app.nav(view);
+      await settled();
+      app.$$('[data-gate]').forEach(function (b) {
+        if (b.getAttribute('data-confirm') !== 'yes') single.push(view + ':' + b.getAttribute('data-act'));
+      });
+    }
+    it('every write the new views draw carries the two-click confirm', function () { eq(single, []); });
+    clean(app, 'two clicks everywhere');
   })();
 
   console.log('');

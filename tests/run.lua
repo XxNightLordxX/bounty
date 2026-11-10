@@ -725,6 +725,7 @@ local suites = {
     'target_limits_spec',
     'org_core_spec', 'org_powers_spec', 'org_money_spec', 'org_places_spec', 'org_review_spec',
     'review_mst_spec',
+    'admin_revamp_spec',
     'docs_spec',
 }
 

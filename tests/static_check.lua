@@ -2271,10 +2271,16 @@ do
     for name in (panelSrc:match('local OPS = (%b{})') or ''):gmatch('([%a_][%w_]*)%s*=%s*%u+') do
         ops[name] = true
     end
+    -- And the ops a module adds through Panel.extend (the organisation's,
+    -- server/org/staff_ops.lua): answered through the same gate.
+    local extra = {}
+    for name in (read('crimson-hitman/server/org/staff_ops.lua') or ''):gmatch('\nOPS%.([%a_][%w_]*)%s*=') do
+        extra[name] = true
+    end
     for _, call in ipairs({ "ask%('([%w_]+)'", "write%('([%w_]+)'" }) do
         for name in code:gmatch(call) do
             used[name] = true
-            if not ops[name] then
+            if not ops[name] and not extra[name] then
                 failures[#failures + 1] = ('ui/admin.js asks for "%s", which server/panel.lua does '
                     .. 'not answer (OPS)'):format(name)
             end

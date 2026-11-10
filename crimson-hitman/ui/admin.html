@@ -33,124 +33,80 @@
       <h1>Crimson Hitman <span class="muted">staff panel</span></h1>
       <span id="version" class="version"></span>
     </div>
+    <!-- One search for settings, actions, sections, players and contracts
+         (/ or Ctrl+K); its list is drawn by admin.js as it is typed. -->
+    <div class="gs" role="search">
+      <label class="search gs-box"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+        <input id="gs-q" class="input" type="text" data-bind="gs.q" data-live="gs-input" data-enter="gs-go"
+          autocomplete="off" spellcheck="false" placeholder="Search settings, actions, players (/ or Ctrl+K)"
+          aria-label="Search settings, actions, players and contracts">
+      </label>
+      <div id="gs-results" class="gs-results" role="listbox" hidden></div>
+    </div>
+    <div id="ctx" class="ctx" hidden></div>
     <div id="badges" class="badges"></div>
+    <button id="refresh-btn" class="icon-btn" type="button" data-act="refresh-view" title="Read this section again"
+      aria-label="Refresh">
+      <i class="fa-solid fa-rotate" aria-hidden="true"></i><span class="lbl">Reload</span>
+    </button>
+    <button id="help-btn" class="icon-btn" type="button" data-act="help-btn" title="Help: how it works, how do I, who can do what"
+      aria-label="Help">
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i><span class="lbl">Help</span>
+    </button>
     <button id="close" class="icon-btn" type="button" data-act="close" title="Close (Esc)" aria-label="Close (Esc)">
       <i class="fa-solid fa-xmark" aria-hidden="true"></i><span class="lbl">Close</span>
     </button>
   </header>
   <div id="banner" class="banner" role="status" hidden></div>
-  <!-- Seven sections, by who uses them; each holds the views it groups as
-       sub-tabs (admin.js GROUPS). Developer is drawn only for staff who may
-       open it, and is Permissions alone for everybody else. -->
+  <!-- The sections, in groups by how often each is used (admin.js GROUPS).
+       Developer is drawn only for staff who may open it; a section with no
+       view this staff member may open is not drawn. Under 700 px wide the
+       list folds into one menu button. -->
+  <button id="nav-menu" class="nav-menu" type="button" data-act="nav-menu" aria-controls="nav" aria-expanded="false">
+    <i class="fa-solid fa-bars" aria-hidden="true"></i><span class="lbl">Sections</span>
+  </button>
   <nav id="nav" class="nav" aria-label="Sections">
-    <button id="grp-live" class="nav-btn" type="button" data-act="group" data-group="live">
-      <i class="fa-solid fa-gauge-high" aria-hidden="true"></i><span class="lbl">Live</span>
-      <span id="count-live" class="nav-count is-warn" hidden></span>
+    <p id="nh-daily" class="nav-head">Daily</p>
+    <button id="grp-home" class="nav-btn" type="button" data-act="group" data-group="home">
+      <i class="fa-solid fa-house" aria-hidden="true"></i><span class="lbl">Home</span>
+      <span id="count-home" class="nav-count is-warn" hidden></span>
     </button>
-    <button id="grp-actions" class="nav-btn" type="button" data-act="group" data-group="actions">
-      <i class="fa-solid fa-hand" aria-hidden="true"></i><span class="lbl">Staff actions</span>
+    <button id="grp-players" class="nav-btn" type="button" data-act="group" data-group="players">
+      <i class="fa-solid fa-user" aria-hidden="true"></i><span class="lbl">Players</span>
     </button>
-    <button id="grp-rules" class="nav-btn" type="button" data-act="group" data-group="rules">
-      <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl">Rules</span>
-      <span id="count-settings" class="nav-count" hidden></span>
+    <button id="grp-contracts" class="nav-btn" type="button" data-act="group" data-group="contracts">
+      <i class="fa-solid fa-file-contract" aria-hidden="true"></i><span class="lbl">Contracts</span>
     </button>
     <button id="grp-targets" class="nav-btn" type="button" data-act="group" data-group="targets">
       <i class="fa-solid fa-user-clock" aria-hidden="true"></i><span class="lbl">Target limits</span>
     </button>
-    <button id="grp-features" class="nav-btn" type="button" data-act="group" data-group="features">
-      <i class="fa-solid fa-toggle-on" aria-hidden="true"></i><span class="lbl">Features</span>
+    <p id="nh-setup" class="nav-head">Setup</p>
+    <button id="grp-rules" class="nav-btn" type="button" data-act="group" data-group="rules">
+      <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl">Game rules</span>
+      <span id="count-rules" class="nav-count" hidden></span>
     </button>
+    <button id="grp-org" class="nav-btn" type="button" data-act="group" data-group="org">
+      <i class="fa-solid fa-people-group" aria-hidden="true"></i><span class="lbl">Hitman organisation</span>
+    </button>
+    <button id="grp-bossperms" class="nav-btn" type="button" data-act="group" data-group="bossperms">
+      <i class="fa-solid fa-key" aria-hidden="true"></i><span class="lbl">Boss permissions</span>
+    </button>
+    <button id="grp-locations" class="nav-btn" type="button" data-act="group" data-group="locations">
+      <i class="fa-solid fa-location-dot" aria-hidden="true"></i><span class="lbl">Locations</span>
+    </button>
+    <p id="nh-records" class="nav-head">Records</p>
     <button id="grp-logs" class="nav-btn" type="button" data-act="group" data-group="logs">
-      <i class="fa-solid fa-list-ul" aria-hidden="true"></i><span class="lbl">Logs &amp; alerts</span>
+      <i class="fa-solid fa-list-ul" aria-hidden="true"></i><span class="lbl">Logs</span>
       <span id="count-logs" class="nav-count is-warn" hidden></span>
     </button>
+    <p id="nh-developer" class="nav-head">Developer</p>
     <button id="grp-developer" class="nav-btn" type="button" data-act="group" data-group="developer">
       <i class="fa-solid fa-code" aria-hidden="true"></i><span class="lbl">Developer</span>
     </button>
   </nav>
-  <nav id="subnav" class="subnav" aria-label="In this section">
-    <button id="nav-help" class="sub-btn" type="button" data-act="section" data-section="help" hidden>
-      <i class="fa-solid fa-circle-question" aria-hidden="true"></i><span class="lbl">How it works</span>
-    </button>
-    <button id="nav-overview" class="sub-btn" type="button" data-act="section" data-section="overview" hidden>
-      <i class="fa-solid fa-gauge-high" aria-hidden="true"></i><span class="lbl">Overview</span>
-    </button>
-    <button id="nav-contracts" class="sub-btn" type="button" data-act="section" data-section="contracts" hidden>
-      <i class="fa-solid fa-file-contract" aria-hidden="true"></i><span class="lbl">Contracts</span>
-    </button>
-    <button id="nav-players" class="sub-btn" type="button" data-act="section" data-section="players" hidden>
-      <i class="fa-solid fa-user" aria-hidden="true"></i><span class="lbl">Players</span>
-    </button>
-    <button id="nav-frozen" class="sub-btn" type="button" data-act="section" data-section="frozen" hidden>
-      <i class="fa-solid fa-snowflake" aria-hidden="true"></i><span class="lbl">Frozen players</span>
-    </button>
-    <button id="nav-reviews" class="sub-btn" type="button" data-act="section" data-section="reviews" hidden>
-      <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl">Needs review</span>
-      <span id="count-reviews" class="nav-count is-warn" hidden></span>
-    </button>
-    <button id="nav-stuck" class="sub-btn" type="button" data-act="section" data-section="stuck" hidden>
-      <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="lbl">Stuck escrow</span>
-      <span id="count-stuck" class="nav-count is-warn" hidden></span>
-    </button>
-    <button id="nav-actions" class="sub-btn" type="button" data-act="section" data-section="actions" hidden>
-      <i class="fa-solid fa-hand" aria-hidden="true"></i><span class="lbl">All staff actions</span>
-    </button>
-    <button id="nav-tools" class="sub-btn" type="button" data-act="section" data-section="tools" hidden>
-      <i class="fa-solid fa-screwdriver-wrench" aria-hidden="true"></i><span class="lbl">Tools</span>
-    </button>
-    <button id="nav-announce" class="sub-btn" type="button" data-act="section" data-section="announce" hidden>
-      <i class="fa-solid fa-bullhorn" aria-hidden="true"></i><span class="lbl">Announce</span>
-    </button>
-    <button id="nav-timers" class="sub-btn" type="button" data-act="section" data-section="timers" hidden>
-      <i class="fa-solid fa-clock" aria-hidden="true"></i><span class="lbl">Timers</span>
-    </button>
-    <button id="nav-money" class="sub-btn" type="button" data-act="section" data-section="money" hidden>
-      <i class="fa-solid fa-sack-dollar" aria-hidden="true"></i><span class="lbl">Rewards &amp; money</span>
-    </button>
-    <button id="nav-limits" class="sub-btn" type="button" data-act="section" data-section="limits" hidden>
-      <i class="fa-solid fa-sliders" aria-hidden="true"></i><span class="lbl">Limits</span>
-    </button>
-    <button id="nav-targeting" class="sub-btn" type="button" data-act="section" data-section="targeting" hidden>
-      <i class="fa-solid fa-crosshairs" aria-hidden="true"></i><span class="lbl">Targeting</span>
-    </button>
-    <button id="nav-tldefaults" class="sub-btn" type="button" data-act="section" data-section="tldefaults" hidden>
-      <i class="fa-solid fa-sliders" aria-hidden="true"></i><span class="lbl">Defaults</span>
-    </button>
-    <button id="nav-tljobs" class="sub-btn" type="button" data-act="section" data-section="tljobs" hidden>
-      <i class="fa-solid fa-briefcase" aria-hidden="true"></i><span class="lbl">Per job</span>
-    </button>
-    <button id="nav-tlplayer" class="sub-btn" type="button" data-act="section" data-section="tlplayer" hidden>
-      <i class="fa-solid fa-user-clock" aria-hidden="true"></i><span class="lbl">Per player</span>
-    </button>
-    <button id="nav-tlcontracts" class="sub-btn" type="button" data-act="section" data-section="tlcontracts" hidden>
-      <i class="fa-solid fa-list-check" aria-hidden="true"></i><span class="lbl">Current contracts</span>
-    </button>
-    <button id="nav-features" class="sub-btn" type="button" data-act="section" data-section="features" hidden>
-      <i class="fa-solid fa-toggle-on" aria-hidden="true"></i><span class="lbl">Switches</span>
-    </button>
-    <button id="nav-logs" class="sub-btn" type="button" data-act="section" data-section="logs" hidden>
-      <i class="fa-solid fa-list-ul" aria-hidden="true"></i><span class="lbl">Logs</span>
-    </button>
-    <button id="nav-alerts" class="sub-btn" type="button" data-act="section" data-section="alerts" hidden>
-      <i class="fa-solid fa-bell" aria-hidden="true"></i><span class="lbl">Alerts &amp; Discord</span>
-      <span id="count-alerts" class="nav-count is-warn" hidden></span>
-    </button>
-    <button id="nav-devsettings" class="sub-btn" type="button" data-act="section" data-section="devsettings" hidden>
-      <i class="fa-solid fa-gear" aria-hidden="true"></i><span class="lbl">Settings</span>
-    </button>
-    <button id="nav-console" class="sub-btn" type="button" data-act="section" data-section="console" hidden>
-      <i class="fa-solid fa-terminal" aria-hidden="true"></i><span class="lbl">Console</span>
-    </button>
-    <button id="nav-diagnostics" class="sub-btn" type="button" data-act="section" data-section="diagnostics" hidden>
-      <i class="fa-solid fa-stethoscope" aria-hidden="true"></i><span class="lbl">Diagnostics</span>
-    </button>
-    <button id="nav-permissions" class="sub-btn" type="button" data-act="section" data-section="permissions" hidden>
-      <i class="fa-solid fa-key" aria-hidden="true"></i><span class="lbl">Permissions</span>
-    </button>
-    <button id="nav-history" class="sub-btn" type="button" data-act="section" data-section="history" hidden>
-      <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span class="lbl">Settings history</span>
-    </button>
-  </nav>
+  <!-- The section's views, as tabs (drawn by admin.js), and where you are. -->
+  <nav id="subnav" class="subnav" aria-label="In this section" hidden></nav>
+  <div id="crumbs" class="crumbs" aria-label="You are here"></div>
   <main id="main" class="main"></main>
   <div id="scrim" class="scrim" data-act="drawer-close" hidden></div>
   <aside id="drawer" class="drawer" aria-label="Contract" hidden></aside>

@@ -267,37 +267,86 @@
 
   /* ---------- state ---------------------------------------------------- */
 
-  /* Six sections by who uses them, each holding views as sub-tabs. Every
-     view the panel had is still one; the settings are split by category
-     (the catalogue's `category`, server/settings.lua). Developer is only for
-     staff the server says may open it (access.canDevelop); everybody else
-     has its Permissions page alone, under that name. */
+  /* The sections, in sidebar groups ordered by how often each is used
+     (Daily, Setup, Records, Developer), each holding its views as sub-tabs;
+     Help is the header's (?) button. Every view the panel had is still
+     reachable: a view whose items moved answers to its old name through
+     ALIASES. Developer is only for staff the server says may open it
+     (access.canDevelop). */
   var GROUPS = [
-    { id: 'live', views: ['help', 'overview', 'contracts', 'players', 'frozen', 'reviews', 'stuck'],
-      first: 'overview' },
-    { id: 'actions', views: ['actions', 'tools', 'announce'] },
-    { id: 'rules', views: ['timers', 'money', 'limits', 'targeting'] },
+    { id: 'home', head: 'Daily', label: 'Home', icon: 'house', views: ['inbox', 'overview', 'announce'] },
+    { id: 'players', head: 'Daily', label: 'Players', icon: 'user',
+      views: ['players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag',
+              'frozen', 'suspended', 'protected'] },
+    { id: 'contracts', head: 'Daily', label: 'Contracts', icon: 'file-contract', views: ['contracts'] },
     // How often one person may be targeted (server/targetlimits.lua).
-    { id: 'targets', views: ['tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'] },
-    { id: 'features', views: ['features'] },
-    { id: 'logs', views: ['logs', 'alerts'] },
-    { id: 'developer', views: ['devsettings', 'console', 'diagnostics', 'permissions', 'history'], developer: true }
+    { id: 'targets', head: 'Daily', label: 'Target limits', icon: 'user-clock',
+      views: ['tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'] },
+    { id: 'rules', head: 'Setup', label: 'Game rules', icon: 'scale-balanced', views: ['rules', 'changed', 'history'] },
+    // The hitman organisation (server/org/), off as shipped.
+    { id: 'org', head: 'Setup', label: 'Hitman organisation', icon: 'people-group',
+      views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit'] },
+    { id: 'bossperms', head: 'Setup', label: 'Boss permissions', icon: 'key',
+      views: ['bpmatrix', 'bplimits', 'bpoffice', 'bphistory'] },
+    { id: 'locations', head: 'Setup', label: 'Locations', icon: 'location-dot', views: ['locations'] },
+    { id: 'logs', head: 'Records', label: 'Logs', icon: 'list-ul', views: ['logs', 'alerts'] },
+    { id: 'developer', head: 'Developer', label: 'Developer', icon: 'code',
+      views: ['health', 'devsettings', 'console', 'tools'], developer: true },
+    { id: 'help', head: null, label: 'Help', icon: 'circle-question', views: ['help', 'howto', 'permissions'] }
   ];
+  /** Each view's name on its sub-tab, its icon, and on the breadcrumb. */
+  var VIEW_LABEL = {
+    inbox: ['Inbox', 'inbox'], overview: ['Overview', 'gauge-high'], announce: ['Announce', 'bullhorn'],
+    players: ['Find & summary', 'magnifying-glass'], pcontracts: ['Contracts', 'file-contract'],
+    pmeasures: ['Measures', 'snowflake'], pmoney: ['Money', 'sack-dollar'], pplaytime: ['Playtime', 'clock'],
+    phistory: ['History', 'clock-rotate-left'], pdiag: ['Why can’t they see…', 'stethoscope'],
+    frozen: ['Frozen', 'snowflake'], suspended: ['Suspended', 'ban'], protected: ['Protected', 'shield'],
+    contracts: ['All contracts', 'file-contract'],
+    tldefaults: ['Defaults', 'sliders'], tljobs: ['Per job', 'briefcase'], tlplayer: ['Per player', 'user-clock'],
+    tlcontracts: ['Contracts on someone', 'list-check'],
+    rules: ['Areas', 'layer-group'], changed: ['Changed from the panel', 'pen'],
+    history: ['Change history', 'clock-rotate-left'],
+    orgsetup: ['Setup', 'gear'], orgroles: ['Roles & pay', 'id-badge'], orgmembers: ['Members', 'users'],
+    orgapps: ['Applications', 'envelope-open-text'], orgfunds: ['Funds & cuts', 'vault'],
+    orgaccess: ['Contract access', 'door-open'], orgnotices: ['Notices', 'thumbtack'], orgaudit: ['Org audit', 'list-ul'],
+    bpmatrix: ['Matrix', 'table-cells'], bplimits: ['Limits', 'sliders'], bpoffice: ['Delegation & office', 'building'],
+    bphistory: ['Grant history', 'clock-rotate-left'],
+    locations: ['Map points', 'location-dot'],
+    logs: ['Audit log', 'list-ul'], alerts: ['Alerts', 'bell'],
+    health: ['Health', 'heart-pulse'], devsettings: ['Engine settings', 'gear'], console: ['Console', 'terminal'],
+    tools: ['Test tools', 'screwdriver-wrench'],
+    help: ['How it works', 'circle-question'], howto: ['How do I…', 'hand'], permissions: ['Who can do what', 'key']
+  };
   /** The views only the Developer section's staff see. */
-  var DEV_VIEWS = { devsettings: true, console: true, diagnostics: true };
+  var DEV_VIEWS = { health: true, devsettings: true, console: true };
+  /** A selected player's own tabs, shown once somebody is looked up. */
+  var PERSON_VIEWS = { pcontracts: true, pmeasures: true, pmoney: true, pplaytime: true, phistory: true, pdiag: true };
+  var PLAYER_VIEWS = { players: true, pcontracts: true, pmeasures: true, pmoney: true, pplaytime: true,
+                       phistory: true, pdiag: true };
+  var ORG_VIEWS = { orgsetup: true, orgroles: true, orgmembers: true, orgapps: true, orgfunds: true,
+                    orgaccess: true, orgnotices: true, orgaudit: true };
+  var BP_VIEWS = { bpmatrix: true, bplimits: true, bpoffice: true, bphistory: true };
   var SECTIONS = [];
   GROUPS.forEach(function (g) { SECTIONS = SECTIONS.concat(g.views); });
-  /** Old names, so a link or a remembered view from before lands somewhere. */
-  var ALIASES = { settings: 'features' };
-
-  /** The settings view each category is shown in. */
-  var CATEGORY_VIEW = {
-    'rules-timers': 'timers', 'rules-rewards': 'money', 'rules-limits': 'limits',
-    'rules-targeting': 'targeting', features: 'features', developer: 'devsettings',
-    'target-limits': 'tldefaults'
+  /** Old names, so a link or a remembered view from before lands where its
+      items are now: [old] = [view, what to set there]. */
+  var ALIASES = {
+    settings: ['rules', { cat: 'features' }], features: ['rules', { cat: 'features' }],
+    timers: ['rules', { cat: 'rules-timers' }], money: ['rules', { cat: 'rules-rewards' }],
+    limits: ['rules', { cat: 'rules-limits' }], targeting: ['rules', { cat: 'rules-targeting' }],
+    reviews: ['inbox', { inbox: 'reviews' }], stuck: ['inbox', { inbox: 'stuck' }],
+    actions: ['howto'], diagnostics: ['health'], live: ['inbox'], frozenlist: ['frozen']
   };
-  var SETTING_VIEWS = { timers: true, money: true, limits: true, targeting: true, features: true,
-                        devsettings: true, tldefaults: true };
+  window.CH_ADMIN_ALIASES = ALIASES;
+
+  /** The settings view each category is shown in; Game rules' areas hold
+      the rules and features categories. */
+  var CATEGORY_VIEW = {
+    'rules-timers': 'rules', 'rules-rewards': 'rules', 'rules-limits': 'rules',
+    'rules-targeting': 'rules', features: 'rules', developer: 'devsettings',
+    'target-limits': 'tldefaults', organisation: 'orgsetup'
+  };
+  var SETTING_VIEWS = { rules: true, changed: true, devsettings: true, tldefaults: true };
 
   /** Ops that only read. A refusal of one as not_allowed means the staff
       member may no longer read at all (an ACE taken away while the panel was
@@ -305,8 +354,9 @@
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
                    alerts: true, console: true, frozen: true, exportContract: true, playerView: true,
-                   history: true, settingsHistory: true,
-                   targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true };
+                   history: true, settingsHistory: true, sanctions: true,
+                   targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true,
+                   orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, orgMyPosition: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -317,7 +367,7 @@
     gen: 0,                 // bumped on every open and close: a reply from before is nobody's
     access: {},
     recovery: 'ready',
-    section: 'overview',
+    section: 'inbox',
     seq: {},                // [channel] = the newest request on it
     forms: {},              // what has been typed, by data-bind, so a redraw keeps it
     busy: {},               // writes in flight, by what they act on
@@ -332,8 +382,14 @@
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
-    players: { data: null, whois: {}, subject: null, ref: null, playtime: null, freeze: null, frozen: null },
-    settings: { data: null, answers: {}, photos: null, drafts: {} },
+    players: { data: null, whois: {}, subject: null, ref: null, playtime: null, freeze: null, frozen: null,
+               sanctions: null, at: 0, recent: [], lift: {} },
+    inbox: 'all',           // which of the inbox's lists show: all, reviews, stuck, alerts
+    rules: { area: '', type: '', cat: '' },
+    ctx: { contract: null },  // the contract last opened, for its header chip
+    search: { q: '', open: false, at: 0 },
+    help: { open: {} },
+    settings: { data: null, answers: {}, photos: null, drafts: {}, open: {} },
     remembered: {},         // [group] = the sub-tab last open in it
     tools: { refresh: null, diag: null, flush: null }
   };
@@ -399,7 +455,7 @@
     invalid_input: 'The server could not read that request.',
     unknown_op: 'The server does not know that request: is the resource up to date?',
     admin_off: 'The staff tools are switched off (Config.Admin.Enabled).',
-    server_error: 'That raised an error on the server. Run the diagnosis, under Tools, to read it.',
+    server_error: 'That raised an error on the server. Run the diagnosis, under Developer, Health, to read it.',
     recovering: 'Still recovering from the restart: try again in a moment.',
     recovery_failed: 'Recovery failed at the last start: restart the resource once the cause in the console is fixed.',
     not_found: 'Not found.',
@@ -494,7 +550,7 @@
      that moved, a switch the other way) is a different button. */
   var ARM_ATTRS = ['id', 'data-act', 'data-key', 'data-value', 'data-id', 'data-ref', 'data-index',
     'data-line', 'data-bucket', 'data-where', 'data-how', 'data-subject', 'data-contract', 'data-report',
-    'data-ace', 'data-view', 'data-group', 'data-section'];
+    'data-ace', 'data-view', 'data-group', 'data-section', 'data-power'];
   /* And whom it acts on: the player card's buttons and the drawer's carry
      no id of their own, so the player looked up (by the handle the lookup
      gave) and the contract open are part of what tells one apart. A button
@@ -562,6 +618,9 @@
     a.type = 'button';
     a['data-act'] = act;
     var allowed = open !== undefined ? open : (always ? canWrite() : writesOpen());
+    // What decides it, so a change of recovery or of the ACE toggles the
+    // button where it is (refreshGates) rather than redrawing the section.
+    a['data-gate'] = a['data-gate'] || (open !== undefined ? 'custom' : always ? 'always' : 'write');
     if (!allowed) { a.disabled = true; a.title = a.title || whyNoWrite(); }
     if (confirmLabel) a['data-confirm'] = 'yes';
     return h('button.btn' + (cls || ''), a, iconName ? icon(iconName) : null, h('span.lbl', label),
@@ -731,31 +790,118 @@
           icon('mask'), 'Identities hidden')));
     drawBanner();
     var current = groupOf(S.section);
+    var heads = {};
     GROUPS.forEach(function (g) {
       var top = byId('grp-' + g.id);
+      var shown = groupShown(g);
+      if (shown && g.head) heads[g.head] = true;
       if (top) {
+        top.hidden = !shown;
         top.classList.toggle('is-on', g === current);
         top.setAttribute('aria-current', g === current ? 'page' : 'false');
-        if (g.developer) {
-          var lbl = top.querySelector('.lbl');
-          // Without the Developer ACE the section holds Permissions and the
-          // settings History (where a change is undone): both named, or
-          // History was found by nobody who was not looking for it.
-          if (lbl) lbl.textContent = canDevelop() ? 'Developer' : 'Permissions & history';
-        }
       }
     });
-    SECTIONS.forEach(function (name) {
-      var node = byId('nav-' + name);
-      if (!node) return;
-      node.hidden = !(current && current.views.indexOf(name) !== -1 && viewAllowed(name));
-      node.classList.toggle('is-on', name === S.section);
-      node.setAttribute('aria-current', name === S.section ? 'page' : 'false');
+    ['Daily', 'Setup', 'Records', 'Developer'].forEach(function (head) {
+      var node = byId('nh-' + head.toLowerCase());
+      if (node) node.hidden = !heads[head];
     });
-    // One sub-tab is no strip at all.
-    var subnav = byId('subnav');
-    if (subnav) subnav.hidden = !current || current.views.filter(viewAllowed).length < 2;
+    var help = byId('help-btn');
+    if (help) help.classList.toggle('is-on', !!current && current.id === 'help');
+    var menu = byId('nav-menu');
+    if (menu) {
+      var lbl = menu.querySelector('.lbl');
+      if (lbl) lbl.textContent = current ? current.label : 'Sections';
+      menu.setAttribute('aria-expanded', S.navOpen ? 'true' : 'false');
+    }
+    var nav = byId('nav');
+    if (nav) nav.classList.toggle('is-open', !!S.navOpen);
+    drawSubnav();
+    drawCrumbs();
+    drawContext();
     drawCounts();
+  }
+
+  /** The section's sub-tabs, drawn for the section open: a selected
+      player's own tabs only once somebody is looked up. */
+  function drawSubnav() {
+    var subnav = byId('subnav');
+    if (!subnav) return;
+    var g = groupOf(S.section);
+    var views = g ? g.views.filter(viewShown) : [];
+    subnav.hidden = views.length < 2;
+    var counts = { inbox: 'count-inbox', changed: 'count-settings', alerts: 'count-alerts' };
+    setHtml(subnav, frag(views.map(function (view) {
+      var on = view === S.section;
+      var label = VIEW_LABEL[view] || [view, 'circle'];
+      return h('button.sub-btn' + (on ? '.is-on' : '') + (PERSON_VIEWS[view] ? '.is-person' : ''),
+        { id: 'nav-' + view, type: 'button', 'data-act': 'section', 'data-section': view,
+          'aria-current': on ? 'page' : 'false' },
+        icon(label[1]), h('span.lbl', label[0]),
+        counts[view] ? h('span.nav-count.is-warn', { id: counts[view], hidden: true }) : null);
+    })));
+  }
+
+  /** Where the staff member is: the section, the player or area chosen, the view. */
+  function drawCrumbs() {
+    var node = byId('crumbs');
+    if (!node) return;
+    var g = groupOf(S.section);
+    var parts = [];
+    if (g) parts.push(g.label);
+    if (PERSON_VIEWS[S.section] || (S.section === 'players' && hasPlayer())) parts.push(playerChipText());
+    parts.push((VIEW_LABEL[S.section] || [S.section])[0]);
+    if (S.section === 'rules' && S.rules.area) parts.push(areaLabel(S.rules.area));
+    if (S.section === 'rules' && S.rules.cat) parts.push(OLD_TAB[S.rules.cat] || S.rules.cat);
+    setHtml(node, frag(parts.map(function (part, i) {
+      return frag(i ? h('span.crumb-sep', { 'aria-hidden': 'true' }, '›') : null,
+        h('span.crumb' + (i === parts.length - 1 ? '.is-here' : ''), part));
+    })));
+  }
+
+  /** Whether a player is selected: looked up, with a handle to act on. */
+  function hasPlayer() {
+    var d = S.players.data;
+    return !!(S.players.ref && d && !d.error && d.player);
+  }
+
+  /** Minutes left of the lookup's handle (the server's ten). */
+  var PLAYER_REF_MIN = 10;
+  function refMinutesLeft() {
+    if (!S.players.at) return 0;
+    return Math.max(0, PLAYER_REF_MIN - Math.floor((Date.now() - S.players.at) / 60000));
+  }
+
+  function playerChipText() {
+    var p = (S.players.data && S.players.data.player) || {};
+    return String(p.name || 'No name on record')
+      + (p.online ? ' (in city · ' + String(p.server) + ')' : ' (offline)');
+  }
+
+  /** The header's chips: the selected player (with the minutes left of the
+      lookup) and the contract last opened, each with its own clear. */
+  function drawContext() {
+    var node = byId('ctx');
+    if (!node) return;
+    var parts = [];
+    if (hasPlayer()) {
+      var left = refMinutesLeft();
+      parts.push(h('span.ctx-chip' + (left <= 0 ? '.is-stale' : ''),
+        h('button.ctx-open', { type: 'button', 'data-act': left <= 0 ? 'ctx-relookup' : 'ctx-player',
+          title: left <= 0 ? 'The lookup ran out: look them up again' : 'Open their card' },
+          icon('user'), h('span.lbl', 'Player: ' + String((S.players.data.player || {}).name || 'No name on record')),
+          h('span.ctx-left', left <= 0 ? 'look up again' : left + ' min')),
+        h('button.ctx-x', { type: 'button', 'data-act': 'ctx-player-clear', 'aria-label': 'Clear the player',
+          title: 'Clear the player' }, icon('xmark'), h('span.lbl', 'Clear'))));
+    }
+    if (S.ctx.contract) {
+      parts.push(h('span.ctx-chip',
+        h('button.ctx-open', { type: 'button', 'data-act': 'ctx-contract', title: 'Open the contract' },
+          icon('file-contract'), h('span.lbl', 'Contract: ' + S.ctx.contract)),
+        h('button.ctx-x', { type: 'button', 'data-act': 'ctx-contract-clear', 'aria-label': 'Clear the contract',
+          title: 'Clear the contract' }, icon('xmark'), h('span.lbl', 'Clear'))));
+    }
+    node.hidden = !parts.length;
+    setHtml(node, frag(parts));
   }
 
   function drawBanner() {
@@ -790,25 +936,47 @@
 
   function drawCounts() {
     var o = S.overview || {};
-    setCount('count-reviews', o.reviews ? Number(o.reviews.open) || 0 : 0, 'open in the review queue');
+    var reviews = o.reviews ? Number(o.reviews.open) || 0 : 0;
     // What staff settle, not every line listed: one queued since, or an
-    // ending finishing itself, needs nobody. Beside Stuck escrow, where
-    // they are settled.
-    setCount('count-stuck', o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0, 'escrow line(s) left for you to settle');
-    setCount('count-settings', Number(o.overrides) || 0, 'setting(s) changed from the panel');
-    setCount('count-alerts', o.alerts ? Number(o.alerts.open) || 0 : 0, 'open alerts, not acknowledged yet');
-    // On the sections, what waits in their sub-tabs.
-    setCount('count-live', (o.reviews ? Number(o.reviews.open) || 0 : 0)
-      + (o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0), 'waiting for staff in the review queue and stuck escrow');
-    setCount('count-logs', o.alerts ? Number(o.alerts.open) || 0 : 0, 'open alerts, not acknowledged yet');
+    // ending finishing itself, needs nobody.
+    var stuck = o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0;
+    var alerts = o.alerts ? Number(o.alerts.open) || 0 : 0;
+    var changed = Number(o.overrides) || 0;
+    setCount('count-home', reviews + stuck + alerts, 'waiting in the inbox: reviews, money left for staff and alerts');
+    setCount('count-inbox', reviews + stuck + alerts, 'waiting in the inbox');
+    setCount('count-reviews', reviews, 'open in the review queue');
+    setCount('count-stuck', stuck, 'escrow line(s) left for you to settle');
+    setCount('count-ialerts', alerts, 'open alerts, not acknowledged yet');
+    setCount('count-rules', changed, 'setting(s) changed from the panel');
+    setCount('count-settings', changed, 'setting(s) changed from the panel');
+    setCount('count-logs', alerts, 'open alerts, not acknowledged yet');
+    setCount('count-alerts', alerts, 'open alerts, not acknowledged yet');
+  }
+
+  /** Every write button drawn, enabled or not as recovery and the ACEs now
+      say, where it stands: no section is drawn again for it. A button whose
+      gate only its section knows (a setting's) has its section redrawn. */
+  function refreshGates() {
+    var panel = byId('panel');
+    if (!panel || !panel.querySelectorAll) return;
+    var custom = false;
+    panel.querySelectorAll('[data-gate]').forEach(function (node) {
+      var gate = node.getAttribute('data-gate');
+      if (gate === 'custom') { custom = true; return; }
+      var open = gate === 'mod' ? modOpen() : gate === 'always' ? canWrite() : writesOpen();
+      node.disabled = !open;
+      if (open) node.removeAttribute('title');
+      else node.setAttribute('title', gate === 'mod' ? whyNoMod() : whyNoWrite());
+    });
+    if (custom) redraw();
   }
 
   function setRecovery(state) {
     if (!state || state === S.recovery) return;
     S.recovery = state;
     drawBanner();
-    // Every write button reads it as it is drawn.
-    redraw();
+    // Every write button follows, where it is.
+    refreshGates();
   }
 
   /* ---------- sections ------------------------------------------------- */
@@ -823,12 +991,28 @@
     return null;
   }
 
-  /** Whether this staff member is shown a view at all. */
-  function viewAllowed(view) { return !DEV_VIEWS[view] || canDevelop(); }
+  /** Whether this staff member is shown a view at all. Bring timers forward
+      and the log flush are the staff ACE's too, under Developer's Test tools
+      (Help, How do I... links them for staff without the Developer ACE). */
+  function viewAllowed(view) {
+    if (DEV_VIEWS[view]) return canDevelop();
+    if (view === 'tools') return canDevelop() || canWrite();
+    return true;
+  }
+  /** And on its section's strip: a selected player's tabs once there is one. */
+  function viewShown(view) { return viewAllowed(view) && (!PERSON_VIEWS[view] || hasPlayer()); }
+  /** A section is in the sidebar when it has a view to show; Developer only
+      for the Developer ACE. */
+  function groupShown(g) {
+    if (g.developer && !canDevelop()) return false;
+    if (g.id === 'help') return false;
+    return g.views.some(viewAllowed);
+  }
 
   /* Where the staff member was, kept in this browser only: the last view,
      and the sub-tab last open in each section. Storage that throws (private
-     mode, a CEF profile without it) is no storage, never a fault. */
+     mode, a CEF profile without it) is no storage, never a fault. A view
+     kept under an old name lands where it is now. */
   var STORE_KEY = 'crimson-hitman.admin.nav';
 
   function remember() {
@@ -837,16 +1021,26 @@
     } catch (err) { /* not kept */ }
   }
 
+  function known(view) {
+    if (typeof view !== 'string') return null;
+    if (ALIASES[view]) return ALIASES[view][0];
+    return SECTIONS.indexOf(view) !== -1 ? view : null;
+  }
+
   function recall() {
     try {
       var kept = JSON.parse(window.localStorage.getItem(STORE_KEY) || 'null');
       if (!kept || typeof kept !== 'object') return;
       if (kept.sub && typeof kept.sub === 'object') {
         Object.keys(kept.sub).forEach(function (g) {
-          if (typeof kept.sub[g] === 'string' && SECTIONS.indexOf(kept.sub[g]) !== -1) S.remembered[g] = kept.sub[g];
+          var view = known(kept.sub[g]);
+          var group = view && groupOf(view);
+          if (group) S.remembered[group.id] = view;
         });
       }
-      if (typeof kept.view === 'string' && SECTIONS.indexOf(kept.view) !== -1) S.section = kept.view;
+      var view = known(kept.view);
+      // A selected player's tab is nobody's after a reopen: their Find.
+      if (view) S.section = PERSON_VIEWS[view] ? 'players' : view;
     } catch (err) { /* nothing kept */ }
   }
 
@@ -854,30 +1048,50 @@
   function openGroup(id) {
     var g = GROUPS.filter(function (x) { return x.id === id; })[0];
     if (!g) return;
-    var views = g.views.filter(viewAllowed);
+    var views = g.views.filter(viewShown);
     var want = S.remembered[g.id];
-    show(views.indexOf(want) !== -1 ? want : (views.indexOf(g.first) !== -1 ? g.first : views[0]));
+    S.navOpen = false;
+    show(views.indexOf(want) !== -1 ? want : views[0]);
+  }
+
+  /** What an old view's name sets where its items are now. */
+  function applyAlias(with_) {
+    if (!with_) return;
+    // An old settings tab: the rows it held, until an area or a type is picked.
+    if (with_.cat !== undefined) { S.rules.cat = with_.cat; S.rules.area = ''; S.rules.type = ''; }
+    if (with_.inbox !== undefined) S.inbox = with_.inbox;
   }
 
   function show(section) {
-    if (ALIASES[section]) section = ALIASES[section];
-    if (SECTIONS.indexOf(section) === -1) section = 'overview';
-    // Developer views for staff the server says may not open them: the
-    // Permissions page, which everybody may read.
+    if (ALIASES[section]) {
+      applyAlias(ALIASES[section][1]);
+      section = ALIASES[section][0];
+    }
+    if (SECTIONS.indexOf(section) === -1) section = 'inbox';
+    // A selected player's tab with nobody selected: Find.
+    if (PERSON_VIEWS[section] && !hasPlayer()) section = 'players';
+    // Developer views for staff the server says may not open them: who can
+    // do what, which everybody may read.
     if (!viewAllowed(section)) section = 'permissions';
+    var before = S.section;
     S.section = section;
     var g = groupOf(section);
     if (g) S.remembered[g.id] = section;
     remember();
-    closeDrawer();
+    // The contract drawer stays open over any section until it is closed.
     disarm();
     S.menu = null;
+    S.search.open = false;
+    drawSearch();
     drawChrome();
     var main = byId('main');
     setHtml(main, SHELL[section]());
     if (main) main.scrollTop = 0;
-    LOAD[section]();
+    LOAD[section](before);
+    // The overview's pace follows the section: quicker on Home and the live views.
+    if (S.pollGen === S.gen && fastPace(before) !== fastPace(section)) schedule(S.gen);
   }
+  window.CH_ADMIN_SHOW = function (view) { if (S.open) show(view); };
 
   /** The current section drawn again from what is already here. */
   function redraw() {
@@ -896,6 +1110,12 @@
     var s = Number(S.access.refreshSeconds) || 10;
     return Math.max(2, s) * 1000;
   }
+  /** Away from Home, the counts on the sidebar only need reading this often. */
+  var AWAY_MS = 30000;
+  /** The views that read again at the panel's own pace while they show. */
+  var LIVE_VIEWS = { console: true, alerts: true, health: true };
+  function fastPace(view) { var g = groupOf(view); return (g && g.id === 'home') || !!LIVE_VIEWS[view]; }
+  function pollMs() { return fastPace(S.section) ? refreshMs() : Math.max(refreshMs(), AWAY_MS); }
 
   function loadOverview(manual) {
     return ask('overview', {}, 'overview').then(function (reply) {
@@ -921,10 +1141,10 @@
         if (S.overview.recovery) setRecovery(S.overview.recovery);
       }
       drawCounts();
-      if (S.section !== 'overview') return;
+      if (S.section !== 'overview' && S.section !== 'health') return;
       var at = same && byId('ov-at');
       if (at) { at.textContent = overviewStamp(); return; }
-      setHtml(byId('ov'), overviewBody());
+      setHtml(byId(S.section === 'health' ? 'dg' : 'ov'), S.section === 'health' ? healthBody() : overviewBody());
     });
   }
 
@@ -949,16 +1169,18 @@
       try {
         // Stuck escrow too while it is on screen, so its list and the badge
         // agree after another staff member settles a line.
-        if (S.section === 'stuck' && !S.drawer.id) loadStuck(true);
+        if (shows('stuck') && !S.drawer.id) loadStuck(true);
         // And the alerts, unless a button there waits for its second click.
-        if (S.section === 'alerts' && !S.drawer.id && !S.armed) loadAlerts();
+        if (shows('alerts') && !S.drawer.id && !S.armed) loadAlerts();
+        // The header's lookup chip counts its minutes down.
+        drawContext();
         // And the console: its live updates, at this pace and no faster.
         if (S.section === 'console' && !S.drawer.id) loadConsole();
         loadOverview(false).then(next, next);
       } catch (err) {
         next();
       }
-    }, refreshMs());
+    }, pollMs());
   }
 
   function moneyRows(bucket) {
@@ -995,6 +1217,28 @@
     return h('div.tile' + (cls || ''), h('h3.tile-title', title), body);
   }
 
+  /** The inbox's three counts on Home, each opening its list. */
+  function inboxCounts(o) {
+    var forYou = o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0;
+    var reviewsOpen = o.reviews ? Number(o.reviews.open) || 0 : 0;
+    var alertsOpen = o.alerts ? Number(o.alerts.open) || 0 : 0;
+    var listed = o.stuck ? Number(o.stuck.total) || 0 : 0;
+    return frag(
+      h('p.big' + (forYou + reviewsOpen + alertsOpen > 0 ? '.is-warn' : ''), num(forYou + reviewsOpen + alertsOpen)),
+      h('p.sub', 'waiting for you'),
+      h('div.chips',
+        h('button.chip.is-link', { type: 'button', 'data-act': 'ib-go', 'data-value': 'reviews' },
+          'Needs review ' + num(reviewsOpen)),
+        h('button.chip.is-link', { type: 'button', 'data-act': 'ib-go', 'data-value': 'stuck' },
+          'Money waiting ' + num(forYou)),
+        h('button.chip.is-link', { type: 'button', 'data-act': 'ib-go', 'data-value': 'alerts' },
+          'Alerts ' + num(alertsOpen))),
+      !o.stuck ? h('p.note', notListed(o.recovery))
+        : o.stuck.error ? h('p.note.is-error', 'Money waiting could not be read just now; the inbox reads it again.')
+          : listed > forYou ? h('p.note', num(listed - forYou) + ' more line' + (listed - forYou === 1 ? '' : 's')
+            + ' listed need nothing from you.') : null);
+  }
+
   function overviewBody() {
     var o = S.overview;
     if (!o) return S.overviewError ? empty(S.overviewError) : loading('Reading the overview…');
@@ -1004,57 +1248,23 @@
     Object.keys(byState).forEach(function (s) { if (states.indexOf(s) === -1) states.push(s); });
     var hitmen = o.hitmen || {};
     var owed = o.owed || {};
-    var photos = o.photos;
-    var slowest = asList(o.slowest);
     var warnings = asList(o.warnings);
-    var slowMs = Number(o.slowMs) || 0;
-
-    /* The headline is what staff settle (every line with something to settle
-       it by), not every line listed: one queued since for whom it is owed,
-       or an ending finishing itself, needs nobody, and is said so apart. */
-    var stuckBody;
-    var forYou = o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0;
-    if (!o.stuck) {
-      stuckBody = h('p.note', notListed(o.recovery));
-    } else if (o.stuck.error) {
-      stuckBody = frag(h('p.note.is-error', 'The list could not be read just now; the diagnosis keeps '
-        + 'why. Stuck escrow reads it again.'),
-        btn('.is-small', 'section', { 'data-section': 'stuck' }, 'Open Stuck escrow', 'arrow-right'));
-    } else {
-      var byWhy = o.stuck.byWhy || {};
-      var listed = Number(o.stuck.total) || 0;
-      var nothingToDo = Math.max(0, listed - forYou);
-      stuckBody = frag(
-        h('p.big' + (forYou > 0 ? '.is-warn' : ''), num(forYou)),
-        h('p.sub', 'left for you to settle, of ' + num(listed) + ' listed'),
-        h('div.chips', Object.keys(byWhy).sort().map(function (why) {
-          return h('span.chip', (WHY_SHORT[why] || why) + ' ' + num(byWhy[why]));
-        })),
-        nothingToDo > 0
-          ? h('p.note', num(nothingToDo) + ' need nothing from you: queued since for whom '
-            + (nothingToDo === 1 ? 'it is' : 'they are') + ' owed, or an ending settling itself within a minute.')
-          : null,
-        listed > 0
-          ? h('p.note', 'Stuck escrow lists every one and settles it; each contract\'s view lists its '
-            + 'own, a contract that was never stored included.')
-          : null,
-        btn('.is-small', 'section', { 'data-section': 'stuck' }, 'Open Stuck escrow', 'arrow-right'));
-    }
-
-    var reviewsOpen = o.reviews ? Number(o.reviews.open) || 0 : 0;
-    var alertsOpen = o.alerts ? Number(o.alerts.open) || 0 : 0;
     var frozenCount = o.frozen ? Number(o.frozen.players) || 0 : 0;
     // The store's freezes could not be read: unknown, never 0.
     var frozenUnknown = !!(o.frozen && o.frozen.unknown);
+    var sanctions = o.sanctions || {};
+    var held = frozenCount > 0 || frozenUnknown;
 
     return frag(
       h('div.tiles',
+        tile('Inbox', inboxCounts(o)),
         tile('Contracts', frag(
           h('p.big', num(contracts.total)),
           h('div.chips', states.filter(function (s) { return byState[s]; }).map(function (s) {
             return h('button.chip.is-link', { type: 'button', 'data-act': 'ov-state', 'data-value': s },
               (STATE_LABEL[s] || s) + ' ' + num(byState[s]));
-          })))),
+          })),
+          h('p.sub', 'new ones placed under ' + (RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—'))))),
         tile('Operatives', frag(
           h('p.big', num(hitmen.operatives)),
           h('p.sub', 'on contracts now, holding ' + num(hitmen.contracts) + ' contract'
@@ -1063,62 +1273,29 @@
         tile('Owed to players', frag(moneyRows(owed),
           h('p.sub', num(owed.players) + ' player' + (Number(owed.players) === 1 ? '' : 's') + ' · '
             + num(owed.queued) + ' line' + (Number(owed.queued) === 1 ? '' : 's') + ' in a retry queue'))),
-        tile('Waiting for staff', stuckBody, forYou > 0 ? '.is-warn' : ''),
-        tile('Frozen players', frag(
-          h('p.big' + (frozenCount > 0 || frozenUnknown ? '.is-warn' : ''), { id: 'ov-frozen' },
-            frozenUnknown ? 'Unknown' : num(frozenCount)),
-          h('p.sub', frozenUnknown
-            ? 'the store\'s freezes could not be read: every live contract is held until they can be'
-            : 'player' + (frozenCount === 1 ? '' : 's') + ' whose contracts are on hold'),
-          btn('.is-small', 'section', { 'data-section': 'players' }, 'Open Players', 'arrow-right')),
-          frozenCount > 0 || frozenUnknown ? '.is-warn' : ''),
-        tile('Needs review', frag(
-          h('p.big' + (reviewsOpen > 0 ? '.is-warn' : ''), num(reviewsOpen)),
-          h('p.sub', 'open item' + (reviewsOpen === 1 ? '' : 's') + ' in the review queue'),
-          btn('.is-small', 'section', { 'data-section': 'reviews' }, 'Open the queue', 'arrow-right')),
-          reviewsOpen > 0 ? '.is-warn' : ''),
-        tile('Alerts', frag(
-          h('p.big' + (alertsOpen > 0 ? '.is-warn' : ''), { id: 'ov-alerts' }, num(alertsOpen)),
-          h('p.sub', 'open alert' + (alertsOpen === 1 ? '' : 's') + ', not acknowledged yet'),
-          btn('.is-small', 'section', { 'data-section': 'alerts' }, 'Open Alerts', 'arrow-right')),
-          alertsOpen > 0 ? '.is-warn' : ''),
-        tile('Kill photos', photos ? h('dl.facts',
-          h('dt', 'Waiting'), h('dd', num(photos.waiting && photos.waiting.count) + ' · '
-            + bytes(photos.waiting && photos.waiting.bytes)),
-          h('dt', 'Kept in the app'), h('dd', num(photos.kept && photos.kept.count) + ' · '
-            + bytes(photos.kept && photos.kept.bytes)),
-          h('dt', 'Served to Photos'), h('dd', num(photos.served && photos.served.count) + ' · '
-            + bytes(photos.served && photos.served.bytes)))
-          : h('p.note', 'The photo store did not answer.')),
-        tile('Server', h('dl.facts',
-          h('dt', 'Storage'), h('dd', String(o.storage || '—'), o.storage === 'memory'
-            ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are gone at '
-              + 'the next start' }, 'nothing is kept across a restart') : null),
-          h('dt', 'New contracts'), h('dd', RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—')),
-          h('dt', 'Kill photos'), h('dd', o.killPhotos === false ? 'Off'
-            : 'On, kept on ' + String(o.photoStorage || '—')),
-          h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'Finished'
-            : o.recovery === 'recovering' ? 'Still running' : 'FAILED'),
-          h('dt', 'Settings changed here'), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
-            'data-section': 'settings' }, (Number(o.overrides) > 0 ? num(o.overrides) + ' changed'
-              : 'None changed') + ' \u2014 open Settings'),
-            Number(o.notApplied) > 0 ? h('span.chip.is-error', num(o.notApplied) + ' not applied') : null),
-          h('dt', 'Log rows queued'), h('dd', num(o.auditQueued))))),
-      h('div.cols',
-        card('Slowest maintenance jobs', slowest.length ? h('div.table-wrap', h('table.grid',
-          h('thead', h('tr', h('th', 'Job'), h('th.num', 'Worst'), h('th.num', 'Average'),
-            h('th.num', 'Last'), h('th.num', 'Runs'))),
-          h('tbody', slowest.map(function (job) {
-            var slow = slowMs > 0 && Number(job.max) > slowMs;
-            return h('tr' + (slow ? '.is-warn' : ''), h('td.mono.wrap', String(job.name)),
-              h('td.num', ms(job.max)), h('td.num', ms(job.avg)), h('td.num', ms(job.last)),
-              h('td.num', num(job.runs)));
-          })))) : empty('No job has run yet.'),
-          '', slowMs > 0 ? h('span.sub', 'over ' + slowMs + ' ms is marked') : null),
-        card('What the diagnosis says', warnings.length
-          ? h('ul.warnings', warnings.map(function (line) { return h('li', String(line)); }))
-          : empty('Nothing that wants doing.'), '',
-          btn('.is-small', 'ov-diag', {}, 'Run it', 'stethoscope'))),
+        tile('Measures on players', frag(
+          h('dl.facts',
+            h('dt', 'Frozen'), h('dd', h('span' + (held ? '.is-warn' : ''), { id: 'ov-frozen' },
+              frozenUnknown ? 'Unknown' : num(frozenCount))),
+            h('dt', 'Suspended'), h('dd', sanctions.suspended == null ? '—' : num(sanctions.suspended)),
+            h('dt', 'Protected'), h('dd', sanctions.protected == null ? '—' : num(sanctions.protected))),
+          frozenUnknown ? h('p.sub', 'the store\'s freezes could not be read: every live contract is held until '
+            + 'they can be') : null,
+          h('div.btn-row',
+            btn('.is-small', 'section', { 'data-section': 'frozen' }, 'Frozen', 'arrow-right'),
+            btn('.is-small.is-ghost', 'section', { 'data-section': 'suspended' }, 'Suspended', 'arrow-right'),
+            btn('.is-small.is-ghost', 'section', { 'data-section': 'protected' }, 'Protected', 'arrow-right'))),
+          held ? '.is-warn' : '')),
+      h('p.foot', h('span', 'Recovery: ' + (o.recovery === 'ready' ? 'finished'
+        : o.recovery === 'recovering' ? 'still running' : 'FAILED')),
+        Number(o.overrides) > 0 ? h('button.link', { type: 'button', 'data-act': 'section', 'data-section': 'changed' },
+          num(o.overrides) + ' setting' + (Number(o.overrides) === 1 ? '' : 's') + ' changed from the panel') : null,
+        o.storage === 'memory' ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are '
+          + 'gone at the next start' }, 'memory mode: nothing is kept across a restart') : null),
+      warnings.length && canWrite() ? card('Setup problems (' + num(warnings.length) + ')', frag(
+        h('ul.warnings', warnings.map(function (line) { return h('li', String(line)); })),
+        S.tools.diag && S.section === 'overview' ? linesBox(S.tools.diag.lines, S.tools.diag.later) : null),
+        '.is-warn', btn('.is-small', 'ov-diag', {}, 'Run the diagnosis', 'stethoscope')) : null,
       h('p.foot', icon('rotate'),
         h('span', { id: 'ov-at' }, overviewStamp()),
         S.overviewError ? h('span.is-error', ' · last refresh: ' + S.overviewError) : null,
@@ -1129,6 +1306,68 @@
     return h('section.view', h('div.stack', { id: 'ov' }, overviewBody()));
   };
   LOAD.overview = function () { loadOverview(false); };
+
+  /* ---- Developer > Health: what the server itself is doing ---- */
+
+  function healthBody() {
+    var o = S.overview;
+    if (!o) return S.overviewError ? empty(S.overviewError) : loading('Reading the overview…');
+    var photos = o.photos;
+    var slowest = asList(o.slowest);
+    var slowMs = Number(o.slowMs) || 0;
+    var t = S.tools;
+    return frag(
+      S.access.developerHint ? h('p.hint.is-note', String(S.access.developerHint)) : null,
+      h('div.tiles',
+        tile('Server', h('dl.facts',
+          h('dt', 'Storage'), h('dd', String(o.storage || '—'), o.storage === 'memory'
+            ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are gone at '
+              + 'the next start' }, 'nothing is kept across a restart') : null),
+          h('dt', 'New contracts'), h('dd', RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—')),
+          h('dt', 'Kill photos'), h('dd', o.killPhotos === false ? 'Off'
+            : 'On, kept on ' + String(o.photoStorage || '—')),
+          h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'Finished'
+            : o.recovery === 'recovering' ? 'Still running' : 'FAILED'),
+          h('dt', 'Settings changed here'), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
+            'data-section': 'changed' }, (Number(o.overrides) > 0 ? num(o.overrides) + ' changed'
+              : 'None changed') + ' — open Game rules'),
+            Number(o.notApplied) > 0 ? h('span.chip.is-error', num(o.notApplied) + ' not applied') : null),
+          h('dt', 'Log rows queued'), h('dd', num(o.auditQueued)))),
+        tile('Kill photos', photos ? h('dl.facts',
+          h('dt', 'Waiting'), h('dd', num(photos.waiting && photos.waiting.count) + ' · '
+            + bytes(photos.waiting && photos.waiting.bytes)),
+          h('dt', 'Kept in the app'), h('dd', num(photos.kept && photos.kept.count) + ' · '
+            + bytes(photos.kept && photos.kept.bytes)),
+          h('dt', 'Served to Photos'), h('dd', num(photos.served && photos.served.count) + ' · '
+            + bytes(photos.served && photos.served.bytes)))
+          : h('p.note', 'The photo store did not answer.'))),
+      card('Slowest maintenance jobs', slowest.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Job'), h('th.num', 'Worst'), h('th.num', 'Average'),
+          h('th.num', 'Last'), h('th.num', 'Runs'))),
+        h('tbody', slowest.map(function (job) {
+          var slow = slowMs > 0 && Number(job.max) > slowMs;
+          return h('tr' + (slow ? '.is-warn' : ''), h('td.mono.wrap', String(job.name)),
+            h('td.num', ms(job.max)), h('td.num', ms(job.avg)), h('td.num', ms(job.last)),
+            h('td.num', num(job.runs)));
+        })))) : empty('No job has run yet.'),
+        '', slowMs > 0 ? h('span.sub', 'over ' + slowMs + ' ms is marked') : null),
+      card('What the diagnosis says', asList(o.warnings).length
+        ? h('ul.warnings', asList(o.warnings).map(function (line) { return h('li', String(line)); }))
+        : empty('Nothing that wants doing.')),
+      card('Diagnosis', frag(
+        h('p.about', 'Why the app is not showing something, the server-wide checks, the settings that need '
+          + 'attention, and what the console said. Name a player id to run the app\'s own reads as them, or run '
+          + 'it from a player\'s card in Players.'),
+        h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
+          'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
+          btn('.is-primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
+        t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
+        t.diag ? linesBox(t.diag.lines, t.diag.later) : null)),
+      h('p.foot', icon('rotate'), h('span', { id: 'ov-at' }, overviewStamp()),
+        ' ', btn('.is-small.is-ghost', 'ov-refresh', {}, 'Refresh now')));
+  }
+  SHELL.health = function () { return h('section.view', h('div.stack', { id: 'dg' }, healthBody())); };
+  LOAD.health = function () { loadOverview(false); };
 
   /* ---- contracts ---- */
 
@@ -1268,7 +1507,10 @@
     if (!id) return;
     // Nothing armed on the contract open before carries over to this one.
     disarm();
-    S.drawer = { id: String(id), data: null, answer: null, whois: null };
+    S.drawer = { id: String(id), data: null, answer: null, whois: null, tab: 'summary' };
+    // The header's chip reopens it after it is closed, over any section.
+    S.ctx.contract = String(id);
+    drawContext();
     // A reason typed for another contract is not this one's.
     S.forms['dr.reason'] = '';
     S.forms['dr.dl.min'] = '';
@@ -1301,7 +1543,7 @@
     if (drawer) { drawer.hidden = true; setHtml(drawer, frag()); }
     if (scrim) scrim.hidden = true;
     // What was settled in it shows in the list behind it.
-    if (was && S.open && S.section === 'stuck') loadStuck();
+    if (was && S.open && shows('stuck')) loadStuck();
   }
 
   function drawDrawer() {
@@ -1462,16 +1704,27 @@
     }));
   }
 
+  /* The drawer's tabs, safest first; only the one open is drawn. */
+  var DRAWER_TABS = [
+    { id: 'summary', label: 'Summary' }, { id: 'money', label: 'Money' }, { id: 'people', label: 'People' },
+    { id: 'notes', label: 'Notes & text' }, { id: 'record', label: 'Record' }
+  ];
+
   function drawerBody() {
     var d = S.drawer.data;
     var id = S.drawer.id;
+    var c0 = d && d.contract ? d.contract : null;
+    var canVoid = !!(d && d.canVoid && !(c0 && c0.neverStored));
     var head = h('header.drawer-head',
       h('div.drawer-title', h('h2', 'Contract ', h('span.mono', id)),
-        d && d.contract ? stateChip(d.contract.state) : null,
-        d && d.contract ? h('span.chip', RULE_LABEL[d.contract.rule] || String(d.contract.rule || '')) : null,
+        c0 ? stateChip(c0.state) : null,
+        c0 ? h('span.chip', RULE_LABEL[c0.rule] || String(c0.rule || '')) : null,
         d && d.frozen ? h('span.chip.is-warn.is-frozen', { title: 'On hold: frozen by staff ('
           + asList(d.frozen).join(', ') + ')' }, 'Frozen') : null),
-      btn('.is-ghost', 'drawer-close', { 'aria-label': 'Close the contract' }, 'Close', 'xmark'));
+      h('div.drawer-tools',
+        canVoid ? btn('.is-ghost.is-small', 'dr-more', { 'aria-expanded': S.drawer.more ? 'true' : 'false',
+          title: 'More: void this contract' }, S.drawer.more ? 'Less' : 'More', 'ellipsis') : null,
+        btn('.is-ghost', 'drawer-close', { 'aria-label': 'Close the contract' }, 'Close', 'xmark')));
     if (!d) {
       return frag(head, answerBox(S.drawer.answer), S.drawer.answer ? null : loading('Reading the contract…'));
     }
@@ -1487,15 +1740,7 @@
     var stub = c.neverStored === true;
     var actions = stub ? h('div.drawer-actions', h('p.note', 'Never stored: escrow under this id has no '
         + 'contract record, so nothing here names who put it up. Settle each line below; Return to sends '
-        + 'it to the citizen id of whoever did.'))
-      : h('div.drawer-actions',
-      d.canVoid
-        ? h('div.inline-form.is-wide',
-          field('dr.reason', { class: 'is-grow', placeholder: 'Reason for the void (kept in the log)',
-            maxlength: '120', disabled: !modOpen(), 'aria-label': 'Reason for the void' }),
-          modBtn('.is-danger', 'void', {}, 'Void contract', 'Click again to void', 'ban'))
-        : h('p.note', 'Closed: a closed contract is never voided.'),
-      canIdentify() ? btn('.is-ghost', 'whois', { 'data-id': id }, 'Whois', 'user-secret') : null);
+        + 'it to the citizen id of whoever did.')) : null;
 
     var stuckPart = null;
     if (stuck === null) {
@@ -1542,53 +1787,95 @@
       c.meeting ? h('dd', 'x ' + String(Number(c.meeting.x)) + ', y '
         + String(Number(c.meeting.y))) : null);
 
-    return frag(head, answerBox(S.drawer.answer), h('div.drawer-body',
-      actions,
-      whois,
-      stuckPart,
-      deadlinePart,
-      stub ? null : card('Terms', terms),
-      stub ? null : contractTools(d),
-      stub ? null : card('Payouts', slotSummary(escrow, c)),
-      card('Escrow lines', escrow.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Line'), h('th', 'Payout'), h('th', 'Holds'),
-          h('th', 'State'), h('th', 'Owed to'), h('th.num', 'Arrived'), h('th.num', 'Still owed'))),
-        h('tbody', escrow.map(function (line) {
-          return h('tr' + (line.parked ? '.is-warn' : ''),
-            h('td.mono.wrap', String(line.id)),
-            h('td', (line.slot == null ? '' : line.slot + ' · ') + String(line.portion || '—')),
-            h('td', holds(line)),
-            h('td', String(line.state || '—'), line.parked ? h('span.chip.is-warn', 'left for staff') : null,
-              Number(line.raised) > 0 ? h('span.chip', 'raised ' + num(line.raised)) : null,
-              line.settled_by_staff ? h('span.chip', 'staff: ' + line.settled_by_staff) : null),
-            h('td.name', String(line.owed_to || line.releasing_to || line.settled_to || '—')),
-            h('td.num', line.arrived == null ? '—' : num(line.arrived)),
-            h('td.num', MONEY[line.source] ? money(line.owes) : num(line.owes)));
-        })))) : empty('No escrow lines.')),
-      stub ? null : card('Operatives', hitmen.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Alias'), h('th', 'Name'), canIdentify() ? h('th', 'Citizen id') : null,
-          h('th', 'State'), h('th', 'Accepted'), h('th', 'Left'), h('th.num', 'Claims'), h('th.num', 'Stake'))),
-        h('tbody', hitmen.map(function (m) {
-          // Look up / Freeze under the name, where the name may be shown.
-          return h('tr', h('td', String(m.alias || '—')),
-            h('td.name', m.anonymous && !m.cid ? h('span.anon', icon('mask'), ' ', String(m.name || 'Anonymous'))
-              : String(m.name || '—'),
-              (m.anonymous && !canIdentify()) || m.id == null ? null
-                : h('div.party', partyButton('op', String(m.id)))),
-            canIdentify() ? h('td.mono', String(m.cid || '—')) : null,
-            h('td', String(m.state || '—')), h('td', when(m.accepted_at)), h('td', when(m.left_at)),
-            h('td.num', num(m.claims)), h('td.num', money(m.stake)));
-        })))) : empty('Nobody has taken it.')),
-      amendments.length ? card('Open proposals', h('ul.plain', amendments.map(function (a) {
-        return h('li', h('b', String(a.kind || 'proposal')), ' by ' + String(a.proposer || '—'),
-          a.expires_at ? ' · runs out ' + when(a.expires_at) : '',
-          a.payload ? h('span.detail', ' ' + detailText(a.payload)) : null);
-      }))) : null,
-      card('Timeline', timeline.length ? h('ol.timeline', timeline.map(function (row) {
-        return h('li', h('span.time', when(row.ts)), h('span.chip.kind-' + String(row.kind || 'system'), String(row.kind || '')),
-          h('b', String(row.action || '')), row.actor ? h('span.sub', ' ' + row.actor) : null,
-          h('span.detail', detailText(row.detail)));
-      })) : empty('The log keeps nothing for it.'))));
+    var escrowCard = card('Escrow lines', escrow.length ? h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', 'Line'), h('th', 'Payout'), h('th', 'Holds'),
+        h('th', 'State'), h('th', 'Owed to'), h('th.num', 'Arrived'), h('th.num', 'Still owed'))),
+      h('tbody', escrow.map(function (line) {
+        return h('tr' + (line.parked ? '.is-warn' : ''),
+          h('td.mono.wrap', String(line.id)),
+          h('td', (line.slot == null ? '' : line.slot + ' · ') + String(line.portion || '—')),
+          h('td', holds(line)),
+          h('td', String(line.state || '—'), line.parked ? h('span.chip.is-warn', 'left for staff') : null,
+            Number(line.raised) > 0 ? h('span.chip', 'raised ' + num(line.raised)) : null,
+            line.settled_by_staff ? h('span.chip', 'staff: ' + line.settled_by_staff) : null),
+          h('td.name', String(line.owed_to || line.releasing_to || line.settled_to || '—')),
+          h('td.num', line.arrived == null ? '—' : num(line.arrived)),
+          h('td.num', MONEY[line.source] ? money(line.owes) : num(line.owes)));
+      })))) : empty('No escrow lines.'));
+
+    var operatives = card('Operatives', hitmen.length ? h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', 'Alias'), h('th', 'Name'), canIdentify() ? h('th', 'Citizen id') : null,
+        h('th', 'State'), h('th', 'Accepted'), h('th', 'Left'), h('th.num', 'Claims'), h('th.num', 'Stake'))),
+      h('tbody', hitmen.map(function (m) {
+        // Look up / Freeze under the name, where the name may be shown.
+        return h('tr', h('td', String(m.alias || '—')),
+          h('td.name', m.anonymous && !m.cid ? h('span.anon', icon('mask'), ' ', String(m.name || 'Anonymous'))
+            : String(m.name || '—'),
+            (m.anonymous && !canIdentify()) || m.id == null ? null
+              : h('div.party', partyButton('op', String(m.id)))),
+          canIdentify() ? h('td.mono', String(m.cid || '—')) : null,
+          h('td', String(m.state || '—')), h('td', when(m.accepted_at)), h('td', when(m.left_at)),
+          h('td.num', num(m.claims)), h('td.num', money(m.stake)));
+      })))) : empty('Nobody has taken it.'));
+
+    var proposals = amendments.length ? card('Open proposals', h('ul.plain', amendments.map(function (a) {
+      return h('li', h('b', String(a.kind || 'proposal')), ' by ' + String(a.proposer || '—'),
+        a.expires_at ? ' · runs out ' + when(a.expires_at) : '',
+        a.payload ? h('span.detail', ' ' + detailText(a.payload)) : null);
+    }))) : null;
+
+    var staff = d.staff;
+    var tab = S.drawer.tab || 'summary';
+    if (stub && tab !== 'money' && tab !== 'record') tab = 'money';
+    var waiting = stuck ? stuck.length : 0;
+    var tabs = h('div.drawer-tabs', { role: 'tablist' }, DRAWER_TABS.filter(function (t) {
+      return !stub || t.id === 'money' || t.id === 'record';
+    }).map(function (t) {
+      var on = t.id === tab;
+      return h('button.drawer-tab' + (on ? '.is-on' : ''), { type: 'button', role: 'tab', 'data-act': 'dr-tab',
+        'data-value': t.id, 'aria-selected': on ? 'true' : 'false' }, h('span.lbl', t.label),
+        t.id === 'money' && waiting > 0 ? h('span.nav-count.is-warn', { title: num(waiting)
+          + ' line(s) waiting for staff' }, num(waiting)) : null);
+    }));
+
+    var voidForm = canVoid ? h('div.drawer-void', { id: 'dr-void' },
+      h('div.inline-form.is-wide',
+        field('dr.reason', { class: 'is-grow', placeholder: 'Reason for the void (kept in the log)',
+          maxlength: '120', disabled: !modOpen(), 'aria-label': 'Reason for the void' }),
+        modBtn('.is-danger', 'void', {}, 'Void contract', 'Click again to void', 'ban')),
+      h('p.note', 'Voiding closes it and refunds what it holds, by the rules every ending follows.')) : null;
+
+    var body;
+    if (tab === 'money') {
+      body = frag(actions, stuckPart, stub ? null : card('Payouts', slotSummary(escrow, c)), escrowCard);
+    } else if (tab === 'people') {
+      body = frag(
+        canIdentify() ? h('div.drawer-actions', btn('.is-ghost', 'whois', { 'data-id': id }, 'Whois', 'user-secret'))
+          : null,
+        whois, operatives,
+        staff ? card('Remove an operative', removeBody(d, staff), '.ct-remove') : null,
+        staff ? card('As a player sees it', playerViewBody(d), '.ct-view') : null);
+    } else if (tab === 'notes') {
+      body = staff ? frag(card('Staff notes', notesBody(staff), '.ct-notes'),
+        card('Edit text', textBody(d, staff), '.ct-text')) : empty('Staff notes and text edits are not available here.');
+    } else if (tab === 'record') {
+      body = frag(
+        staff && !stub ? card('Export the record', exportBody(), '.ct-export') : null,
+        card('Timeline', timeline.length ? h('ol.timeline', timeline.map(function (row) {
+          return h('li', h('span.time', when(row.ts)), h('span.chip.kind-' + String(row.kind || 'system'), String(row.kind || '')),
+            h('b', String(row.action || '')), row.actor ? h('span.sub', ' ' + row.actor) : null,
+            h('span.detail', detailText(row.detail)));
+        })) : empty('The log keeps nothing for it.')));
+    } else {
+      body = frag(
+        d.canVoid ? null : h('p.note', 'Closed: a closed contract is never voided.'),
+        card('Terms', terms), deadlinePart, proposals,
+        canVoid && !S.drawer.more ? h('div.btn-row', btn('.is-small.is-ghost', 'dr-more', {}, 'Void this contract…',
+          'ban')) : null);
+    }
+
+    return frag(head, S.drawer.more ? voidForm : null, answerBox(S.drawer.answer), tabs,
+      h('div.drawer-body', body));
   }
 
   /* ---- a contract's deadline, moved by staff ----
@@ -1699,43 +1986,78 @@
   }
 
   function drawStuck() {
-    if (S.section === 'stuck') setHtml(byId('sk-list'), stuckBody());
+    if (shows('stuck')) setHtml(byId('sk-list'), stuckBody());
   }
 
   function stuckBody() {
     var d = S.stuck.data;
     if (!d) return S.stuck.error ? empty(S.stuck.error) : loading('Reading what waits for staff…');
-    var reviewsOpen = Number(d.reviews) || 0;
-    var reviews = reviewsOpen > 0
-      ? card('Needs review', frag(
-          h('p.about', num(reviewsOpen) + ' money event' + (reviewsOpen === 1 ? '' : 's')
-            + ' no rule could settle wait' + (reviewsOpen === 1 ? 's' : '') + ' in the review queue.'),
-          btn('.is-small', 'section', { 'data-section': 'reviews' }, 'Open the queue', 'arrow-right')), '.is-warn')
-      : null;
-    if (d.lines === undefined || d.lines === null) {
-      return frag(h('p.note', notListed(d.recovery)), reviews);
-    }
+    if (d.lines === undefined || d.lines === null) return h('p.note', notListed(d.recovery));
     var lines = asList(d.lines);
-    if (!lines.length) return frag(empty('No escrow line is waiting for staff.'), reviews);
+    if (!lines.length) return empty('No escrow line is waiting for staff.');
     var forYou = lines.filter(function (entry) { return asList(entry.actions).length > 0; }).length;
     return frag(
       h('p.hint', num(forYou) + ' left for you to settle, of ' + num(lines.length) + ' listed. One queued '
-        + 'since for whom it is owed, or an ending settling itself within a minute, needs nothing from you.'),
+        + 'since for whom it is owed, or an ending settling itself within a minute, needs nothing from you. '
+        + 'Check what the player has before you settle one: Delivered if it is there, Pay if it is not.'),
       card('Waiting for staff', h('ul.stuck', lines.map(function (entry) {
         return stuckItem(entry, 'stuck');
-      })), forYou > 0 ? '.is-warn' : ''),
-      reviews);
+      })), forYou > 0 ? '.is-warn' : ''));
   }
 
-  SHELL.stuck = function () {
+  /* ---- Home > Inbox: reviews, money waiting and open alerts, one list ----
+
+     What used to be three sub-tabs (Needs review, Stuck escrow and the open
+     alerts), with filter chips and a count each. Each part is drawn into
+     its own box, and read again only while it shows. */
+
+  /** Whether one of the inbox's parts (or the Alerts view) is on screen. */
+  function shows(part) {
+    var all = S.section === 'inbox' && S.inbox === 'all';
+    if (part === 'reviews') return all || (S.section === 'inbox' && S.inbox === 'reviews');
+    if (part === 'stuck') return all || (S.section === 'inbox' && S.inbox === 'stuck');
+    if (part === 'alerts') return S.section === 'alerts' || all || (S.section === 'inbox' && S.inbox === 'alerts');
+    return false;
+  }
+
+  var INBOX_FILTERS = [
+    { value: 'all', label: 'Everything', count: 'count-inbox-all' },
+    { value: 'reviews', label: 'Needs review', count: 'count-reviews' },
+    { value: 'stuck', label: 'Money waiting', count: 'count-stuck' },
+    { value: 'alerts', label: 'Alerts', count: 'count-ialerts' }
+  ];
+
+  SHELL.inbox = function () {
+    var f = S.inbox;
     return h('section.view',
-      h('div.toolbar', btn('.is-ghost', 'sk-refresh', {}, 'Refresh', 'rotate')),
-      h('p.hint', 'Every escrow line left for staff: a payout whose give raised or stopped part-way, one '
-        + 'the server stopped in the middle of, and escrow of a contract never stored. Check what the '
-        + 'player has before you settle one: Delivered if it is there, Pay if it is not.'),
-      h('div.stack', { id: 'sk-list' }, stuckBody()));
+      h('div.toolbar',
+        h('div.seg.ib-filters', { role: 'group' }, INBOX_FILTERS.map(function (o) {
+          var on = o.value === f;
+          return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'ib-filter',
+            'data-value': o.value, 'aria-pressed': on ? 'true' : 'false' }, o.label,
+            o.value === 'all' ? null : h('span.nav-count.is-warn', { id: o.count, hidden: true }));
+        })),
+        btn('.is-ghost', 'ib-refresh', {}, 'Refresh', 'rotate')),
+      h('p.hint', 'Everything waiting for staff: review items no rule could settle, money left for you to '
+        + 'settle, and alerts not acknowledged yet. Nothing waiting? Reviews, stuck money and alerts land here.'),
+      shows('reviews') ? h('section.ib-part', h('h3.st-group-title', 'Needs review'),
+        h('div.toolbar', segmented('rv-all', [{ value: 'open', label: 'Open' }, { value: 'all', label: 'All (latest 50)' }],
+          S.reviews.all ? 'all' : 'open')),
+        h('p.hint', 'Money no rule on the server could settle by itself. Resolving an item gives it once, however '
+          + 'often it is asked; a role (payer, creator, ...) names a party without unmasking them.'),
+        h('div.stack', { id: 'rv-list' }, reviewList())) : null,
+      shows('stuck') ? h('section.ib-part', h('h3.st-group-title', 'Money waiting for staff (stuck escrow)'),
+        h('div.stack', { id: 'sk-list' }, stuckBody())) : null,
+      shows('alerts') ? h('section.ib-part', h('h3.st-group-title', 'Open alerts'),
+        h('div.stack', { id: 'al-list' }, alertsBody())) : null);
   };
-  LOAD.stuck = function () { loadStuck(); };
+  LOAD.inbox = function () {
+    loadOverview(false);
+    if (shows('reviews')) loadReviews();
+    if (shows('stuck')) loadStuck();
+    if (shows('alerts')) { S.alerts.state = 'open'; loadAlerts(); }
+    drawCounts();
+  };
 
   /* ---- needs review ---- */
 
@@ -1809,7 +2131,7 @@
       if (!reply.ok) { toast(words(reply), 'error'); return; }
       var fresh = asList((reply.data || {}).items);
       S.reviews.items = keep ? keptResolved(asList(S.reviews.items), fresh) : fresh;
-      if (S.section === 'reviews') setHtml(byId('rv-list'), reviewList());
+      if (shows('reviews')) setHtml(byId('rv-list'), reviewList());
     });
   }
 
@@ -1925,18 +2247,6 @@
     }));
   }
 
-  SHELL.reviews = function () {
-    return h('section.view',
-      h('div.toolbar',
-        segmented('rv-all', [{ value: 'open', label: 'Open' }, { value: 'all', label: 'All (latest 50)' }],
-          S.reviews.all ? 'all' : 'open'),
-        btn('.is-ghost', 'rv-refresh', {}, 'Refresh', 'rotate')),
-      h('p.hint', 'Money no rule on the server could settle by itself. Resolving an item gives it once, however '
-        + 'often it is asked; a role (payer, creator, ...) names a party without unmasking them.'),
-      h('div.stack', { id: 'rv-list' }, reviewList()));
-  };
-  LOAD.reviews = function () { loadReviews(); };
-
   /* ---- alerts ---- */
 
   var LEVEL_LABEL = { always: 'Needs staff', problem: 'Setting' };
@@ -1955,7 +2265,7 @@
     });
   }
 
-  function drawAlerts() { if (S.section === 'alerts') setHtml(byId('al-list'), alertsBody()); }
+  function drawAlerts() { if (shows('alerts')) setHtml(byId('al-list'), alertsBody()); }
 
   /** Where posting to Discord stands: whether a webhook is set (never what
       it is), the last post, and the last one given up. */
@@ -2029,8 +2339,9 @@
     var rows = asList(d.rows);
     var open = S.alerts.state === 'open';
     var total = open ? Number(d.open) || 0 : Number(d.acknowledged) || 0;
+    var inInbox = S.section === 'inbox';
     return frag(
-      card('Discord', discordBody(d.discord)),
+      inInbox ? null : card('Discord', discordBody(d.discord)),
       h('div.toolbar',
         h('span.sub', num(d.open) + ' open · ' + num(d.acknowledged) + ' acknowledged'
           + (rows.length < total ? ' · the newest ' + num(rows.length) + ' shown' : '')),
@@ -2040,7 +2351,8 @@
           : null),
       answerBox(S.alerts.all),
       rows.length ? rows.map(alertCard)
-        : empty(open ? 'No open alerts.' : 'Nothing has been acknowledged yet.'));
+        : empty(open ? 'No open alerts.' : 'Nothing has been acknowledged yet.'),
+      inInbox ? h('p.note', 'Acknowledged ones, Discord and the test alert are in Logs, Alerts.') : null);
   }
 
   SHELL.alerts = function () {
@@ -2363,7 +2675,8 @@
           'aria-label': 'Citizen id' }),
         dropdown('lg-range'),
         rangeInputs('lg', S.logs.range, 'lg-search'),
-        btn('.is-ghost', 'lg-clear', {}, 'Clear', 'eraser')),
+        btn('.is-ghost', 'lg-clear', {}, 'Clear', 'eraser'),
+        h('span.lg-tools', { id: 'lg-tools' }, logToolsBody())),
       h('p.hint', canIdentify()
         ? 'Every row as it was written. Reading the log as you can see it is on the record.'
         : 'Citizen ids show as the party\'s place on the contract (the placer, the target, an operative) and '
@@ -2401,8 +2714,16 @@
       var found = reply.ok && reply.data && reply.data.player;
       S.players.ref = found && typeof found.ref === 'string' ? found.ref : null;
       S.players.subject = reply.ok ? (byRef ? S.players.subject : subject.slice(0, 64)) : null;
-      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
-      if (reply.ok) loadPlayerHistory();
+      // The handle runs out ten minutes after this lookup; the header's chip
+      // counts it down. A lookup again by the handle is a new ten minutes.
+      S.players.at = reply.ok ? Date.now() : 0;
+      if (found && !byRef) rememberLookup(subject.slice(0, 64), found);
+      // A selected player's tab with nobody selected any more: Find.
+      if (PERSON_VIEWS[S.section] && !hasPlayer()) { show('players'); return; }
+      drawChrome();
+      if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
+      // Their history only on its own tab, as it opens.
+      if (reply.ok && S.section === 'phistory') loadPlayerHistory();
     });
   }
 
@@ -2487,25 +2808,38 @@
       })))) : empty('Nobody is frozen.'), '', h('span.sub', num(rows.length)));
   }
 
-  function playerBody() {
-    var d = S.players.data;
-    if (!d) return empty('Look somebody up by their player id (in the city), their citizen id (anybody) '
-      + 'or their name, as Contracts searches.');
-    if (d.error) return empty(d.error);
+  /** The last few lookups, to go back to one with a click. */
+  var RECENT_MAX = 6;
+  function rememberLookup(subject, found) {
+    var list = S.players.recent.filter(function (r) { return r.subject !== subject; });
+    list.unshift({ subject: subject, name: String(found.name || subject) });
+    S.players.recent = list.slice(0, RECENT_MAX);
+  }
+
+  /** Who is selected, above every one of their tabs. */
+  function personHead(d) {
     var p = d.player || {};
+    return h('div.person',
+      h('h2', String(p.name || 'No name on record')),
+      p.cid ? h('span.cid', String(p.cid)) : h('span.chip', 'citizen id hidden'),
+      p.online ? h('span.chip.is-live', 'in the city · player ' + String(p.server)) : h('span.chip', 'offline'),
+      d.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null,
+      d.suspended ? h('span.chip.is-warn.is-suspended', 'Suspended') : null,
+      d.protected ? h('span.chip.is-protected', 'Protected') : null);
+  }
+
+  /** The person tabs, as buttons under their summary. */
+  function personLinks() {
+    return h('div.btn-row.person-links', Object.keys(PERSON_VIEWS).map(function (view) {
+      return btn('.is-small.is-ghost', 'section', { 'data-section': view }, VIEW_LABEL[view][0], VIEW_LABEL[view][1]);
+    }));
+  }
+
+  function summaryBody(d) {
     var stats = d.stats;
-    var owed = asList(d.owed);
-    var contracts = asList(d.contracts);
-    var notices = d.notices || {};
     return frag(
-      h('div.person',
-        h('h2', String(p.name || 'No name on record')),
-        p.cid ? h('span.cid', String(p.cid)) : h('span.chip', 'citizen id hidden'),
-        p.online ? h('span.chip.is-live', 'in the city · player ' + String(p.server)) : h('span.chip', 'offline'),
-        d.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
-      freezeCard(d.frozen),
-      // Suspend, Protect, Pay and the history card (the block near the end).
-      playerStaffCards(d),
+      personHead(d),
+      personLinks(),
       // Sent only to staff with the identity ACE: the counters hold what was
       // placed and taken anonymously too, and nothing says which.
       stats ? h('div.tiles.is-compact',
@@ -2517,7 +2851,17 @@
         tile('Standing', h('p.big.is-word', String(stats.standing || '—'))))
         : h('p.note', 'Their record is not shown: it counts contracts placed and taken anonymously too, '
           + 'which only the identity ACE may see.'),
-      playtimeCard(d.playtime),
+      h('div.tiles.is-compact',
+        tile('Contracts', h('p.big', num(asList(d.contracts).length))),
+        tile('Owed to them', h('p.big', num(asList(d.owed).length))),
+        tile('Playtime', h('p.big', d.playtime && !d.playtime.unread ? num(d.playtime.hours) + ' h' : '—'))));
+  }
+
+  function moneyBody(d) {
+    var owed = asList(d.owed);
+    var notices = d.notices || {};
+    return frag(
+      payCard(d),
       h('div.cols',
         card('Owed to them', owed.length ? h('div.table-wrap', h('table.grid',
           h('thead', h('tr', h('th', 'Line'), h('th', 'Contract'), h('th', 'Holds'), h('th', 'State'),
@@ -2534,48 +2878,105 @@
           '', h('span.sub', num(d.pending) + (Number(d.pending) === 1 ? ' delivery' : ' deliveries') + ' pending')),
         card('Notices for their next login', Number(notices.count) > 0
           ? h('ul.plain', asList(notices.titles).map(function (t) { return h('li', String(t)); }))
-          : empty('None waiting.'), '', h('span.sub', num(notices.count)))),
-      card('Contracts', contracts.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), h('th', 'Role'), h('th', 'Target'),
-          h('th', 'Placed'), h('th', 'Ended'), canIdentify() ? h('th', '') : null)),
-        h('tbody', contracts.map(function (row) {
-          var id = String(row.id);
-          var who = S.players.whois[id];
-          return frag(h('tr',
-            h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': id }, id)),
-            h('td', stateChip(row.state), row.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
-            h('td', String(row.role || '—'), row.anonymous ? h('span.chip.is-anon', 'anonymous') : null),
-            h('td.name', String(row.target || '—')), h('td', when(row.created_at)),
-            h('td', String(row.resolution || '—')),
-            canIdentify() ? h('td', btn('.is-small.is-ghost', 'whois', { 'data-id': id, 'data-where': 'player' },
-              'Whois', 'user-secret')) : null),
-            who ? h('tr.more', h('td', { colspan: canIdentify() ? '7' : '6' }, whoisBody(who))) : null);
-        })))) : empty(canIdentify() ? 'No contracts on record.' : 'No contracts you may see.'),
-        '', h('span.sub', 'newest first')));
+          : empty('None waiting.'), '', h('span.sub', num(notices.count)))));
   }
 
-  SHELL.players = function () {
-    return h('section.view',
+  function playerContractsBody(d) {
+    var contracts = asList(d.contracts);
+    return card('Contracts', contracts.length ? h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), h('th', 'Role'), h('th', 'Target'),
+        h('th', 'Placed'), h('th', 'Ended'), canIdentify() ? h('th', '') : null)),
+      h('tbody', contracts.map(function (row) {
+        var id = String(row.id);
+        var who = S.players.whois[id];
+        return frag(h('tr',
+          h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': id }, id)),
+          h('td', stateChip(row.state), row.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
+          h('td', String(row.role || '—'), row.anonymous ? h('span.chip.is-anon', 'anonymous') : null),
+          h('td.name', String(row.target || '—')), h('td', when(row.created_at)),
+          h('td', String(row.resolution || '—')),
+          canIdentify() ? h('td', btn('.is-small.is-ghost', 'whois', { 'data-id': id, 'data-where': 'player' },
+            'Whois', 'user-secret')) : null),
+          who ? h('tr.more', h('td', { colspan: canIdentify() ? '7' : '6' }, whoisBody(who))) : null);
+      })))) : empty(canIdentify() ? 'No contracts on record.' : 'No contracts you may see.'),
+      '', h('span.sub', 'newest first'));
+  }
+
+  function measuresBody(d) {
+    return frag(
+      freezeCard(d.frozen),
+      h('div.cols', suspendCard(d), protectCard(d)),
+      card('Target limits', frag(
+        h('p.about', 'How often a contract may be placed on them: their cooldown, their counts, their own limits '
+          + 'or an exemption, exactly, with Reset, Extend and Exempt.'),
+        h('div.btn-row', btn('.is-small', 'pl-tl', {}, 'Open them in Target limits', 'user-clock')))));
+  }
+
+  /** Why can't they see...: the diagnosis, run as the player selected. */
+  function playerDiagBody(d) {
+    var t = S.tools;
+    var online = d.player && d.player.online;
+    return card('Why can’t they see…', frag(
+      h('p.about', 'Runs the app\'s own reads as them: why a contract, the board or a feature is not showing, '
+        + 'with the server-wide checks. They have to be in the city.'),
+      h('div.btn-row', btn('.is-primary', 'pl-diag', { disabled: !online || null,
+        title: online ? null : 'They are not in the city now' }, 'Run the diagnosis as them', 'stethoscope')),
+      t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
+      t.diag ? linesBox(t.diag.lines, t.diag.later) : null));
+  }
+
+  function findBody() {
+    var recent = S.players.recent;
+    return frag(
       h('div.toolbar',
         h('label.search', icon('magnifying-glass'),
           field('pl.q', { id: 'pl-q', placeholder: 'Player id, citizen id or name', 'data-enter': 'pl-lookup',
             'aria-label': 'Player id, citizen id or name' })),
         btn('.is-primary', 'pl-lookup', {}, 'Look up', 'arrow-right')),
+      recent.length ? h('div.chips.recent', h('span.sub', 'Recent:'), recent.map(function (r) {
+        return h('button.chip.is-link', { type: 'button', 'data-act': 'pl-recent', 'data-value': r.subject },
+          r.name);
+      })) : null,
       h('p.hint', canIdentify()
         ? 'You see every contract they were party to, anonymous ones included. Each lookup is on the record.'
         : 'Contracts they placed or took anonymously are left out, with what they are owed, the deliveries '
-          + 'and the notices on them, and so is their record, which counts them.'),
-      h('div.stack', { id: 'pl-result' }, playerBody()),
-      h('div.stack', { id: 'pl-frozen' }, frozenListCard()));
+          + 'and the notices on them, and so is their record, which counts them.'));
+  }
+
+  function playerBody() {
+    var d = S.players.data;
+    if (!d) return empty('Look someone up by player id, citizen id or name.');
+    if (d.error) return empty(d.error);
+    switch (S.section) {
+      case 'pcontracts': return frag(personHead(d), playerContractsBody(d));
+      case 'pmeasures': return frag(personHead(d), measuresBody(d));
+      case 'pmoney': return frag(personHead(d), moneyBody(d));
+      case 'pplaytime': return frag(personHead(d), playtimeCard(d.playtime));
+      case 'phistory': return frag(personHead(d), historyCard());
+      case 'pdiag': return frag(personHead(d), playerDiagBody(d));
+      default: return summaryBody(d);
+    }
+  }
+
+  SHELL.players = function () {
+    return h('section.view', findBody(), h('div.stack', { id: 'pl-result' }, playerBody()));
   };
+  LOAD.players = function () {};
+  Object.keys(PERSON_VIEWS).forEach(function (view) {
+    SHELL[view] = function () { return h('section.view', h('div.stack', { id: 'pl-result' }, playerBody())); };
+    LOAD[view] = function () {
+      if (view === 'phistory') loadPlayerHistory();
+      if (view === 'pdiag') S.tools.diag = null;
+    };
+  });
+
   function loadFrozen() {
     return ask('frozen', {}, 'frozen').then(function (reply) {
       if (!reply || !reply.ok) return;
       S.players.frozen = reply.data || {};
-      if (S.section === 'players' || S.section === 'frozen') setHtml(byId('pl-frozen'), frozenListCard());
+      if (S.section === 'frozen') setHtml(byId('pl-frozen'), frozenListCard());
     });
   }
-  LOAD.players = function () { loadFrozen(); };
 
   /* ---- settings: Rules, Features and Developer ----
 
@@ -2597,7 +2998,7 @@
   function categoryOf(entry, list) {
     if (entry.category) return String(entry.category);
     if (list === 'readonly' || entry.readonly) return 'developer';
-    if (list === 'features' && entry.kind === 'switch') return 'features';
+    if ((list === 'features' || list === undefined) && entry.kind === 'switch') return 'features';
     return 'rules-limits';
   }
 
@@ -2694,10 +3095,15 @@
      them by: sent once, and after that only each row's key and what
      changes, which are put back together here. The reply was 172 KB at
      every open of the section and after every change. */
-  var SCHEMA_FIELDS = ['group', 'label', 'about', 'category', 'money', 'shipped', 'hasShipped',
+  var SCHEMA_FIELDS = ['group', 'label', 'about', 'category', 'money', 'area', 'shipped', 'hasShipped',
     'kind', 'choices', 'min', 'integer', 'live', 'inflight', 'readonly', 'destroys', 'stricter',
     'strict', 'whole', 'default'];
   var settingsSchema = null; // { hash, rows: { [key]: fixed parts } }
+  /** What else redraws when the settings arrive (Organisation, Locations,
+      Boss permissions' limits, the header search). */
+  var AFTER_SETTINGS = [];
+  /** The header search's index of the settings, built once per reply. */
+  var settingsIndex = null;
 
   function keepSchema(data) {
     if (!data || typeof data.schema !== 'string') { settingsSchema = null; return; }
@@ -2746,14 +3152,27 @@
         keepSchema(data);
       }
       S.settings.data = data;
+      settingsIndex = null;
       if (SETTING_VIEWS[S.section]) drawSettings();
+      // The other views that show settings rows, and the header search.
+      AFTER_SETTINGS.forEach(function (fn) { fn(); });
     });
   }
 
   function drawSettings() {
+    // A row asked for (a help link, the header search): its area, its
+    // details open.
+    var want = S.settings.focus && settingEntry(S.settings.focus);
+    if (want && S.section === 'rules') {
+      S.rules.area = areaOf(want);
+      S.rules.type = '';
+      S.rules.cat = '';
+      S.forms['st.q'] = '';
+      S.settings.open[want.key] = true;
+    }
     setHtml(byId('st-head'), settingsHead());
     setHtml(byId('st-list'), settingsList());
-    filterSettings();
+    drawCrumbs();
     // Where a help link pointed: that row, marked and brought into view.
     var focus = S.settings.focus && byId('st-row-' + S.settings.focus);
     if (focus) {
@@ -2833,6 +3252,7 @@
       field(bind, { value: shownValue, class: entry.kind === 'text' ? 'is-grow' : 'is-short',
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
         disabled: !open, 'aria-label': entry.label }),
+      entry.kind === 'number' && trim(unitOf(entry)) ? h('span.st-unit', trim(unitOf(entry))) : null,
       writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
         'Click again to save', 'check', false, open),
       h('span.st-range', range));
@@ -2860,22 +3280,41 @@
     return null;
   }
 
+  /** A row's type, for its chip and Game rules' filter: Switch, Timer,
+      Money, Limit or List. */
+  function typeOf(entry) {
+    if (entry.kind === 'switch') return 'switch';
+    if (entry.kind === 'list') return 'list';
+    if (entry.money || entry.category === 'rules-rewards' || unitOf(entry) === '$') return 'money';
+    if (entry.category === 'rules-timers' || /(Seconds|Minutes|Hours|Days|Ms)$/.test(String(entry.key))) return 'timer';
+    return 'limit';
+  }
+  var TYPE_LABEL = { switch: 'Switch', timer: 'Timer', money: 'Money', limit: 'Limit', list: 'List' };
+
+  /* A setting's row, compact: its label (with its unit), its control and
+     Save or Reset, and the chips that matter. Details shows the key, what
+     it does, what happens to things under way, and where its value comes
+     from; anything that warns (it deletes, it is stricter, it is not
+     applied) stays outside Details. */
   function settingInner(entry) {
     var key = entry.key;
     var answer = S.settings.answers[key];
     var overridden = entry.source === 'panel';
     var hasShipped = entry.hasShipped === true || (entry.hasShipped === undefined && entry.shipped !== undefined);
     var offDefault = !entry.readonly && hasShipped && !sameValue(entry.value, entry.shipped);
+    var open = !!S.settings.open[key];
+    var unit = trim(unitOf(entry));
     return frag(
       h('div.st-main',
         h('p.st-title', h('b', String(entry.label || key)),
+          unit && entry.kind === 'number' && String(entry.label || '').indexOf('(') === -1
+            ? h('span.st-unit-label', ' (' + unit + ')') : null,
+          h('span.chip.st-type.is-' + typeOf(entry), TYPE_LABEL[typeOf(entry)]),
           overridden ? h('span.chip.is-panel', 'changed from the panel') : null,
           entry.live === false ? h('span.chip.is-warn.is-restart', 'applies after restart') : null,
           entry.ignored ? h('span.chip.is-error', 'not applied') : null,
           entry.inactive ? h('span.chip.is-warn', 'does not apply now') : null,
           entry.denied ? h('span.chip', 'edit in config.lua') : null),
-        h('code.st-key', entry.secret ? 'server.cfg' : 'Config.' + key),
-        entry.about ? h('p.st-about', String(entry.about)) : null,
         // A key whose switch is off (the catalogue's `needs`): said beside
         // it, so a staff member is not left changing something that does
         // nothing.
@@ -2885,17 +3324,22 @@
           ? h('p.st-about.is-warn', 'Lowering it deletes for good, so saving a lower value takes two clicks.') : null,
         entry.stricter && !entry.readonly
           ? h('p.st-about.is-warn', 'Making it stricter refuses players at once, so it takes two clicks.') : null,
-        entry.inflight ? h('p.st-inflight', h('b', 'Under way: '), String(entry.inflight)) : null,
-        entry.readonly ? null : h('p.st-source', 'Now: ' + describe(entry, entry.value)
-          + ' · config.lua: ' + describe(entry, entry.default)
-          + (hasShipped ? ' · default: ' + describe(entry, entry.shipped) : '')
-          + (overridden ? ' · in force from the panel' + (entry.by ? ', set by ' + entry.by : '')
-            + (entry.at ? ' ' + ago(entry.at) : '') : ' · in force from config.lua')),
         entry.ignored ? h('p.st-about.is-error', 'The store holds a value that was not applied at start: '
           + String(entry.ignored) + '. config.lua\'s is in force; reset it to clear this.') : null,
         entry.unknown ? h('p.st-about.is-error', 'A change to it raised in the store, and so did reading it '
           + 'back (' + String(entry.unknown) + '): the store may or may not hold it. What is shown is in '
           + 'force; set or reset it again to settle it.') : null,
+        h('button.link.st-more', { type: 'button', 'data-act': 'st-details', 'data-key': key,
+          'aria-expanded': open ? 'true' : 'false' }, open ? 'Details ▾' : 'Details ▸'),
+        h('div.st-details', { hidden: !open },
+          h('code.st-key', entry.secret ? 'server.cfg' : 'Config.' + key),
+          entry.about ? h('p.st-about', String(entry.about)) : null,
+          entry.inflight ? h('p.st-inflight', h('b', 'Under way: '), String(entry.inflight)) : null,
+          entry.readonly ? null : h('p.st-source', 'Now: ' + describe(entry, entry.value)
+            + ' · config.lua: ' + describe(entry, entry.default)
+            + (hasShipped ? ' · default: ' + describe(entry, entry.shipped) : '')
+            + (overridden ? ' · in force from the panel' + (entry.by ? ', set by ' + entry.by : '')
+              + (entry.at ? ' ' + ago(entry.at) : '') : ' · in force from config.lua'))),
         answerBox(answer),
         key === 'Completion.KillPhotos' ? keptPhotosPart(entry) : null),
       // A read-only key too, when the store holds a value for it that was
@@ -2943,10 +3387,7 @@
 
   function settingRow(entry) {
     return h('div.st-row' + (entry.source === 'panel' ? '.is-panel' : '') + (entry.ignored ? '.is-ignored' : ''),
-      { id: 'st-row-' + entry.key, 'data-key': entry.key,
-        'data-find': [entry.key, entry.label, entry.about, entry.group, entry.money].map(function (v) {
-          return v == null ? '' : String(v);
-        }).join(' ').toLowerCase() },
+      { id: 'st-row-' + entry.key, 'data-key': entry.key, 'data-area': areaOf(entry) },
       settingInner(entry));
   }
 
@@ -3055,19 +3496,107 @@
     'Other': 'Settings not in any group above.'
   };
 
+  /* ---- Game rules: by feature area, not by type ----
+
+     Every rules and features setting under the area of the game it is
+     about (the catalogue's `area`), the area's switches first, then its
+     numbers, lists and choices in their groups, each row with its type.
+     Filter chips narrow it to Switches, Timers, Money, Limits, Lists or
+     what was changed from the panel; across every area when none is
+     picked. Target limits, the organisation's and the Developer section's
+     own settings are in their sections, and the lists of places in
+     Locations. */
+
+  var AREAS = [
+    { id: 'access', label: 'Who can use the app', icon: 'door-open' },
+    { id: 'placing', label: 'Placing contracts', icon: 'file-signature' },
+    { id: 'anonymity', label: 'Anonymity', icon: 'mask' },
+    { id: 'rewards', label: 'Rewards & payouts', icon: 'sack-dollar' },
+    { id: 'completing', label: 'Completing a contract', icon: 'flag-checkered' },
+    { id: 'buyouts', label: 'Buyouts', icon: 'hand-holding-dollar' },
+    { id: 'informants', label: 'Informants & tips', icon: 'user-secret' },
+    { id: 'police', label: 'Police & city news', icon: 'shield-halved' },
+    { id: 'messages', label: 'Phone messages & notifications', icon: 'comment' },
+    { id: 'extras', label: 'Roleplay extras', icon: 'masks-theater' },
+    { id: 'staff', label: 'Staff tools & alerts', icon: 'user-shield' },
+    { id: 'other', label: 'Other', icon: 'ellipsis' }
+  ];
+  var AREA_ELSEWHERE = { targets: 'Target limits', organisation: 'Hitman organisation', engine: 'Developer' };
+  function areaLabel(id) {
+    for (var i = 0; i < AREAS.length; i++) if (AREAS[i].id === id) return AREAS[i].label;
+    return AREA_ELSEWHERE[id] || String(id || 'Other');
+  }
+  window.CH_ADMIN_AREAS = AREAS;
+  /** An entry's area: the server's, else Other. */
+  function areaOf(entry) {
+    var a = entry && entry.area ? String(entry.area) : 'other';
+    return a;
+  }
+  /** The lists of places, edited in Locations instead. */
+  var PLACE_KEYS = {
+    'Roleplay.Rumours.Locations': 'point', 'Roleplay.InformantNpc.Locations': 'point',
+    'Improvements.TipSafeZones.Zones': 'zone', 'Roleplay.Rumours.Districts': 'district',
+    'Roleplay.WitnessHeat.Areas': 'area', 'Roleplay.Rumours.Zones': 'name',
+    'Limits.JailZone.x': 'jail', 'Limits.JailZone.y': 'jail', 'Limits.JailZone.radius': 'jail'
+  };
+  /** The section a setting is edited in. */
+  function viewOfSetting(entry) {
+    if (PLACE_KEYS[entry.key]) return 'locations';
+    var cat = categoryOf(entry);
+    if (cat === 'organisation') {
+      return String(entry.group || '').indexOf('Boss limits') !== -1 ? 'bplimits' : 'orgsetup';
+    }
+    return CATEGORY_VIEW[cat] || 'rules';
+  }
+  function inRules(entry) { return viewOfSetting(entry) === 'rules'; }
+
+  /** The old settings tabs, by the category each showed. */
+  var OLD_TAB = { features: 'Switches (was Features)', 'rules-timers': 'Timers (was Rules, Timers)',
+    'rules-rewards': 'Money (was Rules, Rewards & money)', 'rules-limits': 'Limits (was Rules, Limits)',
+    'rules-targeting': 'Targeting (was Rules, Targeting)' };
+
+  var TYPE_FILTERS = [{ value: '', label: 'All' }, { value: 'switch', label: 'Switches' },
+    { value: 'timer', label: 'Timers' }, { value: 'money', label: 'Money' }, { value: 'limit', label: 'Limits' },
+    { value: 'list', label: 'Lists' }, { value: 'changed', label: 'Changed' }];
+  /** Search shows at most this many rows, rather than drawing everything. */
+  var SEARCH_ROWS = 50;
+
+  function typeHit(entry, type) {
+    if (!type) return true;
+    if (type === 'changed') return entry.source === 'panel' || !!entry.ignored || !!entry.unknown;
+    return typeOf(entry) === type;
+  }
+  function textHit(entry, q) {
+    if (!q) return true;
+    return [entry.key, entry.label, entry.about, entry.group, entry.money, areaLabel(areaOf(entry))]
+      .map(function (v) { return v == null ? '' : String(v); }).join(' ').toLowerCase().indexOf(q) !== -1;
+  }
+
   function settingsHead() {
     var d = S.settings.data;
     var overrides = d ? Number(d.overrides) || 0 : 0;
+    var view = S.section;
+    var undoAll = overrides > 0 || (d && Number(d.stored) > 0) ? writeBtn('.is-danger.is-small', 'st-reset-all', {},
+      'Undo all panel changes', 'Click again: back to config.lua', 'arrow-rotate-left') : null;
+    if (view === 'changed') {
+      return frag(h('span.sub', num(overrides) + ' changed from the panel'
+        + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + ' kept and not applied' : '')),
+        // Whenever the store holds a row, applied or not: one not applied (a
+        // key from another version among them) is cleared by it too.
+        undoAll);
+    }
     return frag(
       h('label.search', icon('magnifying-glass'),
-        field('st.q', { id: 'st-q', placeholder: 'Search by name, key, description or group', 'data-live': 'st-filter',
-          'aria-label': 'Search the settings' })),
+        field('st.q', { id: 'st-q', placeholder: view === 'rules' ? 'Filter by name, key or description'
+          : 'Search by name, key, description or group', 'data-live': 'st-filter', 'aria-label': 'Filter the settings' })),
+      view === 'rules' ? h('div.seg.gr-types', { role: 'group' }, TYPE_FILTERS.map(function (o) {
+        var on = o.value === S.rules.type;
+        return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'gr-type',
+          'data-value': o.value, 'aria-pressed': on ? 'true' : 'false' }, o.label);
+      })) : null,
       h('span.sub', num(overrides) + ' changed from the panel'
         + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + ' kept and not applied' : '')),
-      // Whenever the store holds a row, applied or not: one not applied (a
-      // key from another version among them) is cleared by it too.
-      overrides > 0 || (d && Number(d.stored) > 0) ? writeBtn('.is-danger.is-small', 'st-reset-all', {},
-        'Reset all to config.lua', 'Click again to reset all', 'arrow-rotate-left') : null);
+      view === 'rules' ? null : undoAll);
   }
 
   /** The rate limits' two rows per bucket, as one row with both. */
@@ -3111,81 +3640,160 @@
     });
   }
 
+  /** The rows of one settings view: its category's, and for Game rules
+      the area chosen (or every area, with a type filter or a search). */
+  function settingRowsFor(view) {
+    var d = S.settings.data || {};
+    var out = [];
+    ['features', 'limits', 'readonly'].forEach(function (list) {
+      asList(d[list]).forEach(function (entry) {
+        if (view === 'changed') {
+          if (typeHit(entry, 'changed')) out.push(entry);
+        } else if (view === 'rules') {
+          if (inRules(entry)) out.push(entry);
+        } else if (CATEGORY_VIEW[categoryOf(entry, list)] === view) {
+          out.push(entry);
+        }
+      });
+    });
+    return out;
+  }
+
+  /** Groups in their order, each with its rows. In Game rules, a group
+      with a switch comes first (in the README's order of features), and in
+      each group its switches lead. */
+  function grouped(list, view) {
+    var groups = [], byGroup = {};
+    list.forEach(function (entry) {
+      var g = String(entry.group || 'Other');
+      if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
+      byGroup[g].push(entry);
+    });
+    var seq = {};
+    groups.forEach(function (g, i) { seq[g] = i; });
+    if (view === 'rules') {
+      var hasSwitch = {};
+      groups.forEach(function (g) {
+        hasSwitch[g] = byGroup[g].some(function (e) { return e.kind === 'switch'; });
+        byGroup[g] = byGroup[g].map(function (e, i) { return { e: e, i: i }; }).sort(function (a, b) {
+          return ((a.e.kind === 'switch' ? 0 : 1) - (b.e.kind === 'switch' ? 0 : 1)) || (a.i - b.i);
+        }).map(function (x) { return x.e; });
+      });
+      groups.sort(function (a, b) {
+        return ((hasSwitch[a] ? 0 : 1) - (hasSwitch[b] ? 0 : 1)) || (featureRank(a) - featureRank(b)) || (seq[a] - seq[b]);
+      });
+    } else {
+      groups.sort(function (a, b) { return seq[a] - seq[b]; });
+    }
+    return { groups: groups, byGroup: byGroup };
+  }
+
+  function groupSection(g, rows) {
+    return h('section.st-group', { 'data-group': g.toLowerCase() }, h('h3.st-group-title', g),
+      GROUP_INTRO[g] ? h('p.st-group-about', GROUP_INTRO[g]) : null,
+      rows.map(settingRow));
+  }
+
+  /** Game rules' list of areas, each with how many rows it holds now. */
+  function areaNav(all) {
+    var counts = {}, changed = {};
+    all.forEach(function (e) {
+      var a = areaOf(e);
+      if (typeHit(e, S.rules.type)) counts[a] = (counts[a] || 0) + 1;
+      if (typeHit(e, 'changed')) changed[a] = (changed[a] || 0) + 1;
+    });
+    var total = 0;
+    Object.keys(counts).forEach(function (a) { total += counts[a]; });
+    return h('nav.gr-areas', { 'aria-label': 'Areas' },
+      h('button.gr-area' + (!S.rules.area ? '.is-on' : ''), { type: 'button', 'data-act': 'gr-area', 'data-value': '' },
+        icon('layer-group'), h('span.lbl', 'All areas'), h('span.gr-n', num(total))),
+      AREAS.filter(function (a) { return counts[a.id] || (!S.rules.type && a.id !== 'other'); }).map(function (a) {
+        return h('button.gr-area' + (S.rules.area === a.id ? '.is-on' : ''), { type: 'button', 'data-act': 'gr-area',
+          'data-value': a.id }, icon(a.icon), h('span.lbl', a.label), h('span.gr-n', num(counts[a.id] || 0)),
+          changed[a.id] ? h('span.chip.is-panel', num(changed[a.id]) + ' changed') : null);
+      }));
+  }
+
+  function rulesList() {
+    var all = settingRowsFor('rules');
+    var q = trim(S.forms['st.q']).toLowerCase();
+    var type = S.rules.type;
+    var area = S.rules.area;
+    var cat = S.rules.cat;
+    var rows = all.filter(function (e) {
+      return (cat ? categoryOf(e) === cat : (!area || areaOf(e) === area) && typeHit(e, type)) && textHit(e, q);
+    });
+    var body;
+    if (!area && !type && !q && !cat) {
+      // Every area at once would be hundreds of rows: pick one.
+      body = h('div.cards-grid.gr-pick', AREAS.filter(function (a) {
+        return all.some(function (e) { return areaOf(e) === a.id; });
+      }).map(function (a) {
+        var mine = all.filter(function (e) { return areaOf(e) === a.id; });
+        var switches = mine.filter(function (e) { return e.kind === 'switch'; }).length;
+        return h('button.card.gr-card', { type: 'button', 'data-act': 'gr-area', 'data-value': a.id },
+          h('span.gr-card-title', icon(a.icon), ' ', a.label),
+          h('span.sub', num(mine.length) + ' settings · ' + num(switches) + ' switch' + (switches === 1 ? '' : 'es')));
+      }));
+    } else if (!rows.length) {
+      body = empty(q ? 'No setting matches; clear the filter.' : 'Nothing here with this filter.');
+    } else {
+      var shown = rows.slice(0, q ? SEARCH_ROWS : rows.length);
+      var gr = grouped(shown, 'rules');
+      body = frag(
+        rows.length > shown.length ? h('p.note', 'The first ' + num(shown.length) + ' of ' + num(rows.length)
+          + ' matches; type more to narrow it.') : null,
+        gr.groups.map(function (g) { return groupSection(g, gr.byGroup[g]); }));
+    }
+    var memory = S.overview && S.overview.storage === 'memory';
+    return h('div.gr',
+      areaNav(all),
+      h('div.gr-rows',
+        cat ? h('p.note.gr-old', 'Showing what the old ' + (OLD_TAB[cat] || cat) + ' tab held. Pick an area or a '
+          + 'type to see the rest.') : null,
+        h('p.hint', 'Every setting under the area of the game it is about, its switches first. Every change takes '
+          + 'effect at once and ' + (memory ? 'lasts until the resource stops: this server runs in memory mode, which '
+          + 'keeps nothing across a restart' : 'is kept across restarts') + '; what is already under way finishes '
+          + 'under the rules it started with.'),
+        body));
+  }
+
   function settingsList() {
     var d = S.settings.data;
     if (!d) return loading('Reading the settings…');
     var view = S.section;
-    var list = settingList(view);
+    if (view === 'rules') return rulesList();
+    var q = trim(S.forms['st.q']).toLowerCase();
+    var list = settingRowsFor(view).filter(function (e) { return view === 'changed' || textHit(e, q); });
+    if (view === 'changed') {
+      if (!list.length) return empty('Nothing is changed from the panel: every setting is what config.lua says.');
+      var gc = grouped(list, 'changed');
+      return frag(h('p.hint', 'Every setting changed from this panel, wherever it lives. Undo all panel changes '
+        + 'puts every one back to config.lua; each row\'s Reset puts back one.'),
+        gc.groups.map(function (g) { return groupSection(g, gc.byGroup[g]); }));
+    }
     var buckets = view === 'devsettings' ? mapBuckets(list) : [];
     var inMap = {};
     buckets.forEach(function (b) { inMap['Cooldowns.' + b + '.per'] = inMap['Cooldowns.' + b + '.burst'] = true; });
-    var groups = [], byGroup = {};
-    list.forEach(function (entry) {
-      if (inMap[entry.key]) return;
-      var g = String((view === 'money' && entry.money) || entry.group || 'Other');
-      if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
-      byGroup[g].push(entry);
-    });
-    // Stable: groups of the same rank keep the catalogue's order.
-    var seq = {};
-    groups.forEach(function (g, i) { seq[g] = i; });
-    groups.sort(function (a, b) {
-      if (view === 'features') return (featureRank(a) - featureRank(b)) || (seq[a] - seq[b]);
-      if (view !== 'money') return seq[a] - seq[b];
-      var x = MONEY_ORDER.indexOf(a), y = MONEY_ORDER.indexOf(b);
-      if (x === -1 && y === -1) return seq[a] - seq[b];
-      if (x === -1) return 1;
-      if (y === -1) return -1;
-      return x - y;
-    });
-    // In memory mode nothing is kept across a restart: the settings no more
-    // than the contracts.
-    var memory = S.overview && S.overview.storage === 'memory';
-    var intro = memory && view === 'features'
-      ? 'Every switch here takes effect at once, and lasts until the resource stops: this server runs in '
-        + 'memory mode, which keeps nothing across a restart. What is already under way finishes under the '
-        + 'rules it started with; only new actions are refused, and players are told the feature is turned '
-        + 'off by the server.'
-      : VIEW_INTRO[view] + (memory ? ' This server runs in memory mode, which keeps nothing across a restart: '
-        + 'a change lasts until the resource stops.' : '');
+    var gr = grouped(list.filter(function (e) { return !inMap[e.key]; }), view);
+    var intro = VIEW_INTRO[view] || '';
     var note = view === 'devsettings' && S.access.developerHint ? h('p.hint.is-note', String(S.access.developerHint)) : null;
-    if (!groups.length && !buckets.length) return frag(h('p.hint', intro), note, empty('Nothing here.'));
-    return frag(h('p.hint', intro), note, groups.map(function (g) {
-      return h('section.st-group', { 'data-group': g.toLowerCase() }, h('h3.st-group-title', g),
-        GROUP_INTRO[g] ? h('p.st-group-about', GROUP_INTRO[g]) : null,
-        byGroup[g].map(settingRow));
-    }), buckets.length ? h('section.st-group', { 'data-group': 'rate limits' }, h('h3.st-group-title', 'Rate limits'),
-      h('p.st-group-about', 'Per player: a full allowance of burst requests refills over per seconds.'),
-      buckets.map(function (b) {
-        var per = settingEntry('Cooldowns.' + b + '.per');
-        return h('div.st-row.st-map', { id: 'st-map-' + b, 'data-key': 'Cooldowns.' + b,
-          'data-find': ('cooldowns.' + b + ' ' + b + ' rate limits ' + String(per.about || '')).toLowerCase() },
-          mapInner(b));
-      })) : null, h('p.empty', { id: 'st-none', hidden: true }, 'No setting matches.'));
+    if (!gr.groups.length && !buckets.length) {
+      return frag(h('p.hint', intro), note, empty(q ? 'No setting matches.' : 'Nothing here.'));
+    }
+    return frag(h('p.hint', intro), note, gr.groups.map(function (g) { return groupSection(g, gr.byGroup[g]); }),
+      buckets.length ? h('section.st-group', { 'data-group': 'rate limits' }, h('h3.st-group-title', 'Rate limits'),
+        h('p.st-group-about', 'Per player: a full allowance of burst requests refills over per seconds.'),
+        buckets.map(function (b) {
+          return h('div.st-row.st-map', { id: 'st-map-' + b, 'data-key': 'Cooldowns.' + b }, mapInner(b));
+        })) : null);
   }
 
-  /** Hide what the search box does not match: rows, then groups left empty. */
+  /** The search box: the list drawn again for what it matches, at most
+      SEARCH_ROWS rows. */
   function filterSettings() {
-    var q = trim(S.forms['st.q']).toLowerCase();
     var list = byId('st-list');
-    if (!list) return;
-    var shown = 0;
-    var rows = list.querySelectorAll('.st-row');
-    rows.forEach(function (row) {
-      var hit = !q || String(row.getAttribute('data-find') || '').indexOf(q) !== -1;
-      row.hidden = !hit;
-      if (hit) shown++;
-    });
-    list.querySelectorAll('.st-group').forEach(function (group) {
-      var any = false;
-      for (var i = 0; i < group.children.length; i++) {
-        var child = group.children[i];
-        if (child.getAttribute && child.getAttribute('data-key') && !child.hidden) any = true;
-      }
-      group.hidden = !any;
-    });
-    var none = byId('st-none');
-    if (none) none.hidden = shown > 0;
+    if (list) setHtml(list, settingsList());
   }
 
   /** A typed value, in the type the key takes, or why not. */
@@ -3243,9 +3851,13 @@
       h('div.toolbar', { id: 'st-head' }, settingsHead()),
       h('div.stack', { id: 'st-list' }, settingsList()));
   }
+  /* One read of the settings serves every view that shows them (Game
+     rules, Target limits' Defaults, Developer, Organisation, Locations and
+     the header search) while the panel stays open; a Save reads them again,
+     and so does the header's Refresh. */
   Object.keys(SETTING_VIEWS).forEach(function (view) {
     SHELL[view] = settingsShell;
-    LOAD[view] = function () { loadSettings(); };
+    LOAD[view] = function () { if (!S.settings.data) loadSettings(); else drawSettings(); };
   });
 
   /* ---- tools ---- */
@@ -3272,14 +3884,7 @@
             + 'Works while recovery holds everything else back.'),
           h('div.btn-row', writeBtn('', 'tl-flush', {}, 'Flush the audit log', 'Click again to flush', 'floppy-disk', true)),
           t.flush ? answerBox(t.flush) : null))),
-      card('Diagnosis', frag(
-        h('p.about', 'Why the app is not showing something, the server-wide checks, the settings that need '
-          + 'attention, and what the console said. Name a player id to run the app\'s own reads as them.'),
-        h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
-          'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
-          btn('.is-primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
-        t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
-        t.diag ? linesBox(t.diag.lines, t.diag.later) : null)));
+      h('p.hint', 'The diagnosis is under Health, and on a player\'s card in Players (Why can’t they see…).'));
   }
 
   SHELL.tools = function () { return h('section.view', h('div.stack', { id: 'tl' }, toolsBody())); };
@@ -3287,17 +3892,76 @@
 
   function drawTools() {
     if (S.section === 'tools') setHtml(byId('tl'), toolsBody());
-    if (S.section === 'diagnostics') setHtml(byId('dg'), diagnosticsBody());
+    if (S.section === 'health') setHtml(byId('dg'), healthBody());
+    if (S.section === 'overview') setHtml(byId('ov'), overviewBody());
+    if (S.section === 'pdiag') setHtml(byId('pl-result'), playerBody());
+    if (S.section === 'logs') { var lt = byId('lg-tools'); if (lt) setHtml(lt, logToolsBody()); }
   }
 
-  /* ---- frozen players: the list from Players, as its own sub-tab ---- */
+  /** Logs' own Flush, beside the log it writes. */
+  function logToolsBody() {
+    return canWrite() ? frag(writeBtn('.is-small.is-ghost', 'tl-flush', {}, 'Flush the audit log', 'Click again to flush',
+      'floppy-disk', true), S.tools.flush ? answerBox(S.tools.flush) : null) : frag();
+  }
+
+  /* ---- Players > Frozen, Suspended and Protected: the lists ---- */
 
   SHELL.frozen = function () {
     return h('section.view',
-      h('p.hint', 'Every player staff have frozen. Freeze somebody from Players, after looking them up.'),
+      h('p.hint', 'Every player staff have frozen. Freeze somebody from their Measures tab, after looking them up.'),
       h('div.stack', { id: 'pl-frozen' }, frozenListCard() || loading('Reading who is frozen…')));
   };
   LOAD.frozen = function () { loadFrozen(); };
+
+  function loadSanctions() {
+    return ask('sanctions', {}, 'sanctions').then(function (reply) {
+      if (!reply) return;
+      S.players.sanctions = reply.ok ? (reply.data || {}) : { error: words(reply) };
+      drawSanctions();
+    });
+  }
+  function drawSanctions() {
+    if (S.section === 'suspended' || S.section === 'protected') setHtml(byId('pl-sanctions'), sanctionsCard(S.section));
+  }
+
+  /** Everybody suspended or protected now, each with Lift (two clicks). */
+  function sanctionsCard(view) {
+    var d = S.players.sanctions;
+    if (!d) return loading('Reading the list…');
+    if (d.error) return empty(d.error);
+    var suspended = view === 'suspended';
+    var rows = asList(suspended ? d.suspended : d.protected);
+    var what = suspended ? 'suspended' : 'protected';
+    return card(suspended ? 'Suspended players' : 'Protected players', rows.length ? h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', 'Player'), h('th', 'Since'), h('th', 'Until'), h('th', 'Reason'), h('th', ''))),
+      h('tbody', rows.map(function (row) {
+        var ref = String(row.ref || '');
+        var answer = S.players.lift[ref];
+        return frag(h('tr',
+          h('td.name', String(row.name || 'No name on record'), row.cid ? h('span.cid', String(row.cid)) : null,
+            row.online ? h('span.chip.is-live', 'in the city') : null,
+            row.cid ? h('div.party', btn('.is-small.is-ghost', 'pl-open-cid', { 'data-value': String(row.cid) },
+              'Open', 'arrow-right')) : null),
+          h('td.nowrap', { title: when(row.since) }, ago(row.since)),
+          h('td.nowrap', row['until'] ? when(row['until']) : (suspended ? 'until lifted' : 'for good')),
+          h('td', String(row.reason || '—')),
+          h('td', modBtn('.is-small', 'pl-lift-row', { 'data-ref': ref, 'data-value': view },
+            'Lift', 'Click again: lift for ' + String(row.name || 'them'), 'unlock'))),
+          answer ? h('tr.more', h('td', { colspan: '5' }, answerBox(answer))) : null);
+      })))) : empty('Nobody is ' + what + '.'), '', h('span.sub', num(rows.length)));
+  }
+
+  ['suspended', 'protected'].forEach(function (view) {
+    SHELL[view] = function () {
+      return h('section.view',
+        h('p.hint', view === 'suspended'
+          ? 'Players barred from placing and accepting contracts, newest first. Suspend somebody from their '
+            + 'Measures tab.'
+          : 'Players no new contract may name, newest first. Protect somebody from their Measures tab.'),
+        h('div.stack', { id: 'pl-sanctions' }, sanctionsCard(view)));
+    };
+    LOAD[view] = function () { loadSanctions(); };
+  });
 
   /* ---- staff actions: every write the panel has, in one place ----
 
@@ -3305,81 +3969,69 @@
      in; nothing here writes on its own. */
 
   var STAFF_ACTIONS = [
-    { title: 'Freeze or unfreeze a player', icon: 'snowflake', view: 'players', go: 'Open Players',
-      text: 'Look the player up, then Freeze puts every live contract they are party to on hold: its clocks stop '
-        + 'and nothing on it moves. Unfreeze gives the time back. Every frozen player is listed under Frozen '
-        + 'players, each with its own Unfreeze.', also: { view: 'frozen', go: 'Frozen players' } },
-    { title: 'Void a contract', icon: 'ban', view: 'contracts', go: 'Open Contracts',
-      text: 'Open the contract from Contracts, then Void contract closes it and refunds what it holds, with a '
+    { title: 'Freeze or unfreeze a player', icon: 'snowflake', view: 'players', go: 'Players',
+      text: 'Look the player up, then Freeze on their Measures tab puts every live contract they are party to on '
+        + 'hold: its clocks stop and nothing on it moves. Unfreeze gives the time back. Every frozen player is '
+        + 'listed under Players, Frozen, each with its own Unfreeze.', also: { view: 'frozen', go: 'Frozen' } },
+    { title: 'Suspend or protect a player', icon: 'ban', view: 'players', go: 'Players',
+      text: 'Look the player up, then Measures: Suspend bars them from placing and accepting; Protect stops new '
+        + 'contracts naming them. Players, Suspended and Protected list everybody, each with Lift.',
+      also: { view: 'suspended', go: 'Suspended' } },
+    { title: 'Pay a player or set their playtime', icon: 'sack-dollar', view: 'players', go: 'Players',
+      text: 'Look the player up, then Money: Pay sends money you choose, up to the most the server allows. '
+        + 'Playtime sets the hours counted for the new-player rule.' },
+    { title: 'Void a contract', icon: 'ban', view: 'contracts', go: 'Contracts',
+      text: 'Open the contract from Contracts, then More, Void contract closes it and refunds what it holds, with a '
         + 'reason kept in the log.' },
-    { title: 'Refund or pay', icon: 'scale-balanced', view: 'reviews', go: 'Open Needs review',
+    { title: 'Refund or pay', icon: 'scale-balanced', view: 'reviews', go: 'Inbox, Needs review',
       text: 'Needs review holds the contracts a player asked staff to look at: Refund, Pay or Dismiss each. '
         + 'Stuck escrow holds the money left for staff: Pay, Pay amount, Return or Delivered.',
-      also: { view: 'stuck', go: 'Stuck escrow' } },
-    { title: 'Deadlines', icon: 'clock', view: 'contracts', go: 'Open Contracts',
+      also: { view: 'stuck', go: 'Money waiting' } },
+    { title: 'Deadlines', icon: 'clock', view: 'contracts', go: 'Contracts',
       text: 'Open the contract from Contracts, then Extend or Shorten under Deadline moves it: 15 min, 30 min, '
         + '1 h, 2 h or a number of minutes, with a reason kept in the log. It shows the exact time left before '
         + 'and after; players are told only that staff changed its time. Freezing a player stops its clock, and '
         + 'voiding ends it.' },
-    { title: 'Announce', icon: 'bullhorn', view: 'announce', go: 'Open Announce',
+    { title: 'Announce', icon: 'bullhorn', view: 'announce', go: 'Home, Announce',
       text: 'One phone notice from Staff to every hitman holding a contract, or to everybody online with the app. '
         + 'It never names you, takes two clicks and is on the record.' },
-    { title: 'Tools', icon: 'screwdriver-wrench', view: 'tools', go: 'Open Tools',
-      text: 'Bring timers forward (test servers only), Flush the audit log, and Run the diagnosis for why the app '
-        + 'is not showing something.' },
-    { title: 'Settings', icon: 'sliders', view: 'timers', go: 'Open Rules',
-      text: 'Every setting is changed in Rules or Features, each Save, reset or list edit taking the same '
-        + 'confirms as before.', also: { view: 'features', go: 'Features' } },
-    { title: 'Undo a setting change', icon: 'arrow-rotate-left', view: 'history', go: 'Open History',
+    { title: 'Test tools', icon: 'screwdriver-wrench', view: 'tools', go: 'Test tools',
+      text: 'Bring timers forward (test servers only) and Flush the audit log. The diagnosis is under Developer, '
+        + 'Health, and on a player\'s card (Why can\u2019t they see\u2026).', also: { view: 'logs', go: 'Logs' } },
+    { title: 'Settings', icon: 'sliders', view: 'rules', go: 'Game rules',
+      text: 'Every rule is in Game rules, by the area of the game it is about, each area\'s switches first. Filter '
+        + 'by Switches, Timers, Money, Limits or Lists, or search from the header. Each Save, reset or list edit takes '
+        + 'two clicks.', also: { view: 'changed', go: 'Changed from the panel' } },
+    { title: 'Undo a setting change', icon: 'arrow-rotate-left', view: 'history', go: 'Change history',
       text: 'History lists every setting changed from this panel, who changed it and when, with both values. '
         + 'Undo puts the value before back, on two clicks, checked as any change is.' },
-    { title: 'Contract tools', icon: 'clipboard-list', view: 'contracts', go: 'Open Contracts',
+    { title: 'Contract tools', icon: 'clipboard-list', view: 'contracts', go: 'Contracts',
       text: 'Open a contract: Staff notes, Remove an operative (stake to the placer as a walk-away, or returned; '
         + 'optionally barred), Edit text through the checks a player\'s text gets, Export the record for a '
         + 'ticket, and As a player sees it.' }
   ];
 
-  SHELL.actions = function () {
+  /** Help > How do I...: every staff action, each card's Go opening where
+      it is done (shown only where this staff member may open it). */
+  SHELL.howto = function () {
     return h('section.view',
-      h('p.hint', canWrite() ? 'Everything here changes something, and takes two clicks where it moves money or '
-        + 'cannot be undone. Each opens the place it is done.' : whyNoWrite()),
+      h('p.hint', canWrite() ? 'Everything here changes something, and takes two clicks. Each Go opens the place '
+        + 'it is done. The header search (/ or Ctrl+K) finds these too.' : whyNoWrite()),
       h('div.cards-grid', STAFF_ACTIONS.map(function (a) {
+        var go = resolveView(a.view);
         return card(frag(icon(a.icon), ' ', a.title), frag(
           h('p.about', a.text),
-          h('div.btn-row', btn('.is-small', 'section', { 'data-section': a.view }, a.go, 'arrow-right'),
-            a.also ? btn('.is-small.is-ghost', 'section', { 'data-section': a.also.view }, a.also.go, 'arrow-right')
-              : null)));
+          h('div.btn-row', viewAllowed(go) ? btn('.is-small', 'section', { 'data-section': a.view }, 'Go: ' + a.go,
+            'arrow-right') : h('p.note', 'Needs ' + (DEV_VIEWS[go] ? 'the Developer ACE' : 'the staff ACE')
+              + ': see Who can do what.'),
+            a.also && viewAllowed(resolveView(a.also.view)) ? btn('.is-small.is-ghost', 'section',
+              { 'data-section': a.also.view }, a.also.go, 'arrow-right') : null)), '.howto-card');
       })));
   };
-  LOAD.actions = function () {};
+  LOAD.howto = function () {};
 
-  /* ---- diagnostics: the slow jobs, and the diagnosis ---- */
-
-  function diagnosticsBody() {
-    var o = S.overview || {};
-    var slowest = asList(o.slowest);
-    var t = S.tools;
-    return frag(
-      S.access.developerHint ? h('p.hint.is-note', String(S.access.developerHint)) : null,
-      card('Slow-job timings', slowest.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Job'), h('th.num', 'Slowest'), h('th.num', 'Average'), h('th.num', 'Last'),
-          h('th.num', 'Runs'))),
-        h('tbody', slowest.map(function (job) {
-          return h('tr', h('td', String(job.name)), h('td.num', ms(job.max)), h('td.num', ms(job.avg)),
-            h('td.num', ms(job.last)), h('td.num', num(job.runs)));
-        })))) : empty('No timings yet: the overview reads them.'), '',
-        o.slowMs != null ? h('span.sub', 'warns above ' + num(o.slowMs) + ' ms') : null),
-      card('Diagnosis', frag(
-        h('p.about', 'Why the app is not showing something, the server-wide checks, the settings that need '
-          + 'attention, and what the console said. Name a player id to run the app\'s own reads as them.'),
-        h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
-          'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
-          btn('.is-primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
-        t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
-        t.diag ? linesBox(t.diag.lines, t.diag.later) : null)));
-  }
-  SHELL.diagnostics = function () { return h('section.view', h('div.stack', { id: 'dg' }, diagnosticsBody())); };
-  LOAD.diagnostics = function () { loadOverview(false).then(drawTools); };
+  /** A view's name now, from an old one too. */
+  function resolveView(view) { return ALIASES[view] ? ALIASES[view][0] : view; }
 
   /* ---- permissions: every ACE this resource checks, read-only ---- */
 
@@ -3518,16 +4170,24 @@
   /** For the tests. */
   window.CH_ADMIN_HELP_ORDERED = helpOrdered;
 
+  /* Help > How it works: an accordion, each card's words drawn only when
+     it is opened. */
   SHELL.help = function () {
-    return h('section.view', h('p.hint', 'How the contract app works, in plain words. Each link opens the setting '
-      + 'that controls it.'),
-      h('div.cards-grid', helpOrdered().map(function (c, i) {
-        return card(frag(icon(c.icon), ' ', c.title), frag(
-          h('p.about', c.text),
-          c.links.length ? h('div.help-links', c.links.map(function (l) {
-            return h('button.link', { type: 'button', 'data-act': 'help-jump', 'data-key': l.key,
-              'data-view': l.view }, l.label);
-          })) : null), '.help-card', null);
+    return h('section.view', h('p.hint', 'How the contract app works, in plain words. Open a card; each link opens '
+      + 'the setting that controls it.'),
+      h('div.toolbar', btn('.is-small.is-ghost', 'help-all', {}, 'Open all', 'angles-down'),
+        btn('.is-small.is-ghost', 'help-none', {}, 'Close all', 'angles-up')),
+      h('div.stack.help-list', helpOrdered().map(function (c) {
+        var open = !!S.help.open[c.title];
+        return h('section.card.help-card' + (open ? '.is-open' : ''),
+          h('button.help-head', { type: 'button', 'data-act': 'help-toggle', 'data-value': c.title,
+            'aria-expanded': open ? 'true' : 'false' }, icon(c.icon), h('span.lbl', c.title),
+            icon(open ? 'chevron-up' : 'chevron-down')),
+          open ? frag(h('p.about', c.text),
+            c.links.length ? h('div.help-links', c.links.map(function (l) {
+              return h('button.link', { type: 'button', 'data-act': 'help-jump', 'data-key': l.key,
+                'data-view': l.view }, l.label);
+            })) : null) : null);
       })));
   };
   LOAD.help = function () {};
@@ -3545,17 +4205,13 @@
     var subject = node.getAttribute('data-subject');
     if (!subject) return;
     S.forms['pl.q'] = subject;
+    // Their Measures, where Freeze is; the contract stays open over it.
     show('players');
-    loadPlayer();
+    loadPlayer().then(function () { if (hasPlayer()) show('pmeasures'); });
   };
   ACTIONS.group = function (node) { openGroup(node.getAttribute('data-group')); };
   /** A help link: the setting's view, the search cleared, and its row marked. */
-  ACTIONS['help-jump'] = function (node) {
-    var key = node.getAttribute('data-key');
-    S.forms['st.q'] = '';
-    S.settings.focus = key;
-    show(node.getAttribute('data-view'));
-  };
+  ACTIONS['help-jump'] = function (node) { goSetting(node.getAttribute('data-key'), node.getAttribute('data-view')); };
   ACTIONS['toast-close'] = function (node) { node.remove(); };
 
   ACTIONS['dd-open'] = function (node) {
@@ -3589,7 +4245,8 @@
   };
   /** Run it: the diagnosis, run, not only the section it is run from. */
   ACTIONS['ov-diag'] = function () {
-    show(canDevelop() ? 'diagnostics' : 'tools');
+    if (canDevelop()) show('health');
+    S.forms['tl.subject'] = '';
     ACTIONS['tl-diag']();
   };
 
@@ -3734,7 +4391,7 @@
         return;
       }
       // Opened from Stuck escrow, the list behind it is read again too.
-      if (S.section === 'stuck') loadStuck();
+      if (shows('stuck')) loadStuck();
       if (S.drawer.id !== id) return;
       drawerAnswer(reply);
       drawDrawer();
@@ -3753,7 +4410,7 @@
       if (!reply.ok) { toast(words(reply), 'error'); return; }
       if (where === 'player') {
         S.players.whois[id] = reply.data || {};
-        if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+        if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
       } else if (S.drawer.id === id) {
         S.drawer.whois = reply.data || {};
         drawDrawer();
@@ -3812,7 +4469,7 @@
       if (!reply) return;
       S.reviews.answers[id] = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
-      if (S.section === 'reviews') setHtml(byId('rv-list'), reviewList());
+      if (shows('reviews')) setHtml(byId('rv-list'), reviewList());
       loadReviews(true);
     });
   };
@@ -3825,7 +4482,7 @@
       if (!reply) return;
       S.reviews.answers[id] = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
-      if (S.section === 'reviews') setHtml(byId('rv-list'), reviewList());
+      if (shows('reviews')) setHtml(byId('rv-list'), reviewList());
       loadReviews(true);
     });
   };
@@ -3936,7 +4593,7 @@
         S.players.data.playtime = reply.data.playtime;
         delete S.forms['pl.hours'];
       }
-      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+      if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
     });
   }
   ACTIONS['pl-playtime-set'] = function (node) {
@@ -3945,7 +4602,7 @@
     if (raw === '' || !isFinite(hours) || hours < 0 || hours > 100000) {
       disarm();
       S.players.playtime = { ok: false, text: 'Hours are a number from 0 to 100000.' };
-      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+      if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
       return;
     }
     setPlaytime(node, hours);
@@ -3966,7 +4623,7 @@
         }
         loadFrozen();
       }
-      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+      if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
     });
   }
   ACTIONS['pl-freeze'] = function (node) {
@@ -3975,7 +4632,7 @@
     if (!reason) {
       disarm();
       S.players.freeze = { ok: false, text: 'Give a reason: it goes on the record.' };
-      if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+      if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
       return;
     }
     if (!confirmed(node)) return;
@@ -4462,6 +5119,12 @@
     var act = node ? node.getAttribute('data-act') : null;
     // A click anywhere but the dropdown closes it.
     if (S.menu && act !== 'dd-open' && act !== 'dd-pick') closeMenu();
+    // And anywhere but the header search, its list.
+    if (S.search.open && !(act && act.indexOf('gs-') === 0)
+      && !(event.target && event.target.getAttribute && event.target.getAttribute('data-bind') === 'gs.q')) {
+      S.search.open = false;
+      drawSearch();
+    }
     if (!node || node.disabled || !ACTIONS[act]) return;
     if (!S.open && act !== 'toast-close') return;
     run(ACTIONS[act], node, event);
@@ -4474,7 +5137,7 @@
     if (bind) S.forms[bind] = node.value;
     // Typing in a box whose Save is armed disarms it: what the armed click
     // named is no longer what is in the box.
-    if (bind && S.armed && S.armed.bind === bind) disarm();
+    if (bind && S.armed && (S.armed.bind === bind || (S.armed.binds && S.armed.binds.indexOf(bind) !== -1))) disarm();
     var live = node.getAttribute('data-live');
     if (live && LIVE[live]) run(LIVE[live], node, event);
   });
@@ -4488,13 +5151,35 @@
   document.addEventListener('keyup', function (event) {
     if (!S.open || !isEscape(event)) return;
     if (event.preventDefault) event.preventDefault();
+    // Escape in the header search clears it; the panel stays.
+    if (S.search.open || (event.target && event.target.getAttribute && event.target.getAttribute('data-bind') === 'gs.q')) {
+      closeSearch();
+      return;
+    }
     close();
   });
+
+  /** Whether a key was typed into a box (where / is a slash). */
+  function typing(node) {
+    var tag = node && node.tagName ? String(node.tagName).toUpperCase() : '';
+    return tag === 'INPUT' || tag === 'TEXTAREA';
+  }
 
   document.addEventListener('keydown', function (event) {
     if (!S.open) return;
     if (isEscape(event)) {
       if (event.preventDefault) event.preventDefault();
+      return;
+    }
+    // / or Ctrl+K: the header search.
+    if ((event.key === '/' && !typing(event.target)) || ((event.key === 'k' || event.key === 'K') && event.ctrlKey)) {
+      var box = byId('gs-q');
+      if (box) {
+        if (event.preventDefault) event.preventDefault();
+        if (box.focus) box.focus();
+        S.search.open = true;
+        drawSearch();
+      }
       return;
     }
     if (event.key === 'Enter') {
@@ -4540,6 +5225,7 @@
     var open = modOpen();
     var a = attrs || {};
     if (!open) a.title = whyNoMod();
+    a['data-gate'] = 'mod';
     return writeBtn(cls, act, a, label, confirmLabel, iconName, false, open);
   }
 
@@ -4557,7 +5243,7 @@
   resetPlayerStaff();
 
   function drawPlayer() {
-    if (S.section === 'players') setHtml(byId('pl-result'), playerBody());
+    if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
   }
 
   /** Until when, in words: a date, or until lifted. */
@@ -4890,11 +5576,19 @@
     S.players.playtime = null;
     S.players.freeze = null;
     S.players.frozen = null;
+    S.players.sanctions = null;
+    S.players.at = 0;
+    S.players.lift = {};
+    S.ctx.contract = null;
+    S.search = { q: '', open: false, at: 0 };
+    S.navOpen = false;
     resetPlayerStaff();
+    orgReset();
     S.settings.data = null;
     S.settings.answers = {};
     S.settings.photos = null;
     S.settings.drafts = {};
+    S.settings.open = {};
     S.tools = { refresh: null, diag: null, flush: null };
     S.busy = {};
     S.seq = {};
@@ -4939,17 +5633,6 @@
 
   function activeOperatives(d) {
     return asList(d.hitmen).filter(function (m) { return m.state === 'active'; });
-  }
-
-  function contractTools(d) {
-    var staff = d.staff;
-    if (!staff) return null;
-    return frag(
-      card('Staff notes', notesBody(staff), '.ct-notes'),
-      card('Remove an operative', removeBody(d, staff), '.ct-remove'),
-      card('Edit text', textBody(d, staff), '.ct-text'),
-      card('Export the record', exportBody(), '.ct-export'),
-      card('As a player sees it', playerViewBody(d), '.ct-view'));
   }
 
   /* -- notes -- */
@@ -5345,6 +6028,7 @@
       // A diagnosis line that had to wait for an answer (the photo address check).
       if (!S.open) return;
       if (!S.tools.diag || S.tools.diag.error) S.tools.diag = { lines: [], later: [] };
+      // Drawn wherever the diagnosis shows: Health, Home, a player's card.
       S.tools.diag.later = asList(S.tools.diag.later).concat([message.line]);
       drawTools();
     }
@@ -6137,6 +6821,1916 @@
         + 'as shipped. Players are told only what the target rules always said, never a time, a job or staff.',
       links: [{ key: 'Limits.MaxContractsPerTargetPerDay', view: 'tldefaults', label: 'Day cap' },
         { key: 'Limits.MaxContractsPerTargetPerWeek', view: 'tldefaults', label: 'Week cap' }] });
+
+  /* ---------- the new layout's own clicks: chips, search, areas -------- */
+
+  ACTIONS['nav-menu'] = function () { S.navOpen = !S.navOpen; drawChrome(); };
+  ACTIONS['ctx-player'] = function () { show(PLAYER_VIEWS[S.section] ? S.section : 'players'); };
+  ACTIONS['ctx-relookup'] = function () {
+    if (!S.players.subject) { show('players'); return; }
+    S.forms['pl.q'] = S.players.subject;
+    loadPlayer();
+  };
+  ACTIONS['ctx-player-clear'] = function () {
+    disarm();
+    S.players.data = null;
+    S.players.ref = null;
+    S.players.subject = null;
+    S.players.at = 0;
+    S.players.whois = {};
+    resetPlayerStaff();
+    if (PLAYER_VIEWS[S.section]) show('players'); else drawChrome();
+  };
+  ACTIONS['ctx-contract'] = function () { if (S.ctx.contract) openContract(S.ctx.contract); };
+  ACTIONS['ctx-contract-clear'] = function () {
+    S.ctx.contract = null;
+    if (S.drawer.id) closeDrawer();
+    drawContext();
+  };
+  /** The header's Refresh: the section open read again. */
+  ACTIONS['refresh-view'] = function () {
+    loadOverview(true);
+    if (SETTING_VIEWS[S.section]) { loadSettings(); return; }
+    if (ORG_VIEWS[S.section] || BP_VIEWS[S.section] || S.section === 'locations') { loadOrg(); }
+    LOAD[S.section]();
+  };
+  ACTIONS['help-btn'] = function () { openGroup('help'); };
+
+  ACTIONS['ib-filter'] = function (node) {
+    var v = node.getAttribute('data-value');
+    S.inbox = ['reviews', 'stuck', 'alerts'].indexOf(v) !== -1 ? v : 'all';
+    show('inbox');
+  };
+  ACTIONS['ib-go'] = function (node) { ACTIONS['ib-filter'](node); };
+  ACTIONS['ib-refresh'] = function () {
+    S.stuck.answers = {};
+    LOAD.inbox();
+  };
+
+  ACTIONS['gr-area'] = function (node) {
+    S.rules.area = node.getAttribute('data-value') || '';
+    S.rules.cat = '';
+    S.forms['st.q'] = '';
+    drawSettings();
+    var main = byId('main');
+    if (main) main.scrollTop = 0;
+  };
+  ACTIONS['gr-type'] = function (node) {
+    S.rules.type = node.getAttribute('data-value') || '';
+    S.rules.cat = '';
+    drawSettings();
+  };
+  ACTIONS['st-details'] = function (node) {
+    var key = node.getAttribute('data-key');
+    S.settings.open[key] = !S.settings.open[key];
+    drawSettingRow(key);
+  };
+
+  ACTIONS['help-toggle'] = function (node) {
+    var title = node.getAttribute('data-value');
+    S.help.open[title] = !S.help.open[title];
+    redraw();
+  };
+  ACTIONS['help-all'] = function () { HELP.forEach(function (c) { S.help.open[c.title] = true; }); redraw(); };
+  ACTIONS['help-none'] = function () { S.help.open = {}; redraw(); };
+
+  ACTIONS['pl-recent'] = function (node) {
+    S.forms['pl.q'] = node.getAttribute('data-value') || '';
+    loadPlayer();
+  };
+  ACTIONS['pl-open-cid'] = function (node) {
+    S.forms['pl.q'] = node.getAttribute('data-value') || '';
+    show('players');
+    loadPlayer();
+  };
+  /** Their standing as a target, in Target limits, by the same lookup. */
+  ACTIONS['pl-tl'] = function () {
+    if (!S.players.ref) return;
+    S.tl.ref = S.players.ref;
+    S.tl.answer = null;
+    show('tlplayer');
+    loadTargetStatus(true);
+  };
+  /** Why can't they see...: the diagnosis as the player selected, by the
+      lookup's handle (they have to be in the city). */
+  ACTIONS['pl-diag'] = function () {
+    if (!S.players.ref) return;
+    S.tools.diag = { lines: ['Running…'], later: [] };
+    drawTools();
+    ask('diag', { ref: S.players.ref }, 'diag').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) S.tools.diag = { error: words(reply) };
+      else S.tools.diag = { lines: asList((reply.data || {}).lines), later: [] };
+      drawTools();
+    });
+  };
+  /** Lift on a row of Suspended or Protected, by the list's handle. */
+  ACTIONS['pl-lift-row'] = function (node) {
+    var ref = node.getAttribute('data-ref');
+    var kind = node.getAttribute('data-value');
+    if (!ref || !confirmed(node)) return;
+    write(kind === 'suspended' ? 'unsuspend' : 'unprotect', { ref: ref }, 'lift:' + ref, node).then(function (reply) {
+      if (!reply) return;
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) delete S.players.lift[ref];
+      else S.players.lift[ref] = { ok: false, text: words(reply) };
+      if (reply.ok) loadSanctions(); else drawSanctions();
+    });
+  };
+
+  ACTIONS['dr-tab'] = function (node) {
+    disarm();
+    S.drawer.tab = node.getAttribute('data-value') || 'summary';
+    drawDrawer();
+  };
+  ACTIONS['dr-more'] = function () {
+    disarm();
+    S.drawer.more = !S.drawer.more;
+    drawDrawer();
+  };
+
+  /* ---------- the header search: settings, actions, sections, players ----
+
+     Typed into the header's box (/ or Ctrl+K go there): matches as you
+     type, from what the page already holds, at most SEARCH_MAX rows. Enter
+     takes the first: a contract id opens it, a player id runs a lookup, and
+     any other text with nothing better matching looks it up as a player. */
+
+  var SEARCH_MAX = 20;
+
+  function searchSettings() {
+    if (settingsIndex) return settingsIndex;
+    settingsIndex = allSettings().map(function (e) {
+      return { e: e, text: [e.key, e.label, e.about, e.group, areaLabel(areaOf(e))].map(function (v) {
+        return v == null ? '' : String(v);
+      }).join(' ').toLowerCase() };
+    });
+    return settingsIndex;
+  }
+
+  function searchHits(raw) {
+    var q = trim(raw).toLowerCase();
+    if (!q) return [];
+    var hits = [];
+    var contract = /^ct[a-z0-9]{3,}$/i.test(trim(raw));
+    var digits = /^\d{1,6}$/.test(trim(raw));
+    if (contract) hits.push({ kind: 'Contract', label: 'Open contract ' + trim(raw), act: 'gs-contract', value: trim(raw) });
+    if (digits) hits.push({ kind: 'Player', label: 'Look up player id ' + trim(raw), act: 'gs-player', value: trim(raw) });
+    SECTIONS.forEach(function (view) {
+      if (!viewShown(view)) return;
+      var g = groupOf(view);
+      var label = (VIEW_LABEL[view] || [view])[0];
+      if ((label + ' ' + (g ? g.label : '')).toLowerCase().indexOf(q) !== -1) {
+        hits.push({ kind: 'Section', label: (g ? g.label + ' › ' : '') + label, act: 'gs-view', value: view });
+      }
+    });
+    STAFF_ACTIONS.forEach(function (a, i) {
+      if ((a.title + ' ' + a.text).toLowerCase().indexOf(q) !== -1 && viewAllowed(resolveView(a.view))) {
+        hits.push({ kind: 'Action', label: a.title, act: 'gs-action', value: String(i) });
+      }
+    });
+    searchSettings().forEach(function (row) {
+      if (row.text.indexOf(q) !== -1) {
+        hits.push({ kind: 'Setting', label: String(row.e.label || row.e.key), sub: areaLabel(areaOf(row.e))
+          + ' · ' + (row.e.secret ? 'server.cfg' : 'Config.' + row.e.key), act: 'gs-setting', value: row.e.key });
+      }
+    });
+    if (!contract && !digits) {
+      hits.push({ kind: 'Player', label: 'Look up “' + trim(raw).slice(0, 64) + '” as a player',
+        act: 'gs-player', value: trim(raw).slice(0, 64) });
+    }
+    return hits.slice(0, SEARCH_MAX);
+  }
+
+  function searchBody() {
+    var q = S.search.q;
+    if (!S.search.open || !trim(q)) return frag();
+    var hits = searchHits(q);
+    if (!S.settings.data) {
+      hits.push({ kind: 'Note', label: 'Reading the settings: their rows join the list in a moment.', act: null });
+    }
+    return frag(hits.length ? hits.map(function (hit, i) {
+      return h('button.gs-hit' + (i === 0 ? '.is-first' : ''), { type: 'button', 'data-act': hit.act || 'gs-none',
+        'data-value': hit.value == null ? '' : String(hit.value), role: 'option' },
+        h('span.gs-kind', hit.kind), h('span.gs-label', hit.label), hit.sub ? h('span.gs-sub', hit.sub) : null);
+    }) : h('p.empty', 'No setting, action or section matches. Press Enter to look it up as a player.'));
+  }
+
+  function drawSearch() {
+    var box = byId('gs-results');
+    if (!box) return;
+    box.hidden = !(S.search.open && trim(S.search.q));
+    setHtml(box, searchBody());
+  }
+
+  function closeSearch() {
+    S.search.open = false;
+    S.search.q = '';
+    S.forms['gs.q'] = '';
+    var input = byId('gs-q');
+    if (input) { input.value = ''; if (input.blur) input.blur(); }
+    drawSearch();
+  }
+
+  LIVE['gs-input'] = function (node) {
+    S.search.q = node.value;
+    S.search.open = true;
+    // The settings index needs the settings: read once, then kept.
+    if (!S.settings.data && !S.search.asked) { S.search.asked = true; loadSettings(); }
+    drawSearch();
+  };
+  AFTER_SETTINGS.push(function () { if (S.search.open) drawSearch(); });
+
+  ACTIONS['gs-go'] = function () {
+    var hits = searchHits(S.search.q);
+    if (!hits.length) return;
+    var first = hits[0];
+    var fake = { getAttribute: function (k) { return k === 'data-value' ? first.value : null; } };
+    if (ACTIONS[first.act]) ACTIONS[first.act](fake);
+  };
+  ACTIONS['gs-none'] = function () {};
+  ACTIONS['gs-contract'] = function (node) {
+    var id = node.getAttribute('data-value');
+    closeSearch();
+    openContract(id);
+  };
+  ACTIONS['gs-player'] = function (node) {
+    var who = node.getAttribute('data-value');
+    closeSearch();
+    S.forms['pl.q'] = who;
+    show('players');
+    loadPlayer();
+  };
+  ACTIONS['gs-view'] = function (node) {
+    var view = node.getAttribute('data-value');
+    closeSearch();
+    show(view);
+  };
+  ACTIONS['gs-action'] = function (node) {
+    var a = STAFF_ACTIONS[Number(node.getAttribute('data-value'))];
+    closeSearch();
+    if (a) show(a.view);
+  };
+  ACTIONS['gs-setting'] = function (node) {
+    var key = node.getAttribute('data-value');
+    closeSearch();
+    goSetting(key);
+  };
+
+  /** A setting's row, in the section it is edited in, marked and opened. */
+  function goSetting(key, fallbackView) {
+    var entry = settingEntry(key);
+    S.forms['st.q'] = '';
+    S.settings.focus = key;
+    S.settings.open[key] = true;
+    if (!entry) { show(fallbackView || 'rules'); return; }
+    var view = viewOfSetting(entry);
+    if (view === 'rules') { S.rules.area = areaOf(entry); S.rules.type = ''; S.rules.cat = ''; }
+    show(view);
+    if (!SETTING_VIEWS[view]) focusRow();
+  }
+
+  /** The row asked for, marked and brought into view, once it is drawn. */
+  function focusRow() {
+    var focus = S.settings.focus && byId('st-row-' + S.settings.focus);
+    if (!focus) return;
+    focus.classList.toggle('is-focus', true);
+    if (typeof focus.scrollIntoView === 'function') focus.scrollIntoView({ block: 'center' });
+    S.settings.focus = null;
+  }
+  AFTER_SETTINGS.push(function () { if (!SETTING_VIEWS[S.section]) focusRow(); });
+
+  /* ---------- Hitman organisation, Boss permissions, Locations ----------
+
+     The organisation's staff ops (server/org/staff_ops.lua), each through
+     the panel's one gate: reads for every reader of the panel, every change
+     the staff ACE's, two clicks, audited (org_*). Staff may do everything
+     here whatever Boss permissions say. One read (orgGet) serves the three
+     sections; a write reads it again. A member is named by the handle
+     orgGet gave (member), a player to hire by the lookup Players made
+     (ref) or an exact citizen id. While the organisation is off, each
+     section is one card saying so, with its switch. */
+
+  function orgReset() {
+    S.org = { data: null, error: null, answers: {}, funds: null, fundsError: null, audit: null, auditError: null,
+      auditAction: '', member: null, role: null, nonce: null, dir: 'deposit', bonusTo: '', newGrade: null,
+      layout: null, hire: null, history: null, historyError: null,
+      bp: { pending: {}, cols: [], area: '', granted: false, col: '', add: '' },
+      loc: { edit: {}, pos: null }, staged: {} };
+  }
+  orgReset();
+
+  var ORG_TABS = ['members', 'roles', 'pay', 'funds', 'contracts', 'locations', 'notices', 'settings', 'log'];
+  var AREA_NAMES = { members: 'Members', roles: 'Roles', pay: 'Pay', money: 'Money & cuts', contracts: 'Contracts',
+    locations: 'Locations', notices: 'Notices', settings: 'Settings', delegation: 'Delegation' };
+  var SPOT_KINDS = [
+    { id: 'office', label: 'Boss office', one: 'boss office', icon: 'building' },
+    { id: 'signup', label: 'Sign-up spots', one: 'sign-up spot', icon: 'clipboard' },
+    { id: 'meeting', label: 'Meeting and handover spots', one: 'meeting spot', icon: 'handshake' },
+    { id: 'npc', label: 'NPC spots', one: 'NPC spot', icon: 'user-tie' },
+    { id: 'place', label: 'Other organisation places', one: 'place', icon: 'location-dot' }
+  ];
+  var ORG_ACTIONS = ['org_created', 'org_member_hired', 'org_member_fired', 'org_member_role', 'org_member_suspended',
+    'org_member_limits', 'org_member_grant', 'org_member_staff', 'org_role_created', 'org_role_edited',
+    'org_role_deleted', 'org_role_power', 'org_role_pay', 'org_grant', 'org_limits', 'org_office_rule',
+    'org_cut_set', 'org_cut', 'org_split_frozen', 'org_access', 'org_pick', 'org_funds_deposit',
+    'org_funds_withdraw', 'org_funds_staff_deposit', 'org_bonus', 'org_location_set', 'org_location_removed',
+    'org_notice', 'org_applied', 'org_application', 'org_renamed', 'org_layout', 'org_external_adopted',
+    'org_external_reverted', 'org_funds_unrecorded', 'org_setup'];
+
+  function loadOrg() {
+    return ask('orgGet', {}, 'orgGet').then(function (reply) {
+      if (!reply) return;
+      if (reply.ok) { S.org.data = reply.data || {}; S.org.error = null; }
+      else S.org.error = words(reply);
+      drawOrg();
+    });
+  }
+
+  function orgOn() { var d = S.org.data; return !!(d && d.enabled && d.loaded); }
+
+  function drawOrg() {
+    if (ORG_VIEWS[S.section] || BP_VIEWS[S.section] || S.section === 'locations') {
+      setHtml(byId('org-body'), orgViewBody());
+    }
+  }
+  AFTER_SETTINGS.push(function () {
+    // The switch turned on or off from the card: what the server holds now.
+    var e = settingEntry('Organisation.Enabled');
+    if (e && S.org.data && (e.value === true) !== (S.org.data.enabled === true)) { loadOrg(); return; }
+    drawOrg();
+  });
+
+  /** A write of the organisation's: its answer under the card it came from
+      (by `slot`), a toast, and the organisation read again once it went. */
+  function orgWrite(op, data, slot, node, after) {
+    return write(op, data, 'org:' + slot, node).then(function (reply) {
+      if (!reply) return null;
+      S.org.answers[slot] = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) {
+        if (after) after(reply);
+        loadOrg();
+      } else {
+        drawOrg();
+      }
+      return reply;
+    });
+  }
+  function orgRefuse(slot, text) {
+    disarm();
+    S.org.answers[slot] = { ok: false, text: text };
+    drawOrg();
+  }
+  function orgAnswer(slot) { return answerBox(S.org.answers[slot]); }
+
+  /** Arm a write, naming what it sets; typing in any of `binds` disarms it. */
+  function armed(node, label, binds) {
+    if (confirmed(node, label)) return true;
+    if (S.armed && binds) S.armed.binds = binds;
+    return false;
+  }
+
+  /** The organisation is off: said once, with its switch. */
+  function offCard(what) {
+    var d = S.org.data || {};
+    var e = settingEntry('Organisation.Enabled');
+    if (!e && !S.settings.data) loadSettings();
+    return card('The hitman job is switched off', frag(
+      h('p.about', 'The hitman job is off. Turn it on here: a real qbx_core job (' + String(d.job || 'hitman')
+        + ') with roles, members, funds, Boss permissions and its own places. Off, no job is registered and nothing '
+        + 'changes for anybody. ' + (what || '')),
+      e ? h('div.st-row', { id: 'st-row-' + e.key, 'data-key': e.key }, settingInner(e))
+        : loading('Reading the switch…')), '.is-warn.org-off');
+  }
+
+  function orgViewBody() {
+    var d = S.org.data;
+    // Locations holds the settings' places too, whatever the organisation says.
+    if (S.section === 'locations') return locationsBody(d);
+    if (!d) return S.org.error ? empty(S.org.error) : loading('Reading the organisation…');
+    if (!d.enabled) return offCard(S.section === 'orgsetup' ? '' : 'Setup has its other settings.');
+    if (!d.loaded) {
+      return card('On, and not read yet', frag(
+        h('p.about', 'The switch is on, but the organisation has not been read from the store yet. Create / sync '
+          + 'registers the job in qbx_core and brings every online member in step.'),
+        h('div.btn-row', writeBtn('.is-primary', 'org-setup', {}, 'Create / sync job',
+          'Click again: register ' + String(d.job || 'the job') + ' in qbx_core', 'rotate')),
+        orgAnswer('setup')), '.is-warn');
+    }
+    switch (S.section) {
+      case 'orgroles': return orgRolesBody(d);
+      case 'orgmembers': return orgMembersBody(d);
+      case 'orgapps': return orgAppsBody(d);
+      case 'orgfunds': return orgFundsBody(d);
+      case 'orgaccess': return orgAccessBody(d);
+      case 'orgnotices': return orgNoticesBody(d);
+      case 'orgaudit': return orgAuditBody();
+      case 'bpmatrix': return bpMatrixBody(d);
+      case 'bplimits': return bpLimitsBody(d);
+      case 'bpoffice': return bpOfficeBody(d);
+      case 'bphistory': return bpHistoryBody();
+      default: return orgSetupBody(d);
+    }
+  }
+
+  function roleName(d, grade) {
+    var r = asList(d.roles).filter(function (x) { return Number(x.grade) === Number(grade); })[0];
+    return r ? String(r.label || r.name || ('grade ' + grade)) : 'grade ' + grade;
+  }
+  function memberOf(d, ref) {
+    return asList(d.members).filter(function (m) { return String(m.ref) === String(ref); })[0];
+  }
+  function powerOf(d, code) {
+    return asList(d.powers).filter(function (p) { return p.code === code; })[0];
+  }
+  function powerName(d, code) {
+    if (code === 'TAKE') return 'Take contracts';
+    var p = powerOf(d, code);
+    return p ? String(p.label) : String(code);
+  }
+  function roleOptions(d) {
+    return asList(d.roles).map(function (r) { return { value: String(r.grade), label: String(r.grade) + ' · ' + roleName(d, r.grade) }; });
+  }
+
+  /* -- Setup -- */
+
+  function orgSetupBody(d) {
+    var members = asList(d.members);
+    var online = members.filter(function (m) { return m.online; }).length;
+    var warnings = asList(d.warnings);
+    var layout = S.org.layout || { labels: {}, hidden: {} };
+    var saved = d.layout || {};
+    var rows = allSettings().filter(function (e) {
+      return categoryOf(e) === 'organisation' && String(e.group || '').indexOf('Boss limits') === -1;
+    });
+    rows.sort(function (a, b) { return (a.kind === 'switch' ? 0 : 1) - (b.kind === 'switch' ? 0 : 1); });
+    return frag(
+      card('The job', frag(
+        h('dl.facts',
+          h('dt', 'Job (qbx_core)'), h('dd.mono', String(d.job || '—')),
+          h('dt', 'Label'), h('dd', String(d.label || '—')),
+          h('dt', 'Type'), h('dd', String(d.type || '—')),
+          h('dt', 'Only members may accept'), h('dd', d.requireJob ? 'Yes' : 'No'),
+          h('dt', 'Members'), h('dd', num(members.length) + ' · ' + num(online) + ' in the city'),
+          h('dt', 'Roles'), h('dd', num(asList(d.roles).length)),
+          h('dt', 'Funds'), h('dd', money(d.balance) + ' · ' + (d.bank ? 'Renewed-Banking society account'
+            : 'this resource\'s own ledger'))),
+        warnings.length ? h('ul.warnings', warnings.map(function (w) { return h('li', String(w)); })) : null,
+        h('div.btn-row', writeBtn('', 'org-setup', {}, 'Create / sync job',
+          'Click again: register ' + String(d.job || 'the job') + ' in qbx_core', 'rotate')),
+        orgAnswer('setup'))),
+      card('Rename', frag(
+        h('p.about', 'The label players see; never the job name members hold in qbx_core.'),
+        h('div.toolbar', field('org.label', { class: 'is-grow', value: String(d.label || ''), maxlength: '64',
+          'aria-label': 'Organisation label' }),
+          writeBtn('', 'org-rename', {}, 'Rename', 'Click again to rename', 'pen')),
+        orgAnswer('rename'))),
+      card('Boss menu', frag(
+        h('p.about', 'What each tab of the phone\'s Organisation tab is called, and the roles a tab is hidden from.'),
+        h('div.table-wrap', h('table.grid',
+          h('thead', h('tr', h('th', 'Tab'), h('th', 'Label'), h('th', 'Hidden from'))),
+          h('tbody', ORG_TABS.map(function (tab) {
+            var hidden = (layout.hidden && layout.hidden[tab]) || asList((saved.hidden || {})[tab]).map(String);
+            return h('tr', h('td.mono', tab),
+              h('td', field('org.tab.' + tab, { class: 'is-mid', maxlength: '24',
+                value: String(((saved.labels || {})[tab]) || ''), placeholder: tab, 'aria-label': 'Label of ' + tab })),
+              h('td', h('div.chips', asList(d.roles).map(function (r) {
+                var on = hidden.indexOf(String(r.grade)) !== -1;
+                return h('button.chip.is-link' + (on ? '.is-warn' : ''), { type: 'button', 'data-act': 'org-tab-hide',
+                  'data-value': tab, 'data-id': String(r.grade), 'aria-pressed': on ? 'true' : 'false' },
+                  roleName(d, r.grade));
+              }))));
+          })))),
+        h('div.btn-row', writeBtn('', 'org-layout', {}, 'Save the boss menu', 'Click again: save the boss menu', 'check')),
+        orgAnswer('layout'))),
+      card('Settings', rows.length ? h('div.stack', rows.map(settingRow))
+        : (S.settings.data ? empty('No organisation settings.') : loading('Reading the settings…'))));
+  }
+
+  /* -- Roles & pay -- */
+
+  function orgRolesBody(d) {
+    var roles = asList(d.roles);
+    var sel = S.org.role != null ? roles.filter(function (r) { return Number(r.grade) === Number(S.org.role); })[0] : null;
+    return frag(
+      card('Roles', roles.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th.num', 'Grade'), h('th', 'Name'), h('th', 'Label'), h('th.num', 'Pay ($ per cycle)'),
+          h('th', 'Boss'), h('th.num', 'Members'), h('th', ''))),
+        h('tbody', roles.map(function (r) {
+          return h('tr' + (sel && Number(sel.grade) === Number(r.grade) ? '.is-open' : ''),
+            h('td.num', num(r.grade)), h('td.mono', String(r.name || '—')), h('td', String(r.label || '—'),
+              r.locked ? h('span.chip.is-warn', 'locked') : null),
+            h('td.num', money(r.pay)), h('td', r.boss ? h('span.chip.is-panel', 'boss') : '—'),
+            h('td.num', num(r.members)),
+            h('td', btn('.is-small.is-ghost', 'org-role-open', { 'data-id': String(r.grade) }, 'Edit & powers', 'pen')));
+        })))) : empty('No roles yet. Add one below.'), '', h('span.sub', num(roles.length))),
+      sel ? orgRoleCard(d, sel) : null,
+      card('Add a role', frag(
+        h('div.toolbar',
+          field('org.new.grade', { class: 'is-short', inputmode: 'numeric', placeholder: 'Grade', 'aria-label': 'Grade' }),
+          field('org.new.name', { class: 'is-mid', maxlength: '64', placeholder: 'name (job grade)', 'aria-label': 'Name' }),
+          field('org.new.label', { class: 'is-mid', maxlength: '64', placeholder: 'Label', 'aria-label': 'Label' }),
+          field('org.new.pay', { class: 'is-short', inputmode: 'numeric', placeholder: '$ pay', 'aria-label': 'Pay' }),
+          segmented('org-new-boss', [{ value: 'no', label: 'Not boss' }, { value: 'yes', label: 'Boss' }],
+            S.org.newBoss ? 'yes' : 'no'),
+          writeBtn('.is-primary', 'org-role-add', {}, 'Add role', 'Click again to add', 'plus')),
+        orgAnswer('role-add'))));
+  }
+
+  function orgRoleCard(d, r) {
+    var g = String(r.grade);
+    var ceiling = (d.ceiling && d.ceiling.role && d.ceiling.role[g]) || {};
+    var powers = r.powers || {};
+    var codes = [{ code: 'TAKE', area: 'contracts', label: 'Take contracts', about: 'May accept contracts, when only '
+      + 'roles given it may (Config.Organisation.AcceptNeedsPower).' }].concat(asList(d.powers));
+    return card('Role: ' + roleName(d, r.grade), frag(
+      h('div.toolbar',
+        h('label.st-pair', h('span', 'Name'), field('org.role.' + g + '.name', { class: 'is-mid', value: String(r.name || ''),
+          maxlength: '64', 'aria-label': 'Name' })),
+        h('label.st-pair', h('span', 'Label'), field('org.role.' + g + '.label', { class: 'is-mid',
+          value: String(r.label || ''), maxlength: '64', 'aria-label': 'Label' })),
+        h('label.st-pair', h('span', 'Pay $'), field('org.role.' + g + '.pay', { class: 'is-short', inputmode: 'numeric',
+          value: String(r.pay == null ? '' : r.pay), 'aria-label': 'Pay' })),
+        h('label.st-pair', h('span', 'Grade'), field('org.role.' + g + '.grade', { class: 'is-short', inputmode: 'numeric',
+          value: g, 'aria-label': 'Grade (order)' }))),
+      h('div.toolbar',
+        segmented('org-role-boss', [{ value: 'no', label: 'Not boss' }, { value: 'yes', label: 'Boss' }],
+          (S.org.staged['boss:' + g] != null ? S.org.staged['boss:' + g] : !!r.boss) ? 'yes' : 'no', { 'data-id': g }),
+        segmented('org-role-lock', [{ value: 'no', label: 'Bosses may edit' }, { value: 'yes', label: 'Locked' }],
+          (S.org.staged['lock:' + g] != null ? S.org.staged['lock:' + g] : !!r.locked) ? 'yes' : 'no', { 'data-id': g }),
+        writeBtn('.is-primary', 'org-role-save', { 'data-id': g }, 'Save role', 'Click again to save', 'check'),
+        writeBtn('.is-danger', 'org-role-remove', { 'data-id': g, disabled: Number(r.members) > 0 || null,
+          title: Number(r.members) > 0 ? 'A role cannot be removed while it holds members' : null },
+          'Remove role', 'Click again: remove ' + roleName(d, r.grade), 'trash-can')),
+      Number(r.members) > 0 ? h('p.note', 'A role cannot be removed while it holds members.') : null,
+      orgAnswer('role:' + g),
+      h('h3.st-group-title', 'Powers of this role'),
+      h('p.hint', 'What members holding this role may use. A boss reaches a power only once Boss permissions allows it '
+        + 'for the role (or them); greyed rows are above that ceiling. Staff may set any.'),
+      h('div.table-wrap', h('table.grid.org-powers',
+        h('tbody', codes.map(function (p) {
+          var on = !!powers[p.code];
+          var above = p.code !== 'TAKE' && ceiling[p.code] !== 'allow';
+          return h('tr' + (above ? '.is-dim' : ''),
+            h('td', h('b', String(p.label)), h('span.sub', ' ' + String(AREA_NAMES[p.area] || p.area || ''))),
+            h('td.detail', String(p.about || '')),
+            h('td', above ? h('span.chip', 'above the ceiling') : h('span.chip.is-panel', 'within the ceiling')),
+            h('td', writeBtn('.is-small' + (on ? '.is-primary' : ''), 'org-role-power', { 'data-id': g,
+              'data-power': p.code, 'data-value': on ? 'off' : 'on' }, on ? 'Given' : 'Not given',
+              on ? 'Click again: take ' + p.label + ' from ' + roleName(d, r.grade)
+                : 'Click again: give ' + p.label + ' to ' + roleName(d, r.grade), on ? 'check' : 'plus')));
+        })))),
+      orgAnswer('power:' + g)), '.is-identity');
+  }
+
+  /* -- Members -- */
+
+  function orgMembersBody(d) {
+    var members = asList(d.members);
+    var sel = S.org.member ? memberOf(d, S.org.member) : null;
+    var player = hasPlayer() ? (S.players.data.player || {}) : null;
+    var hireGrade = S.org.hire != null ? S.org.hire : (asList(d.roles).length ? String(asList(d.roles)[asList(d.roles).length - 1].grade) : '');
+    return frag(
+      card('Hire', frag(
+        h('p.about', player ? 'Hire the player selected in Players, ' + String(player.name || 'them') + ', into a role.'
+          : 'Look a player up in Players first (the header\'s Player chip), or give their exact citizen id.'),
+        h('div.toolbar',
+          player ? h('span.chip.is-live', icon('user'), ' ', String(player.name || 'No name on record'))
+            : field('org.hire.cid', { class: 'is-mid', placeholder: 'Exact citizen id', maxlength: '64',
+              'aria-label': 'Citizen id' }),
+          h('span.sub', 'as'),
+          h('div.seg', { role: 'group' }, asList(d.roles).map(function (r) {
+            var on = String(r.grade) === String(hireGrade);
+            return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'org-hire-grade',
+              'data-value': String(r.grade), 'aria-pressed': on ? 'true' : 'false' }, roleName(d, r.grade));
+          })),
+          writeBtn('.is-primary', 'org-hire', {}, 'Hire', 'Click again to hire', 'user-plus')),
+        orgAnswer('hire'))),
+      card('Members', members.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Name'), h('th', 'Role'), h('th', 'In the city'), h('th', 'Joined'), h('th', 'Last seen'),
+          h('th', 'Flags'), h('th', ''))),
+        h('tbody', members.map(function (m) {
+          var suspended = m.suspendedUntil && Number(m.suspendedUntil) > nowSeconds();
+          return h('tr' + (sel && sel.ref === m.ref ? '.is-open' : ''),
+            h('td.name', String(m.name || '—')), h('td', String(m.role || roleName(d, m.grade))),
+            h('td', m.online ? h('span.chip.is-live', 'yes') : 'no'),
+            h('td.nowrap', m.joined ? ago(m.joined) : '—'), h('td.nowrap', m.lastSeen ? ago(m.lastSeen) : '—'),
+            h('td', m.boss ? h('span.chip.is-panel', 'boss') : null, m.locked ? h('span.chip.is-warn', 'locked') : null,
+              suspended ? h('span.chip.is-warn', 'suspended') : null,
+              Object.keys(m.grants || {}).length ? h('span.chip', num(Object.keys(m.grants).length) + ' granted') : null,
+              Object.keys(m.denies || {}).length ? h('span.chip', num(Object.keys(m.denies).length) + ' denied') : null),
+            h('td', btn('.is-small.is-ghost', 'org-member-open', { 'data-id': String(m.ref) }, 'Manage', 'pen')));
+        })))) : empty('Nobody is a member yet. Hire somebody above.'), '', h('span.sub', num(members.length))),
+      sel ? orgMemberCard(d, sel) : null);
+  }
+
+  function orgMemberCard(d, m) {
+    var ref = String(m.ref);
+    var name = String(m.name || 'them');
+    var grants = m.grants || {}, denies = m.denies || {};
+    var held = Object.keys(m.held || {});
+    var roleSel = S.org.staged['role:' + ref] != null ? S.org.staged['role:' + ref] : String(m.grade);
+    var power = S.org.staged['power:' + ref] || (asList(d.powers)[0] || {}).code || 'M1';
+    var state = S.org.staged['state:' + ref] || 'grant';
+    var limits = m.limits || {};
+    return card('Member: ' + name, frag(
+      h('dl.facts',
+        h('dt', 'Role'), h('dd', roleName(d, m.grade)),
+        h('dt', 'Holds now'), h('dd', held.length ? held.map(function (c) { return powerName(d, c); }).join(', ') : 'nothing'),
+        h('dt', 'Own grants'), h('dd', Object.keys(grants).length ? Object.keys(grants).map(function (c) {
+          return powerName(d, c) + (grants[c].inactive ? ' (inactive: ' + String(grants[c].inactive) + ')' : '')
+            + ' by ' + String(grants[c].by);
+        }).join(', ') : 'none'),
+        h('dt', 'Own denies'), h('dd', Object.keys(denies).length ? Object.keys(denies).map(function (c) {
+          return powerName(d, c) + ' by ' + String(denies[c]);
+        }).join(', ') : 'none'),
+        h('dt', 'Limits'), h('dd', (limits.maxAtOnce ? num(limits.maxAtOnce) + ' at once' : 'server\'s at once') + ' · '
+          + (limits.cooldownMinutes != null ? num(limits.cooldownMinutes) + ' min between accepts' : 'server\'s cooldown')),
+        m.suspendedUntil ? h('dt', 'Suspended until') : null, m.suspendedUntil ? h('dd', when(m.suspendedUntil)) : null),
+      h('h3.st-group-title', 'Role'),
+      h('div.toolbar',
+        h('div.seg', { role: 'group' }, asList(d.roles).map(function (r) {
+          var on = String(r.grade) === String(roleSel);
+          return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'org-member-grade',
+            'data-id': ref, 'data-value': String(r.grade) }, roleName(d, r.grade));
+        })),
+        writeBtn('', 'org-member-role', { 'data-id': ref }, 'Set role', 'Click again to set', 'id-badge')),
+      orgAnswer('role-of:' + ref),
+      h('h3.st-group-title', 'Suspend from contracts'),
+      h('div.toolbar',
+        field('org.m.' + ref + '.hours', { class: 'is-short', inputmode: 'numeric', placeholder: 'Hours (0 lifts)',
+          'aria-label': 'Hours' }),
+        field('org.m.' + ref + '.sreason', { class: 'is-grow', maxlength: '160', placeholder: 'Reason (kept in the log)',
+          'aria-label': 'Reason' }),
+        writeBtn('', 'org-member-suspend', { 'data-id': ref }, 'Suspend', 'Click again to suspend', 'ban')),
+      orgAnswer('suspend:' + ref),
+      h('h3.st-group-title', 'Own limits'),
+      h('div.toolbar',
+        h('label.st-pair', h('span', 'At once'), field('org.m.' + ref + '.at', { class: 'is-short', inputmode: 'numeric',
+          value: limits.maxAtOnce == null ? '' : String(limits.maxAtOnce), placeholder: '1-50', 'aria-label': 'At once' })),
+        h('label.st-pair', h('span', 'Cooldown (min)'), field('org.m.' + ref + '.cd', { class: 'is-short',
+          inputmode: 'numeric', value: limits.cooldownMinutes == null ? '' : String(limits.cooldownMinutes),
+          placeholder: '0-10080', 'aria-label': 'Cooldown minutes' })),
+        writeBtn('', 'org-member-limits', { 'data-id': ref }, 'Save limits', 'Click again to save', 'check')),
+      orgAnswer('limits:' + ref),
+      h('h3.st-group-title', 'A power of their own'),
+      h('div.toolbar',
+        dropdown('org-mpower:' + ref),
+        segmented('org-member-state', [{ value: 'grant', label: 'Grant' }, { value: 'deny', label: 'Deny' },
+          { value: 'clear', label: 'Clear' }], state, { 'data-id': ref }),
+        writeBtn('', 'org-member-grant', { 'data-id': ref, 'data-power': power }, 'Save', 'Click again to save', 'key')),
+      orgAnswer('grant:' + ref),
+      h('h3.st-group-title', 'Codename and lock'),
+      h('div.toolbar',
+        field('org.m.' + ref + '.codename', { class: 'is-mid', maxlength: '32', placeholder: 'Codename (empty clears)',
+          'aria-label': 'Codename' }),
+        writeBtn('', 'org-member-codename', { 'data-id': ref }, 'Save codename', 'Click again to save', 'mask'),
+        writeBtn('', 'org-member-lock', { 'data-id': ref, 'data-value': m.locked ? 'off' : 'on' },
+          m.locked ? 'Unlock' : 'Lock against boss edits',
+          m.locked ? 'Click again: let bosses edit ' + name : 'Click again: lock ' + name, m.locked ? 'unlock' : 'lock')),
+      orgAnswer('staff:' + ref),
+      h('h3.st-group-title', 'Fire'),
+      h('div.toolbar',
+        field('org.m.' + ref + '.freason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason (kept in the log)',
+          'aria-label': 'Reason for firing' }),
+        writeBtn('.is-danger', 'org-member-fire', { 'data-id': ref }, 'Fire', 'Click again: fire ' + name, 'user-minus')),
+      orgAnswer('fire:' + ref)), '.is-identity');
+  }
+
+  DD['org-mpower'] = {
+    prefix: 'Power',
+    options: function () {
+      var d = S.org.data || {};
+      return [{ value: 'TAKE', label: 'Take contracts' }].concat(asList(d.powers).map(function (p) {
+        return { value: p.code, label: String(p.label) };
+      }));
+    },
+    value: function (ref) {
+      var d = S.org.data || {};
+      return S.org.staged['power:' + ref] || (asList(d.powers)[0] || {}).code || 'M1';
+    },
+    pick: function (v, ref) { disarm(); S.org.staged['power:' + ref] = v; drawOrg(); }
+  };
+
+  /* -- Applications -- */
+
+  function orgAppsBody(d) {
+    var apps = asList(d.applications);
+    return card('Applications', apps.length ? h('div.stack', apps.map(function (a) {
+      var id = String(a.id);
+      return h('article.card.org-app',
+        h('header.card-head', h('h3', String(a.name || 'Applicant')), h('span.sub', a.at ? ago(a.at) : '')),
+        h('p.al-text', String(a.body || '')),
+        h('div.btn-row',
+          writeBtn('.is-primary', 'org-app', { 'data-id': id, 'data-value': 'yes' }, 'Accept',
+            'Click again: hire ' + String(a.name || 'them') + ' into the lowest role', 'check'),
+          writeBtn('.is-danger', 'org-app', { 'data-id': id, 'data-value': 'no' }, 'Reject',
+            'Click again: reject ' + String(a.name || 'them'), 'xmark')),
+        orgAnswer('app:' + id));
+    })) : empty('No open applications. Players apply from the app (at a sign-up spot, when that is the rule).'),
+    '', h('span.sub', num(apps.length)));
+  }
+
+  /* -- Funds & cuts -- */
+
+  function loadOrgFunds() {
+    return ask('orgFunds', { limit: 50 }, 'orgFunds').then(function (reply) {
+      if (!reply) return;
+      if (reply.ok) { S.org.funds = reply.data || {}; S.org.fundsError = null; }
+      else S.org.fundsError = words(reply);
+      drawOrg();
+    });
+  }
+
+  function orgNonce() {
+    if (!S.org.nonce) S.org.nonce = 'n' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+    return S.org.nonce;
+  }
+
+  function orgFundsBody(d) {
+    var f = S.org.funds;
+    var cuts = d.cuts || {};
+    var lim = d.limits || {};
+    var cap = Number(lim.TotalCutCapPercent) || 0;
+    var dir = S.org.dir;
+    var byMember = Object.keys(cuts.byMember || {}).length;
+    function cutRow(kind, label, value, bossMax) {
+      return h('tr', h('td', label), h('td.num', value == null || value === false ? '—' : num(value) + '%'),
+        h('td.num', '0–' + num(cap) + '%'), h('td.num', bossMax == null ? '—' : '0–' + num(bossMax) + '%'),
+        h('td', h('div.inline-form', field('org.cut.' + kind, { class: 'is-short', inputmode: 'numeric', placeholder: '%',
+          'aria-label': label + ' (percent)' }),
+          writeBtn('.is-small', 'org-cut', { 'data-value': kind }, 'Save', 'Click again to save', 'check'))));
+    }
+    return frag(
+      h('div.tiles',
+        tile('Balance', frag(h('p.big', fundsReady(d, f) ? money(f ? f.balance : d.balance) : 'Unknown'),
+          h('p.sub', fundsReady(d, f) ? (fundsBackend(d, f) === 'bank' ? 'Renewed-Banking society account'
+            : 'this resource\'s own ledger') : 'the bank is not answering: the balance cannot be read')),
+          fundsReady(d, f) ? '' : '.is-warn')),
+      fundsBackendCard(d, f),
+      card('Move money', frag(
+        h('p.about', 'Staff money into the funds or out of them, or a bonus from the funds to a member, with a reason. '
+          + 'Sent once however often it is clicked: a retry after no answer is the same movement.'),
+        h('div.toolbar',
+          segmented('org-dir', [{ value: 'deposit', label: 'Deposit' }, { value: 'withdraw', label: 'Withdraw' },
+            { value: 'bonus', label: 'Bonus to a member' }], dir),
+          dir === 'bonus' ? dropdown('org-bonus-to') : null),
+        h('div.toolbar',
+          field('org.funds.amount', { class: 'is-short', inputmode: 'numeric', placeholder: '$ amount', 'aria-label': 'Amount' }),
+          field('org.funds.reason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason (kept in the log)',
+            'aria-label': 'Reason' }),
+          writeBtn('.is-primary', 'org-funds', {}, dir === 'deposit' ? 'Deposit' : dir === 'withdraw' ? 'Withdraw' : 'Pay bonus',
+            'Click again', dir === 'withdraw' ? 'arrow-up-from-bracket' : 'arrow-down-to-bracket')),
+        orgAnswer('funds'))),
+      card('Cuts', frag(
+        h('p.about', 'The share of what a member is paid that goes to the funds, frozen onto a contract when the member '
+          + 'accepts it: a change never touches money already promised. Staff may set any cut up to the cap on all cuts '
+          + 'of one payout (' + num(cap) + '%); a boss only within the limits in Boss permissions. 0 is always allowed.'),
+        h('div.table-wrap', h('table.grid',
+          h('thead', h('tr', h('th', 'Cut'), h('th.num', 'Now'), h('th.num', 'Staff may set'), h('th.num', 'A boss may set'),
+            h('th', ''))),
+          h('tbody',
+            cutRow('payout', 'Organisation cut of payouts', cuts.payout, Math.min(cap, Number(lim.CutMaxPercent) || 0)),
+            cutRow('stake', 'Cut on stakes', cuts.stake, Math.min(cap, Number(lim.StakeCutMaxPercent) || 0)),
+            cutRow('buyout', 'Cut on buyouts', cuts.buyout, Math.min(cap, Number(lim.BuyoutCutMaxPercent) || 0)),
+            asList(d.roles).map(function (r) {
+              var v = (cuts.byRole || {})[String(r.grade)];
+              return h('tr', h('td', 'Role: ' + roleName(d, r.grade)), h('td.num', v == null ? 'as the organisation' : num(v) + '%'),
+                h('td.num', '0–' + num(cap) + '%'), h('td.num', '0–' + num(Math.min(cap, Number(lim.CutMaxPercent) || 0)) + '%'),
+                h('td', h('div.inline-form', field('org.cut.role.' + r.grade, { class: 'is-short', inputmode: 'numeric',
+                  placeholder: '%', 'aria-label': 'Cut for ' + roleName(d, r.grade) }),
+                  writeBtn('.is-small', 'org-cut', { 'data-value': 'role', 'data-id': String(r.grade) }, 'Save',
+                    'Click again to save', 'check'),
+                  v == null ? null : writeBtn('.is-small.is-ghost', 'org-cut-clear', { 'data-id': String(r.grade) },
+                    'Clear', 'Click again: ' + roleName(d, r.grade) + ' as the organisation', 'eraser'))));
+            })))),
+        byMember ? h('p.note', num(byMember) + ' member' + (byMember === 1 ? ' has a cut' : 's have cuts')
+          + ' of their own.') : null,
+        orgAnswer('cut'))),
+      card('Ledger', f ? (asList(f.rows).length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'When'), h('th', 'Kind'), h('th.num', 'Amount'), h('th', 'Reason'), h('th', 'Contract'),
+          canIdentify() ? h('th', 'By') : null)),
+        h('tbody', asList(f.rows).map(function (r) {
+          return h('tr', h('td.nowrap', when(r.at)), h('td', String(r.kind || '—')), h('td.num', money(r.amount)),
+            h('td', String(r.reason || '—')),
+            h('td', r.contract ? h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': String(r.contract) },
+              String(r.contract)) : '—'),
+            canIdentify() ? h('td.mono', String(r.actor || '—')) : null);
+        })))) : empty('Nothing has moved yet.'))
+        : (S.org.fundsError ? empty(S.org.fundsError) : loading('Reading the ledger…')), '',
+        btn('.is-small.is-ghost', 'org-funds-refresh', {}, 'Refresh', 'rotate')));
+  }
+
+  /** Where the funds are kept, as orgFunds (or orgGet) says: 'internal' or 'bank'. */
+  function fundsBackend(d, f) {
+    var b = (f && f.backend) || d.fundsBackend;
+    if (b) return String(b);
+    return (f ? f.bank : d.bank) ? 'bank' : 'internal';
+  }
+  /** Whether the funds can be read now (false while the bank is down). */
+  function fundsReady(d, f) {
+    var r = f && f.ready !== undefined ? f.ready : d.fundsReady;
+    return r !== false;
+  }
+
+  /** Switch the funds between this resource's ledger and Renewed-Banking. */
+  function fundsBackendCard(d, f) {
+    var now = fundsBackend(d, f);
+    var ready = fundsReady(d, f);
+    var other = now === 'bank' ? 'internal' : 'bank';
+    var otherName = other === 'bank' ? 'Renewed-Banking' : 'this resource\'s own ledger';
+    return card('Where the funds are kept', frag(
+      h('p.about', 'Now: ' + (now === 'bank' ? 'Renewed-Banking\'s society account' : 'this resource\'s own ledger')
+        + (ready ? '.' : ', which is not answering.') + ' Switching moves the balance to the other, on the record.'),
+      h('div.btn-row', writeBtn('', 'org-backend', { 'data-value': other }, 'Switch to ' + otherName,
+        'Click again: move the funds to ' + otherName, 'right-left')),
+      !ready ? h('div.org-abandon',
+        h('p.note.is-error', 'The bank is down. Abandon leaves it carrying nothing: the funds start again from $0 in '
+          + otherName + ', and whatever the bank holds is not moved or counted. Only do this if the bank will not '
+          + 'come back.'),
+        h('div.btn-row', writeBtn('.is-danger', 'org-backend', { 'data-value': other, 'data-how': 'abandon' },
+          'Abandon the bank', 'Click again: abandon the bank, start from $0 in ' + otherName, 'triangle-exclamation')))
+        : null,
+      orgAnswer('backend')), ready ? '' : '.is-warn');
+  }
+
+  /* -- Contract access -- */
+
+  function orgAccessBody(d) {
+    var access = d.access || {};
+    return frag(
+      card('Which contracts each role may take', frag(
+        h('p.about', 'Only ever stricter than the server\'s own rules, which still apply first. Empty is no rule of the '
+          + 'organisation\'s own.'),
+        h('div.org-access', asList(d.roles).map(function (r) {
+          var g = String(r.grade);
+          var a = access[g] || {};
+          var rule = S.org.staged['rule:' + g] != null ? S.org.staged['rule:' + g] : (a.rule || '');
+          var wl = S.org.staged['wl:' + g] != null ? S.org.staged['wl:' + g] : (a.whitelisted === false ? 'no' : 'yes');
+          return h('div.org-access-role',
+            h('b', roleName(d, g)),
+            h('div.toolbar',
+              h('label.st-pair', h('span', 'Most reward ($)'), field('org.acc.' + g + '.max', { class: 'is-short',
+                inputmode: 'numeric', value: a.maxReward == null ? '' : String(a.maxReward), 'aria-label': 'Most reward' })),
+              h('label.st-pair', h('span', 'At once'), field('org.acc.' + g + '.at', { class: 'is-short',
+                inputmode: 'numeric', value: a.maxAtOnce == null ? '' : String(a.maxAtOnce), 'aria-label': 'At once' })),
+              h('label.st-pair', h('span', 'Cooldown (min)'), field('org.acc.' + g + '.cd', { class: 'is-short',
+                inputmode: 'numeric', value: a.cooldownMinutes == null ? '' : String(a.cooldownMinutes),
+                'aria-label': 'Cooldown' }))),
+            h('div.toolbar',
+              segmented('org-acc-rule', [{ value: '', label: 'Any rule' }, { value: 'alive', label: 'Alive only' },
+                { value: 'either', label: 'Kill or alive' }], rule, { 'data-id': g }),
+              segmented('org-acc-wl', [{ value: 'yes', label: 'Whitelisted-job targets allowed' },
+                { value: 'no', label: 'Not on whitelisted jobs' }], wl, { 'data-id': g }),
+              writeBtn('.is-small', 'org-access', { 'data-id': g }, 'Save', 'Click again: save for ' + roleName(d, g),
+                'check')));
+        })),
+        orgAnswer('access'))),
+      card('Boss pick', frag(
+        h('p.about', 'Pin a contract to a member on their board, as a boss would; Nobody clears the pick.'),
+        h('div.toolbar',
+          field('org.pick.id', { class: 'is-mid', maxlength: '64', placeholder: 'Contract id', 'aria-label': 'Contract id' }),
+          dropdown('org-pick-to'),
+          writeBtn('', 'org-pick', {}, 'Pick', 'Click again', 'thumbtack')),
+        orgAnswer('pick'))));
+  }
+
+  /** A member to pick from a list, drawn as a dropdown (a roster can be long). */
+  function memberOptions(first) {
+    return [{ value: '', label: first }].concat(asList((S.org.data || {}).members).map(function (m) {
+      return { value: String(m.ref), label: String(m.name || '—') };
+    }));
+  }
+  DD['org-pick-to'] = {
+    prefix: 'Member',
+    options: function () { return memberOptions('Nobody (clear the pick)'); },
+    value: function () { return S.org.staged.pick || ''; },
+    pick: function (v) { disarm(); S.org.staged.pick = v; drawOrg(); }
+  };
+  DD['org-bonus-to'] = {
+    prefix: 'To',
+    options: function () { return memberOptions('Pick a member'); },
+    value: function () { return S.org.bonusTo || ''; },
+    pick: function (v) { disarm(); S.org.bonusTo = v; drawOrg(); }
+  };
+
+  /* -- Notices -- */
+
+  function orgNoticesBody(d) {
+    var n = d.notice;
+    var text = n && typeof n === 'object' ? n.text : null;
+    return card('The board notice', frag(
+      text ? h('blockquote.org-notice', String(text)) : empty('No notice posted.'),
+      n && n.at ? h('p.sub', 'Posted ' + ago(n.at)) : null,
+      h('div.toolbar',
+        field('org.notice', { class: 'is-grow', maxlength: String((d.limits || {}).NoticeMaxLength || 2000),
+          placeholder: 'New notice', 'aria-label': 'Notice' })),
+      h('div.toolbar',
+        segmented('org-broadcast', [{ value: 'no', label: 'On the board' }, { value: 'yes', label: 'And message every member' }],
+          S.org.staged.broadcast ? 'yes' : 'no'),
+        writeBtn('.is-primary', 'org-notice', {}, 'Post', 'Click again to post', 'thumbtack'),
+        text ? writeBtn('.is-ghost', 'org-notice-clear', {}, 'Take it down', 'Click again: take the notice down', 'eraser')
+          : null),
+      orgAnswer('notice')));
+  }
+
+  /* -- Org audit -- */
+
+  function loadOrgAudit(action) {
+    var data = { limit: 100 };
+    if (action) data.action = action;
+    return ask('orgAudit', data, 'orgAudit').then(function (reply) {
+      if (!reply) return;
+      var rows = reply.ok ? asList((reply.data || {}).rows) : null;
+      if (action === 'org_grant') {
+        S.org.history = rows;
+        S.org.historyError = reply.ok ? null : words(reply);
+      } else {
+        S.org.audit = rows;
+        S.org.auditError = reply.ok ? null : words(reply);
+      }
+      drawOrg();
+    });
+  }
+
+  DD['org-audit'] = {
+    prefix: 'Action',
+    options: function () {
+      return [{ value: '', label: 'Every action' }].concat(ORG_ACTIONS.map(function (a) {
+        return { value: a, label: a.replace(/^org_/, '').replace(/_/g, ' ') };
+      }));
+    },
+    value: function () { return S.org.auditAction; },
+    pick: function (v) { S.org.auditAction = v; S.org.audit = null; drawOrg(); loadOrgAudit(v); }
+  };
+
+  function auditTable(rows) {
+    return h('div.table-wrap', h('table.grid.is-log',
+      h('thead', h('tr', h('th', 'When'), h('th', 'Action'), h('th', 'By'), h('th', 'Detail'))),
+      h('tbody', rows.map(function (r) {
+        return h('tr', h('td.nowrap', when(r.ts)), h('td.mono', String(r.action || '').replace(/^org_/, '')),
+          h('td', String(r.by || '—')), h('td.detail', detailText(r.detail)));
+      }))));
+  }
+
+  function orgAuditBody() {
+    var rows = S.org.audit;
+    return frag(
+      h('div.toolbar', dropdown('org-audit'), btn('.is-ghost', 'org-audit-refresh', {}, 'Refresh', 'rotate')),
+      card('Every boss and staff action on the organisation', rows ? (rows.length ? auditTable(rows)
+        : empty('Nothing on the record yet.')) : (S.org.auditError ? empty(S.org.auditError) : loading('Reading the log…'))));
+  }
+
+  /* -- Boss permissions: the matrix -- */
+
+  function bpColumns(d) {
+    var cols = [];
+    asList(d.roles).forEach(function (r) {
+      if (r.boss) cols.push({ key: 'role:' + r.grade, subject: 'role', id: Number(r.grade), label: roleName(d, r.grade) });
+    });
+    var cm = (d.ceiling && d.ceiling.member) || {};
+    var seen = {};
+    Object.keys(cm).concat(S.org.bp.cols).forEach(function (ref) {
+      if (seen[ref]) return;
+      seen[ref] = true;
+      var m = memberOf(d, ref);
+      if (m) cols.push({ key: 'member:' + ref, subject: 'member', id: ref, label: String(m.name || 'member') });
+    });
+    return cols;
+  }
+  function bpSaved(d, col, code) {
+    if (col.subject === 'role') return ((d.ceiling.role || {})[String(col.id)] || {})[code] === 'allow' ? 'allow' : 'off';
+    return ((d.ceiling.member || {})[col.id] || {})[code] || 'inherit';
+  }
+  function bpState(d, col, code) {
+    var p = S.org.bp.pending[col.key + '|' + code];
+    return p || bpSaved(d, col, code);
+  }
+  var BP_WORD = { allow: 'Allow', off: 'Off', deny: 'Deny', inherit: 'Inherit role' };
+  function bpPendingList(d) {
+    var cols = bpColumns(d);
+    var out = [];
+    Object.keys(S.org.bp.pending).forEach(function (k) {
+      var at = k.lastIndexOf('|');
+      var colKey = k.slice(0, at), code = k.slice(at + 1);
+      var col = cols.filter(function (c) { return c.key === colKey; })[0];
+      if (!col) return;
+      var state = S.org.bp.pending[k];
+      out.push({ col: col, code: code, state: state,
+        text: (state === 'allow' ? '+ ' : state === 'inherit' ? '↺ ' : '− ') + powerName(d, code) + ' for '
+          + col.label + (state === 'deny' ? ' (deny)' : state === 'inherit' ? ' (inherit role)' : '') });
+    });
+    return out;
+  }
+  /** A power allowed whose staff bounds are all still config.lua's. */
+  function atDefault(d, p) {
+    var keys = asList(p.limits);
+    if (!keys.length || !S.settings.data) return false;
+    return keys.every(function (k) {
+      var e = settingEntry('Organisation.Limits.' + k);
+      return e && Number(e.value) === Number((d.limits || {})[k]);
+    });
+  }
+
+  DD['bp-area'] = {
+    prefix: 'Area',
+    options: function () {
+      return [{ value: '', label: 'Every area' }].concat(Object.keys(AREA_NAMES).map(function (a) {
+        return { value: a, label: AREA_NAMES[a] };
+      }));
+    },
+    value: function () { return S.org.bp.area; },
+    pick: function (v) { S.org.bp.area = v; drawOrg(); }
+  };
+  DD['bp-add'] = {
+    prefix: 'Add an individual boss',
+    options: function () {
+      var d = S.org.data || {};
+      var shown = {};
+      bpColumns(d).forEach(function (c) { shown[c.key] = true; });
+      return [{ value: '', label: 'Pick a member' }].concat(asList(d.members).filter(function (m) {
+        return !shown['member:' + m.ref];
+      }).map(function (m) { return { value: String(m.ref), label: String(m.name || '—') + ' · ' + String(m.role || '') }; }));
+    },
+    value: function () { return ''; },
+    pick: function (v) { if (v) { S.org.bp.cols.push(v); drawOrg(); } }
+  };
+  DD['bp-col'] = {
+    prefix: 'Show',
+    options: function () {
+      return [{ value: '', label: 'Every column' }].concat(bpColumns(S.org.data || {}).map(function (c) {
+        return { value: c.key, label: c.label };
+      }));
+    },
+    value: function () { return S.org.bp.col; },
+    pick: function (v) { S.org.bp.col = v; drawOrg(); }
+  };
+  DD['bp-copy'] = {
+    prefix: 'Copy from',
+    options: function (colKey) {
+      return [{ value: '', label: '…' }].concat(bpColumns(S.org.data || {}).filter(function (c) {
+        return c.key !== colKey;
+      }).map(function (c) { return { value: c.key, label: c.label }; }));
+    },
+    value: function () { return ''; },
+    pick: function (v, colKey) {
+      var d = S.org.data || {};
+      var cols = bpColumns(d);
+      var from = cols.filter(function (c) { return c.key === v; })[0];
+      var to = cols.filter(function (c) { return c.key === colKey; })[0];
+      if (!from || !to) return;
+      asList(d.powers).forEach(function (p) {
+        var src = bpState(d, from, p.code);
+        var want = to.subject === 'role' ? (src === 'allow' ? 'allow' : 'off')
+          : (from.subject === 'role' ? (src === 'allow' ? 'allow' : 'inherit') : src);
+        bpStage(d, to, p.code, want);
+      });
+      disarm();
+      drawOrg();
+    }
+  };
+
+  function bpStage(d, col, code, state) {
+    var k = col.key + '|' + code;
+    if (state === bpSaved(d, col, code)) delete S.org.bp.pending[k];
+    else S.org.bp.pending[k] = state;
+  }
+
+  function bpMatrixBody(d) {
+    var allCols = bpColumns(d);
+    var cols = S.org.bp.col ? allCols.filter(function (c) { return c.key === S.org.bp.col; }) : allCols;
+    var q = trim(S.forms['bp.q']).toLowerCase();
+    var office = d.officeStaff || {};
+    var powers = asList(d.powers).filter(function (p) {
+      if (S.org.bp.area && p.area !== S.org.bp.area) return false;
+      if (q && (String(p.label) + ' ' + String(p.about) + ' ' + p.code).toLowerCase().indexOf(q) === -1) return false;
+      if (S.org.bp.granted) {
+        return cols.some(function (c) { var st = bpState(d, c, p.code); return st === 'allow' || st === 'deny'; });
+      }
+      return true;
+    });
+    var pending = bpPendingList(d);
+    var areas = [];
+    powers.forEach(function (p) { if (areas.indexOf(p.area) === -1) areas.push(p.area); });
+    return frag(
+      h('p.hint', 'The ceiling: every power is off for every boss until it is allowed here, for a boss role or for one '
+        + 'boss. A boss\'s own column overrides their role: Allow, Deny, or Inherit role. Click cells to change them; '
+        + 'nothing is saved until Save. Staff may always do everything themselves.'),
+      h('div.toolbar',
+        dropdown('bp-area'),
+        h('label.search', icon('magnifying-glass'), field('bp.q', { placeholder: 'Find a power', 'data-live': 'bp-filter',
+          'aria-label': 'Find a power' })),
+        segmented('bp-granted', [{ value: 'all', label: 'Every power' }, { value: 'granted', label: 'Only granted' }],
+          S.org.bp.granted ? 'granted' : 'all'),
+        dropdown('bp-col'),
+        dropdown('bp-add')),
+      allCols.length ? null : h('p.note.is-warn', 'No role is marked boss, and no boss column is added: mark a role boss '
+        + 'in Roles & pay, or add an individual boss.'),
+      h('div.table-wrap.bp-wrap', h('table.grid.bp-grid',
+        h('thead',
+          h('tr', h('th', 'Power'), cols.map(function (c) {
+            return h('th.bp-col', h('span.bp-col-name', c.label), h('span.sub', c.subject === 'role' ? 'role' : 'one boss'));
+          })),
+          h('tr.bp-tools', h('th', ''), cols.map(function (c) {
+            return h('th', h('div.bp-col-tools', dropdown('bp-copy:' + c.key, '.is-small'),
+              writeBtn('.is-small.is-danger', 'bp-revoke', { 'data-id': c.key }, 'Revoke all',
+                'Click again: revoke every power from ' + c.label, 'ban')));
+          }))),
+        h('tbody', areas.map(function (area) {
+          return frag(h('tr.tl-group', h('td', { colspan: String(cols.length + 1) }, AREA_NAMES[area] || area)),
+            powers.filter(function (p) { return p.area === area; }).map(function (p) {
+              return h('tr',
+                h('td.bp-power', h('b', String(p.label)), office[p.code] ? h('span.chip.is-warn', { title: 'Needs the boss office' },
+                  icon('lock'), ' office') : null,
+                  asList(p.limits).length ? h('button.link.bp-limits-link', { type: 'button', 'data-act': 'section',
+                    'data-section': 'bplimits' }, 'Limits ▸') : null,
+                  h('span.detail', ' ' + String(p.about || ''))),
+                cols.map(function (c) {
+                  var st = bpState(d, c, p.code);
+                  var dirty = !!S.org.bp.pending[c.key + '|' + p.code];
+                  var warn = st === 'allow' && atDefault(d, p);
+                  return h('td.bp-cell',
+                    h('button.bp-btn.is-' + st + (dirty ? '.is-pending' : ''), { type: 'button', 'data-act': 'bp-cell',
+                      'data-id': c.key, 'data-power': p.code, disabled: !writesOpen() || null,
+                      title: (dirty ? 'Changed, not saved: ' : '') + BP_WORD[st] + (warn ? ' · its limit is still the '
+                        + 'default: set bounds in Limits' : ''), 'aria-label': p.label + ' for ' + c.label + ': ' + BP_WORD[st] },
+                      h('span.lbl', BP_WORD[st]), warn ? h('span.bp-warn', { 'aria-hidden': 'true' }, '⚠') : null));
+                }));
+            }));
+        })))),
+      card('Changes to save (' + num(pending.length) + ')', pending.length ? frag(
+        h('ul.plain.bp-diff', pending.map(function (x) { return h('li', x.text); })),
+        h('div.btn-row',
+          writeBtn('.is-primary', 'bp-save', {}, 'Save ' + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'),
+            'Click again: save ' + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'), 'check'),
+          btn('.is-ghost', 'bp-discard', {}, 'Discard', 'xmark'))) : empty('Nothing changed yet: click a cell.'),
+        pending.length ? '.is-warn' : ''),
+      orgAnswer('bp'));
+  }
+
+  /* -- Boss permissions: limits, office and delegation, history -- */
+
+  function bpLimitsBody(d) {
+    var lim = d.limits || {};
+    var keys = Object.keys(lim).sort();
+    var usedBy = {};
+    asList(d.powers).forEach(function (p) {
+      asList(p.limits).forEach(function (k) { (usedBy[k] = usedBy[k] || []).push(String(p.label)); });
+    });
+    return frag(
+      h('p.hint', 'The bounds every boss power works within, for this organisation. config.lua\'s are the defaults '
+        + '(Config.Organisation.Limits); Reset puts one back to it.'),
+      card('Limits', h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Limit'), h('th.num', 'Now'), h('th.num', 'config.lua'), h('th', 'Used by'), h('th', ''))),
+        h('tbody', keys.map(function (k) {
+          var e = settingEntry('Organisation.Limits.' + k);
+          var label = e ? String(e.label) : k;
+          var unit = /Percent$/.test(k) ? '%' : /Minutes$/.test(k) ? ' min' : /Hours$/.test(k) ? ' h'
+            : /(Radius|Metres)$/.test(k) ? ' m' : /(Max|PerDay)$/.test(k) && /(Pay|Bonus|Withdraw)/.test(k) ? '$' : '';
+          function show(v) { return v == null ? '—' : unit === '$' ? money(v) : num(v) + unit; }
+          return h('tr', h('td', h('b', label), h('code.st-key', ' ' + k)), h('td.num', show(lim[k])),
+            h('td.num', e ? show(e.value) : '—'), h('td.detail', asList(usedBy[k]).join(', ') || '—'),
+            h('td', h('div.inline-form', field('bp.lim.' + k, { class: 'is-short', inputmode: 'decimal',
+              placeholder: String(lim[k]), 'aria-label': label }),
+              writeBtn('.is-small', 'bp-limit', { 'data-id': k }, 'Save', 'Click again to save', 'check'),
+              e && Number(e.value) !== Number(lim[k]) ? writeBtn('.is-small.is-ghost', 'bp-limit-reset', { 'data-id': k },
+                'Reset', 'Click again: back to ' + show(e.value), 'arrow-rotate-left') : null)));
+        })))), '', h('span.sub', num(keys.length))),
+      orgAnswer('limits'));
+  }
+
+  function bpOfficeBody(d) {
+    var office = d.officeStaff || {};
+    var bossOwn = d.officeBoss || {};
+    return frag(
+      card('Needs the boss office', frag(
+        h('p.about', 'Powers a boss may use only while standing in the boss office (Locations). Staff\'s list is forced: a '
+          + 'boss may add more for themselves (Office requirement), never lift one of these.'),
+        h('div.table-wrap', h('table.grid',
+          h('thead', h('tr', h('th', 'Power'), h('th', 'Staff require it'), h('th', 'A boss added it'), h('th', ''))),
+          h('tbody', asList(d.powers).map(function (p) {
+            var on = !!office[p.code];
+            return h('tr', h('td', h('b', String(p.label)), h('span.sub', ' ' + (AREA_NAMES[p.area] || p.area))),
+              h('td', on ? h('span.chip.is-warn', icon('lock'), ' office') : 'no'),
+              h('td', bossOwn[p.code] ? 'yes' : '—'),
+              h('td', writeBtn('.is-small', 'bp-office', { 'data-power': p.code, 'data-value': on ? 'off' : 'on' },
+                on ? 'Stop requiring it' : 'Require the office',
+                on ? 'Click again: ' + p.label + ' anywhere' : 'Click again: ' + p.label + ' only in the office', 'building')));
+          })))),
+        orgAnswer('office'))),
+      card('Delegation rules', h('ul.plain.bp-rules',
+        h('li', 'A boss passes on only powers they hold themselves, after this ceiling and their denies, and never with '
+          + 'wider limits than their own.'),
+        h('li', 'Rank: a boss never creates, edits or assigns a role at or above their own, or acts on a member at or above '
+          + 'it, unless given Promote to own rank, which allows equal and never above.'),
+        h('li', 'No self-escalation: a boss never changes their own role, powers or limits, or another boss of equal or '
+          + 'higher rank.'),
+        h('li', 'Revoking a power here makes every grant that boss made of it inactive, not deleted: allowing it again '
+          + 'restores them.'),
+        h('li', 'Staff may edit any role, member or grant, and lock a role or member against boss edits.'),
+        h('li', 'The organisation is never left without a member in its top boss role, except by staff.'),
+        h('li', 'Every rule is checked on the server for every request; the phone only greys out what it may not do.'))));
+  }
+
+  function bpHistoryBody() {
+    var rows = S.org.history;
+    var d = S.org.data || {};
+    return frag(
+      h('div.toolbar', btn('.is-ghost', 'bp-history-refresh', {}, 'Refresh', 'rotate')),
+      card('Grant history', rows ? (rows.length ? h('div.table-wrap', h('table.grid.is-log',
+        h('thead', h('tr', h('th', 'When'), h('th', 'By'), h('th', 'Column'), h('th', 'Power'), h('th', 'Before'),
+          h('th', 'After'), h('th', ''))),
+        h('tbody', rows.map(function (r, i) {
+          var det = r.detail || {};
+          var isRole = det.subject === 'role';
+          var undoTo = isRole ? (det.before === 'allow' ? 'allow' : 'off') : null;
+          return h('tr', h('td.nowrap', when(r.ts)), h('td', String(r.by || '—')),
+            h('td', isRole ? 'Role: ' + roleName(d, det.id) : 'One boss'),
+            h('td', powerName(d, det.power)), h('td', String(det.before || 'off')), h('td', String(det.after || 'off')),
+            h('td', isRole && det.before !== det.after ? writeBtn('.is-small.is-ghost', 'bp-undo', { 'data-index': String(i),
+              'data-id': String(det.id), 'data-power': String(det.power), 'data-value': undoTo }, 'Undo',
+              'Click again: ' + powerName(d, det.power) + ' back to ' + undoTo, 'arrow-rotate-left')
+              : (isRole ? null : h('span.sub', 'change it in the Matrix'))));
+        })))) : empty('Nothing granted or revoked yet.'))
+        : (S.org.historyError ? empty(S.org.historyError) : loading('Reading the history…'))),
+      orgAnswer('bp'));
+  }
+
+  /* -- Locations -- */
+
+  /** A spot's or a list's coordinates, as each list writes them. */
+  function fmt(n, places) { var p = Math.pow(10, places == null ? 1 : places); return String(Math.round(Number(n) * p) / p); }
+
+  function locationsBody(d) {
+    var on = orgOn();
+    var spots = asList((d || {}).spots);
+    var pos = S.org.loc.pos;
+    return frag(
+      h('p.hint', 'Every place this resource uses, by kind. Stand on the spot in game and press Use my position: the '
+        + 'server reads where you stand. Adjust, then save; every save takes two clicks.'),
+      pos ? h('p.note', 'Your position: x ' + fmt(pos.x) + ', y ' + fmt(pos.y) + ', z ' + fmt(pos.z) + ', heading '
+        + fmt(pos.heading, 0) + ' (read ' + ago(S.org.loc.posAt) + ')') : null,
+      orgAnswer('pos'),
+      h('h3.st-group-title', 'Organisation places'),
+      !d ? (S.org.error ? empty(S.org.error) : loading('Reading the organisation…'))
+        : on ? SPOT_KINDS.map(function (k) { return spotCard(k, spots.filter(function (s) { return s.kind === k.id; })); })
+        : (d.enabled && !d.loaded ? empty('The organisation is on and not read yet: Hitman organisation, Setup.')
+          : offCard('Its places (boss office, sign-up and meeting spots) are set here once it is on.')),
+      h('h3.st-group-title', 'Places in the settings'),
+      S.settings.data ? placeSettings() : loading('Reading the settings…'));
+  }
+
+  function spotCard(kind, rows) {
+    var k = kind.id;
+    var edit = S.org.loc.edit[k] || '';
+    var editing = edit ? rows.filter(function (r) { return r.id === edit; })[0] : null;
+    var blip = S.org.staged['blip:' + k] != null ? S.org.staged['blip:' + k] : (editing ? !!editing.blip : false);
+    var enabled = S.org.staged['en:' + k] != null ? S.org.staged['en:' + k] : (editing ? editing.enabled !== false : true);
+    var pre = 'loc.' + k + '.';
+    return card(frag(icon(kind.icon), ' ', kind.label), frag(
+      rows.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Name'), h('th', 'x, y, z, heading'), h('th.num', 'Radius'), h('th', 'Blip'),
+          h('th', 'On'), h('th', ''))),
+        h('tbody', rows.map(function (r) {
+          return h('tr' + (r.id === edit ? '.is-open' : ''), h('td.name', String(r.label || '—')),
+            h('td.mono', fmt(r.x) + ', ' + fmt(r.y) + ', ' + fmt(r.z) + ', ' + fmt(r.heading, 0)),
+            h('td.num', fmt(r.radius) + ' m'), h('td', r.blip ? 'yes' : 'no'), h('td', r.enabled === false ? 'off' : 'on'),
+            h('td', h('div.inline-form',
+              btn('.is-small.is-ghost', 'loc-edit', { 'data-id': String(r.id), 'data-value': k }, 'Edit', 'pen'),
+              writeBtn('.is-small.is-danger', 'loc-remove', { 'data-id': String(r.id) }, 'Remove',
+                'Click again: remove ' + String(r.label || 'it'), 'trash-can'))));
+        })))) : empty('No ' + kind.one + ' yet. Stand there in game and press Use my position.'),
+      h('div.loc-form',
+        h('p.sub', editing ? 'Editing ' + String(editing.label || kind.one) : 'Add a ' + kind.one),
+        h('div.toolbar',
+          field(pre + 'label', { class: 'is-mid', maxlength: '64', placeholder: 'Name',
+            value: editing ? String(editing.label || '') : '', 'aria-label': 'Name' }),
+          field(pre + 'x', { class: 'is-short', inputmode: 'decimal', placeholder: 'x', value: editing ? fmt(editing.x) : '',
+            'aria-label': 'x' }),
+          field(pre + 'y', { class: 'is-short', inputmode: 'decimal', placeholder: 'y', value: editing ? fmt(editing.y) : '',
+            'aria-label': 'y' }),
+          field(pre + 'z', { class: 'is-short', inputmode: 'decimal', placeholder: 'z', value: editing ? fmt(editing.z) : '',
+            'aria-label': 'z' }),
+          field(pre + 'h', { class: 'is-short', inputmode: 'decimal', placeholder: 'heading',
+            value: editing ? fmt(editing.heading, 0) : '', 'aria-label': 'Heading' }),
+          field(pre + 'r', { class: 'is-short', inputmode: 'decimal', placeholder: 'radius m',
+            value: editing ? fmt(editing.radius) : '', 'aria-label': 'Radius (m)' })),
+        h('div.toolbar',
+          segmented('loc-blip', [{ value: 'no', label: 'No blip' }, { value: 'yes', label: 'Map blip' }], blip ? 'yes' : 'no',
+            { 'data-id': k }),
+          segmented('loc-enabled', [{ value: 'yes', label: 'On' }, { value: 'no', label: 'Off' }], enabled ? 'yes' : 'no',
+            { 'data-id': k }),
+          btn('.is-small', 'loc-mypos', { 'data-value': k }, 'Use my position', 'location-crosshairs'),
+          writeBtn('.is-primary.is-small', 'loc-save', { 'data-value': k, 'data-id': edit }, 'Save', 'Click again to save',
+            'check'),
+          writeBtn('.is-small', 'loc-here', { 'data-value': k, 'data-id': edit }, 'Save where I stand',
+            'Click again: save where you stand', 'street-view'),
+          editing ? btn('.is-small.is-ghost', 'loc-new', { 'data-value': k }, 'New instead', 'plus') : null),
+        orgAnswer('loc:' + k))));
+  }
+
+  /** The lists of places that are settings, with Use my position filling a line. */
+  function placeSettings() {
+    var keys = Object.keys(PLACE_KEYS).filter(function (k) { return !!settingEntry(k); });
+    if (!keys.length) return empty('No place settings on this server.');
+    var jail = keys.filter(function (k) { return PLACE_KEYS[k] === 'jail'; });
+    return frag(keys.filter(function (k) { return PLACE_KEYS[k] !== 'jail'; }).map(function (k) {
+      var e = settingEntry(k);
+      var kind = PLACE_KEYS[k];
+      return h('div.loc-setting',
+        settingRow(e),
+        kind !== 'name' && settingOpen(e) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': k },
+          'Use my position for a new line', 'location-crosshairs')) : null);
+    }), jail.length ? h('div.loc-setting', h('h3.st-group-title', 'Prison zone'),
+      jail.map(function (k) { return settingRow(settingEntry(k)); }),
+      settingOpen(settingEntry(jail[0])) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': 'Limits.JailZone.x' },
+        'Use my position for the centre', 'location-crosshairs')) : null) : null);
+  }
+
+  /* -- the shells -- */
+
+  Object.keys(ORG_VIEWS).concat(Object.keys(BP_VIEWS), ['locations']).forEach(function (view) {
+    SHELL[view] = function () { return h('section.view', h('div.stack', { id: 'org-body' }, orgViewBody())); };
+    LOAD[view] = function () {
+      var ready = S.org.data ? Promise.resolve() : loadOrg();
+      if (!S.settings.data && (view === 'orgsetup' || view === 'locations' || view === 'bplimits' || view === 'bpmatrix')) {
+        loadSettings();
+      }
+      // The ledger and the log only of an organisation that is on.
+      ready.then(function () {
+        if (S.section !== view || !orgOn()) return;
+        if (view === 'orgfunds') loadOrgFunds();
+        if (view === 'orgaudit') loadOrgAudit(S.org.auditAction);
+        if (view === 'bphistory') loadOrgAudit('org_grant');
+      });
+    };
+  });
+
+  /* -- the clicks -- */
+
+  ACTIONS['org-setup'] = function (node) {
+    if (!armed(node)) return;
+    orgWrite('orgSetup', {}, 'setup', node);
+  };
+  ACTIONS['org-rename'] = function (node) {
+    var label = trim(S.forms['org.label']);
+    if (!label) { orgRefuse('rename', 'Give the label.'); return; }
+    if (!armed(node, 'Click again: rename to ' + label, ['org.label'])) return;
+    orgWrite('orgRename', { label: label.slice(0, 64) }, 'rename', node, function () { delete S.forms['org.label']; });
+  };
+  ACTIONS['org-tab-hide'] = function (node) {
+    var d = S.org.data || {};
+    var tab = node.getAttribute('data-value'), grade = node.getAttribute('data-id');
+    var saved = (d.layout && d.layout.hidden) || {};
+    if (!S.org.layout) S.org.layout = { hidden: {} };
+    var list = S.org.layout.hidden[tab] || asList(saved[tab]).map(String);
+    var at = list.indexOf(grade);
+    if (at === -1) list = list.concat([grade]); else list = list.filter(function (g) { return g !== grade; });
+    S.org.layout.hidden[tab] = list;
+    disarm();
+    drawOrg();
+  };
+  ACTIONS['org-layout'] = function (node) {
+    var d = S.org.data || {};
+    var saved = d.layout || {};
+    var labels = {}, hidden = {};
+    var bad = null;
+    ORG_TABS.forEach(function (tab) {
+      var typed = S.forms['org.tab.' + tab];
+      var text = trim(typed === undefined ? ((saved.labels || {})[tab] || '') : typed);
+      if (text) {
+        if (text.length > 24) bad = 'A tab label is at most 24 characters.';
+        labels[tab] = text;
+      }
+      var list = (S.org.layout && S.org.layout.hidden[tab]) || asList((saved.hidden || {})[tab]).map(String);
+      if (list.length) hidden[tab] = list.map(Number);
+    });
+    if (bad) { orgRefuse('layout', bad); return; }
+    if (!armed(node, 'Click again: save the boss menu')) return;
+    orgWrite('orgLayout', { layout: { labels: labels, hidden: hidden } }, 'layout', node, function () { S.org.layout = null; });
+  };
+
+  ACTIONS['org-role-open'] = function (node) {
+    disarm();
+    var g = node.getAttribute('data-id');
+    S.org.role = String(S.org.role) === g ? null : Number(g);
+    drawOrg();
+  };
+  ACTIONS['org-new-boss'] = function (node) { disarm(); S.org.newBoss = node.getAttribute('data-value') === 'yes'; drawOrg(); };
+  ACTIONS['org-role-boss'] = function (node) {
+    disarm();
+    S.org.staged['boss:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes';
+    drawOrg();
+  };
+  ACTIONS['org-role-lock'] = function (node) {
+    disarm();
+    S.org.staged['lock:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes';
+    drawOrg();
+  };
+  function wholeOrNull(text, lo, hi) {
+    var t = trim(text);
+    if (t === '') return null;
+    if (!/^-?\d+$/.test(t)) return false;
+    var n = Number(t);
+    return n >= lo && n <= hi ? n : false;
+  }
+  ACTIONS['org-role-add'] = function (node) {
+    var grade = wholeOrNull(S.forms['org.new.grade'], 0, 100);
+    var pay = wholeOrNull(S.forms['org.new.pay'], 0, 100000000);
+    var label = trim(S.forms['org.new.label']), name = trim(S.forms['org.new.name']);
+    if (grade === null || grade === false) { orgRefuse('role-add', 'Give the role a whole grade from 0 to 100.'); return; }
+    if (!label || !name) { orgRefuse('role-add', 'Give the role a name and a label.'); return; }
+    if (pay === false) { orgRefuse('role-add', 'Pay is a whole number of dollars.'); return; }
+    if (!armed(node, 'Click again: add ' + label + ' at grade ' + grade,
+      ['org.new.grade', 'org.new.pay', 'org.new.label', 'org.new.name'])) return;
+    var data = { grade: grade, name: name.slice(0, 64), label: label.slice(0, 64), isBoss: !!S.org.newBoss };
+    if (pay !== null) data.pay = pay;
+    orgWrite('orgRoleSet', data, 'role-add', node, function () {
+      ['org.new.grade', 'org.new.pay', 'org.new.label', 'org.new.name'].forEach(function (k) { delete S.forms[k]; });
+      S.org.newBoss = false;
+    });
+  };
+  ACTIONS['org-role-save'] = function (node) {
+    var d = S.org.data || {};
+    var g = node.getAttribute('data-id');
+    var role = asList(d.roles).filter(function (r) { return String(r.grade) === g; })[0];
+    if (!role) return;
+    var pre = 'org.role.' + g + '.';
+    var name = trim(typedOr(pre + 'name', role.name)), label = trim(typedOr(pre + 'label', role.label));
+    var pay = wholeOrNull(typedOr(pre + 'pay', role.pay == null ? '' : role.pay), 0, 100000000);
+    var newGrade = wholeOrNull(typedOr(pre + 'grade', g), 0, 100);
+    if (!name || !label) { orgRefuse('role:' + g, 'A role needs a name and a label.'); return; }
+    if (pay === false) { orgRefuse('role:' + g, 'Pay is a whole number of dollars.'); return; }
+    if (newGrade === false || newGrade === null) { orgRefuse('role:' + g, 'The grade is a whole number from 0 to 100.'); return; }
+    if (!armed(node, 'Click again: save ' + label, [pre + 'name', pre + 'label', pre + 'pay', pre + 'grade'])) return;
+    var data = { grade: Number(g), name: name.slice(0, 64), label: label.slice(0, 64) };
+    if (pay !== null) data.pay = pay;
+    if (newGrade !== Number(g)) data.newGrade = newGrade;
+    if (S.org.staged['boss:' + g] != null) data.isBoss = S.org.staged['boss:' + g];
+    if (S.org.staged['lock:' + g] != null) data.locked = S.org.staged['lock:' + g];
+    orgWrite('orgRoleSet', data, 'role:' + g, node, function () {
+      [pre + 'name', pre + 'label', pre + 'pay', pre + 'grade'].forEach(function (k) { delete S.forms[k]; });
+      delete S.org.staged['boss:' + g];
+      delete S.org.staged['lock:' + g];
+      if (data.newGrade != null) S.org.role = data.newGrade;
+    });
+  };
+  ACTIONS['org-role-remove'] = function (node) {
+    var g = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgRoleRemove', { grade: Number(g) }, 'role:' + g, node, function () { S.org.role = null; });
+  };
+  ACTIONS['org-role-power'] = function (node) {
+    var g = node.getAttribute('data-id'), code = node.getAttribute('data-power');
+    var on = node.getAttribute('data-value') === 'on';
+    if (!armed(node)) return;
+    orgWrite('orgRolePowers', { grade: Number(g), power: code, on: on }, 'power:' + g, node);
+  };
+
+  ACTIONS['org-hire-grade'] = function (node) { disarm(); S.org.hire = node.getAttribute('data-value'); drawOrg(); };
+  ACTIONS['org-hire'] = function (node) {
+    var d = S.org.data || {};
+    var roles = asList(d.roles);
+    var grade = S.org.hire != null ? S.org.hire : (roles.length ? String(roles[roles.length - 1].grade) : null);
+    if (grade == null) { orgRefuse('hire', 'Add a role first, in Roles & pay.'); return; }
+    var data = { grade: Number(grade) };
+    var who;
+    if (hasPlayer()) {
+      data.ref = S.players.ref;
+      who = String((S.players.data.player || {}).name || 'them');
+    } else {
+      var cid = trim(S.forms['org.hire.cid']);
+      if (!cid) { orgRefuse('hire', 'Look a player up in Players first, or give their exact citizen id.'); return; }
+      data.subject = cid.slice(0, 64);
+      who = cid;
+    }
+    if (!armed(node, 'Click again: hire ' + who + ' as ' + roleName(d, grade), ['org.hire.cid'])) return;
+    orgWrite('orgMemberHire', data, 'hire', node, function () { delete S.forms['org.hire.cid']; });
+  };
+  ACTIONS['org-member-open'] = function (node) {
+    disarm();
+    var ref = node.getAttribute('data-id');
+    S.org.member = S.org.member === ref ? null : ref;
+    drawOrg();
+  };
+  ACTIONS['org-member-grade'] = function (node) {
+    disarm();
+    S.org.staged['role:' + node.getAttribute('data-id')] = node.getAttribute('data-value');
+    drawOrg();
+  };
+  ACTIONS['org-member-state'] = function (node) {
+    disarm();
+    S.org.staged['state:' + node.getAttribute('data-id')] = node.getAttribute('data-value');
+    drawOrg();
+  };
+  function memberName(ref) { var m = memberOf(S.org.data || {}, ref); return m ? String(m.name || 'them') : 'them'; }
+  ACTIONS['org-member-role'] = function (node) {
+    var d = S.org.data || {};
+    var ref = node.getAttribute('data-id');
+    var m = memberOf(d, ref);
+    var grade = S.org.staged['role:' + ref] != null ? S.org.staged['role:' + ref] : (m && String(m.grade));
+    if (grade == null) return;
+    if (m && String(m.grade) === String(grade)) { orgRefuse('role-of:' + ref, 'They hold that role already: pick another.'); return; }
+    if (!armed(node, 'Click again: make ' + memberName(ref) + ' ' + roleName(d, grade))) return;
+    orgWrite('orgMemberRole', { member: ref, grade: Number(grade) }, 'role-of:' + ref, node, function () {
+      delete S.org.staged['role:' + ref];
+    });
+  };
+  ACTIONS['org-member-suspend'] = function (node) {
+    var ref = node.getAttribute('data-id');
+    var pre = 'org.m.' + ref + '.';
+    var hours = wholeOrNull(S.forms[pre + 'hours'], 0, 720);
+    if (hours === null || hours === false) { orgRefuse('suspend:' + ref, 'Hours are a whole number from 0 (lifts it) to 720.'); return; }
+    if (!armed(node, hours === 0 ? 'Click again: lift ' + memberName(ref) + '\'s suspension'
+      : 'Click again: suspend ' + memberName(ref) + ' for ' + hours + ' h', [pre + 'hours', pre + 'sreason'])) return;
+    orgWrite('orgMemberSuspend', { member: ref, hours: hours, reason: trim(S.forms[pre + 'sreason']).slice(0, 200) },
+      'suspend:' + ref, node, function () { delete S.forms[pre + 'hours']; delete S.forms[pre + 'sreason']; });
+  };
+  ACTIONS['org-member-limits'] = function (node) {
+    var ref = node.getAttribute('data-id');
+    var pre = 'org.m.' + ref + '.';
+    var m = memberOf(S.org.data || {}, ref) || {};
+    var lim = m.limits || {};
+    var at = wholeOrNull(typedOr(pre + 'at', lim.maxAtOnce == null ? '' : lim.maxAtOnce), 1, 50);
+    var cd = wholeOrNull(typedOr(pre + 'cd', lim.cooldownMinutes == null ? '' : lim.cooldownMinutes), 0, 10080);
+    if (at === false || cd === false) { orgRefuse('limits:' + ref, 'At once is 1 to 50, the cooldown 0 to 10080 minutes; empty is the server\'s.'); return; }
+    if (!armed(node, 'Click again: ' + (at == null ? 'server\'s' : at) + ' at once, '
+      + (cd == null ? 'server\'s' : cd + ' min') + ' cooldown', [pre + 'at', pre + 'cd'])) return;
+    var data = { member: ref };
+    if (at != null) data.maxAtOnce = at;
+    if (cd != null) data.cooldownMinutes = cd;
+    orgWrite('orgMemberLimits', data, 'limits:' + ref, node, function () { delete S.forms[pre + 'at']; delete S.forms[pre + 'cd']; });
+  };
+  ACTIONS['org-member-grant'] = function (node) {
+    var d = S.org.data || {};
+    var ref = node.getAttribute('data-id');
+    var power = S.org.staged['power:' + ref] || (asList(d.powers)[0] || {}).code;
+    var state = S.org.staged['state:' + ref] || 'grant';
+    if (!power) return;
+    if (!armed(node, 'Click again: ' + (state === 'clear' ? 'clear ' + powerName(d, power) + ' for '
+      : state + ' ' + powerName(d, power) + ' to ') + memberName(ref))) return;
+    orgWrite('orgMemberOverride', { member: ref, power: power, state: state }, 'grant:' + ref, node);
+  };
+  ACTIONS['org-member-codename'] = function (node) {
+    var ref = node.getAttribute('data-id');
+    var bind = 'org.m.' + ref + '.codename';
+    var text = trim(S.forms[bind]);
+    if (text.length > 32) { orgRefuse('staff:' + ref, 'A codename is at most 32 characters.'); return; }
+    if (!armed(node, text ? 'Click again: codename ' + text : 'Click again: clear the codename', [bind])) return;
+    orgWrite('orgMemberOverride', { member: ref, codename: text ? text : false }, 'staff:' + ref, node, function () {
+      delete S.forms[bind];
+    });
+  };
+  ACTIONS['org-member-lock'] = function (node) {
+    var ref = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgMemberOverride', { member: ref, locked: node.getAttribute('data-value') === 'on' }, 'staff:' + ref, node);
+  };
+  ACTIONS['org-member-fire'] = function (node) {
+    var ref = node.getAttribute('data-id');
+    var bind = 'org.m.' + ref + '.freason';
+    var reason = trim(S.forms[bind]);
+    if (!reason) { orgRefuse('fire:' + ref, 'Give a reason: it goes on the record.'); return; }
+    if (!armed(node, null, [bind])) return;
+    orgWrite('orgMemberFire', { member: ref, reason: reason.slice(0, 200) }, 'fire:' + ref, node, function () {
+      delete S.forms[bind];
+      S.org.member = null;
+    });
+  };
+
+  ACTIONS['org-app'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgApplication', { id: id, accept: node.getAttribute('data-value') === 'yes' }, 'app:' + id, node);
+  };
+
+  ACTIONS['org-dir'] = function (node) { disarm(); S.org.dir = node.getAttribute('data-value'); drawOrg(); };
+  ACTIONS['org-funds'] = function (node) {
+    var dir = S.org.dir;
+    var amount = wholeOrNull(S.forms['org.funds.amount'], 1, 100000000);
+    var reason = trim(S.forms['org.funds.reason']);
+    if (amount === null || amount === false) { orgRefuse('funds', 'Give a whole number of dollars, 1 or more.'); return; }
+    if (!reason) { orgRefuse('funds', 'Give a reason: it goes on the record.'); return; }
+    if (dir === 'bonus' && !S.org.bonusTo) { orgRefuse('funds', 'Pick the member the bonus goes to.'); return; }
+    var label = dir === 'deposit' ? 'Click again: deposit ' + money(amount)
+      : dir === 'withdraw' ? 'Click again: withdraw ' + money(amount)
+        : 'Click again: pay ' + memberName(S.org.bonusTo) + ' ' + money(amount);
+    if (!armed(node, label, ['org.funds.amount', 'org.funds.reason'])) return;
+    var data = { direction: dir, amount: amount, reason: reason.slice(0, 200), nonce: orgNonce() };
+    if (dir === 'bonus') data.member = S.org.bonusTo;
+    orgWrite('orgFundsMove', data, 'funds', node, function () {
+      S.org.nonce = null;
+      delete S.forms['org.funds.amount'];
+      delete S.forms['org.funds.reason'];
+      loadOrgFunds();
+    }).then(function (reply) {
+      // A refusal (not a lost answer) is a new movement next time.
+      if (reply && !reply.ok) S.org.nonce = null;
+    });
+  };
+  ACTIONS['org-funds-refresh'] = function () { loadOrgFunds(); };
+  /** Where the funds are kept: the ledger or the bank, or (abandon) leave a
+      bank that is down carrying nothing. Two clicks, naming what it does. */
+  ACTIONS['org-backend'] = function (node) {
+    var backend = node.getAttribute('data-value');
+    var abandon = node.getAttribute('data-how') === 'abandon';
+    if (!armed(node)) return;
+    var data = { backend: backend };
+    if (abandon) data.abandon = true;
+    orgWrite('orgFundsBackend', data, 'backend', node, function () { loadOrgFunds(); });
+  };
+  ACTIONS['org-cut'] = function (node) {
+    var d = S.org.data || {};
+    var kind = node.getAttribute('data-value');
+    var grade = node.getAttribute('data-id');
+    var bind = kind === 'role' ? 'org.cut.role.' + grade : 'org.cut.' + kind;
+    var cap = Number((d.limits || {}).TotalCutCapPercent) || 0;
+    var pct = wholeOrNull(S.forms[bind], 0, 100);
+    if (pct === null || pct === false) { orgRefuse('cut', 'A cut is a whole percent from 0 to ' + cap + '.'); return; }
+    if (pct > cap) { orgRefuse('cut', 'At most ' + cap + '%: the cap on all cuts of one payout (Boss permissions, Limits).'); return; }
+    var what = kind === 'role' ? 'the cut for ' + roleName(d, grade) : kind === 'payout' ? 'the payout cut'
+      : 'the cut on ' + kind + 's';
+    if (!armed(node, 'Click again: set ' + what + ' to ' + pct + '%', [bind])) return;
+    var data = { kind: kind, percent: pct };
+    if (kind === 'role') data.grade = Number(grade);
+    orgWrite('orgCuts', data, 'cut', node, function () { delete S.forms[bind]; });
+  };
+  ACTIONS['org-cut-clear'] = function (node) {
+    var g = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgCuts', { kind: 'role', grade: Number(g), percent: false }, 'cut', node);
+  };
+
+  ACTIONS['org-acc-rule'] = function (node) { disarm(); S.org.staged['rule:' + node.getAttribute('data-id')] = node.getAttribute('data-value'); drawOrg(); };
+  ACTIONS['org-acc-wl'] = function (node) { disarm(); S.org.staged['wl:' + node.getAttribute('data-id')] = node.getAttribute('data-value'); drawOrg(); };
+  ACTIONS['org-access'] = function (node) {
+    var d = S.org.data || {};
+    var g = node.getAttribute('data-id');
+    var a = (d.access || {})[g] || {};
+    var pre = 'org.acc.' + g + '.';
+    var max = wholeOrNull(typedOr(pre + 'max', a.maxReward == null ? '' : a.maxReward), 0, 2000000000);
+    var at = wholeOrNull(typedOr(pre + 'at', a.maxAtOnce == null ? '' : a.maxAtOnce), 1, 50);
+    var cd = wholeOrNull(typedOr(pre + 'cd', a.cooldownMinutes == null ? '' : a.cooldownMinutes), 0, 10080);
+    if (max === false || at === false || cd === false) {
+      orgRefuse('access', 'Most reward is whole dollars, at once 1 to 50, the cooldown 0 to 10080 minutes; empty is no rule.');
+      return;
+    }
+    var rule = S.org.staged['rule:' + g] != null ? S.org.staged['rule:' + g] : (a.rule || '');
+    var wl = S.org.staged['wl:' + g] != null ? S.org.staged['wl:' + g] : (a.whitelisted === false ? 'no' : 'yes');
+    if (!armed(node, null, [pre + 'max', pre + 'at', pre + 'cd'])) return;
+    var rules = { maxReward: max == null ? false : max, maxAtOnce: at == null ? false : at,
+      cooldownMinutes: cd == null ? false : cd, rule: rule || false, whitelisted: wl !== 'no' };
+    orgWrite('orgAccess', { grade: Number(g), rules: rules }, 'access', node, function () {
+      [pre + 'max', pre + 'at', pre + 'cd'].forEach(function (k) { delete S.forms[k]; });
+      delete S.org.staged['rule:' + g];
+      delete S.org.staged['wl:' + g];
+    });
+  };
+  ACTIONS['org-pick'] = function (node) {
+    var id = trim(S.forms['org.pick.id']);
+    if (!id) { orgRefuse('pick', 'Give the contract id.'); return; }
+    var to = S.org.staged.pick || '';
+    if (!armed(node, to ? 'Click again: pin ' + id + ' to ' + memberName(to) : 'Click again: clear the pick on ' + id,
+      ['org.pick.id'])) return;
+    var data = { id: id.slice(0, 64) };
+    if (to) data.member = to;
+    orgWrite('orgPick', data, 'pick', node);
+  };
+
+  ACTIONS['org-broadcast'] = function (node) { disarm(); S.org.staged.broadcast = node.getAttribute('data-value') === 'yes'; drawOrg(); };
+  ACTIONS['org-notice'] = function (node) {
+    var text = trim(S.forms['org.notice']);
+    if (!text) { orgRefuse('notice', 'Write the notice first.'); return; }
+    if (!armed(node, S.org.staged.broadcast ? 'Click again: post it and message every member' : 'Click again: post it',
+      ['org.notice'])) return;
+    orgWrite('orgNotice', { text: text, broadcast: !!S.org.staged.broadcast }, 'notice', node, function () {
+      delete S.forms['org.notice'];
+    });
+  };
+  ACTIONS['org-notice-clear'] = function (node) {
+    if (!armed(node)) return;
+    orgWrite('orgNotice', { text: false }, 'notice', node);
+  };
+  ACTIONS['org-audit-refresh'] = function () { loadOrgAudit(S.org.auditAction); };
+
+  ACTIONS['bp-cell'] = function (node) {
+    var d = S.org.data || {};
+    var colKey = node.getAttribute('data-id'), code = node.getAttribute('data-power');
+    var col = bpColumns(d).filter(function (c) { return c.key === colKey; })[0];
+    if (!col) return;
+    var st = bpState(d, col, code);
+    var next = col.subject === 'role' ? (st === 'allow' ? 'off' : 'allow')
+      : (st === 'inherit' ? 'allow' : st === 'allow' ? 'deny' : 'inherit');
+    bpStage(d, col, code, next);
+    disarm();
+    drawOrg();
+  };
+  ACTIONS['bp-discard'] = function () { disarm(); S.org.bp.pending = {}; drawOrg(); };
+  ACTIONS['bp-granted'] = function (node) { S.org.bp.granted = node.getAttribute('data-value') === 'granted'; drawOrg(); };
+  LIVE['bp-filter'] = function () {
+    var box = byId('org-body');
+    if (!box) return;
+    // Only the grid moves; the box keeps what is typed and its focus.
+    setHtml(box, orgViewBody());
+    var input = box.querySelector && box.querySelector('[data-bind="bp.q"]');
+    if (input && input.focus) input.focus();
+  };
+  /** The pending cells, as one batch: every one checked before any is written. */
+  ACTIONS['bp-save'] = function (node) {
+    var d = S.org.data || {};
+    var list = bpPendingList(d);
+    if (!list.length) return;
+    if (!armed(node)) return;
+    var cells = list.map(function (x) {
+      return { subject: x.col.subject, id: x.col.id, power: x.code, state: x.state };
+    });
+    orgWrite('bossPermsSet', { cells: cells }, 'bp', node, function () { S.org.bp.pending = {}; });
+  };
+  ACTIONS['bp-revoke'] = function (node) {
+    var d = S.org.data || {};
+    var colKey = node.getAttribute('data-id');
+    var col = bpColumns(d).filter(function (c) { return c.key === colKey; })[0];
+    if (!col || !armed(node)) return;
+    orgWrite('bossPermsRevokeAll', { subject: col.subject, id: col.id }, 'bp', node, function () {
+      Object.keys(S.org.bp.pending).forEach(function (k) { if (k.indexOf(colKey + '|') === 0) delete S.org.bp.pending[k]; });
+    });
+  };
+  ACTIONS['bp-limit'] = function (node) {
+    var d = S.org.data || {};
+    var k = node.getAttribute('data-id');
+    var bind = 'bp.lim.' + k;
+    var raw = trim(S.forms[bind]);
+    var n = Number(raw);
+    if (raw === '' || !isFinite(n) || n < 0) { orgRefuse('limits', 'Give a number for ' + k + '.'); return; }
+    var e = settingEntry('Organisation.Limits.' + k);
+    if (e && ((e.min != null && n < e.min) || (e.max != null && n > e.max))) {
+      orgRefuse('limits', k + ' is from ' + e.min + ' to ' + e.max + '.');
+      return;
+    }
+    if (e && e.integer && Math.floor(n) !== n) { orgRefuse('limits', k + ' is a whole number.'); return; }
+    if (!armed(node, 'Click again: ' + k + ' to ' + num(n) + ' (now ' + num((d.limits || {})[k]) + ')', [bind])) return;
+    var limits = {};
+    limits[k] = n;
+    orgWrite('bossLimits', { limits: limits }, 'limits', node, function () { delete S.forms[bind]; });
+  };
+  ACTIONS['bp-limit-reset'] = function (node) {
+    var k = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    var limits = {};
+    limits[k] = false;
+    orgWrite('bossLimits', { limits: limits }, 'limits', node);
+  };
+  ACTIONS['bp-office'] = function (node) {
+    if (!armed(node)) return;
+    orgWrite('bossOfficeRule', { power: node.getAttribute('data-power'), on: node.getAttribute('data-value') === 'on' },
+      'office', node);
+  };
+  ACTIONS['bp-history-refresh'] = function () { loadOrgAudit('org_grant'); };
+  ACTIONS['bp-undo'] = function (node) {
+    var g = Number(node.getAttribute('data-id'));
+    var code = node.getAttribute('data-power'), state = node.getAttribute('data-value');
+    if (!armed(node)) return;
+    orgWrite('bossPermsSet', { cells: [{ subject: 'role', id: g, power: code, state: state }] }, 'bp', node, function () {
+      loadOrgAudit('org_grant');
+    });
+  };
+
+  /** Use my position: read by the server, from where the character stands. */
+  function myPosition() {
+    return ask('orgMyPosition', {}, 'orgPos').then(function (reply) {
+      if (!reply) return null;
+      if (!reply.ok) { S.org.answers.pos = { ok: false, text: words(reply) }; drawOrg(); return null; }
+      S.org.answers.pos = null;
+      S.org.loc.pos = reply.data || {};
+      S.org.loc.posAt = nowSeconds();
+      return S.org.loc.pos;
+    });
+  }
+  ACTIONS['loc-mypos'] = function (node) {
+    var k = node.getAttribute('data-value');
+    myPosition().then(function (pos) {
+      if (!pos) return;
+      var pre = 'loc.' + k + '.';
+      S.forms[pre + 'x'] = fmt(pos.x);
+      S.forms[pre + 'y'] = fmt(pos.y);
+      S.forms[pre + 'z'] = fmt(pos.z);
+      S.forms[pre + 'h'] = fmt(pos.heading, 0);
+      disarm();
+      drawOrg();
+    });
+  };
+  ACTIONS['loc-fill'] = function (node) {
+    var key = node.getAttribute('data-key');
+    myPosition().then(function (pos) {
+      if (!pos) return;
+      var kind = PLACE_KEYS[key];
+      if (kind === 'jail') {
+        S.forms['st.Limits.JailZone.x'] = fmt(pos.x);
+        S.forms['st.Limits.JailZone.y'] = fmt(pos.y);
+        drawOrg();
+        return;
+      }
+      var line = kind === 'point' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', ' + fmt(pos.z) + ', ' + fmt(pos.heading, 0)
+        : kind === 'zone' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', 50, New zone'
+          : kind === 'district' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', New district'
+            : 'New area@' + fmt(pos.x) + ',' + fmt(pos.y);
+      S.forms['stl.' + key] = line;
+      drawOrg();
+    });
+  };
+  ACTIONS['loc-edit'] = function (node) {
+    var k = node.getAttribute('data-value');
+    S.org.loc.edit[k] = node.getAttribute('data-id');
+    ['label', 'x', 'y', 'z', 'h', 'r'].forEach(function (f) { delete S.forms['loc.' + k + '.' + f]; });
+    delete S.org.staged['blip:' + k];
+    delete S.org.staged['en:' + k];
+    disarm();
+    drawOrg();
+  };
+  ACTIONS['loc-new'] = function (node) {
+    var k = node.getAttribute('data-value');
+    S.org.loc.edit[k] = '';
+    ['label', 'x', 'y', 'z', 'h', 'r'].forEach(function (f) { delete S.forms['loc.' + k + '.' + f]; });
+    disarm();
+    drawOrg();
+  };
+  ACTIONS['loc-blip'] = function (node) { disarm(); S.org.staged['blip:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes'; drawOrg(); };
+  ACTIONS['loc-enabled'] = function (node) { disarm(); S.org.staged['en:' + node.getAttribute('data-id')] = node.getAttribute('data-value') === 'yes'; drawOrg(); };
+  function spotSpec(k, here) {
+    var d = S.org.data || {};
+    var id = S.org.loc.edit[k] || '';
+    var editing = id ? asList(d.spots).filter(function (s) { return s.id === id; })[0] : null;
+    var pre = 'loc.' + k + '.';
+    function val(f, from) { var t = S.forms[pre + f]; return trim(t === undefined ? (from == null ? '' : from) : t); }
+    var spec = { kind: k };
+    if (id) spec.id = id;
+    var label = val('label', editing && editing.label);
+    if (!label) return { error: 'Give the place a name.' };
+    spec.label = label.slice(0, 64);
+    var r = val('r', editing && fmt(editing.radius));
+    if (r !== '') {
+      spec.radius = Number(r);
+      if (!isFinite(spec.radius) || spec.radius < 0.5 || spec.radius > 50) return { error: 'The radius is 0.5 to 50 m.' };
+    }
+    spec.blip = S.org.staged['blip:' + k] != null ? S.org.staged['blip:' + k] : !!(editing && editing.blip);
+    spec.enabled = S.org.staged['en:' + k] != null ? S.org.staged['en:' + k] : !(editing && editing.enabled === false);
+    if (here) { spec.here = true; return spec; }
+    var nums = ['x', 'y', 'z', 'h'].map(function (f) {
+      return val(f, editing && (f === 'h' ? fmt(editing.heading, 0) : fmt(editing[f])));
+    });
+    if (nums.slice(0, 3).some(function (t) { return t === '' || !isFinite(Number(t)); })) {
+      return { error: 'Give x, y and z as numbers, or press Use my position.' };
+    }
+    spec.x = Number(nums[0]); spec.y = Number(nums[1]); spec.z = Number(nums[2]);
+    spec.heading = nums[3] === '' ? 0 : Number(nums[3]);
+    if (!isFinite(spec.heading)) return { error: 'The heading is a number from 0 to 360.' };
+    return spec;
+  }
+  function locSave(node, here) {
+    var k = node.getAttribute('data-value');
+    var spec = spotSpec(k, here);
+    if (spec.error) { orgRefuse('loc:' + k, spec.error); return; }
+    var pre = 'loc.' + k + '.';
+    var label = here ? 'Click again: save ' + spec.label + ' where you stand'
+      : 'Click again: save ' + spec.label + ' at ' + fmt(spec.x) + ', ' + fmt(spec.y);
+    if (!armed(node, label, ['label', 'x', 'y', 'z', 'h', 'r'].map(function (f) { return pre + f; }))) return;
+    orgWrite('orgLocationSet', spec, 'loc:' + k, node, function () {
+      ['label', 'x', 'y', 'z', 'h', 'r'].forEach(function (f) { delete S.forms[pre + f]; });
+      S.org.loc.edit[k] = '';
+      delete S.org.staged['blip:' + k];
+      delete S.org.staged['en:' + k];
+    });
+  }
+  ACTIONS['loc-save'] = function (node) { locSave(node, false); };
+  ACTIONS['loc-here'] = function (node) { locSave(node, true); };
+  ACTIONS['loc-remove'] = function (node) {
+    var id = node.getAttribute('data-id');
+    var spot = asList((S.org.data || {}).spots).filter(function (s) { return s.id === id; })[0];
+    if (!armed(node)) return;
+    orgWrite('orgLocationRemove', { id: id }, 'loc:' + (spot ? spot.kind : 'place'), node);
+  };
+
+  HELP.push(
+    { title: 'The hitman organisation', icon: 'people-group',
+      text: 'Off as shipped. On, the hitmen are one qbx_core job with roles (its grades), members, funds, a boss menu '
+        + 'on the phone and its own places. Every boss power is off until staff allow it in Boss permissions, for a '
+        + 'boss role or one boss, within the limits staff set; staff may do everything from the panel. Cuts are '
+        + 'frozen onto a contract when a member accepts it.',
+      links: [{ key: 'Organisation.Enabled', view: 'orgsetup', label: 'The switch' },
+        { key: 'Organisation.RequireJobToAccept', view: 'orgsetup', label: 'Only members may accept' }] });
+  STAFF_ACTIONS.push(
+    { title: 'Run the hitman organisation', icon: 'people-group', view: 'orgsetup', go: 'Hitman organisation',
+      text: 'Turn it on, sync the job, edit roles and pay, hire, fire, suspend and set members\' limits, move money '
+        + 'with a reason, set cuts, contract access, the board notice and applications.',
+      also: { view: 'orgmembers', go: 'Members' } },
+    { title: 'Give bosses powers', icon: 'key', view: 'bpmatrix', go: 'Boss permissions',
+      text: 'The grid of powers by boss role and by one boss: Allow, Deny or Inherit, every change listed before one '
+        + 'Save. Limits sets the bounds; Delegation & office which powers need the boss office.',
+      also: { view: 'bplimits', go: 'Limits' } },
+    { title: 'Set a place on the map', icon: 'location-dot', view: 'locations', go: 'Locations',
+      text: 'The boss office, sign-up and meeting spots, the broker and informant NPC places, tip safe zones, rumour '
+        + 'districts and the prison zone: stand there in game and press Use my position.' });
 
   /* Loaded to the end: admin.html's fallback, which gives the focus back
      when this file fails to load or throws while loading, stands down. */

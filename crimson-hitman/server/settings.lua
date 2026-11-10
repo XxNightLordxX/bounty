@@ -2701,6 +2701,51 @@ function Settings.describe(value)
     return tostring(value)
 end
 
+--- The feature area each group is shown under in the admin panel's Game
+--- rules (a setting's `area`): staff find a feature's switch, numbers and
+--- lists on one page, whatever kind of value each is. A group not named
+--- here is 'other'; the Developer section's own groups are 'engine'.
+local AREA_OF_GROUP = {
+    ['Access'] = 'access', ['The app'] = 'access', ['Barred jobs'] = 'access',
+    ['Anti-collusion'] = 'access', ['Progression'] = 'access',
+    ['Contract limits'] = 'placing', ['Contract reasons'] = 'placing', ['Roleplay: Reason quality'] = 'placing',
+    ['Proposals'] = 'placing', ['Stakes'] = 'placing', ['Targeting'] = 'placing', ['Immunity'] = 'placing',
+    ['Improvements: Contract decay'] = 'placing', ['Improvements: Placer record'] = 'placing',
+    ['Anonymity'] = 'anonymity', ['Anonymity (whitelisted-job targets)'] = 'anonymity',
+    ['Improvements: Serial scrubbing'] = 'anonymity',
+    ['Rewards'] = 'rewards', ['Payouts'] = 'rewards', ['Roleplay: Dirty money payouts'] = 'rewards',
+    ['Completion'] = 'completing', ['Handovers'] = 'completing', ['Ledger'] = 'completing',
+    ['The clock'] = 'completing', ['Server restart'] = 'completing',
+    ['Roleplay: EMS before re-listing'] = 'completing', ['Roleplay: Proof of intent'] = 'completing',
+    ['Improvements: Proof items'] = 'completing',
+    ['Buyouts'] = 'buyouts', ['Buyout pricing'] = 'buyouts',
+    ['Informant'] = 'informants', ['Informant prices'] = 'informants', ['Informant tip'] = 'informants',
+    ['Informants (whitelisted-job targets)'] = 'informants', ['Roleplay: Informant in person'] = 'informants',
+    ['Improvements: Tip warning delay'] = 'informants', ['Improvements: Tip limits'] = 'informants',
+    ['Improvements: Hold before a tip'] = 'informants', ['Improvements: Informant second try'] = 'informants',
+    ['Improvements: Tip safe zones'] = 'informants', ['Improvements: Go dark'] = 'informants',
+    ['Law enforcement advisory'] = 'police', ['Advisory job lists'] = 'police',
+    ['Roleplay: Witness heat'] = 'police', ['Roleplay: City news'] = 'police',
+    ['Improvements: Hitman heat'] = 'police',
+    ['Messages and calls'] = 'messages', ['Notifications'] = 'messages', ['Roleplay: Burner phone'] = 'messages',
+    ['Roleplay: Reputation'] = 'extras', ['Roleplay: Bodyguards'] = 'extras', ['Roleplay: Hit on the hitman'] = 'extras',
+    ['Roleplay: Rumours and broker'] = 'extras', ['Improvements: Tiered board'] = 'extras',
+    ['Staff tools'] = 'staff', ['Staff alerts'] = 'staff', ['Audit and debug'] = 'staff', ['Staff'] = 'staff',
+    ['Improvements: Weekly stats'] = 'staff',
+    ['Storage'] = 'engine', ['Rate limits'] = 'engine', ['Diagnostics'] = 'engine', ['Staff commands'] = 'engine',
+    ['Edit in config.lua'] = 'engine', ['Kept in the store, not on this list'] = 'engine',
+    ['Target limits'] = 'targets',
+    ['Organisation'] = 'organisation', ['Organisation: Boss limits'] = 'organisation',
+}
+Settings.AREA_OF_GROUP = AREA_OF_GROUP
+
+--- A catalogue entry's area: its own `area`, or its group's.
+---@param entry table
+---@return string
+function Settings.areaOf(entry)
+    return entry.area or AREA_OF_GROUP[entry.group] or 'other'
+end
+
 --- Every key the panel shows, with its value now, what config.lua says,
 --- and where the value in force comes from.
 ---
@@ -2717,7 +2762,7 @@ function Settings.view()
         local skipped = ignored[entry.key]
         local row = {
             key = entry.key, group = entry.group, label = entry.label, about = entry.about,
-            category = entry.category, money = entry.money,
+            category = entry.category, money = entry.money, area = Settings.areaOf(entry),
             shipped = shippedOf(entry), hasShipped = shippedOf(entry) ~= nil,
             kind = entry.kind, choices = entry.choices, min = entry.min, max = Settings.maxOf(entry),
             integer = entry.integer or nil, live = entry.live ~= false,
@@ -2754,7 +2799,7 @@ function Settings.view()
             if type(value) == 'table' then value = json and json.encode(value) or '(a table)' end
         end
         out.readonly[#out.readonly + 1] = {
-            key = key, group = 'Edit in config.lua',
+            key = key, group = 'Edit in config.lua', area = 'engine',
             label = rule.secret and ('Secret: ' .. rule.convar) or rule.label or key,
             kind = 'text', category = 'developer', readonly = rule.why, denied = true,
             secret = rule.secret or nil, value = value, source = 'config',
@@ -2770,7 +2815,7 @@ function Settings.view()
         local skipped = ignored[key] or {}
         out.readonly[#out.readonly + 1] = {
             key = key, group = 'Kept in the store, not on this list', label = key, kind = 'text',
-            category = 'developer',
+            category = 'developer', area = 'engine',
             readonly = 'Not a setting this version lists, so nothing reads it. Reset takes its row '
                 .. 'out of the store; nothing in force changes.',
             value = copyOf(skipped.value), source = 'config', by = skipped.by, at = skipped.at,

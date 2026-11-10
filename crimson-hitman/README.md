@@ -16,16 +16,20 @@ check in game is [docs/in-game-checklist.md](../docs/in-game-checklist.md).
 4. The target can see contracts on them under **On me** and buy one out; officers are warned when one of them is targeted.
 5. Staff watch, freeze, void, pay and tune all of it live from the admin panel, and every money movement is in the audit log.
 
-**The admin panel's six sections** (`/hitmanadmin`, see [Admin panel](#admin-panel)):
+**The admin panel's sections** (`/hitmanadmin`, see [Admin panel](#admin-panel)), in four groups, with **Help** in its header:
 
-| Section | What you do there |
-|---|---|
-| **Live** | How it works, Overview, Contracts, Players, Frozen players, Needs review, Stuck escrow |
-| **Staff actions** | Every staff action as a card that opens where it is done, Tools, Announce |
-| **Rules** | Timers, Rewards & money, Limits, Targeting |
-| **Features** | Every on/off switch: core, Anonymity, Informants, Advisory, Staff tools, Roleplay, Improvements |
-| **Logs & alerts** | The audit log with its search, Alerts & Discord |
-| **Developer** | Developer settings, Console, Diagnostics, Permissions, History (without the Developer ACE: **Permissions & history**) |
+| Group | Section | What you do there |
+|---|---|---|
+| Daily | **Home** | The inbox (Needs review, Money waiting, open alerts), the overview, Announce |
+| Daily | **Players** | Find a player; their contracts, measures (freeze, suspend, protect), money, playtime, history; who is frozen, suspended or protected |
+| Daily | **Contracts** | Every contract, searched and filtered; a contract's drawer |
+| Daily | **Target limits** | How often one person may be targeted: defaults, per job, per player, contracts on someone |
+| Setup | **Game rules** | Every rule by area of the game, its switches first; what was changed from the panel; the change history |
+| Setup | **Hitman organisation** | The optional hitman job: setup, roles and pay, members, applications, funds and cuts, access, notices, its log |
+| Setup | **Boss permissions** | What bosses may do: the matrix, limits, delegation and the office, grant history |
+| Setup | **Locations** | Every place the resource uses, set from where you stand |
+| Records | **Logs** | The audit log with its search, Alerts & Discord |
+| Developer | **Developer** | Health, engine settings, the console, test tools |
 
 **The roles** (the words used everywhere: see [Glossary](#glossary)):
 
@@ -117,7 +121,7 @@ of live contracts. Kill photo files are in `data/photos/` in every mode.
 
 - **Keep `crimson-hitman/data/`** when you put a new version in place (copy the new files over the old folder, or move `data/` out and back). In `json` mode it is the store; in every mode it holds the kill photos. A `json` store that finds an empty `data/` after it has run refuses to start; put the old one back, or `set crimson_hitman_new_store 1` once to start empty on purpose.
 - Carry your `config/config.lua` across. Settings changed in the panel are kept in the store and survive the update.
-- Payouts an older version left owed appear once in **Stuck escrow** (`/ch-stuck`): check the player has it, then **Pay** or **Delivered**.
+- Payouts an older version left owed appear once under **Money waiting** in the panel's inbox (`/ch-stuck`): check the player has it, then **Pay** or **Delivered**.
 - Restarting `qbx_core`, `ox_inventory` or `oxmysql` stops this resource with them: `ensure crimson-hitman` afterwards. Restarting `lb-phone` is safe.
 
 ### Changing storage mode
@@ -180,7 +184,7 @@ On a contract only a live handover completes, once a hitman holds it the placer 
 ### Money rules
 
 - Every reward is held from placing to ending; a payout comes only from what is held, in exactly the sources it holds (dirty money in, dirty money out: there is no conversion, because `sc-blackmarket` values dirty money above clean).
-- A payout to a player who is away or full is owed and given at their next login (and retried every 30 s while online). One the server could not give after three tries waits for staff in **Stuck escrow**.
+- A payout to a player who is away or full is owed and given at their next login (and retried every 30 s while online). One the server could not give after three tries waits for staff under **Money waiting** in the panel's inbox.
 - Anything no rule can settle (a buyout the store would not record, a payment the database did not confirm) goes to **Needs review** for staff.
 - Caps: `Config.MaxContractValue`, each source's `max`, `Config.Penalty` for stakes, `Config.Bailout` for buyouts; every figure is checked on the server, never taken from the phone.
 
@@ -231,15 +235,38 @@ Every write is rate-limited per staff member (`Config.Cooldowns.admin`,
 still recovering from a restart, every write but flushing the log is
 refused.
 
-| Section | Views | Use it to |
+The sidebar groups the sections by how often each is used: **Daily**,
+**Setup**, **Records** and **Developer** (only for staff who hold
+`crimson.developer`, or `crimson.admin`). **Help** is in the header: *How it
+works* (an accordion, a card per feature with links to its settings), *How do
+I…* (every staff action, each with a Go that opens where it is done) and *Who
+can do what* (every ACE, and how to grant it).
+
+- **Search** (`/` or Ctrl+K, in the header) finds a setting, an action or a
+  section as you type; Enter on a contract id opens it, on a player id or a
+  name looks them up.
+- **The player and contract you are on stay put.** A lookup puts *Player:
+  <name>* in the header, with the minutes left of the lookup (ten); the
+  contract you last opened is a chip too. The contract drawer stays open over
+  any section until you close it, and its chip opens it again. A breadcrumb
+  under the tabs says where you are.
+- **On a phone-width window** the sidebar folds into one *Sections* menu, the
+  tabs scroll along one line, and the drawer takes the whole screen.
+- A link or a view remembered from before the rebuild (Rules, Features,
+  Stuck escrow, Diagnostics, Permissions…) opens where its items are now.
+
+| Section | Tabs | Use it to |
 |---|---|---|
-| **Live** | How it works, Overview, Contracts, Players, Frozen players, Needs review, Stuck escrow | See what is happening; open a contract (timeline, escrow, parties, staff notes, **Extend** / **Shorten**, **Void**, remove an operative, edit text, export, *As a player sees it*); look a player up (history, freeze, suspend, protect, pay, playtime); settle money left for staff |
-| **Staff actions** | Actions, Tools, Announce | Find any staff action (each card opens where it is done, **Undo a setting change** included); Tools: run the diagnosis, flush the log, bring timers forward (test servers); Announce: one notice to every hitman holding a contract, or everybody with the app |
-| **Rules** | Timers, Rewards & money, Limits, Targeting | Tune the game. Every row shows its value with its unit, config.lua's value and where it comes from; a search box filters by name, key or group |
-| **Target limits** | Defaults, Per job, Per player, Current contracts | How often one person may have a contract placed on them: the global limits, a job's own (police wait longer), one player's cooldown reset or extended, counts reset, own limits or exempt; the same for every player of a job at once; and every live contract by target, each opening its contract view |
-| **Features** | Features | Switch features on and off, in this order: core, Anonymity, Informants, Advisory, Staff tools, Roleplay, Improvements. Each group says what it does |
-| **Logs & alerts** | Logs, Alerts & Discord | Search the audit log; acknowledge alerts; send a test alert |
-| **Developer** | Settings, Console, Diagnostics, Permissions, History | Debug, storage, rate limits, timings and the read-only values; the console; slow jobs; which ACE opens what; every setting change with **Undo** |
+| **Home** | Inbox, Overview, Announce | The inbox lists what waits for staff in one place, with a chip and a count for each: **Needs review** (refund, pay or dismiss), **Money waiting** (escrow lines left for you to settle: Pay, Pay amount, Return, Delivered) and the open **Alerts** (Acknowledge). The overview counts contracts, operatives, money held and owed, and who is frozen, suspended or protected, with the setup problems for staff who can change things. Announce sends one notice to every hitman holding a contract, or everybody with the app |
+| **Players** | Find & summary, then for the player looked up Contracts, Measures, Money, Playtime, History, *Why can't they see…*; and Frozen, Suspended, Protected | Look a player up (player id, citizen id or name; recent lookups are one click). Measures: **Freeze**, **Suspend**, **Protect**, and their standing in Target limits. Money: what they are owed, notices for their next login, **Pay**. *Why can't they see…* runs the diagnosis as them. The three lists hold everybody frozen, suspended or protected now, each with **Unfreeze** or **Lift** |
+| **Contracts** | All contracts | Search and filter, then open one. The drawer has tabs: **Summary** (terms, the deadline with **Extend** / **Shorten**, open proposals), **Money** (lines waiting for staff, payouts, escrow lines; its tab counts the lines waiting), **People** (operatives, **Remove an operative**, *As a player sees it*, Whois), **Notes & text** (staff notes, **Edit text**) and **Record** (timeline, export). **Void** is under **More** |
+| **Target limits** | Defaults, Per job, Per player, Contracts on someone | See [Target limits](#target-limits) |
+| **Game rules** | Areas, Changed from the panel, Change history | Every rules and features setting by the area of the game it is about (who can use the app, placing contracts, anonymity, rewards, completing, buyouts, informants, police, messages, roleplay extras, staff tools): an area's switches first, then its numbers and lists. Chips narrow it to **Switches**, **Timers**, **Money**, **Limits**, **Lists** or **Changed**, across every area when none is picked. A row shows its label with its unit, its control and Save or Reset; **Details** shows its `Config` key, what it does, what happens to things under way and where its value comes from. **Undo all panel changes** is on *Changed from the panel*; every change, with **Undo**, on *Change history* |
+| **Hitman organisation** | Setup, Roles & pay, Members, Applications, Funds & cuts, Contract access, Notices, Org audit | See [Organisation](#organisation). Off as shipped: every tab is one card saying so, with its switch |
+| **Boss permissions** | Matrix, Limits, Delegation & office, Grant history | The ceiling on what bosses may do: powers by boss role and by one boss (**Allow**, **Deny** or **Inherit role**), every change listed before one **Save** that sends them together; **Revoke all** and **Copy from** per column; each power's limits; which powers need the boss office; every grant, with **Undo** on a role's |
+| **Locations** | Map points | The organisation's places (boss office, sign-up, meeting and handover spots, NPC spots), and the places that are settings (broker and informant NPC places, tip safe zones, rumour districts, witness areas, the prison zone). **Use my position** fills a row from where your character stands, read by the server |
+| **Logs** | Audit log, Alerts | Search the audit log (and flush it); acknowledge alerts, see where Discord stands, send a test alert |
+| **Developer** | Health, Engine settings, Console, Test tools | Storage, recovery, kill photos, slow jobs and the diagnosis; debug, storage, rate limits and the read-only values; the console; **Bring timers forward** (test servers) and **Flush the audit log** |
 
 Without `crimson.identity`, an anonymous party is *Anonymous* everywhere,
 citizen ids read as the party's place (*the placer*, *the target*,
@@ -248,7 +275,7 @@ party. Every unmasking is its own audit row.
 
 ### Target limits
 
-**Target limits** is its own section, after Rules. Every write in it takes
+**Target limits** is its own section, under Daily. Every write in it takes
 two clicks, is rate-limited and audited, and waits for boot recovery, like
 every other write.
 
@@ -297,7 +324,7 @@ every other write.
   buyout's immunity. The
   confirm names the job and how many players it reaches; one audit row
   records the action with the count. `crimson.moderator` or `crimson.admin`.
-- **Current contracts**: every live contract (open, taken, settling, on
+- **Contracts on someone**: every live contract (open, taken, settling, on
   hold) grouped by target, a page at a time, searchable by the target's name
   or exact citizen id. A row opens the contract's own view, with every staff
   action it has (Extend / Shorten, Void, remove an operative, edit text,
@@ -356,15 +383,16 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `exportContract` | Read | One contract's record as text, for a ticket |
 | `playerView` | Read | A contract as one of its parties sees it |
 | `reviews` | Read | The review queue |
-| `stuck` | Read | Stuck escrow |
+| `stuck` | Read | Money waiting for staff (Home, Inbox) |
 | `logs` | Read | The audit log and its search |
 | `alerts` | Read | The alerts |
 | `player` | Read | One player's contracts and record |
 | `history` | Read | One player's history card |
 | `frozen` | Read | Frozen players |
+| `sanctions` | Read | Everybody suspended or protected now, each row with a handle Lift takes |
 | `settings` | Read | Every setting, its value and where it comes from |
 | `settingsHistory` | Read | Every setting change from the panel |
-| `diag` | Read | The diagnosis |
+| `diag` | Read | The diagnosis, as yourself, a player id or the player looked up (`ref`) |
 | `console` | Developer | What this resource printed in the server console |
 | `whois` | Identity | Who is behind an anonymous party |
 | `void` | Moderate | Void a contract and refund it |
@@ -614,8 +642,9 @@ resource does.
 #### Organisation requests (admin panel)
 
 Through the panel's one way in, as every op in *Panel requests*; reads need a
-staff ACE, writes `crimson.admin` itself. The page for them comes with the panel
-rebuild; the ops answer now.
+staff ACE, writes `crimson.admin` itself. The panel's Hitman organisation,
+Boss permissions and Locations sections use them; every write takes two
+clicks, naming what it sets.
 
 | Op | Level | What it does |
 |---|---|---|
@@ -1378,7 +1407,17 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, review fixes (newest)**
+**1.1.0, the admin panel rebuilt (newest)**
+
+- The admin panel is organised by task: a sidebar of **Daily** (Home, Players, Contracts, Target limits), **Setup** (Game rules, Hitman organisation, Boss permissions, Locations), **Records** (Logs) and **Developer**, with **Help** in the header. Every view it had is still there; a link or a remembered view from before opens where its items are now.
+- **Search** from the header (`/` or Ctrl+K): settings, actions, sections, a contract id or a player. The player and the contract you are on stay in the header as you move, and the contract drawer stays open over any section.
+- **Home** has one inbox for Needs review, Money waiting and open alerts. **Players** is a workspace with a tab per part of a player's card, and lists of everybody frozen, suspended or protected (new request `sanctions`). *Why can't they see…* runs the diagnosis as the player looked up (`diag` takes the lookup).
+- **Game rules** shows every setting by area of the game, its switches first, with type chips and compact rows whose **Details** hold the key and the rest. Each setting carries its area from the server.
+- The contract drawer has tabs (Summary, Money, People, Notes & text, Record), with Void under More.
+- The panel for the **Hitman organisation**, **Boss permissions** (the matrix, saved as one batch) and **Locations** (Use my position).
+- A phone-width window folds the sidebar into one menu and gives the drawer the whole screen.
+
+**1.1.0, review fixes**
 
 - A buyout's immunity (`Config.Immunity.AfterBailoutSeconds`) survives a staff Reset, Exempt and every job-wide action; only Reset all on the player lifts it, and the panel's replies say so. A plain Reset also says when a staff extension still holds.
 - A job's own target limits apply to a target holding that job as a second one too, the strictest of their jobs winning, in placing, the lookup card and the job-wide actions alike.
