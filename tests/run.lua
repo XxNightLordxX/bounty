@@ -730,7 +730,7 @@ local suites = {
 
 --- Specs that write rows into the store by hand, rather than through the
 --- resource. The invariant run leaves these out: see tests/invariants.lua.
-local RAW_STORE_SPECS = { differential_spec = true }
+local RAW_STORE_SPECS = { differential_spec = true, review_mst_spec = true }
 
 --- And the specs that exist to measure cost rather than to assert
 --- behaviour. The invariant monitor audits the whole store after every
