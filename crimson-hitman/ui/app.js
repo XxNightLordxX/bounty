@@ -3792,24 +3792,43 @@
   }
 
   /* A different target: the contract is withdrawn (everything put up comes
-     back, nobody having taken it) and the Place form opened, where the new
-     one goes through every check placing makes. Two taps, three seconds
-     apart at most. The usual wait after withdrawing is said first. */
+     back, nobody having taken it, but an anonymity fee) and the Place form
+     opened, where the new one goes through every check placing makes. Two
+     taps, three seconds apart at most. The usual wait after withdrawing is
+     said first, and on the button: as shipped every new placement by this
+     placer waits five minutes after a withdrawal, and "Cancel and place
+     again" read as if the new one went straight on.
+
+     The anonymity fee is not given back. It bought the listing's
+     anonymity for as long as it ran, and handing it back on a withdrawal
+     would make anonymity free to anybody who withdraws before a taker:
+     list anonymously, watch, withdraw, repeat. It cannot be tied to placing
+     again either, since the withdrawal comes first and the new one may
+     never be placed. So the words say so instead. */
   var retargetArmed = null;   // the contract id whose Cancel and place again waits for its second tap
+  function retargetLabel(contract) {
+    var any = Number((settings().relistWaits || {}).anyMinutes) || 0;
+    return any > 0 ? 'Cancel \u2014 place again in ' + durationText(any) : 'Cancel and place again';
+  }
+  function feeKeptText(contract) {
+    return contract.creatorAnonymous === true
+      ? ', except the anonymity fee, which is not refunded' : '';
+  }
   function retargetBox(contract) {
     var box = el('div', 'sheet-retarget');
     var waits = relistWaitText(contract);
     box.appendChild(el('div', 'hint', 'To put this contract on someone else, withdraw it and place '
-      + 'it again: nobody has taken it, so everything you put up comes back.'
-      + (waits ? ' ' + waits : '')));
+      + 'it again: nobody has taken it, so everything you put up comes back'
+      + feeKeptText(contract) + '.' + (waits ? ' ' + waits : '')));
     var key = 'retarget:' + contract.id;
     var armed = retargetArmed === contract.id;
+    var label = retargetLabel(contract);
     var b;
     if (isBusy(key)) {
-      b = actionButton('ghost ico i-swap', 'Cancel and place again', key, 'Withdrawing\u2026');
+      b = actionButton('ghost ico i-swap', label, key, 'Withdrawing\u2026');
     } else {
       b = el('button', 'ghost ico i-swap' + (armed ? ' is-armed' : ''),
-        armed ? 'Tap again to withdraw it' : 'Cancel and place again');
+        armed ? 'Tap again to withdraw it' : label);
       b.onclick = function () {
         if (retargetArmed !== contract.id) {
           retargetArmed = contract.id;
@@ -3823,11 +3842,15 @@
           return post('cancel', { id: contract.id }).then(function (r) {
             if (!r.ok) { return takenOr(r); }
             var queued = (r.data && Number(r.data.queued)) || 0;
+            var any = Number((settings().relistWaits || {}).anyMinutes) || 0;
             say((queued > 0
               ? 'Contract withdrawn. Some of what you put up is waiting for you \u2014 it arrives '
                 + 'when you next have room.'
-              : 'Contract withdrawn. Everything you put up has been returned.')
-              + ' Place the new one here.' + staffChecking(r.data), 'ok');
+              : 'Contract withdrawn. Everything you put up has been returned'
+                + feeKeptText(contract) + '.')
+              + (any > 0 ? ' You can place the new one in ' + durationText(any)
+                + ': the Place form is open for it.' : ' Place the new one here.')
+              + staffChecking(r.data), 'ok');
             state.dialog = null;
             state.draft = state.draft || {};
             state.tab = 'place';
@@ -4098,6 +4121,41 @@
       + (staked ? ' and your stake' : '') + ' up.');
   }
 
+  /* What accepting echoes of the card: the anonymity fee and its account
+     the dialog showed, and the terms a placer may change until somebody
+     accepts, as the card had them. A term the card did not carry is not
+     sent, and the server holds the tap to nothing about it. */
+  function acceptEcho(contract, shownFee, feeAccount) {
+    var echo = { hitmanFee: shownFee, feeAccount: feeAccount,
+                 creatorAnonymous: contract.creatorAnonymous === true };
+    if (typeof contract.fulfilment === 'string') { echo.fulfilment = contract.fulfilment; }
+    if (typeof contract.bailoutAmount === 'number') { echo.bailoutAmount = contract.bailoutAmount; }
+    return echo;
+  }
+
+  /* A term that moved between the card and the tap, said as what it is now:
+     the board refreshes under it. null where it is not one of these. */
+  function acceptMovedText(r) {
+    var d = r.data || {};
+    if (r.err === 'rule_changed' && typeof d.fulfilment === 'string') {
+      return 'The person who placed it changed how it is completed: '
+        + (d.fulfilment === 'either' ? 'a kill completes it as well as a live handover.'
+          : 'it only pays when the target is brought in alive, and a kill does not complete it.')
+        + ' Nothing was taken. Check the card and accept again if you still want it.';
+    }
+    if (r.err === 'terms_changed' && typeof d.creatorAnonymous === 'boolean') {
+      return 'The person who placed it changed whether it is placed anonymously: it is now '
+        + (d.creatorAnonymous ? 'anonymous' : 'under their name')
+        + '. Nothing was taken. Check the card and accept again if you still want it.';
+    }
+    if (r.err === 'terms_changed' && typeof d.bailoutAmount === 'number') {
+      return 'The person who placed it changed the buyout: it is now '
+        + (d.bailoutAmount > 0 ? money(d.bailoutAmount) : 'none')
+        + '. Nothing was taken. Check the card and accept again if you still want it.';
+    }
+    return null;
+  }
+
   function acceptContract(contract) {
     var feeAccount = anonymityAccount();
     // The fee the dialog shows, kept with it and sent back with the tap:
@@ -4122,10 +4180,17 @@
         // to: shorter now, the server refuses rather than takes the stake.
         timeLeft: contract.timeLeft,
         // And the anonymity fee and its account, as the dialog said them,
-        // and the organisation's cut where one was shown.
-        shown: shownTerms
-          ? { hitmanFee: shownFee, feeAccount: feeAccount, orgCut: Number(shownTerms.orgPercent) || 0 }
-          : { hitmanFee: shownFee, feeAccount: feeAccount }
+        // and the organisation's cut where one was shown, with the terms
+        // the placer may change until somebody accepts, as the card showed
+        // them: how it is completed, whether it was placed anonymously, and
+        // the buyout where the card carries one. The server refuses
+        // (rule_changed, terms_changed) rather than takes it on terms that
+        // moved under the card.
+        shown: (function () {
+          var echo = acceptEcho(contract, shownFee, feeAccount);
+          if (shownTerms) { echo.orgCut = Number(shownTerms.orgPercent) || 0; }
+          return echo;
+        })()
       }).then(function (r) {
         if (!r.ok) {
           // Told and shown. A message saying the figure changed, with the
@@ -4136,7 +4201,7 @@
           // And one somebody else took (locked), one that is gone, one this
           // hitman was taken off, and one inside the stake window: each left
           // Accept live on a card the server could only refuse again.
-          if (r.err === 'terms_changed' || r.err === 'already_settled'
+          if (r.err === 'terms_changed' || r.err === 'rule_changed' || r.err === 'already_settled'
               || r.err === 'contract_full' || r.err === 'already_holding'
               || r.err === 'too_little_time' || r.err === 'locked'
               || r.err === 'not_found' || r.err === 'hold_released'
@@ -4169,6 +4234,8 @@
             fee = Number(short.need);
             if (short.account === 'bank' || short.account === 'cash') { from = short.account; }
           }
+          var moved = acceptMovedText(r);
+          if (moved) { return say(moved); }
           if (r.err === 'insufficient_funds' && (stake > 0 || fee > 0)) {
             return say(stake > 0 && short.part !== 'fee'
               ? 'You need ' + money(stake) + ' in your bank or in your cash for the '

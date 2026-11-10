@@ -2053,7 +2053,7 @@ function StartCrimsonHitman()
     sanctions.init({ storage = Storage, audit = audit, notify = notify })
     -- Target limits' job and player overrides (server/targetlimits.lua):
     -- read from the store once, here, and asked by every placing check.
-    targetLimits.init({ storage = Storage, audit = audit, contracts = contracts })
+    targetLimits.init({ storage = Storage, audit = audit, contracts = contracts, identity = identity })
     payments.init({ storage = Storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
     -- The app pause follows its switch the moment it changes.

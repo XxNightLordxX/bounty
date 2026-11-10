@@ -1951,7 +1951,7 @@ describe('a player the app is closed to can still buy out', function()
 
     it('buys it out', function()
         local s, f, c = officer()
-        Env.commands[Config.Bailout.Command](2, { c.id })
+        Env.commands[Config.Bailout.Command](2, { c.id, '15000' })
 
         eq(Env.players[2].PlayerData.money.bank, 85000, 'charged the premium')
         eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
@@ -1996,11 +1996,11 @@ describe('a player the app is closed to can still buy out', function()
         local s, f, c = officer()
         Env.players[2].PlayerData.money.bank = 0
         Env.players[2].PlayerData.money.cash = 0
-        Env.commands[Config.Bailout.Command](2, { c.id })
+        Env.commands[Config.Bailout.Command](2, { c.id, '15000' })
         eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'could not afford it')
         Env.players[2].PlayerData.money.bank = 100000
         Env.chat = {}
-        Env.commands[Config.Bailout.Command](2, { c.id })
+        Env.commands[Config.Bailout.Command](2, { c.id, '15000' })
         eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT,
             'refused for want of an allowance the refusal had spent')
     end)
@@ -2010,7 +2010,7 @@ describe('a player the app is closed to can still buy out', function()
         Env.players[2].PlayerData.money.bank = 0
         Env.players[2].PlayerData.money.cash = 0
         Env.chat = {}
-        Env.commands[Config.Bailout.Command](2, { c.id })
+        Env.commands[Config.Bailout.Command](2, { c.id, '15000' })
         local said = ''
         for _, line in ipairs(Env.chat) do said = said .. line.text end
         falsy(said:find('insufficient_funds', 1, true), said)
@@ -2044,10 +2044,10 @@ describe('a player the app is closed to can still buy out', function()
         })
         truthy(c2, 'a second contract on the same officer')
         local _ = f
-        Env.commands[Config.Bailout.Command](2, { c.id })
+        Env.commands[Config.Bailout.Command](2, { c.id, '15000' })
         eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
         Env.chat = {}
-        Env.commands[Config.Bailout.Command](2, { c2.id })
+        Env.commands[Config.Bailout.Command](2, { c2.id, '15000' })
         local said = ''
         for _, line in ipairs(Env.chat) do said = said .. line.text end
         truthy(said:find('Slow down', 1, true), 'a purchase is what the allowance is for: ' .. said)

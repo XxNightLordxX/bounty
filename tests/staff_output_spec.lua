@@ -1064,20 +1064,20 @@ describe('the buyout command\'s answers', function()
         local s, f = stack()
         Env.players[2].PlayerData.money.bank = 100000
         local queued = priced(s, f, true)
-        local said = chat(run(2, 'bailout', { queued.id }))
+        local said = chat(run(2, 'bailout', { queued.id, '15000' }))
         truthy(said:find('^Paid%. It closes in '), said)
         truthy(said:find('You are still a target until then; if a hitman finishes first, your money '
             .. 'comes back.', 1, true), said)
         truthy(said:find(NOT_THE_LAST, 1, true), 'W039: ' .. said)
         said = chat(run(2, 'bailout'))
         truthy(said:find('paid; you are still a target until it closes', 1, true), said)
-        said = chat(run(2, 'bailout', { queued.id }))
+        said = chat(run(2, 'bailout', { queued.id, '15000' }))
         truthy(said:find('You are still a target until it closes', 1, true), 'already paid: ' .. said)
 
         local s2, f2 = stack()
         Env.players[2].PlayerData.money.bank = 100000
         local instant = priced(s2, f2)
-        said = chat(run(2, 'bailout', { instant.id }))
+        said = chat(run(2, 'bailout', { instant.id, '15000' }))
         eq(said, 'Paid. Contract closed. ' .. NOT_THE_LAST)
         eq(s2.storage.readContract(instant.id).state, CH.STATE.BAILED_OUT)
     end)
@@ -1087,14 +1087,14 @@ describe('the buyout command\'s answers', function()
         local c = priced(s, f)
         Env.players[2].PlayerData.money.bank = 10000
         Env.players[2].PlayerData.money.cash = 10000
-        local said = chat(run(2, 'bailout', { c.id }))
+        local said = chat(run(2, 'bailout', { c.id, '15000' }))
         eq(said, 'Could not buy it out: your bank or your cash has to cover the full $15,000 on its '
             .. 'own; it is never split.')
         local buy = s.bailout.buy
         for code, words in pairs({ [CH.ERR.LOCKED] = 'someone got there first.',
                                    [CH.ERR.BUSY] = 'that was busy for a moment. Try again.' }) do
             s.bailout.buy = function() return false, code end
-            eq(chat(run(2, 'bailout', { c.id })), 'Could not buy it out: ' .. words)
+            eq(chat(run(2, 'bailout', { c.id, '15000' })), 'Could not buy it out: ' .. words)
         end
         s.bailout.buy = buy
     end)
@@ -1122,12 +1122,12 @@ describe('the buyout command\'s answers', function()
         local c = priced(s, f)
         local buy = s.bailout.buy
         s.bailout.buy = function() error('connection lost') end
-        local said = chat(run(2, 'bailout', { c.id }))
+        local said = chat(run(2, 'bailout', { c.id, '15000' }))
         eq(said, 'Something broke on the server, not on your end. If anything was taken it has '
             .. 'been returned or left for staff.')
         eq(rows(s, 'error_cleanse'), 1, 'audited as the app\'s handler audits error_bailout')
         s.bailout.buy = buy
-        said = chat(run(2, 'bailout', { c.id }))
+        said = chat(run(2, 'bailout', { c.id, '15000' }))
         falsy(said:find('Slow down', 1, true), 'the allowance came back: ' .. said)
         eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)

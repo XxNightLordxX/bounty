@@ -866,6 +866,8 @@ describe('a buyout, whichever way it was asked for', function()
     local WAYS = {
         onMe = function(id) return call('bailout', 2, { id = id }) end,
         cleanse = function(id)
+            -- Listed, then bought at the price listed, as the command says.
+            Env.commands[Config.Bailout.Command](2, {})
             Env.commands[Config.Bailout.Command](2, { id })
             return { ok = true }
         end,

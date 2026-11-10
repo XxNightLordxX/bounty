@@ -554,7 +554,7 @@ function _G.newStack()
     staffContract.init({ storage = storage, audit = audit, notify = notify,
                          contracts = contracts, identity = identity })
     sanctions.init({ storage = storage, audit = audit, notify = notify })
-    targetLimits.init({ storage = storage, audit = audit, contracts = contracts })
+    targetLimits.init({ storage = storage, audit = audit, contracts = contracts, identity = identity })
     payments.init({ storage = storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
     settings.watch('Staff.AppPaused', freeze.syncAppPause)
@@ -724,6 +724,7 @@ local suites = {
     'sweep6_spec',
     'target_limits_spec',
     'org_core_spec', 'org_powers_spec', 'org_money_spec', 'org_places_spec', 'org_review_spec',
+    'review_mst_spec',
     'docs_spec',
 }
 

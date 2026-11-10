@@ -32,7 +32,10 @@
 --- untaken and free again, so no step falls due the moment a hold ends.
 --- And while decay itself is switched off (off_since on its row): the
 --- stretch it was off for is added back when it is switched on again, so
---- turning it off and on charges nothing for the time between.
+--- turning it off and on charges nothing for the time between. A contract
+--- placed while it was off counts from when it went on (OnSince), not from
+--- when it was placed: its first step falls a whole step of decay being on
+--- after that, never sooner.
 
 local Util = CrimsonBoot.requireShared('util')
 
@@ -64,6 +67,14 @@ local nextHours = nil
 ---                      held_since, off_since }
 local rows = {}
 
+--- When decay last went on, os.time(), as this process saw it or the store
+--- kept it (the ON_KIND row); nil where it has been on since before any of
+--- that. And whether it has been seen off since, so the next pass that
+--- finds it on records the moment.
+local OnSince = nil
+local SeenOff = false
+local ON_KIND = 'imp_decay_on'
+
 local function rules()
     return Board and Board.on('ContractDecay') or nil
 end
@@ -87,9 +98,12 @@ local function rowFor(contract, now, hours)
     local row = rows[contract.id]
     if row then return row end
     local created = math.floor(num(contract.created_at, now))
+    -- Placed while decay was off: counted from when it went on. Only the
+    -- time it waited with decay on counts toward a step.
+    local from = math.max(created, math.floor(num(OnSince, created)))
     row = { id = KIND .. ':' .. contract.id, kind = KIND, contract_id = contract.id,
             steps = 0, added = 0,
-            last_at = (now - created) < hours * 3600 and created or now }
+            last_at = (now - created) < hours * 3600 and math.min(from, now) or now }
     write(row)
     return row
 end
@@ -327,17 +341,27 @@ end
 --- and nobody has taken it: a contract switched back on while taken waits
 --- for the walk-away, and none of the time it was off, taken or held is
 --- counted. Charged at once, the placer paid for hours of nobody waiting.
+---
+--- Each change is stored before it is kept: a row cleared in memory before
+--- a write that failed lost its mark, while the store still had it. Where a
+--- write fails the row stays marked, nothing more is done this pass
+--- (false), and the next pass tries again.
+---@return boolean stored
 local function markOn(now)
-    for _, row in pairs(rows) do
+    for id, row in pairs(rows) do
         local off = row.off_since
         if off then
             local from = math.min(num(row.held_since, off), num(off, now))
-            row.off_since = nil
-            row.last_at = num(row.last_at, from) + math.max(0, now - from)
-            row.held_since = now
-            write(row)
+            local changed = Util.copy(row)
+            changed.off_since = nil
+            changed.last_at = num(row.last_at, from) + math.max(0, now - from)
+            changed.held_since = now
+            local ok, err = pcall(Storage.writeRpRow, changed)
+            if not ok or err == false then return false end
+            rows[id] = changed
         end
     end
+    return true
 end
 
 --- The tick (once a minute, on a tick of its own): one step on each
@@ -352,12 +376,19 @@ function Decay.tick()
     local cfg = rules()
     if not cfg then
         nextAt = 0
+        SeenOff = true
         pruneWhileOff()
         markOff(os.time())
         return 0
     end
     local now = os.time()
-    markOn(now)
+    if SeenOff then
+        -- On again: contracts first seen from now count from now. Kept in
+        -- the store, once a switch, so a restart counts from it too.
+        SeenOff, OnSince = false, now
+        pcall(Storage.writeRpRow, { id = ON_KIND, kind = ON_KIND, on_since = now })
+    end
+    if not markOn(now) then return 0 end
     local hours = math.max(1, num(cfg.Hours, 1))
     if hours ~= nextHours then nextAt, nextHours = 0, hours end
     local stepping = now >= nextAt
@@ -492,10 +523,15 @@ function Decay.init(deps, board)
     Escrow, Contracts, Amendments, Board = deps.escrow, deps.contracts, deps.amendments, board
     Projection = deps.projection
     rows, nextAt, nextHours = {}, 0, nil
+    OnSince, SeenOff = nil, rules() == nil
     if Storage and Storage.readRpRows then
         local ok, kept = pcall(Storage.readRpRows, KIND)
         for _, row in ipairs(ok and type(kept) == 'table' and kept or {}) do
             if type(row.contract_id) == 'string' then rows[row.contract_id] = row end
+        end
+        local okOn, on = pcall(Storage.readRpRows, ON_KIND)
+        for _, row in ipairs(okOn and type(on) == 'table' and on or {}) do
+            if row.id == ON_KIND and tonumber(row.on_since) then OnSince = tonumber(row.on_since) end
         end
     end
     local projection = deps.projection

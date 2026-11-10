@@ -1655,6 +1655,12 @@ local CLEANSE_REFUSALS = {
 --- not the city's last.
 local NOT_THE_LAST = 'Closing this one does not mean nobody else is after you.'
 
+--- How long a price /cleanse printed stays the one `/cleanse <id>` pays,
+--- in seconds. The placer may change the buyout until somebody accepts
+--- (Contracts.revise), so the command charges the figure it said, as the
+--- app's dialog does (Bailout.buy's `shown`), never whatever it is now.
+local QUOTE_SECONDS = 300
+
 --- Register the players' buyout command (Config.Bailout.Command, /cleanse).
 ---
 --- Its own, not one of the staff commands: registered whatever
@@ -1689,9 +1695,38 @@ function Bridges.installBuyoutCommand(modules)
         TriggerClientEvent('chat:addMessage', src, { args = { 'CRIMSON', line } })
     end
 
+    -- The price each listing said, per player, for QUOTE_SECONDS:
+    -- { [cid] = { [contractId] = { amount = n, at = os.time() } } }.
+    local Quoted = {}
+
+    --- Remember the price said to a player for one contract, and forget
+    --- every quote that has run out (a handful at most, so all of them).
+    local function quote(cid, id, amount)
+        local now = os.time()
+        for who, ids in pairs(Quoted) do
+            for key, q in pairs(ids) do
+                if now - q.at >= QUOTE_SECONDS then ids[key] = nil end
+            end
+            if next(ids) == nil then Quoted[who] = nil end
+        end
+        if amount == nil then
+            if Quoted[cid] then Quoted[cid][id] = nil end
+            return
+        end
+        Quoted[cid] = Quoted[cid] or {}
+        Quoted[cid][id] = { amount = amount, at = now }
+    end
+
+    --- The price said to this player for this contract, while it holds.
+    local function quoted(cid, id)
+        local q = Quoted[cid] and Quoted[cid][id]
+        if not q or os.time() - q.at >= QUOTE_SECONDS then return nil end
+        return q.amount
+    end
+
     --- Every live contract on them they may be shown, priced or not: an
     --- all-clear only when there is none.
-    local function list(src, shown)
+    local function list(src, shown, actor)
         local buyouts = Config.Bailout.Enabled == true
         if #shown == 0 then
             return answer(src, buyouts and 'Nothing is out on you.'
@@ -1710,11 +1745,13 @@ function Bridges.installBuyoutCommand(modules)
             else
                 how = dollars(entry.amount)
                 buyable = buyable + 1
+                if actor then quote(actor.cid, entry.id, entry.amount) end
             end
             answer(src, ('  %s  %s'):format(entry.id, how))
         end
         if buyable > 0 then
-            answer(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
+            answer(src, ('Buy one out with /%s <id> at the price listed (or /%s <id> <price>).')
+                :format(Config.Bailout.Command, Config.Bailout.Command))
         end
     end
 
@@ -1760,7 +1797,7 @@ function Bridges.installBuyoutCommand(modules)
         if not modules.ratelimit.check(actor, 'load') then return slowDown('load') end
 
         local shown = modules.bailout.onTarget(actor)
-        if not args[1] then return list(src, shown) end
+        if not args[1] then return list(src, shown, actor) end
 
         if not Config.Bailout.Enabled then
             return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
@@ -1791,11 +1828,39 @@ function Bridges.installBuyoutCommand(modules)
             return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.NO_BUYOUT_PRICE])
         end
 
+        -- The price they agree to: the one typed (/cleanse <id> <price>),
+        -- else the one the listing said to them a moment ago. With neither,
+        -- or one that is not the price now, nothing is bought: the price
+        -- now is said, and remembered as said, so running it again pays it.
+        local cmd = Config.Bailout.Command
+        local typed
+        if args[2] ~= nil then
+            typed = tonumber((tostring(args[2]):gsub('[%$,]', '')))
+            if not typed or typed < 0 or typed ~= math.floor(typed) then
+                return answer(src, ('Could not buy it out: the price is a whole number of dollars, as '
+                    .. '/%s lists it.'):format(cmd))
+            end
+        end
+        local agreed = typed or quoted(actor.cid, id)
+        local function priceNow(amount, before)
+            quote(actor.cid, id, amount)
+            return answer(src, ('%s The buyout on %s is %s now. Run /%s %s again within %d minutes to pay '
+                .. 'it, or /%s %s %d.'):format(before, id, dollars(amount), cmd, id,
+                    QUOTE_SECONDS // 60, cmd, id, amount))
+        end
+        if agreed == nil then return priceNow(listed.amount, 'Nothing was bought yet.') end
+        if agreed ~= listed.amount then
+            return priceNow(listed.amount, ('Nothing was bought: the price changed from %s.')
+                :format(dollars(agreed)))
+        end
+
         if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
 
         -- As the app's handler runs it: a raise is answered, the
-        -- allowance goes back, and the audit has it.
-        local ran, ok, err, third = pcall(modules.bailout.buy, actor, id)
+        -- allowance goes back, and the audit has it. With the price agreed
+        -- to, which the buy refuses (TERMS_CHANGED) rather than charges
+        -- where the placer changed it in the moment between.
+        local ran, ok, err, third = pcall(modules.bailout.buy, actor, id, agreed)
         if not ran then
             modules.ratelimit.refund(actor, 'bailout')
             if modules.audit then
@@ -1823,6 +1888,10 @@ function Bridges.installBuyoutCommand(modules)
                 return answer(src, ('Could not buy it out: your bank or your cash has to cover the '
                     .. 'full %s on its own; it is never split.'):format(dollars(third.need)))
             end
+            if err == CH.ERR.TERMS_CHANGED and type(third) == 'table' and tonumber(third.amount) then
+                return priceNow(tonumber(third.amount), ('Nothing was bought: the price changed from %s.')
+                    :format(dollars(agreed)))
+            end
             -- Put on hold by staff after the charge: the premium came back.
             if err == CH.ERR.CONTRACT_FROZEN and type(third) == 'table' and third.refunded then
                 return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[err]
@@ -1830,6 +1899,7 @@ function Bridges.installBuyoutCommand(modules)
             end
             return answer(src, 'Could not buy it out: ' .. (CLEANSE_REFUSALS[err] or tostring(err)))
         end
+        quote(actor.cid, id, nil)
         -- Whether it closed now or waits on a hitman, as the app says it:
         -- "closes shortly" while somebody can still finish it is the target
         -- walking into the open thinking they are safe.

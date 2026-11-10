@@ -638,9 +638,15 @@ function Contracts.canCreate(actor, targetActor)
         if counted[c.id] then goto continue end
         counted[c.id] = true
         -- Placed on this target in the last day or week, whatever became of
-        -- it but a staff void, and not before staff reset the counts.
+        -- it but a staff void, and not before staff reset the counts. Nor
+        -- one withdrawn or left to run out before anybody took it: free and
+        -- refunded, two of them from friends kept every real placer off the
+        -- target for a day, the shield the wait after a resolution below
+        -- already refuses to be.
         if (perDay > 0 or perWeek > 0) and c.target_cid == targetActor.cid and c.state ~= CH.STATE.VOIDED
-            and not (adj and adj.counts_reset_at and (tonumber(c.created_at) or 0) <= adj.counts_reset_at) then
+            and not (adj and adj.counts_reset_at and (tonumber(c.created_at) or 0) <= adj.counts_reset_at)
+            and not ((c.state == CH.STATE.CANCELLED or c.state == CH.STATE.EXPIRED)
+                and not everTakenUp(c.id)) then
             local age = now - (tonumber(c.created_at) or 0)
             if age < 86400 then placedDay = placedDay + 1 end
             if age < 604800 then placedWeek = placedWeek + 1 end
@@ -655,29 +661,44 @@ function Contracts.canCreate(actor, targetActor)
                 if holdsAPlace(c) then byTarget = byTarget + 1 end
             end
         else
+            -- Buying your way out earns a longer breather than an ordinary
+            -- resolution: otherwise a creator simply re-lists and the target
+            -- pays again (Config.Immunity.AfterBailoutSeconds). It is what
+            -- the target paid for, not a target limit, so neither an
+            -- exemption nor a Reset lifts it, nor a job-wide action: only a
+            -- staff Reset all on that one player (buyout_cleared_at).
+            if c.target_cid == targetActor.cid and c.resolved_at and c.state == CH.STATE.BAILED_OUT
+                and (now - c.resolved_at) < (tonumber(Config.Immunity.AfterBailoutSeconds) or 0)
+                and not (adj and adj.buyout_cleared_at and c.resolved_at <= adj.buyout_cleared_at) then
+                return false, CH.ERR.TARGET_RECENTLY_ON
+            end
             -- Cooldowns after a resolution, so a target cannot be re-listed
             -- the moment their last contract closes (§12.5).
             -- Not on a target exempt from the target limits, nor for a
             -- contract resolved before staff reset their cooldown.
             if c.target_cid == targetActor.cid and c.resolved_at and not exempt then
-                -- Buying your way out earns a longer breather than an
-                -- ordinary resolution: otherwise a creator simply re-lists
-                -- and the target pays again.
                 local since = now - c.resolved_at
-                local cooldown = (c.state == CH.STATE.BAILED_OUT)
-                    and Config.Immunity.AfterBailoutSeconds
+                -- A buyout's own wait is the immunity above.
+                local cooldown = (c.state == CH.STATE.BAILED_OUT) and 0
                     or limit.TargetCooldownAfterResolveSeconds
                 if not counts(c.resolved_at, false) then cooldown = 0 end
                 -- After a completed one, the longer wait where it is set
                 -- (Config.Limits.TargetCooldownAfterCompletionSeconds, off as
                 -- shipped: server/imp_staffeco.lua). Said in whole hours
-                -- left, and nothing else about the contract.
+                -- left, and nothing else about the contract: the hours of
+                -- the global wait only, while it runs, and none after. The
+                -- wait itself may be a job's or the player's own, and its
+                -- hours said which.
                 local afterCompletion = c.state == CH.STATE.COMPLETED and counts(c.resolved_at, false)
                     and (tl and (tonumber(limit.TargetCooldownAfterCompletionSeconds) or 0)
                         or Imp.completionCooldown()) or 0
                 if afterCompletion > (tonumber(cooldown) or 0) and since < afterCompletion then
-                    return false, CH.ERR.TARGET_RECENTLY_ON,
-                        { hours = math.max(1, math.ceil((afterCompletion - since) / 3600)) }
+                    local global = Imp.completionCooldown()
+                    if since < global then
+                        return false, CH.ERR.TARGET_RECENTLY_ON,
+                            { hours = math.max(1, math.ceil((global - since) / 3600)) }
+                    end
+                    return false, CH.ERR.TARGET_RECENTLY_ON
                 end
                 -- Except a withdrawal nobody ever took up, which cost the
                 -- target nothing to earn a breather for. It started one for
@@ -1545,6 +1566,35 @@ local function shortfall(part, need, account, fee, feeAccount)
              fee = fee, feeAccount = (fee or 0) > 0 and feeAccount or nil }
 end
 
+--- Whether the terms the hitman's card showed are the contract's now, for
+--- the ones the placer may change until somebody accepts (Contracts.revise):
+--- how it is completed, whether it was placed anonymously, and the buyout
+--- where the card carried one. The page echoes them with the tap
+--- (`shown.fulfilment`, `shown.creatorAnonymous`, `shown.bailoutAmount`);
+--- one it does not send is held to nothing, as shownTermsRefusal does for
+--- placing. Without it a card saying a kill pays was accepted after the
+--- placer made it live handover only, and the stake went with it.
+---@param contract table this read, the one the acceptance is written from
+---@param shown table the page's echo
+---@return string|nil err
+---@return table|nil terms what it is now, of what the card showed
+local function acceptTermsRefusal(contract, shown)
+    local rule = Util.fulfilmentRule(contract)
+    if type(shown.fulfilment) == 'string' and shown.fulfilment ~= rule then
+        return CH.ERR.RULE_CHANGED, { fulfilment = rule }
+    end
+    -- Read as the card reads it (Projection: creatorAnonymous on truthiness).
+    local anonNow = contract.anon_creator and true or false
+    if type(shown.creatorAnonymous) == 'boolean' and shown.creatorAnonymous ~= anonNow then
+        return CH.ERR.TERMS_CHANGED, { creatorAnonymous = anonNow }
+    end
+    local buyoutNow = tonumber(contract.bailout_amount) or 0
+    if type(shown.bailoutAmount) == 'number' and shown.bailoutAmount ~= buyoutNow then
+        return CH.ERR.TERMS_CHANGED, { bailoutAmount = buyoutNow }
+    end
+    return nil
+end
+
 --- Accept a contract. Conditional write: in exclusive mode the ACTIVE →
 --- ACCEPTED transition is what reserves it, so two hitmen racing produce
 --- exactly one winner (§14.34).
@@ -1581,6 +1631,14 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         -- here that really is momentary.
         if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
         return false, CH.ERR.BAD_STATE
+    end
+
+    -- The rule, the anonymity and the buyout as the card showed them,
+    -- against this read: the placer may change each until the moment of
+    -- accept, and the lock orders the writes but not what the hitman read.
+    if opts and opts.checkDisclosure and type(opts.shown) == 'table' then
+        local termsErr, terms = acceptTermsRefusal(contract, opts.shown)
+        if termsErr then return false, termsErr, terms end
     end
 
     -- On hold by staff, or the hitman is: nothing is taken. Somebody not on

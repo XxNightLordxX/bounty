@@ -197,7 +197,7 @@ describe('buyouts, switched from the panel', function()
         -- On me tab shows it.
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         Env.chat = {}
-        Env.commands[Config.Bailout.Command](2, { c.id })
+        Env.commands[Config.Bailout.Command](2, { c.id, '15000' })
         truthy(Env.chat[#Env.chat].text:find('Paid', 1, true), tostring(Env.chat[#Env.chat].text))
     end)
 end)

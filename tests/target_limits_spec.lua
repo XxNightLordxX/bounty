@@ -186,25 +186,30 @@ describe('target limits: player over job over global', function()
         truthy(place(s, 4), 'the global wait is over for every other job')
     end)
 
+    -- A contract cancelled after a hitman took it still counts. One withdrawn
+    -- (or left to run out) before anybody took it does not: this used to
+    -- assert that it did, which let two friends shield a target for a day
+    -- with two $1 contracts withdrawn at once, free and refunded (review-mst
+    -- F3; tests/review_mst_spec.lua). The wait after a resolution never
+    -- counted those either.
     it('counts contracts placed on them in a rolling day and week', function()
-        local s = world()
+        local s, f = world()
         truthy(ask(6, 'setSetting', { key = 'Limits.MaxContractsPerTargetPerDay', value = 2 }).ok)
-        local first = assert(place(s, 1))
-        s.contracts.resolve(first.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        ended(s, f, 1, CH.STATE.CANCELLED)
+        Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 1)
         truthy(place(s, 4), 'the second today')
         local c, err = place(s, 5)
-        eq(c, nil, 'a cancelled one still counts')
+        eq(c, nil, 'a cancelled one a hitman took still counts')
         eq(err, CH.ERR.TARGET_HAS_ENOUGH)
-        Env.advance(86400 - 10)
+        Env.advance(86400 - 10 - (Config.Limits.TargetCooldownAfterResolveSeconds + 1))
         eq(select(2, place(s, 5)), CH.ERR.TARGET_HAS_ENOUGH, 'still inside the 24 hours')
         Env.advance(20)
         -- The live one counts toward the cap of two live; one placed a day ago no longer counts.
         truthy(place(s, 5), 'the first left the 24 hours')
         -- The week.
-        local w = world()
+        local w, wf = world()
         truthy(ask(6, 'setSetting', { key = 'Limits.MaxContractsPerTargetPerWeek', value = 1 }).ok)
-        local one = assert(place(w, 1))
-        w.contracts.resolve(one.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        ended(w, wf, 1, CH.STATE.CANCELLED)
         Env.advance(6 * 86400)
         eq(select(2, place(w, 4)), CH.ERR.TARGET_HAS_ENOUGH, 'six days on')
         Env.advance(86400)
@@ -281,10 +286,11 @@ describe('target limits: staff actions on one player', function()
     end)
 
     it('Reset counts starts the day and week counts from now', function()
-        local s = world()
+        local s, f = world()
         truthy(ask(6, 'setSetting', { key = 'Limits.MaxContractsPerTargetPerDay', value = 1 }).ok)
-        local c = assert(place(s, 1))
-        s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        -- Taken, then cancelled: one withdrawn untaken is not counted (F3).
+        ended(s, f, 1, CH.STATE.CANCELLED)
+        Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 1)
         eq(select(2, place(s, 4)), CH.ERR.TARGET_HAS_ENOUGH)
         local ref = lookedUp(9, 2)
         truthy(ask(9, 'targetCounts', { ref = ref, reason = 'mistake' }).ok)

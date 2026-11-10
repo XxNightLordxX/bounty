@@ -12249,7 +12249,10 @@ async function main() {
     });
     it('sends back the fee and the account the dialog showed', function () {
       truthy(accepted, 'accepted');
-      eq(JSON.stringify(accepted.shown), JSON.stringify({ hitmanFee: 2500, feeAccount: 'bank' }));
+      // With the card's terms beside them since review-mst F4 (the
+      // anonymity flag here; this card carries no rule and no buyout).
+      eq(JSON.stringify(accepted.shown), JSON.stringify({ hitmanFee: 2500, feeAccount: 'bank',
+        creatorAnonymous: false }));
     });
     it('names the fee charged in the notice', function () {
       truthy(app.notice().indexOf('Anonymity cost $2,500 from your bank.') !== -1, app.notice());
@@ -14116,6 +14119,12 @@ async function main() {
     function node6(app, id) {
       return app.view.all().filter(function (n) { return n._id === id; })[0];
     }
+    /* Cancel and place again, tapped by its id whatever it is called. */
+    function retarget6(app) {
+      const b = node6(app, 'sheet-retarget-ct00000061');
+      if (!b) { throw new Error('no Cancel and place again button: ' + labels6(app).join(' | ')); }
+      b.onclick();
+    }
     function labels6(app) {
       return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
@@ -14233,7 +14242,9 @@ async function main() {
         truthy(text.indexOf('everything you put up comes back') !== -1, text);
         truthy(text.indexOf('any new contract for') !== -1, 'the wait after withdrawing: ' + text);
       });
-      click(t.app, 'Cancel and place again');
+      // Named with the wait (review-mst L3): five minutes here. Tapped by
+      // its id, the name being asserted on its own.
+      retarget6(t.app);
       it('S6 J-3: the first tap only arms it', function () {
         eq(t.sent.length, 0, JSON.stringify(t.sent));
         truthy(labels6(t.app).indexOf('Tap again to withdraw it') !== -1, labels6(t.app).join(' | '));
@@ -14241,9 +14252,10 @@ async function main() {
       t.app.timers.filter(function (x) { return x.ms === 3000 && !x.cleared; })
         .forEach(function (x) { x.cleared = true; x.fn(); });
       it('S6 J-3: and disarms after three seconds', function () {
-        truthy(labels6(t.app).indexOf('Cancel and place again') !== -1, labels6(t.app).join(' | '));
+        truthy(labels6(t.app).indexOf('Cancel \u2014 place again in 5 minutes') !== -1,
+          labels6(t.app).join(' | '));
       });
-      click(t.app, 'Cancel and place again');
+      retarget6(t.app);
       click(t.app, 'Tap again to withdraw it');
       await settle(); await settle();
       it('S6 J-3: the second tap withdraws it and opens the Place form', function () {
@@ -14253,6 +14265,107 @@ async function main() {
         truthy(t.app.notice().indexOf('Everything you put up has been returned') !== -1, t.app.notice());
       });
       drewCleanly(t.app, 'the Edit sheet: Cancel and place again');
+    })();
+
+    /* review-mst L3: the button and the notice say the wait after a
+       withdrawal, and the anonymity fee that is not refunded. With no wait
+       the old name stands. */
+    await (async function () {
+      const t = await sheet6({ creatorAnonymous: true, creatorName: undefined });
+      it('L3: Cancel and place again names the wait on the button', function () {
+        truthy(labels6(t.app).indexOf('Cancel \u2014 place again in 5 minutes') !== -1,
+          labels6(t.app).join(' | '));
+        falsy(labels6(t.app).indexOf('Cancel and place again') !== -1, 'the name hid the wait');
+      });
+      it('L3: and says the anonymity fee is not refunded before the tap', function () {
+        const text = t.app.view.textContent;
+        truthy(text.indexOf('except the anonymity fee, which is not refunded') !== -1, text);
+      });
+      retarget6(t.app);
+      retarget6(t.app);
+      await settle(); await settle();
+      it('L3: the notice says when the new one can go on, and that the fee stays', function () {
+        const notice = t.app.notice();
+        falsy(notice.indexOf('Place the new one here.') !== -1, 'said as if at once: ' + notice);
+        truthy(notice.indexOf('You can place the new one in 5 minutes') !== -1, notice);
+        truthy(notice.indexOf('except the anonymity fee, which is not refunded') !== -1, notice);
+        falsy(/Everything you put up has been returned\./.test(notice), 'everything, said of a kept fee: '
+          + notice);
+      });
+      const none = await sheet6({}, { relistWaits: { anyMinutes: 0, sameTargetMinutes: 0, everyoneMinutes: 0 } });
+      it('L3: with no wait, the old name and "here"', function () {
+        truthy(labels6(none.app).indexOf('Cancel and place again') !== -1, labels6(none.app).join(' | '));
+        falsy(none.app.view.textContent.indexOf('not refunded') !== -1, 'no fee on a named contract');
+      });
+      retarget6(none.app);
+      retarget6(none.app);
+      await settle(); await settle();
+      it('L3: and says to place it here at once', function () {
+        truthy(none.app.notice().indexOf('Place the new one here.') !== -1, none.app.notice());
+      });
+    })();
+
+    /* review-mst F4: Accept echoes the terms the card showed (the rule, the
+       anonymity flag, the buyout where the card has one), and a refusal
+       for any of them says what it is now and reads the board again. */
+    await (async function () {
+      function board(card) {
+        const b = JSON.parse(JSON.stringify(BOARD));
+        b.data.contracts[0] = Object.assign(b.data.contracts[0], card || {});
+        return b;
+      }
+      async function accepting(card, reply) {
+        let accepted = null;
+        let lists = 0;
+        const app = boot({ list: function () { lists++; return board(card); }, mine: MINE, ledger: LEDGER,
+          accept: function (body) { accepted = body; return reply; } });
+        await settle(); await settle();
+        click(app, 'Accept contract');
+        const take = app.view.all().filter(function (n) {
+          return n.tagName === 'BUTTON' && (n.textContent === 'Accept' || n.textContent === 'Under my name');
+        })[0];
+        if (take) { take.onclick(); }
+        await settle(); await settle(); await settle();
+        return { app: app, sent: function () { return accepted; }, lists: function () { return lists; } };
+      }
+      const ok = await accepting({ fulfilment: 'either', creatorAnonymous: true, creatorName: undefined },
+        { ok: true, data: { myAnonymous: false } });
+      it('F4: Accept sends the rule and the anonymity the card showed', function () {
+        const sent = ok.sent();
+        truthy(sent && sent.shown, 'sent');
+        eq(sent.shown.fulfilment, 'either');
+        eq(sent.shown.creatorAnonymous, true);
+        eq(sent.shown.bailoutAmount, undefined, 'a buyout the card never had');
+      });
+      const withBuyout = await accepting({ fulfilment: 'alive', bailoutAmount: 15000 },
+        { ok: true, data: { myAnonymous: false } });
+      it('F4: and the buyout, where the card carries one', function () {
+        const sent = withBuyout.sent();
+        eq(sent.shown.fulfilment, 'alive');
+        eq(sent.shown.creatorAnonymous, false);
+        eq(sent.shown.bailoutAmount, 15000);
+      });
+      const rule = await accepting({ fulfilment: 'either' },
+        { ok: false, err: 'rule_changed', data: { fulfilment: 'alive' } });
+      it('F4: a rule changed under the card is said as it is now, and the board read again', function () {
+        const notice = rule.app.notice();
+        truthy(notice.indexOf('changed how it is completed') !== -1, notice);
+        truthy(notice.indexOf('brought in alive') !== -1, notice);
+        truthy(notice.indexOf('Nothing was taken') !== -1, notice);
+        truthy(rule.lists() >= 2, 'the stale card left up');
+      });
+      const anon = await accepting({ fulfilment: 'either' },
+        { ok: false, err: 'terms_changed', data: { creatorAnonymous: true } });
+      it('F4: anonymity changed under the card is said', function () {
+        truthy(anon.app.notice().indexOf('it is now anonymous') !== -1, anon.app.notice());
+        truthy(anon.lists() >= 2, 'the stale card left up');
+      });
+      const buyout = await accepting({ fulfilment: 'either', bailoutAmount: 15000 },
+        { ok: false, err: 'terms_changed', data: { bailoutAmount: 25000 } });
+      it('F4: a buyout changed under the card is said with the figure now', function () {
+        truthy(buyout.app.notice().indexOf('changed the buyout: it is now $25,000') !== -1,
+          buyout.app.notice());
+      });
     })();
 
     // FE-4: the guard keeps the Protection tab after it is switched off.

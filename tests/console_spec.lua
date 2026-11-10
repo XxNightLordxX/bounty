@@ -493,7 +493,7 @@ describe('a raise in something that moves money, with Config.Debug off', functio
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         Env.console = {}
         s.bailout.buy = function() error('buyout went wrong') end
-        Env.commands[Config.Bailout.Command](2, { c.id })
+        Env.commands[Config.Bailout.Command](2, { c.id, '12000' })
         eq(said(('[crimson-hitman] /%s run by player 2 raised: '):format(Config.Bailout.Command)), 1,
             console())
         -- A read that raised moved nothing: with Debug on only.

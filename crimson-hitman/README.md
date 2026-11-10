@@ -260,11 +260,16 @@ every other write.
   once), and two new caps, both 0 (off) as shipped:
   `MaxContractsPerTargetPerDay` (placed on them in a rolling 24 hours) and
   `MaxContractsPerTargetPerWeek` (a rolling 7 days). A contract counts toward
-  the day and week caps whatever became of it, unless staff voided it.
+  the day and week caps whatever became of it, unless staff voided it or it
+  was withdrawn or ran out before anybody took it (those cost nothing, so
+  friends could otherwise fill the caps for free).
   Changing these needs `crimson.admin`, like every setting.
 - **Per job**: add a qbx job name (`[a-z0-9_]+`, at most 32 characters) with
-  any of the six limits; a target working that job when the contract is
-  placed has those instead of the defaults. Each job shows its own values
+  any of the six limits; a target holding that job when the contract is
+  placed, as the one they are working or as a second job, has those instead
+  of the defaults. Where more than one of their jobs has its own, the
+  strictest value wins, limit by limit (the longer wait, the smaller cap), so
+  switching the active job steps round none of them. Each job shows its own values
   and the effective ones. Kept in the store (`crimson_rp_rows`, kind
   `tl_job`) and applied again at every start; a stored row that does not
   check out is not applied and the start says why. Adding, changing and
@@ -272,17 +277,24 @@ every other write.
 - **Per player**: look a player up (as Players does). Their card shows the
   live contracts on them, the contracts placed on them in the last 24 hours
   and 7 days, the exact cooldown left and which rule sets it (global, job or
-  player), with *Reset cooldown* (they may be named now; the same placer's
-  wait holds unless you choose *Reset all*), *Extend cooldown* by minutes or
+  player), with *Reset cooldown* (the wait after a contract ends; the same
+  placer's wait, a staff extension and a buyout's immunity hold unless you
+  choose *Reset all*, and the reply says so), *Extend cooldown* by minutes or
   until a time, *Reset counts* (the day and week counts start from now), and
-  their own limits or *Exempt from limits*, for some hours or for good. Every
+  their own limits or *Exempt from limits*, for some hours or for good.
+  The immunity a target bought with a buyout
+  (`Config.Immunity.AfterBailoutSeconds`) is not a target limit: Reset,
+  Exempt and every job-wide action leave it, the card shows how long it has
+  left, and only *Reset all* on that one player lifts it. Every
   one takes a reason and needs `crimson.moderator` or `crimson.admin`. Kept
   in `crimson_rp_rows` (kind `tl_player`) and pruned once every fact in them
   has run out.
 - **Per job, at once**: the same Reset cooldowns, Extend cooldowns and
   Reset counts for every player of one job. *Players of a job* are everybody
-  in the city working it now, and everybody not in the city whom the latest
-  contract placed on them in the last 7 days recorded as working it. The
+  in the city holding it now (working it or as a second job), and everybody
+  not in the city whom the latest contract placed on them in the last 7 days
+  recorded as holding it. A job-wide Reset, even Reset all, never lifts a
+  buyout's immunity. The
   confirm names the job and how many players it reaches; one audit row
   records the action with the count. `crimson.moderator` or `crimson.admin`.
 - **Current contracts**: every live contract (open, taken, settling, on
@@ -316,7 +328,11 @@ id is the **Ref** at the foot of every card and Ledger entry.
 | `/ch-refresh timers` | Test servers: bring every wait forward | `crimson.admin` |
 
 The players' buyout command (`Config.Bailout.Command`, `/cleanse`) is not a
-staff command; it answers in chat.
+staff command; it answers in chat. `/cleanse` lists what is out on the player
+with each price; `/cleanse <id>` then buys at the price listed to them in the
+last 5 minutes, and `/cleanse <id> <price>` at the price typed. Where that is
+not the price now (the placer may change it until somebody accepts), nothing
+is bought and the new price is said.
 
 No two of these names may be the same, in any case, and none may be the
 panel's way out, `/<panel>-close` (`/hitmanadmin-close`): two commands under
@@ -1362,7 +1378,15 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, Target limits (newest)**
+**1.1.0, review fixes (newest)**
+
+- A buyout's immunity (`Config.Immunity.AfterBailoutSeconds`) survives a staff Reset, Exempt and every job-wide action; only Reset all on the player lifts it, and the panel's replies say so. A plain Reset also says when a staff extension still holds.
+- A job's own target limits apply to a target holding that job as a second one too, the strictest of their jobs winning, in placing, the lookup card and the job-wide actions alike.
+- Contracts withdrawn or run out before anybody took them no longer count toward the day and week caps.
+- Accepting is refused, nothing taken, when the placer changed how the contract is completed, whether it is anonymous, or the buyout on the card since the hitman read it; the hitman is told what it is now.
+- `/cleanse <id>` buys at the price it listed (or `/cleanse <id> <price>`), never at one changed since; the completion wait's hours never reveal a job's or a player's own wait; contract decay counts nothing of the time it was off before a contract's first step; **Cancel and place again** names the wait after withdrawing, and says the anonymity fee is not refunded.
+
+**1.1.0, Target limits**
 
 - The admin panel has a **Target limits** section: the six limits on how often one person may have a contract placed on them (two new, a day and a week cap, off as shipped), each job's own, one player's cooldown reset or extended, counts reset and own limits or exempt, the same for a whole job at once, and every live contract by target. See Admin panel, Target limits.
 

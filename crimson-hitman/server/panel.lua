@@ -3300,10 +3300,14 @@ H.targetJobRemove = function(src, data)
     return true, nil, 'Removed: that job\'s members have the global limits again.'
 end
 
---- The job a target is working now, or the one the latest contract on
---- them recorded, and which it is.
+--- The jobs a target holds now (the one they are working first, then every
+--- other they hold: TargetLimits.jobsOf, as placing reads them), or the one
+--- the latest contract on them recorded, and which it is.
 local function targetJobOf(cid, actor, contracts)
-    if actor and type(actor.job) == 'table' and actor.job.name then return tostring(actor.job.name), 'now' end
+    if actor then
+        local jobs = deps.targetLimits.jobsOf(actor)
+        if #jobs > 0 then return jobs, 'now' end
+    end
     local best
     for _, c in ipairs(contracts or {}) do
         if c.target_cid == cid and c.target_job and (not best or (c.created_at or 0) > (best.created_at or 0)) then
@@ -3330,8 +3334,7 @@ H.targetStatus = function(src, data)
     local cid = who.cid
     local actor = who.actor or deps.identity.byCitizenId(cid)
     local now = os.time()
-    local job0 = actor and type(actor.job) == 'table' and actor.job.name or nil
-    local eff = TL.effective(cid, job0).values
+    local eff = TL.effective(cid, actor and TL.jobsOf(actor) or nil).values
     local back = math.max(TL.WEEK, tonumber(eff.TargetCooldownAfterResolveSeconds) or 0,
         tonumber(eff.TargetCooldownAfterCompletionSeconds) or 0,
         tonumber(Config.Immunity.AfterBailoutSeconds) or 0)
@@ -3362,6 +3365,7 @@ end
 --- One staff action on the player a lookup found: data.ref only, never a
 --- name or a player id matched again now.
 local function targetWrite(src, data, action, args, said)
+    -- `said` is the reply, or a function of the player's row as written.
     local TL = deps.targetLimits
     if not TL then return false, 'unavailable', TL_OFF end
     if data.ref == nil then return false, 'stale_lookup', STALE_LOOKUP end
@@ -3373,14 +3377,32 @@ local function targetWrite(src, data, action, args, said)
     args.name = who.actor and who.actor.name or nil
     local ok, err, detail = deps.targetLimits.adjust(staffOf(src), who.cid, action, args)
     if not ok then return targetRefusal(err, detail) end
+    if type(said) == 'function' then said = said(detail) end
     return true, nil, said
 end
 
+--- What a buyout's immunity means to a staff action that leaves it.
+local BUYOUT_KEPT = 'A buyout they paid for still keeps them off the board for its hour '
+    .. '(Config.Immunity.AfterBailoutSeconds): only Reset all lifts it.'
+
 H.targetReset = function(src, data)
     local all = data.all == true
-    return targetWrite(src, data, 'reset', { all = all }, all
-        and 'Every cooldown on them is cleared, the same placer\'s wait and any extension too.'
-        or 'Their cooldown is cleared: they may be named again now. The same placer\'s wait still holds.')
+    if all then
+        return targetWrite(src, data, 'reset', { all = true },
+            'Every cooldown on them is cleared, the same placer\'s wait, any extension and the immunity a '
+            .. 'buyout bought them too.')
+    end
+    return targetWrite(src, data, 'reset', { all = false }, function(row)
+        -- A staff extension is not a cooldown Reset clears (canCreate
+        -- still refuses on it), so it is said, with the way to clear it.
+        local held = deps.targetLimits.extendedUntil(row)
+        if held then
+            return ('Their cooldown is cleared, but a staff extension still holds them for %s more: '
+                .. 'Reset all clears it. The same placer\'s wait still holds. %s')
+                :format(math.max(1, math.ceil((held - os.time()) / 60)) .. ' min', BUYOUT_KEPT)
+        end
+        return 'Their cooldown is cleared. The same placer\'s wait still holds. ' .. BUYOUT_KEPT
+    end)
 end
 
 H.targetExtend = function(src, data)
@@ -3413,7 +3435,7 @@ H.targetOverride = function(src, data)
     local limits = exempt and {} or limitsOf(data.limits)
     if not limits then return false, CH.ERR.INVALID_INPUT, 'Give the limits, or choose Exempt.' end
     return targetWrite(src, data, 'override', { exempt = exempt, limits = limits, hours = hours },
-        exempt and 'They are exempt from the target limits.' or 'Their own limits are set.')
+        exempt and ('They are exempt from the target limits. ' .. BUYOUT_KEPT) or 'Their own limits are set.')
 end
 
 H.targetOverrideClear = function(src, data)
@@ -3421,15 +3443,19 @@ H.targetOverrideClear = function(src, data)
         'Their own limits are lifted: the job\'s or the global ones apply.')
 end
 
---- Who a job action reaches: every player in the city working that job now,
---- and every character not in the city whom the latest contract placed on
---- them in the last 7 days recorded as working it. Citizen ids, sorted.
+--- Who a job action reaches: every player in the city holding that job now,
+--- working it or not (TargetLimits.jobsOf, as placing reads it), and every
+--- character not in the city whom the latest contract placed on them in the
+--- last 7 days recorded as holding it. Citizen ids, sorted.
 local function jobPlayers(job)
     local out, seen = {}, {}
     for _, actor in ipairs(deps.identity.online() or {}) do
         seen[actor.cid] = true
-        if type(actor.job) == 'table' and tostring(actor.job.name or ''):lower() == job then
-            out[#out + 1] = actor.cid
+        for _, name in ipairs(deps.targetLimits.jobsOf(actor)) do
+            if tostring(name):lower() == job then
+                out[#out + 1] = actor.cid
+                break
+            end
         end
     end
     local since, latest = os.time() - deps.targetLimits.WEEK, {}
@@ -3467,7 +3493,9 @@ H.targetJobAction = function(src, data)
     if not action then return false, CH.ERR.INVALID_INPUT, 'Reset, extend or reset the counts.' end
     local reason = shortText(data.reason, TL.REASON_MAX)
     if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
-    local args = { reason = reason, all = (action == 'reset' and data.all == true) or nil }
+    -- A buyout's immunity is lifted one player at a time, never for a job.
+    local args = { reason = reason, all = (action == 'reset' and data.all == true) or nil,
+                   keepBuyout = action == 'reset' or nil }
     if action == 'extend' then
         args.minutes = wholeNumber(data.minutes, 1, TL.EXTEND_MAX_MINUTES)
         if not args.minutes then
@@ -3483,8 +3511,10 @@ H.targetJobAction = function(src, data)
     local _, _, done = deps.targetLimits.adjustMany(staffOf(src), job, cids, action, args)
     local what = (action == 'reset' and 'cooldowns reset') or (action == 'extend' and 'cooldowns extended')
         or 'day and week counts reset'
-    return true, nil, ('%s: %d player(s) had their %s%s.'):format(job, done.done, what,
-        done.failed > 0 and (', %d could not be changed'):format(done.failed) or ''), done
+    return true, nil, ('%s: %d player(s) had their %s%s.%s'):format(job, done.done, what,
+        done.failed > 0 and (', %d could not be changed'):format(done.failed) or '',
+        action == 'reset' and (' A buyout any of them paid for still holds: lift one with Reset all '
+            .. 'on that player.') or ''), done
 end
 
 --- Every live contract (open, taken, settling, and those on hold), by

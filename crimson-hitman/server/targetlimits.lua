@@ -4,9 +4,12 @@
 ---
 ---   1. the global defaults, Config.Limits (the panel's Target limits >
 ---      Defaults, live settings like every other);
----   2. per-job overrides staff add for targets whose job (the qbx job name
----      they are working when the contract is placed) is that job: police
----      waiting longer between contracts, say;
+---   2. per-job overrides staff add for targets who hold that job (the qbx
+---      job they are working when the contract is placed, or any other job
+---      they hold: Identity.heldJobs): police waiting longer between
+---      contracts, say. Where more than one of their jobs has an override,
+---      the strictest value wins, limit by limit (Stricter), so switching
+---      the active job steps round none of them;
 ---   3. per-player adjustments staff make from a lookup: a cooldown reset
 ---      or extended, the day and week counts reset, and an override of
 ---      their own (custom limits, or exempt from them all).
@@ -26,7 +29,7 @@ local Util = CrimsonBoot.requireShared('util')
 
 local TargetLimits = {}
 
-local Storage, Audit
+local Storage, Audit, Identity
 
 -- ============================================================================
 --                              THE LIMITS
@@ -143,6 +146,7 @@ local function ExpiryOf(row)
     local latest = 0
     local function at(v, plus) if tonumber(v) then latest = math.max(latest, v + (plus or 0)) end end
     at(row.cleared_at, HORIZON)
+    at(row.buyout_cleared_at, HORIZON)
     at(row.same_cleared_at, HORIZON)
     at(row.counts_reset_at, TargetLimits.WEEK)
     at(row.until_at)
@@ -157,7 +161,8 @@ end
 --- not applied.
 local function CleanPlayer(row)
     if type(row) ~= 'table' or type(row.cid) ~= 'string' or row.cid == '' then return nil, 'no citizen id' end
-    for _, f in ipairs({ 'cleared_at', 'same_cleared_at', 'counts_reset_at', 'until_at', 'at' }) do
+    for _, f in ipairs({ 'cleared_at', 'same_cleared_at', 'buyout_cleared_at', 'counts_reset_at', 'until_at',
+        'at' }) do
         if row[f] ~= nil and not tonumber(row[f]) then return nil, f .. ' is not a time' end
     end
     if row.override ~= nil then
@@ -221,9 +226,9 @@ function TargetLimits.reload()
     end
 end
 
----@param deps table { storage, audit, contracts }
+---@param deps table { storage, audit, contracts, identity }
 function TargetLimits.init(deps)
-    Storage, Audit = deps.storage, deps.audit
+    Storage, Audit, Identity = deps.storage, deps.audit, deps.identity
     TargetLimits.reload()
     if deps.contracts then deps.contracts.targetLimitsFor = TargetLimits.forTarget end
 end
@@ -248,34 +253,105 @@ local function OverrideOf(row)
     return o
 end
 
+--- Of two values one limit takes, the stricter: the longer wait, the
+--- smaller cap. A day or week cap of 0 is off, so the least strict.
+local function Stricter(key, a, b)
+    if a == nil then return b end
+    if b == nil then return a end
+    local entry = KEY[key]
+    if entry.unit == 's' then return math.max(a, b) end
+    if entry.min == 0 then
+        if a == 0 then return b end
+        if b == 0 then return a end
+    end
+    return math.min(a, b)
+end
+TargetLimits.stricter = Stricter
+
+--- Job names as given: one, a list, or none; lower case, each once.
+local function JobList(job)
+    local out, seen = {}, {}
+    local list = type(job) == 'table' and job or { job }
+    for _, name in ipairs(list) do
+        if name ~= nil then
+            local text = tostring(name):lower()
+            if not seen[text] then
+                seen[text] = true
+                out[#out + 1] = text
+            end
+        end
+    end
+    return out
+end
+
 --- The limits that apply to one target now, each with where it came from:
 --- { values = { [key] = n }, source = { [key] = 'global'|'job'|'player' },
---- exempt, adj (the player's row, or nil), job }. Memory only.
+--- exempt, adj (the player's row, or nil), job (the first of their jobs
+--- with an override), jobOverrides (every one) }. Memory only.
 ---@param cid string|nil
----@param job string|nil the target's job name
+---@param job string|string[]|nil the target's job name, or every job they hold (primary first)
 ---@return table
 function TargetLimits.effective(cid, job)
     local values, source = {}, {}
-    local jobRow = job and Jobs[tostring(job):lower()] or nil
+    local jobRows = {}
+    for _, name in ipairs(JobList(job)) do
+        if Jobs[name] then jobRows[#jobRows + 1] = Jobs[name] end
+    end
     local adj = PlayerRow(cid)
     local override = OverrideOf(adj)
     for _, entry in ipairs(TargetLimits.KEYS) do
         local key = entry.key
         local v, from = tonumber(Config.Limits[key]) or 0, 'global'
-        if jobRow and jobRow.limits[key] ~= nil then v, from = jobRow.limits[key], 'job' end
+        local fromJobs
+        for i = 1, #jobRows do fromJobs = Stricter(key, fromJobs, jobRows[i].limits[key]) end
+        if fromJobs ~= nil then v, from = fromJobs, 'job' end
         if override and override.limits[key] ~= nil then v, from = override.limits[key], 'player' end
         values[key], source[key] = v, from
     end
+    local names = {}
+    for i = 1, #jobRows do names[i] = jobRows[i].job end
     return { values = values, source = source, exempt = override ~= nil and override.exempt == true,
-             adj = adj, job = jobRow and jobRow.job or nil }
+             adj = adj, job = names[1], jobOverrides = names }
 end
 
---- The limits for a target actor at placement: by their primary job.
+--- Every job a player holds, primary first: the one they are working and
+--- every other (Identity.heldJobs), as names. The one rule placing, the
+--- status card and the job-wide actions share: an override read off the
+--- primary job alone was stepped round by switching to a second one.
+---@param actor table|nil
+---@return string[]
+function TargetLimits.jobsOf(actor)
+    local out = {}
+    if not actor then return out end
+    if type(actor.job) == 'table' and actor.job.name then out[1] = tostring(actor.job.name) end
+    local held
+    if Identity and Identity.heldJobs then
+        local ok, list = pcall(Identity.heldJobs, actor)
+        held = ok and type(list) == 'table' and list or nil
+    end
+    if not held then
+        held = {}
+        local data = actor.player and actor.player.PlayerData
+        if data and type(data.jobs) == 'table' then
+            for name in pairs(data.jobs) do
+                if type(name) == 'string' then held[#held + 1] = { name = name } end
+            end
+        end
+    end
+    local rest = {}
+    for _, j in ipairs(held) do
+        if type(j) == 'table' and type(j.name) == 'string' and j.name ~= out[1] then rest[#rest + 1] = j.name end
+    end
+    table.sort(rest)
+    for i = 1, #rest do out[#out + 1] = rest[i] end
+    return out
+end
+
+--- The limits for a target actor at placement: by every job they hold.
 ---@param targetActor table
 ---@return table
 function TargetLimits.forTarget(targetActor)
-    local job = targetActor and type(targetActor.job) == 'table' and targetActor.job.name or nil
-    return TargetLimits.effective(targetActor and targetActor.cid, job)
+    return TargetLimits.effective(targetActor and targetActor.cid, TargetLimits.jobsOf(targetActor))
 end
 
 --- Whether a resolved contract still counts toward a target's cooldowns
@@ -294,6 +370,12 @@ end
 --- limits after staff reset the counts.
 function TargetLimits.countCounts(adj, createdAt)
     return not (adj and adj.counts_reset_at and createdAt <= adj.counts_reset_at)
+end
+
+--- Whether a buyout's immunity still holds after staff actions: only a
+--- Reset all on the player (buyout_cleared_at) lifts it.
+function TargetLimits.buyoutCounts(adj, resolvedAt)
+    return not (adj and adj.buyout_cleared_at and resolvedAt <= adj.buyout_cleared_at)
 end
 
 --- A staff-extended cooldown still running, as an os.time(), or nil.
@@ -322,22 +404,29 @@ function TargetLimits.ignored() return Ignored end
 --- the rule that sets it. `contracts` are those naming them (unfinished, and
 --- finished in the last week: Storage.contractsNaming(cid, now - WEEK)).
 ---@param cid string
----@param job string|nil
+---@param job string|string[]|nil their job, or every job they hold (primary first)
 ---@param contracts table[]
 ---@param everTakenUp function(contractId) -> boolean, as canCreate asks
 ---@return table
 function TargetLimits.status(cid, job, contracts, everTakenUp)
     local now = os.time()
-    local eff = TargetLimits.effective(cid, job)
+    local jobs = JobList(job)
+    local eff = TargetLimits.effective(cid, jobs)
     local v, adj = eff.values, eff.adj
     local live, day, week, dayAll, weekAll = 0, 0, 0, 0, 0
     local left, rule, ruleKey = 0, nil, nil
+    local buyoutLeft = 0
+    local immunity = tonumber(Config.Immunity.AfterBailoutSeconds) or 0
     local LIVE = { active = true, accepted = true, completing = true }
     for _, c in ipairs(contracts or {}) do
         if c.target_cid == cid then
             if LIVE[c.state] then live = live + 1 end
             local created = tonumber(c.created_at) or 0
-            if c.state ~= 'voided' then
+            -- Withdrawn or run out before anybody took it: not counted, as
+            -- placing does not count it (Contracts.canCreate).
+            local untaken = (c.state == 'cancelled' or c.state == 'expired') and everTakenUp
+                and not everTakenUp(c.id)
+            if c.state ~= 'voided' and not untaken then
                 if now - created < TargetLimits.DAY then
                     dayAll = dayAll + 1
                     if TargetLimits.countCounts(adj, created) then day = day + 1 end
@@ -348,13 +437,18 @@ function TargetLimits.status(cid, job, contracts, everTakenUp)
                 end
             end
             local resolved = tonumber(c.resolved_at)
-            if not LIVE[c.state] and resolved and not eff.exempt
+            -- The buyout's immunity, whatever else is reset or exempt.
+            if c.state == 'bailed_out' and resolved and now - resolved < immunity
+                and TargetLimits.buyoutCounts(adj, resolved) then
+                local held = immunity - (now - resolved)
+                if held > buyoutLeft then buyoutLeft = held end
+                if held > left then left, rule, ruleKey = held, 'Immunity.AfterBailoutSeconds', nil end
+            end
+            if not LIVE[c.state] and resolved and not eff.exempt and c.state ~= 'bailed_out'
                 and TargetLimits.cooldownCounts(adj, resolved, false) then
                 local since = now - resolved
                 local wait, key = v.TargetCooldownAfterResolveSeconds, 'TargetCooldownAfterResolveSeconds'
-                if c.state == 'bailed_out' then
-                    wait, key = tonumber(Config.Immunity.AfterBailoutSeconds) or 0, 'Immunity.AfterBailoutSeconds'
-                elseif c.state == 'completed' and v.TargetCooldownAfterCompletionSeconds > wait then
+                if c.state == 'completed' and v.TargetCooldownAfterCompletionSeconds > wait then
                     wait, key = v.TargetCooldownAfterCompletionSeconds, 'TargetCooldownAfterCompletionSeconds'
                 end
                 local free = (c.state == 'cancelled' or c.state == 'expired') and everTakenUp
@@ -372,9 +466,13 @@ function TargetLimits.status(cid, job, contracts, everTakenUp)
     return {
         live = live, day = day, week = week, dayAll = dayAll, weekAll = weekAll,
         cooldownLeft = left, cooldownRule = rule, cooldownFrom = from,
-        exempt = eff.exempt, limits = v, source = eff.source, job = job, jobOverride = eff.job,
+        -- The immunity a buyout paid for, left: only Reset all lifts it.
+        buyoutLeft = buyoutLeft > 0 and buyoutLeft or nil,
+        exempt = eff.exempt, limits = v, source = eff.source, job = jobs[1], jobs = jobs,
+        jobOverride = eff.job, jobOverrides = eff.jobOverrides,
         adjustment = adj and {
             cleared_at = adj.cleared_at, same_cleared_at = adj.same_cleared_at,
+            buyout_cleared_at = adj.buyout_cleared_at,
             counts_reset_at = adj.counts_reset_at, until_at = adj.until_at,
             override = OverrideOf(adj), reason = adj.reason, at = adj.at, expires_at = adj.expires_at,
         } or nil,
@@ -420,8 +518,10 @@ local function Serial(key, fn)
 end
 
 --- Apply one staff action to a player. `action` is 'reset' (resolve and
---- completion cooldowns; `all` the same-placer wait too, and a staff
---- extension), 'extend' ({ minutes } added to whichever is later, now or
+--- completion cooldowns; `all` the same-placer wait too, a staff
+--- extension, and a buyout's immunity unless `keepBuyout`, which a job-wide
+--- action sends: Config.Immunity.AfterBailoutSeconds is what the target
+--- paid for, lifted for one player at a time or not at all), 'extend' ({ minutes } added to whichever is later, now or
 --- the cooldown left; or { untilAt }), 'counts' (day and week counts from
 --- now), 'override' ({ exempt, limits, hours (0 for good) }) or 'clear'
 --- (the override lifted). Audited by the caller's audit action.
@@ -445,6 +545,7 @@ function TargetLimits.adjust(staffCid, cid, action, args, quiet)
             if args.all then
                 row.same_cleared_at = now
                 row.until_at = nil
+                if not args.keepBuyout then row.buyout_cleared_at = now end
             end
             detail.all = args.all == true or nil
         elseif action == 'extend' then
