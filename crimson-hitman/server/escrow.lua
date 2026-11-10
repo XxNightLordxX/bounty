@@ -1143,6 +1143,66 @@ takeUnlocked = function(actor, contractId, lines)
 end
 
 --------------------------------------------------------------------------
+-- Money staff put into a reward (server/staff_reward.lua)
+--------------------------------------------------------------------------
+
+--- Who a line staff funded was taken from, and whom it goes back to: no
+--- player. A line taken from STAFF (taken_from) is money staff added to a
+--- reward ('added by staff'); paid to a hitman it is theirs like any other
+--- line, and every release that would hand it back to the contract's
+--- placer (a cancel, an expiry, a buyout, a void, a lowered reward) hands
+--- it back to STAFF instead, which gives nothing to anybody (Escrow.deliver)
+--- and settles it. Never a citizen id: qbx_core's are upper case.
+Escrow.STAFF = 'staff'
+
+--- Write one baseline money line staff fund on a live contract, on `slot`,
+--- with no player charged. One take per contract at a time, as Escrow.take,
+--- so its id cannot collide with a placer's top-up landing beside it; read
+--- back to confirm it is the line written.
+---@param contractId string
+---@param slot integer
+---@param amount integer whole dollars above zero
+---@param account string 'cash' | 'bank'
+---@param staffCid string|nil who added it, for the line's mark
+---@return boolean ok
+---@return string|nil err
+---@return table<string, boolean>|nil ids the stored line id, as a set
+function Escrow.addStaffLine(contractId, slot, amount, account, staffCid)
+    amount = math.floor(tonumber(amount) or 0)
+    if amount <= 0 or (account ~= 'cash' and account ~= 'bank') then return false, CH.ERR.INVALID_INPUT end
+    if taking[contractId] then return false, CH.ERR.LOCKED end
+    taking[contractId] = true
+    local ran, ok, err, ids = pcall(function()
+        forget()
+        local used = {}
+        local existing = Storage.readEscrow(contractId) or {}
+        for i = 1, #existing do used[existing[i].id] = true end
+        local index, id = #existing, nil
+        repeat
+            index = index + 1
+            id = contractId .. ':' .. tostring(index)
+        until not used[id]
+        local line = {
+            id = id, contract_id = contractId, slot = slot, portion = CH.PORTION.BASELINE,
+            source = account, amount = amount, state = CH.ESCROW_STATE.HELD,
+            taken_from = Escrow.STAFF, metadata = { staffAdded = true, by = staffCid },
+        }
+        if not Storage.insertEscrow(contractId, { line }) then return false, CH.ERR.BAD_STATE end
+        local stored = Storage.readEscrowLine(id)
+        if not stored or stored.taken_from ~= Escrow.STAFF or (stored.amount or 0) ~= amount then
+            Audit.rejected('escrow_id_collision', staffCid, contractId, { line = id })
+            return false, CH.ERR.LOCKED
+        end
+        Audit.financial('escrow_staff_added', staffCid, contractId,
+            { line = id, amount = amount, account = account, slot = slot })
+        return true, nil, { [id] = true }
+    end)
+    taking[contractId] = nil
+    if not ran then error(ok, 0) end
+    return ok, err, ids
+end
+
+--------------------------------------------------------------------------
 -- Releasing escrow
 --------------------------------------------------------------------------
 
@@ -1331,6 +1391,16 @@ local function release(mine, contractId, recipientCid, filter, reason, guard)
         return queuedAlready[lineId] == true
     end
 
+    -- The contract's placer, read once and only for a line staff funded.
+    local toStaff, placer = nil, false
+    local function placerOf()
+        if placer == false then
+            local contract = Storage.readContract(contractId)
+            placer = contract and contract.creator_cid or nil
+        end
+        return placer
+    end
+
     for i = 1, #lines do
         local line = lines[i]
         local matches = true
@@ -1368,6 +1438,16 @@ local function release(mine, contractId, recipientCid, filter, reason, guard)
         -- is audited, so it is the one thing that may override this.
         if line.owed_to and line.owed_to ~= recipientCid
             and not (filter and (filter.line or filter.lines)) then
+            matches = false
+        end
+
+        -- Money staff added (Escrow.STAFF) goes back to staff, never to the
+        -- placer: a release handing the contract's escrow back to its
+        -- placer hands those lines to STAFF instead, below.
+        if matches and line.taken_from == Escrow.STAFF and recipientCid ~= Escrow.STAFF
+            and placerOf() == recipientCid then
+            toStaff = toStaff or {}
+            toStaff[line.id] = true
             matches = false
         end
 
@@ -1554,6 +1634,14 @@ local function release(mine, contractId, recipientCid, filter, reason, guard)
         reason = reason, settled = result.settled, pending = result.pending,
         refused = result.refused > 0 and result.refused or nil,
     })
+
+    if toStaff then
+        local _, back = release(mine, contractId, Escrow.STAFF, { lines = toStaff }, reason, guard)
+        result.staff = (back.settled or 0) + (back.pending or 0)
+        result.skipped = result.skipped + (back.skipped or 0)
+        result.refused = result.refused + (back.refused or 0)
+        if (back.settled or 0) > 0 and result.settled == 0 then return true, result end
+    end
 
     return result.settled > 0, result
 end
@@ -1981,6 +2069,10 @@ Escrow.orgTaken = nil
 ---@return boolean delivered
 ---@return boolean|nil away not delivered because they are not in the city
 function Escrow.deliver(recipientCid, line)
+    -- Money staff added, going back to staff: nobody to give it to, so it
+    -- is handed over by settling it.
+    if recipientCid == Escrow.STAFF then return true end
+
     -- Left for staff: nothing gives it again until they have looked.
     if Escrow.parked(line) then return false end
 
@@ -2436,6 +2528,54 @@ function Escrow.reduceStake(contractId, line, amount, reason)
     return lineId, result ~= nil and (result.settled or 0) > 0
 end
 
+--- Lower one held reward line and owe the difference to whoever funded it
+--- (`recipient`: its placer, or Escrow.STAFF for a line staff added), as
+--- Escrow.reduceStake lowers a stake: the owed line first, unqueued and
+--- marked with the line it splits and the figures either side, then the
+--- line lowered under a guard on its state and amount, then the owed line
+--- given. A crash between the writes is settled at boot (Escrow.recoverOwed)
+--- by the line's own amount. Money lines only, in their own account.
+---@param contractId string
+---@param line table the reward line, as read
+---@param amount integer what it becomes
+---@param reason string
+---@param recipient string
+---@return string|nil owedLineId nil when the line could not be lowered
+---@return boolean delivered whether the difference reached them now
+function Escrow.reduceLine(contractId, line, amount, reason, recipient)
+    local original = line.amount or 0
+    local returned = original - amount
+    if returned <= 0 or amount < 0 or not recipient or not CH.MONEY_SOURCES[line.source] then
+        return nil, false
+    end
+    local lineId = Util.mintId(Storage.nextId, 'owe', Storage.readEscrowLine)
+    if not lineId then return nil, false end
+    local owed = {
+        id = lineId, contract_id = contractId, slot = 0, portion = CH.PORTION.OWED,
+        owed_to = recipient, source = line.source, item = line.item, amount = returned,
+        state = CH.ESCROW_STATE.HELD,
+        taken_from = line.taken_from == Escrow.STAFF and Escrow.STAFF or nil,
+        metadata = { splitFrom = line.id, stakeWas = original, stakeNow = amount, reward = true },
+    }
+    Storage.writeEscrow(contractId, { owed })
+    if not Storage.setEscrowAmount(line.id, CH.ESCROW_STATE.HELD, amount, original) then
+        voidSplit(owed)
+        return nil, false
+    end
+    local check = Storage.readEscrowLine(lineId)
+    if not check or check.state ~= CH.ESCROW_STATE.HELD or (check.amount or 0) ~= returned then
+        Storage.setEscrowAmount(line.id, CH.ESCROW_STATE.HELD, original, amount)
+        return nil, false
+    end
+    -- Staff are not a player: nothing to queue, given (and settled) now.
+    if recipient ~= Escrow.STAFF then
+        Storage.queuePending(recipient, contractId, lineId)
+        Escrow.noteWaiting(recipient, true)
+    end
+    local _, result = Escrow.release(contractId, recipient, { line = lineId }, reason)
+    return lineId, result ~= nil and (result.settled or 0) > 0
+end
+
 --- Finish, at boot, whatever a crash left between owing and queuing.
 ---
 --- Two shapes. A stake reduction interrupted between its two writes (see
@@ -2489,7 +2629,12 @@ function Escrow.recoverOwed(lines)
                     end
                 end
             end
-            if not voided and not doubtful then
+            if not voided and not doubtful and l.owed_to == Escrow.STAFF then
+                -- Owed back to staff (a lowered reward staff had funded):
+                -- nobody to queue it for, so settled now.
+                Escrow.release(l.contract_id, Escrow.STAFF, { line = l.id }, 'staff_returned')
+                finished = finished + 1
+            elseif not voided and not doubtful then
                 Storage.queuePending(l.owed_to, l.contract_id, l.id)
                 queuedFor[l.owed_to][l.id] = true
                 Escrow.noteWaiting(l.owed_to, true)

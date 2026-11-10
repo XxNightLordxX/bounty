@@ -94,6 +94,31 @@ local function audit(store)
                 note('escrow line orphaned from its contract', tostring(l.id))
             end
 
+            -- 8. Money staff added to a reward (server/staff_reward.lua,
+            -- taken_from 'staff') never reaches the contract's placer, and
+            -- only money staff added ever goes back to staff: what staff
+            -- put in is all that can come out to them.
+            if l.taken_from == 'staff' and l.state == CH.ESCROW_STATE.SETTLED
+                and l.settled_to == c.creator_cid then
+                note('money staff added paid to the placer', tostring(l.id))
+            end
+            if (l.settled_to == 'staff' or l.owed_to == 'staff' or l.releasing_to == 'staff')
+                and l.taken_from ~= 'staff' then
+                note('money staff did not add went to staff', tostring(l.id))
+            end
+
+            -- 8b. A split owes exactly what it cut from the line it splits
+            -- (Escrow.reduceStake, Escrow.reduceLine): a lowered stake or
+            -- reward neither mints nor loses the difference.
+            local mark = type(l.metadata) == 'table' and l.metadata or nil
+            if l.portion == CH.PORTION.OWED and mark and mark.splitFrom
+                and tonumber(mark.stakeWas) and tonumber(mark.stakeNow)
+                and (l.amount or 0) ~= tonumber(mark.stakeWas) - tonumber(mark.stakeNow)
+                -- Emptied: a split voided because its cut never landed.
+                and (l.amount or 0) ~= 0 then
+                note('a split owes other than what it cut', tostring(l.id))
+            end
+
         end
 
         -- 9. A hitman row always points at a contract that exists.
@@ -116,6 +141,13 @@ local function auditAtRest(store)
     local ok, contracts = pcall(store.allContracts)
     if not ok or type(contracts) ~= 'table' then return end
     for _, c in ipairs(contracts) do
+        -- Owed back to staff is settled at once (nobody to queue it for):
+        -- held so at rest is money that will never go anywhere.
+        for _, l in ipairs(pcall(store.readEscrow, c.id) and store.readEscrow(c.id) or {}) do
+            if l.state == CH.ESCROW_STATE.HELD and l.owed_to == 'staff' then
+                note('owed back to staff and left held', tostring(l.id))
+            end
+        end
         if CH.TERMINAL[c.state] then
             local lines = pcall(store.readEscrow, c.id) and store.readEscrow(c.id) or {}
             for _, l in ipairs(lines) do

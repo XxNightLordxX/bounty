@@ -1865,6 +1865,11 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- bank whenever the bank covered it, and then refused a hitman whose
     -- cash could have paid the stake as short of money for the fee.
     local stake = contract.penalty_amount or 0
+    -- The penalty as read, which the check after the stake holds it to; a
+    -- hitman staff assign with the stake waived (Config.Staff.ReassignStake)
+    -- puts none up against it.
+    local checkedPenalty = stake
+    if opts and opts.waiveStake then stake = 0 end
     local left = {
         bank = actor.player.Functions.GetMoney('bank') or 0,
         cash = actor.player.Functions.GetMoney('cash') or 0,
@@ -2068,7 +2073,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         -- top; a reward withdrawn in the awaits since re-clamps it, and a
         -- hitman holding a stake the contract no longer asks for — or less
         -- than it now asks for — is on terms nobody agreed to.
-        if (now.penalty_amount or 0) ~= stake then
+        if (now.penalty_amount or 0) ~= checkedPenalty then
             unwind('penalty_moved')
             Audit.rejected('penalty_moved', actor.cid, contractId,
                 { was = stake, now = now.penalty_amount })
@@ -2183,6 +2188,26 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- A meeting point already set goes on the new hitman's map, with what to
     -- do (Meeting.joined, through Bridges.install). Never stops the accept.
     if out[1] and Contracts.onAccepted then pcall(Contracts.onAccepted, contractId, actor.cid) end
+    return table.unpack(out, 1, out.n)
+end
+
+--- An acceptance staff make for a hitman (server/staff_reassign.lua), from
+--- inside the contract's own key, which the caller holds: every rule
+--- Contracts.accept applies, the same afterwards, one acceptance at a time
+--- per hitman. `opts.waiveStake` puts no stake up.
+function Contracts.acceptHeld(actor, contractId, anonymous, opts)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    if Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
+    if Contracts.acceptGate then
+        local ran, refused, data = pcall(Contracts.acceptGate, actor, contractId, opts)
+        if ran and refused then return false, refused, data end
+    end
+    local out = table.pack(Contracts.serialized({ 'hitman:' .. tostring(actor.cid) },
+        acceptUnlocked, actor, contractId, anonymous, opts))
+    if out[1] and Contracts.onChanged then Contracts.onChanged() end
+    if out[1] and Contracts.onAccepted then pcall(Contracts.onAccepted, contractId, actor.cid) end
+    if out[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId) end
     return table.unpack(out, 1, out.n)
 end
 

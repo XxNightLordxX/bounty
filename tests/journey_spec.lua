@@ -401,6 +401,8 @@ describe('what this suite really covered', function()
         protectionAccept   = 'rpC_roleplay_spec ("lets one guard take it"), through the net event',
         protectionPin      = 'authz_matrix_spec (protectionPin, the target), through the net event',
         protectionWaypoint = 'rpC_roleplay_spec ("the guard gets the pin"), through the net event',
+        -- The placer's Confirm handover (off as shipped), through the net event.
+        confirmHandover = 'handover_confirm_spec ("pays once they confirm"), through the net event',
     }
     -- The hitman organisation's requests (off as shipped), each through the
     -- net event in org_powers_spec and org_places_spec, and refused to

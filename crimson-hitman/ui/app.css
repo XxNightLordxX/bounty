@@ -1854,6 +1854,8 @@ button.is-held { opacity: 0.55; }
 }
 /* The placer's half of a running handover. */
 .card > .notice.handover-live { font-weight: 700; }
+.card > .notice.handover-confirm { font-weight: 700; }
+.card > .notice.handover-confirm .row { margin-top: 8px; gap: 8px; }
 /* The proof-of-intent rule on a hitman's card while it can still be met. */
 .card > .hint.intent-rule { margin-top: 0.6rem; overflow-wrap: anywhere; }
 /* A member's organisation cut on a board card, before they accept. */

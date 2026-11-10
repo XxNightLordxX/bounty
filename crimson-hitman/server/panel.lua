@@ -1150,6 +1150,8 @@ end
 
 --- The lines /ch-stuck lists for one contract, with what settles each, or
 --- nil while recovery is still deciding them.
+Panel._frozenShown = frozenShown
+
 local function stuckOf(src, id)
     if recoveryState() ~= 'ready' then return nil end
     local stuck = {}
@@ -1848,6 +1850,9 @@ Panel.writeSubject = function(data, src) return writeSubject(data, src) end
 Panel.refFor = function(src, cid) return playerRef(src, { cid = cid }) end
 Panel.staffOf = function(src) return staffOf(src) end
 Panel.identifies = function(src) return identifies(src) end
+--- Whether a contract's view says it is on hold, as this reader may see it
+--- (frozenShown, defined below): for a module's refusal of a held contract.
+Panel.frozenShown = function(contract, canIdentify) return Panel._frozenShown(contract, nil, canIdentify) end
 
 --- A character's playtime as the panel shows it: what the built-in tracker
 --- counted (Playtime.view), the floor, and what the rule reads for them

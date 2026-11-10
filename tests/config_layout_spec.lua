@@ -88,7 +88,15 @@ local ADDED = {
         ManualPaymentMax = 100000,
         AppPaused = false, DailySummary = false, DailySummaryHour = 6,
         AlertPlacedPerHour = 5, AlertTargetPerDay = 3, AlertRefusalsPer10Min = 30,
+        -- The panel's Change reward and Reassign (server/staff_reward.lua,
+        -- server/staff_reassign.lua).
+        RewardChangeMax = 100000, ReassignStake = 'waive',
     },
+    -- The placer's Confirm handover, shipped off (the owner's rule for new
+    -- options), with its window and what a missed one does.
+    ['Kidnap.PlacerConfirms'] = false,
+    ['Kidnap.ConfirmSeconds'] = 60,
+    ['Kidnap.ConfirmMissed'] = 'rearm',
     ['Cooldowns.report'] = { per = 600, burst = 3 },
     -- The roleplay features, each its own block and each off as shipped,
     -- reported block by block (differences splits the new section).
@@ -344,6 +352,10 @@ describe('the configuration as one short file', function()
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
             end
+            -- The placer's Confirm handover, new, as ADDED says.
+            if pair[1] == nil and path:match('^Kidnap%.') and ADDED[path] == pair[2] then
+                addedSince = true
+            end
             -- The completion cooldown (impC), and the Target limits day and
             -- week caps, new and shipped off.
             if pair[1] == nil and pair[2] == 0 and (path == 'Limits.TargetCooldownAfterCompletionSeconds'
@@ -408,7 +420,10 @@ describe('the configuration as one short file', function()
         -- And the Organisation section: one header and its one block, with
         -- the roles it is made with and the staff bounds every boss works
         -- within, and its two rate-limit buckets.
-        truthy(lines < 817, 'config.lua is ' .. lines .. ' lines')
+        -- And the placer's Confirm handover (three Kidnap lines) and the
+        -- staff Change reward / Reassign bounds (two Staff lines); and the
+        -- organisation invite's wait, one line. Real length 817, plus margin.
+        truthy(lines < 820, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

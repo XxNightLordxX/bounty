@@ -375,7 +375,7 @@ local MONEY_REQUESTS = {
     create = true, accept = true, cancel = true, abandon = true, withdrawReward = true,
     addEscrow = true, improve = true, propose = true, respondAmendment = true,
     bailout = true, informant = true, placerInformant = true, submitPhoto = true, verifyKill = true,
-    armKidnap = true, locationTip = true,
+    armKidnap = true, locationTip = true, confirmHandover = true,
     protectionPost = true, protectionCancel = true,
     goDark = true,
     proofItem = true,
@@ -431,6 +431,13 @@ local function roleplayShape(name, actor, result)
         if ok and shaped ~= nil then result = shaped end
     end
     return result
+end
+
+--- The rules that stand in front of an Accept (the roleplay gates, and the
+--- tiered board), for an acceptance staff make for a hitman
+--- (server/staff_reassign.lua): the error and its data, or nil.
+function App.acceptGate(actor, payload)
+    return roleplayGate('accept', actor, type(payload) == 'table' and payload or {})
 end
 
 --- What the roleplay rules do once a request went through: a burner used
@@ -1431,6 +1438,19 @@ function App.register()
         local ok, err = deps.kidnap.arm(payload.id, actor.cid)
         if not ok then return false, err end
         return { armed = true }
+    end)
+
+    -- The placer's Confirm handover (Config.Kidnap.PlacerConfirms, off as
+    -- shipped; server/handover_confirm.lua): confirm, or decline, the
+    -- handover held on their contract. Only its placer is answered anything
+    -- but not found.
+    handler('confirmHandover', 'accept', function(actor, payload)
+        if payload.decline ~= nil and type(payload.decline) ~= 'boolean' then
+            return false, CH.ERR.INVALID_INPUT
+        end
+        local ok, err, data = deps.kidnap.answer(payload.id, actor.cid, payload.decline ~= true)
+        if not ok then return false, err end
+        return data
     end)
 
     handler('kidnapProgress', 'progress', function(actor, payload)

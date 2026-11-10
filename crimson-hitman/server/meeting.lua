@@ -175,7 +175,18 @@ function Meeting.steps(role)
     local kidnap = Config.Kidnap or {}
     local seconds = tonumber(kidnap.CountdownSeconds) or 0
     local hold = seconds > 0 and ('%d seconds'):format(math.floor(seconds)) or 'until it finishes'
+    -- With the placer's Confirm handover on (Config.Kidnap.PlacerConfirms),
+    -- the hold is followed by their tap, within the window.
+    local confirms = kidnap.PlacerConfirms == true
+    local window = math.max(10, math.floor(tonumber(kidnap.ConfirmSeconds) or 60))
     if role == 'placer' then
+        if confirms then
+            return ('Be at the meeting point marked on your map. When the hitman arrives with the '
+                .. 'target, stay within %s m of them both and keep still while the hitman taps '
+                .. 'Deliver alive: the hold takes %s. Then, on your contract under Mine, tap Confirm '
+                .. 'handover (twice) within %d seconds to release the payment; nothing is paid '
+                .. 'until you do.'):format(metres(), hold, window)
+        end
         return ('Be at the meeting point marked on your map. When the hitman arrives with the '
             .. 'target, stay within %s m of them both and keep still while the hitman taps '
             .. 'Deliver alive: the handover takes %s. Open the app on your phone to follow it '
@@ -183,9 +194,10 @@ function Meeting.steps(role)
     end
     return ('Bring the target alive to the meeting point marked on your map%s. Get within %s m '
         .. 'of the person who placed the contract, open the app on your phone, tap Deliver '
-        .. 'alive on the contract under Mine and hold for %s. Killing the target does not '
+        .. 'alive on the contract under Mine and hold for %s.%s Killing the target does not '
         .. 'count.'):format(kidnap.RequireCoercion and ', cuffed or in your vehicle' or '',
-        metres(), hold)
+        metres(), hold, confirms and ' Then the person who placed it confirms the handover, '
+            .. 'and it pays once they do.' or '')
 end
 
 --- Tell one party, on their phone, that a point was set or moved and what

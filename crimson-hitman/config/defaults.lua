@@ -150,6 +150,9 @@ ConfigDefaults.Kidnap = {
     RejectLastStand        = true,   -- refuse a downed target
     MinTargetHealthPercent = 20,     -- refuse a target hurt below this
     RearmCooldownSeconds   = 60,     -- wait after a failed handover before arming again
+    PlacerConfirms         = false,  -- true = the placer taps Confirm handover before it pays
+    ConfirmSeconds         = 60,     -- seconds the placer has to confirm (10-600)
+    ConfirmMissed          = 'rearm', -- no answer in time: 'rearm' (nothing paid) | 'pay'
 }
 
 ConfigDefaults.Reason = {
@@ -418,6 +421,8 @@ ConfigDefaults.Staff = {
     AlertPlacedPerHour    = 5,      -- alert past this many placed by one player an hour; 0 = off
     AlertTargetPerDay     = 3,      -- alert past this many on one target a day; 0 = off
     AlertRefusalsPer10Min = 30,     -- alert past this many refusals to one player in 10 min; 0 = off
+    RewardChangeMax       = 100000, -- most staff may raise or lower a reward by at once ($); 0 = off
+    ReassignStake         = 'waive', -- a hitman staff assign: 'waive' (no stake) | 'charge'
 }
 -- ============================================================================
 --                                 ROLEPLAY

@@ -1059,6 +1059,10 @@ describe('what this file leaves out', function()
         -- Proof items (imp_staffeco_spec): the item is used up by the first
         -- payout, so a second is refused as proof_missing and pays nothing.
         proofItem = 'a second handover finds no item left and is refused; paid once',
+        -- The placer's Confirm handover (handover_confirm_spec): a second
+        -- tap finds nothing waiting on them (no_handover), and the payout is
+        -- the one claim, which a slot is paid by once.
+        confirmHandover = 'a second confirm or decline finds nothing waiting and is refused as no_handover',
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

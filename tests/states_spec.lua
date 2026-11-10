@@ -389,6 +389,10 @@ describe('the grid covers the whole action surface', function()
         -- is (Contracts.claimSlot); refused on any other state with the item
         -- kept (imp_staffeco_spec).
         proofItem = true,
+        -- The placer's Confirm handover: answered only while a handover
+        -- held on an accepted contract waits on them, and paid through the
+        -- same claim (handover_confirm_spec).
+        confirmHandover = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

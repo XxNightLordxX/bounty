@@ -326,6 +326,22 @@ local CATALOGUE = {
           .. 'advisory, and staff only with the identity ACE.',
       inflight = 'Read at every use, with no restart. Off hides the controls and refuses changes; '
           .. 'points already set are kept, and shown again when it is turned back on.' },
+    { key = 'Kidnap.PlacerConfirms', section = 'features', category = 'features', group = 'Handovers',
+      kind = 'switch', label = 'The placer confirms the handover',
+      about = 'Once a handover has been held for its countdown, the person who placed the contract '
+          .. 'taps Confirm handover on their card (twice) before it pays. A decline pays nothing; '
+          .. 'the contract stays open and the hitman may arm it again after the usual wait.',
+      inflight = 'A handover keeps the rule it was armed under; the next one armed reads it.' },
+    { key = 'Kidnap.ConfirmSeconds', section = 'limits', category = 'rules-timers', group = 'Handovers',
+      kind = 'number', integer = true, min = 10, max = 600, needs = 'Kidnap.PlacerConfirms',
+      label = 'Time the placer has to confirm (s)',
+      about = 'From the end of the countdown. Stands still on the restart hold and while the app is paused.',
+      inflight = 'A window already open keeps its length; the next one opened reads it.' },
+    { key = 'Kidnap.ConfirmMissed', section = 'limits', category = 'rules-timers', group = 'Handovers',
+      kind = 'choice', choices = { 'rearm', 'pay' }, needs = 'Kidnap.PlacerConfirms',
+      label = 'When the placer does not answer in time',
+      about = '\'rearm\': nothing is paid and the hitman may arm again. \'pay\': paid as if confirmed.',
+      inflight = AT_USE },
 
     { key = 'Penalty.RequireDisclosureOnAccept', section = 'features', category = 'features', group = 'Stakes',
       kind = 'switch', label = 'Accept must echo the stake shown',
@@ -711,6 +727,18 @@ local CATALOGUE = {
       kind = 'number', integer = true, min = 0, max = 100000000,
       label = 'Most one manual staff payment may be ($, 0 off)',
       about = 'Players, Pay: cash or bank paid to one player by staff with the staff ACE.',
+      inflight = AT_USE },
+    { key = 'Staff.RewardChangeMax', section = 'limits', category = 'rules-limits', group = 'Staff',
+      kind = 'number', integer = true, min = 0, max = 100000000,
+      label = 'Most staff may change a reward by at once ($, 0 off)',
+      about = 'A contract\'s Change reward: raised (added by staff, or charged to the placer) or '
+          .. 'lowered (the difference back to whoever funded it), by staff with the staff ACE.',
+      inflight = AT_USE },
+    { key = 'Staff.ReassignStake', section = 'limits', category = 'rules-limits', group = 'Staff',
+      kind = 'choice', choices = { 'waive', 'charge' },
+      label = 'Stake of a hitman staff assign',
+      about = 'A contract\'s Reassign: \'waive\' puts no stake up for them; \'charge\' stakes them '
+          .. 'as their own Accept would.',
       inflight = AT_USE },
     { key = 'Limits.ExclusiveIdleReleaseSeconds', section = 'limits', group = 'Contract limits',
       category = 'rules-timers',

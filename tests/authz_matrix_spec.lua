@@ -565,6 +565,22 @@ MATRIX.armKidnap = {
     why = 'a handover is started by the operative holding the target',
 }
 
+MATRIX.confirmHandover = {
+    arrange = function(w)
+        Config.Kidnap.PlacerConfirms = true
+        assembleForHandover(w)
+        truthy(w.s.kidnap.arm(w.held.id, CAST.hitman.cid), 'the countdown has to be running')
+        for _ = 1, math.floor(Config.Kidnap.CountdownSeconds * 1000 / Config.Kidnap.TickMs) do
+            w.s.kidnap.tick(Config.Kidnap.TickMs)
+        end
+    end,
+    payload = function(w, role, contract) return { id = contract.id } end,
+    -- not_found to everybody else, so nobody learns a handover waits on
+    -- this contract's placer.
+    expect = only('creator', CH.ERR.NOT_FOUND),
+    why = 'the handover is confirmed by the person who placed the contract (Config.Kidnap.PlacerConfirms)',
+}
+
 MATRIX.kidnapProgress = {
     arrange = function(w)
         assembleForHandover(w)

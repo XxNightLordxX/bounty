@@ -56,6 +56,13 @@ change in it), hooks it registers on the modules it extends
 like) and, if it has periodic work, one job on the tick that does nothing
 while it is off.
 
+### Confirm handover, Change reward and Reassign
+
+- `server/completion/kidnap.lua`: with `Config.Kidnap.PlacerConfirms` (captured per countdown at arm), a countdown that has run its course enters a confirm window (`confirmLeftMs`, ticked by the shared tick, standing still on the restart hold and the app pause) instead of being claimed; `Kidnap.answer` (the app request `confirmHandover`, `server/handover_confirm.lua`) confirms, which the next tick claims, or declines (`Kidnap.notConfirmed`: re-arm cooldown, outcome `not_confirmed`). `Kidnap.placerConfirm` feeds the placer's card (`handoverConfirm`), `Kidnap.progress` the hitman's (`awaitingConfirm`, `confirmLeft`).
+- `server/escrow.lua`: `Escrow.STAFF` (`'staff'`) is who a staff-funded line was taken from (`taken_from`) and whom it goes back to. `Escrow.addStaffLine` writes one (no player charged, one take per contract at a time); `release` hands any such line it would give the contract's placer to `Escrow.STAFF` instead, and `Escrow.deliver` settles a give to `Escrow.STAFF` with nothing moved. `Escrow.reduceLine` lowers a reward line as `reduceStake` lowers a stake (owed split first, guarded cut, boot recovery by the line's amount), owing the cut to the line's funder; a split owed to staff is settled at once, at boot too (`recoverOwed`).
+- `server/staff_reward.lua` and `server/staff_reassign.lua` add their panel ops with `Panel.extend` and run under `Contracts.serialized({ 'contract:' .. id })`; reassignment accepts through `Contracts.acceptHeld` (Contracts.accept's rules and after-steps, keyed on the hitman only, since the caller holds the contract's key) with `opts.waiveStake`, after `App.acceptGate` (the roleplay rules and tiers in front of Accept).
+- `tests/invariants.lua` holds every staff-funded line away from the placer, everything settled or owed to staff to a staff-funded line, every split to exactly what it cut, and nothing owed to staff left held at rest.
+
 ### The hitman organisation
 
 `server/org/` (Config.Organisation, off as shipped). Its own tables are the

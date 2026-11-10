@@ -441,6 +441,9 @@ function _G.newStack()
     package.loaded['server.imp_proof'] = nil
     package.loaded['server.imp_scrub'] = nil
     package.loaded['server.imp_weekly'] = nil
+    for _, name in ipairs({ 'handover_confirm', 'staff_reward', 'staff_reassign' }) do
+        package.loaded['server.' .. name] = nil
+    end
     for _, name in ipairs({ 'init', 'powers', 'engine', 'jobs', 'funds', 'boss_ops', 'staff_ops' }) do
         package.loaded['server.org.' .. name] = nil
     end
@@ -653,6 +656,8 @@ function _G.newStack()
     alerts.init(wiring)
     require('server.org.boss_ops').register(wiring)
     require('server.org.staff_ops').register(wiring)
+    require('server.staff_reward').register(wiring)
+    require('server.staff_reassign').register(wiring)
     org.boot()
 
     return {
@@ -726,6 +731,7 @@ local suites = {
     'org_core_spec', 'org_powers_spec', 'org_money_spec', 'org_places_spec', 'org_review_spec',
     'review_mst_spec',
     'admin_revamp_spec',
+    'staff_reward_spec', 'handover_confirm_spec',
     'docs_spec',
 }
 

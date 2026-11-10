@@ -2383,6 +2383,13 @@
       node.appendChild(placerHandover(contract));
     }
 
+    // Held long enough, and waiting on this placer's word (Config.Kidnap
+    // .PlacerConfirms): Confirm handover and Decline, two taps each
+    // (Projection: handoverConfirm, roughly how long is left; never who).
+    if (mine && context !== 'board' && Number(contract.handoverConfirm) > 0) {
+      node.appendChild(placerConfirm(contract));
+    }
+
     // Where to meet for the handover, on the same card. The server sends
     // meetingSet only while one can be set here: an alive-only contract a
     // hitman holds, on a server running the feature (Config.Kidnap
@@ -3362,6 +3369,57 @@
     }, 5000);
   }
 
+  /* The placer's Confirm handover: the hold is done, and nothing is paid
+     until they say so. Confirm and Decline each take two taps, three
+     seconds apart at most, the second naming what it does. Names nobody. */
+  var confirmArmed = null;   // 'yes:<id>' | 'no:<id>' waiting on its second tap
+  function placerConfirm(contract) {
+    var box = el('div', 'notice ok handover-confirm ico i-usercheck');
+    box.appendChild(el('div', null, 'The hold is done. Confirm handover to release the payment ('
+      + Number(contract.handoverConfirm) + 's left). Nothing is paid until you do.'));
+    var row = el('div', 'row');
+    [['yes', 'Confirm handover', 'Tap again to confirm and pay', 'Confirming\u2026'],
+     ['no', 'Decline', 'Tap again to decline \u2014 nothing is paid', 'Declining\u2026']]
+      .forEach(function (b) {
+        var key = 'confirm:' + b[0] + ':' + contract.id;
+        if (isBusy(key)) {
+          row.appendChild(actionButton(b[0] === 'yes' ? 'primary' : 'ghost', b[1], key, b[3]));
+          return;
+        }
+        var armed = confirmArmed === b[0] + ':' + contract.id;
+        var button = el('button', (b[0] === 'yes' ? 'primary' : 'ghost') + (armed ? ' is-armed' : ''),
+          armed ? b[2] : b[1]);
+        button.onclick = function () {
+          if (confirmArmed !== b[0] + ':' + contract.id) {
+            confirmArmed = b[0] + ':' + contract.id;
+            setTimeout(function () {
+              if (confirmArmed === b[0] + ':' + contract.id) { confirmArmed = null; render(); }
+            }, TIP_CONFIRM_MS);
+            return render();
+          }
+          confirmArmed = null;
+          once(key, function () {
+            return post('confirmHandover', { id: contract.id,
+              decline: b[0] === 'no' ? true : undefined }).then(function (r) {
+              if (!r.ok) {
+                if (r.err === 'no_handover' || r.err === 'not_found') {
+                  say('That handover is no longer waiting on you.');
+                } else { fail(r); }
+                return refresh();
+              }
+              say(b[0] === 'yes' ? 'Handover confirmed. The payment is being released.'
+                : 'Handover declined. Nothing was paid, and your contract stays open.',
+                b[0] === 'yes' ? 'ok' : null);
+              refresh();
+            });
+          });
+        };
+        row.appendChild(button);
+      });
+    box.appendChild(row);
+    return box;
+  }
+
   /* The buyout on a contract on this player, into a card's action row: On
      me's, and the same on the whitelisted-job view's "Contracts on you",
      drawn by this one function so the two say and do exactly the same. */
@@ -3443,7 +3501,12 @@
 
     wrap.appendChild(el('div', 'label', progress.settling
       ? 'Held long enough — settling the payout…'
-      : progress.elapsed + 's of ' + progress.required + 's'));
+      : progress.awaitingConfirm
+        ? 'Held long enough — waiting for the person who placed it to confirm'
+          + (Number(progress.confirmLeft) > 0 ? ' (' + Number(progress.confirmLeft) + 's)' : '')
+        : progress.elapsed + 's of ' + progress.required + 's'));
+    // Nothing to hold any more: the leeway is not drawn.
+    if (progress.awaitingConfirm) { return wrap; }
 
     // The grace budget is one allowance for the whole countdown, not one per
     // break, so what is left of it is the number that actually matters.
@@ -4453,6 +4516,10 @@
     var m = metres(radius);
     var seconds = Number((settings().kidnap || {}).seconds);
     var hold = (seconds > 0 ? 'for ' + seconds + ' seconds' : 'until it finishes');
+    // With the placer's Confirm handover on, the hold is followed by their tap.
+    if ((settings().kidnap || {}).confirm === true) {
+      hold += ', then the person who placed it confirms the handover and it pays once they do';
+    }
     if (!mustRestrain()) {
       return 'Bring them in alive: take them to the person who placed this contract, '
         + (m ? 'stay within ' + m + ' m of that person with them' : 'stay close to that person with them')
@@ -5116,6 +5183,12 @@
       not_together: 'You and the target were not in the same place.',
       contract_locked: 'The contract was stuck settling another payout.'
     };
+    // The placer's Confirm handover (Config.Kidnap.PlacerConfirms): a
+    // decline and a window that ran out read the same.
+    if (ended.reason === 'not_confirmed') {
+      return say('The person who placed this contract did not confirm the handover, so nothing '
+        + 'was paid. The contract is still open: you can tap Deliver alive again shortly.');
+    }
     return say('The handover failed. ' + (failed[ended.reason]
       || 'You lost hold of the target.') + ' Get them back to the person who placed '
       + 'this contract and try again in a minute.');

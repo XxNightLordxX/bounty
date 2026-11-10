@@ -194,6 +194,8 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
 - [ ] In the admin panel's Game rules (Completing a contract), turn **Meeting point for the handover** off: the placer's controls and the hitman's **Meeting point set** go; turn it back on: a point set before is shown again
 - [ ] **One `'either'` smoke test** (on a copy, or set it back afterwards): set `Config.Completion.Fulfilment = 'either'` and restart. `/ch-diag` says `completion: either`, and counts any contract still open from the step above as placed under `'alive'`: a kill on that one still pays nothing. A new contract's cards, dialog and how-to read as they always did (no line under the reward, no "only pays when"). Place one with a 50% kidnapping bonus: a kill verified with **Verify kill** (no camera, kill photos being off as shipped) pays the baseline and the bonus goes back to the person who placed it; on a second one, a handover pays baseline plus bonus
 
+- [ ] With `Config.Kidnap.PlacerConfirms = true`: hold the handover for its 30 seconds and nothing is paid yet; the placer's phone says *Confirm handover* and their card shows **Confirm handover** and **Decline** with the seconds left; the hitman's bar says it waits for the person who placed it. Tap Confirm handover twice: it pays within a second. Again, tap Decline twice: nothing is paid, the contract stays open, and the hitman can arm it again after a minute. Again, wait out the window: nothing is paid (`ConfirmMissed = 'rearm'`), or it pays with `'pay'`. Neither side's notices name the other; with a meeting point set, both *What to do* lines mention the confirm
+
 ## 5. Elimination
 
 Only on contracts placed under `'either'`: run this section on a copy with
@@ -515,6 +517,10 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `resmon` while placing contracts with a job override and a player adjustment set stays as before (the limits are read from memory)
 
 ---
+
+- [ ] A contract's view, **Change reward**: raise by $1,000 added by staff (two clicks, a reason): the board and both cards show the new reward, the placer and the hitman get *Reward raised* naming nobody, and the placer's money is unchanged; cancel it as the placer and only their own reward comes back. Raise again charged to the placer: their bank goes down by that. Lower by $1,500: staff's part comes off first and the rest goes back to the placer; below `MinContractReward` is refused. While a buyout waits, or the contract is frozen, it is refused
+- [ ] A contract's view, **Reassign**: look a second hitman up under Players, reassign (two clicks, a reason): the operative on it gets *Taken off a contract*, their stake goes to the placer, the new hitman gets *Contract assigned* and has it under Mine with no stake (`ReassignStake = 'waive'`), the placer gets *Contract reassigned*. Naming the target or the placer as the hitman is refused and nobody is taken off. A third player tapping Accept at that moment is told it is busy
+- [ ] Resmon while idle with both staff tools and Confirm handover in use stays where section 12 says (they add no loop: the confirm window rides the handover's own tick)
 
 ## 14. Roleplay features (each off as shipped)
 

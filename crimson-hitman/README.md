@@ -178,8 +178,18 @@ On a contract only a live handover completes, once a hitman holds it the placer 
 
 - **Who gets the marker**: the placer and every hitman active on the contract get a yellow *Meeting point* marker on their map, seen from anywhere. Nobody else does: never the target, a bystander, or staff who are not a party. The coordinates go only to those games, never to the app's page.
 - **What each side is told**: both get a phone notice (*Meeting point set*, or *Meeting point moved*) saying what to do, and their card under Mine shows the same words as a *What to do* line. The placer: be at the meeting point, stay within `Config.Kidnap.Radius` of the hitman and the target and keep still while the hitman taps **Deliver alive** (`Config.Kidnap.CountdownSeconds`), and follow it in the app; there is nothing for them to tap. The hitman: bring the target alive there (cuffed or in their vehicle where `RequireCoercion` is on), get within the radius of the person who placed it, open the app and tap **Deliver alive** on the contract under Mine, and hold. Neither notice names the other side.
+- **With Confirm handover on** (`Config.Kidnap.PlacerConfirms`): the placer's words say to tap **Confirm handover** on their card within `Config.Kidnap.ConfirmSeconds` once the hold is done, and the hitman's that it pays once the placer confirms.
 - **When it changes**: moving the point moves the marker on every map. A hitman who takes the contract after it was set gets the marker and the notice when they accept. A party who logs out loses it from their map and gets it back when they return (and after a restart).
 - **When it goes**: off every map when the placer clears it, when the contract is completed by the handover, cancelled, expired, voided or bought out, and when the last hitman walks away, is released for idling or is removed by staff. A hitman who leaves while others stay loses it from their own map only. Turning the switch off takes it off every map; turning it on puts it back.
+
+### Confirm handover
+
+Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays the moment the hitman has held the target for `Config.Kidnap.CountdownSeconds`. On, the hold no longer pays by itself:
+
+- **The placer confirms**: once the hold is done, their card under Mine shows **Confirm handover** and **Decline** (two taps each, the second naming what it does) for `Config.Kidnap.ConfirmSeconds` (60), and their phone says so. The payout is made once they confirm. Nothing is sampled during the window: the hold is what proves the handover.
+- **Decline, or no answer**: a decline pays nothing; the contract stays open, and the hitman may tap **Deliver alive** again after `Config.Kidnap.RearmCooldownSeconds`, as after any failed handover. A window that runs out does the same, unless `Config.Kidnap.ConfirmMissed = 'pay'`, which pays as if confirmed. The hitman reads the same words for a decline and a timeout.
+- **Anonymity**: the hitman is told the person who placed it confirms; the placer is told nothing of who holds the target. Only the placer is answered; anybody else asking is told not found.
+- **Holds**: a staff freeze stops a handover waiting on its confirm, and nothing is paid. The window stands still on the restart hold (a confirm is refused until it lifts) and while the app is paused (`Config.Staff.AppPaused`; a confirm still pays). A handover keeps the rule it was armed under if the switch is changed meanwhile.
 
 ### Money rules
 
@@ -433,6 +443,17 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `targetOverrideClear` | Moderate | Lift a player's own target limits |
 | `targetJobAction` | Moderate | Reset, extend or reset counts for every player of a job |
 
+### Reward and reassign requests
+
+Added by `server/staff_reward.lua` and `server/staff_reassign.lua` through the panel's one way in (`Panel.extend`), so each runs the same gate: the ACE on every request, the panel's rate limits, a write waiting for boot recovery, every write audited. The page asks twice before it sends a write, naming the figure or the hitman.
+
+| Request | Who | What it does |
+|---|---|---|
+| `rewardPreview` | Read | `{ id, by }`: the collection's reward now and after, the most it may be lowered by, what staff added, and why a change would be refused |
+| `rewardChange` | Write | `{ id, by, from, account, reason }`: raise (`by` above 0, `from = 'staff'` or `'placer'`, `account = 'cash'` or `'bank'`) or lower (`by` below 0) the reward; audit `staff_reward_changed` |
+| `reassignPreview` | Read | `{ id, ref }`: the operatives on it now (aliases), whether the stake is waived, and what would refuse the hitman looked up |
+| `reassignHitman` | Write | `{ id, ref, reason, block, returnStake, anonymous }`: take every operative off and assign the hitman the lookup named; audit `staff_reassign_hitman` (`staff_reassign_failed` when it could not finish) |
+
 ### Console output and Discord
 
 `Config.Debug = true` (as shipped) prints start progress, every setting
@@ -493,6 +514,8 @@ first and the card is marked on the board.
 - **Pay** a player by hand (cash or bank, a reason, at most `Config.Staff.ManualPaymentMax`).
 - **Deadlines**: extend or shorten a live contract by up to `Config.Limits.StaffDeadlineMaxAdjustSeconds`, never under `StaffDeadlineMinLeftSeconds`.
 - **On a contract**: staff notes, remove an operative (stake to the placer as a walk-away, or returned), edit a player's text, export, *As a player sees it*.
+- **Change reward** on a live contract (`crimson.admin`, a reason, two clicks, at most `Config.Staff.RewardChangeMax` at once): a raise is *added by staff* (taken from nobody, and handed back to staff, never to the placer, if the contract is cancelled, expires, is bought out or voided), or charged to the placer's cash or bank if staff choose that and the placer is in the city; a cut comes off what staff added first, then the placer's own, each part going back to whoever funded it (queued for a placer who is away), never below `Config.Limits.MinContractReward` and never touching money already owed or being paid. Refused while a payout is being settled, a buyout waits out its delay, or the contract is on hold (unfreeze first). The placer and every operative are told staff changed it; nobody is named.
+- **Reassign** a live contract to another hitman (`crimson.admin`, a reason, two clicks): the hitman is named by a Players lookup and must be in the city and pass every check their own Accept would (job, eligibility, not the target, the placer or the target's guard, their limits, the stake rule). Every operative on it is taken off as **Remove** does (their stake to the placer, or returned; barred from taking it again unless staff untick it), all under the contract's own key, so nobody takes it from the board in between. The new hitman's stake is waived (`Config.Staff.ReassignStake = 'waive'`, as shipped) or charged as on Accept (`'charge'`).
 - **App pause** (`Config.Staff.AppPaused`): nothing can be placed or taken, and every clock is held, for an event.
 - **Daily summary** (`Config.Staff.DailySummary`, off) at `DailySummaryHour`; **alerts** past the `Config.Staff.Alert*` thresholds, posted to Discord with `Config.Alerts.ToDiscord`.
 - **Moderators** (`crimson.moderator`): read without identities, freeze, suspend, protect, void and move deadlines; settings, payments and settling stay with `crimson.admin`.
@@ -811,6 +834,9 @@ How many contracts a player may place, take or carry, and how one is finished: a
 | `Config.Kidnap.RejectLastStand` | `true` | refuse a downed target |
 | `Config.Kidnap.MinTargetHealthPercent` | `20` | refuse a target hurt below this |
 | `Config.Kidnap.RearmCooldownSeconds` | `60` | wait after a failed handover before arming again |
+| `Config.Kidnap.PlacerConfirms` | `false` | true = the placer taps Confirm handover before it pays |
+| `Config.Kidnap.ConfirmSeconds` | `60` | seconds the placer has to confirm (10-600) |
+| `Config.Kidnap.ConfirmMissed` | `'rearm'` | no answer in time: 'rearm' (nothing paid) \| 'pay' |
 | `Config.Reason.Mode` | `'freetext'` | 'preset' \| 'freetext' \| 'off' |
 | `Config.Reason.MaxLength` | `140` | characters (255 at most on mysql) |
 | `Config.Reason.MaxDigits` | `6` | digits allowed, so no phone numbers |
@@ -979,6 +1005,8 @@ The staff tools: /hitmanadmin and the F8 commands. ACE names are never changed f
 | `Config.Staff.AlertPlacedPerHour` | `5` | alert past this many placed by one player an hour; 0 = off |
 | `Config.Staff.AlertTargetPerDay` | `3` | alert past this many on one target a day; 0 = off |
 | `Config.Staff.AlertRefusalsPer10Min` | `30` | alert past this many refusals to one player in 10 min; 0 = off |
+| `Config.Staff.RewardChangeMax` | `100000` | most staff may raise or lower a reward by at once ($); 0 = off |
+| `Config.Staff.ReassignStake` | `'waive'` | a hitman staff assign: 'waive' (no stake) \| 'charge' |
 
 ### Roleplay
 
@@ -1407,7 +1435,12 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, the admin panel rebuilt (newest)**
+**1.1.0, Confirm handover, Change reward, Reassign (newest)**
+
+- **Confirm handover** (`Config.Kidnap.PlacerConfirms`, off as shipped): the placer taps Confirm handover on their card before a live handover pays; a decline or no answer pays nothing and the hitman may arm again. See Roles and how a contract works, Confirm handover.
+- The contract view's staff tools gain **Change reward** (raise, added by staff or charged to the placer, or lower, back to whoever funded it) and **Reassign** (to a hitman looked up under Players, through every Accept check). See Optional features, Staff tools, and Admin panel, Reward and reassign requests.
+
+**1.1.0, the admin panel rebuilt**
 
 - The admin panel is organised by task: a sidebar of **Daily** (Home, Players, Contracts, Target limits), **Setup** (Game rules, Hitman organisation, Boss permissions, Locations), **Records** (Logs) and **Developer**, with **Help** in the header. Every view it had is still there; a link or a remembered view from before opens where its items are now.
 - **Search** from the header (`/` or Ctrl+K): settings, actions, sections, a contract id or a player. The player and the contract you are on stay in the header as you move, and the contract drawer stays open over any section.

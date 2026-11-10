@@ -744,6 +744,10 @@ function Projection.contract(contract, viewerCid, opts)
         -- A handover running on it, which the placer has to stand still
         -- for: roughly how long is left (Kidnap.placerLeft), never who.
         out.handoverLeft = Kidnap and Kidnap.placerLeft and Kidnap.placerLeft(contract.id) or nil
+        -- And one held long enough, waiting on their Confirm handover
+        -- (Config.Kidnap.PlacerConfirms): roughly how long they have to
+        -- tap it (Kidnap.placerConfirm); never who.
+        out.handoverConfirm = Kidnap and Kidnap.placerConfirm and Kidnap.placerConfirm(contract.id) or nil
         -- The handover's meeting point (server/meeting.lua): whether one is
         -- set, for the controls on an alive-only contract a hitman holds,
         -- while Config.Kidnap.MeetingPoint is on. Absent, no controls. Never
@@ -930,6 +934,9 @@ local function buildListing(viewerCid, page)
                 -- restrain anybody: alive, conscious and there is all a
                 -- handover needs.
                 restrain = Config.Kidnap.RequireCoercion and true or false,
+                -- Whether the placer taps Confirm handover before it pays
+                -- (Config.Kidnap.PlacerConfirms, off as shipped).
+                confirm = Config.Kidnap.PlacerConfirms == true,
             },
             -- How a contract placed now may be completed: 'alive' (live
             -- transfer only, with no bonus, so the Place form offers none)

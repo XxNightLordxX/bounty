@@ -280,6 +280,10 @@ function Kidnap.arm(contractId, hitmanCid)
         -- (Kidnap.partyDropped): a disconnect reads nothing from the store.
         targetCid  = contract.target_cid,
         creatorCid = contract.creator_cid,
+        -- Whether the placer confirms before it pays (Config.Kidnap
+        -- .PlacerConfirms), as it was when armed: switched meanwhile, a
+        -- handover keeps the rule it started under.
+        confirm    = Config.Kidnap.PlacerConfirms == true,
     }
 
     -- How the PREVIOUS handover ended is not how this one ends. Kept, it
@@ -293,8 +297,10 @@ function Kidnap.arm(contractId, hitmanCid)
     -- close to stand: "Be there now" did not say where "there" ended.
     Notify.toCitizen(contract.creator_cid, 'Handover starting',
         ('A hitman has brought your target to you for the handover. Stay where you '
-            .. 'are, within %s m of them both, for %d seconds.')
-            :format(metres(radius), tonumber(Config.Kidnap.CountdownSeconds) or 0))
+            .. 'are, within %s m of them both, for %d seconds.%s')
+            :format(metres(radius), tonumber(Config.Kidnap.CountdownSeconds) or 0,
+                Config.Kidnap.PlacerConfirms == true and (' Then tap Confirm handover on your '
+                    .. 'contract under Mine to release the payment.') or ''))
     -- And their card, which counts it down (Projection: handoverLeft).
     Notify.push(contract.creator_cid, 'handover', contractId)
 
@@ -467,6 +473,33 @@ function Kidnap.tick(deltaMs)
                 Notify.toCitizen(state.hitmanCid, 'Handover ended',
                     'The contract closed before the handover finished.',
                     { bypassBudget = true })
+            elseif state.confirmLeftMs then
+                -- The hold is done and waits on the placer's word
+                -- (Kidnap.answer): nothing is sampled any more, the hold
+                -- being what proves the handover. Paid once confirmed; at
+                -- the end of the window, by Config.Kidnap.ConfirmMissed.
+                -- The window stands still on the restart hold (above) and
+                -- while the app is paused (Config.Staff.AppPaused), as every
+                -- clock does.
+                if not state.confirmed and not (Contracts.appPaused and Contracts.appPaused()) then
+                    state.confirmLeftMs = state.confirmLeftMs - deltaMs
+                end
+                if not state.confirmed and state.confirmLeftMs <= 0 then
+                    if Config.Kidnap.ConfirmMissed == 'pay' then
+                        state.confirmed = 'timeout'
+                        Audit.action('kidnap_confirm_timeout', state.hitmanCid, state.contractId, { paid = true })
+                    else
+                        Kidnap.notConfirmed(k, state, 'timeout')
+                    end
+                end
+                if state.confirmed and active[k] == state then
+                    active[k] = nil
+                    remember(k, { outcome = 'settling' })
+                    completions[#completions + 1] = {
+                        contractId = state.contractId, hitmanCid = state.hitmanCid,
+                        countdown = state, slot = contract.next_slot or 1,
+                    }
+                end
             else
                 local hitmanActor  = Identity.byCitizenId(state.hitmanCid)
                 local targetActor  = Identity.byCitizenId(contract.target_cid)
@@ -479,7 +512,11 @@ function Kidnap.tick(deltaMs)
                     state.elapsedMs = state.elapsedMs + deltaMs
                     state.breaking = nil
 
-                    if state.elapsedMs >= (Config.Kidnap.CountdownSeconds * 1000) then
+                    if state.elapsedMs >= (Config.Kidnap.CountdownSeconds * 1000)
+                        and state.confirm and not state.confirmed then
+                        -- Held long enough; now the placer's word.
+                        Kidnap.awaitConfirm(state)
+                    elseif state.elapsedMs >= (Config.Kidnap.CountdownSeconds * 1000) then
                         active[k] = nil
                         -- Between here and the outcome below the countdown
                         -- is neither running nor ended: the payout is being
@@ -710,8 +747,124 @@ function Kidnap.progress(contractId, hitmanCid)
         -- armed with), so the page can say how close the person who placed
         -- the contract has to be when that is what is slipping.
         radius    = state.radius,
+        -- Held long enough, and waiting on the placer's Confirm handover
+        -- (Config.Kidnap.PlacerConfirms): roughly how long they have left.
+        awaitingConfirm = state.confirmLeftMs ~= nil or nil,
+        confirmLeft = state.confirmLeftMs and Kidnap.roughSeconds(state.confirmLeftMs) or nil,
     }
 end
+
+--------------------------------------------------------------------------
+-- The placer's Confirm handover (Config.Kidnap.PlacerConfirms)
+--------------------------------------------------------------------------
+
+--- Seconds, rounded up to the next five, of a window in milliseconds.
+---@param ms number
+---@return integer
+function Kidnap.roughSeconds(ms)
+    local s = math.max(0, math.ceil((tonumber(ms) or 0) / 1000))
+    return math.ceil(s / 5) * 5
+end
+
+--- The window a placer has to confirm, in seconds (Config.Kidnap
+--- .ConfirmSeconds), at least 10.
+local function confirmWindow()
+    return math.max(10, math.floor(tonumber(Config.Kidnap.ConfirmSeconds) or 60))
+end
+
+--- A countdown held long enough on a contract its placer confirms: the
+--- window opens, the placer's card shows Confirm handover (Projection:
+--- handoverConfirm) and their phone says so, and the hitman is told it
+--- waits on that. Neither is told who the other is.
+---@param state table the countdown
+function Kidnap.awaitConfirm(state)
+    state.confirmLeftMs = confirmWindow() * 1000
+    state.breaking = nil
+    Audit.action('kidnap_awaiting_confirm', state.hitmanCid, state.contractId, {})
+    pcall(Notify.toCitizen, state.creatorCid, 'Confirm handover',
+        ('The hold is done. Tap Confirm handover on your contract under Mine within %d seconds to '
+            .. 'release the payment, or Decline if you were not handed the target.'):format(confirmWindow()),
+        { bypassBudget = true })
+    pcall(Notify.push, state.creatorCid, 'handover', state.contractId)
+    pcall(Notify.toCitizen, state.hitmanCid, 'Handover held',
+        'Held long enough. The person who placed this contract now confirms the handover; it pays '
+            .. 'once they do.', { bypassBudget = true })
+end
+
+--- A handover its placer declined, or did not confirm in time (and
+--- Config.Kidnap.ConfirmMissed is 'rearm'): nothing is paid, the contract
+--- stays open, and the hitman may arm again after Config.Kidnap
+--- .RearmCooldownSeconds, as after any failed handover. The hitman reads
+--- the same words either way.
+---@param k string the countdown's key
+---@param state table
+---@param why string 'declined' | 'timeout'
+function Kidnap.notConfirmed(k, state, why)
+    if active[k] ~= state then return end
+    active[k] = nil
+    lastFailure[k] = os.time()
+    Audit.action('kidnap_not_confirmed', state.hitmanCid, state.contractId, { reason = why })
+    remember(k, { outcome = 'failed', reason = 'not_confirmed' })
+    pcall(Notify.toCitizen, state.hitmanCid, 'Handover not confirmed',
+        'The person who placed this contract did not confirm the handover, so nothing was paid. The '
+            .. 'contract is still open: you can arm it again shortly.', { bypassBudget = true })
+    pcall(Notify.toCitizen, state.creatorCid, 'Handover not confirmed',
+        why == 'declined' and 'You declined the handover. Nothing was paid, and your contract stays open.'
+            or 'The handover was not confirmed in time. Nothing was paid, and your contract stays open.',
+        { bypassBudget = true })
+    pcall(Notify.push, state.creatorCid, 'handover', state.contractId)
+end
+
+--- The placer's answer: Confirm handover (yes) or Decline, on the handover
+--- waiting longest on their word on this contract. Only the contract's
+--- placer is answered anything but not found, so nobody else learns that a
+--- handover is running. Refused while staff hold it (frozen) and, for a
+--- confirm, during the restart hold, when the payout would be refused.
+---@param contractId any
+---@param cid string the asker
+---@param yes boolean
+---@return boolean ok
+---@return string|nil err
+---@return table|nil data { confirmed } | { declined }
+function Kidnap.answer(contractId, cid, yes)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    local contract = Storage.readContract(contractId)
+    if not contract or contract.creator_cid ~= cid then return false, CH.ERR.NOT_FOUND end
+    local pick, pickKey
+    for k, state in pairs(active) do
+        if state.contractId == contractId and state.confirmLeftMs and not state.confirmed
+            and (not pick or state.confirmLeftMs < pick.confirmLeftMs) then
+            pick, pickKey = state, k
+        end
+    end
+    if not pick then return false, CH.ERR.NO_HANDOVER end
+    if Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if yes and Contracts.restartHeld and Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
+    if not yes then
+        Kidnap.notConfirmed(pickKey, pick, 'declined')
+        return true, nil, { declined = true }
+    end
+    pick.confirmed = true
+    Audit.action('kidnap_confirmed', cid, contractId, {})
+    return true, nil, { confirmed = true }
+end
+
+--- What the placer's card shows of a handover waiting on their word:
+--- roughly how long is left to confirm, or nil. Never which operative.
+---@param contractId string
+---@return integer|nil
+function Kidnap.placerConfirm(contractId)
+    local least
+    for _, state in pairs(active) do
+        if state.contractId == contractId and state.confirmLeftMs and not state.confirmed then
+            if not least or state.confirmLeftMs < least then least = state.confirmLeftMs end
+        end
+    end
+    if not least then return nil end
+    return math.max(5, Kidnap.roughSeconds(least))
+end
+
 
 --- What the person who placed it is shown of a handover running on their
 --- contract: roughly how long they still have to hold still, in seconds,

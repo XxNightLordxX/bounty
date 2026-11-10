@@ -593,6 +593,8 @@ local UI_EVENTS = {
     'rewardOptions', 'mugshotImage',
     'create', 'accept', 'abandon', 'cancel', 'revise',
     'armKidnap', 'kidnapProgress',
+    -- The placer's Confirm handover (Config.Kidnap.PlacerConfirms).
+    'confirmHandover',
     -- Clearing the handover's meeting point. Setting it and Set GPS are
     -- answered here (crimson:setMeeting, crimson:meetingGps), below.
     'clearMeeting',

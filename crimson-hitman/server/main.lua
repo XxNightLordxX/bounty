@@ -153,6 +153,10 @@ local DEFAULTS = {
         AlertPlacedPerHour = 5,
         AlertTargetPerDay = 3,
         AlertRefusalsPer10Min = 30,
+        -- The panel's Change reward and Reassign (server/staff_reward.lua,
+        -- server/staff_reassign.lua). Checked below.
+        RewardChangeMax = 100000,
+        ReassignStake = 'waive',
     },
     Immunity = {
         MinTargetPlaytimeHours = 5,
@@ -363,6 +367,11 @@ local DEFAULTS = {
         --- Absent, the placer of an alive-only contract could not set a
         --- meeting point for the handover, as shipped they can. Checked below.
         MeetingPoint = true,
+        --- Off, as shipped: a handover pays at the end of its hold, with no
+        --- word from the placer (server/completion/kidnap.lua). Checked below.
+        PlacerConfirms = false,
+        ConfirmSeconds = 60,
+        ConfirmMissed = 'rearm',
     },
     --- The board's page size, read straight into arithmetic in
     --- Projection.listing. Absent, it takes down `list` — the app's home
@@ -1468,6 +1477,10 @@ local function validateConfig(quiet)
     CrimsonBoot.require('server.targetlimits').checkConfig(warn)
     -- The hitman organisation (server/org/, Config.Organisation).
     CrimsonBoot.require('server.org.init').validate(warn)
+    -- The placer's Confirm handover, and the panel's reward and reassign.
+    CrimsonBoot.require('server.handover_confirm').validate(warn)
+    CrimsonBoot.require('server.staff_reward').validate(warn)
+    CrimsonBoot.require('server.staff_reassign').validate(warn)
 
     if quiet then return #fatal == 0, fatal, warn end
 
@@ -2230,6 +2243,9 @@ function StartCrimsonHitman()
         -- player brought in step where it does not.
         CrimsonBoot.require('server.org.boss_ops').register(modules)
         CrimsonBoot.require('server.org.staff_ops').register(modules)
+        -- The panel's Change reward and Reassign (README, Staff tools).
+        CrimsonBoot.require('server.staff_reward').register(modules)
+        CrimsonBoot.require('server.staff_reassign').register(modules)
         org.boot()
 
         -- Its own clock, faster than the maintenance tick: attribution is

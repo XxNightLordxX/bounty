@@ -14513,6 +14513,111 @@ async function main() {
     });
   })();
 
+  /* ================================================================
+     The placer's Confirm handover (Config.Kidnap.PlacerConfirms).
+     ================================================================ */
+  await (async function handoverConfirm() {
+    function labels(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    function card(extra) {
+      return Object.assign({
+        id: 'ct00000071', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
+        reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+        timeLeft: band(5400), penaltyAmount: 0, fulfilment: 'alive'
+      }, extra || {});
+    }
+    function board(confirm) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { minQueryLength: 3, relay: true, amendments: true,
+          defaultDeadlineMinutes: 180, deadlineMaxMinutes: 1440,
+          kidnap: { radius: 12, seconds: 30, restrain: false, confirm: confirm } } } };
+    }
+    async function open(created, accepted, more, confirm) {
+      const app = boot(Object.assign({ list: board(confirm !== false),
+        mine: { ok: true, data: { created: created || [], accepted: accepted || [], onMe: [] } },
+        ledger: LEDGER, amendments: { ok: true, data: [] } }, more || {}));
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+
+    let sent = [];
+    const placer = await open([card({ role: 'creator', hitmen: [{ alias: 'Operative #1' }],
+      handoverConfirm: 55 })], [], {
+      confirmHandover: function (b) { sent.push(b); return { ok: true, data: { confirmed: !b.decline } }; } });
+    it('HC1: the placer\'s card offers Confirm handover and Decline, with the time left, naming nobody', function () {
+      const all = labels(placer);
+      truthy(all.indexOf('Confirm handover') !== -1, all.join(' | '));
+      truthy(all.indexOf('Decline') !== -1, all.join(' | '));
+      truthy(placer.view.textContent.indexOf('(55s left)') !== -1, placer.view.textContent);
+      falsy(placer.view.textContent.indexOf('Operative #1: ') !== -1, 'names nobody');
+    });
+    click(placer, 'Confirm handover');
+    await settle();
+    it('HC2: the first tap sends nothing and says what the second does', function () {
+      eq(sent.length, 0, 'sent on one tap');
+      truthy(labels(placer).indexOf('Tap again to confirm and pay') !== -1, labels(placer).join(' | '));
+    });
+    click(placer, 'Tap again to confirm and pay');
+    await settle(); await settle();
+    it('HC3: the second tap confirms, and says so', function () {
+      eq(sent.length, 1);
+      eq(sent[0].id, 'ct00000071');
+      eq(sent[0].decline, undefined, 'a confirm carries no decline');
+      truthy(placer.notice().indexOf('Handover confirmed.') !== -1, placer.notice());
+    });
+
+    sent = [];
+    const declining = await open([card({ role: 'creator', hitmen: [{ alias: 'Operative #1' }],
+      handoverConfirm: 30 })], [], {
+      confirmHandover: function (b) { sent.push(b); return { ok: true, data: { declined: true } }; } });
+    click(declining, 'Decline');
+    await settle();
+    click(declining, 'Tap again to decline — nothing is paid');
+    await settle(); await settle();
+    it('HC4: Decline takes two taps too, and sends decline', function () {
+      eq(sent.length, 1);
+      eq(sent[0].decline, true);
+      truthy(declining.notice().indexOf('Nothing was paid') !== -1, declining.notice());
+    });
+
+    const gone = await open([card({ role: 'creator', hitmen: [{ alias: 'Operative #1' }],
+      handoverConfirm: 10 })], [], {
+      confirmHandover: function () { return { ok: false, err: 'no_handover' }; } });
+    click(gone, 'Confirm handover');
+    await settle();
+    click(gone, 'Tap again to confirm and pay');
+    await settle(); await settle();
+    it('HC5: one no longer waiting is said as that', function () {
+      truthy(gone.notice().indexOf('no longer waiting on you') !== -1, gone.notice());
+    });
+
+    const none = await open([card({ role: 'creator', hitmen: [{ alias: 'Operative #1' }] })]);
+    it('HC6: no confirm controls with nothing waiting', function () {
+      eq(labels(none).indexOf('Confirm handover'), -1);
+    });
+
+    const hitman = await open([], [card({ role: 'hitman', myAlias: 'Operative #1',
+      kidnapProgress: { elapsed: 30, required: 30, graceLeft: 3000, graceTotal: 3000,
+        awaitingConfirm: true, confirmLeft: 45 } })]);
+    it('HC7: the hitman is told it waits on the placer, and is offered no confirm', function () {
+      const text = hitman.view.textContent;
+      truthy(text.indexOf('waiting for the person who placed it to confirm (45s)') !== -1, text);
+      eq(labels(hitman).indexOf('Confirm handover'), -1);
+      truthy(text.indexOf('confirms the handover and it pays once they do') !== -1,
+        'the How to finish line says so: ' + text);
+    });
+
+    const off = await open([], [card({ role: 'hitman', myAlias: 'Operative #1' })], null, false);
+    it('HC8: with the option off the steps say nothing of a confirm', function () {
+      eq(off.view.textContent.indexOf('confirms the handover'), -1, off.view.textContent);
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

@@ -51,6 +51,9 @@ local CONDITIONAL = {
     -- A handover running on it, on the placer's card alone, roughly how
     -- long they still hold still for (Kidnap.placerLeft); never who.
     handoverLeft = 'creator-only, and only while a handover runs on it',
+    -- One held long enough and waiting on the placer's Confirm handover
+    -- (Config.Kidnap.PlacerConfirms, off as shipped): creator-only.
+    handoverConfirm = 'creator-only, and only while a handover waits on their confirm',
     -- The proof-of-intent rule on a hitman's card while it can be met
     -- (Config.Roleplay.ProofOfIntent, off as shipped).
     intentRule = 'hitman-only, with proof of intent on, while the contract is live',
