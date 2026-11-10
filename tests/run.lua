@@ -446,6 +446,7 @@ function _G.newStack()
     end
     package.loaded['server.missionsteps'] = nil
     package.loaded['server.disposal'] = nil
+    package.loaded['server.payout'] = nil
     package.loaded['server.places'] = nil
     package.loaded['server.police'] = nil
     package.loaded['server.discord'] = nil
@@ -752,7 +753,7 @@ local suites = {
     'org_phone_review_spec',
     'capability_inventory_spec',
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
-    'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'lib_players_spec',
+    'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'payout_checks_spec', 'lib_players_spec',
     'lib_feature_spec',
     'docs_spec',
 }

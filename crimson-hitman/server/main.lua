@@ -2110,8 +2110,9 @@ function StartCrimsonHitman()
     org.init({ storage = Storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
                contracts = contracts, settings = settings, review = review })
     -- After death, kidnap and the bodyguards, whose steps it draws, and after
-    -- the proof-of-intent hold and the EMS rule, which disposal chains ahead
-    -- of (Escrow.holdBack, Contracts.intentOnClaim, Contracts.relistHold).
+    -- the EMS rule, which disposal chains ahead of (Contracts.relistHold).
+    -- Its hold is a payout check (server/payout.lua), asked ahead of proof
+    -- of intent whatever order the two start in.
     missionSteps.init({ identity = identity, storage = Storage, death = death, kidnap = kidnap,
                         rpProtection = rpProtection })
     disposal.init({ storage = Storage, identity = identity, audit = audit, notify = notify,

@@ -20,6 +20,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Payout = CrimsonBoot.require('server.payout')
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Roleplay.ProofOfIntent'
@@ -46,15 +47,13 @@ end
 function Intent.init(deps)
     Storage, Audit, Notify, Escrow = deps.storage, deps.audit, deps.notify, deps.escrow
     holds, recent, loaded = {}, {}, false
-    -- The escrow asks before every give (Escrow.deliver).
-    if Escrow then Escrow.holdBack = Intent.holds end
-    -- And staff settling a line it holds are told until when (Admin.settleLine).
-    if Escrow then Escrow.holdUntil = Intent.releasesAt end
-    -- And the claim tells this module a payout is about to be released.
-    if deps.contracts then
-        deps.contracts.intentOnClaim = Intent.onClaim
-        deps.contracts.intentAfterClaim = Intent.afterClaim
-    end
+    -- One of the payout checks (server/payout.lua): the escrow asks the
+    -- list before every give (Escrow.deliver), staff settling a line it
+    -- holds are told until when (Admin.settleLine), and the claim tells the
+    -- list a payout is about to be released, and how the claim ended.
+    Payout.add('intent', { holds = Intent.holds, releasesAt = Intent.releasesAt,
+        onClaim = Intent.onClaim, afterClaim = Intent.afterClaim },
+        { escrow = Escrow, contracts = deps.contracts })
     -- The hitman's card says what is missing while one of theirs is held.
     if deps.projection and deps.projection.extenders then
         deps.projection.extenders.intent = function(out, contract, viewerCid, role)

@@ -686,6 +686,12 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Turn each of Reputation, Tiered board, Hitman heat and Placer record on from the panel in turn: each behaves as its own checks above say, with no restart; turned off, each stops at once.
 - [ ] Restart with heat given: it is still there until it cools, and the minute job (`record.tick` in /ch-diag) clears it after.
 
+## Payout checks: one check, one list (step 3k)
+
+- [ ] Verify a kill, deliver a target alive, hand over a proof item and confirm a handover (placer's Confirm on): each pays once, as before; a second claim on a one-payout contract is refused.
+- [ ] Freeze a contract (staff) or start the restart hold: Verify kill is refused with the same words, nothing paid.
+- [ ] Turn on body disposal and proof of intent together: a verified kill's baseline waits for the drop-off and then for intent (or the hold time); the hitman's card and receipt say what is missing; staff's Settle on a held line says until when; nothing is lost or paid twice.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

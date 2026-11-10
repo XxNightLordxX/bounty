@@ -3386,6 +3386,31 @@ end
 ---@return string|nil err
 ---@return table|nil result
 ---@param opts table|nil { deathAt = ms } when the claim rests on a recorded death
+--- Whether a payout may be claimed on this contract by this hitman now, or
+--- why not: the one check of a claim's eligibility, asked before the claim
+--- takes the contract's lock and again under it (Contracts.claimSlot), in
+--- this order: still on it, not on a staff hold, not on the restart hold,
+--- not cooling down between two slots, and a slot left to pay.
+---@param contract table as read (asked of it as it was taken: a hold
+--- leaves one already completing alone, Holds.partiesOf)
+---@param hitman table|nil their roster row
+---@return string|nil refusal
+function Contracts.payoutRefusal(contract, hitman)
+    if not hitman or hitman.state ~= 'active' then return CH.ERR.NOT_PARTICIPANT end
+    -- On hold by staff: no completion and no payout.
+    if Holds.on(setmetatable({ state = CH.STATE.ACCEPTED }, { __index = contract }), nil, 'staff') then
+        return CH.ERR.CONTRACT_FROZEN
+    end
+    -- Nor on the restart hold: no hit goes through in the last half hour
+    -- before a restart (Holds.on, 'restart').
+    if Holds.on(nil, nil, 'restart') then return CH.ERR.RESTART_HOLD end
+    -- The same hitman may not collect two slots back to back; without this a
+    -- multi-slot contract is a respawn-camping machine (§3.5).
+    if Contracts.slotCoolingDown(hitman) then return CH.ERR.SLOT_COOLDOWN end
+    if (contract.next_slot or 1) > (contract.payout_slots or 1) then return CH.ERR.ALREADY_SETTLED end
+    return nil
+end
+
 local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
@@ -3402,22 +3427,9 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     end
 
     local hitman = Storage.readHitman(contractId, hitmanCid)
-    if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
-
-    -- On hold by staff: no completion and no payout.
-    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
-    -- Nor on the restart hold: no hit goes through in the last half hour
-    -- before a restart (Holds.on, 'restart').
-    if Holds.on(nil, nil, 'restart') then return false, CH.ERR.RESTART_HOLD end
-
-    -- The same hitman may not collect two slots back to back; without this a
-    -- multi-slot contract is a respawn-camping machine (§3.5).
-    if Contracts.slotCoolingDown(hitman) then
-        return false, CH.ERR.SLOT_COOLDOWN
-    end
-
-    local slot = contract.next_slot or 1
-    if slot > (contract.payout_slots or 1) then return false, CH.ERR.ALREADY_SETTLED end
+    local refused = Contracts.payoutRefusal(contract, hitman)
+    if refused then return false, refused end
+    local slot
 
     -- Eligibility is re-checked here, not just at creation: a multi-slot
     -- contract is claimed repeatedly over time, and the target's post-respawn
@@ -3447,23 +3459,17 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- moved, the claim reported success, and the kill, the photo token and
     -- the next ten minutes were spent on it. Read again under the lock,
     -- where nothing else can move them.
+    -- The same checks, the one function (Contracts.payoutRefusal), with the
+    -- holds again among them: a freeze or the restart hold that landed in
+    -- the reads since the first look takes no key, and the claim paid out
+    -- "on hold".
     local held = Storage.readContract(contractId)
     local fresh = Storage.readHitman(contractId, hitmanCid)
     local refusal
-    if not fresh or fresh.state ~= 'active' then
-        refusal = CH.ERR.NOT_PARTICIPANT
-    elseif Contracts.slotCoolingDown(fresh) then
-        refusal = CH.ERR.SLOT_COOLDOWN
-    elseif not held or (held.next_slot or 1) > (held.payout_slots or 1) then
-        refusal = CH.ERR.ALREADY_SETTLED
-    -- And the holds again: a freeze or the restart hold that landed in the
-    -- reads since the first look takes no key, and the claim paid out "on
-    -- hold". Asked of the contract as it was taken: a hold leaves one
-    -- already completing alone (Holds.partiesOf).
-    elseif Holds.on(setmetatable({ state = CH.STATE.ACCEPTED }, { __index = held }), nil, 'staff') then
-        refusal = CH.ERR.CONTRACT_FROZEN
-    elseif Holds.on(nil, nil, 'restart') then
-        refusal = CH.ERR.RESTART_HOLD
+    if not held then
+        refusal = (not fresh or fresh.state ~= 'active') and CH.ERR.NOT_PARTICIPANT or CH.ERR.ALREADY_SETTLED
+    else
+        refusal = Contracts.payoutRefusal(held, fresh)
     end
     if refusal then
         Contracts.transition(contractId, CH.STATE.COMPLETING, CH.STATE.ACCEPTED, 'claim_refused')
@@ -3478,10 +3484,11 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- earns is scaled (Record.factorFor, server/record/). Neither may stop a
     -- claim.
     local intentHold, reputation
-    if Contracts.intentOnClaim then
-        -- With the claim's options, so a step that waits on the payout (the
-        -- body's disposal, server/disposal.lua) can tell a proof item apart.
-        local asked, hold = pcall(Contracts.intentOnClaim, contract, hitmanCid, fulfilment, opts)
+    if Contracts.payoutOnClaim then
+        -- The payout checks (server/payout.lua), with the claim's options,
+        -- so a step that waits on the payout (the body's disposal,
+        -- server/disposal.lua) can tell a proof item apart.
+        local asked, hold = pcall(Contracts.payoutOnClaim, contract, hitmanCid, fulfilment, opts)
         if asked then intentHold = hold end
     end
     if Record then
@@ -3656,11 +3663,12 @@ end
 function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
     local out = table.pack(pcall(Escrow.whileClaiming, contractId, claimSlot, contractId,
         hitmanCid, fulfilment, opts))
-    -- A hold for proof of intent this claim started is written down only
-    -- now it is known how the claim ended (Intent.afterClaim): refused, it
-    -- goes; raised part-way, its payout may still be owed, and it stays.
-    if Contracts.intentAfterClaim then
-        pcall(Contracts.intentAfterClaim, contractId, hitmanCid, not out[1] or out[2] == true)
+    -- A hold a payout check started (proof of intent, the body's disposal)
+    -- is written down only now it is known how the claim ended
+    -- (Payout.afterClaim): refused, it goes; raised part-way, its payout
+    -- may still be owed, and it stays.
+    if Contracts.payoutAfterClaim then
+        pcall(Contracts.payoutAfterClaim, contractId, hitmanCid, not out[1] or out[2] == true)
     end
     if not out[1] then
         if contractId ~= nil then

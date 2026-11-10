@@ -47,6 +47,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
+local Payout = CrimsonBoot.require('server.payout')
 local Text = CrimsonBoot.requireShared('text')
 local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
@@ -591,7 +592,7 @@ local function Instructions(step)
 end
 
 --- A claim is about to release a payout (Contracts.claimSlot, under its
---- lock; chained ahead of Contracts.intentOnClaim). A verified kill on a
+--- lock; the 'disposal' payout check, asked ahead of proof of intent). A verified kill on a
 --- contract a kill may complete, with both spots set, starts a step here,
 --- written down once the claim has gone through (Disposal.afterClaim).
 function Disposal.onClaim(contract, hitmanCid, fulfilment, opts)
@@ -1016,28 +1017,12 @@ function Disposal.init(deps)
     Registry.attach(Deps.storage)
     RegisterSpots()
     local escrow, contracts = Deps.escrow, Deps.contracts
-    -- The escrow's gate, ahead of the proof-of-intent hold that holds it.
-    if escrow then
-        local previous = escrow.holdBack
-        escrow.holdBack = function(recipientCid, line)
-            if Disposal.holds(recipientCid, line) then return true end
-            if previous then return previous(recipientCid, line) end
-            return false
-        end
-    end
+    -- One of the payout checks (server/payout.lua), asked ahead of the
+    -- proof-of-intent hold: the escrow's gate, and the claim's two hooks.
+    Payout.add('disposal', { holds = Disposal.holds, onClaim = Disposal.onClaim,
+        afterClaim = Disposal.afterClaim }, { escrow = escrow, contracts = contracts })
     if contracts then
-        local onClaim, afterClaim, relist = contracts.intentOnClaim, contracts.intentAfterClaim, contracts.relistHold
-        contracts.intentOnClaim = function(contract, hitmanCid, fulfilment, opts)
-            local ok, err = pcall(Disposal.onClaim, contract, hitmanCid, fulfilment, opts)
-            if not ok then Log.debug(('body disposal: the claim hook raised: %s'):format(tostring(err))) end
-            if onClaim then return onClaim(contract, hitmanCid, fulfilment, opts) end
-            return nil
-        end
-        contracts.intentAfterClaim = function(contractId, hitmanCid, claimed)
-            local ok, err = pcall(Disposal.afterClaim, contractId, hitmanCid, claimed)
-            if not ok then Log.debug(('body disposal: after the claim: %s'):format(tostring(err))) end
-            if afterClaim then return afterClaim(contractId, hitmanCid, claimed) end
-        end
+        local relist = contracts.relistHold
         contracts.relistHold = function(targetActor)
             if targetActor and Disposal.namesTarget(targetActor.cid) then return true end
             if relist then return relist(targetActor) end
