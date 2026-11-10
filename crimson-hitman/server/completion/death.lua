@@ -8,6 +8,7 @@
 --- them" is not evidence and is dropped.
 
 local Util = CrimsonBoot.requireShared('util')
+local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 
 local Death = {}
@@ -542,7 +543,7 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
 
     local attackerCoords = GetEntityCoords(GetPlayerPed(attackerSource))
     local victimCoords = GetEntityCoords(GetPlayerPed(victimSource))
-    local distance = math.sqrt(Util.dist2(attackerCoords, victimCoords))
+    local distance = math.sqrt(Geo.dist2(attackerCoords, victimCoords))
 
     -- A hit reported from further than any weapon reaches did not happen.
     if distance > Config.Completion.MaxWeaponRange then
@@ -829,10 +830,7 @@ Death.sourceOf = nil
 local function inCity(cid)
     cid = Util.toCitizenId(cid)
     if not cid then return nil end
-    if not Death.sourceOf then
-        local actor = Identity.byCitizenId(cid)
-        return actor and actor.source or nil
-    end
+    if not Death.sourceOf then return Identity.sourceOf(cid) end
     local src = Death.sourceOf(cid)
     if src then return src end
     local ok, player = pcall(function() return exports.qbx_core:GetPlayerByCitizenId(cid) end)
@@ -984,7 +982,7 @@ function Death.watchTargets(contracts, rosters)
                     if hitman.state == 'active' then
                         local hitmanSource = here(hitman.hitman_cid)
                         if hitmanSource then
-                            local distance2 = Util.dist2(spot(hitmanSource), targetCoords)
+                            local distance2 = Geo.dist2(spot(hitmanSource), targetCoords)
                             if distance2 <= radius2 then
                                 seenNear[c.id] = seenNear[c.id] or {}
                                 seenNear[c.id][hitman.hitman_cid] = now
@@ -1100,7 +1098,7 @@ function Death.noteDefib(medicSource, targetSource)
     if not sameBucket(medicSource, patientSource) then return false end
 
     local reach = ((Config.Completion and Config.Completion.DefibRange) or 3.0) + 2.0
-    local gap = Util.dist2(GetEntityCoords(GetPlayerPed(medicSource)),
+    local gap = Geo.dist2(GetEntityCoords(GetPlayerPed(medicSource)),
         GetEntityCoords(GetPlayerPed(patientSource)))
     if gap > reach * reach then return false end
 
@@ -1134,7 +1132,7 @@ function Death.onVictimReport(victimSource, killerServerId)
             Audit.rejected('killer_out_of_range', killer.cid, nil,
                 { victim = victim.cid, instance = true })
         elseif killer and killer.cid ~= victim.cid then
-            local distance = math.sqrt(Util.dist2(
+            local distance = math.sqrt(Geo.dist2(
                 GetEntityCoords(GetPlayerPed(killerServerId)),
                 GetEntityCoords(GetPlayerPed(victimSource))))
             if distance <= Config.Completion.MaxWeaponRange then

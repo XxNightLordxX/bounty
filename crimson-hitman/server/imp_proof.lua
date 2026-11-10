@@ -24,6 +24,8 @@
 --- two collections. With ox_inventory not started the feature does nothing.
 
 local Util = CrimsonBoot.requireShared('util')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Imp = CrimsonBoot.require('server.imp_staffeco')
 
@@ -76,28 +78,14 @@ local function bucketOf(src)
     return ok and tonumber(bucket) or nil
 end
 
-local function coordsOf(src)
-    local ok, coords = pcall(function()
-        local ped = GetPlayerPed(src)
-        if not ped or ped == 0 then return nil end
-        return GetEntityCoords(ped)
-    end)
-    return ok and coords or nil
-end
-
 --- The slot holding an item that names the target, or nil. Searched by the
 --- metadata value (ox_inventory's Search), then each slot's field checked
 --- here as well: Search matches by value, not by key.
 ---@return table|nil slot
 ---@return boolean read false when the inventory could not be read
 local function proofSlot(actor, item, key, targetCid)
-    local ok, slots = pcall(function()
-        return exports.ox_inventory:Search(actor.source, 'slots', item, { [key] = targetCid })
-    end)
-    if not ok then
-        Imp.raised('ox_inventory Search', slots)
-        return nil, false
-    end
+    local ok, slots = Bridge.call('ox_inventory', 'Search', actor.source, 'slots', item, { [key] = targetCid })
+    if not ok then return nil, false end
     for _, slot in pairs(type(slots) == 'table' and slots or {}) do
         if type(slot) == 'table' and type(slot.metadata) == 'table'
             and slot.metadata[key] == targetCid and (tonumber(slot.count) or 1) >= 1 then
@@ -109,13 +97,10 @@ end
 
 --- Give the item back after a claim that did not pay. Audited either way.
 local function giveBack(actor, contractId, item, slot, why)
-    local ok, gave = pcall(function()
-        return exports.ox_inventory:AddItem(actor.source, item, 1, slot.metadata)
-    end)
+    local ok, gave = Bridge.call('ox_inventory', 'AddItem', actor.source, item, 1, slot.metadata)
     if ok and gave then
         deps.audit.action('proof_item_returned', actor.cid, contractId, { item = item, reason = why })
     else
-        if not ok then Imp.raised('ox_inventory AddItem', gave) end
         deps.audit.financial('proof_item_not_returned', actor.cid, contractId,
             { item = item, reason = why })
         Log.always(('a proof item (%s) taken for contract %s could not be given back after the '
@@ -131,7 +116,7 @@ end
 ---@return table|nil result the claim's own answer
 function Proof.handover(actor, rawId)
     if not Proof.on() then return false, CH.ERR.FEATURE_OFF end
-    if GetResourceState('ox_inventory') ~= 'started' then return false, CH.ERR.FEATURE_OFF end
+    if not Bridge.started('ox_inventory') then return false, CH.ERR.FEATURE_OFF end
     local contractId = Util.toId(rawId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
 
@@ -171,9 +156,9 @@ function Proof.handover(actor, rawId)
     local creator = deps.identity.byCitizenId(contract.creator_cid)
     local bucket = bucketOf(actor.source)
     local together = creator ~= nil and bucket ~= nil and bucketOf(creator.source) == bucket
-    local here = together and coordsOf(actor.source)
-    local there = together and coordsOf(creator.source)
-    if not here or not there or Util.dist2(here, there) > radius * radius then
+    local here = together and Geo.position(actor.source)
+    local there = together and Geo.position(creator.source)
+    if not here or not there or Geo.dist2(here, there) > radius * radius then
         return false, CH.ERR.PROOF_TOO_FAR, { radius = radius }
     end
 
@@ -182,12 +167,9 @@ function Proof.handover(actor, rawId)
     working[busy] = true
 
     -- The hitman's side first: the very slot found above, by its metadata.
-    local took, removed = pcall(function()
-        return exports.ox_inventory:RemoveItem(actor.source, item, 1, slot.metadata, slot.slot)
-    end)
+    local took, removed = Bridge.call('ox_inventory', 'RemoveItem', actor.source, item, 1, slot.metadata, slot.slot)
     if not took or not removed then
         working[busy] = nil
-        if not took then Imp.raised('ox_inventory RemoveItem', removed) end
         deps.audit.rejected('proof_item_not_taken', actor.cid, contractId, { item = item })
         return false, CH.ERR.PROOF_MISSING
     end

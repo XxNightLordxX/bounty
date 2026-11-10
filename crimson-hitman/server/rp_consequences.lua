@@ -29,6 +29,8 @@
 --- MaxHoldMinutes after the kill.
 
 local Util = CrimsonBoot.requireShared('util')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 --- The named-area parser both roleplay area lists share.
 local Places = CrimsonBoot.require('server.rp_places')
@@ -257,17 +259,6 @@ end
 -- Witness heat
 --------------------------------------------------------------------------
 
---- The departments told, as the advisory's dispatch entry tells them.
-local function policeJobs()
-    local jobs = {}
-    for name, yes in pairs(Config.Advisory and Config.Advisory.RecipientJobNames or {}) do
-        if yes == true and type(name) == 'string' then jobs[#jobs + 1] = name end
-    end
-    table.sort(jobs)
-    if #jobs == 0 then jobs = { 'police' } end
-    return jobs
-end
-
 --- Every citizen id party to a contract: placer, target and each hitman.
 local function partiesOf(contract)
     local parties = { [contract.creator_cid] = true, [contract.target_cid] = true }
@@ -291,7 +282,7 @@ function RpConsequences.witnesses(contract, hitmanSrc, radius)
         local src = tonumber(id)
         if src and src ~= hitmanSrc and GetPlayerRoutingBucket(src) == bucket then
             local there = coordsOf(src)
-            if there and Util.dist2(at, there) <= reach and IsEntityVisible(GetPlayerPed(src)) then
+            if there and Geo.dist2(at, there) <= reach and IsEntityVisible(GetPlayerPed(src)) then
                 local actor = Identity.resolve(src)
                 if actor and not parties[actor.cid] then count = count + 1 end
             end
@@ -329,7 +320,7 @@ local function witnessAlert(contract, hitmanCid, slot)
     end
 
     local dispatched = false
-    if GetResourceState('sc-dispatch') == 'started' then
+    if Bridge.started('sc-dispatch') then
         local coords
         if cfg.SendCoords == true then
             local fuzz = math.max(0, tonumber(cfg.FuzzMeters) or 0)
@@ -338,14 +329,12 @@ local function witnessAlert(contract, hitmanCid, slot)
             local y = math.floor((at.y + math.sin(angle) * dist) * 10 + 0.5) / 10
             coords = vector3 and vector3(x, y, at.z) or { x = x, y = y, z = at.z }
         end
-        dispatched = pcall(function()
-            exports['sc-dispatch']:AddNotification({
-                title = title, message = said, coords = coords, street = clean(area, 100),
-                caller = 'Witness', priority = math.floor(tonumber(cfg.DispatchPriority) or 2),
-                job_table = policeJobs(),
-                unique_id = ('ch-wit-%s-%s'):format(tostring(contract.id), tostring(slot or 1)):sub(1, 60),
-            })
-        end)
+        dispatched = Bridge.call('sc-dispatch', 'AddNotification', {
+            title = title, message = said, coords = coords, street = clean(area, 100),
+            caller = 'Witness', priority = math.floor(tonumber(cfg.DispatchPriority) or 2),
+            job_table = Notify.policeJobs(),
+            unique_id = ('ch-wit-%s-%s'):format(tostring(contract.id), tostring(slot or 1)):sub(1, 60),
+        })
     end
     Audit.action('rp_witness_alert', nil, contract.id, { witnesses = seen, told = told,
         dispatched = dispatched or nil })
@@ -524,9 +513,7 @@ local function postNews(contract, hitmanCid)
     if cfg.App == 'event' then
         posted = pcall(TriggerEvent, cfg.Event, { account = cfg.Account, text = text })
     elseif GetResourceState('lb-phone') == 'started' then
-        local ran, ok = pcall(function()
-            return exports['lb-phone']:PostBirdy(cfg.Account, text, nil, nil, nil, nil)
-        end)
+        local ran, ok = Bridge.call('lb-phone', 'PostBirdy', cfg.Account, text, nil, nil, nil, nil)
         posted = ran and ok ~= false
         if not ran then why = tostring(ok) end
     else

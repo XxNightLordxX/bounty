@@ -45,8 +45,10 @@ end
 
 local function removePed(npc)
     local d = drawn[npc]
-    if d and d.ped and DoesEntityExist(d.ped) then DeleteEntity(d.ped) end
-    if d then d.ped = nil end
+    if d then
+        CrimsonNpc.remove(d.ped)
+        d.ped = nil
+    end
 end
 
 local function removeBlip(npc)
@@ -69,31 +71,8 @@ local function removePeds()
     for npc in pairs(drawn) do removePed(npc) end
 end
 
---- Whether a character is loaded. qbx_core sets the bag on load and clears
---- it on unload; between the two (the character screen) nothing is drawn.
---- A game with no bag to read draws as before.
-local function loggedIn()
-    local state = LocalPlayer and LocalPlayer.state
-    if not state then return true end
-    return state.isLoggedIn and true or false
-end
-
---- Load a model with a cap on the wait, and give up on one the game has not.
-local function loaded(model)
-    local hash = type(model) == 'string' and joaat(model) or nil
-    if not hash or not IsModelInCdimage(hash) or not IsModelValid(hash) then return nil end
-    RequestModel(hash)
-    local waited = 0
-    while not HasModelLoaded(hash) and waited < MODEL_WAIT_MS do
-        Wait(50)
-        waited = waited + 50
-    end
-    if not HasModelLoaded(hash) then return nil end
-    return hash
-end
-
 local function spawn(npc, p)
-    local hash = loaded(p.model)
+    local hash = CrimsonNpc.loadModel(p.model, MODEL_WAIT_MS)
     if not hash then return end
     -- The model load waits: the server may have moved or taken this NPC
     -- away meanwhile (apply), or it may have been drawn already. Made only
@@ -103,28 +82,14 @@ local function spawn(npc, p)
         SetModelAsNoLongerNeeded(hash)
         return
     end
-    local ped = CreatePed(4, hash, p.x, p.y, p.z - 1.0, p.h, false, false)
-    SetModelAsNoLongerNeeded(hash)
-    if not ped or ped == 0 then return end
-    SetEntityInvincible(ped, true)
-    FreezeEntityPosition(ped, true)
-    SetBlockingOfNonTemporaryEvents(ped, true)
-    SetPedCanRagdoll(ped, false)
-    if p.scenario ~= '' then TaskStartScenarioInPlace(ped, p.scenario, 0, true) end
-    d.ped = ped
+    d.ped = CrimsonNpc.spawn(hash, p.x, p.y, p.z, p.h, { ragdoll = false, scenario = p.scenario })
 end
 
 local function blipFor(npc, p)
     removeBlip(npc)
     if not p.blip then return end
-    local blip = AddBlipForCoord(p.x, p.y, p.z)
-    SetBlipSprite(blip, npc == 'broker' and 280 or 480)
-    SetBlipScale(blip, 0.8)
-    SetBlipAsShortRange(blip, true)
-    BeginTextCommandSetBlipName('STRING')
-    AddTextComponentSubstringPlayerName(npc == 'broker' and 'Broker' or 'Informant')
-    EndTextCommandSetBlipName(blip)
-    drawn[npc].blip = blip
+    drawn[npc].blip = CrimsonNpc.blip(p.x, p.y, p.z, npc == 'broker' and 280 or 480, 0.8,
+        npc == 'broker' and 'Broker' or 'Informant')
 end
 
 --- Make what is drawn match what the server said.
@@ -182,7 +147,7 @@ end)
 --- difference vectors: each place carries its own (apply).
 local function pass()
     local me = GetEntityCoords(PlayerPedId())
-    local inCity = loggedIn()
+    local inCity = CrimsonNpc.loggedIn()
     local near = false
     for npc, p in pairs(places) do
         local d = drawn[npc]

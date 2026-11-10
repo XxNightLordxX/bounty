@@ -7,7 +7,10 @@
 local Notify = {}
 
 local Util = CrimsonBoot.requireShared('util')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+local Db = CrimsonBoot.require('server.lib.db')
 
 local Identity
 local Storage
@@ -135,9 +138,7 @@ end
 --- a notice saved on it would tell whoever holds it what this player is
 --- part of.
 local function equippedNumber(src)
-    local ok, number = pcall(function()
-        return exports['lb-phone']:GetEquippedPhoneNumber(src)
-    end)
+    local ok, number = Bridge.call('lb-phone', 'GetEquippedPhoneNumber', src)
     if not ok then return nil, false end
     if type(number) ~= 'string' and type(number) ~= 'number' then return nil, true end
     number = tostring(number)
@@ -174,7 +175,7 @@ local PHONE_WAIT_MS, PHONE_WAITS = 2000, 60
 local function raise(actor, cid, title, content)
     local src = actor.source
     Citizen.CreateThreadNow(function()
-        if GetResourceState('lb-phone') == 'started' then
+        if Bridge.started('lb-phone') then
             local number, asked = equippedNumber(src)
             for _ = 1, PHONE_WAITS do
                 if number or not asked then break end
@@ -186,11 +187,9 @@ local function raise(actor, cid, title, content)
                 number, asked = equippedNumber(src)
             end
             if number then
-                local ok, id = pcall(function()
-                    return exports['lb-phone']:SendNotification(number, {
-                        app = 'crimson-hitman', title = title, content = content,
-                    })
-                end)
+                local ok, id = Bridge.call('lb-phone', 'SendNotification', number, {
+                    app = 'crimson-hitman', title = title, content = content,
+                })
                 if ok and id ~= false then return end
             end
         end
@@ -465,6 +464,34 @@ function Notify.pushParties(contract, hitmanCids, reason)
     return sent
 end
 
+--- Tell every party of a contract the same words, whoever caused it, and
+--- move their open app on: the placer and each active hitman by the
+--- contract, the target (only once they are shown it, Notify.shownToTarget)
+--- by a notice and a push that name none, as every push to a target does.
+--- Each once, outside the budget. The hitmen are read before anybody is told.
+---@param contract table
+---@param title string
+---@param text string
+---@param reason string the push's reason ('hold', 'deadline')
+---@param opts table|nil { skip = cid told nothing, except = function(cid): boolean }
+function Notify.parties(contract, title, text, reason, opts)
+    opts = opts or {}
+    local hitmen = Storage.readHitmen(contract.id) or {}
+    local told, except = { [opts.skip or false] = true }, opts.except
+    local function tell(cid, named)
+        if not cid or told[cid] or (except and except(cid)) then return end
+        told[cid] = true
+        Notify.toCitizen(cid, title, text,
+            { bypassBudget = true, contractId = named and contract.id or nil })
+        Notify.push(cid, reason, named and contract.id or nil)
+    end
+    tell(contract.creator_cid, true)
+    if Notify.shownToTarget(contract) then tell(contract.target_cid, false) end
+    for i = 1, #hitmen do
+        if hitmen[i].state == 'active' then tell(hitmen[i].hitman_cid, true) end
+    end
+end
+
 function Notify.clearPush(cid)
     -- What this tick queued goes first, as it would have.
     sendQueued(cid)
@@ -508,11 +535,8 @@ function Notify.viewAlertsOn(cid)
     local known = viewOptIn[cid]
     if known ~= nil then return known end
     if not (Storage and Storage.readViewAlerts) then return false end
-    local ok, on = pcall(Storage.readViewAlerts, cid)
-    if not ok then
-        Log.debug(('could not read a player\'s Notify me choice: %s'):format(Util.dbError(on)))
-        return false
-    end
+    local ok, on = Db.quiet('could not read a player\'s Notify me choice: %s', Storage.readViewAlerts, cid)
+    if not ok then return false end
     viewOptIn[cid] = on == true
     return viewOptIn[cid]
 end
@@ -1203,7 +1227,7 @@ function Notify.outstandingDelivered(cid, count, summary)
         local goods = math.floor(tonumber(summary.goods) or 0)
         local left = math.floor(tonumber(summary.left) or 0)
         local parts = {}
-        if money > 0 then parts[#parts + 1] = Notify.dollars(money) end
+        if money > 0 then parts[#parts + 1] = Words.dollars(money, 'before') end
         if goods > 0 then parts[#parts + 1] = ('%d item(s)'):format(goods) end
         local what = table.concat(parts, ' and ')
         if what == '' then what = ('%d payment(s)'):format(count) end
@@ -1218,44 +1242,25 @@ function Notify.outstandingDelivered(cid, count, summary)
     return Notify.toCitizen(cid, 'Outstanding payment', body, { bypassBudget = true })
 end
 
---- Dollars as the page writes them (ui/app.js money()): "$100,000".
----@param amount number
----@return string
-local function dollars(amount)
-    local digits = tostring(math.floor(math.abs(tonumber(amount) or 0)))
-    local grouped = digits:reverse():gsub('(%d%d%d)', '%1,'):reverse():gsub('^,', '')
-    return ((tonumber(amount) or 0) < 0 and '-$' or '$') .. grouped
-end
-Notify.dollars = dollars
-
 --- The sentence that ends a hitman's notice: where their stake went. Left
 --- out when they had none.
 local function stakeSentence(outcome)
     if (outcome.stake or 0) <= 0 then return '' end
     if outcome.forfeited then
         return (' Your %s stake went to the person who placed the contract.')
-            :format(dollars(outcome.stake))
+            :format(Words.dollars(outcome.stake, 'before'))
     end
     -- Its give raised and what arrived could not be read: no retry gives
     -- it, so "handed back as soon as you can take it" was untrue of it.
     if outcome.parked then
         return (' Your %s stake could not be confirmed as handed back; staff have been '
-            .. 'asked to check it.'):format(dollars(outcome.stake))
+            .. 'asked to check it.'):format(Words.dollars(outcome.stake, 'before'))
     end
     if outcome.owed then
         return (' Your %s stake is held for you and is handed back as soon as '
-            .. 'you can take it.'):format(dollars(outcome.stake))
+            .. 'you can take it.'):format(Words.dollars(outcome.stake, 'before'))
     end
-    return (' Your %s stake has been returned.'):format(dollars(outcome.stake))
-end
-
---- A wait in the words a player reads: seconds under a minute, else
---- minutes, rounded up.
-local function waitWords(seconds)
-    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
-    if seconds < 60 then return ('%d second%s'):format(seconds, seconds == 1 and '' or 's') end
-    local minutes = math.ceil(seconds / 60)
-    return ('%d minute%s'):format(minutes, minutes == 1 and '' or 's')
+    return (' Your %s stake has been returned.'):format(Words.dollars(outcome.stake, 'before'))
 end
 
 --- The receipt a hitman is sent for a collection paid to them
@@ -1281,9 +1286,9 @@ function Notify.hitmanReceipt(contract, delivered, result)
     local goods = math.floor(tonumber(result.goods) or 0)
     local what
     if money > 0 and goods > 0 then
-        what = ('%s and %d item(s)'):format(dollars(money), goods)
+        what = ('%s and %d item(s)'):format(Words.dollars(money, 'before'), goods)
     elseif money > 0 then
-        what = dollars(money)
+        what = Words.dollars(money, 'before')
     elseif goods > 0 then
         what = ('%d item(s)'):format(goods)
     end
@@ -1331,7 +1336,7 @@ function Notify.hitmanReceipt(contract, delivered, result)
         -- Not after a recovery: whether the claim that stopped had started
         -- the wait is not known.
         if wait > 0 and not result.recovered then
-            body = body .. ('; you can collect again in %s.'):format(waitWords(wait))
+            body = body .. ('; you can collect again in %s.'):format(Words.duration(wait))
         else
             body = body .. '.'
         end
@@ -1472,9 +1477,9 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     end
     body = body .. staffCheck
     if forfeitedCount == 1 then
-        body = body .. (" The operative's %s stake is yours."):format(dollars(forfeitedTotal))
+        body = body .. (" The operative's %s stake is yours."):format(Words.dollars(forfeitedTotal, 'before'))
     elseif forfeitedCount > 1 then
-        body = body .. (" The operatives' stakes, %s in all, are yours."):format(dollars(forfeitedTotal))
+        body = body .. (" The operatives' stakes, %s in all, are yours."):format(Words.dollars(forfeitedTotal, 'before'))
     end
     tellOrKeep(contract.creator_cid, 'Contract expired', body, { bypassBudget = true }, contract.id)
 
@@ -1499,7 +1504,7 @@ function Notify.hitmanLeft(contract, stake, remaining)
     local body = ('An operative left your contract on %s.')
         :format(contract.target_name or 'your target')
     if (stake or 0) > 0 then
-        body = body .. (' Their %s stake is yours.'):format(dollars(stake))
+        body = body .. (' Their %s stake is yours.'):format(Words.dollars(stake, 'before'))
     end
     if remaining > 0 then
         body = body .. (' %d operative%s still on it.')
@@ -1543,10 +1548,12 @@ end
 --- The departments the dispatch entry is for: the job names configured to
 --- receive advisories, so the MDT and the phones are told the same people.
 --- It was a list of its own, and a department added to one was missing
---- from the other.
-local function dispatchJobs()
+--- from the other. The one list every dispatch entry is sent to: the
+--- advisories, the witness heat and the heat bulletin.
+---@return string[]
+function Notify.policeJobs()
     local jobs = {}
-    for name, on in pairs(Config.Advisory.RecipientJobNames or {}) do
+    for name, on in pairs(Config.Advisory and Config.Advisory.RecipientJobNames or {}) do
         if on == true and type(name) == 'string' then jobs[#jobs + 1] = name end
     end
     table.sort(jobs)
@@ -1697,17 +1704,15 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
 
     -- The same advisory goes to dispatch so it lands in the MDT alongside
     -- other calls, not just on phones.
-    if Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
-        pcall(function()
-            exports['sc-dispatch']:AddNotification({
-                title = title,
-                message = content,
-                priority = Config.Advisory.DispatchPriority,
-                caller = 'Criminal Intelligence',
-                job_table = dispatchJobs(),
-                unique_id = 'ch-' .. contract.id .. '-' .. stage,
-            })
-        end)
+    if Config.Advisory.UseDispatch then
+        Bridge.call('sc-dispatch', 'AddNotification', {
+            title = title,
+            message = content,
+            priority = Config.Advisory.DispatchPriority,
+            caller = 'Criminal Intelligence',
+            job_table = Notify.policeJobs(),
+            unique_id = 'ch-' .. contract.id .. '-' .. stage,
+        })
     end
 
     return recipients
@@ -1738,17 +1743,15 @@ function Notify.tipAdvisory(contract)
         end
     end
 
-    if Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
-        pcall(function()
-            exports['sc-dispatch']:AddNotification({
-                title = title,
-                message = content,
-                priority = Config.Advisory.DispatchPriority,
-                caller = 'Criminal Intelligence',
-                job_table = dispatchJobs(),
-                unique_id = 'ch-' .. contract.id .. '-tip',
-            })
-        end)
+    if Config.Advisory.UseDispatch then
+        Bridge.call('sc-dispatch', 'AddNotification', {
+            title = title,
+            message = content,
+            priority = Config.Advisory.DispatchPriority,
+            caller = 'Criminal Intelligence',
+            job_table = Notify.policeJobs(),
+            unique_id = 'ch-' .. contract.id .. '-tip',
+        })
     end
     return recipients
 end
@@ -1790,17 +1793,15 @@ function Notify.cancelAdvisory(contract, targetShown)
             { bypassBudget = true }, contract.id)
     end
 
-    if Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
-        pcall(function()
-            exports['sc-dispatch']:AddNotification({
-                title = title,
-                message = content,
-                priority = Config.Advisory.DispatchPriority,
-                caller = 'Criminal Intelligence',
-                job_table = dispatchJobs(),
-                unique_id = 'ch-' .. contract.id .. '-cancelled',
-            })
-        end)
+    if Config.Advisory.UseDispatch then
+        Bridge.call('sc-dispatch', 'AddNotification', {
+            title = title,
+            message = content,
+            priority = Config.Advisory.DispatchPriority,
+            caller = 'Criminal Intelligence',
+            job_table = Notify.policeJobs(),
+            unique_id = 'ch-' .. contract.id .. '-cancelled',
+        })
     end
     return recipients
 end
@@ -1875,12 +1876,12 @@ function Notify.clearContract(contractId, contract)
     -- or UseDispatch off while one was up left it there for good. Clearing
     -- an id never filed does nothing. In a thread of its own: the export
     -- waits on the database, and this is the end of a settlement.
-    if contract and contract.target_protected and GetResourceState('sc-dispatch') == 'started' then
-        local jobs = dispatchJobs()
+    if contract and contract.target_protected and Bridge.started('sc-dispatch') then
+        local jobs = Notify.policeJobs()
         for _, stage in ipairs({ 'posted', 'accepted', 'tip' }) do
             local uid = 'ch-' .. contractId .. '-' .. stage
             CreateThread(function()
-                pcall(function() exports['sc-dispatch']:ClearNotification(uid, jobs) end)
+                Bridge.call('sc-dispatch', 'ClearNotification', uid, jobs)
             end)
         end
     end

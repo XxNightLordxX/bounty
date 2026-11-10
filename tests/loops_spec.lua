@@ -766,6 +766,7 @@ describe('the client\'s NPC loop', function()
             GetCurrentResourceName = function() return 'crimson-hitman' end,
             CreateThread = function(fn) t.threads[#t.threads + 1] = coroutine.create(fn) end,
         }, { __index = _G })
+        assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
         t.loop = assert(loadfile('crimson-hitman/client/rp_npc.lua', 't', env))()
         --- Run thread `i` to its next wait: the wait, or 'ended'.
         function t.step(i)

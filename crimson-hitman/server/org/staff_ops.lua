@@ -17,6 +17,7 @@
 --- the page will ask for are listed in README, "Organisation requests".
 
 local Util = CrimsonBoot.requireShared('util')
+local Text = CrimsonBoot.requireShared('text')
 local Org = CrimsonBoot.require('server.org.init')
 
 local StaffOps = {}
@@ -63,7 +64,6 @@ local function memberCid(src, data)
 end
 
 local function bool(v) return type(v) == 'boolean' and v or nil end
-local function str(v, max) return type(v) == 'string' and #v <= max and v or nil end
 
 local function off()
     return false, Org.ERR.OFF, 'The organisation is switched off (Config.Organisation.Enabled).'
@@ -91,7 +91,7 @@ end }
 OPS.orgAudit = { 'read', function(src, data)
     if not Org.current() then return off() end
     local limit = math.max(1, math.min(100, math.floor(tonumber(data.limit) or 50)))
-    local only = str(data.action, 40)
+    local only = Text.field(data.action, 40)
     local rows = {}
     for _, action in ipairs(StaffOps.ACTIONS) do
         if not only or only == action then
@@ -143,7 +143,7 @@ OPS.orgSetup = { 'write', function(src)
 end }
 
 OPS.orgRename = { 'write', function(src, data)
-    return said(Org.rename(staff(src), str(data.label, 128)))
+    return said(Org.rename(staff(src), Text.field(data.label, 128)))
 end }
 
 OPS.orgLayout = { 'write', function(src, data)
@@ -164,10 +164,10 @@ OPS.orgRoleSet = { 'write', function(src, data)
     local org = Org.current()
     if not org then return off() end
     if not org.roles[grade] then
-        return said(Org.roleCreate(staff(src), { grade = grade, name = str(data.name, 64), label = str(data.label, 128),
-            pay = data.pay, isBoss = data.isBoss == true }))
+        return said(Org.roleCreate(staff(src), { grade = grade, name = Text.field(data.name, 64),
+            label = Text.field(data.label, 128), pay = data.pay, isBoss = data.isBoss == true }))
     end
-    return said(Org.roleEdit(staff(src), grade, { name = str(data.name, 64), label = str(data.label, 128),
+    return said(Org.roleEdit(staff(src), grade, { name = Text.field(data.name, 64), label = Text.field(data.label, 128),
         newGrade = data.newGrade, isBoss = bool(data.isBoss), locked = bool(data.locked), pay = data.pay }))
 end }
 
@@ -176,7 +176,7 @@ OPS.orgRoleRemove = { 'write', function(src, data)
 end }
 
 OPS.orgRolePowers = { 'write', function(src, data)
-    return said(Org.rolePower(staff(src), tonumber(data.grade), str(data.power, 4), data.on))
+    return said(Org.rolePower(staff(src), tonumber(data.grade), Text.field(data.power, 4), data.on))
 end }
 
 -- Members -----------------------------------------------------------------
@@ -194,11 +194,11 @@ OPS.orgMemberRole = { 'write', function(src, data)
 end }
 
 OPS.orgMemberFire = { 'write', function(src, data)
-    return said(Org.fire(staff(src), memberCid(src, data), str(data.reason, 200)))
+    return said(Org.fire(staff(src), memberCid(src, data), Text.field(data.reason, 200)))
 end }
 
 OPS.orgMemberSuspend = { 'write', function(src, data)
-    return said(Org.suspend(staff(src), memberCid(src, data), data.hours, str(data.reason, 200)))
+    return said(Org.suspend(staff(src), memberCid(src, data), data.hours, Text.field(data.reason, 200)))
 end }
 
 OPS.orgMemberLimits = { 'write', function(src, data)
@@ -210,7 +210,8 @@ OPS.orgMemberOverride = { 'write', function(src, data)
     local cid = memberCid(src, data)
     if not cid then return false, Org.ERR.NOT_FOUND, Org.message(Org.ERR.NOT_FOUND) end
     if data.power ~= nil then
-        local ok, err, extra, message = Org.memberGrant(staff(src), cid, str(data.power, 4), str(data.state, 8))
+        local ok, err, extra, message = Org.memberGrant(staff(src), cid, Text.field(data.power, 4),
+            Text.field(data.state, 8))
         if not ok then return said(ok, err, extra, message) end
     end
     if data.locked ~= nil or data.codename ~= nil then
@@ -284,13 +285,13 @@ OPS.bossLimits = { 'write', function(src, data)
 end }
 
 OPS.bossOfficeRule = { 'write', function(src, data)
-    return said(Org.officeRule(staff(src), str(data.power, 4), data.on))
+    return said(Org.officeRule(staff(src), Text.field(data.power, 4), data.on))
 end }
 
 -- Money --------------------------------------------------------------------
 
 OPS.orgCuts = { 'write', function(src, data)
-    local kind = str(data.kind, 8)
+    local kind = Text.field(data.kind, 8)
     local target
     if kind == 'role' then target = tonumber(data.grade) end
     if kind == 'member' then target = memberCid(src, data) end
@@ -303,7 +304,7 @@ end }
 --- bonus), with a reason, idempotent by data.nonce.
 OPS.orgFundsMove = { 'write', function(src, data)
     local who = staff(src)
-    local reason = str(data.reason, 200)
+    local reason = Text.field(data.reason, 200)
     if data.direction == 'deposit' then
         return said(Org.staffDeposit(who, data.amount, reason, data.nonce))
     elseif data.direction == 'withdraw' then
@@ -348,7 +349,7 @@ end }
 
 OPS.orgPick = { 'write', function(src, data)
     local cid = (data.member ~= nil or data.ref ~= nil or data.subject ~= nil) and memberCid(src, data) or nil
-    return said(Org.pick(staff(src), str(data.id, 64), cid))
+    return said(Org.pick(staff(src), Text.field(data.id, 64), cid))
 end }
 
 -- Locations -------------------------------------------------------------------
@@ -356,19 +357,19 @@ end }
 --- A spot from typed figures, or (here = true) where the staff member
 --- stands, read by the server.
 OPS.orgLocationSet = { 'write', function(src, data)
-    return said(Org.placeSpot(staff(src), { kind = str(data.kind, 8), id = str(data.id, 48),
-        label = str(data.label, 128), radius = data.radius, blip = bool(data.blip), enabled = bool(data.enabled),
+    return said(Org.placeSpot(staff(src), { kind = Text.field(data.kind, 8), id = Text.field(data.id, 48),
+        label = Text.field(data.label, 128), radius = data.radius, blip = bool(data.blip), enabled = bool(data.enabled),
         here = data.here == true, x = data.x, y = data.y, z = data.z, heading = data.heading }))
 end }
 
 OPS.orgLocationRemove = { 'write', function(src, data)
-    return said(Org.removeSpot(staff(src), str(data.id, 48)))
+    return said(Org.removeSpot(staff(src), Text.field(data.id, 48)))
 end }
 
 -- Applications ------------------------------------------------------------------
 
 OPS.orgApplication = { 'write', function(src, data)
-    return said(Org.decide(staff(src), str(data.id, 48), data.accept))
+    return said(Org.decide(staff(src), Text.field(data.id, 48), data.accept))
 end }
 
 --- Add every op to the panel.

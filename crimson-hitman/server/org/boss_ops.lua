@@ -15,6 +15,7 @@
 --- by a handle the server gave this viewer (Org.refFor). Off, every one
 --- answers org_off before reading anything.
 
+local Text = CrimsonBoot.requireShared('text')
 local Org = CrimsonBoot.require('server.org.init')
 
 local BossOps = {}
@@ -37,10 +38,6 @@ end
 
 local function memberOf(actor, payload)
     return Org.fromRef(actor.cid, type(payload) == 'table' and payload.member or nil)
-end
-
-local function str(v, max)
-    return type(v) == 'string' and #v <= max and v or nil
 end
 
 local REQUESTS = {
@@ -73,13 +70,13 @@ local REQUESTS = {
             p.grade ~= nil and tonumber(p.grade) or nil))
     end },
     { 'orgFire', 'orgWrite', 'M3', function(actor, p)
-        return answer(Org.fire(who(actor), memberOf(actor, p), str(p.reason, 200)))
+        return answer(Org.fire(who(actor), memberOf(actor, p), Text.field(p.reason, 200)))
     end },
     { 'orgSetRole', 'orgWrite', 'M4', function(actor, p)
         return answer(Org.setRole(who(actor), memberOf(actor, p), tonumber(p.grade)))
     end },
     { 'orgSuspend', 'orgWrite', 'M5', function(actor, p)
-        return answer(Org.suspend(who(actor), memberOf(actor, p), p.hours, str(p.reason, 200)))
+        return answer(Org.suspend(who(actor), memberOf(actor, p), p.hours, Text.field(p.reason, 200)))
     end },
     { 'orgMemberLimits', 'orgWrite', 'M6', function(actor, p)
         return answer(Org.memberLimits(who(actor), memberOf(actor, p), p.maxAtOnce, p.cooldownMinutes))
@@ -92,27 +89,27 @@ local REQUESTS = {
             cid = memberOf(actor, p)
             if not cid then return answer(false, Org.ERR.NOT_FOUND) end
         end
-        local name = p.codename == false and false or str(p.codename, 64)
+        local name = p.codename == false and false or Text.field(p.codename, 64)
         if name == nil then return answer(false, Org.ERR.INVALID) end
         return answer(Org.setCodename(who(actor), cid, name))
     end },
     { 'orgMemberGrant', 'orgWrite', 'D2', function(actor, p)
-        return answer(Org.memberGrant(who(actor), memberOf(actor, p), str(p.power, 4), str(p.state, 8)))
+        return answer(Org.memberGrant(who(actor), memberOf(actor, p), Text.field(p.power, 4), Text.field(p.state, 8)))
     end },
     -- Roles -------------------------------------------------------------
     { 'orgRoleCreate', 'orgWrite', 'R1', function(actor, p)
-        return answer(Org.roleCreate(who(actor), { grade = p.grade, name = str(p.name, 64),
-            label = str(p.label, 128), pay = p.pay }))
+        return answer(Org.roleCreate(who(actor), { grade = p.grade, name = Text.field(p.name, 64),
+            label = Text.field(p.label, 128), pay = p.pay }))
     end },
     { 'orgRoleEdit', 'orgWrite', 'R2', function(actor, p)
-        return answer(Org.roleEdit(who(actor), tonumber(p.grade), { name = str(p.name, 64),
-            label = str(p.label, 128), newGrade = p.newGrade }))
+        return answer(Org.roleEdit(who(actor), tonumber(p.grade), { name = Text.field(p.name, 64),
+            label = Text.field(p.label, 128), newGrade = p.newGrade }))
     end },
     { 'orgRoleDelete', 'orgWrite', 'R3', function(actor, p)
         return answer(Org.roleDelete(who(actor), tonumber(p.grade)))
     end },
     { 'orgRolePowers', 'orgWrite', 'R4', function(actor, p)
-        return answer(Org.rolePower(who(actor), tonumber(p.grade), str(p.power, 4), p.on))
+        return answer(Org.rolePower(who(actor), tonumber(p.grade), Text.field(p.power, 4), p.on))
     end },
     { 'orgRolePay', 'orgWrite', 'P1', function(actor, p)
         return answer(Org.rolePay(who(actor), tonumber(p.grade), p.pay))
@@ -123,10 +120,10 @@ local REQUESTS = {
     end },
     -- Pay and money -----------------------------------------------------
     { 'orgBonus', 'orgWrite', 'P2', function(actor, p)
-        return answer(Org.bonus(who(actor), memberOf(actor, p), p.amount, str(p.reason, 200), p.nonce))
+        return answer(Org.bonus(who(actor), memberOf(actor, p), p.amount, Text.field(p.reason, 200), p.nonce))
     end },
     { 'orgSetCut', 'orgWrite', 'C1-C5', function(actor, p)
-        local kind = str(p.kind, 8)
+        local kind = Text.field(p.kind, 8)
         local target = kind == 'member' and memberOf(actor, p) or (kind == 'role' and tonumber(p.grade)) or nil
         if (kind == 'member' or kind == 'role') and target == nil then return answer(false, Org.ERR.NOT_FOUND) end
         local percent = p.percent
@@ -134,10 +131,10 @@ local REQUESTS = {
         return answer(Org.setCut(who(actor), kind, target, percent))
     end },
     { 'orgDeposit', 'orgWrite', 'C6', function(actor, p)
-        return answer(Org.deposit(who(actor), p.amount, str(p.account, 8), p.nonce))
+        return answer(Org.deposit(who(actor), p.amount, Text.field(p.account, 8), p.nonce))
     end },
     { 'orgWithdraw', 'orgWrite', 'C7', function(actor, p)
-        return answer(Org.withdraw(who(actor), p.amount, str(p.reason, 200), p.nonce))
+        return answer(Org.withdraw(who(actor), p.amount, Text.field(p.reason, 200), p.nonce))
     end },
     -- Contracts ---------------------------------------------------------
     { 'orgAccess', 'orgWrite', 'K1', function(actor, p)
@@ -146,7 +143,7 @@ local REQUESTS = {
     { 'orgPick', 'orgWrite', 'K2', function(actor, p)
         local cid = p.member ~= nil and memberOf(actor, p) or nil
         if p.member ~= nil and not cid then return answer(false, Org.ERR.NOT_FOUND) end
-        return answer(Org.pick(who(actor), str(p.id, 64), cid))
+        return answer(Org.pick(who(actor), Text.field(p.id, 64), cid))
     end },
     { 'orgRoleCooldown', 'orgWrite', 'K3', function(actor, p)
         local minutes = p.minutes
@@ -155,13 +152,13 @@ local REQUESTS = {
     end },
     -- Locations ---------------------------------------------------------
     { 'orgPlaceHere', 'orgWrite', 'L1-L3', function(actor, p)
-        local kind = str(p.kind, 8)
+        local kind = Text.field(p.kind, 8)
         if kind ~= 'office' and kind ~= 'signup' and kind ~= 'meeting' then return answer(false, Org.ERR.INVALID) end
-        return answer(Org.placeSpot(who(actor), { kind = kind, id = str(p.id, 48), label = str(p.label, 128),
-            here = true }))
+        return answer(Org.placeSpot(who(actor), { kind = kind, id = Text.field(p.id, 48),
+            label = Text.field(p.label, 128), here = true }))
     end },
     { 'orgRemoveSpot', 'orgWrite', 'L2-L3', function(actor, p)
-        return answer(Org.removeSpot(who(actor), str(p.id, 48)))
+        return answer(Org.removeSpot(who(actor), Text.field(p.id, 48)))
     end },
     -- Notices -----------------------------------------------------------
     { 'orgNotice', 'orgWrite', 'N1', function(actor, p)
@@ -170,24 +167,24 @@ local REQUESTS = {
         return answer(Org.notice(who(actor), text, p.broadcast == true))
     end },
     { 'orgDecide', 'orgWrite', 'N2', function(actor, p)
-        return answer(Org.decide(who(actor), str(p.id, 48), p.accept))
+        return answer(Org.decide(who(actor), Text.field(p.id, 48), p.accept))
     end },
     { 'orgApply', 'orgWrite', 'any', function(actor, p)
-        return answer(Org.apply(actor, p.text ~= nil and str(p.text, 600) or nil))
+        return answer(Org.apply(actor, p.text ~= nil and Text.field(p.text, 600) or nil))
     end },
     -- The invited player's own answer to a boss's hire (Org.answerInvite).
     { 'orgInviteAnswer', 'orgWrite', 'any', function(actor, p)
-        return answer(Org.answerInvite(actor, str(p.id, 48), p.accept))
+        return answer(Org.answerInvite(actor, Text.field(p.id, 48), p.accept))
     end },
     -- Settings ----------------------------------------------------------
     { 'orgRename', 'orgWrite', 'S1', function(actor, p)
-        return answer(Org.rename(who(actor), str(p.label, 128)))
+        return answer(Org.rename(who(actor), Text.field(p.label, 128)))
     end },
     { 'orgLayout', 'orgWrite', 'S2', function(actor, p)
         return answer(Org.layout(who(actor), type(p.layout) == 'table' and p.layout or nil))
     end },
     { 'orgOfficeRule', 'orgWrite', 'S3', function(actor, p)
-        return answer(Org.officeRule(who(actor), str(p.power, 4), p.on))
+        return answer(Org.officeRule(who(actor), Text.field(p.power, 4), p.on))
     end },
 }
 

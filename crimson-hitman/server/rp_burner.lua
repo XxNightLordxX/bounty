@@ -16,6 +16,7 @@
 --- stands. With ox_inventory not started the feature does nothing at all.
 
 local Places = CrimsonBoot.require('server.rp_places')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
 
 local Burner = {}
 
@@ -59,15 +60,10 @@ Burner.ACTIONS = {
 ---@param actor table
 ---@return boolean|nil
 function Burner.has(actor)
-    if GetResourceState('ox_inventory') ~= 'started' then return nil end
+    if not Bridge.started('ox_inventory') then return nil end
     local item = tostring(rules().Item or 'burner_phone')
-    local ok, count = pcall(function()
-        return exports.ox_inventory:GetItemCount(actor.source, item)
-    end)
-    if not ok then
-        Places.raised('ox_inventory GetItemCount', count)
-        return nil
-    end
+    local ok, count = Bridge.call('ox_inventory', 'GetItemCount', actor.source, item)
+    if not ok then return nil end
     return (tonumber(count) or 0) >= 1
 end
 
@@ -111,15 +107,12 @@ function Burner.after(name, actor)
     if not Burner.on() then return end
     local spend = (name == 'create' and rules().ConsumeOnPlace == true)
         or (name == 'accept' and rules().ConsumeOnAccept == true)
-    if not spend or GetResourceState('ox_inventory') ~= 'started' then return end
+    if not spend or not Bridge.started('ox_inventory') then return end
     local item = tostring(rules().Item or 'burner_phone')
-    local ok, removed = pcall(function()
-        return exports.ox_inventory:RemoveItem(actor.source, item, 1)
-    end)
+    local ok, removed = Bridge.call('ox_inventory', 'RemoveItem', actor.source, item, 1)
     if ok and removed then
         deps.audit.action('burner_used', actor.cid, nil, { request = name, item = item })
     else
-        if not ok then Places.raised('ox_inventory RemoveItem', removed) end
         deps.audit.rejected('burner_not_taken', actor.cid, nil, { request = name, item = item })
     end
 end

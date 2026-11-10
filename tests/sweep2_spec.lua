@@ -285,7 +285,7 @@ describe('sweep 2 fix 5: a buyout frozen after its charge says on hold and refun
         eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'the contract is on hold, not closed')
 
         local told = notices(2)
-        local premium = s.notify.dollars(s.storage.readContract(c.id).bailout_amount)
+        local premium = require('crimson-hitman.shared.words').dollars(s.storage.readContract(c.id).bailout_amount, 'before')
         truthy(has(told, 'Buyout refunded | Staff put the contract on hold before your buyout went '
             .. 'through, so your ' .. premium .. ' is back.'), 'the target\'s notice: ' .. table.concat(told, ' / '))
         falsy(has(told, 'could not be completed'), 'not the generic words')

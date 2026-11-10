@@ -11,7 +11,8 @@
 --- anything the game says.
 
 local Util = CrimsonBoot.requireShared('util')
-local Log = CrimsonBoot.requireShared('log')
+local Geo = CrimsonBoot.requireShared('geo')
+local Text = CrimsonBoot.requireShared('text')
 
 local Places = {}
 
@@ -317,7 +318,6 @@ function Places.addOps(panel)
     if not (panel and panel.extend and panel.LEVELS) then return end
     local READ, WRITE = panel.LEVELS.READ, panel.LEVELS.WRITE
     local function staffCid(src) return panel.staffOf and panel.staffOf(src) or ('player ' .. tostring(src)) end
-    local function str(v, max) return type(v) == 'string' and #v <= max and v or nil end
     local SAYS = {
         feature_off = 'Turn on Roleplay.NpcPlaces (Switches) to place the broker and informant from here.',
         invalid_input = 'Give the NPC (broker or informant), a point on the map and a short name.',
@@ -332,27 +332,27 @@ function Places.addOps(panel)
     panel.extend('rpPlaceSet', WRITE, function(src, data)
         local at
         if data.here == true then
-            local coords = Places.coordsOf(src)
+            local coords = Geo.position(src)
             if not coords then return false, 'not_found', 'The server cannot see your character right now.' end
             local okH, heading = pcall(function() return GetEntityHeading(GetPlayerPed(src)) end)
             at = { x = coords.x, y = coords.y, z = coords.z, h = okH and tonumber(heading) or 0 }
         else
             at = { x = data.x, y = data.y, z = data.z, h = data.heading }
         end
-        local ok, err, row = Places.setPanelPlace(staffCid(src), { npc = str(data.npc, 16), id = str(data.id, 64),
-            label = data.label, enabled = data.enabled, at = at })
+        local ok, err, row = Places.setPanelPlace(staffCid(src), { npc = Text.field(data.npc, 16),
+            id = Text.field(data.id, 64), label = data.label, enabled = data.enabled, at = at })
         if not ok then return false, err, SAYS[err] or SAYS.invalid_input end
         return true, nil, 'Place saved.', row
     end)
     panel.extend('rpPlaceRemove', WRITE, function(src, data)
-        local id = str(data.id, 64)
+        local id = Text.field(data.id, 64)
         if not id then return false, 'invalid_input', SAYS.not_found end
         local ok, err = Places.removePanelPlace(staffCid(src), id, nil)
         if not ok then return false, err, SAYS[err] or SAYS.not_found end
         return true, nil, 'Place removed.'
     end)
     panel.extend('rpPlaceReset', WRITE, function(src, data)
-        local npc = str(data.npc, 16)
+        local npc = Text.field(data.npc, 16)
         if not Places.NPCS[npc or ''] then return false, 'invalid_input', SAYS.invalid_input end
         local ok, err, removed = Places.removePanelPlace(staffCid(src), nil, npc)
         if not ok then
@@ -360,18 +360,6 @@ function Places.addOps(panel)
         end
         return true, nil, ('%d place(s) removed: the config list applies again.'):format(removed)
     end)
-end
-
---- Where a player's ped is, read on the server.
----@param src integer
----@return table|nil coords
-function Places.coordsOf(src)
-    local ok, coords = pcall(function()
-        local ped = GetPlayerPed(src)
-        if not ped or ped == 0 then return nil end
-        return GetEntityCoords(ped)
-    end)
-    return ok and coords or nil
 end
 
 --- Whether a player stands within the NPC's radius, by where the server
@@ -382,10 +370,10 @@ end
 function Places.near(npc, src)
     local point = Places.current(npc)
     if not point then return false end
-    local coords = Places.coordsOf(src)
+    local coords = Geo.position(src)
     if not coords then return false end
     local radius = tonumber(Places.block(Places.NPCS[npc].block).Radius) or 0
-    return Util.dist2(coords, point) <= radius * radius
+    return Geo.near(coords, point, radius)
 end
 
 --- What a player's game draws: each NPC on now, where, as what, and
@@ -554,13 +542,5 @@ function Places.checkBlock(name, rules, warn)
     end
 end
 
---- Log a third-party call that raised, once a minute per name.
-local said_at = {}
-function Places.raised(what, err)
-    local now = os.time()
-    if said_at[what] and now - said_at[what] < 60 then return end
-    said_at[what] = now
-    Log.problem(('%s raised: %s'):format(what, tostring(err)))
-end
 
 return Places

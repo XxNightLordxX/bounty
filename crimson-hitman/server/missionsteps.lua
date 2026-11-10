@@ -33,6 +33,7 @@
 --- runs but one look on the maintenance tick.
 
 local Util = CrimsonBoot.requireShared('util')
+local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 
 local MissionSteps = {}
@@ -98,19 +99,8 @@ end
 --                              HELPERS
 -- ============================================================================
 
-local function Finite(v)
-    v = tonumber(v)
-    if not v or v ~= v or v == math.huge or v == -math.huge then return nil end
-    return v
-end
-
 --- A point as the client is sent it, to a tenth of a metre.
 local function Round(v) return math.floor(v * 10 + 0.5) / 10 end
-
-local function SourceOf(cid)
-    local actor = Deps.identity and Deps.identity.byCitizenId(cid)
-    return actor and actor.source or nil
-end
 
 --- Two markers the same, as far as the player's map is concerned.
 local function Same(a, b)
@@ -125,12 +115,12 @@ end
 ---@return table|nil
 local function Clean(marker)
     if type(marker) ~= 'table' or not MissionSteps.KINDS[marker.kind] then return nil end
-    local x, y = Finite(marker.x), Finite(marker.y)
+    local x, y = Geo.finite(marker.x), Geo.finite(marker.y)
     if not x or not y then return nil end
     local out = { kind = marker.kind, x = Round(x), y = Round(y) }
-    local z = Finite(marker.z)
+    local z = Geo.finite(marker.z)
     if z then out.z = Round(z) end
-    local r = Finite(marker.radius)
+    local r = Geo.finite(marker.radius)
     if r and r > 0 then out.radius = math.min(2000, Round(r)) end
     if marker.act == 'load' or marker.act == 'drop' then out.act = marker.act end
     if type(marker.ref) == 'string' then out.ref = Util.toId(marker.ref) end
@@ -226,7 +216,7 @@ function MissionSteps.refresh()
             for key in pairs(keys) do
                 if not (wanted and wanted[key]) then
                     keys[key] = nil
-                    local src = SourceOf(cid)
+                    local src = Deps.identity and Deps.identity.sourceOf(cid)
                     if src then
                         TriggerClientEvent(CLEAR_EVENT, src, { key = key })
                         n = n + 1
@@ -240,7 +230,7 @@ function MissionSteps.refresh()
             for key, marker in pairs(keys) do
                 local had = Shown[cid] and Shown[cid][key]
                 if not Same(had, marker) then
-                    src = src or SourceOf(cid)
+                    src = src or (Deps.identity and Deps.identity.sourceOf(cid))
                     if not src then break end
                     local payload = Util.copy(marker)
                     payload.key = key
@@ -348,9 +338,9 @@ local function NoteArm(out, contractId, hitmanCid)
     if not contractId or not hitmanCid then return end
     local k = contractId .. ':' .. hitmanCid
     if not Arms[k] then
-        local src = SourceOf(hitmanCid)
+        local src = Deps.identity and Deps.identity.sourceOf(hitmanCid)
         local coords = src and GetEntityCoords(GetPlayerPed(src))
-        local x, y = coords and Finite(coords.x), coords and Finite(coords.y)
+        local x, y = coords and Geo.finite(coords.x), coords and Geo.finite(coords.y)
         local contract = Deps.storage and Deps.storage.readContract(contractId)
         if x and y and contract then
             Arms[k] = { contractId = contractId, hitmanCid = hitmanCid, creatorCid = contract.creator_cid,

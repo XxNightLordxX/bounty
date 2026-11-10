@@ -47,6 +47,9 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
+local Text = CrimsonBoot.requireShared('text')
+local Lock = CrimsonBoot.require('server.lib.lock')
+local Db = CrimsonBoot.require('server.lib.db')
 
 local Freeze = {}
 
@@ -56,9 +59,11 @@ local frozen = {}   -- [cid] = { cid, name, reason, by_cid, frozen_at }
 --- How many are frozen: always counted from `frozen` (recount), never kept
 --- as a running sum two interleaved requests could each move.
 local count = 0
---- A freeze or release of a player in flight: [cid] = true. Each awaits the
---- store, and a second one let in meanwhile read the first's stale state.
-local inFlight = {}
+--- One freeze or release per player at a time, keyed by cid: another for
+--- the same player while one is in flight is refused as busy, never run
+--- alongside it. Each awaits the store, and a second one let in meanwhile
+--- read the first's stale state.
+local PlayerLock = Lock.new()
 
 local function recount()
     local n = 0
@@ -66,16 +71,6 @@ local function recount()
     count = n
 end
 
---- One freeze or release per player at a time: another for the same player
---- while one is in flight is refused as busy, never run alongside it.
-local function oneAtATime(cid, fn, ...)
-    if inFlight[cid] then return false, CH.ERR.BUSY end
-    inFlight[cid] = true
-    local out = table.pack(pcall(fn, ...))
-    inFlight[cid] = nil
-    if not out[1] then error(out[2], 0) end
-    return table.unpack(out, 2, out.n)
-end
 
 --- Releases still giving back what their hold took: an unfreeze, the
 --- restart hold's end and the app pause's. Each lets go of its hold before
@@ -157,8 +152,6 @@ local function giveBack(contractId, back, from)
     end
 end
 
-local REASON_MAX = 120
-
 --- The app pause now, or nil: { since }. Kept by the store, so it holds
 --- across a restart (Freeze.syncAppPause).
 local appPause = nil
@@ -190,7 +183,8 @@ function Freeze.init(deps)
     Storage, Audit, Notify, Kidnap, Death = deps.storage, deps.audit, deps.notify, deps.kidnap, deps.death
     -- A restart hold ends with the restart: this start is it.
     restartHold = nil
-    inFlight, unread, unreadRetry = {}, nil, nil
+    PlayerLock.reset()
+    unread, unreadRetry = nil, nil
     Freeze.reload()
     -- An app pause from before the restart is still on: read before the
     -- restart hold's lifetime is given back, which leaves out what it covers.
@@ -408,29 +402,11 @@ local function liveOf(cid)
 end
 
 --- Tell every party of a contract but the frozen ones, in the same words
---- whoever caused it. The target only once they are shown the contract.
+--- whoever caused it (Notify.parties). The target only once they are shown
+--- the contract.
+local function isFrozen(cid) return frozen[cid] ~= nil end
 local function tellParties(contract, text, skip)
-    local hitmen = Storage.readHitmen(contract.id) or {}
-    local told = { [skip or false] = true }
-    local function tell(cid, named)
-        if not cid or told[cid] or frozen[cid] then return end
-        told[cid] = true
-        Notify.toCitizen(cid, Freeze.TEXT.title, text,
-            { bypassBudget = true, contractId = named and contract.id or nil })
-        Notify.push(cid, 'hold', named and contract.id or nil)
-    end
-    tell(contract.creator_cid, true)
-    if Notify.shownToTarget(contract) then tell(contract.target_cid, false) end
-    for i = 1, #hitmen do
-        if hitmen[i].state == 'active' then tell(hitmen[i].hitman_cid, true) end
-    end
-end
-
-local function cleanReason(reason)
-    if type(reason) ~= 'string' then return nil end
-    -- By characters, never through one: a cut UTF-8 character is refused
-    -- by utf8mb4 (error 1366), and the whole write with it.
-    return Util.sanitizeText(reason, REASON_MAX)
+    Notify.parties(contract, Freeze.TEXT.title, text, 'hold', { skip = skip, except = isFrozen })
 end
 
 --- Freeze a player. Every live contract they are party to goes on hold now.
@@ -443,12 +419,12 @@ end
 local freezeUnlocked
 function Freeze.freeze(staffCid, cid, reason, name)
     if type(cid) ~= 'string' or cid == '' then return false, CH.ERR.INVALID_INPUT end
-    return oneAtATime(cid, freezeUnlocked, staffCid, cid, reason, name)
+    return PlayerLock.run(cid, freezeUnlocked, staffCid, cid, reason, name)
 end
 
 freezeUnlocked = function(staffCid, cid, reason, name)
     if frozen[cid] then return false, 'already_frozen' end
-    reason = cleanReason(reason)
+    reason = Text.reason(reason)
     local now = os.time()
 
     -- Which of their contracts were on hold already, through somebody else:
@@ -459,10 +435,8 @@ freezeUnlocked = function(staffCid, cid, reason, name)
 
     local row = { cid = cid, name = Util.sanitizeText(name, 128),
                   reason = reason, by_cid = staffCid, frozen_at = now }
-    local wrote, err = pcall(Storage.writeFreeze, row)
-    if not wrote then
-        Log.always(('a staff freeze could not be written (%s); nothing was put on hold')
-            :format(Util.dbError(err)))
+    if not Db.try('a staff freeze could not be written (%s); nothing was put on hold',
+        Storage.writeFreeze, row) then
         return false, CH.ERR.SERVER_ERROR
     end
     frozen[cid] = row
@@ -510,19 +484,17 @@ end
 local unfreezeUnlocked
 function Freeze.unfreeze(staffCid, cid, reason)
     if type(cid) ~= 'string' then return false, 'not_frozen' end
-    return oneAtATime(cid, whileReleasing, unfreezeUnlocked, staffCid, cid, reason)
+    return PlayerLock.run(cid, whileReleasing, unfreezeUnlocked, staffCid, cid, reason)
 end
 
 unfreezeUnlocked = function(staffCid, cid, reason)
     local row = frozen[cid]
     if not row then return false, 'not_frozen' end
-    reason = cleanReason(reason)
+    reason = Text.reason(reason)
     local now = os.time()
 
-    local removed, err = pcall(Storage.deleteFreeze, cid)
-    if not removed then
-        Log.always(('a staff freeze could not be removed (%s); the player stays on hold')
-            :format(Util.dbError(err)))
+    if not Db.try('a staff freeze could not be removed (%s); the player stays on hold',
+        Storage.deleteFreeze, cid) then
         return false, CH.ERR.SERVER_ERROR
     end
     frozen[cid] = nil
@@ -840,11 +812,8 @@ end
 loadAppPause = function()
     appPause = nil
     if not (Storage and Storage.readStaffMeta) then return end
-    local ok, meta = pcall(Storage.readStaffMeta)
-    if not ok then
-        Log.always(('the app pause could not be read from the store (%s)'):format(Util.dbError(meta)))
-        return
-    end
+    local ok, meta = Db.try('the app pause could not be read from the store (%s)', Storage.readStaffMeta)
+    if not ok then return end
     local since = tonumber(type(meta) == 'table' and meta[PAUSE_META]) or 0
     if since > 0 then appPause = { since = since } end
 end
@@ -856,11 +825,8 @@ local function startAppPause()
     -- Taken in this process before the first await: a second sync landing
     -- in the write (the panel's watcher and the tick) finds it on.
     appPause = { since = now }
-    local wrote, err = pcall(Storage.writeStaffMeta, PAUSE_META, now)
-    if not wrote then
-        Log.always(('the app pause could not be kept by the store (%s); it is on until the next '
-            .. 'start'):format(Util.dbError(err)))
-    end
+    Db.try('the app pause could not be kept by the store (%s); it is on until the next start',
+        Storage.writeStaffMeta, PAUSE_META, now)
     local live = Storage.liveContracts() or {}
     for i = 1, #live do
         local contract = live[i]
@@ -889,11 +855,7 @@ local function endAppPause()
     -- Taken in this process before the first await: a second sync landing
     -- in the write finds it off, and gives nothing back a second time.
     appPause = nil
-    local wrote, err = pcall(Storage.writeStaffMeta, PAUSE_META, 0)
-    if not wrote then
-        Log.always(('the end of the app pause could not be kept by the store (%s)')
-            :format(Util.dbError(err)))
-    end
+    Db.try('the end of the app pause could not be kept by the store (%s)', Storage.writeStaffMeta, PAUSE_META, 0)
     local gave, giveErr = pcall(giveBackApp, since, now)
     if not gave then
         Log.always(('the lifetime the app pause took could not be given back (%s)')

@@ -26,6 +26,7 @@
 --- every citizen id is the party's role on the contract instead.
 
 local Util = CrimsonBoot.requireShared('util')
+local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 
 local Panel = {}
@@ -1853,6 +1854,13 @@ end
 Panel.writeSubject = function(data, src) return writeSubject(data, src) end
 Panel.refFor = function(src, cid) return playerRef(src, { cid = cid }) end
 Panel.staffOf = function(src) return staffOf(src) end
+--- The staff member a module's write is made by: { cid, name, source }.
+---@param src integer
+---@return table
+Panel.staffActor = function(src)
+    local actor = deps.identity.resolve(src)
+    return { cid = actor and actor.cid or staffOf(src), name = actor and actor.name or nil, source = src }
+end
 Panel.identifies = function(src) return identifies(src) end
 --- Whether a contract's view says it is on hold, as this reader may see it
 --- (frozenShown, defined below): for a module's refusal of a held contract.
@@ -2123,13 +2131,6 @@ H.unfreeze = function(src, data)
     return true, nil, 'Unfrozen. Their contracts run again, with the time on hold given back.'
 end
 
---- Hours with one decimal, as staff read them.
-local function hoursText(hours)
-    local whole = math.floor(hours)
-    if whole == hours then return tostring(whole) .. ' h' end
-    return ('%.1f h'):format(hours)
-end
-
 --- Set or reset one character's counted playtime (Players, under the
 --- lookup). A write: the ACE itself, the write allowance, and a row in the
 --- log with what it was and what it is now. Not IdentityAce: staff name the
@@ -2171,8 +2172,8 @@ H.setPlaytime = function(src, data)
     local view = playtimeView(cid, actor)
     local name = actor and actor.name or (who.typed and cid) or 'This character'
     local parts = {
-        seconds == 0 and ('%s\'s counted playtime is reset to 0 h (it was %s).'):format(name, hoursText(before))
-            or ('%s\'s counted playtime is now %s (it was %s).'):format(name, hoursText(after), hoursText(before)),
+        seconds == 0 and ('%s\'s counted playtime is reset to 0 h (it was %s).'):format(name, Words.hours(before, true))
+            or ('%s\'s counted playtime is now %s (it was %s).'):format(name, Words.hours(after, true), Words.hours(before, true)),
     }
     -- Grandfathered counts only where the tracker is what the rule reads
     -- (Identity.playtimeHours): an export or QBox metadata answering for

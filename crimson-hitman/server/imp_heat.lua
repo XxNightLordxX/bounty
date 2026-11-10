@@ -24,6 +24,7 @@
 --- (crimson_rp_rows, kind 'imp_heat'), so a restart does not cool anybody.
 
 local Util = CrimsonBoot.requireShared('util')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
 
 local Heat = {}
 
@@ -158,17 +159,6 @@ function Heat.after(name, actor, payload)
     Audit.action('imp_heat_warned', actor.cid, contract.id, {})
 end
 
---- The police jobs sc-dispatch is asked to show a bulletin to.
-local function policeJobs()
-    local jobs = {}
-    for name, yes in pairs(Config.Advisory and Config.Advisory.RecipientJobNames or {}) do
-        if yes == true and type(name) == 'string' then jobs[#jobs + 1] = name end
-    end
-    table.sort(jobs)
-    if #jobs == 0 then jobs = { 'police' } end
-    return jobs
-end
-
 --- Whether this hitman holds a live contract now, from the snapshot of
 --- what is running the other loops share (Projection.liveSnapshot): no
 --- read of its own while nothing was written.
@@ -224,16 +214,13 @@ function Heat.bulletin(now)
         end
     end
     local dispatched = false
-    if Config.Advisory and Config.Advisory.UseDispatch ~= false
-        and GetResourceState('sc-dispatch') == 'started' then
-        dispatched = pcall(function()
-            exports['sc-dispatch']:AddNotification({
-                title = title, message = text, caller = 'Criminal Intelligence',
-                priority = math.floor(num(Config.Advisory.DispatchPriority, 2)),
-                job_table = policeJobs(),
-                unique_id = ('ch-heat-%d'):format(now):sub(1, 60),
-            })
-        end)
+    if Config.Advisory and Config.Advisory.UseDispatch ~= false then
+        dispatched = Bridge.call('sc-dispatch', 'AddNotification', {
+            title = title, message = text, caller = 'Criminal Intelligence',
+            priority = math.floor(num(Config.Advisory.DispatchPriority, 2)),
+            job_table = Notify.policeJobs(),
+            unique_id = ('ch-heat-%d'):format(now):sub(1, 60),
+        })
     end
     Audit.action('imp_heat_bulletin', nil, nil, { told = told, dispatched = dispatched or nil })
     return true

@@ -14,6 +14,8 @@
 --- placeholder. Read at every use, so the admin panel's switch applies at
 --- once.
 
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+
 local Mugshot = {}
 
 local Identity, Audit
@@ -95,7 +97,7 @@ end
 --- a contract on that target was then shown, on a server that expected no
 --- faces at all. A resource the clients load is started on the server.
 local function rendererRunning()
-    return GetResourceState('MugShotBase64') == 'started'
+    return Bridge.started('MugShotBase64')
 end
 
 --- Ask a player's own client for a fresh headshot, subject to the refresh

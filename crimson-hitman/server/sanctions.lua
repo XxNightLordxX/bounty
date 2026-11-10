@@ -23,8 +23,10 @@
 --- and end (Sanctions.noteFreeze) and every manual payment
 --- (server/payments.lua) for the history card.
 
-local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
+local Text = CrimsonBoot.requireShared('text')
+local Lock = CrimsonBoot.require('server.lib.lock')
+local Db = CrimsonBoot.require('server.lib.db')
 
 local Sanctions = {}
 
@@ -41,11 +43,12 @@ local records = {}
 local open = { suspend = {}, protect = {} }
 --- How many are open, so a check costs nothing while nobody has one.
 local counts = { suspend = 0, protect = 0 }
---- A placing or lifting of one kind on one player in flight, each awaiting
---- the store: a second one let in meanwhile read the first's stale state.
-local inFlight = {}
+--- One change of one kind on one player at a time, keyed kind .. ':' .. cid:
+--- another while one is in flight is refused as busy, never run alongside
+--- it. Each awaits the store: a second one let in meanwhile read the first's
+--- stale state.
+local KindLock = Lock.new()
 
-local REASON_MAX = 120
 --- The longest a suspension may be set for, in days, and a protection, in
 --- hours; anything longer is until lifted (a suspension) or permanent.
 Sanctions.MAX_SUSPEND_DAYS = 365
@@ -74,15 +77,13 @@ end
 
 --- Read every staff record from the store again. Done once at the start.
 function Sanctions.reload()
-    records, open, inFlight = {}, { suspend = {}, protect = {} }, {}
+    records, open = {}, { suspend = {}, protect = {} }
+    KindLock.reset()
     counts = { suspend = 0, protect = 0 }
     if not (Storage and Storage.readStaffRecords) then return end
-    local ok, rows = pcall(Storage.readStaffRecords)
-    if not ok then
-        Log.always(('staff suspensions and protections could not be read (%s); '
-            .. 'nobody reads as suspended or protected until the next start'):format(Util.dbError(rows)))
-        return
-    end
+    local ok, rows = Db.try('staff suspensions and protections could not be read (%s); '
+        .. 'nobody reads as suspended or protected until the next start', Storage.readStaffRecords)
+    if not ok then return end
     for _, row in ipairs(rows or {}) do
         if row.id and row.cid then
             records[row.id] = row
@@ -185,30 +186,9 @@ function Sanctions.refusal(row)
     return { untilAt = row.until_at, reason = row.reason }
 end
 
-local function cleanReason(reason)
-    if type(reason) ~= 'string' then return nil end
-    -- By characters, never through one: a cut UTF-8 character is refused
-    -- by utf8mb4 (error 1366), and the whole write with it.
-    return Util.sanitizeText(reason, REASON_MAX)
-end
-
---- One change of one kind on one player at a time: another while one is in
---- flight is refused as busy, never run alongside it.
-local function oneAtATime(key, fn, ...)
-    if inFlight[key] then return false, CH.ERR.BUSY end
-    inFlight[key] = true
-    local out = table.pack(pcall(fn, ...))
-    inFlight[key] = nil
-    if not out[1] then error(out[2], 0) end
-    return table.unpack(out, 2, out.n)
-end
-
 --- Write a record, new or changed. False when the store would not take it.
 local function store(row)
-    local wrote, err = pcall(Storage.writeStaffRecord, row)
-    if not wrote then
-        Log.always(('a staff record could not be written (%s); nothing changed')
-            :format(Util.dbError(err)))
+    if not Db.try('a staff record could not be written (%s); nothing changed', Storage.writeStaffRecord, row) then
         return false
     end
     records[row.id] = row
@@ -250,9 +230,9 @@ function Sanctions.place(kind, staffCid, cid, seconds, reason, name)
     if seconds ~= nil and (math.type(seconds) ~= 'integer' or seconds <= 0) then
         return false, CH.ERR.INVALID_INPUT
     end
-    reason = cleanReason(reason)
+    reason = Text.reason(reason)
     if not reason then return false, CH.ERR.INVALID_INPUT end
-    return oneAtATime(kind .. ':' .. cid, placeUnlocked, kind, staffCid, cid, seconds, reason, name)
+    return KindLock.run(kind .. ':' .. cid, placeUnlocked, kind, staffCid, cid, seconds, reason, name)
 end
 
 --- End one whose time has passed, as the tick would: written, audited, and
@@ -311,7 +291,7 @@ local liftUnlocked
 ---@return string|nil err 'not_active' | CH.ERR.*
 function Sanctions.lift(kind, staffCid, cid, reason)
     if not KINDS[kind] or type(cid) ~= 'string' then return false, 'not_active' end
-    return oneAtATime(kind .. ':' .. cid, liftUnlocked, kind, staffCid, cid, cleanReason(reason))
+    return KindLock.run(kind .. ':' .. cid, liftUnlocked, kind, staffCid, cid, Text.reason(reason))
 end
 
 liftUnlocked = function(kind, staffCid, cid, reason)
@@ -343,7 +323,7 @@ function Sanctions.tick()
     local now, due = os.time(), {}
     for kind in pairs(KINDS) do
         for cid, row in pairs(open[kind]) do
-            if row.until_at and now >= row.until_at and not inFlight[kind .. ':' .. cid] then
+            if row.until_at and now >= row.until_at and not KindLock.held(kind .. ':' .. cid) then
                 due[#due + 1] = row
             end
         end
@@ -372,7 +352,7 @@ function Sanctions.note(fields)
     local row = {
         id = id, kind = fields.kind, cid = fields.cid,
         name = Util.sanitizeText(fields.name, 128),
-        reason = cleanReason(fields.reason), by_cid = fields.by_cid, created_at = os.time(),
+        reason = Text.reason(fields.reason), by_cid = fields.by_cid, created_at = os.time(),
         amount = fields.amount, account = fields.account,
     }
     if not store(row) then return nil end

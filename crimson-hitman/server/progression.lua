@@ -4,6 +4,8 @@
 --- that feeds a completed contract into the server's existing criminal
 --- progression rather than making the contract board a parallel economy.
 
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+
 local Progression = {}
 
 local Storage, Audit
@@ -76,13 +78,11 @@ function Progression.onCompleted(cid, fulfilment, factor)
     if not amount or amount <= 0 then return end
 
     local resource = Config.Progression.Resource
-    if not resource or GetResourceState(resource) ~= 'started' then return end
+    if not Bridge.started(resource) then return end
 
     -- A progression resource being absent or shaped differently must never
     -- break a payout that has already happened.
-    local ok, err = pcall(function()
-        exports[resource]:AddTrust(cid, amount)
-    end)
+    local ok, err = Bridge.call(resource, 'AddTrust', cid, amount)
 
     if ok then
         Audit.action('progression_awarded', cid, nil, { amount = amount, fulfilment = fulfilment,

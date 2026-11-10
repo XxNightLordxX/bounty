@@ -725,6 +725,7 @@ do
         ['Bridges.accessMemoSize']     = 'that the access memo does not grow without bound',
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
+        ['Bridge.reset']               = 'when each raise was last said, so a test can say one again',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
         ['OrgSpots.running']           = 'whether the organisation\'s NPC loop runs, so a test can '
             .. 'watch it stop',
@@ -870,6 +871,16 @@ do
             local defs = countDefs(resource, module, name)
             -- Dispatched by name rather than called: App.handlers[name].
             local dynamic = resource:find("%['" .. name .. "'%]") ~= nil
+            -- Or run from a cleanup list (Lifecycle.run, server/bridges.lua):
+            -- { 'death', 'clearPlayer' } names Death.clearPlayer.
+            if not dynamic then
+                for key, fn in resource:gmatch("{%s*'([%w_]+)',%s*'([%w_]+)'%s*}") do
+                    if fn == name and key:lower() == module:lower() then
+                        dynamic = true
+                        break
+                    end
+                end
+            end
 
             if mentions <= defs and not dynamic and not SEAMS[full] then
                 unreferenced[#unreferenced + 1] =
@@ -2767,12 +2778,33 @@ do
     for _, path in ipairs({ 'crimson-hitman/ui/app.js', 'crimson-hitman/ui/admin.js' }) do
         drifted(path, read(path) or '', "'", '//')
     end
+    -- The shared helper library (step 2): a local copy of one of its helpers
+    -- is a second copy to drift. Each name, and the one to use instead.
+    local SHARED_HELPERS = {
+        oneAtATime = 'Lock.new (server/lib/lock.lua)', Serial = 'Lock.new (server/lib/lock.lua)',
+        cleanReason = 'Text.reason (shared/text.lua)', hoursText = 'Words.hours (shared/words.lua)',
+        waitWords = 'Words.duration / Words.inAbout (shared/words.lua)',
+        dollars = 'Words.dollars (shared/words.lua)', metres = 'Words.metres (shared/words.lua)',
+        Finite = 'Geo.finite (shared/geo.lua)', finite = 'Geo.finite (shared/geo.lua)',
+        phoneRefuses = 'Bridge.phoneRefuses (server/lib/bridge.lua)',
+        policeJobs = 'Notify.policeJobs (server/notify.lua)', dispatchJobs = 'Notify.policeJobs (server/notify.lua)',
+        str = 'Text.field (shared/text.lua)', within = 'Window.new (server/lib/window.lua)',
+        targetUp = 'CrimsonNpc.targetUp (client/npc.lua)', TargetUp = 'CrimsonNpc.targetUp (client/npc.lua)',
+    }
+    for _, path in ipairs(files) do
+        local src = '\n' .. (read(path) or '')
+        for name, use in pairs(SHARED_HELPERS) do
+            if src:find('\n%s*local function ' .. name .. '%(') then
+                failures[#failures + 1] = ('%s defines its own %s: use %s'):format(path, name, use)
+            end
+        end
+    end
     for _, path in ipairs(files) do
         local src = read(path) or ''
         for _, name in ipairs({ 'copyOf', 'money' }) do
             if src:find('\nlocal function ' .. name .. '%(') then
                 failures[#failures + 1] = ('%s defines its own %s: use %s'):format(path, name,
-                    name == 'copyOf' and 'Util.copy' or 'Util.dollars')
+                    name == 'copyOf' and 'Util.copy' or 'Words.dollars')
             end
         end
     end

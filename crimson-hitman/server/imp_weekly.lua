@@ -20,7 +20,8 @@
 --- the server was down for the whole day after the hour is not caught up.
 
 local Log = CrimsonBoot.requireShared('log')
-local Util = CrimsonBoot.requireShared('util')
+local Words = CrimsonBoot.requireShared('words')
+local Db = CrimsonBoot.require('server.lib.db')
 local Imp = CrimsonBoot.require('server.imp_staffeco')
 
 local Weekly = {}
@@ -58,12 +59,9 @@ function Weekly.init(d)
     deps = d
     lastDay, asleep, backoff = nil, nil, nil
     if deps.storage and deps.storage.readStaffMeta then
-        local ok, meta = pcall(deps.storage.readStaffMeta)
+        local ok, meta = Db.quiet('the day the weekly stats were last posted could not be read (%s)',
+            deps.storage.readStaffMeta)
         if ok and type(meta) == 'table' then lastDay = tonumber(meta[Weekly.META]) end
-        if not ok then
-            Log.debug(('the day the weekly stats were last posted could not be read (%s)')
-                :format(Util.dbError(meta)))
-        end
     end
 end
 
@@ -143,7 +141,7 @@ function Weekly.text(totals, day)
             :format(day // 10000, (day // 100) % 100, day % 100),
         ('- Contracts placed: %d'):format(totals.placed),
         ('- Contracts completed: %d'):format(totals.completed),
-        ('- Paid out to hitmen: %s'):format(Util.dollars(totals.paid)),
+        ('- Paid out to hitmen: %s'):format(Words.dollars(totals.paid)),
     }, '\n')
 end
 
@@ -230,11 +228,8 @@ function Weekly.tick()
         return false, err
     end
     lastDay = day
-    local wrote, writeErr = pcall(deps.storage.writeStaffMeta, Weekly.META, day)
-    if not wrote then
-        Log.always(('the weekly stats were posted, but the day could not be kept by the store (%s): '
-            .. 'a restart today may post them again'):format(Util.dbError(writeErr)))
-    end
+    Db.try('the weekly stats were posted, but the day could not be kept by the store (%s): a restart '
+        .. 'today may post them again', deps.storage.writeStaffMeta, Weekly.META, day)
     pcall(deps.audit.staff, 'weekly_stats_posted', nil, nil, { day = day })
     return true
 end

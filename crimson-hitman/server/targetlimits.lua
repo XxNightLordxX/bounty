@@ -26,6 +26,8 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
+local Lock = CrimsonBoot.require('server.lib.lock')
+local Db = CrimsonBoot.require('server.lib.db')
 
 local TargetLimits = {}
 
@@ -73,7 +75,13 @@ local JOB_KIND, PLAYER_KIND = 'tl_job', 'tl_player'
 local Jobs = {}        -- { [job] = { job, limits = { [key] = n }, by_cid, at } }
 local Players = {}     -- { [cid] = row } (see writePlayer for the shape)
 local Ignored = {}     -- { { id, why } } rows the store held that were not applied
-local InFlight = {}    -- { [cid or 'job:'..name] = true } a write awaiting the store
+--- One write per subject at a time (a cid, or 'job:' .. name): a second
+--- while one awaits the store is refused as busy. A raise is said and
+--- answered as a failed write.
+local WriteLock = Lock.new({ raised = function(err)
+    Log.always(('a target limit write raised: %s'):format(tostring(err)))
+    return false, 'store_failed'
+end })
 
 --- A whole number in a limit's range, or nil.
 ---@param key string
@@ -183,14 +191,12 @@ end
 --- applying those that check out; the rest are listed (TargetLimits.view)
 --- and left in the store as they are. Rows run out are deleted.
 function TargetLimits.reload()
-    Jobs, Players, Ignored, InFlight = {}, {}, {}, {}
+    Jobs, Players, Ignored = {}, {}, {}
+    WriteLock.reset()
     if not (Storage and Storage.readRpRows) then return end
-    local okJobs, jobRows = pcall(Storage.readRpRows, JOB_KIND)
-    if not okJobs then
-        Log.always(('target limit job overrides could not be read (%s); the global defaults apply '
-            .. 'to every job until the next start'):format(Util.dbError(jobRows)))
-        jobRows = {}
-    end
+    local okJobs, jobRows = Db.try('target limit job overrides could not be read (%s); the global '
+        .. 'defaults apply to every job until the next start', Storage.readRpRows, JOB_KIND)
+    if not okJobs then jobRows = {} end
     for _, row in ipairs(jobRows or {}) do
         local job = TargetLimits.jobName(row.job)
         local limits, why = TargetLimits.cleanLimits(row.limits)
@@ -202,12 +208,9 @@ function TargetLimits.reload()
             Log.always(('target limit job override %s was not applied: %s'):format(tostring(row.id), why))
         end
     end
-    local okPlayers, playerRows = pcall(Storage.readRpRows, PLAYER_KIND)
-    if not okPlayers then
-        Log.always(('target limit player adjustments could not be read (%s); none applies until the '
-            .. 'next start'):format(Util.dbError(playerRows)))
-        playerRows = {}
-    end
+    local okPlayers, playerRows = Db.try('target limit player adjustments could not be read (%s); none '
+        .. 'applies until the next start', Storage.readRpRows, PLAYER_KIND)
+    if not okPlayers then playerRows = {} end
     local now = os.time()
     for _, row in ipairs(playerRows or {}) do
         local clean, why = CleanPlayer(row)
@@ -503,20 +506,6 @@ local function Draft(cid, name)
     return row
 end
 
---- Run one write per subject at a time: a second while one awaits the
---- store is refused as busy.
-local function Serial(key, fn)
-    if InFlight[key] then return false, CH.ERR.BUSY end
-    InFlight[key] = true
-    local ran, ok, err, extra = pcall(fn)
-    InFlight[key] = nil
-    if not ran then
-        Log.always(('a target limit write raised: %s'):format(tostring(ok)))
-        return false, 'store_failed'
-    end
-    return ok, err, extra
-end
-
 --- Apply one staff action to a player. `action` is 'reset' (resolve and
 --- completion cooldowns; `all` the same-placer wait too, a staff
 --- extension, and a buyout's immunity unless `keepBuyout`, which a job-wide
@@ -536,7 +525,7 @@ function TargetLimits.adjust(staffCid, cid, action, args, quiet)
     args = args or {}
     if type(cid) ~= 'string' or cid == '' then return false, CH.ERR.INVALID_INPUT end
     local reason = type(args.reason) == 'string' and args.reason:sub(1, TargetLimits.REASON_MAX) or nil
-    return Serial(cid, function()
+    return WriteLock.run(cid, function()
         local now = os.time()
         local row = Draft(cid, args.name)
         local detail = { subject = cid, reason = reason }
@@ -605,7 +594,7 @@ function TargetLimits.setJob(staffCid, name, limits)
     if not Jobs[job] and #TargetLimits.jobs() >= TargetLimits.JOBS_MAX then
         return false, 'too_many', { max = TargetLimits.JOBS_MAX }
     end
-    return Serial('job:' .. job, function()
+    return WriteLock.run('job:' .. job, function()
         local row = { id = 'tl_job:' .. job, kind = JOB_KIND, job = job, limits = clean, by_cid = staffCid,
                       at = os.time() }
         local ok, err = pcall(Storage.writeRpRow, row)
@@ -623,7 +612,7 @@ function TargetLimits.removeJob(staffCid, name)
     local job = TargetLimits.jobName(name)
     if not job then return false, CH.ERR.INVALID_INPUT end
     if not Jobs[job] then return false, 'not_active' end
-    return Serial('job:' .. job, function()
+    return WriteLock.run('job:' .. job, function()
         local ok = pcall(Storage.deleteRpRow, 'tl_job:' .. job)
         if not ok then return false, 'store_failed' end
         local was = Jobs[job]
@@ -659,7 +648,7 @@ end
 function TargetLimits.prune()
     local now, pruned = os.time(), 0
     for cid, row in pairs(Players) do
-        if row.expires_at and row.expires_at <= now and not InFlight[cid] then
+        if row.expires_at and row.expires_at <= now and not WriteLock.held(cid) then
             if pcall(Storage.deleteRpRow, row.id) then
                 Players[cid] = nil
                 pruned = pruned + 1

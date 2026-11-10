@@ -30,6 +30,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Db = CrimsonBoot.require('server.lib.db')
 
 local ImpTips = {}
 
@@ -499,11 +500,7 @@ function ImpTips.heldBack(contractId, from, to)
             local start = math.max(from, tonumber(row.bought_at) or (untilAt - minutes * 60))
             if start < untilAt and to > start then
                 row.until_at = untilAt + (to - start)
-                local kept, err = pcall(Storage.writeRpRow, row)
-                if not kept then
-                    Log.always(('go dark: the time a hold took could not be kept (%s)')
-                        :format(Util.dbError(err)))
-                end
+                Db.try('go dark: the time a hold took could not be kept (%s)', Storage.writeRpRow, row)
             end
         end
     end
@@ -647,10 +644,8 @@ buyDark = function(actor, contractId, shown)
         -- given back; one landing after the delete is the store's own
         -- ordering, and leaves at most the window it was written for.
         row.pending = nil
-        local confirmed, confirmErr = pcall(Storage.writeRpRow, row)
-        if not confirmed then
-            Log.always(('go dark: the purchase could not be kept by the store (%s); the price is '
-                .. 'given back'):format(Util.dbError(confirmErr)))
+        if not Db.try('go dark: the purchase could not be kept by the store (%s); the price is given back',
+            Storage.writeRpRow, row) then
             refusal = CH.ERR.SERVER_ERROR
         end
     end

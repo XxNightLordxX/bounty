@@ -19,6 +19,8 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Geo = CrimsonBoot.requireShared('geo')
+local Window = CrimsonBoot.require('server.lib.window')
 local Powers = CrimsonBoot.require('server.org.powers')
 local Engine = CrimsonBoot.require('server.org.engine')
 local Jobs = CrimsonBoot.require('server.org.jobs')
@@ -55,9 +57,11 @@ local Paying, PaidHere = {}, {}
 --- When each member last accepted, for the cooldowns: [cid] = os.time().
 local LastAccept = {}
 
---- What each boss did lately, for the per-day and cooldown bounds:
---- [cid] = { fires = { ts }, promotions = { ts } }
-local Recent = {}
+--- When each boss last fired a member, for FireCooldownMinutes: [cid] = os.time().
+local LastFire = {}
+
+--- Each boss's role moves in the last day, for PromotionsPerDay (Window.new).
+local Promotions = Window.new(86400)
 
 --- Hires a boss offered, waiting for the player to accept them in the app:
 --- [cid] = { id, cid, grade, by (the boss's cid), at, expires }. Kept in
@@ -274,7 +278,8 @@ function Org.init(d)
     deps = d
     -- A member's codename where a hitman's name is shown (Org.shownName).
     Util.shownHitmanName = function(cid, name, contractId) return Org.shownName(cid, name, contractId) end
-    State, Splits, LastAccept, Recent, Refs, RefSeq = nil, {}, {}, {}, {}, 0
+    State, Splits, LastAccept, LastFire, Refs, RefSeq = nil, {}, {}, {}, {}, 0
+    Promotions.reset()
     NoSplit, NoSplitCount = {}, 0
     Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, nil, 0
     Paying, PaidHere = {}, {}
@@ -529,14 +534,13 @@ end
 function Org.inOffice(org, src)
     src = tonumber(src)
     if not src or src <= 0 then return false end
+    local at
     for _, loc in pairs(org.locations) do
         if loc.kind == 'office' and loc.enabled ~= false then
-            local ok, at = pcall(function() return GetEntityCoords(GetPlayerPed(src)) end)
-            if ok and at then
-                local dx, dy, dz = at.x - loc.x / 10, at.y - loc.y / 10, at.z - loc.z / 10
-                local radius = math.max(tonumber(Config.Organisation.OfficeRadius) or 5, (loc.radius or 0) / 10)
-                if dx * dx + dy * dy + dz * dz <= radius * radius then return true end
-            end
+            at = at or Geo.position(src)
+            if not at then return false end
+            local radius = math.max(tonumber(Config.Organisation.OfficeRadius) or 5, (loc.radius or 0) / 10)
+            if Geo.near(at, { x = loc.x / 10, y = loc.y / 10, z = loc.z / 10 }, radius) then return true end
         end
     end
     return false
@@ -565,19 +569,6 @@ local function record(action, who, detail, contract)
     end
 end
 Org.record = record
-
-local function within(list, ts, seconds)
-    local n = 0
-    for i = #list, 1, -1 do
-        if ts - list[i] < seconds then n = n + 1 else table.remove(list, i) end
-    end
-    return n
-end
-
-local function recent(cid)
-    Recent[cid] = Recent[cid] or { fires = {}, promotions = {} }
-    return Recent[cid]
-end
 
 -- ============================================================================
 --                              MEMBER HANDLES
@@ -713,12 +704,10 @@ function Org.hire(who, target, grade)
     if why then return fail(why) end
     -- In person: the server's own positions, never the client's.
     local radius = Powers.limit(org, 'HireRadius')
-    local ok, a, b = pcall(function()
-        return GetEntityCoords(GetPlayerPed(who.source)), GetEntityCoords(GetPlayerPed(target.source))
-    end)
-    if not target.source or not ok or not a or not b
-        or GetPlayerRoutingBucket(who.source) ~= GetPlayerRoutingBucket(target.source)
-        or (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 + (a.z - b.z) ^ 2 > radius * radius then
+    local a = target.source and Geo.position(who.source)
+    local b = a and Geo.position(target.source)
+    if not b or GetPlayerRoutingBucket(who.source) ~= GetPlayerRoutingBucket(target.source)
+        or not Geo.near(a, b, radius) then
         return fail(ERR.RULE, { message = ('They must be in the city and standing beside you (within %s m).')
             :format(tostring(radius)) })
     end
@@ -798,8 +787,8 @@ function Org.fire(who, cid, reason)
         local why = Engine.mayActOn(org, who.cid, cid)
         if why then return fail(why == 'self' and ERR.SELF or why == 'locked' and ERR.LOCKED or ERR.RANK) end
         if Engine.wouldLeaveNoBoss(org, cid) then return fail(ERR.LAST_BOSS) end
-        local mine = recent(who.cid)
-        if within(mine.fires, now(), Powers.limit(org, 'FireCooldownMinutes') * 60) > 0 then
+        local last = LastFire[who.cid]
+        if last and now() - last < Powers.limit(org, 'FireCooldownMinutes') * 60 then
             return fail(ERR.COOLDOWN)
         end
     end
@@ -811,7 +800,7 @@ function Org.fire(who, cid, reason)
     for _, g in ipairs(deps.storage.readOrgRows('grants', org.id) or {}) do
         if g.subject == 'member' and g.subject_id == cid then deps.storage.deleteOrgRow('grants', g.id) end
     end
-    if not who.staff then table.insert(recent(who.cid).fires, now()) end
+    if not who.staff then LastFire[who.cid] = now() end
     record('org_member_fired', who, { member = cid, grade = member.grade, reason = reason })
     local actor = deps.identity.byCitizenId(cid)
     if actor then Org.pushSpots(actor.source) end
@@ -835,7 +824,7 @@ function Org.setRole(who, cid, grade)
         if why then return fail(why == 'self' and ERR.SELF or why == 'locked' and ERR.LOCKED or ERR.RANK) end
         if Engine.mayAssignGrade(org, who.cid, grade) then return fail(ERR.RANK) end
         if Engine.wouldLeaveNoBoss(org, cid, grade) then return fail(ERR.LAST_BOSS) end
-        if within(recent(who.cid).promotions, now(), 86400) >= Powers.limit(org, 'PromotionsPerDay') then
+        if Promotions.count(who.cid, now()) >= Powers.limit(org, 'PromotionsPerDay') then
             return fail(ERR.LIMIT)
         end
     elseif Engine.wouldLeaveNoBoss(org, cid, grade) then
@@ -846,7 +835,7 @@ function Org.setRole(who, cid, grade)
     local from = member.grade
     member.grade = grade
     saveMember(member)
-    if not who.staff then table.insert(recent(who.cid).promotions, now()) end
+    if not who.staff then Promotions.add(who.cid, now()) end
     record('org_member_role', who, { member = cid, from = from, to = grade })
     return true, nil, { from = from, to = grade }
 end
@@ -2320,14 +2309,12 @@ end
 function Org.positionOf(src)
     src = tonumber(src)
     if not src or src <= 0 then return nil end
-    local ok, at, h = pcall(function()
-        local ped = GetPlayerPed(src)
-        return GetEntityCoords(ped), GetEntityHeading(ped)
-    end)
-    if not ok or type(at) ~= 'table' and type(at) ~= 'vector3' and type(at) ~= 'userdata' then return nil end
-    local x, y, z = tonumber(at.x), tonumber(at.y), tonumber(at.z)
+    local at = Geo.position(src)
+    if type(at) ~= 'table' and type(at) ~= 'vector3' and type(at) ~= 'userdata' then return nil end
+    local _, h = pcall(function() return GetEntityHeading(GetPlayerPed(src)) end)
+    local x, y, z = Geo.finite(at.x), Geo.finite(at.y), Geo.finite(at.z)
     if not x or not y or not z or (x == 0 and y == 0 and z == 0) then return nil end
-    return { x = x, y = y, z = z, h = tonumber(h) or 0 }
+    return { x = x, y = y, z = z, h = Geo.finite(h) or 0 }
 end
 
 --- Inside one of the staff safe zones (Config.Improvements.TipSafeZones.Zones,
@@ -2372,9 +2359,9 @@ function Org.placeSpot(who, spec)
         at = Org.positionOf(who.source)
         if not at then return fail(ERR.RULE, { message = 'The server cannot see where you stand right now.' }) end
     else
-        local x, y, z = tonumber(spec.x), tonumber(spec.y), tonumber(spec.z)
+        local x, y, z = Geo.finite(spec.x), Geo.finite(spec.y), Geo.finite(spec.z)
         if not x or not y or not z then return fail(ERR.INVALID) end
-        at = { x = x, y = y, z = z, h = tonumber(spec.heading) or 0 }
+        at = { x = x, y = y, z = z, h = Geo.finite(spec.heading) or 0 }
     end
     if at.x ~= at.x or at.x < BOUNDS.minX or at.x > BOUNDS.maxX or at.y < BOUNDS.minY or at.y > BOUNDS.maxY
         or at.z < BOUNDS.minZ or at.z > BOUNDS.maxZ then

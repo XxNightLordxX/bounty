@@ -25,6 +25,8 @@ client_scripts {
     -- and the mugshot floor is an elapsed subtraction against it. The server
     -- loads this same file through CrimsonBoot.requireShared instead.
     'shared/util.lua',
+    -- Positions and distances (CrimsonGeo), one copy for both sides.
+    'shared/geo.lua',
     -- The one way to the console (CrimsonLog): with Config.Debug off the
     -- client prints nothing to F8 but a staff command's own answer.
     'shared/log.lua',
@@ -35,6 +37,9 @@ client_scripts {
     'client/mugshot.lua',
     -- The admin panel's page: opening it, closing it, its requests.
     'client/admin.lua',
+    -- Making and removing scenery NPCs and their blips (CrimsonNpc), before
+    -- the files that draw them.
+    'client/npc.lua',
     -- The roleplay NPCs, the broker and the informant (Config.Roleplay).
     'client/rp_npc.lua',
     -- The hitman organisation's spots (Config.Organisation, off as shipped):

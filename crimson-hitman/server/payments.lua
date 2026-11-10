@@ -18,22 +18,24 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
+local Words = CrimsonBoot.requireShared('words')
+local Text = CrimsonBoot.requireShared('text')
+local Lock = CrimsonBoot.require('server.lib.lock')
 
 local Payments = {}
 
 local Storage, Audit, Notify, Bailout, Sanctions
 
---- One payment to one player at a time: [cid] = true.
-local inFlight = {}
+--- One payment to one player at a time, keyed by cid.
+local PayLock = Lock.new()
 
-local REASON_MAX = 120
 Payments.ACCOUNTS = { cash = true, bank = true }
 
 ---@param deps table { storage, audit, notify, bailout, sanctions }
 function Payments.init(deps)
     Storage, Audit, Notify = deps.storage, deps.audit, deps.notify
     Bailout, Sanctions = deps.bailout, deps.sanctions
-    inFlight = {}
+    PayLock.reset()
 end
 
 --- The most one payment may be now (Config.Staff.ManualPaymentMax); 0 off.
@@ -42,13 +44,6 @@ function Payments.max()
     local max = tonumber(Config.Staff and Config.Staff.ManualPaymentMax) or 0
     if max ~= max or max < 0 then return 0 end
     return math.floor(max)
-end
-
-local function cleanReason(reason)
-    if type(reason) ~= 'string' then return nil end
-    -- By characters, never through one: a cut UTF-8 character is refused
-    -- by utf8mb4 (error 1366), and the whole write with it.
-    return Util.sanitizeText(reason, REASON_MAX)
 end
 
 local payUnlocked
@@ -65,17 +60,12 @@ function Payments.pay(staffCid, cid, amount, account, reason, name)
     if type(cid) ~= 'string' or cid == '' then return false, CH.ERR.INVALID_INPUT end
     if not Payments.ACCOUNTS[account] then return false, CH.ERR.INVALID_INPUT end
     if math.type(amount) ~= 'integer' or amount <= 0 then return false, CH.ERR.INVALID_INPUT end
-    reason = cleanReason(reason)
+    reason = Text.reason(reason)
     if not reason then return false, CH.ERR.INVALID_INPUT end
     local max = Payments.max()
     if max <= 0 then return false, 'payments_off' end
     if amount > max then return false, 'over_max' end
-    if inFlight[cid] then return false, CH.ERR.BUSY end
-    inFlight[cid] = true
-    local out = table.pack(pcall(payUnlocked, staffCid, cid, amount, account, reason, name))
-    inFlight[cid] = nil
-    if not out[1] then error(out[2], 0) end
-    return table.unpack(out, 2, out.n)
+    return PayLock.run(cid, payUnlocked, staffCid, cid, amount, account, reason, name)
 end
 
 payUnlocked = function(staffCid, cid, amount, account, reason, name)
@@ -104,7 +94,7 @@ payUnlocked = function(staffCid, cid, amount, account, reason, name)
         Sanctions.note({ kind = 'payment', cid = cid, name = name, reason = reason, by_cid = staffCid,
                          amount = amount, account = account })
     end
-    local words = Notify.dollars and Notify.dollars(amount) or ('$' .. amount)
+    local words = Words.dollars(amount, 'before')
     Notify.tellOrKeep(cid, 'Payment from staff', paid
         and ('Staff paid you %s in %s: %s'):format(words, account, reason)
         or ('Staff paid you %s in %s: %s. It is handed over when you can take it.')

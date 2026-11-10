@@ -12,6 +12,7 @@
 --- leaves no trace is a lookup nobody can review.
 
 local Util = CrimsonBoot.requireShared('util')
+local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 
 local Admin = {}
@@ -1261,21 +1262,9 @@ local DEADLINE_STATES = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true }
 --- whoever they are, and move their open app on: the placer and each active
 --- operative by the contract, the target (only once they are shown it) by a
 --- push that names none, as every push to a target does. That push is also
---- what refreshes a whitelisted-job target's view.
+--- what refreshes a whitelisted-job target's view (Notify.parties).
 local function tellDeadlineMoved(contract, text)
-    local told = {}
-    local function tell(cid, named)
-        if not cid or told[cid] then return end
-        told[cid] = true
-        Notify.toCitizen(cid, Admin.DEADLINE_TEXT.title, text,
-            { bypassBudget = true, contractId = named and contract.id or nil })
-        Notify.push(cid, 'deadline', named and contract.id or nil)
-    end
-    tell(contract.creator_cid, true)
-    if Notify.shownToTarget(contract) then tell(contract.target_cid, false) end
-    for _, hitman in ipairs(Storage.readHitmen(contract.id) or {}) do
-        if hitman.state == 'active' then tell(hitman.hitman_cid, true) end
-    end
+    Notify.parties(contract, Admin.DEADLINE_TEXT.title, text, 'deadline')
 end
 
 --- Staff move a live contract's deadline later or sooner by `seconds`
@@ -2176,13 +2165,6 @@ local function utcText(at)
     return os.date('!%Y-%m-%d %H:%M UTC', math.floor(tonumber(at) or 0))
 end
 
---- Hours to one decimal, a whole number without one.
-local function hoursText(hours)
-    local tenths = math.floor((tonumber(hours) or 0) * 10 + 0.5)
-    if tenths % 10 == 0 then return ('%d h'):format(tenths // 10) end
-    return ('%.1f h'):format(tenths / 10)
-end
-
 --- The new-player rule's hours, for the diagnosis: what answers them, the
 --- built-in tracker's state (server/playtime.lua), and for the player named
 --- what it counted and whether they are from before it.
@@ -2227,7 +2209,7 @@ local function sayPlaytime(say, actor)
         local decided = view.grandfathered == true and 'yes, from before the tracker'
             or view.grandfathered == false and 'no' or 'not decided yet'
         say(('  this player: %s counted by the tracker; grandfathered: %s')
-            :format(hoursText(view.hours), decided))
+            :format(Words.hours(view.hours), decided))
     end
     if hours == nil then
         say('  -> nothing answers for them yet, so the playtime rule is skipped for them')
@@ -2236,7 +2218,7 @@ local function sayPlaytime(say, actor)
     else
         local source = answered == 'provider' and 'the export' or answered == 'metadata'
             and 'QBox metadata' or 'the tracker'
-        say(('  -> %s, from %s: %s'):format(hoursText(hours), source, hours < floor
+        say(('  -> %s, from %s: %s'):format(Words.hours(hours), source, hours < floor
             and 'protected as too new to be a target' or 'fair game by playtime'))
     end
 end

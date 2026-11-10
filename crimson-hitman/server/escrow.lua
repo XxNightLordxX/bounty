@@ -7,6 +7,7 @@
 ---      exactly once, no matter which path reaches it.
 
 local Util = CrimsonBoot.requireShared('util')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Log = CrimsonBoot.requireShared('log')
 
 local Escrow = {}
@@ -384,10 +385,8 @@ function Escrow.namesOwner(actor, lines)
     -- from charinfo.phone: a SIM, a burner or a note from another resource
     -- carries that one under whatever key it likes.
     local src = actor and actor.source
-    if src and GetResourceState('lb-phone') == 'started' then
-        local ok, number = pcall(function()
-            return exports['lb-phone']:GetEquippedPhoneNumber(src)
-        end)
+    if src then
+        local ok, number = Bridge.call('lb-phone', 'GetEquippedPhoneNumber', src)
         if ok then want(number) end
     end
 

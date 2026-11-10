@@ -45,6 +45,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Db = CrimsonBoot.require('server.lib.db')
 
 local Alerts = {}
 
@@ -194,12 +195,9 @@ end
 --- What the store kept, put back. A row already here (read twice) is left.
 ---@return boolean read
 local function load()
-    local ok, rows = pcall(Storage.readAlerts)
-    if not ok then
-        Log.debug(('the admin panel\'s alerts could not be read from the store: %s; they are '
-            .. 'read again at the next write'):format(Util.dbError(rows)))
-        return false
-    end
+    local ok, rows = Db.quiet('the admin panel\'s alerts could not be read from the store: %s; they are '
+        .. 'read again at the next write', Storage.readAlerts)
+    if not ok then return false end
     loaded = true
     for _, row in ipairs(type(rows) == 'table' and rows or {}) do
         local id = type(row) == 'table' and Util.toId(row.id) or nil

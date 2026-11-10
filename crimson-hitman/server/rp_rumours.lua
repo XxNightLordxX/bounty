@@ -17,6 +17,7 @@
 --- refused without one (not_briefed), before anything is taken.
 
 local Util = CrimsonBoot.requireShared('util')
+local Geo = CrimsonBoot.requireShared('geo')
 local Places = CrimsonBoot.require('server.rp_places')
 
 local Rumours = {}
@@ -134,7 +135,7 @@ local function areaFor(contract)
     local area
     if rules().AreaMode == 'district' then
         local target = deps.identity.byCitizenId(contract.target_cid)
-        local coords = target and target.source and Places.coordsOf(target.source)
+        local coords = target and target.source and Geo.position(target.source)
         if coords then area = nearestDistrict(coords) end
     end
     area = area or zoneFor(contract)
@@ -242,7 +243,7 @@ function Rumours.askBroker(actor, contractId)
 end
 
 local function nearby(actor)
-    local mine = Places.coordsOf(actor.source)
+    local mine = Geo.position(actor.source)
     if not mine then return {} end
     local radius = tonumber(rules().Radius) or 0
     local okB, bucket = pcall(GetPlayerRoutingBucket, actor.source)
@@ -251,10 +252,10 @@ local function nearby(actor)
         local src = tonumber(id)
         if src and src ~= actor.source then
             local okT, theirs = pcall(GetPlayerRoutingBucket, src)
-            local coords = Places.coordsOf(src)
+            local coords = Geo.position(src)
             local listable = not (deps.app and deps.app.brokerMayList) or deps.app.brokerMayList(src)
             if coords and listable and (not okB or not okT or theirs == bucket) then
-                local d2 = Util.dist2(mine, coords)
+                local d2 = Geo.dist2(mine, coords)
                 if d2 <= radius * radius then
                     local person = deps.identity.resolve(src)
                     if person and person.cid then
@@ -297,10 +298,10 @@ function Rumours.brokerBrief(actor, contractId, who)
         and shownTo[actor.cid][who] or nil
     if not picked or os.time() - picked.at > HANDLE_SECONDS then return false, CH.ERR.NOT_FOUND end
     local person = deps.identity.byCitizenId(picked.cid)
-    local theirs = person and person.source and Places.coordsOf(person.source)
-    local mine = Places.coordsOf(actor.source)
+    local theirs = person and person.source and Geo.position(person.source)
+    local mine = Geo.position(actor.source)
     local radius = tonumber(rules().Radius) or 0
-    if not theirs or not mine or Util.dist2(mine, theirs) > radius * radius then
+    if not theirs or not mine or Geo.dist2(mine, theirs) > radius * radius then
         return false, CH.ERR.BROKER_TOO_FAR
     end
     -- Never the person the contract is on: briefed, they learnt of it before

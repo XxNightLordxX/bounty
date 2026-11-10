@@ -646,6 +646,15 @@ function Identity.byCitizenId(cid)
     return nil
 end
 
+--- The server id of a citizen in the city now (Identity.byCitizenId), or
+--- nil: away, not loaded, or not a citizen id.
+---@param cid any
+---@return integer|nil src
+function Identity.sourceOf(cid)
+    local actor = Identity.byCitizenId(cid)
+    return actor and actor.source or nil
+end
+
 --- What qbx_core's offline lookup said of a citizen id, kept a while:
 --- [cid] = { exists = boolean, at = Util.monotonicMs() }. The staff tools ask
 --- it of every line owed to somebody away while the admin panel's overview

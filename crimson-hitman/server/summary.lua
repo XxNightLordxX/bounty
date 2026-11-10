@@ -13,8 +13,8 @@
 --- it then. Without a webhook nothing is posted and the day is not marked,
 --- so one set later the same day still gets that day's post.
 
-local Log = CrimsonBoot.requireShared('log')
-local Util = CrimsonBoot.requireShared('util')
+local Words = CrimsonBoot.requireShared('words')
+local Db = CrimsonBoot.require('server.lib.db')
 
 local Summary = {}
 
@@ -39,12 +39,9 @@ function Summary.init(d)
     deps = d
     lastDay, backoff = nil, nil
     if deps.storage and deps.storage.readStaffMeta then
-        local ok, meta = pcall(deps.storage.readStaffMeta)
+        local ok, meta = Db.quiet('the day the daily summary was last posted could not be read (%s)',
+            deps.storage.readStaffMeta)
         if ok and type(meta) == 'table' then lastDay = tonumber(meta[DAY_META]) end
-        if not ok then
-            Log.debug(('the day the daily summary was last posted could not be read (%s)')
-                :format(Util.dbError(meta)))
-        end
     end
 end
 
@@ -112,7 +109,7 @@ function Summary.text(counts, day)
         ('- Contracts completed: %d'):format(counts.completed),
         ('- Contracts refunded (cancelled, expired or voided): %d'):format(counts.refunded),
         ('- Money in escrow: %s (cash %s, bank %s, dirty %s), and %d goods line(s)')
-            :format(Util.dollars(total), Util.dollars(e.cash), Util.dollars(e.bank), Util.dollars(e.dirty),
+            :format(Words.dollars(total), Words.dollars(e.cash), Words.dollars(e.bank), Words.dollars(e.dirty),
                 e.goods),
         ('- Open review items: %d'):format(counts.reviews),
         counts.frozen and ('- Frozen players: %d'):format(counts.frozen)
@@ -155,11 +152,8 @@ function Summary.tick()
         return false, err
     end
     lastDay = day
-    local wrote, writeErr = pcall(deps.storage.writeStaffMeta, DAY_META, day)
-    if not wrote then
-        Log.always(('the daily summary was posted, but the day could not be kept by the store (%s): '
-            .. 'a restart today may post it again'):format(Util.dbError(writeErr)))
-    end
+    Db.try('the daily summary was posted, but the day could not be kept by the store (%s): a restart '
+        .. 'today may post it again', deps.storage.writeStaffMeta, DAY_META, day)
     pcall(deps.audit.staff, 'daily_summary_posted', nil, nil, { day = day })
     return true
 end

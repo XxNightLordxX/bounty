@@ -46,6 +46,8 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Text = CrimsonBoot.requireShared('text')
+local Geo = CrimsonBoot.requireShared('geo')
 
 local Disposal = {}
 
@@ -157,17 +159,11 @@ local function Say(key, text)
     Log.always(text)
 end
 
-local function Finite(v)
-    v = tonumber(v)
-    if not v or v ~= v or v == math.huge or v == -math.huge then return nil end
-    return v
-end
-
 local function Point(v)
     if type(v) ~= 'table' then return nil end
-    local x, y, z = Finite(v.x), Finite(v.y), Finite(v.z)
+    local x, y, z = Geo.finite(v.x), Geo.finite(v.y), Geo.finite(v.z)
     if not x or not y or not z then return nil end
-    return { x = x, y = y, z = z, h = Finite(v.h or v.heading) or 0.0 }
+    return { x = x, y = y, z = z, h = Geo.finite(v.h or v.heading) or 0.0 }
 end
 
 local function Dist2(a, b)
@@ -980,7 +976,6 @@ local function AddOps(panel)
     if not (panel and panel.extend and panel.LEVELS) then return end
     local READ, WRITE = panel.LEVELS.READ, panel.LEVELS.WRITE
     local function staffCid(src) return panel.staffOf and panel.staffOf(src) or ('player ' .. tostring(src)) end
-    local function str(v, max) return type(v) == 'string' and #v <= max and v or nil end
     Disposal.OPS = {
         disposalList = READ, disposalSkip = WRITE, disposalRespawn = WRITE,
         disposalSpotSet = WRITE, disposalSpotClear = WRITE, disposalMyPosition = READ,
@@ -1000,12 +995,12 @@ local function AddOps(panel)
             limitSeconds = LimitSeconds(), onTimeout = Cfg().OnTimeout or 'pay' }
     end)
     panel.extend('disposalSkip', WRITE, function(src, data)
-        local ok, err = Disposal.skip(staffCid(src), str(data.id, 64))
+        local ok, err = Disposal.skip(staffCid(src), Text.field(data.id, 64))
         if not ok then return false, err, 'No disposal step by that id.' end
         return true, nil, 'Finished: the payout is being handed over.'
     end)
     panel.extend('disposalRespawn', WRITE, function(src, data)
-        local ok, err = Disposal.respawn(staffCid(src), str(data.id, 64))
+        local ok, err = Disposal.respawn(staffCid(src), Text.field(data.id, 64))
         if not ok then
             return false, err, err == 'away' and 'The hitman is not in the city: the vehicle is made when they are back.'
                 or err == 'no_spot' and 'The vehicle could not be made: set the spawn spot and check the model.'
@@ -1014,7 +1009,7 @@ local function AddOps(panel)
         return true, nil, 'The vehicle is back at the spawn spot.'
     end)
     panel.extend('disposalSpotSet', WRITE, function(src, data)
-        local name = str(data.spot, 8)
+        local name = Text.field(data.spot, 8)
         local at
         if data.here == true then
             at = PositionOf(src)
@@ -1031,7 +1026,7 @@ local function AddOps(panel)
         return true, nil, 'Spot saved.', point
     end)
     panel.extend('disposalSpotClear', WRITE, function(src, data)
-        local ok, err = Disposal.clearSpot(staffCid(src), str(data.spot, 8))
+        local ok, err = Disposal.clearSpot(staffCid(src), Text.field(data.spot, 8))
         if not ok then return false, err, 'Give the spot: vehicle or drop.' end
         return true, nil, 'Spot cleared.'
     end)

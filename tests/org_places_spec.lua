@@ -281,6 +281,9 @@ describe('client/org.lua', function()
             GetCurrentResourceName = function() return 'crimson-hitman' end,
             CreateThread = function(fn) t.threads[#t.threads + 1] = coroutine.create(fn) end,
         }, { __index = _G })
+        -- As the manifest loads them: CrimsonGeo and CrimsonNpc before client/org.lua.
+        assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
+        assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
         t.mod = assert(loadfile('crimson-hitman/client/org.lua', 't', env))()
         function t.step(i)
             local ok, ms = coroutine.resume(t.threads[i])

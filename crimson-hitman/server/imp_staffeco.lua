@@ -5,7 +5,6 @@
 --- imp_weekly.lua, and for Config.Limits.TargetCooldownAfterCompletionSeconds.
 
 local Util = CrimsonBoot.requireShared('util')
-local Log = CrimsonBoot.requireShared('log')
 
 local Imp = {}
 
@@ -127,13 +126,5 @@ function Imp.completionCooldown()
     return math.floor(value)
 end
 
---- Log a third-party call that raised, once a minute per name.
-local saidAt = {}
-function Imp.raised(what, err)
-    local now = os.time()
-    if saidAt[what] and now - saidAt[what] < 60 then return end
-    saidAt[what] = now
-    Log.problem(('%s raised: %s'):format(what, tostring(err)))
-end
 
 return Imp

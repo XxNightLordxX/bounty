@@ -22,13 +22,13 @@
 --- scrub every alert goes through). Never a name, never which contract.
 
 local Log = CrimsonBoot.requireShared('log')
+local Window = CrimsonBoot.require('server.lib.window')
 
 local Thresholds = {}
 
 --- The windows, in seconds.
 Thresholds.HOUR, Thresholds.DAY, Thresholds.TEN_MINUTES = 3600, 86400, 600
 
-local books = { placed = {}, target = {}, refused = {} }   -- [kind] = { [cid] = { times = integer[], alertedAt = integer|nil } }
 
 local RULES = {
     placed = { setting = 'AlertPlacedPerHour', window = Thresholds.HOUR,
@@ -42,10 +42,20 @@ local RULES = {
                     .. '(more than %d, Staff.AlertRefusalsPer10Min)' },
 }
 
+--- One window per kind (Window.new), each entry { times, alertedAt|nil }.
+local books
+
+local function freshBooks()
+    local out = {}
+    for kind, rule in pairs(RULES) do out[kind] = Window.new(rule.window) end
+    return out
+end
+books = freshBooks()
+
 ---@param deps table|nil { audit }
 function Thresholds.init(deps)
     local _ = deps
-    books = { placed = {}, target = {}, refused = {} }
+    books = freshBooks()
 end
 
 local function limitOf(rule)
@@ -65,24 +75,14 @@ local function count(kind, cid)
     if limit == 0 then return false end
     local now = os.time()
     local book = books[kind]
-    local entry = book[cid]
-    if not entry then
-        entry = { times = {} }
-        book[cid] = entry
-    end
     -- Only the ones still inside the window, and never more than one past
     -- the threshold: that is all a verdict needs.
-    local kept = {}
-    for i = 1, #entry.times do
-        if now - entry.times[i] < rule.window then kept[#kept + 1] = entry.times[i] end
-    end
-    kept[#kept + 1] = now
-    while #kept > limit + 1 do table.remove(kept, 1) end
-    entry.times = kept
-    if #kept <= limit then return false end
+    local n = book.add(cid, now, limit + 1)
+    if n <= limit then return false end
+    local entry = book.get(cid)
     if entry.alertedAt and now - entry.alertedAt < rule.window then return false end
     entry.alertedAt = now
-    Log.always(rule.text:format(cid, #kept, limit))
+    Log.always(rule.text:format(cid, n, limit))
     return true
 end
 
@@ -107,14 +107,9 @@ function Thresholds.sweep()
     local now, dropped = os.time(), 0
     for kind, book in pairs(books) do
         local window = RULES[kind].window
-        for cid, entry in pairs(book) do
-            local newest = entry.times[#entry.times]
-            if (not newest or now - newest >= window)
-                and (not entry.alertedAt or now - entry.alertedAt >= window) then
-                book[cid] = nil
-                dropped = dropped + 1
-            end
-        end
+        dropped = dropped + book.sweep(now, function(entry)
+            return entry.alertedAt ~= nil and now - entry.alertedAt < window
+        end)
     end
     return dropped
 end

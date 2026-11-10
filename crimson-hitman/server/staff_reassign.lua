@@ -332,11 +332,6 @@ local function said(err, detail)
     return base or ('Not reassigned: their Accept was refused (' .. tostring(err) .. ').')
 end
 
-local function staffOf(src)
-    local actor = deps.identity.resolve(src)
-    return { cid = actor and actor.cid or deps.panel.staffOf(src), name = actor and actor.name or nil, source = src }
-end
-
 local function subjectOf(src, data)
     if data.ref == nil then
         return nil, CH.ERR.INVALID_INPUT, 'Look the hitman up under Players first, then reassign from the lookup.'
@@ -421,7 +416,7 @@ local function opReassign(src, data)
     end
     local subject, subjectErr, message = subjectOf(src, data)
     if not subject then return false, subjectErr, message end
-    local ok, err, detail = StaffReassign.reassign(staffOf(src), id, subject,
+    local ok, err, detail = StaffReassign.reassign(deps.panel.staffActor(src), id, subject,
         { reason = reason, block = data.block, returnStake = data.returnStake == true,
           identity = identity })
     if not ok then

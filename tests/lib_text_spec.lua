@@ -1,0 +1,35 @@
+--- Cleaning typed text (shared/text.lua): staff reasons and request
+--- fields, over Util.sanitizeText.
+
+local Text = require('crimson-hitman.shared.text')
+
+describe('Text: reasons and fields', function()
+    it('keeps a staff reason to one clean line', function()
+        eq(Text.reason('  griefing\n\tin the  bank  '), 'griefing in the bank')
+        eq(Text.reason(''), nil, 'nothing is no reason')
+        eq(Text.reason('   '), nil)
+        eq(Text.reason(nil), nil)
+        eq(Text.reason(42), nil, 'not a string')
+        eq(Text.reason({}), nil)
+    end)
+
+    it('cuts a reason at Text.REASON_MAX characters, never through one', function()
+        eq(Text.REASON_MAX, 120)
+        local long = ('a'):rep(200)
+        eq(#Text.reason(long), 120)
+        local polish = ('ż'):rep(200)
+        local cut = Text.reason(polish)
+        eq(utf8.len(cut), 120, 'counted in characters, not bytes')
+        truthy(utf8.len(cut) ~= nil, 'still valid UTF-8')
+        eq(#Text.reason(long, 10), 10, 'or at the most the caller gives')
+    end)
+
+    it('takes a field as sent when it fits, and refuses it otherwise', function()
+        eq(Text.field('spot1', 8), 'spot1')
+        eq(Text.field('12345678', 8), '12345678', 'exactly the most')
+        eq(Text.field('123456789', 8), nil, 'too long is refused, never cut')
+        eq(Text.field(5, 8), nil, 'not a string')
+        eq(Text.field(nil, 8), nil)
+        eq(Text.field('', 8), '', 'empty is a string that fits')
+    end)
+end)

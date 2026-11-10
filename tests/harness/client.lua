@@ -292,9 +292,14 @@ function Client.boot(opts)
     end
 
     -- The shared files the manifest loads before the client's own, which
-    -- publish CrimsonUtil and CrimsonLog.
+    -- publish CrimsonUtil, CrimsonGeo and CrimsonLog.
     require('crimson-hitman.shared.util')
+    require('crimson-hitman.shared.geo')
     require('crimson-hitman.shared.log')
+    -- CrimsonNpc: the step markers ask it whether ox_target is up (the
+    -- manifest lists client/npc.lua later; the markers ask only at run time).
+    package.loaded['crimson-hitman.client.npc'] = nil
+    require('crimson-hitman.client.npc')
 
     -- The step markers first, as the manifest lists them: client/main.lua
     -- draws the tip and the meeting point through CrimsonMarkers.

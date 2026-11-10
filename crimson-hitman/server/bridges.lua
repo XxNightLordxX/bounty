@@ -7,6 +7,8 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
+local Lifecycle = CrimsonBoot.require('server.lib.lifecycle')
+local Words = CrimsonBoot.requireShared('words')
 
 local Bridges = {}
 
@@ -82,6 +84,71 @@ function Bridges.onPlayerReady(modules, src)
     return delivered
 end
 
+--- What each module forgets of a player who leaves, in this order
+--- (Lifecycle.run): their session, their time in the city counted up to now
+--- (Playtime.leave), their rate limits, then each module's per-player state.
+local ON_PLAYER_LEFT = {
+    { 'identity', 'endSession' },
+    { 'playtime', 'leave' },
+    { 'ratelimit', 'clear' },
+    { 'death', 'clearPlayer' },
+    { 'photo', 'clearPlayer' },
+    { 'kidnap', 'clearPlayer' },
+    { 'notify', 'clearPlayer' },
+    { 'comms', 'clearPlayer' },
+    { 'mugshot', 'clearPlayer' },
+    { 'informant', 'clearPlayer' },
+    { 'app', 'clearPlayerHandles' },
+    -- Their game took its own meeting point markers off; drawn again on
+    -- their return (Meeting.reshow).
+    { 'meeting', 'forget' },
+    -- And their step markers; a disposal vehicle of theirs goes, made again
+    -- when they are back (server/missionsteps.lua, server/disposal.lua).
+    { 'missionSteps', 'forget' },
+    { 'disposal', 'playerLeft' },
+}
+
+--- Per-contract caches in modules that contracts.lua cannot see, released
+--- when a contract resolves (Contracts.onResolved).
+local ON_CONTRACT_RESOLVED = {
+    { 'informant', 'clearContract' },
+    { 'comms', 'clearContract' },
+    { 'death', 'clearProximity' },
+    -- Kidnap was missing from this list. An armed handover on a contract
+    -- that then cancelled, expired, or was completed by somebody else
+    -- stayed in memory for the life of the process: it holds one of
+    -- Config.Kidnap.MaxConcurrentCountdowns and keeps the tick thread
+    -- running. Fill the cap that way and live delivery stops working for
+    -- everybody on the server, refused as limit_reached, until a restart.
+    { 'kidnap', 'clearContract' },
+    -- And the kills pending on it and the photo tokens they minted: nothing
+    -- can claim them now, and one pending past a staff void went on minting
+    -- tokens for a contract that was over.
+    { 'death', 'clearContract' },
+    { 'photo', 'forgetContract' },
+    -- And every informant tip on it, off its buyer's map, with its records.
+    { 'locationTip', 'clearContract' },
+    -- And the meeting point's marker, off every party's map.
+    { 'meeting', 'sync' },
+}
+
+--- What goes when a hitman is no longer on a contract
+--- (Contracts.onHitmanLeft), called with (contractId, hitmanCid, reason).
+local ON_HITMAN_LEFT = {
+    -- No handover on it either.
+    { 'kidnap', 'cancel' },
+    -- And the proof of a kill made during the stint that just ended. A
+    -- hitman may now take the contract up again, and a kill or a photo token
+    -- from before they walked away is not something the new stint earned.
+    { 'death', 'clearPending' },
+    { 'photo', 'forget' },
+    -- And the handles that stood for their thread on it.
+    { 'comms', 'clearHitman' },
+    -- And their informant tip on it, off their map. Its record stays, so
+    -- coming back resets neither the wait nor the most per contract.
+    { 'locationTip', 'hitmanLeft' },
+}
+
 --- Release per-player state when someone disconnects.
 ---
 --- Identity is resolved from a citizen id captured while they were still
@@ -103,25 +170,7 @@ function Bridges.onPlayerDropped(modules, cid)
         pcall(modules.kidnap.partyDropped, cid)
     end
 
-    modules.identity.endSession(cid)
-    -- Their time in the city counted up to now (Playtime.leave).
-    if modules.playtime then modules.playtime.leave(cid) end
-    modules.ratelimit.clear(cid)
-    modules.death.clearPlayer(cid)
-    modules.photo.clearPlayer(cid)
-    modules.kidnap.clearPlayer(cid)
-    modules.notify.clearPlayer(cid)
-    modules.comms.clearPlayer(cid)
-    modules.mugshot.clearPlayer(cid)
-    modules.informant.clearPlayer(cid)
-    modules.app.clearPlayerHandles(cid)
-    -- Their game took its own meeting point markers off; drawn again on
-    -- their return (Meeting.reshow).
-    if modules.meeting and modules.meeting.forget then modules.meeting.forget(cid) end
-    -- And their step markers; a disposal vehicle of theirs goes, made again
-    -- when they are back (server/missionsteps.lua, server/disposal.lua).
-    if modules.missionSteps then modules.missionSteps.forget(cid) end
-    if modules.disposal then pcall(modules.disposal.playerLeft, cid) end
+    Lifecycle.run('a player leaving', modules, ON_PLAYER_LEFT, cid)
 
     -- Memory mode holds no durable escrow, so a creator disconnecting would
     -- strand it. Refund and close rather than risk losing their property.
@@ -175,26 +224,7 @@ function Bridges.install(modules)
     -- Per-contract caches in modules that contracts.lua cannot see are
     -- released through this hook when a contract resolves.
     modules.contracts.onResolved = function(contractId)
-        modules.informant.clearContract(contractId)
-        modules.comms.clearContract(contractId)
-        modules.death.clearProximity(contractId)
-        -- Kidnap was missing from this list. An armed handover on a contract
-        -- that then cancelled, expired, or was completed by somebody else
-        -- stayed in memory for the life of the process: it holds one of
-        -- Config.Kidnap.MaxConcurrentCountdowns and keeps the tick thread
-        -- running. Fill the cap that way and live delivery stops working for
-        -- everybody on the server, refused as limit_reached, until a
-        -- restart.
-        modules.kidnap.clearContract(contractId)
-        -- And the kills pending on it and the photo tokens they minted:
-        -- nothing can claim them now, and one pending past a staff void went
-        -- on minting tokens for a contract that was over.
-        if modules.death.clearContract then modules.death.clearContract(contractId) end
-        if modules.photo.forgetContract then modules.photo.forgetContract(contractId) end
-        -- And every informant tip on it, off its buyer's map, with its records.
-        if modules.locationTip then modules.locationTip.clearContract(contractId) end
-        -- And the meeting point's marker, off every party's map.
-        if modules.meeting and modules.meeting.sync then modules.meeting.sync(contractId) end
+        Lifecycle.run('a contract ending', modules, ON_CONTRACT_RESOLVED, contractId)
     end
 
     --- A hitman who is no longer on a contract has no handover on it either.
@@ -203,20 +233,7 @@ function Bridges.install(modules)
     --- contracts.lua does not know about the kidnap module and should not
     --- start to. Kidnap.cancel existed for this and had no caller.
     modules.contracts.onHitmanLeft = function(contractId, hitmanCid, reason)
-        modules.kidnap.cancel(contractId, hitmanCid, reason)
-        -- And the proof of a kill made during the stint that just ended. A
-        -- hitman may now take the contract up again, and a kill or a photo
-        -- token from before they walked away is not something the new stint
-        -- earned.
-        modules.death.clearPending(contractId, hitmanCid)
-        modules.photo.forget(contractId, hitmanCid)
-        -- And the handles that stood for their thread on it.
-        if modules.comms and modules.comms.clearHitman then
-            modules.comms.clearHitman(contractId, hitmanCid)
-        end
-        -- And their informant tip on it, off their map. Its record stays, so
-        -- coming back resets neither the wait nor the most per contract.
-        if modules.locationTip then modules.locationTip.hitmanLeft(contractId, hitmanCid) end
+        Lifecycle.run('a hitman leaving a contract', modules, ON_HITMAN_LEFT, contractId, hitmanCid, reason)
         -- And the meeting point's marker off their map, and off the placer's
         -- where nobody is coming any more.
         if modules.meeting and modules.meeting.sync then modules.meeting.sync(contractId) end
@@ -1615,23 +1632,6 @@ end
 -- The players' buyout command
 --------------------------------------------------------------------------
 
---- A wait in the words the app uses for one (ui/app.js, retryIn).
----@param seconds number
----@return string
-local function waitWords(seconds)
-    local s = math.ceil(tonumber(seconds) or 0)
-    if not (s > 0) then return 'in a moment' end
-    if s < 60 then return ('in %d second%s'):format(s, s == 1 and '' or 's') end
-    local m = math.ceil(s / 60)
-    return ('in about %d minute%s'):format(m, m == 1 and '' or 's')
-end
-
---- Dollars as the app writes them: $15,000.
-local function dollars(amount)
-    local digits = tostring(math.floor(math.abs(tonumber(amount) or 0)))
-    return '$' .. digits:reverse():gsub('(%d%d%d)', '%1,'):reverse():gsub('^,', '')
-end
-
 --- What /cleanse says for each refusal, in the words the app's buyout
 --- uses, since the app may be closed to the player running it.
 local STILL_A_TARGET = 'You are still a target until it closes; if a hitman finishes first, '
@@ -1741,13 +1741,13 @@ function Bridges.installBuyoutCommand(modules)
         for i = 1, #shown do
             local entry, how = shown[i], nil
             if entry.queued then
-                how = ('%s  paid; you are still a target until it closes'):format(dollars(entry.amount))
+                how = ('%s  paid; you are still a target until it closes'):format(Words.dollars(entry.amount, 'none'))
             elseif entry.amount <= 0 then
                 how = 'no buyout offered'
             elseif not buyouts then
                 how = 'buyouts are off'
             else
-                how = dollars(entry.amount)
+                how = Words.dollars(entry.amount, 'none')
                 buyable = buyable + 1
                 if actor then quote(actor.cid, entry.id, entry.amount) end
             end
@@ -1795,7 +1795,7 @@ function Bridges.installBuyoutCommand(modules)
         -- exactly what it said was refused as "Slow down."
         local function slowDown(bucket)
             local wait = modules.ratelimit.retryAfter(actor, bucket) or 0
-            return answer(src, wait > 0 and ('Slow down. Try again %s.'):format(waitWords(wait))
+            return answer(src, wait > 0 and ('Slow down. Try again %s.'):format(Words.inAbout(wait))
                 or 'Slow down.')
         end
         if not modules.ratelimit.check(actor, 'load') then return slowDown('load') end
@@ -1849,13 +1849,13 @@ function Bridges.installBuyoutCommand(modules)
         local function priceNow(amount, before)
             quote(actor.cid, id, amount)
             return answer(src, ('%s The buyout on %s is %s now. Run /%s %s again within %d minutes to pay '
-                .. 'it, or /%s %s %d.'):format(before, id, dollars(amount), cmd, id,
+                .. 'it, or /%s %s %d.'):format(before, id, Words.dollars(amount, 'none'), cmd, id,
                     QUOTE_SECONDS // 60, cmd, id, amount))
         end
         if agreed == nil then return priceNow(listed.amount, 'Nothing was bought yet.') end
         if agreed ~= listed.amount then
             return priceNow(listed.amount, ('Nothing was bought: the price changed from %s.')
-                :format(dollars(agreed)))
+                :format(Words.dollars(agreed, 'none')))
         end
 
         if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
@@ -1890,11 +1890,11 @@ function Bridges.installBuyoutCommand(modules)
             modules.ratelimit.refund(actor, 'bailout')
             if err == CH.ERR.INSUFFICIENT and type(third) == 'table' and tonumber(third.need) then
                 return answer(src, ('Could not buy it out: your bank or your cash has to cover the '
-                    .. 'full %s on its own; it is never split.'):format(dollars(third.need)))
+                    .. 'full %s on its own; it is never split.'):format(Words.dollars(third.need, 'none')))
             end
             if err == CH.ERR.TERMS_CHANGED and type(third) == 'table' and tonumber(third.amount) then
                 return priceNow(tonumber(third.amount), ('Nothing was bought: the price changed from %s.')
-                    :format(dollars(agreed)))
+                    :format(Words.dollars(agreed, 'none')))
             end
             -- Put on hold by staff after the charge: the premium came back.
             if err == CH.ERR.CONTRACT_FROZEN and type(third) == 'table' and third.refunded then
@@ -1909,7 +1909,7 @@ function Bridges.installBuyoutCommand(modules)
         -- walking into the open thinking they are safe.
         if third == true then
             local delay = tonumber(Config.Bailout.ProcessingDelaySeconds) or 0
-            local wait = delay < 60 and 'in under a minute' or waitWords(delay)
+            local wait = delay < 60 and 'in under a minute' or Words.inAbout(delay)
             return answer(src, ('Paid. It closes %s. You are still a target until then; if a '
                 .. 'hitman finishes first, your money comes back. %s'):format(wait, NOT_THE_LAST))
         end

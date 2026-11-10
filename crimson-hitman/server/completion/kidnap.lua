@@ -6,6 +6,8 @@
 --- reports nothing.
 
 local Util = CrimsonBoot.requireShared('util')
+local Geo = CrimsonBoot.requireShared('geo')
+local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 
 local Kidnap = {}
@@ -43,17 +45,6 @@ function Kidnap.declinesUsed(contractId)
 end
 
 local function key(contractId, hitmanCid) return contractId .. ':' .. hitmanCid end
-
---- A handover radius in the words a player reads: "12", not "12.0", and
---- Config.Kidnap.Radius when none is given. Every notice that says how close
---- the person who placed the contract has to be says it from the config.
----@param radius number|nil
----@return string
-local function metres(radius)
-    local r = tonumber(radius) or tonumber(Config.Kidnap.Radius) or 0
-    if r > -1e9 and r < 1e9 and r == math.floor(r) then return ('%d'):format(math.floor(r)) end
-    return ('%.1f'):format(r)
-end
 
 --- A player's routing bucket, or nil when the server cannot say: nil is
 --- never anybody's bucket, so an unanswered read refuses rather than
@@ -173,13 +164,13 @@ function Kidnap.conditionsMet(contract, hitman, target, creator, radius)
     local hitmanCoords = GetEntityCoords(GetPlayerPed(hitman.source))
     local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
 
-    if Util.dist2(hitmanCoords, targetCoords) > r2 then return false, 'target_too_far' end
+    if Geo.dist2(hitmanCoords, targetCoords) > r2 then return false, 'target_too_far' end
     if not creator then return false, 'creator_too_far' end
     if bucketOf(creator.source) ~= hitmanBucket then return false, 'creator_too_far' end
 
     local creatorCoords = GetEntityCoords(GetPlayerPed(creator.source))
-    if Util.dist2(hitmanCoords, creatorCoords) > r2 then return false, 'creator_too_far' end
-    if Util.dist2(targetCoords, creatorCoords) > r2 then return false, 'creator_too_far' end
+    if Geo.dist2(hitmanCoords, creatorCoords) > r2 then return false, 'creator_too_far' end
+    if Geo.dist2(targetCoords, creatorCoords) > r2 then return false, 'creator_too_far' end
 
     return true
 end
@@ -314,7 +305,7 @@ function Kidnap.arm(contractId, hitmanCid)
     Notify.toCitizen(contract.creator_cid, 'Handover starting',
         ('A hitman has brought your target to you for the handover. Stay where you '
             .. 'are, within %s m of them both, for %d seconds.%s')
-            :format(metres(radius), tonumber(Config.Kidnap.CountdownSeconds) or 0,
+            :format(Words.metres(tonumber(radius) or Config.Kidnap.Radius), tonumber(Config.Kidnap.CountdownSeconds) or 0,
                 Config.Kidnap.PlacerConfirms == true and (' Then tap Confirm handover on your '
                     .. 'contract under Mine to release the payment.') or ''))
     -- And their card, which counts it down (Projection: handoverLeft).
@@ -402,7 +393,7 @@ local function tellPlacerStopped(state)
     pcall(Notify.toCitizen, state.creatorCid, 'Handover stopped',
         ('The handover did not finish, so your contract is still open and the hitman can try '
             .. 'again. For it to count, stay within %s m of them both for the whole %d seconds.')
-            :format(metres(state.radius), tonumber(Config.Kidnap.CountdownSeconds) or 0),
+            :format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius), tonumber(Config.Kidnap.CountdownSeconds) or 0),
         { bypassBudget = true })
 end
 
@@ -600,11 +591,11 @@ function Kidnap.tick(deltaMs)
                         elseif reason == 'party_offline' and not creatorActor then
                             why = ('The person who placed this contract went offline before '
                                 .. 'the handover finished. They have to be online and within '
-                                .. '%s m of you and the target for it.'):format(metres(state.radius))
+                                .. '%s m of you and the target for it.'):format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius))
                         elseif reason == 'creator_too_far' then
                             why = ('The person who placed this contract did not arrive in '
                                 .. 'time. They have to be online and within %s m of you and '
-                                .. 'the target for the whole handover.'):format(metres(state.radius))
+                                .. 'the target for the whole handover.'):format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius))
                         elseif reason == 'target_not_conscious' then
                             why = 'The target went down before the handover finished. '
                                 .. 'A handover has to be alive.'

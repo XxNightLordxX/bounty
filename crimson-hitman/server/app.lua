@@ -6,6 +6,7 @@
 --- from its payload, and none of them is reachable without passing the gate.
 
 local Util = CrimsonBoot.requireShared('util')
+local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 
 local App = {}
@@ -993,7 +994,7 @@ function App.register()
                 if nearby then
                     local theirPed = GetPlayerPed(candidate.source)
                     if nearbyNameable(candidate.source, theirPed, bucket) then
-                        local metres = math.sqrt(Util.dist2(origin, GetEntityCoords(theirPed)))
+                        local metres = math.sqrt(Geo.dist2(origin, GetEntityCoords(theirPed)))
                         if metres <= Config.Targeting.NearbyRadius then
                             found[#found + 1] = { actor = candidate,
                                 band = math.floor(metres / NEARBY_BAND) + 1 }

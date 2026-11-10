@@ -36,6 +36,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Geo = CrimsonBoot.requireShared('geo')
 
 local Funds = {}
 
@@ -146,8 +147,8 @@ end
 ---@return integer|nil
 function Funds.amount(value)
     if type(value) ~= 'number' and type(value) ~= 'string' then return nil end
-    local n = tonumber(value)
-    if not n or n ~= n or n == math.huge or n == -math.huge then return nil end
+    local n = Geo.finite(value)
+    if not n then return nil end
     if n ~= math.floor(n) or n <= 0 or n > 2000000000 then return nil end
     return math.floor(n)
 end

@@ -24,6 +24,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Lock = CrimsonBoot.require('server.lib.lock')
 
 local Settings = {}
 
@@ -2319,19 +2320,9 @@ end
 --- each fine beside what was in force, both passed, and the server ran on a
 --- pair the start-up checks call fatal, which the next start then dropped
 --- one of. The second is refused as busy, and staff ask again.
-local saving = false
-
---- Run one change, or refuse it while another is being saved.
-local function oneAtATime(fn, ...)
-    if saving then
-        return false, CH.ERR.BUSY, 'another change to the settings is being saved'
-    end
-    saving = true
-    local ran, ok, err, detail = pcall(fn, ...)
-    saving = false
-    if not ran then error(ok, 0) end
-    return ok, err, detail
-end
+--- One key for every change (Lock), so only one runs at a time.
+local SaveLock = Lock.new({ busy = function() return 'another change to the settings is being saved' end })
+local SAVING = 'settings'
 
 --- Moved by every init: what each catalogue entry says of itself, and the
 --- defaults read here, are fixed until the next (Settings.schemaVersion).
@@ -2349,7 +2340,7 @@ function Settings.init(deps)
     schemaVersion = schemaVersion + 1
     Storage, Audit, Check = deps.storage, deps.audit, deps.check
     overrides, ignored, unknown, nextStart = {}, {}, {}, {}
-    saving = false
+    SaveLock.reset()
     -- What config.lua says, as the start-up checks left it. Taken here so a
     -- stack that never boots still knows what a reset puts back.
     defaults = {}
@@ -2511,7 +2502,7 @@ end
 ---@return string|nil err also 'busy' while another change is being saved
 ---@return any detail the reason, or { key, value, old, source } on success
 function Settings.set(key, raw, staff, actorCid)
-    return oneAtATime(setKey, key, raw, staff, actorCid)
+    return SaveLock.run(SAVING, setKey, key, raw, staff, actorCid)
 end
 
 --- One key back to what config.lua says. A key read-only now whose stored
@@ -2563,7 +2554,7 @@ end
 --- 'store_failed' | 'busy'
 ---@return any detail
 function Settings.reset(key, staff, actorCid)
-    return oneAtATime(resetKey, key, staff, actorCid)
+    return SaveLock.run(SAVING, resetKey, key, staff, actorCid)
 end
 
 local function resetEvery(staff, actorCid)
@@ -2630,7 +2621,7 @@ end
 ---@return string|nil err 'store_failed' | 'busy'
 ---@return any detail { keys = n }
 function Settings.resetAll(staff, actorCid)
-    return oneAtATime(resetEvery, staff, actorCid)
+    return SaveLock.run(SAVING, resetEvery, staff, actorCid)
 end
 
 --------------------------------------------------------------------------

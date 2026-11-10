@@ -33,6 +33,8 @@
 --- target, bystanders and staff who are not a party are never sent it.
 
 local Util = CrimsonBoot.requireShared('util')
+local Geo = CrimsonBoot.requireShared('geo')
+local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 
 local Meeting = {}
@@ -90,16 +92,6 @@ local function activeHitmen(contractId)
     return out
 end
 
---- A coordinate from the client: a finite number, or nil.
----@return number|nil
-local function finite(value)
-    if type(value) ~= 'number' or value ~= value
-        or value == math.huge or value == -math.huge then
-        return nil
-    end
-    return value
-end
-
 --- Whether a point is on the map (Meeting.BOUNDS).
 local function onMap(x, y, z)
     local b = Meeting.BOUNDS
@@ -120,7 +112,7 @@ local function standsAt(actor, point)
         if not ped or ped == 0 then return false end
         local coords = GetEntityCoords(ped)
         return coords ~= nil and tonumber(coords.x) ~= nil
-            and Util.dist2(coords, point) <= Meeting.TOLERANCE * Meeting.TOLERANCE
+            and Geo.dist2(coords, point) <= Meeting.TOLERANCE * Meeting.TOLERANCE
     end)
     return ok and near == true
 end
@@ -155,13 +147,6 @@ end
 -- What each side does, in words
 --------------------------------------------------------------------------
 
---- Metres as a player reads them: "12", not "12.0".
-local function metres()
-    local r = tonumber(Config.Kidnap and Config.Kidnap.Radius) or 0
-    if r == math.floor(r) then return ('%d'):format(math.floor(r)) end
-    return ('%.1f'):format(r)
-end
-
 --- What a party does to finish a live handover at the meeting point, in the
 --- app's own words (its button is Deliver alive, the contract is under
 --- Mine): the placer stands there and keeps still, and taps nothing (the
@@ -185,18 +170,18 @@ function Meeting.steps(role)
                 .. 'target, stay within %s m of them both and keep still while the hitman taps '
                 .. 'Deliver alive: the hold takes %s. Then, on your contract under Mine, tap Confirm '
                 .. 'handover (twice) within %d seconds to release the payment; nothing is paid '
-                .. 'until you do.'):format(metres(), hold, window)
+                .. 'until you do.'):format(Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold, window)
         end
         return ('Be at the meeting point marked on your map. When the hitman arrives with the '
             .. 'target, stay within %s m of them both and keep still while the hitman taps '
             .. 'Deliver alive: the handover takes %s. Open the app on your phone to follow it '
-            .. 'on your contract under Mine; you have nothing to tap.'):format(metres(), hold)
+            .. 'on your contract under Mine; you have nothing to tap.'):format(Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold)
     end
     return ('Bring the target alive to the meeting point marked on your map%s. Get within %s m '
         .. 'of the person who placed the contract, open the app on your phone, tap Deliver '
         .. 'alive on the contract under Mine and hold for %s.%s Killing the target does not '
         .. 'count.'):format(kidnap.RequireCoercion and ', cuffed or in your vehicle' or '',
-        metres(), hold, confirms and ' Then the person who placed it confirms the handover, '
+        Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold, confirms and ' Then the person who placed it confirms the handover, '
             .. 'and it pays once they do.' or '')
 end
 
@@ -240,23 +225,17 @@ local function partiesOf(contract)
     return want
 end
 
---- This player's game, if they are in the city.
-local function sourceOf(cid)
-    local actor = Identity and Identity.byCitizenId(cid)
-    return actor and actor.source or nil
-end
-
 --- Draw the marker on one party's map: the contract id and the point, to
 --- their game alone.
 local function draw(cid, contractId, x, y)
-    local game = sourceOf(cid)
+    local game = Identity and Identity.sourceOf(cid)
     if not game then return false end
     TriggerClientEvent('crimson-hitman:meetingBlip', game, { id = contractId, x = x, y = y })
     return true
 end
 
 local function erase(cid, contractId)
-    local game = sourceOf(cid)
+    local game = Identity and Identity.sourceOf(cid)
     if not game then return end
     TriggerClientEvent('crimson-hitman:meetingBlipClear', game, { id = contractId })
 end
@@ -388,7 +367,7 @@ end
 function Meeting.set(actor, payload)
     if not Meeting.enabled() then return false, CH.ERR.FEATURE_OFF end
     local id = Util.toId(payload.id)
-    local x, y, z = finite(payload.x), finite(payload.y), finite(payload.z)
+    local x, y, z = Geo.finite(payload.x, true), Geo.finite(payload.y, true), Geo.finite(payload.z, true)
     if not id or not x or not y or not z then return false, CH.ERR.INVALID_INPUT end
 
     local contract = placedBy(actor, id)

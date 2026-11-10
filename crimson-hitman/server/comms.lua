@@ -5,6 +5,7 @@
 --- other participant; anonymity is enforced by what is *not* in the payload.
 
 local Util = CrimsonBoot.requireShared('util')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Log = CrimsonBoot.requireShared('log')
 
 local Comms = {}
@@ -25,13 +26,6 @@ local Comms = {}
 ---@param source integer
 ---@param text string
 ---@return boolean blocked
-local function phoneRefuses(source, text)
-    local ok, blocked = pcall(function()
-        return exports['lb-phone']:ContainsBlacklistedWord(source, text)
-    end)
-    return ok and blocked == true
-end
-
 local Storage, Identity, Audit, Notify, RateLimit
 
 --- Opaque thread handles issued to clients, so a citizen id never leaves the
@@ -223,7 +217,7 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     local body = Util.sanitizeText(rawBody, Config.Relay.MaxLength)
     if not body then return false, CH.ERR.MESSAGE_REFUSED, { empty = true } end
 
-    if phoneRefuses(actor.source, body) then
+    if Bridge.phoneRefuses(actor.source, body) then
         Audit.rejected('relay_blacklisted_word', actor.cid, contractId, {})
         return false, CH.ERR.MESSAGE_REFUSED
     end
@@ -701,13 +695,10 @@ end
 local maskingChecked, maskingOk = false, false
 function Comms.maskingAvailable()
     if maskingChecked then return maskingOk end
-    if GetResourceState('lb-phone') ~= 'started' then return false end
+    if not Bridge.started('lb-phone') then return false end
     maskingChecked = true
-    local ok, result = pcall(function()
-        local config = exports['lb-phone']:GetConfig()
-        return type(config) == 'table' and config.AnonymousCalls ~= false
-    end)
-    maskingOk = ok and result == true
+    local ok, config = Bridge.call('lb-phone', 'GetConfig')
+    maskingOk = ok and type(config) == 'table' and config.AnonymousCalls ~= false
     return maskingOk
 end
 

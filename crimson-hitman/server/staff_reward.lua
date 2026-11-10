@@ -334,11 +334,6 @@ end
 -- The panel's ops
 --------------------------------------------------------------------------
 
-local function staffOf(src)
-    local actor = deps.identity.resolve(src)
-    return { cid = actor and actor.cid or deps.panel.staffOf(src), name = actor and actor.name or nil, source = src }
-end
-
 local MESSAGES = {
     [CH.ERR.NOT_FOUND] = 'No contract has that id.',
     [CH.ERR.ALREADY_SETTLED] = 'It has ended, or every payout on it is collected.',
@@ -422,7 +417,7 @@ local function opChange(src, data)
     local reason = type(data.reason) == 'string' and Util.sanitizeText(data.reason, 120) or nil
     if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
 
-    local ok, err, detail = StaffReward.change(staffOf(src), id, by,
+    local ok, err, detail = StaffReward.change(deps.panel.staffActor(src), id, by,
         { from = from, account = account, reason = reason })
     if not ok then return refused(src, id, err, detail) end
     local said

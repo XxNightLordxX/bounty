@@ -5,7 +5,10 @@
 --- on one contract cannot both win.
 
 local Util = CrimsonBoot.requireShared('util')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+local Lock = CrimsonBoot.require('server.lib.lock')
 -- The completion cooldown (Config.Limits.TargetCooldownAfterCompletionSeconds).
 local Imp = CrimsonBoot.require('server.imp_staffeco')
 
@@ -171,27 +174,16 @@ Contracts.holds = holds
 --- says how long the oldest of them has been held: { heldMs }. A key held
 --- for seconds is a request waiting on a slow database, where "try again"
 --- at once meets the same key; the page words that case apart (failText).
---- Callers inside the resource compare only the code.
-local busy = {}
+--- Callers inside the resource compare only the code. One lock (Lock.new)
+--- for every contract, settle, hitman and tip key, so they wait on each
+--- other across modules.
+local ContractLock = Lock.new({ busy = function(heldMs) return { heldMs = heldMs } end })
 
 ---@param keys string[]
 ---@param fn function
 ---@return any ... or false, CH.ERR.BUSY, { heldMs = integer } while a key is held
 function Contracts.serialized(keys, fn, ...)
-    local oldest
-    for i = 1, #keys do
-        local since = busy[keys[i]]
-        if since and (not oldest or since < oldest) then oldest = since end
-    end
-    if oldest then
-        return false, CH.ERR.BUSY, { heldMs = math.max(0, Util.monotonicMs() - oldest) }
-    end
-    local now = Util.monotonicMs()
-    for i = 1, #keys do busy[keys[i]] = now end
-    local out = table.pack(pcall(fn, ...))
-    for i = 1, #keys do busy[keys[i]] = nil end
-    if not out[1] then error(out[2], 0) end
-    return table.unpack(out, 2, out.n)
+    return ContractLock.run(keys, fn, ...)
 end
 
 --- See Contracts.retryStuckJoins.
@@ -995,13 +987,6 @@ end
 ---@param source integer
 ---@param text string
 ---@return boolean blocked
-local function phoneRefuses(source, text)
-    local ok, blocked = pcall(function()
-        return exports['lb-phone']:ContainsBlacklistedWord(source, text)
-    end)
-    return ok and blocked == true
-end
-
 --- The buyout premium, against the escrow it is a multiple of.
 ---
 --- Clamped rather than rejected: a creator who types a silly number gets
@@ -1153,7 +1138,7 @@ local function reasonFor(actor, req)
     for _, pattern in ipairs(Config.Reason.PatternDenylist) do
         if reason:lower():find(pattern) then return nil, CH.ERR.REASON_REFUSED, { rule = 'pattern' } end
     end
-    if phoneRefuses(actor.source, reason) then
+    if Bridge.phoneRefuses(actor.source, reason) then
         return nil, CH.ERR.REASON_REFUSED, { rule = 'phone' }
     end
     -- And the roleplay rules on top, when on (server/rp_reason.lua,
@@ -3017,14 +3002,14 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
             .. 'on the board.'):format(target, minutes,
             why == 'no_attempt' and 'making an attempt on them' or 'going near them')
         .. (given > 0 and (' Your %s stake went to the person who placed it.')
-                :format(Notify.dollars(given))
+                :format(Words.dollars(given, 'before'))
             or ''),
         { bypassBudget = true }, contractId)
     Notify.tellOrKeep(contract.creator_cid, 'Contract back on the board',
         ('The operative holding your contract on %s was not working it, so %s'):format(target,
             remaining == 0 and 'it is back on the board.'
                 or 'their place on it is open to another operative.')
-        .. (given > 0 and (' Their %s stake is yours.'):format(Notify.dollars(given)) or ''),
+        .. (given > 0 and (' Their %s stake is yours.'):format(Words.dollars(given, 'before')) or ''),
         { bypassBudget = given > 0 }, contractId)
     others[#others + 1] = current.hitman_cid
     Notify.pushParties(Storage.readContract(contractId) or contract, others, 'released')

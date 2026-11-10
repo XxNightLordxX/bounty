@@ -54,18 +54,8 @@ local Gen = 0
 
 local MAX_KEY = 64
 
-local function Finite(v)
-    v = tonumber(v)
-    if not v or v ~= v or v == math.huge or v == -math.huge then return nil end
-    return v
-end
-
-local function TargetUp()
-    return GetResourceState('ox_target') == 'started'
-end
-
 local function RemoveZone(zone)
-    if zone and TargetUp() then pcall(function() exports.ox_target:removeZone(zone, true) end) end
+    if zone and CrimsonNpc.targetUp() then pcall(function() exports.ox_target:removeZone(zone, true) end) end
 end
 
 --- Take one marker off the map.
@@ -120,7 +110,7 @@ end
 
 local function AddZone(entry, spec)
     local action = ACTIONS[spec.act]
-    if not action or not entry.z or not TargetUp() or type(spec.ref) ~= 'string' then return end
+    if not action or not entry.z or not CrimsonNpc.targetUp() or type(spec.ref) ~= 'string' then return end
     local ref, act = spec.ref, spec.act
     local ok, zone = pcall(function()
         return exports.ox_target:addSphereZone({
@@ -143,10 +133,10 @@ end
 function CrimsonMarkers.set(key, spec)
     if type(key) ~= 'string' or #key == 0 or #key > MAX_KEY or type(spec) ~= 'table' then return false end
     local style = STYLES[spec.kind]
-    local x, y = Finite(spec.x), Finite(spec.y)
+    local x, y = CrimsonGeo.finite(spec.x), CrimsonGeo.finite(spec.y)
     if not style or not x or not y then return false end
-    local radius = Finite(spec.radius)
-    local seconds = Finite(spec.secondsLeft)
+    local radius = CrimsonGeo.finite(spec.radius)
+    local seconds = CrimsonGeo.finite(spec.secondsLeft)
     if style.area and (not radius or radius <= 0) then return false end
     if seconds ~= nil and seconds <= 0 then return false end
     CrimsonMarkers.remove(key)
@@ -168,7 +158,7 @@ function CrimsonMarkers.set(key, spec)
     blips[#blips + 1] = centre
 
     Gen = Gen + 1
-    local entry = { x = x, y = y, z = Finite(spec.z), blips = blips, gen = Gen }
+    local entry = { x = x, y = y, z = CrimsonGeo.finite(spec.z), blips = blips, gen = Gen }
     Drawn[key] = entry
     AddZone(entry, spec)
     -- Off by itself when its time runs out, should the server's word not

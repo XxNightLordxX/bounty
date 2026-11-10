@@ -51,6 +51,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Lock = CrimsonBoot.require('server.lib.lock')
 
 local Protection = {}
 
@@ -63,8 +64,9 @@ local jobs = {}
 local loaded = false
 
 --- Jobs being worked on right now (posting, taking, cancelling, paying),
---- so two requests never act on one at once. [id] = true
-local busy = {}
+--- so two requests never act on one at once, keyed by job id (and
+--- 'protection:' .. contractId while one is bought).
+local JobLock = Lock.new()
 
 --- How often settled jobs are looked at for removal, in seconds, and when
 --- that last ran (os.time()). See Protection.prune.
@@ -92,7 +94,8 @@ function Protection.init(deps)
     App, Informant = deps.app, deps.informant
     Review, Contracts = deps.review, deps.contracts
     Projection = deps.projection
-    jobs, busy, loaded = {}, {}, false
+    jobs, loaded = {}, false
+    JobLock.reset()
     prunedAt = 0
     -- Asked by Contracts' acceptance: a guard may not take a contract on
     -- the person they guard.
@@ -322,9 +325,8 @@ end
 --- Pay what a settled job still owes, and close it once nothing is owed.
 local function payOut(job)
     if job.state ~= 'settling' then return end
-    if busy[job.id] then return end
-    busy[job.id] = true
-    local ok, err = pcall(function()
+    if JobLock.held(job.id) then return end
+    local ok, err = pcall(JobLock.run, job.id, function()
         -- A share left for staff (stuck) is the review queue's now.
         local guardDone = payShare(job, 'guard') or job.guard_stuck == true
         local targetDone = payShare(job, 'target') or job.target_stuck == true
@@ -334,7 +336,6 @@ local function payOut(job)
             save(job)
         end
     end)
-    busy[job.id] = nil
     if not ok then
         Audit.rejected('protection_payout_raised', job.target_cid, job.contract_id,
             { job = job.id, error = tostring(err) })
@@ -423,7 +424,7 @@ function Protection.prune()
     local removed = 0
     local ids = {}
     for id, job in pairs(jobs) do
-        if job.state == 'settled' and not busy[id]
+        if job.state == 'settled' and not JobLock.held(id)
             and not (job.guard_stuck and not job.guard_review)
             and not (job.target_stuck and not job.target_review) then
             ids[#ids + 1] = id
@@ -472,8 +473,8 @@ function Protection.sweep()
     for i = 1, #ids do
         local job = jobs[ids[i]]
         -- A row the store would not take, written again first.
-        if job and job.unsaved and not busy[job.id] then save(job) end
-        if job and live(job) and not busy[job.id] and settled < Protection.SETTLES_PER_PASS then
+        if job and job.unsaved and not JobLock.held(job.id) then save(job) end
+        if job and live(job) and not JobLock.held(job.id) and settled < Protection.SETTLES_PER_PASS then
             if running == nil then
                 running = false
                 if Projection and Projection.liveSnapshot then
@@ -567,9 +568,7 @@ function Protection.post(actor, payload)
     if not pin then return false, CH.ERR.BUSY end
 
     local key = 'protection:' .. contractId
-    if busy[key] then return false, CH.ERR.BUSY end
-    busy[key] = true
-    local ok, result, err, refusal = pcall(function()
+    return JobLock.run(key, function()
         -- Written before the money moves: a crash after the charge leaves a
         -- row saying a charge was under way (charging), which the start
         -- leaves for staff rather than guessing.
@@ -625,9 +624,6 @@ function Protection.post(actor, payload)
         end
         return Protection.targetView(contract, actor.cid)
     end)
-    busy[key] = nil
-    if not ok then error(result, 0) end
-    return result, err, refusal
 end
 
 --- The target takes an open job back, and its money with it. Not once a
@@ -637,11 +633,11 @@ function Protection.cancel(actor, payload)
     local job = type(payload.job) == 'string' and jobs[payload.job] or nil
     if not job or job.target_cid ~= actor.cid then return false, CH.ERR.NOT_FOUND end
     if job.state == 'taken' then return false, CH.ERR.CONTRACT_TAKEN end
-    if job.state ~= 'open' or busy[job.id] then return false, CH.ERR.ALREADY_SETTLED end
+    if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.ALREADY_SETTLED end
     -- On hold by staff: no money moves on it. Told to its own target only.
     local contract = Storage.readContract(job.contract_id)
     if contract and heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
-    if job.state ~= 'open' or busy[job.id] then return false, CH.ERR.ALREADY_SETTLED end
+    if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.ALREADY_SETTLED end
     -- Through the same settling as an ending, so the refund is owed if it
     -- cannot be given now. Nothing yields between the check above and here.
     Audit.action('protection_cancelled', actor.cid, job.contract_id, { job = job.id })
@@ -775,7 +771,7 @@ local function acceptUnlocked(actor, payload)
     load()
     local job = type(payload.job) == 'string' and jobs[payload.job] or nil
     if not job or job.target_cid == actor.cid then return false, CH.ERR.NOT_FOUND end
-    if job.state ~= 'open' or busy[job.id] then return false, CH.ERR.PROTECTION_TAKEN end
+    if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.PROTECTION_TAKEN end
     -- The reward the board showed: a different one is refused, not taken on.
     if tonumber(payload.reward) ~= tonumber(job.amount) then return false, CH.ERR.TERMS_CHANGED end
     local most = math.floor(tonumber(cfg().MaxJobsPerGuard) or 0)
@@ -791,7 +787,7 @@ local function acceptUnlocked(actor, payload)
     if anonymous and not Util.anonymityAllowed('hitman', contract.target_protected == true) then
         return false, CH.ERR.ANONYMITY_OFF
     end
-    if job.state ~= 'open' or busy[job.id] then return false, CH.ERR.PROTECTION_TAKEN end
+    if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.PROTECTION_TAKEN end
     job.state, job.guard_cid, job.guard_name = 'taken', actor.cid, actor.name
     job.guard_anon, job.taken_at = anonymous or nil, os.time()
     save(job)
@@ -814,12 +810,7 @@ function Protection.accept(actor, payload)
     if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
     if appPaused() then return false, CH.ERR.APP_PAUSED end
     local key = 'guard:' .. tostring(actor.cid)
-    if busy[key] then return false, CH.ERR.BUSY end
-    busy[key] = true
-    local ok, result, err, refusal = pcall(acceptUnlocked, actor, payload)
-    busy[key] = nil
-    if not ok then error(result, 0) end
-    return result, err, refusal
+    return JobLock.run(key, acceptUnlocked, actor, payload)
 end
 
 --- Where the meeting pin is, to the guard alone, for their map.

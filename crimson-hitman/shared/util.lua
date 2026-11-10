@@ -79,14 +79,6 @@ function Util.toCitizenId(cid)
     return cid
 end
 
---- Squared distance between two {x,y,z} tables. Squared so callers compare
---- against a squared radius and never pay for a square root on a hot tick.
-function Util.dist2(a, b)
-    if not a or not b then return math.huge end
-    local dx, dy, dz = (a.x or 0) - (b.x or 0), (a.y or 0) - (b.y or 0), (a.z or 0) - (b.z or 0)
-    return dx * dx + dy * dy + dz * dz
-end
-
 --- Keep only well-formed UTF-8, dropping any byte that is not part of a
 --- complete, legal sequence.
 ---
@@ -647,17 +639,6 @@ function Util.copy(tbl)
         out[k] = type(v) == 'table' and Util.copy(v) or v
     end
     return out
-end
-
---- A whole number of dollars as players read it: '$1,234,567'. The one
---- formatter the server's own notices and posts use (contract decay, the
---- weekly stats, the daily summary each had a copy of it).
----@param n number
----@return string
-function Util.dollars(n)
-    local text = tostring(math.floor(tonumber(n) or 0))
-    local formatted = text:reverse():gsub('(%d%d%d)', '%1,'):reverse()
-    return '$' .. formatted:gsub('^,', ''):gsub('^%-,', '-')
 end
 
 --- Sum the money value of a set of escrow lines, per source.

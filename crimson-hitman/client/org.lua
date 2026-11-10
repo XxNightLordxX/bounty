@@ -31,16 +31,15 @@ local Zones, Blips, Peds = {}, {}, {}
 local Draw, Model = 40.0, 'g_m_m_armboss_01'
 local watching = false
 
-local function targetUp()
-    return GetResourceState('ox_target') == 'started'
-end
+local Npc, Geo = CrimsonNpc, CrimsonGeo
+local targetUp = Npc.targetUp
 
 local function removePed(id)
     local ped = Peds[id]
-    if ped and DoesEntityExist(ped) then
-        if targetUp() then pcall(function() exports.ox_target:removeLocalEntity(ped) end) end
-        DeleteEntity(ped)
+    if ped and DoesEntityExist(ped) and targetUp() then
+        pcall(function() exports.ox_target:removeLocalEntity(ped) end)
     end
+    Npc.remove(ped)
     Peds[id] = nil
 end
 
@@ -78,49 +77,25 @@ local function addZone(spot)
 end
 
 local function addBlip(spot)
-    local blip = AddBlipForCoord(spot.at.x, spot.at.y, spot.at.z)
-    SetBlipSprite(blip, spot.kind == 'office' and 475 or 280)
-    SetBlipScale(blip, 0.7)
-    SetBlipAsShortRange(blip, true)
-    BeginTextCommandSetBlipName('STRING')
-    AddTextComponentSubstringPlayerName(spot.label)
-    EndTextCommandSetBlipName(blip)
-    Blips[spot.id] = blip
+    Blips[spot.id] = Npc.blip(spot.at.x, spot.at.y, spot.at.z, spot.kind == 'office' and 475 or 280, 0.7, spot.label)
 end
 
 local function spawn(spot)
-    local hash = joaat(Model)
-    if not IsModelInCdimage(hash) then return end
-    RequestModel(hash)
-    local waited = 0
-    while not HasModelLoaded(hash) and waited < MODEL_WAIT_MS do
-        Wait(100)
-        waited = waited + 100
-    end
-    if not HasModelLoaded(hash) then return end
-    local ped = CreatePed(4, hash, spot.at.x, spot.at.y, spot.at.z - 1.0, spot.h or 0.0, false, true)
-    SetModelAsNoLongerNeeded(hash)
-    if not ped or ped == 0 then return end
-    SetEntityInvincible(ped, true)
-    FreezeEntityPosition(ped, true)
-    SetBlockingOfNonTemporaryEvents(ped, true)
+    local hash = Npc.loadModel(Model, MODEL_WAIT_MS, { stepMs = 100, checkValid = false })
+    if not hash then return end
+    local ped = Npc.spawn(hash, spot.at.x, spot.at.y, spot.at.z, spot.h or 0.0, { scriptHost = true })
+    if not ped then return end
     Peds[spot.id] = ped
     if targetUp() then
         pcall(function() exports.ox_target:addLocalEntity(ped, { option(spot) }) end)
     end
 end
 
-local function loggedIn()
-    local state = LocalPlayer and LocalPlayer.state
-    if not state then return true end
-    return state.isLoggedIn and true or false
-end
-
 --- One pass over the NPC spots: whether one is near enough to look again
 --- in a second.
 local function pass()
     local me = GetEntityCoords(PlayerPedId())
-    local inCity = loggedIn()
+    local inCity = Npc.loggedIn()
     local near = false
     for id, spot in pairs(Spots) do
         if spot.npc then
@@ -167,8 +142,8 @@ function OrgSpots.apply(data)
     if type(data.model) == 'string' and data.model:match('^[%w_]+$') then Model = data.model end
     for i = 1, math.min(#data.spots, 100) do
         local s = data.spots[i]
-        local x, y, z = type(s) == 'table' and tonumber(s.x), type(s) == 'table' and tonumber(s.y),
-            type(s) == 'table' and tonumber(s.z)
+        local x, y, z = type(s) == 'table' and Geo.finite(s.x), type(s) == 'table' and Geo.finite(s.y),
+            type(s) == 'table' and Geo.finite(s.z)
         if x and y and z and type(s.id) == 'string' and #s.id <= 48 and type(s.kind) == 'string' then
             local spot = {
                 id = s.id, kind = s.kind, label = type(s.label) == 'string' and s.label:sub(1, 64) or s.kind,

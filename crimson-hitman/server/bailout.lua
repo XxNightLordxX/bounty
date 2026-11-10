@@ -6,6 +6,7 @@
 --- is queued for a short processing delay first.
 
 local Util = CrimsonBoot.requireShared('util')
+local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 
 local Bailout = {}
@@ -490,7 +491,7 @@ end
 local function tellCreatorClosed(contract, amount)
     local owed, parked = 0, 0
     if Contracts.owedTo then owed, parked = Contracts.owedTo(contract.id, contract.creator_cid) end
-    local premium = Notify.dollars(amount)
+    local premium = Words.dollars(amount, 'before')
     local body = 'Your target bought out the contract. '
     if owed > 0 or parked > 0 then
         body = body .. ('Your escrow and the %s buyout are yours, but not all of it is in your '
@@ -541,7 +542,7 @@ local function tellRefunded(contractId, payer, amount, lineId, why)
         where = 'is on its way: it arrives as soon as you can take it'
     end
     Notify.tellOrKeep(payer, 'Buyout refunded',
-        ('%s, so your %s %s.'):format(lead, Notify.dollars(amount), where),
+        ('%s, so your %s %s.'):format(lead, Words.dollars(amount, 'before'), where),
         { bypassBudget = true }, contractId)
 end
 

@@ -318,10 +318,13 @@ local function tickJobs(add)
     for name in src:gmatch('%f[%w_]every%(\'([%w_%.]+)\'') do add(name) end
 end
 
---- Other resources' exports this resource calls, as resource:export.
+--- Other resources' exports this resource calls, as resource:export: written
+--- out (exports['res']:Name) or through the safe-call helper
+--- (Bridge.call('res', 'Name', ...), server/lib/bridge.lua).
 local function externalCalls(add)
     for _, f in ipairs(luaFiles('server', 'client', 'shared')) do
         local src = luaSrc(f)
+        for res, name in src:gmatch('Bridge%.call%(%s*\'([^\']+)\'%s*,%s*\'([%w_]+)\'') do add(res .. ':' .. name) end
         for res, name in src:gmatch('exports%[\'([^\']+)\'%]:([%w_]+)') do add(res .. ':' .. name) end
         for res, name in src:gmatch('exports%[\'([^\']+)\'%]%[\'([%w_]+)\'%]') do add(res .. ':' .. name) end
         for res, name in src:gmatch('exports%.([%w_]+):([%w_]+)') do add(res .. ':' .. name) end

@@ -34,6 +34,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Lock = CrimsonBoot.require('server.lib.lock')
 
 local Review = {}
 
@@ -115,9 +116,9 @@ Review.DECIDERS = {}
 --- write is the one most likely to be refused.
 local unwritten = {}
 
---- Items being resolved in this process, so two asks for one item cannot
---- both run.
-local busy = {}
+--- Items being resolved in this process, by id, so two asks for one item
+--- cannot both run.
+local ItemLock = Lock.new()
 
 --- Items the server settles by itself once the store answers (Review.decide),
 --- by id: open, carrying their whole record, and not dismissed.
@@ -200,7 +201,8 @@ end
 
 function Review.init(deps)
     Storage, Escrow, Audit = deps.storage, deps.escrow, deps.audit
-    unwritten, busy, undecided, holding, raiseSaid, unread = {}, {}, {}, {}, {}, false
+    unwritten, undecided, holding, raiseSaid, unread = {}, {}, {}, {}, false
+    ItemLock.reset()
     if Storage and Storage.remote and type(SetResourceKvp) ~= 'function' then
         Log.always('resource KVP is not available here, so a payment caught by a database that '
             .. 'stops answering is not kept across a restart')
@@ -896,12 +898,7 @@ end
 function Review.resolve(id, decision, staff, opts)
     id = Util.toId(id)
     if not id then return false, CH.ERR.INVALID_INPUT end
-    if busy[id] then return false, CH.ERR.BUSY end
-    busy[id] = true
-    local ran, ok, err, detail = pcall(resolveUnlocked, id, decision, staff or 'console', opts)
-    busy[id] = nil
-    if not ran then error(ok, 0) end
-    return ok, err, detail
+    return ItemLock.run(id, resolveUnlocked, id, decision, staff or 'console', opts)
 end
 
 --- An item's state as the store has it, for words worded from what happened:
@@ -1001,7 +998,7 @@ end
 --- Settle every item on the server's list that it can now. A maintenance
 --- tick job, and run once at boot by Review.recoverSystem.
 ---
---- Each under the item's own key (`busy`, as a staff resolution is), in its
+--- Each under the item's own key (ItemLock, as a staff resolution is), in its
 --- own pcall: 'done' closes it (settleBySystem, open -> resolved), 'wait'
 --- keeps it, 'staff' leaves it open for staff and off the list; a raise
 --- keeps it, said at most once an hour. Every step a decider takes is
@@ -1016,10 +1013,8 @@ function Review.decide()
     local settled = 0
     for _, id in ipairs(ids) do
         local item = undecided[id]
-        if item and not busy[id] then
-            busy[id] = true
-            local ran, verdict, note = pcall(Review.DECIDERS[item.kind], item)
-            busy[id] = nil
+        if item and not ItemLock.held(id) then
+            local ran, verdict, note = pcall(ItemLock.run, id, Review.DECIDERS[item.kind], item)
             if not ran then
                 local now = os.time()
                 if not raiseSaid[id] or now - raiseSaid[id] >= 3600 then

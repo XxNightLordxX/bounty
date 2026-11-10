@@ -18,6 +18,7 @@
 --- lb-phone or an image host anything.
 
 local Util = CrimsonBoot.requireShared('util')
+local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 
 local Photo = {}
@@ -352,7 +353,7 @@ local function downedInReach(actor, contractId)
     local hitAt = Death.lastHit(actor.cid, contract.target_cid)
     if hitAt and os.time() - hitAt <= DOWNED_HIT_SECONDS then return true end
     local range = Config.Completion.MaxWeaponRange
-    return Util.dist2(GetEntityCoords(GetPlayerPed(actor.source)),
+    return Geo.dist2(GetEntityCoords(GetPlayerPed(actor.source)),
         GetEntityCoords(GetPlayerPed(victim.source))) <= range * range
 end
 
@@ -383,11 +384,11 @@ local function atTheScene(actor, proof)
     -- nothing can be claimed that could not be before.
     local hitmanCoords = GetEntityCoords(GetPlayerPed(actor.source))
     local radius = Config.Completion.PhotoRadius
-    local near = Util.dist2(hitmanCoords, proof.coords) <= radius * radius
+    local near = Geo.dist2(hitmanCoords, proof.coords) <= radius * radius
     if not near then
         local body = Identity.byCitizenId(proof.victimCid)
         near = body ~= nil and Identity.isTrulyDead(body.source)
-            and Util.dist2(hitmanCoords, GetEntityCoords(GetPlayerPed(body.source))) <= radius * radius
+            and Geo.dist2(hitmanCoords, GetEntityCoords(GetPlayerPed(body.source))) <= radius * radius
     end
     if not near then
         Audit.rejected('photo_out_of_range', actor.cid, proof.contractId, {})
