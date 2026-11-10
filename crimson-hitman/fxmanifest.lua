@@ -77,6 +77,9 @@ server_scripts {
 ui_page 'ui/admin.html'
 
 files {
+    -- The design system both pages link first (colours, type, buttons,
+    -- fields, cards, chips, notices, tables, dialogs).
+    'ui/kit.css',
     'ui/index.html',
     'ui/app.css',
     'ui/app.js',

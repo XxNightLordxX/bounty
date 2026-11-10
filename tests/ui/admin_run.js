@@ -946,14 +946,14 @@ async function main() {
         eq(app.button(label, drawer).disabled, true, label);
       });
     });
-    app.nav('settings');
+    app.nav('rules:switch');
     await settled();
     it('and every setting', function () {
       app.$$('.switch').forEach(function (s) { eq(s.disabled, true, 'switch ' + s.getAttribute('data-key')); });
       app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-act') === 'st-choice'; })
         .forEach(function (b) { eq(b.disabled, true); });
     });
-    app.nav('reviews');
+    app.nav('inbox:reviews');
     await settled();
     it('and the review queue offers no resolution', function () {
       eq(app.$$('.rv-form').length, 0);
@@ -1354,7 +1354,8 @@ async function main() {
     it('delivered is sent as delivered, and a refusal shows its own words', function () {
       eq(app.last('settle').data, { line: 'ct00000001:2', disposition: 'delivered' });
       const answer = app.drawer().querySelector('.answer');
-      truthy(answer.classList.contains('is-error'));
+      // A refusal is kit.css's default notice: crimson, not .ok.
+      truthy(answer.classList.contains('notice') && !answer.classList.contains('ok'));
       has(app.text(answer), 'Not settled: nothing of it was given');
     });
 
@@ -1395,7 +1396,7 @@ async function main() {
     const app = boot(standardServer({ reviews: answer }));
     app.open(ADMIN);
     await settled();
-    app.nav('reviews');
+    app.nav('inbox:reviews');
     await settled();
     it('says which goods were kept without their metadata, before anybody gives them', function () {
       const card = app.text(app.byId('rv-rv00000002'));
@@ -1413,7 +1414,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('reviews');
+    app.nav('inbox:reviews');
     await settled();
     it('lists the open items with what is known and what the store says now', function () {
       eq(app.last('reviews').data, {});
@@ -1515,7 +1516,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('reviews');
+    app.nav('inbox:reviews');
     await settled();
     app.type(app.byId('rv-rv00000001').querySelector('[data-bind="rv.rv00000001.amount"]'), '500');
     const refund = app.button('Refund it', app.byId('rv-rv00000001'));
@@ -1558,7 +1559,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('reviews');
+    app.nav('inbox:reviews');
     await settled();
     const resolving = app.byId('rv-rv00000003');
     it('one left part-way says what was decided, with one button and no actions to choose', function () {
@@ -2027,7 +2028,7 @@ async function main() {
       has(text, 'TARGET01');
       has(text, 'in the city · player 12');
       has(text, '80%');
-      ['pcontracts', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag'].forEach(function (view) {
+      ['pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag'].forEach(function (view) {
         truthy(app.byId('nav-' + view), 'the ' + view + ' tab');
       });
     });
@@ -2040,9 +2041,18 @@ async function main() {
       has(text, '1 delivery pending');
       has(text, 'Contract closed');
     });
-    app.nav('pcontracts');
+    app.nav('players');
     await settled();
-    it('Contracts: theirs', function () {
+    it('a player has no Contracts tab of their own: the one list is filtered to them', function () {
+      eq(app.byId('nav-pcontracts'), null);
+    });
+    app.click(app.button('Their contracts'));
+    await settled();
+    it('Their contracts opens Contracts with the person filter set, by the lookup\'s handle', function () {
+      eq(app.byId('nav-contracts').getAttribute('aria-current'), 'page');
+      eq(app.last('contracts').data, { page: 1, ref: 'p7_424242' });
+      has(app.main(), 'Dana Reyes');
+      has(app.main(), 'Their part');
       has(app.main(), 'ct00000001');
     });
     app.click(app.button('Whois'));
@@ -2050,6 +2060,19 @@ async function main() {
     it('with identity, whois answers under the contract', function () {
       eq(app.last('whois').data, { id: 'ct00000001' });
       has(app.main(), 'Kai Holt');
+    });
+    app.click(app.$$('[data-act="dd-open"]').filter(function (b) { return b.getAttribute('data-dd') === 'ct-as'; })[0]);
+    app.click(app.$$('[data-act="dd-pick"]').filter(function (b) {
+      return b.getAttribute('data-dd') === 'ct-as' && b.getAttribute('data-value') === 'hitman'; })[0]);
+    await settled();
+    it('and narrowed to one part they played', function () {
+      eq(app.last('contracts').data, { page: 1, ref: 'p7_424242', as: 'hitman' });
+    });
+    app.click(app.$('[data-act="ct-person-clear"]'));
+    await settled();
+    it('clearing the person shows everybody\'s again', function () {
+      eq(app.last('contracts').data, { page: 1 }, 'every state, as their list was');
+      lacks(app.main(), 'Their part');
     });
     clean(app, 'players');
   })();
@@ -2186,7 +2209,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     it('Features lists the switches by group, each with its value, config.lua\'s and where it comes from', function () {
       const text = app.main();
@@ -2270,7 +2293,7 @@ async function main() {
       eq(app.last('setSetting').data, { key: 'Bailout.Enabled', value: true });
     });
 
-    app.nav('limits');
+    app.nav('rules:limit');
     await settled();
     const either = function () {
       return app.byId('st-row-Completion.Fulfilment').querySelectorAll('.seg-btn')
@@ -2347,11 +2370,11 @@ async function main() {
     });
     server.setSetting = standardServer().setSetting;
 
-    app.nav('money');
+    app.nav('rules:money');
     await settled();
-    it('the old Rewards & money lands on Game rules with its rows, each setting under its group', function () {
+    it('Game rules\' money settings, every area, each setting under its group', function () {
       has(app.text(app.$('.st-group[data-group="stakes"]')), 'Largest stake, as a share');
-      has(app.text(app.$('.gr-old')), 'Rewards & money');
+      eq(app.$('.gr-old'), null);
     });
     app.type(app.byId('st-row-Penalty.MaxFractionOfEscrow').querySelector('input'), '0.75');
     app.click(app.button('Save', app.byId('st-row-Penalty.MaxFractionOfEscrow')));
@@ -2410,7 +2433,7 @@ async function main() {
     server.setSetting = standardServer().setSetting;
 
     // A from-to pair.
-    app.nav('timers');
+    app.nav('rules:timer');
     await settled();
     const jitter = function () { return app.byId('st-row-Notifications.ParanoidAlertJitter'); };
     const inputs = jitter().querySelectorAll('input');
@@ -2433,7 +2456,7 @@ async function main() {
     });
 
     // Search: label, key, description and group.
-    app.nav('limits');
+    app.nav('rules:limit');
     await settled();
     app.type(app.byId('st-q'), 'hitman may hold');
     it('the search finds a label, and draws only what matches', function () {
@@ -2451,7 +2474,7 @@ async function main() {
       truthy(app.byId('st-row-Limits.MaxAcceptedPerHitman'));
       falsy(app.byId('st-row-Completion.Fulfilment'));
     });
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     it('and keeps what was typed from view to view', function () {
       eq(app.byId('st-q').value, 'contract limits');
@@ -2550,8 +2573,8 @@ async function main() {
       eq(crumb(), 'Areas');
     });
     const views = { inbox: 'Inbox', overview: 'Overview', announce: 'Announce', players: 'Find & summary',
-      measures: 'All measures', contracts: 'All contracts',
-      tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player', tlcontracts: 'Contracts on someone',
+      measures: 'All measures', contracts: 'Contracts',
+      tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player',
       rules: 'Areas', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
       orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
       orgaccess: 'Contract access', orgnotices: 'Notices', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
@@ -2570,31 +2593,25 @@ async function main() {
       eq(drew, Object.keys(views));
       clean(app, 'every view');
     });
-    // Every old view's name lands where its items are now.
-    const OLD = { help: 'How it works', overview: 'Overview', contracts: 'All contracts', players: 'Find & summary',
-      frozenlist: 'All measures', reviews: 'Inbox', stuck: 'Inbox', actions: 'How do I…', tools: 'Test tools',
-      announce: 'Announce', timers: 'Timers (was Rules, Timers)', money: 'Money (was Rules, Rewards & money)',
-      limits: 'Limits (was Rules, Limits)', targeting: 'Targeting (was Rules, Targeting)',
-      features: 'Switches (was Features)', settings: 'Switches (was Features)', logs: 'Audit log', alerts: 'Alerts', devsettings: 'Engine settings', console: 'Console',
-      diagnostics: 'Health', permissions: 'Who can do what', tldefaults: 'Defaults',
-      tljobs: 'Per job', tlplayer: 'Per player', tlcontracts: 'Contracts on someone' };
+    // A view has one name: an old one (rule 4: no old-name mappings) is
+    // not a view, and lands on Home's inbox like any other unknown name.
+    const OLD = ['settings', 'features', 'timers', 'money', 'limits', 'targeting', 'reviews', 'stuck',
+      'actions', 'diagnostics', 'live', 'frozenlist'];
     const landed = {};
-    for (const old of Object.keys(OLD)) {
+    for (const old of OLD) {
       app.window.CH_ADMIN_SHOW(old);
       await settled();
       landed[old] = crumb();
     }
-    it('every old view name redirects to its new place', function () {
-      eq(landed, OLD);
+    it('no old view name is kept: each is unknown and lands on the inbox', function () {
+      const want = {};
+      OLD.forEach(function (o) { want[o] = 'Inbox'; });
+      eq(landed, want);
+      eq(app.window.CH_ADMIN_ALIASES, undefined);
     });
-    app.window.CH_ADMIN_SHOW('timers');
+    app.window.CH_ADMIN_SHOW('inbox:stuck');
     await settled();
-    it('an old settings tab lands on Game rules with the rows it held, saying so', function () {
-      has(app.text(app.$('.gr-old')), 'Showing what the old Timers (was Rules, Timers) tab held');
-    });
-    app.window.CH_ADMIN_SHOW('stuck');
-    await settled();
-    it('and an old inbox tab on the inbox with its filter chosen', function () {
+    it('a link to the inbox with a filter chooses that filter there', function () {
       eq(app.$$('[data-act="ib-filter"]').filter(function (b) { return b.getAttribute('aria-pressed') === 'true'; })[0]
         .getAttribute('data-value'), 'stuck');
       truthy(app.byId('sk-list'), 'Money waiting drawn');
@@ -2674,8 +2691,8 @@ async function main() {
     const old = boot(standardServer(), { storage: storage });
     old.open(ADMIN);
     await settled();
-    it('a view remembered under an old name opens where it is now', function () {
-      eq(old.byId('nav-rules').getAttribute('aria-current'), 'page');
+    it('a view remembered under an old name is not kept: the panel opens on Home', function () {
+      eq(old.byId('nav-inbox').getAttribute('aria-current'), 'page');
       clean(old, 'an old remembered view');
     });
     const broken = boot(standardServer(), { storage: { getItem: function () { throw new Error('denied'); },
@@ -2713,7 +2730,7 @@ async function main() {
       eq(app.requests('setSetting').length, sets + 1);
       eq(app.last('setSetting').data, { key: 'Cooldowns.create.burst', value: 1 });
     });
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     it('but no setting of any other section', function () {
       app.$$('.switch').forEach(function (b) { eq(b.disabled, true, 'switch ' + b.getAttribute('data-key')); });
@@ -2796,17 +2813,16 @@ async function main() {
     // categorises it.
     const settingsLua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'settings.lua'), 'utf8')
       + fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'org', 'settings_catalogue.lua'), 'utf8');
-    // The old tab names still reach Game rules (ALIASES), so a link may
-    // name either; what it may not name is another section.
-    const VIEW = { 'rules-timers': ['timers', 'rules'], 'rules-rewards': ['money', 'rules'],
-      'rules-limits': ['limits', 'rules'], 'rules-targeting': ['targeting', 'rules'], features: ['features', 'rules'],
-      developer: ['devsettings'], 'target-limits': ['tldefaults'], organisation: ['orgsetup'] };
+    // A link names a setting, never a view: the panel finds the section
+    // its setting is in (server/settings.lua's category).
+    const VIEW = { 'rules-timers': 1, 'rules-rewards': 1, 'rules-limits': 1, 'rules-targeting': 1, features: 1,
+      developer: 1, 'target-limits': 1, organisation: 1 };
     const wrong = [];
     help.forEach(function (c) {
       c.links.forEach(function (l) {
         const at = settingsLua.indexOf("key = '" + l.key + "'");
         const cat = at === -1 ? null : /category = '([\w-]+)'/.exec(settingsLua.slice(at, at + 400));
-        if (!cat || (VIEW[cat[1]] || []).indexOf(l.view) === -1) wrong.push(l.key + ' -> ' + l.view + ' (' + (cat && cat[1]) + ')');
+        if (!cat || !VIEW[cat[1]] || l.view !== undefined) wrong.push(l.key + ' -> ' + l.view + ' (' + (cat && cat[1]) + ')');
       });
     });
     it('every link names the section its setting is in', function () { eq(wrong, []); });
@@ -2844,7 +2860,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('timers');
+    app.nav('rules:timer');
     await settled();
     const row = function () { return app.byId('st-row-Ledger.PhotoRetentionDays'); };
     it('a setting whose lowering deletes says so on its row', function () {
@@ -3030,7 +3046,7 @@ async function main() {
     const app = boot(standardServer({ stuck: { ok: true, data: { recovery: 'ready', lines: [], reviews: 0 } } }));
     app.open(READER);
     await settled();
-    app.nav('stuck');
+    app.nav('inbox:stuck');
     await settled();
     it('says when nothing waits for staff', function () {
       has(app.main(), 'No escrow line is waiting for staff.');
@@ -3042,7 +3058,7 @@ async function main() {
     const app = boot(standardServer({ stuck: { ok: true, data: { recovery: 'recovering', reviews: 1 } } }));
     app.open(FULL);
     await settled();
-    app.nav('stuck');
+    app.nav('inbox:stuck');
     await settled();
     it('lists nothing while the server recovers, and says so', function () {
       has(app.main(), 'Not listed while the server is recovering from the restart.');
@@ -3055,7 +3071,7 @@ async function main() {
     const app = boot(standardServer());
     app.open(READER);
     await settled();
-    app.nav('stuck');
+    app.nav('inbox:stuck');
     await settled();
     it('read-only staff see every settle in Stuck escrow disabled, saying why', function () {
       ['Pay', 'Pay amount', 'Return', 'Delivered', 'Return to'].forEach(function (label) {
@@ -3119,7 +3135,7 @@ async function main() {
           await settled();
         }
         // A review resolved, and one refused.
-        app.nav('reviews');
+        app.nav('inbox:reviews');
         await settled();
         const resolve = app.$$('button').filter(function (b) { return b.getAttribute('data-act') === 'resolve'; })[0];
         if (resolve && !resolve.disabled) {
@@ -3145,7 +3161,7 @@ async function main() {
           await settled();
           sweep(app, 'settings ' + tab);
         }
-        app.nav('features');
+        app.nav('rules:switch');
         await settled();
         const sw = app.$$('.switch').filter(function (b) { return !b.disabled; })[0];
         if (sw) { app.click(sw); await settled(); sweep(app, 'a setting changed'); }
@@ -3250,7 +3266,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('settings');
+    app.nav('rules:switch');
     await settled();
     const row = app.byId('st-row-Completion.KillPhotos');
     it('offers the removal under Kill photos while they are off and some are kept', function () {
@@ -3293,17 +3309,17 @@ async function main() {
     const none = boot(standardServer());
     none.open(ADMIN);
     await settled();
-    none.nav('settings');
+    none.nav('rules:switch');
     await settled();
     const photosOn = boot(standardServer({ settings: on }));
     photosOn.open(ADMIN);
     await settled();
-    photosOn.nav('settings');
+    photosOn.nav('rules:switch');
     await settled();
     const reader = boot(standardServer({ settings: settingsView({ keptPhotos: kept }) }));
     reader.open(READER);
     await settled();
-    reader.nav('settings');
+    reader.nav('rules:switch');
     await settled();
     it('offers nothing when none is kept, or while kill photos are on', function () {
       eq(removeButtons(none).length, 0);
@@ -3418,7 +3434,7 @@ async function main() {
       has(app.main(), 'Not listed: recovery failed at the last start; restart the resource');
       lacks(app.main(), 'while the server is recovering');
     });
-    app.nav('stuck');
+    app.nav('inbox:stuck');
     await settled();
     it('and so does Stuck escrow', function () {
       has(app.main(), 'Not listed: recovery failed at the last start; restart the resource');
@@ -3464,7 +3480,7 @@ async function main() {
     const app = boot(server);
     app.open(FULL);
     await settled();
-    app.nav('stuck');
+    app.nav('inbox:stuck');
     await settled();
     app.click(app.$$('button.link').filter(function (b) {
       return b.getAttribute('data-act') === 'contract' && b.getAttribute('data-id') === 'ct00000001';
@@ -3524,7 +3540,7 @@ async function main() {
     it('says on the overview that memory mode keeps nothing', function () {
       has(app.main(), 'nothing is kept across a restart');
     });
-    app.nav('settings');
+    app.nav('rules:switch');
     await settled();
     it('and in the Features intro that a change lasts until the resource stops', function () {
       has(app.main(), 'lasts until the resource stops');
@@ -3618,7 +3634,7 @@ async function main() {
     const app = boot(standardServer({ contract: stub }));
     app.open(FULL);
     await settled();
-    app.nav('stuck');
+    app.nav('inbox:stuck');
     await settled();
     app.click(app.$$('button.link').filter(function (b) {
       return b.getAttribute('data-act') === 'contract' && b.getAttribute('data-id') === 'ct00000009';
@@ -3744,7 +3760,8 @@ async function main() {
     await settled();
     it('a refusal shows the server\'s words', function () {
       const answer = app.drawer().querySelector('.answer');
-      truthy(answer.classList.contains('is-error'));
+      // A refusal is kit.css's default notice: crimson, not .ok.
+      truthy(answer.classList.contains('notice') && !answer.classList.contains('ok'));
       has(app.text(answer), 'The most you can shorten it by is 5 min.');
     });
     clean(app, 'deadline');
@@ -3785,7 +3802,7 @@ async function main() {
         return /^dl-/.test(b.getAttribute('data-act') || '');
       }).length, 0);
     });
-    app.nav('actions');
+    app.nav('howto');
     await settled();
     it('Staff actions > Deadlines points to Extend and Shorten in Contracts', function () {
       has(app.main(), 'Extend or Shorten under Deadline');
@@ -4677,7 +4694,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('reviews');
+    app.nav('inbox:reviews');
     await settled();
     const item = app.byId('rv-rv00000009');
     it('a report shows who sent it by role, the note and the thread\'s messages by alias', function () {
@@ -4727,13 +4744,13 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     it('lists a roleplay switch under Features, in its Roleplay group, with what the group is', function () {
       has(app.text(app.byId('st-row-Roleplay.WitnessHeat.Enabled')), 'Witness heat');
       has(app.text(app.$('#panel')), 'naming nobody');
     });
-    app.nav('limits');
+    app.nav('rules:list');
     await settled();
     const row = function () { return app.byId('st-row-Roleplay.WitnessHeat.Phrases'); };
     app.type(row().querySelector('input'), 'a tall man, in a cap, ran {direction}');
@@ -4801,7 +4818,7 @@ async function main() {
       eq(app.byId('nav-rules').getAttribute('aria-current'), 'page');
       truthy(app.byId('st-row-Roleplay.ProofOfIntent.HoldMaxMinutes').classList.contains('is-focus'));
     });
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     it('the bodyguard switch is under Features, in its Roleplay group', function () {
       has(app.main(), 'Roleplay: Bodyguards');
@@ -4843,7 +4860,7 @@ async function main() {
       eq(app.last('setSetting').data, { key: 'Intel.Rumours.Locations',
         value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'] });
     });
-    app.nav('reviews');
+    app.nav('inbox:reviews');
     await settled();
     const item = app.byId('rv-rv00000010');
     it('a low-effort reason in Needs review offers Dismiss alone: it holds no money', function () {
@@ -4992,13 +5009,13 @@ async function main() {
     const app = boot(standardServer({ settings: view }));
     app.open(ADMIN);
     await settled();
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     it('the contract decay switch is under Features, in its Improvements group', function () {
       has(app.main(), 'Improvements: Contract decay');
       truthy(app.byId('st-row-Improvements.ContractDecay.Enabled'), 'its row');
     });
-    app.nav('limits');
+    app.nav('rules:list');
     await settled();
     const row = function () { return app.byId('st-row-Record.Tiers.Tiers'); };
     app.type(row().querySelector('input'), 'Elite, 150000, 4');
@@ -5023,7 +5040,8 @@ async function main() {
         truthy(found[0].links.length >= 2, w + ' links to its settings');
         truthy(/off as shipped/i.test(found[0].text), w + ' says it ships off');
         found[0].links.forEach(function (l) {
-          truthy(['features', 'limits', 'timers', 'money', 'targeting'].indexOf(l.view) !== -1, l.key + ' view');
+          // A link names its setting only: no view, old or new.
+          eq(l.view, undefined, l.key + ' view');
         });
       });
     });
@@ -5077,7 +5095,7 @@ async function main() {
       eq(app.byId('nav-tldefaults').getAttribute('aria-current'), 'page');
       truthy(app.byId('st-row-Limits.TargetCooldownAfterCompletionSeconds').classList.contains('is-focus'));
     });
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     it('the proof items switch is under Features, in its Improvements group', function () {
       has(app.main(), 'Improvements: Proof items');
@@ -5116,7 +5134,7 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     const whole = app.main();
     it('asks for the rows whole the first time', function () {
@@ -5221,7 +5239,7 @@ async function main() {
       eq(app.last('player').data.subject, 'Dana Reyes');
       eq(app.byId('pl-q').getAttribute('placeholder'), 'Player id, citizen id or name');
     });
-    app.nav('timers');
+    app.nav('rules:timer');
     await settled();
     it('S13: a duration in seconds says it in hours too', function () {
       has(app.main(), '10,800 s = 3 h');
@@ -5272,7 +5290,7 @@ async function main() {
     const app = boot(standardServer({ settings: view }));
     app.open(ADMIN);
     await settled();
-    app.nav('features');
+    app.nav('rules:switch');
     await settled();
     const rank = app.window.CH_ADMIN_FEATURE_RANK;
     it('Features lists the core first, then Anonymity, Intel, Advisory, Staff tools, Roleplay, Improvements', function () {
@@ -5300,7 +5318,7 @@ async function main() {
         truthy(g.querySelector('.st-group-about'), g.getAttribute('data-group') + ' has no line saying what it does');
       });
     });
-    app.nav('money');
+    app.nav('rules:money');
     await settled();
     it('every group in Rules says what it does too', function () {
       truthy(app.$$('.st-group').length > 0, 'groups');
@@ -5354,7 +5372,7 @@ async function main() {
       eq(rec[0], 'Record: Reputation earned in character', 'Record in the order of config.lua');
       eq(intel[0], 'Intel: The informant in person', 'Intel in the order of config.lua');
     });
-    app.nav('actions');
+    app.nav('howto');
     await settled();
     it('Actions offers the hardest one to find: undoing a setting change, in History', function () {
       has(app.main(), 'Undo a setting change');
@@ -5582,7 +5600,7 @@ async function main() {
       targetCounts: { ok: true, message: 'Their day and week counts start again from now.' },
       targetOverride: { ok: true, message: 'They are exempt from the target limits.' },
       targetOverrideClear: { ok: false, err: 'not_active', message: 'Nothing like that is set, so nothing was changed.' },
-      targetContracts: { ok: true, data: { page: 1, pages: 1, total: 3, targets: 2, rows: [
+      contracts: { ok: true, data: { page: 1, pages: 1, total: 3, targets: 2, rows: [
         { id: 'ct00000001', state: 'active', rule: 'alive', target: 'Dana Reyes', group: 't1', onTarget: 2,
           client: 'Anonymous', anonymous: true, slots: 1, claimed: 0, created_at: NOW - 60, deadline_at: NOW + 3600 },
         { id: 'ct00000002', state: 'accepted', rule: 'alive', target: 'Dana Reyes', group: 't1', onTarget: 2,
@@ -5602,7 +5620,7 @@ async function main() {
       eq(app.byId('nav-tldefaults').getAttribute('aria-current'), 'page');
       truthy(app.byId('nav-tljobs'));
       truthy(app.byId('nav-tlplayer'));
-      truthy(app.byId('nav-tlcontracts'));
+      truthy(app.byId('nav-contracts-bytarget'), 'and a link to the live contracts by target');
       eq(app.byId('nav-rules'), null, 'and nothing of Game rules');
       truthy(app.requests('settings').length >= 1, 'reads the settings');
     });
@@ -5773,20 +5791,25 @@ async function main() {
     const app = boot(tlServer());
     app.open(ADMIN);
     await settled();
-    app.nav('tlcontracts');
+    app.click(app.byId('grp-targets'));
     await settled();
-    it('Current contracts lists every live contract grouped by target, escaped', function () {
-      eq(app.last('targetContracts').data, { page: 1 });
+    app.click(app.byId('nav-contracts-bytarget'));
+    await settled();
+    it('Live contracts by target: the one list of contracts, grouped by target, escaped', function () {
+      eq(app.byId('nav-contracts').getAttribute('aria-current'), 'page');
+      eq(app.last('contracts').data, { page: 1, state: 'live', byTarget: true });
       eq(app.$$('tr.tl-group').length, 2);
       eq(app.$$('tr.row').length, 3);
       has(app.main(), 'On hold');
       has(app.main(), '3 live contracts on 2 targets');
       eq(app.body.querySelectorAll('img').length, 0, 'escaped');
     });
-    app.type(app.byId('tc-q'), 'Dana');
+    app.type(app.byId('ct-q'), 'Dana');
     app.fire(250);
     await settled();
-    it('the search asks by target', function () { eq(app.last('targetContracts').data, { page: 1, query: 'Dana' }); });
+    it('the search asks by target', function () {
+      eq(app.last('contracts').data, { page: 1, query: 'Dana', state: 'live', byTarget: true });
+    });
     app.click(app.$$('tr.row')[1]);
     await settled();
     app.more();
@@ -5795,7 +5818,7 @@ async function main() {
       eq(app.drawer().hidden, false);
       truthy(app.button('Void contract', app.drawer()), 'the drawer\'s own Void');
     });
-    clean(app, 'target limits current contracts');
+    clean(app, 'contracts by target');
   })();
 
   /* ======================================================================

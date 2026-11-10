@@ -269,18 +269,19 @@
 
   /* The sections, in sidebar groups ordered by how often each is used
      (Daily, Setup, Records, Developer), each holding its views as sub-tabs;
-     Help is the header's (?) button. Every view the panel had is still
-     reachable: a view whose items moved answers to its old name through
-     ALIASES. Developer is only for staff the server says may open it
-     (access.canDevelop). */
+     Help is the header's (?) button. A view has one name: there are no old
+     names kept for it. Developer is only for staff the server says may open
+     it (access.canDevelop). */
   var GROUPS = [
     { id: 'home', head: 'Daily', label: 'Home', icon: 'house', views: ['inbox', 'overview', 'announce'] },
     { id: 'players', head: 'Daily', label: 'Players', icon: 'user',
-      views: ['players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag', 'measures'] },
+      views: ['players', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag', 'measures'] },
     { id: 'contracts', head: 'Daily', label: 'Contracts', icon: 'file-contract', views: ['contracts'] },
     // How often one person may be targeted (server/targetlimits.lua).
     { id: 'targets', head: 'Daily', label: 'Target limits', icon: 'user-clock',
-      views: ['tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'], logs: ['logs:targets', 'History'] },
+      views: ['tldefaults', 'tljobs', 'tlplayer'], logs: ['logs:targets', 'History'],
+      // The live contracts on each target: the one list of contracts, grouped.
+      list: ['contracts:bytarget', 'Live contracts by target'] },
     { id: 'rules', head: 'Setup', label: 'Game rules', icon: 'scale-balanced', views: ['rules', 'changed'],
       logs: ['logs:settings', 'Change history'] },
     // The hitman organisation (server/org/), off as shipped.
@@ -298,13 +299,12 @@
   /** Each view's name on its sub-tab, its icon, and on the breadcrumb. */
   var VIEW_LABEL = {
     inbox: ['Inbox', 'inbox'], overview: ['Overview', 'gauge-high'], announce: ['Announce', 'bullhorn'],
-    players: ['Find & summary', 'magnifying-glass'], pcontracts: ['Contracts', 'file-contract'],
+    players: ['Find & summary', 'magnifying-glass'],
     pmeasures: ['Measures', 'snowflake'], pmoney: ['Money', 'sack-dollar'], pplaytime: ['Playtime', 'clock'],
     phistory: ['History', 'clock-rotate-left'], pdiag: ['Why can’t they see…', 'stethoscope'],
     measures: ['All measures', 'list-check'],
-    contracts: ['All contracts', 'file-contract'],
+    contracts: ['Contracts', 'file-contract'],
     tldefaults: ['Defaults', 'sliders'], tljobs: ['Per job', 'briefcase'], tlplayer: ['Per player', 'user-clock'],
-    tlcontracts: ['Contracts on someone', 'list-check'],
     rules: ['Areas', 'layer-group'], changed: ['Changed from the panel', 'pen'],
     orgsetup: ['Setup', 'gear'], orgroles: ['Roles & pay', 'id-badge'], orgmembers: ['Members', 'users'],
     orgapps: ['Applications', 'envelope-open-text'], orgfunds: ['Funds & cuts', 'vault'],
@@ -319,24 +319,14 @@
   /** The views only the Developer section's staff see. */
   var DEV_VIEWS = { health: true, devsettings: true, console: true };
   /** A selected player's own tabs, shown once somebody is looked up. */
-  var PERSON_VIEWS = { pcontracts: true, pmeasures: true, pmoney: true, pplaytime: true, phistory: true, pdiag: true };
-  var PLAYER_VIEWS = { players: true, pcontracts: true, pmeasures: true, pmoney: true, pplaytime: true,
+  var PERSON_VIEWS = { pmeasures: true, pmoney: true, pplaytime: true, phistory: true, pdiag: true };
+  var PLAYER_VIEWS = { players: true, pmeasures: true, pmoney: true, pplaytime: true,
                        phistory: true, pdiag: true };
   var ORG_VIEWS = { orgsetup: true, orgroles: true, orgmembers: true, orgapps: true, orgfunds: true,
                     orgaccess: true, orgnotices: true };
   var BP_VIEWS = { bpmatrix: true, bplimits: true, bpoffice: true };
   var SECTIONS = [];
   GROUPS.forEach(function (g) { SECTIONS = SECTIONS.concat(g.views); });
-  /** Old names, so a link or a remembered view from before lands where its
-      items are now: [old] = [view, what to set there]. */
-  var ALIASES = {
-    settings: ['rules', { cat: 'features' }], features: ['rules', { cat: 'features' }],
-    timers: ['rules', { cat: 'rules-timers' }], money: ['rules', { cat: 'rules-rewards' }],
-    limits: ['rules', { cat: 'rules-limits' }], targeting: ['rules', { cat: 'rules-targeting' }],
-    reviews: ['inbox', { inbox: 'reviews' }], stuck: ['inbox', { inbox: 'stuck' }],
-    actions: ['howto'], diagnostics: ['health'], live: ['inbox'], frozenlist: ['measures']
-  };
-  window.CH_ADMIN_ALIASES = ALIASES;
 
   /** The settings view each category is shown in; Game rules' areas hold
       the rules and features categories. */
@@ -354,7 +344,7 @@
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
                    alerts: true, console: true, measures: true, exportContract: true, playerView: true,
                    history: true,
-                   targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true,
+                   targetLimits: true, targetStatus: true, targetJobCount: true,
                    orgGet: true, bossPermsGet: true, orgFunds: true, placeMyPosition: true,
                    rewardPreview: true, reassignPreview: true, disposalList: true, placeList: true };
 
@@ -375,17 +365,21 @@
     menu: null,             // the dropdown that is open
     overview: null, overviewAt: 0, overviewError: null, overviewTimer: null,
     pollGen: 0,             // the open whose overview refresh is running
-    contracts: { page: 1, state: 'live', rule: '', range: '', data: null, timer: null },
+    // The one list of contracts. `person`: whose contracts it shows ({ ref or
+    // person, name }, from a player's card or typed here), `as` their part on
+    // them; `byTarget` the live ones grouped by target (Target limits').
+    contracts: { page: 1, state: 'live', rule: '', range: '', data: null, timer: null,
+                 person: null, as: '', byTarget: false, whois: {} },
     drawer: { id: null, data: null, answer: null, whois: null },
     stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { area: 'audit', kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
-    players: { data: null, whois: {}, subject: null, ref: null, playtime: null, freeze: null, measures: null,
+    players: { data: null, subject: null, ref: null, playtime: null, freeze: null, measures: null,
                measureKind: '', at: 0, recent: [], lift: {} },
     inbox: 'all',           // which of the inbox's lists show: all, reviews, stuck, alerts
-    rules: { area: '', type: '', cat: '' },
+    rules: { area: '', type: '' },
     ctx: { contract: null },  // the contract last opened, for its header chip
     search: { q: '', open: false, at: 0 },
     help: { open: {} },
@@ -705,7 +699,7 @@
 
   function answerBox(answer) {
     if (!answer) return null;
-    return h('div.answer' + (answer.ok ? '.is-ok' : '.is-error'), { role: 'status' },
+    return h('div.notice.answer' + (answer.ok ? '.ok' : ''), { role: 'status' },
       icon(answer.ok ? 'circle-check' : 'circle-exclamation'), h('span.answer-text', answer.text));
   }
 
@@ -828,7 +822,7 @@
     if (!subnav) return;
     var g = groupOf(S.section);
     var views = g ? g.views.filter(viewShown) : [];
-    subnav.hidden = views.length + (g && g.logs ? 1 : 0) < 2;
+    subnav.hidden = views.length + (g && g.logs ? 1 : 0) + (g && g.list ? 1 : 0) < 2;
     var counts = { inbox: 'count-inbox', changed: 'count-settings', alerts: 'count-alerts' };
     setHtml(subnav, frag(views.map(function (view) {
       var on = view === S.section;
@@ -840,7 +834,10 @@
         counts[view] ? h('span.nav-count.is-warn', { id: counts[view], hidden: true }) : null);
     }), g && g.logs ? h('button.sub-btn.is-link', { id: 'nav-' + g.logs[0].replace(':', '-'), type: 'button',
       'data-act': 'section', 'data-section': g.logs[0], title: 'Records \u203a Logs, ' + g.logs[1] },
-      icon('list-ul'), h('span.lbl', g.logs[1] + ' \u25b8')) : null));
+      icon('list-ul'), h('span.lbl', g.logs[1] + ' \u25b8')) : null,
+      g && g.list ? h('button.sub-btn.is-link', { id: 'nav-' + g.list[0].replace(':', '-'), type: 'button',
+        'data-act': 'section', 'data-section': g.list[0], title: 'Contracts, ' + g.list[1] },
+        icon('file-contract'), h('span.lbl', g.list[1] + ' \u25b8')) : null));
   }
 
   /** Where the staff member is: the section, the player or area chosen, the view. */
@@ -854,7 +851,6 @@
     parts.push((VIEW_LABEL[S.section] || [S.section])[0]);
     if (S.section === 'logs') parts.push(logAreaLabel());
     if (S.section === 'rules' && S.rules.area) parts.push(areaLabel(S.rules.area));
-    if (S.section === 'rules' && S.rules.cat) parts.push(OLD_TAB[S.rules.cat] || S.rules.cat);
     setHtml(node, frag(parts.map(function (part, i) {
       return frag(i ? h('span.crumb-sep', { 'aria-hidden': 'true' }, '›') : null,
         h('span.crumb' + (i === parts.length - 1 ? '.is-here' : ''), part));
@@ -912,13 +908,13 @@
     if (!banner) return;
     if (S.recovery === 'recovering') {
       banner.hidden = false;
-      banner.className = 'banner is-warn';
+      banner.className = 'notice gold banner';
       setHtml(banner, frag(icon('hourglass-half'), h('span',
         'Still recovering from the restart. Everything reads; void, settle, resolve, settings and the '
         + 'timer refresh wait until it finishes.')));
     } else if (S.recovery === 'recovery_failed') {
       banner.hidden = false;
-      banner.className = 'banner is-error';
+      banner.className = 'notice banner';
       setHtml(banner, frag(icon('triangle-exclamation'), h('span',
         'Recovery failed at the last start (the console says why, after BOOT RECOVERY FAILED). Nothing '
         + 'can be voided, settled, resolved or changed until the resource is restarted once the cause '
@@ -1026,7 +1022,6 @@
 
   function known(view) {
     if (typeof view !== 'string') return null;
-    if (ALIASES[view]) return ALIASES[view][0];
     return SECTIONS.indexOf(view) !== -1 ? view : null;
   }
 
@@ -1057,14 +1052,6 @@
     show(views.indexOf(want) !== -1 ? want : views[0]);
   }
 
-  /** What an old view's name sets where its items are now. */
-  function applyAlias(with_) {
-    if (!with_) return;
-    // An old settings tab: the rows it held, until an area or a type is picked.
-    if (with_.cat !== undefined) { S.rules.cat = with_.cat; S.rules.area = ''; S.rules.type = ''; }
-    if (with_.inbox !== undefined) S.inbox = with_.inbox;
-  }
-
   function show(section) {
     // A section's link to its own log: Records \u203a Logs with that log's
     // filter (LOG_AREAS), as 'logs:<filter>'.
@@ -1073,9 +1060,28 @@
       pickLogArea(section.slice(at + 1));
       section = 'logs';
     }
-    if (ALIASES[section]) {
-      applyAlias(ALIASES[section][1]);
-      section = ALIASES[section][0];
+    // Home's inbox with one filter chosen, as 'inbox:<filter>'.
+    if (at > 0 && section.slice(0, at) === 'inbox') {
+      S.inbox = section.slice(at + 1);
+      section = 'inbox';
+    }
+    // The one list of contracts, as Target limits shows it: the live ones
+    // grouped by target ('contracts:bytarget').
+    if (at > 0 && section.slice(0, at) === 'contracts') {
+      if (section.slice(at + 1) === 'bytarget') {
+        S.contracts.byTarget = true;
+        S.contracts.person = null;
+        S.contracts.state = 'live';
+        S.contracts.page = 1;
+      }
+      section = 'contracts';
+    }
+    // Game rules with one type of setting shown, every area, as
+    // 'rules:<type>' (switch, timer, money, limit, list, changed).
+    if (at > 0 && section.slice(0, at) === 'rules') {
+      S.rules.type = section.slice(at + 1);
+      S.rules.area = '';
+      section = 'rules';
     }
     if (SECTIONS.indexOf(section) === -1) section = 'inbox';
     // A selected player's tab with nobody selected: Find.
@@ -1294,9 +1300,9 @@
             + 'they can be') : null,
           h('div.btn-row',
             btn('.is-small', 'ms-open', { 'data-value': '' }, 'All measures', 'arrow-right'),
-            btn('.is-small.is-ghost', 'ms-open', { 'data-value': 'freeze' }, 'Frozen', 'arrow-right'),
-            btn('.is-small.is-ghost', 'ms-open', { 'data-value': 'suspend' }, 'Suspended', 'arrow-right'),
-            btn('.is-small.is-ghost', 'ms-open', { 'data-value': 'protect' }, 'Protected', 'arrow-right'))),
+            btn('.is-small.ghost', 'ms-open', { 'data-value': 'freeze' }, 'Frozen', 'arrow-right'),
+            btn('.is-small.ghost', 'ms-open', { 'data-value': 'suspend' }, 'Suspended', 'arrow-right'),
+            btn('.is-small.ghost', 'ms-open', { 'data-value': 'protect' }, 'Protected', 'arrow-right'))),
           held ? '.is-warn' : '')),
       h('p.foot', h('span', 'Recovery: ' + (o.recovery === 'ready' ? 'finished'
         : o.recovery === 'recovering' ? 'still running' : 'FAILED')),
@@ -1311,7 +1317,7 @@
       h('p.foot', icon('rotate'),
         h('span', { id: 'ov-at' }, overviewStamp()),
         S.overviewError ? h('span.is-error', ' · last refresh: ' + S.overviewError) : null,
-        ' ', btn('.is-small.is-ghost', 'ov-refresh', {}, 'Refresh now')));
+        ' ', btn('.is-small.ghost', 'ov-refresh', {}, 'Refresh now')));
   }
 
   SHELL.overview = function () {
@@ -1372,11 +1378,11 @@
           + 'it from a player\'s card in Players.'),
         h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
           'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
-          btn('.is-primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
+          btn('.primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
         t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
         t.diag ? linesBox(t.diag.lines, t.diag.later) : null)),
       h('p.foot', icon('rotate'), h('span', { id: 'ov-at' }, overviewStamp()),
-        ' ', btn('.is-small.is-ghost', 'ov-refresh', {}, 'Refresh now')));
+        ' ', btn('.is-small.ghost', 'ov-refresh', {}, 'Refresh now')));
   }
   SHELL.health = function () { return h('section.view', h('div.stack', { id: 'dg' }, healthBody())); };
   LOAD.health = function () { loadOverview(false); };
@@ -1392,6 +1398,15 @@
     },
     value: function () { return S.contracts.state; },
     pick: function (v) { S.contracts.state = v; S.contracts.page = 1; loadContracts(); }
+  };
+  DD['ct-as'] = {
+    prefix: 'Their part',
+    options: function () {
+      return [{ value: '', label: 'Any' }, { value: 'target', label: PART_LABEL.target },
+              { value: 'client', label: PART_LABEL.client }, { value: 'hitman', label: PART_LABEL.hitman }];
+    },
+    value: function () { return S.contracts.as; },
+    pick: function (v) { S.contracts.as = v; S.contracts.page = 1; loadContracts(); }
   };
   DD['ct-rule'] = {
     prefix: 'Rule',
@@ -1426,6 +1441,10 @@
     if (range === false) return null;
     if (range.from) data.from = range.from;
     if (range.to) data.to = range.to;
+    if (c.person && c.person.ref) data.ref = c.person.ref;
+    else if (c.person) data.person = c.person.person;
+    if (c.person && c.as) data.as = c.as;
+    if (c.byTarget) data.byTarget = true;
     return data;
   }
 
@@ -1440,6 +1459,12 @@
       if (!reply) return;
       if (!reply.ok) {
         toast(words(reply), 'error');
+        // A person no longer found (a lookup gone stale): the list unfiltered.
+        if (S.contracts.person && (reply.err === 'stale_lookup' || reply.err === 'not_found')) {
+          S.contracts.person = null;
+          S.contracts.as = '';
+          if (S.section === 'contracts') show('contracts');
+        }
       } else {
         S.contracts.data = reply.data || {};
         S.contracts.page = Number(S.contracts.data.page) || 1;
@@ -1457,31 +1482,55 @@
     setHtml(byId('ct-pager'), contractPager());
   }
 
+  var PART_LABEL = { target: 'Target', client: 'Placer', hitman: 'Hitman' };
+
   function contractRows() {
     var d = S.contracts.data;
     if (!d) return loading('Reading contracts…');
     var rows = asList(d.rows);
-    if (!rows.length) return empty('No contract matches.');
+    if (!rows.length) return empty(S.contracts.byTarget ? 'No live contract matches.' : 'No contract matches.');
+    var c = S.contracts;
+    var person = !!c.person;
+    var whoisCol = person && canIdentify();
+    // One person's: their part in place of the rule and the payouts, as
+    // their own list had, so the table still fits a 1280 window.
+    var cols = person ? 7 + (whoisCol ? 1 : 0) : 8;
+    var out = [], last = null;
+    rows.forEach(function (row) {
+      if (c.byTarget && row.group !== last) {
+        last = row.group;
+        out.push(h('tr.tl-group', h('td', { colspan: String(cols) }, icon('crosshairs'), ' ',
+          String(row.target || '—'), h('span.sub', ' · ' + num(row.onTarget) + ' live on them'))));
+      }
+      var id = String(row.id);
+      // Relative, to scan down a page of them; the date itself on hover.
+      var endAt = row.resolved_at || row.deadline_at;
+      var ended = row.resolved_at
+        ? String(row.resolution || STATE_LABEL[row.state] || 'ended') + ' · ' + ago(row.resolved_at)
+        : (row.deadline_at ? 'due ' + ago(row.deadline_at) : '—');
+      out.push(h('tr.row', { 'data-act': 'contract', 'data-id': id, tabindex: '0',
+        title: 'Open contract ' + row.id },
+        h('td.mono.nowrap', id), h('td', stateChip(row.state),
+          row.frozen ? h('span.chip.is-warn.is-frozen', c.byTarget ? 'On hold' : 'Frozen') : null),
+        person ? h('td', PART_LABEL[row.role] || String(row.role || '—'),
+          row.roleAnonymous ? h('span.chip.is-anon', 'anonymous') : null) : null,
+        person ? null : h('td.nowrap', RULE_LABEL[row.rule] || String(row.rule || '—')),
+        h('td.name', String(row.target || '—')),
+        h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || 'Anonymous'))
+          : String(row.client || '—')),
+        person ? null : h('td.num', num(row.claimed) + ' / ' + num(row.slots)),
+        h('td.nowrap', when(row.created_at)), h('td', { title: endAt ? when(endAt) : null }, ended),
+        whoisCol ? h('td', btn('.is-small.ghost', 'whois', { 'data-id': id, 'data-where': 'contracts' },
+          'Whois', 'user-secret')) : null));
+      var who = c.whois[id];
+      if (who) out.push(h('tr.more', h('td', { colspan: String(cols) }, whoisBody(who))));
+    });
     return h('div.table-wrap', h('table.grid.is-rows',
-      h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), h('th', 'Rule'), h('th', 'Target'),
-        h('th', 'Client'), h('th.num', 'Payouts'), h('th', 'Placed'), h('th', 'Deadline or end'))),
-      h('tbody', rows.map(function (row) {
-        // Relative, to scan down a page of them; the date itself on hover.
-        var endAt = row.resolved_at || row.deadline_at;
-        var ended = row.resolved_at
-          ? String(row.resolution || STATE_LABEL[row.state] || 'ended') + ' · ' + ago(row.resolved_at)
-          : (row.deadline_at ? 'due ' + ago(row.deadline_at) : '—');
-        return h('tr.row', { 'data-act': 'contract', 'data-id': String(row.id), tabindex: '0',
-          title: 'Open contract ' + row.id },
-          h('td.mono.nowrap', String(row.id)), h('td', stateChip(row.state),
-            row.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
-          h('td.nowrap', RULE_LABEL[row.rule] || String(row.rule || '—')),
-          h('td.name', String(row.target || '—')),
-          h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || 'Anonymous'))
-            : String(row.client || '—')),
-          h('td.num', num(row.claimed) + ' / ' + num(row.slots)),
-          h('td.nowrap', when(row.created_at)), h('td', { title: endAt ? when(endAt) : null }, ended));
-      }))));
+      h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), person ? h('th', 'Their part') : null,
+        person ? null : h('th', 'Rule'), h('th', 'Target'), h('th', 'Client'),
+        person ? null : h('th.num', 'Payouts'), h('th', 'Placed'),
+        h('th', 'Deadline or end'), whoisCol ? h('th', '') : null)),
+      h('tbody', out)));
   }
 
   function contractPager() {
@@ -1490,20 +1539,39 @@
     var page = Number(d.page) || 1, pages = Number(d.pages) || 1;
     return frag(
       btn('.is-small', 'ct-page', { 'data-value': String(page - 1), disabled: page <= 1 }, 'Previous', 'chevron-left'),
-      h('span.pager-text', 'Page ' + page + ' of ' + pages + ' · ' + num(d.total) + ' contract'
-        + (Number(d.total) === 1 ? '' : 's')),
+      h('span.pager-text', 'Page ' + page + ' of ' + pages + ' · ' + num(d.total)
+        + (S.contracts.byTarget ? ' live contract' : ' contract') + (Number(d.total) === 1 ? '' : 's')
+        + (S.contracts.byTarget ? ' on ' + num(d.targets) + ' target' + (Number(d.targets) === 1 ? '' : 's') : '')),
       btn('.is-small', 'ct-page', { 'data-value': String(page + 1), disabled: page >= pages }, 'Next', 'chevron-right'));
+  }
+
+  /** Whose contracts the list shows, and their part on them. */
+  function contractPerson() {
+    var c = S.contracts;
+    return h('div.toolbar.ct-person',
+      c.person
+        ? frag(h('span.chip.is-link.st-chip', icon('user'), ' ', String(c.person.name || 'One person'),
+            h('button.st-chip-x', { type: 'button', 'data-act': 'ct-person-clear', title: 'Show everybody\'s',
+              'aria-label': 'Show everybody\'s contracts' }, icon('xmark'))),
+          dropdown('ct-as'))
+        : h('label.search', icon('user'),
+          field('ct.who', { id: 'ct-who', placeholder: 'One person: player id, citizen id or name',
+            'data-enter': 'ct-person-set', 'aria-label': 'Show one person\'s contracts' })),
+      segmented('ct-bytarget', [{ value: 'list', label: 'Newest first' },
+        { value: 'bytarget', label: 'Live, by target' }], c.byTarget ? 'bytarget' : 'list'));
   }
 
   SHELL.contracts = function () {
     return h('section.view',
       h('div.toolbar',
         h('label.search', icon('magnifying-glass'),
-          field('ct.q', { id: 'ct-q', placeholder: 'Contract id, citizen id or name',
+          field('ct.q', { id: 'ct-q', placeholder: S.contracts.byTarget ? 'Target name or citizen id'
+            : 'Contract id, citizen id or name',
             'data-live': 'ct-search', 'data-enter': 'ct-search-now', 'aria-label': 'Search contracts' })),
         dropdown('ct-state'), dropdown('ct-rule'), dropdown('ct-range'),
         rangeInputs('ct', S.contracts.range, 'ct-search'),
-        btn('.is-ghost', 'ct-clear', {}, 'Clear', 'eraser')),
+        btn('.ghost', 'ct-clear', {}, 'Clear', 'eraser')),
+      contractPerson(),
       h('p.hint', canIdentify()
         ? 'You see who is behind anonymous parties. Every search and every contract you open is on the record.'
         : 'Anonymous placers and operatives show as Anonymous, and a search by citizen id or name never '
@@ -1736,9 +1804,9 @@
         d && d.frozen ? h('span.chip.is-warn.is-frozen', { title: 'On hold: frozen by staff ('
           + asList(d.frozen).join(', ') + ')' }, 'Frozen') : null),
       h('div.drawer-tools',
-        canVoid ? btn('.is-ghost.is-small', 'dr-more', { 'aria-expanded': S.drawer.more ? 'true' : 'false',
+        canVoid ? btn('.ghost.is-small', 'dr-more', { 'aria-expanded': S.drawer.more ? 'true' : 'false',
           title: 'More: void this contract' }, S.drawer.more ? 'Less' : 'More', 'ellipsis') : null,
-        btn('.is-ghost', 'drawer-close', { 'aria-label': 'Close the contract' }, 'Close', 'xmark')));
+        btn('.ghost', 'drawer-close', { 'aria-label': 'Close the contract' }, 'Close', 'xmark')));
     if (!d) {
       return frag(head, answerBox(S.drawer.answer), S.drawer.answer ? null : loading('Reading the contract…'));
     }
@@ -1773,7 +1841,7 @@
        server resolves (playerSubject), so no citizen id is needed here. Not
        for a party who is anonymous on it to staff without IdentityAce. */
     function partyButton(role, opId) {
-      return btn('.is-small.is-ghost', 'party-lookup', { 'data-subject': 'contract:' + id + ':' + role
+      return btn('.is-small.ghost', 'party-lookup', { 'data-subject': 'contract:' + id + ':' + role
         + (opId ? ':' + opId : '') }, 'Look up / Freeze', 'magnifying-glass');
     }
     var clientHidden = c.anonymous && !canIdentify();
@@ -1856,7 +1924,7 @@
       h('div.inline-form.is-wide',
         field('dr.reason', { class: 'is-grow', placeholder: 'Reason for the void (kept in the log)',
           maxlength: '120', disabled: !modOpen(), 'aria-label': 'Reason for the void' }),
-        modBtn('.is-danger', 'void', {}, 'Void contract', 'Click again to void', 'ban')),
+        modBtn('.danger', 'void', {}, 'Void contract', 'Click again to void', 'ban')),
       h('p.note', 'Voiding closes it and refunds what it holds, by the rules every ending follows.')) : null;
 
     var body;
@@ -1865,7 +1933,7 @@
         staff && !stub ? card('Change reward', rewardBody(d), '.ct-reward') : null, escrowCard);
     } else if (tab === 'people') {
       body = frag(
-        canIdentify() ? h('div.drawer-actions', btn('.is-ghost', 'whois', { 'data-id': id }, 'Whois', 'user-secret'))
+        canIdentify() ? h('div.drawer-actions', btn('.ghost', 'whois', { 'data-id': id }, 'Whois', 'user-secret'))
           : null,
         whois, operatives,
         staff ? card('Remove an operative', removeBody(d, staff), '.ct-remove') : null,
@@ -1886,7 +1954,7 @@
       body = frag(
         d.canVoid ? null : h('p.note', 'Closed: a closed contract is never voided.'),
         card('Terms', terms), deadlinePart, proposals,
-        canVoid && !S.drawer.more ? h('div.btn-row', btn('.is-small.is-ghost', 'dr-more', {}, 'Void this contract…',
+        canVoid && !S.drawer.more ? h('div.btn-row', btn('.is-small.ghost', 'dr-more', {}, 'Void this contract…',
           'ban')) : null);
     }
 
@@ -2053,7 +2121,7 @@
             'data-value': o.value, 'aria-pressed': on ? 'true' : 'false' }, o.label,
             o.value === 'all' ? null : h('span.nav-count.is-warn', { id: o.count, hidden: true }));
         })),
-        btn('.is-ghost', 'ib-refresh', {}, 'Refresh', 'rotate')),
+        btn('.ghost', 'ib-refresh', {}, 'Refresh', 'rotate')),
       h('p.hint', 'Everything waiting for staff: review items no rule could settle, money left for you to '
         + 'settle, and alerts not acknowledged yet. Nothing waiting? Reviews, stuck money and alerts land here.'),
       shows('reviews') ? h('section.ib-part', h('h3.st-group-title', 'Needs review'),
@@ -2193,7 +2261,7 @@
         { value: 'pay', label: 'Pay', disabled: off, title: why },
         { value: 'dismiss', label: 'Dismiss', disabled: off, title: why }], action, { 'data-id': id }),
       h('div.inline-form.is-wide', fields,
-        writeBtn(action === 'dismiss' ? '' : '.is-primary', 'resolve',
+        writeBtn(action === 'dismiss' ? '' : '.primary', 'resolve',
           { 'data-id': id, disabled: off, title: why },
           verbs[action][0], verbs[action][1], action === 'dismiss' ? 'xmark' : 'hand-holding-dollar')));
   }
@@ -2205,7 +2273,7 @@
     var id = String(item.id);
     return h('div.rv-form',
       h('div.inline-form.is-wide',
-        writeBtn('.is-primary', 'resolve-finish', { 'data-id': id }, 'Finish as decided',
+        writeBtn('.primary', 'resolve-finish', { 'data-id': id }, 'Finish as decided',
           'Click again to finish', 'check')));
   }
 
@@ -2379,7 +2447,7 @@
       h('div.toolbar',
         segmented('al-state', [{ value: 'open', label: 'Open' }, { value: 'acknowledged', label: 'Acknowledged' }],
           S.alerts.state),
-        btn('.is-ghost', 'al-refresh', {}, 'Refresh', 'rotate')),
+        btn('.ghost', 'al-refresh', {}, 'Refresh', 'rotate')),
       h('p.hint', 'Every line the server console prints whatever Debug says: money at risk or left for staff, '
         + 'a write that failed, a job that keeps failing, and each setting that needs attention. The same line '
         + 'again is counted on its alert. Kept across restarts until acknowledged; acknowledging is on the record.'),
@@ -2540,7 +2608,7 @@
         h('label.search', icon('magnifying-glass'),
           field('cs.q', { id: 'cs-q', placeholder: 'Filter the lines', 'data-live': 'cs-filter',
             'aria-label': 'Filter the lines' })),
-        btn('.is-ghost', 'cs-refresh', {}, 'Refresh', 'rotate'),
+        btn('.ghost', 'cs-refresh', {}, 'Refresh', 'rotate'),
         btn('', 'cs-copy', {}, 'Copy', 'copy'),
         h('span.sub', { id: 'cs-at' }, consoleAt())),
       h('p.hint', 'What this resource said in the server console since its last start, and what it kept with Debug '
@@ -2732,7 +2800,7 @@
           'aria-label': 'Citizen id' }),
         dropdown('lg-range'),
         rangeInputs('lg', S.logs.range, 'lg-search'),
-        btn('.is-ghost', 'lg-clear', {}, 'Clear', 'eraser'),
+        btn('.ghost', 'lg-clear', {}, 'Clear', 'eraser'),
         h('span.lg-tools', { id: 'lg-tools' }, logToolsBody())),
       h('p.hint', canIdentify()
         ? 'Every row as it was written. Reading the log as you can see it is on the record.'
@@ -2790,7 +2858,6 @@
     if (!subject && !byRef) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
     // Nothing armed on the card before carries over to who is read now.
     disarm();
-    S.players.whois = {};
     S.players.playtime = null;
     S.players.freeze = null;
     resetPlayerStaff();
@@ -2855,7 +2922,7 @@
         field('pl.hours', { id: 'pl-hours', type: 'number', min: '0', max: '100000', step: '0.5',
           placeholder: 'Hours', 'aria-label': 'Counted hours' }),
         writeBtn('', 'pl-playtime-set', {}, 'Set hours', 'Click again to set', 'clock', true),
-        writeBtn('.is-ghost', 'pl-playtime-reset', {}, 'Reset to 0', 'Click again to reset', 'arrow-rotate-left', true)),
+        writeBtn('.ghost', 'pl-playtime-reset', {}, 'Reset to 0', 'Click again to reset', 'arrow-rotate-left', true)),
       answerBox(S.players.playtime)), '', h('span.sub', pt.counting ? 'in the city: counting' : 'not counting'));
   }
 
@@ -2869,7 +2936,7 @@
         'aria-label': frozen ? 'Reason for unfreezing' : 'Reason for the freeze' }),
       frozen
         ? modBtn('', 'pl-unfreeze', {}, 'Unfreeze', 'Click again to unfreeze', 'play')
-        : modBtn('.is-danger', 'pl-freeze', {}, 'Freeze', 'Click again to freeze', 'snowflake'));
+        : modBtn('.danger', 'pl-freeze', {}, 'Freeze', 'Click again to freeze', 'snowflake'));
     var about = frozen
       ? frag(h('p.sub', 'Frozen ' + ago(frozen.since) + (frozen.reason ? ': ' + String(frozen.reason) : '')
           + (frozen.by ? ' · by ' + String(frozen.by) : '')),
@@ -2905,9 +2972,12 @@
 
   /** The person tabs, as buttons under their summary. */
   function personLinks() {
-    return h('div.btn-row.person-links', Object.keys(PERSON_VIEWS).map(function (view) {
-      return btn('.is-small.is-ghost', 'section', { 'data-section': view }, VIEW_LABEL[view][0], VIEW_LABEL[view][1]);
-    }));
+    // Their contracts: the one list of contracts, filtered to them.
+    return h('div.btn-row.person-links',
+      btn('.is-small.ghost', 'pl-contracts', {}, 'Their contracts', 'file-contract'),
+      Object.keys(PERSON_VIEWS).map(function (view) {
+        return btn('.is-small.ghost', 'section', { 'data-section': view }, VIEW_LABEL[view][0], VIEW_LABEL[view][1]);
+      }));
   }
 
   function summaryBody(d) {
@@ -2956,27 +3026,6 @@
           : empty('None waiting.'), '', h('span.sub', num(notices.count)))));
   }
 
-  function playerContractsBody(d) {
-    var contracts = asList(d.contracts);
-    return card('Contracts', contracts.length ? h('div.table-wrap', h('table.grid',
-      h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), h('th', 'Role'), h('th', 'Target'),
-        h('th', 'Placed'), h('th', 'Ended'), canIdentify() ? h('th', '') : null)),
-      h('tbody', contracts.map(function (row) {
-        var id = String(row.id);
-        var who = S.players.whois[id];
-        return frag(h('tr',
-          h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': id }, id)),
-          h('td', stateChip(row.state), row.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null),
-          h('td', String(row.role || '—'), row.anonymous ? h('span.chip.is-anon', 'anonymous') : null),
-          h('td.name', String(row.target || '—')), h('td', when(row.created_at)),
-          h('td', String(row.resolution || '—')),
-          canIdentify() ? h('td', btn('.is-small.is-ghost', 'whois', { 'data-id': id, 'data-where': 'player' },
-            'Whois', 'user-secret')) : null),
-          who ? h('tr.more', h('td', { colspan: canIdentify() ? '7' : '6' }, whoisBody(who))) : null);
-      })))) : empty(canIdentify() ? 'No contracts on record.' : 'No contracts you may see.'),
-      '', h('span.sub', 'newest first'));
-  }
-
   function measuresBody(d) {
     return frag(
       freezeCard(d.frozen),
@@ -2998,7 +3047,7 @@
     return card('Why can’t they see…', frag(
       h('p.about', 'Runs the app\'s own reads as them: why a contract, the board or a feature is not showing, '
         + 'with the server-wide checks. They have to be in the city.'),
-      h('div.btn-row', btn('.is-primary', 'pl-diag', { disabled: !online || null,
+      h('div.btn-row', btn('.primary', 'pl-diag', { disabled: !online || null,
         title: online ? null : 'They are not in the city now' }, 'Run the diagnosis as them', 'stethoscope')),
       // Only the diagnosis run for the player shown (by the lookup's handle),
       // never one run for somebody looked up before.
@@ -3013,7 +3062,7 @@
         h('label.search', icon('magnifying-glass'),
           field('pl.q', { id: 'pl-q', placeholder: 'Player id, citizen id or name', 'data-enter': 'pl-lookup',
             'aria-label': 'Player id, citizen id or name' })),
-        btn('.is-primary', 'pl-lookup', {}, 'Look up', 'arrow-right')),
+        btn('.primary', 'pl-lookup', {}, 'Look up', 'arrow-right')),
       recent.length ? h('div.chips.recent', h('span.sub', 'Recent:'), recent.map(function (r) {
         return h('button.chip.is-link', { type: 'button', 'data-act': 'pl-recent', 'data-value': r.subject },
           r.name);
@@ -3029,7 +3078,6 @@
     if (!d) return empty('Look someone up by player id, citizen id or name.');
     if (d.error) return empty(d.error);
     switch (S.section) {
-      case 'pcontracts': return frag(personHead(d), playerContractsBody(d));
       case 'pmeasures': return frag(personHead(d), measuresBody(d));
       case 'pmoney': return frag(personHead(d), moneyBody(d));
       case 'pplaytime': return frag(personHead(d), playtimeCard(d.playtime));
@@ -3239,7 +3287,6 @@
     if (want && S.section === 'rules') {
       S.rules.area = areaOf(want);
       S.rules.type = '';
-      S.rules.cat = '';
       S.forms['st.q'] = '';
       S.settings.open[want.key] = true;
     }
@@ -3301,7 +3348,7 @@
             'data-enter': 'st-list-add',
             'data-key': key, disabled: !open, 'aria-label': 'Add to ' + entry.label }),
           btn('.is-small', 'st-list-add', { 'data-key': key, disabled: !open || null }, 'Add', 'plus'),
-          writeBtn('.is-small' + (changed ? '.is-primary' : ''), 'st-list-save',
+          writeBtn('.is-small' + (changed ? '.primary' : ''), 'st-list-save',
             { 'data-key': key, id: 'st-save-' + key }, 'Save list', 'Click again to save', 'check', false, open)));
     }
     if (entry.kind === 'range') {
@@ -3420,9 +3467,9 @@
       // reset takes that row away, and nothing in force moves.
       h('div.st-control', settingControl(entry),
         entry.ignored || entry.unknown || (overridden && !entry.readonly)
-          ? writeBtn('.is-small.is-ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
+          ? writeBtn('.is-small.ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
             'Click again to reset', 'arrow-rotate-left', false, settingOpen(entry)) : null,
-        offDefault ? writeBtn('.is-small.is-ghost', 'st-default', { 'data-key': key }, 'Reset to default',
+        offDefault ? writeBtn('.is-small.ghost', 'st-default', { 'data-key': key }, 'Reset to default',
           'Click again: back to ' + describe(entry, entry.shipped), 'rotate-left', false,
           settingOpen(entry)) : null));
   }
@@ -3452,7 +3499,7 @@
       h('p.st-about', num(n) + ' ' + photos + ' kept from before kill photos were turned off (records, whatever '
         + 'became of each photo). Removing deletes every one, and is on the record.'),
       facts.length ? h('ul.st-kept-facts', facts.map(function (text) { return h('li', text); })) : null,
-      h('div.btn-row', writeBtn('.is-danger.is-small', 'st-remove-photos', {},
+      h('div.btn-row', writeBtn('.danger.is-small', 'st-remove-photos', {},
         'Remove the ' + num(n) + ' ' + photos + ' kept from before',
         'Click again: remove ' + num(n) + ' ' + photos + ' for good', 'trash-can', true)),
       answerBox(answer));
@@ -3627,11 +3674,6 @@
   }
   function inRules(entry) { return viewOfSetting(entry) === 'rules'; }
 
-  /** The old settings tabs, by the category each showed. */
-  var OLD_TAB = { features: 'Switches (was Features)', 'rules-timers': 'Timers (was Rules, Timers)',
-    'rules-rewards': 'Money (was Rules, Rewards & money)', 'rules-limits': 'Limits (was Rules, Limits)',
-    'rules-targeting': 'Targeting (was Rules, Targeting)' };
-
   var TYPE_FILTERS = [{ value: '', label: 'All' }, { value: 'switch', label: 'Switches' },
     { value: 'timer', label: 'Timers' }, { value: 'money', label: 'Money' }, { value: 'limit', label: 'Limits' },
     { value: 'list', label: 'Lists' }, { value: 'changed', label: 'Changed' }];
@@ -3653,7 +3695,7 @@
     var d = S.settings.data;
     var overrides = d ? Number(d.overrides) || 0 : 0;
     var view = S.section;
-    var undoAll = overrides > 0 || (d && Number(d.stored) > 0) ? writeBtn('.is-danger.is-small', 'st-reset-all', {},
+    var undoAll = overrides > 0 || (d && Number(d.stored) > 0) ? writeBtn('.danger.is-small', 'st-reset-all', {},
       'Undo all panel changes', 'Click again: back to config.lua', 'arrow-rotate-left') : null;
     if (view === 'changed') {
       return frag(h('span.sub', num(overrides) + ' changed from the panel'
@@ -3796,12 +3838,11 @@
     var q = trim(S.forms['st.q']).toLowerCase();
     var type = S.rules.type;
     var area = S.rules.area;
-    var cat = S.rules.cat;
     var rows = all.filter(function (e) {
-      return (cat ? categoryOf(e) === cat : (!area || areaOf(e) === area) && typeHit(e, type)) && textHit(e, q);
+      return (!area || areaOf(e) === area) && typeHit(e, type) && textHit(e, q);
     });
     var body;
-    if (!area && !type && !q && !cat) {
+    if (!area && !type && !q) {
       // Every area at once would be hundreds of rows: pick one.
       body = h('div.cards-grid.gr-pick', AREAS.filter(function (a) {
         return all.some(function (e) { return areaOf(e) === a.id; });
@@ -3826,8 +3867,6 @@
     return h('div.gr',
       areaNav(all),
       h('div.gr-rows',
-        cat ? h('p.note.gr-old', 'Showing what the old ' + (OLD_TAB[cat] || cat) + ' tab held. Pick an area or a '
-          + 'type to see the rest.') : null,
         h('p.hint', 'Every setting under the area of the game it is about, its switches first. Every change takes '
           + 'effect at once and ' + (memory ? 'lasts until the resource stops: this server runs in memory mode, which '
           + 'keeps nothing across a restart' : 'is kept across restarts') + '; what is already under way finishes '
@@ -3953,7 +3992,7 @@
         card('Bring timers forward', frag(
           h('p.about', 'Test servers only: brings every wait and cooldown forward. Deadlines are only ever '
             + 'moved later. Audited.'),
-          h('div.btn-row', writeBtn('.is-danger', 'tl-refresh', {}, 'Bring timers forward', 'Click again: test servers only', 'forward')),
+          h('div.btn-row', writeBtn('.danger', 'tl-refresh', {}, 'Bring timers forward', 'Click again: test servers only', 'forward')),
           t.refresh ? answerBox(t.refresh.answer) : null,
           t.refresh ? linesBox(t.refresh.lines) : null)),
         card('Audit log', frag(
@@ -3977,7 +4016,7 @@
 
   /** Logs' own Flush, beside the log it writes. */
   function logToolsBody() {
-    return canWrite() ? frag(writeBtn('.is-small.is-ghost', 'tl-flush', {}, 'Flush the audit log', 'Click again to flush',
+    return canWrite() ? frag(writeBtn('.is-small.ghost', 'tl-flush', {}, 'Flush the audit log', 'Click again to flush',
       'floppy-disk', true), S.tools.flush ? answerBox(S.tools.flush) : null) : frag();
   }
 
@@ -4039,7 +4078,7 @@
             h('td.name', String(row.name || 'No name on record'), row.cid ? h('span.cid', String(row.cid)) : null,
               h('span.chip' + (k.chip || ''), k.label + (row.kind === 'limit' ? (row.exempt ? ': exempt' : '') : '')),
               row.online ? h('span.chip.is-live', 'in the city') : null,
-              row.cid ? h('div.party', btn('.is-small.is-ghost', 'pl-open-cid', { 'data-value': String(row.cid) },
+              row.cid ? h('div.party', btn('.is-small.ghost', 'pl-open-cid', { 'data-value': String(row.cid) },
                 'Open', 'arrow-right')) : null),
             h('td.nowrap', { title: when(row.since) }, ago(row.since)),
             h('td.nowrap', row['until'] ? when(row['until'])
@@ -4084,10 +4123,10 @@
     { title: 'Void a contract', icon: 'ban', view: 'contracts', go: 'Contracts',
       text: 'Open the contract from Contracts, then More, Void contract closes it and refunds what it holds, with a '
         + 'reason kept in the log.' },
-    { title: 'Refund or pay', icon: 'scale-balanced', view: 'reviews', go: 'Inbox, Needs review',
+    { title: 'Refund or pay', icon: 'scale-balanced', view: 'inbox:reviews', go: 'Inbox, Needs review',
       text: 'Needs review holds the contracts a player asked staff to look at: Refund, Pay or Dismiss each. '
         + 'Stuck escrow holds the money left for staff: Pay, Pay amount, Return or Delivered.',
-      also: { view: 'stuck', go: 'Money waiting' } },
+      also: { view: 'inbox:stuck', go: 'Money waiting' } },
     { title: 'Deadlines', icon: 'clock', view: 'contracts', go: 'Contracts',
       text: 'Open the contract from Contracts, then Extend or Shorten under Deadline moves it: 15 min, 30 min, '
         + '1 h, 2 h or a number of minutes, with a reason kept in the log. It shows the exact time left before '
@@ -4125,16 +4164,17 @@
           h('div.btn-row', viewAllowed(go) ? btn('.is-small', 'section', { 'data-section': a.view }, 'Go: ' + a.go,
             'arrow-right') : h('p.note', 'Needs ' + (DEV_VIEWS[go] ? 'the Developer ACE' : 'the staff ACE')
               + ': see Who can do what.'),
-            a.also && viewAllowed(resolveView(a.also.view)) ? btn('.is-small.is-ghost', 'section',
+            a.also && viewAllowed(resolveView(a.also.view)) ? btn('.is-small.ghost', 'section',
               { 'data-section': a.also.view }, a.also.go, 'arrow-right') : null)), '.howto-card');
       })));
   };
   LOAD.howto = function () {};
 
-  /** A view's name now, from an old one too. */
+  /** The view a link names: 'logs:<area>' and 'inbox:<filter>' are views
+      with a filter chosen. */
   function resolveView(view) {
-    if (typeof view === 'string' && view.indexOf('logs:') === 0) return 'logs';
-    return ALIASES[view] ? ALIASES[view][0] : view;
+    var at = typeof view === 'string' ? view.indexOf(':') : -1;
+    return at > 0 ? view.slice(0, at) : view;
   }
 
   /* ---- permissions: every ACE this resource checks, read-only ---- */
@@ -4175,48 +4215,48 @@
         + 'alive, to the person who placed it, and the three stay close together for the countdown. Under '
         + '\'either\' a verified kill completes it too. The escrow then pays the hitman, as many times as the '
         + 'contract has payout slots.',
-      links: [{ key: 'Completion.Fulfilment', view: 'limits', label: 'How contracts are completed' },
-        { key: 'Kidnap.CountdownSeconds', view: 'timers', label: 'Handover countdown' },
-        { key: 'Limits.MaxPayoutSlots', view: 'money', label: 'Payout slots' },
-        { key: 'Limits.MinContractReward', view: 'money', label: 'Least reward' }] },
+      links: [{ key: 'Completion.Fulfilment', label: 'How contracts are completed' },
+        { key: 'Kidnap.CountdownSeconds', label: 'Handover countdown' },
+        { key: 'Limits.MaxPayoutSlots', label: 'Payout slots' },
+        { key: 'Limits.MinContractReward', label: 'Least reward' }] },
     { title: 'The clock and the time bands', icon: 'clock',
       text: 'A contract runs for its deadline, three hours as shipped, but the clock counts down only while the '
         + 'placer, the target and at least one operative holding it are all in the city. Players never see the '
         + 'exact time: each card shows a rough band, More than 2 hours, 1 to 2 hours, Under 1 hour or Under '
         + '15 minutes left. Every contract also pauses for the half hour before a txAdmin restart, and while '
         + 'the target is in prison. A hard ceiling ends any contract after two days, pauses included.',
-      links: [{ key: 'Limits.DefaultDeadlineSeconds', view: 'timers', label: 'Deadline' },
-        { key: 'Limits.ContractLifetimeSeconds', view: 'timers', label: 'Hard ceiling' },
-        { key: 'Holds.RestartPauseBeforeSeconds', view: 'timers', label: 'Restart pause' },
-        { key: 'Limits.PauseWhileTargetJailed', view: 'features', label: 'Pause while jailed' }] },
+      links: [{ key: 'Limits.DefaultDeadlineSeconds', label: 'Deadline' },
+        { key: 'Limits.ContractLifetimeSeconds', label: 'Hard ceiling' },
+        { key: 'Holds.RestartPauseBeforeSeconds', label: 'Restart pause' },
+        { key: 'Limits.PauseWhileTargetJailed', label: 'Pause while jailed' }] },
     { title: 'Anonymity', icon: 'mask',
       text: 'A contract can be placed or accepted anonymously only if the server allows it, and as shipped it '
         + 'does not. When it is allowed, the placer or operative shows as Anonymous everywhere a player looks, '
         + 'and only staff with the identity ACE see who it is. A fee can be charged for it. Contracts on a '
         + 'whitelisted-job target (police, EMS and the like) follow their own three switches instead.',
-      links: [{ key: 'TargetClasses.default.AllowAnonymousPlacer', view: 'features', label: 'Anonymous placing' },
-        { key: 'TargetClasses.default.AllowAnonymousHitman', view: 'features', label: 'Anonymous accepting' },
-        { key: 'TargetClasses.whitelisted.AllowAnonymousPlacer', view: 'features',
+      links: [{ key: 'TargetClasses.default.AllowAnonymousPlacer', label: 'Anonymous placing' },
+        { key: 'TargetClasses.default.AllowAnonymousHitman', label: 'Anonymous accepting' },
+        { key: 'TargetClasses.whitelisted.AllowAnonymousPlacer',
           label: 'On whitelisted-job targets' },
-        { key: 'Anonymity.CreatorFee', view: 'money', label: 'Anonymity fees' }] },
+        { key: 'Anonymity.CreatorFee', label: 'Anonymity fees' }] },
     { title: 'The informants', icon: 'user-secret',
       text: 'Three paid look-ups, each off as shipped. The target\'s informant lets a target pay to find out who '
         + 'is after them, with a chance of an answer. The placer\'s informant lets the placer find out which '
         + 'operative took the contract. The informant tip lets a hitman buy the target\'s rough area on the map. '
         + 'One master switch turns all three off at once, and each has its own switch for whitelisted-job targets.',
-      links: [{ key: 'Intel.Enabled', view: 'features', label: 'Master switch' },
-        { key: 'Intel.Informant.Enabled', view: 'features', label: 'Target\'s informant' },
-        { key: 'Intel.PlacerInformant.Enabled', view: 'features', label: 'Placer\'s informant' },
-        { key: 'Intel.LocationTip.Enabled', view: 'features', label: 'Informant tip' },
-        { key: 'Intel.Informant.Cost', view: 'money', label: 'Prices' }] },
+      links: [{ key: 'Intel.Enabled', label: 'Master switch' },
+        { key: 'Intel.Informant.Enabled', label: 'Target\'s informant' },
+        { key: 'Intel.PlacerInformant.Enabled', label: 'Placer\'s informant' },
+        { key: 'Intel.LocationTip.Enabled', label: 'Informant tip' },
+        { key: 'Intel.Informant.Cost', label: 'Prices' }] },
     { title: 'Buyouts', icon: 'hand-holding-dollar',
       text: 'A target can pay to buy out a contract on them, from the app or with the buyout command. The price '
         + 'is the reward times a multiplier, between a least and a most, and never above a cap. A contract a '
         + 'hitman holds gives them a head start before the buyout closes it. A dead or downed target cannot '
         + 'buy out.',
-      links: [{ key: 'Bailout.Enabled', view: 'features', label: 'Buyouts on or off' },
-        { key: 'Bailout.MinMultiplier', view: 'money', label: 'Buyout price' },
-        { key: 'Bailout.ProcessingDelaySeconds', view: 'money', label: 'Hitman\'s head start' }] },
+      links: [{ key: 'Bailout.Enabled', label: 'Buyouts on or off' },
+        { key: 'Bailout.MinMultiplier', label: 'Buyout price' },
+        { key: 'Bailout.ProcessingDelaySeconds', label: 'Hitman\'s head start' }] },
     { title: 'The staff freeze', icon: 'snowflake',
       text: 'Staff with the staff or moderator ACE can freeze a player for a staff situation or a dispute, from Players. '
         + 'Every live contract they are party to goes on hold: its clocks stop, and nothing on it is accepted, '
@@ -4228,18 +4268,18 @@
         + 'advisory, and an sc-dispatch entry if that is on. Bulletins can go out when a contract is placed, '
         + 'accepted, given an informant tip or called off. The placer and the hitman are warned first, and the '
         + 'card is marked on the board. Which jobs raise one, and which are told, are lists under Targeting.',
-      links: [{ key: 'Advisory.Enabled', view: 'features', label: 'Advisories on or off' },
-        { key: 'Advisory.OnCreate', view: 'features', label: 'When they go out' },
-        { key: 'Advisory.RecipientJobNames', view: 'targeting', label: 'Who is told' }] },
+      links: [{ key: 'Advisory.Enabled', label: 'Advisories on or off' },
+        { key: 'Advisory.OnCreate', label: 'When they go out' },
+        { key: 'Advisory.RecipientJobNames', label: 'Who is told' }] },
     { title: 'Money safety', icon: 'vault',
       text: 'Every reward is held in escrow from the moment a contract is placed until it ends, so it can always '
         + 'be paid or returned. A contract that ends without a payout refunds its placer. A payout to a player '
         + 'who is offline, or whose inventory is full, is owed to them and paid when they next log in. Anything '
         + 'the server could not settle on its own is left for staff under Stuck escrow, and a disputed contract '
         + 'goes to Needs review.',
-      links: [{ key: 'PendingEscrow.MaxRetriesPerLogin', view: 'money', label: 'Owed payouts' },
-        { key: 'MaxContractValue', view: 'money', label: 'Most a contract holds' },
-        { key: 'EscrowBlacklist', view: 'money', label: 'Items never in a reward' }] }
+      links: [{ key: 'PendingEscrow.MaxRetriesPerLogin', label: 'Owed payouts' },
+        { key: 'MaxContractValue', label: 'Most a contract holds' },
+        { key: 'EscrowBlacklist', label: 'Items never in a reward' }] }
   ];
   /** For the tests. */
   window.CH_ADMIN_HELP = HELP;
@@ -4285,8 +4325,8 @@
   SHELL.help = function () {
     return h('section.view', h('p.hint', 'How the contract app works, in plain words. Open a card; each link opens '
       + 'the setting that controls it.'),
-      h('div.toolbar', btn('.is-small.is-ghost', 'help-all', {}, 'Open all', 'angles-down'),
-        btn('.is-small.is-ghost', 'help-none', {}, 'Close all', 'angles-up')),
+      h('div.toolbar', btn('.is-small.ghost', 'help-all', {}, 'Open all', 'angles-down'),
+        btn('.is-small.ghost', 'help-none', {}, 'Close all', 'angles-up')),
       h('div.stack.help-list', helpOrdered().map(function (c) {
         var open = !!S.help.open[c.title];
         return h('section.card.help-card' + (open ? '.is-open' : ''),
@@ -4295,8 +4335,7 @@
             icon(open ? 'chevron-up' : 'chevron-down')),
           open ? frag(h('p.about', c.text),
             c.links.length ? h('div.help-links', c.links.map(function (l) {
-              return h('button.link', { type: 'button', 'data-act': 'help-jump', 'data-key': l.key,
-                'data-view': l.view }, l.label);
+              return h('button.link', { type: 'button', 'data-act': 'help-jump', 'data-key': l.key }, l.label);
             })) : null) : null);
       })));
   };
@@ -4321,7 +4360,7 @@
   };
   ACTIONS.group = function (node) { openGroup(node.getAttribute('data-group')); };
   /** A help link: the setting's view, the search cleared, and its row marked. */
-  ACTIONS['help-jump'] = function (node) { goSetting(node.getAttribute('data-key'), node.getAttribute('data-view')); };
+  ACTIONS['help-jump'] = function (node) { goSetting(node.getAttribute('data-key')); };
   ACTIONS['toast-close'] = function (node) { node.remove(); };
 
   ACTIONS['dd-open'] = function (node) {
@@ -4361,6 +4400,41 @@
   };
 
   ACTIONS['ct-search-now'] = function () { S.contracts.page = 1; loadContracts(); };
+  /** One person's contracts, as typed here (a player id, citizen id or name). */
+  ACTIONS['ct-person-set'] = function () {
+    var who = trim(S.forms['ct.who']).slice(0, 64);
+    if (!who) return;
+    S.contracts.person = { person: who, name: who };
+    S.contracts.as = '';
+    S.contracts.page = 1;
+    S.contracts.whois = {};
+    show('contracts');
+  };
+  ACTIONS['ct-person-clear'] = function () {
+    S.contracts.person = null;
+    S.contracts.as = '';
+    S.contracts.page = 1;
+    S.forms['ct.who'] = '';
+    show('contracts');
+  };
+  ACTIONS['ct-bytarget'] = function (node) {
+    S.contracts.byTarget = node.getAttribute('data-value') === 'bytarget';
+    if (S.contracts.byTarget) S.contracts.state = 'live';
+    S.contracts.page = 1;
+    show('contracts');
+  };
+  /** From a player's card: the one list of contracts, filtered to them. */
+  ACTIONS['pl-contracts'] = function () {
+    var p = (S.players.data && S.players.data.player) || {};
+    if (!p.ref) return;
+    S.contracts.person = { ref: p.ref, name: p.name || p.cid || 'This player' };
+    S.contracts.as = '';
+    S.contracts.byTarget = false;
+    S.contracts.state = '';
+    S.contracts.page = 1;
+    S.contracts.whois = {};
+    show('contracts');
+  };
   LIVE['ct-search'] = function () {
     clearTimeout(S.contracts.timer);
     S.contracts.timer = setTimeout(function () {
@@ -4377,10 +4451,14 @@
     S.forms['ct.q'] = '';
     S.forms['ct.from'] = '';
     S.forms['ct.to'] = '';
+    S.forms['ct.who'] = '';
     S.contracts.state = 'live';
     S.contracts.rule = '';
     S.contracts.range = '';
     S.contracts.page = 1;
+    S.contracts.person = null;
+    S.contracts.as = '';
+    S.contracts.byTarget = false;
     show('contracts');
   };
   ACTIONS.contract = function (node) { openContract(node.getAttribute('data-id')); };
@@ -4522,9 +4600,9 @@
     ask('whois', { id: id }).then(function (reply) {
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); return; }
-      if (where === 'player') {
-        S.players.whois[id] = reply.data || {};
-        if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
+      if (where === 'contracts') {
+        S.contracts.whois[id] = reply.data || {};
+        if (S.section === 'contracts') drawContracts();
       } else if (S.drawer.id === id) {
         S.drawer.whois = reply.data || {};
         drawDrawer();
@@ -4535,7 +4613,7 @@
   ACTIONS['rv-all'] = function (node) {
     S.reviews.all = node.getAttribute('data-value') === 'all';
     S.reviews.items = null;
-    show('reviews');
+    show('inbox:reviews');
   };
   ACTIONS['rv-refresh'] = function () { loadReviews(); };
   ACTIONS['rv-action'] = function (node) {
@@ -5047,7 +5125,7 @@
         field('an.text', { id: 'an-text', class: 'is-grow', placeholder: 'The notice',
           maxlength: String(ANNOUNCE_MAX * 2), 'data-live': 'an-count', disabled: !open,
           'aria-label': 'The notice to send' }),
-        writeBtn('.is-primary', 'an-send', {}, 'Send', 'Click again to send', 'paper-plane')),
+        writeBtn('.primary', 'an-send', {}, 'Send', 'Click again to send', 'paper-plane')),
       h('p.note', { id: 'an-count', 'aria-live': 'polite' }, announceCount()),
       answerBox(a.answer)));
   }
@@ -5143,14 +5221,14 @@
       hidden ? h('p.note', hidden + ' change(s) to the Developer section\'s own settings are left out: they are '
         + 'for staff who may open it.') : null,
       h('div.btn-row',
-        hs.back.length ? btn('.is-small.is-ghost', 'hs-newer', {}, 'Newer', 'arrow-left') : null,
-        hs.data.next != null ? btn('.is-small.is-ghost', 'hs-older', {}, 'Older', 'arrow-right') : null));
+        hs.back.length ? btn('.is-small.ghost', 'hs-newer', {}, 'Newer', 'arrow-left') : null,
+        hs.data.next != null ? btn('.is-small.ghost', 'hs-older', {}, 'Older', 'arrow-right') : null));
   }
 
   /** Records \u203a Logs, Setting changes. */
   function settingsLogBody() {
     return frag(
-      h('div.toolbar', btn('.is-ghost', 'hs-refresh', {}, 'Refresh', 'rotate')),
+      h('div.toolbar', btn('.ghost', 'hs-refresh', {}, 'Refresh', 'rotate')),
       h('p.hint', 'Every setting changed from the panel, newest first: when, the value before and after, and who. '
         + 'Undo puts the value before that change back, checked as any change is; it takes two clicks and is on '
         + 'the record. A secret is never shown.'),
@@ -5401,7 +5479,7 @@
           field('ps.reason', { id: 'ps-reason', class: 'is-grow', maxlength: '120', disabled: !modOpen(),
             placeholder: 'Reason (required: they are shown it, and it goes in the log)',
             'aria-label': 'Reason for the suspension' }),
-          modBtn('.is-danger', 'ps-suspend', {}, 'Suspend', 'Click again to suspend', 'ban')));
+          modBtn('.danger', 'ps-suspend', {}, 'Suspend', 'Click again to suspend', 'ban')));
     }
     return card('Suspend from contracts', frag(body, answerBox(S.pstaff.suspend)), '',
       row ? h('span.chip.is-warn.is-suspended', 'Suspended') : null);
@@ -5458,7 +5536,7 @@
       h('div.inline-form.is-wide',
         field('pay.reason', { id: 'pay-reason', class: 'is-grow', maxlength: '120', disabled: !open,
           placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the payment' }),
-        writeBtn('.is-danger', 'pay-send', open ? {} : { title: why }, 'Pay', 'Click again to pay',
+        writeBtn('.danger', 'pay-send', open ? {} : { title: why }, 'Pay', 'Click again to pay',
           'money-bill', false, open)),
       answerBox(S.pstaff.pay)));
   }
@@ -5667,7 +5745,7 @@
       text: 'The moderator ACE (Config.Admin.ModeratorAce) reads everything the staff ACE reads, without '
         + 'identities. They may freeze, suspend, protect, void and move a deadline. Settings, payments, '
         + 'settling, the review queue and the Developer section stay with the staff ACE.',
-      links: [{ key: 'Staff.ManualPaymentMax', view: 'limits', label: 'Most one manual payment may be' }] });
+      links: [{ key: 'Staff.ManualPaymentMax', label: 'Most one manual payment may be' }] });
 
   /* ---------- opening and closing -------------------------------------- */
 
@@ -5695,7 +5773,6 @@
     S.logs.back = [];
     S.logs.open = {};
     S.players.data = null;
-    S.players.whois = {};
     S.players.subject = null;
     S.players.ref = null;
     S.players.playtime = null;
@@ -5720,7 +5797,7 @@
     S.menu = null;
     S.drawer = { id: null, data: null, answer: null, whois: null };
     S.stuck = { data: null, error: null, answers: {} };
-    if (S.tl) { clearTimeout(S.tl.curTimer); clearTimeout(S.tl.countTimer); }
+    if (S.tl) clearTimeout(S.tl.countTimer);
     tlReset();
   }
 
@@ -5841,7 +5918,7 @@
       h('div.inline-form.is-wide',
         field('dr.rm.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
           maxlength: '120', disabled: !open, 'aria-label': 'Reason for removing the operative' }),
-        writeBtn('.is-danger', 'ct-remove', {}, 'Remove', 'Click again to remove', 'user-minus')),
+        writeBtn('.danger', 'ct-remove', {}, 'Remove', 'Click again to remove', 'user-minus')),
       history);
   }
 
@@ -5997,7 +6074,7 @@
       h('div.inline-form.is-wide',
         field('dr.rw.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
           maxlength: '120', disabled: !open, 'aria-label': 'Reason for changing the reward' }),
-        writeBtn('.is-primary', 'rw-change', {}, 'Change reward', 'Click again to change', 'sack-dollar')));
+        writeBtn('.primary', 'rw-change', {}, 'Change reward', 'Click again to change', 'sack-dollar')));
   }
 
   function rewardPicked() {
@@ -6151,7 +6228,7 @@
       h('div.inline-form.is-wide',
         field('dr.ra.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
           maxlength: '120', disabled: !open, 'aria-label': 'Reason for reassigning the contract' }),
-        writeBtn('.is-danger', 'ra-go', {}, 'Reassign', 'Click again to reassign', 'right-left')));
+        writeBtn('.danger', 'ra-go', {}, 'Reassign', 'Click again to reassign', 'right-left')));
   }
 
   ACTIONS['ra-block'] = function (node) { disarm(); raState().block = node.getAttribute('data-value') || ''; drawDrawer(); };
@@ -6447,9 +6524,9 @@
         + 'handover, or a meeting point set. Their receipt and their card say what is missing. After the hold '
         + 'time it is handed over anyway, so money is never stuck. The money stays in escrow, owed to them, '
         + 'and every hold is audited (intent_hold_started, intent_hold_released).',
-      links: [{ key: 'Roleplay.ProofOfIntent.Enabled', view: 'features', label: 'Proof of intent' },
-        { key: 'Roleplay.ProofOfIntent.MinMessages', view: 'limits', label: 'Messages that count' },
-        { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', view: 'timers', label: 'Longest hold' }] },
+      links: [{ key: 'Roleplay.ProofOfIntent.Enabled', label: 'Proof of intent' },
+        { key: 'Roleplay.ProofOfIntent.MinMessages', label: 'Messages that count' },
+        { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', label: 'Longest hold' }] },
     { title: 'Roleplay: Bodyguards', icon: 'shield-halved',
       text: 'Off as shipped. On, a target can hire protection from their On me card: a reward taken from them '
         + 'at once and held, and a meeting pin where they stand. Other players see the job on the board\'s '
@@ -6457,16 +6534,16 @@
         + 'never who placed the hit or who is on it. Ended without a completion (expired, cancelled, bought '
         + 'out): the guard is paid. Completed anyway: the guard gets their share and the rest goes back. '
         + 'Nobody took it, or staff voided the contract: all of it goes back to the target.',
-      links: [{ key: 'Roleplay.Protection.Enabled', view: 'features', label: 'Bodyguard contracts' },
-        { key: 'Roleplay.Protection.MinReward', view: 'money', label: 'Reward bounds and account' },
-        { key: 'Roleplay.Protection.PayOnCompletionPercent', view: 'money', label: 'Share if completed' },
-        { key: 'Roleplay.Protection.MaxJobsPerGuard', view: 'limits', label: 'Jobs per guard' }] },
+      links: [{ key: 'Roleplay.Protection.Enabled', label: 'Bodyguard contracts' },
+        { key: 'Roleplay.Protection.MinReward', label: 'Reward bounds and account' },
+        { key: 'Roleplay.Protection.PayOnCompletionPercent', label: 'Share if completed' },
+        { key: 'Roleplay.Protection.MaxJobsPerGuard', label: 'Jobs per guard' }] },
     { title: 'Roleplay: Hit on the hitman', icon: 'crosshairs',
       text: 'Off as shipped. On, a target whose informant found out an operative\'s name gets a button on that '
         + 'card to place a contract on them: the Place form opens with them chosen, and every rule of placing '
         + 'a contract applies. Nothing is offered for an operative found only by description.',
-      links: [{ key: 'Roleplay.HitOnHitman.Enabled', view: 'features', label: 'Hit on the hitman' },
-        { key: 'Intel.Informant.Enabled', view: 'features', label: 'The target\'s informant' }] });
+      links: [{ key: 'Roleplay.HitOnHitman.Enabled', label: 'Hit on the hitman' },
+        { key: 'Intel.Informant.Enabled', label: 'The target\'s informant' }] });
 
   window.addEventListener('message', function (event) {
     var message = (event && event.data) || {};
@@ -6528,35 +6605,35 @@
         + 'vague witness report on their phones and in sc-dispatch: a phrase, the way the hitman went, and the '
         + 'nearest named area. A position can be sent too, moved by up to the fuzz distance. It never names the '
         + 'hitman or the placer.',
-      links: [{ key: 'Roleplay.WitnessHeat.Enabled', view: 'features', label: 'Witness heat on or off' },
-        { key: 'Roleplay.WitnessHeat.WitnessRadius', view: 'limits', label: 'Radius and witnesses' },
-        { key: 'Roleplay.WitnessHeat.Phrases', view: 'limits', label: 'What a witness says' },
-        { key: 'Roleplay.WitnessHeat.Areas', view: 'limits', label: 'Named areas' }] },
+      links: [{ key: 'Roleplay.WitnessHeat.Enabled', label: 'Witness heat on or off' },
+        { key: 'Roleplay.WitnessHeat.WitnessRadius', label: 'Radius and witnesses' },
+        { key: 'Roleplay.WitnessHeat.Phrases', label: 'What a witness says' },
+        { key: 'Roleplay.WitnessHeat.Areas', label: 'Named areas' }] },
     { title: 'Roleplay: EMS before re-listing', icon: 'kit-medical',
       text: 'When it is on, a target killed on a contract cannot have a new one placed on them straight away. '
         + 'They have to have been up, neither dead nor downed, for the treated minutes first; the placer is '
         + 'told they are still recovering. With the medic switch on, an on-duty medic\'s defibrillator revive '
         + 'is needed instead. The rule always lets go after the longest hold, and it adds to the usual '
         + 'cooldowns.',
-      links: [{ key: 'Roleplay.EmsRelisting.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Roleplay.EmsRelisting.TreatedMinutes', view: 'timers', label: 'Minutes up' },
-        { key: 'Roleplay.EmsRelisting.RequireEMS', view: 'features', label: 'A medic\'s revive' }] },
+      links: [{ key: 'Roleplay.EmsRelisting.Enabled', label: 'On or off' },
+        { key: 'Roleplay.EmsRelisting.TreatedMinutes', label: 'Minutes up' },
+        { key: 'Roleplay.EmsRelisting.RequireEMS', label: 'A medic\'s revive' }] },
     { title: 'Roleplay: City news', icon: 'newspaper',
       text: 'When it is on, a completed contract on a whitelisted-job target, or on any target if set, posts an '
         + 'anonymous news item. It goes out on lb-phone\'s Birdy from the configured account, or as a server '
         + 'event another resource posts. The words come from the templates, with the target\'s job, the area '
         + 'and the time. The target is named only if staff turn that on, and the hitman and the placer never.',
-      links: [{ key: 'Roleplay.CityNews.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Roleplay.CityNews.App', view: 'limits', label: 'Where it is posted' },
-        { key: 'Roleplay.CityNews.Templates', view: 'limits', label: 'Templates' }] },
+      links: [{ key: 'Roleplay.CityNews.Enabled', label: 'On or off' },
+        { key: 'Roleplay.CityNews.App', label: 'Where it is posted' },
+        { key: 'Roleplay.CityNews.Templates', label: 'Templates' }] },
     { title: 'Roleplay: Dirty money payouts', icon: 'sack-dollar',
       text: 'When it is on, a hitman\'s cash or bank payout is handed over as a dirty money item instead, by '
         + 'count or as one item worth the figure. Escrow keeps the money it took, and only the payout '
         + 'converts it, so nothing is lost. A refund to the placer goes back as it was taken. A payout that '
         + 'does not fit in their pockets is owed, and paid when they make room or next log in.',
-      links: [{ key: 'Roleplay.DirtyPayouts.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Roleplay.DirtyPayouts.Item', view: 'money', label: 'The item' },
-        { key: 'Roleplay.DirtyPayouts.Rate', view: 'money', label: 'The rate' }] });
+      links: [{ key: 'Roleplay.DirtyPayouts.Enabled', label: 'On or off' },
+        { key: 'Roleplay.DirtyPayouts.Item', label: 'The item' },
+        { key: 'Roleplay.DirtyPayouts.Rate', label: 'The rate' }] });
 
   /* ---------- the roleplay features (Config.Roleplay) ---------- */
 
@@ -6566,37 +6643,37 @@
         + 'band, with no name, face or Accept. Asking the broker NPC about it, standing beside it, or '
         + 'being briefed by a player on a broker job, shows the whole card and Accept for a while. The '
         + 'NPC moves between its places on a timer. Distances are checked on the server.',
-      links: [{ key: 'Intel.Rumours.Enabled', view: 'features', label: 'Rumours on or off' },
-        { key: 'Intel.Rumours.Locations', view: 'limits', label: 'Broker places' },
-        { key: 'Intel.Rumours.BriefValidMinutes', view: 'timers', label: 'How long a briefing lasts' },
-        { key: 'Intel.Rumours.BrokerJobs', view: 'targeting', label: 'Broker jobs' }] },
+      links: [{ key: 'Intel.Rumours.Enabled', label: 'Rumours on or off' },
+        { key: 'Intel.Rumours.Locations', label: 'Broker places' },
+        { key: 'Intel.Rumours.BriefValidMinutes', label: 'How long a briefing lasts' },
+        { key: 'Intel.Rumours.BrokerJobs', label: 'Broker jobs' }] },
     { title: 'Roleplay: Burner phone', icon: 'mobile-screen',
       text: 'Off as shipped. On, placing, accepting and every contract action need the burner phone item '
         + 'in the inventory, counted on the server. Without one a player is told "You need a burner '
         + 'phone." and, as shipped, sees no contracts at all. Live contracts stay; a burner can be used '
         + 'up on placing or accepting. Sell it through sc-blackmarket (README).',
-      links: [{ key: 'Roleplay.BurnerPhone.Enabled', view: 'features', label: 'Burner phone on or off' },
-        { key: 'Roleplay.BurnerPhone.Item', view: 'limits', label: 'The item' }] },
+      links: [{ key: 'Roleplay.BurnerPhone.Enabled', label: 'Burner phone on or off' },
+        { key: 'Roleplay.BurnerPhone.Item', label: 'The item' }] },
     { title: 'Intel: The informant in person', icon: 'user-secret',
       text: 'Off as shipped. On, every informant purchase (the target\'s, the placer\'s and the tip) is '
         + 'sold only to a buyer standing beside the informant NPC, which moves between its own places. '
         + 'Anywhere else it is refused with "Find the informant first." and nothing is charged.',
-      links: [{ key: 'Intel.InPerson.Enabled', view: 'features', label: 'Informant in person' },
-        { key: 'Intel.InPerson.Locations', view: 'limits', label: 'Informant places' }] },
+      links: [{ key: 'Intel.InPerson.Enabled', label: 'Informant in person' },
+        { key: 'Intel.InPerson.Locations', label: 'Informant places' }] },
     { title: 'Roleplay: Broker and informant placed from the panel', icon: 'location-dot',
       text: 'Off as shipped. On, the broker and the informant NPC stand where staff placed them in Locations, '
         + 'Broker and informant places (stand there in game and press Use my position), rotating among '
         + 'those as their RotateHours say. Their Locations lists in the settings stay the defaults: they '
         + 'are used while no place is set, and again after Reset to config or with this off.',
-      links: [{ key: 'Roleplay.NpcPlaces.Enabled', view: 'features', label: 'Placed from the panel on or off' },
-        { key: 'Intel.Rumours.Locations', view: 'limits', label: 'Broker defaults' }] },
+      links: [{ key: 'Roleplay.NpcPlaces.Enabled', label: 'Placed from the panel on or off' },
+        { key: 'Intel.Rumours.Locations', label: 'Broker defaults' }] },
     { title: 'Roleplay: Reason quality', icon: 'pen',
       text: 'Off as shipped. On, a typed reason needs a least length and number of words, on top of the '
         + 'other reason rules. A reason with a low-effort phrase (rdm, idk, test) is refused, or placed '
         + 'and put in Needs review as a low-effort reason, as set.',
-      links: [{ key: 'Roleplay.ReasonQuality.Enabled', view: 'features', label: 'Reason quality on or off' },
-        { key: 'Roleplay.ReasonQuality.LowEffort', view: 'limits', label: 'Low-effort phrases' },
-        { key: 'Roleplay.ReasonQuality.LowEffortAction', view: 'limits', label: 'Refuse or review' }] });
+      links: [{ key: 'Roleplay.ReasonQuality.Enabled', label: 'Reason quality on or off' },
+        { key: 'Roleplay.ReasonQuality.LowEffort', label: 'Low-effort phrases' },
+        { key: 'Roleplay.ReasonQuality.LowEffortAction', label: 'Refuse or review' }] });
 
   /* ---------- the improvements (Config.Improvements) ---------- */
 
@@ -6606,42 +6683,42 @@
         + 'a random while after the tip, between the shortest and longest delay, instead of at once. '
         + 'A warning still waiting survives a restart and is sent late rather than lost. The time on '
         + 'the target\'s card is rounded to 5 minutes, so it does not give the delay away.',
-      links: [{ key: 'Intel.WarningDelay.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Intel.WarningDelay.MinSeconds', view: 'timers', label: 'Shortest delay' },
-        { key: 'Intel.WarningDelay.MaxSeconds', view: 'timers', label: 'Longest delay' }] },
+      links: [{ key: 'Intel.WarningDelay.Enabled', label: 'On or off' },
+        { key: 'Intel.WarningDelay.MinSeconds', label: 'Shortest delay' },
+        { key: 'Intel.WarningDelay.MaxSeconds', label: 'Longest delay' }] },
     { title: 'Intel: Tip limits', icon: 'scale-balanced',
       text: 'Off as shipped. On, on top of the tips per contract and the wait between them: each hitman '
         + 'may buy one tip per contract, and/or each further tip on a contract costs twice the one '
         + 'before, up to the most a tip costs. The card quotes the real next price, and a price that '
         + 'moved is refused, never charged.',
-      links: [{ key: 'Intel.TipLimits.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Intel.TipLimits.OnePerHitman', view: 'features', label: 'One per hitman' },
-        { key: 'Intel.TipLimits.PriceDoubling', view: 'features', label: 'Price doubling' },
-        { key: 'Intel.TipLimits.MaxCost', view: 'money', label: 'Most a tip costs' }] },
+      links: [{ key: 'Intel.TipLimits.Enabled', label: 'On or off' },
+        { key: 'Intel.TipLimits.OnePerHitman', label: 'One per hitman' },
+        { key: 'Intel.TipLimits.PriceDoubling', label: 'Price doubling' },
+        { key: 'Intel.TipLimits.MaxCost', label: 'Most a tip costs' }] },
     { title: 'Intel: Hold before a tip', icon: 'hourglass',
       text: 'Off as shipped. On, a hitman can buy a tip only once they have held the contract for the '
         + 'minutes set. Before that the card and the refusal say how long is left; nothing is charged.',
-      links: [{ key: 'Intel.HoldFirst.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Intel.HoldFirst.MinHeldMinutes', view: 'timers', label: 'Minutes held' }] },
+      links: [{ key: 'Intel.HoldFirst.Enabled', label: 'On or off' },
+        { key: 'Intel.HoldFirst.MinHeldMinutes', label: 'Minutes held' }] },
     { title: 'Intel: Informant second try', icon: 'user-secret',
       text: 'Off as shipped. On, the target\'s look-ups after the first on a contract cost this share of '
         + 'the informant\'s price (100 is the same price). The chance stays the informant\'s own.',
-      links: [{ key: 'Intel.SecondTry.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Intel.SecondTry.SecondTryCostPercent', view: 'money', label: 'Later price' },
-        { key: 'Intel.Informant.RevealChancePercent', view: 'limits', label: 'The chance' }] },
+      links: [{ key: 'Intel.SecondTry.Enabled', label: 'On or off' },
+        { key: 'Intel.SecondTry.SecondTryCostPercent', label: 'Later price' },
+        { key: 'Intel.Informant.RevealChancePercent', label: 'The chance' }] },
     { title: 'Intel: Tip safe zones', icon: 'shield',
       text: 'Off as shipped. On, no tip is sold while the target stands inside one of the zones '
         + '(x, y, radius, name). The hitman is told only "Your informant can\'t place them right now.", '
         + 'never why or where, and nothing is charged.',
-      links: [{ key: 'Intel.SafeZones.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Intel.SafeZones.Zones', view: 'targeting', label: 'The zones' }] },
+      links: [{ key: 'Intel.SafeZones.Enabled', label: 'On or off' },
+        { key: 'Intel.SafeZones.Zones', label: 'The zones' }] },
     { title: 'Intel: Go dark', icon: 'eye-slash',
       text: 'Off as shipped. On, a target who was told of a tip can pay from On me to go dark. For the '
         + 'minutes set, every tip bought on them finds nothing: the hitman is told the informant could '
         + 'not find them and gets the price back in full. Nothing names anybody.',
-      links: [{ key: 'Intel.GoDark.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Intel.GoDark.Cost', view: 'money', label: 'The price' },
-        { key: 'Intel.GoDark.Minutes', view: 'timers', label: 'How long' }] });
+      links: [{ key: 'Intel.GoDark.Enabled', label: 'On or off' },
+        { key: 'Intel.GoDark.Cost', label: 'The price' },
+        { key: 'Intel.GoDark.Minutes', label: 'How long' }] });
 
   /* ---------- a character's record (server/record/) ---------- */
 
@@ -6656,37 +6733,37 @@
         + 'plain completion, plus a bonus each for the thread used, a meeting point, a live handover and no '
         + 'witnesses near the hitman, up to a cap. The hitman sees the breakdown on their completion notice. '
         + 'It needs Criminal progression on to give any trust.',
-      links: [{ key: 'Record.Reputation.Enabled', view: 'features', label: 'Reputation' },
-        { key: 'Record.Reputation.BaseFactor', view: 'limits', label: 'Factors and cap' },
-        { key: 'Record.Reputation.WitnessRadius', view: 'limits', label: 'Witness radius' }] },
+      links: [{ key: 'Record.Reputation.Enabled', label: 'Reputation' },
+        { key: 'Record.Reputation.BaseFactor', label: 'Factors and cap' },
+        { key: 'Record.Reputation.WitnessRadius', label: 'Witness radius' }] },
     { title: 'Record: Placer record', icon: 'briefcase',
       text: 'Off as shipped. On, a board card shows how many contracts its placer placed, had paid out and '
         + 'cancelled over the last days set, not counting this one, and never who they are. A named placer\'s '
         + 'counts are exact. An anonymous placer shows nothing unless "anonymous placers too" is on, and then '
         + 'only their anonymous contracts, in bands (0, 1-4, 5-9, 10+), fixed when the card is first drawn, so '
         + 'two anonymous contracts cannot be tied to one person by their numbers.',
-      links: [{ key: 'Record.PlacerRecord.Enabled', view: 'features', label: 'Placer record' },
-        { key: 'Record.PlacerRecord.ShowForAnonymous', view: 'features', label: 'Anonymous placers' },
-        { key: 'Record.PlacerRecord.LookbackDays', view: 'limits', label: 'Days counted' }] },
+      links: [{ key: 'Record.PlacerRecord.Enabled', label: 'Placer record' },
+        { key: 'Record.PlacerRecord.ShowForAnonymous', label: 'Anonymous placers' },
+        { key: 'Record.PlacerRecord.LookbackDays', label: 'Days counted' }] },
     { title: 'Record: Hitman heat', icon: 'fire',
       text: 'Off as shipped. On, a hitman gets heat for a completion on a whitelisted-job target, a witness '
         + 'report on a completion, and a police bulletin about their acceptance or tip on a whitelisted-job '
         + 'target. Heat fades after the hours set. At the threshold they are known: a contract they take warns '
         + 'its target (the paranoid alert) at the chance set, and while they hold one, officers get a vague '
         + 'bulletin at most every so many minutes. Nothing names the hitman, and players never see heat.',
-      links: [{ key: 'Record.Heat.Enabled', view: 'features', label: 'Hitman heat' },
-        { key: 'Record.Heat.Threshold', view: 'limits', label: 'Heat and threshold' },
-        { key: 'Record.Heat.DecayHours', view: 'timers', label: 'How long heat stays' },
-        { key: 'Record.Heat.BulletinText', view: 'limits', label: 'The bulletin' }] },
+      links: [{ key: 'Record.Heat.Enabled', label: 'Hitman heat' },
+        { key: 'Record.Heat.Threshold', label: 'Heat and threshold' },
+        { key: 'Record.Heat.DecayHours', label: 'How long heat stays' },
+        { key: 'Record.Heat.BulletinText', label: 'The bulletin' }] },
     { title: 'Record: Tiered board', icon: 'layer-group',
       text: 'Off as shipped, and only with Criminal progression on. Each tier is a name, the least reward and '
         + 'the least level. A hitman\'s level is 1, plus one for each so many contracts they completed. A card '
         + 'in a tier above their level shows locked, with the level needed, and the server refuses Accept on '
         + 'it before taking anything.',
-      links: [{ key: 'Record.Tiers.Enabled', view: 'features', label: 'Tiered board' },
-        { key: 'Record.Tiers.Tiers', view: 'limits', label: 'Tiers' },
-        { key: 'Record.Tiers.CompletionsPerLevel', view: 'limits', label: 'Completions per level' },
-        { key: 'Record.Progression.Enabled', view: 'features', label: 'Criminal progression' }] });
+      links: [{ key: 'Record.Tiers.Enabled', label: 'Tiered board' },
+        { key: 'Record.Tiers.Tiers', label: 'Tiers' },
+        { key: 'Record.Tiers.CompletionsPerLevel', label: 'Completions per level' },
+        { key: 'Record.Progression.Enabled', label: 'Criminal progression' }] });
 
   /* ---------- contract decay (server/imp_board.lua) ---------- */
 
@@ -6699,10 +6776,10 @@
         + 'most set in all; it waits while they are away, and stops for good if they cannot pay. "shorten": '
         + 'its deadline comes in by the percent of the time left. The placer is told each time, and can turn '
         + 'it off for their contract from its card.',
-      links: [{ key: 'Improvements.ContractDecay.Enabled', view: 'features', label: 'Contract decay' },
-        { key: 'Improvements.ContractDecay.Mode', view: 'limits', label: 'Rise or shorten' },
-        { key: 'Improvements.ContractDecay.Percent', view: 'money', label: 'Step, cap and account' },
-        { key: 'Improvements.ContractDecay.Hours', view: 'timers', label: 'Hours between steps' }] });
+      links: [{ key: 'Improvements.ContractDecay.Enabled', label: 'Contract decay' },
+        { key: 'Improvements.ContractDecay.Mode', label: 'Rise or shorten' },
+        { key: 'Improvements.ContractDecay.Percent', label: 'Step, cap and account' },
+        { key: 'Improvements.ContractDecay.Hours', label: 'Hours between steps' }] });
 
   /* ---------- the staff and economy improvements (Config.Improvements) ---------- */
 
@@ -6714,42 +6791,42 @@
         + 'hitman\'s inventory, checks it names the target and the distance, takes the item and '
         + 'pays as for a verified kill. A payout refused gives the item back. Contracts placed '
         + 'for a live delivery only are never paid this way.',
-      links: [{ key: 'Improvements.ProofItems.Enabled', view: 'features', label: 'Proof items on or off' },
-        { key: 'Improvements.ProofItems.Item', view: 'limits', label: 'The item' },
-        { key: 'Improvements.ProofItems.MetadataKey', view: 'limits', label: 'The field naming the target' },
-        { key: 'Improvements.ProofItems.HandoverRadius', view: 'limits', label: 'The distance' }] },
+      links: [{ key: 'Improvements.ProofItems.Enabled', label: 'Proof items on or off' },
+        { key: 'Improvements.ProofItems.Item', label: 'The item' },
+        { key: 'Improvements.ProofItems.MetadataKey', label: 'The field naming the target' },
+        { key: 'Improvements.ProofItems.HandoverRadius', label: 'The distance' }] },
     { title: 'Improvements: Completion cooldown', icon: 'hourglass',
       text: 'Off as shipped (0). Set, nobody may place a contract on somebody for this long after '
         + 'a contract on them was completed, or for the ordinary wait after any contract if that '
         + 'is longer. The placer is told how many hours are left, and nothing else.',
-      links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', view: 'tldefaults', label: 'The wait' }] },
+      links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', label: 'The wait' }] },
     { title: 'Improvements: Weapon serial scrubbing', icon: 'gun',
       text: 'Off as shipped. On, a weapon an anonymous placer put up reaches the hitman with a new '
         + 'random serial, so it cannot be traced back to them by its number. A refund to the placer '
         + 'is their own weapon unchanged. Each scrub is in the log; the original serial is shown '
         + 'only to staff with the identity ACE.',
-      links: [{ key: 'Improvements.SerialScrub.Enabled', view: 'features', label: 'Scrubbing on or off' }] },
+      links: [{ key: 'Improvements.SerialScrub.Enabled', label: 'Scrubbing on or off' }] },
     { title: 'Improvements: Weekly stats to Discord', icon: 'chart-column',
       text: 'Off as shipped. On, once a week on the day and hour set, one post of the last seven '
         + 'days: contracts placed, contracts completed and money paid out to hitmen. Totals only, '
         + 'never a name, a citizen id or a handle for any hitman. To the webhook in '
         + 'crimson_hitman_stats_webhook, or else the alert webhook. At most once a week.',
-      links: [{ key: 'Improvements.WeeklyStats.Enabled', view: 'features', label: 'Weekly stats on or off' },
-        { key: 'Improvements.WeeklyStats.Day', view: 'timers', label: 'The day' },
-        { key: 'Improvements.WeeklyStats.Hour', view: 'timers', label: 'The hour' }] });
+      links: [{ key: 'Improvements.WeeklyStats.Enabled', label: 'Weekly stats on or off' },
+        { key: 'Improvements.WeeklyStats.Day', label: 'The day' },
+        { key: 'Improvements.WeeklyStats.Hour', label: 'The hour' }] });
 
   /* ---------- Target limits ----------------------------------------------
 
      Its own section (server/targetlimits.lua): Defaults (the six limits as
      settings), Per job (a job's own limits, and one action for every player
      of a job), Per player (one target's standing, exactly, and the staff
-     actions on it), and Current contracts (every live contract by target,
-     each row opening the contract's own view). Every write takes the
+     actions on it), and a link to the one list of contracts listing the
+     live ones by target (Contracts, 'contracts:bytarget'). Every write takes the
      two-click confirm; a player's are named by the lookup made here. */
 
   function tlReset() {
     S.tl = { meta: null, error: null, jobAnswer: null, jobCount: null, jobCountFor: '', jobAnswerMany: null,
-             status: null, ref: null, answer: null, exempt: false, cur: null, curPage: 1, curTimer: null,
+             status: null, ref: null, answer: null, exempt: false,
              countTimer: null };
   }
   tlReset();
@@ -6793,10 +6870,6 @@
   function drawTl() {
     if (S.section === 'tljobs') setHtml(byId('tl-jobs'), tlJobsBody());
     if (S.section === 'tlplayer') setHtml(byId('tl-player'), tlPlayerBody());
-    if (S.section === 'tlcontracts') {
-      setHtml(byId('tl-cur'), tlCurrentRows());
-      setHtml(byId('tl-cur-pager'), tlCurrentPager());
-    }
   }
 
   /* ---- per job ---- */
@@ -6843,8 +6916,8 @@
             return h('td' + (mine ? '.is-own' : ''), { title: mine ? 'This job\'s own' : 'The default' },
               tlValue(k, eff[k.key]));
           }),
-          h('td.nowrap', btn('.is-small.is-ghost', 'tj-edit', { 'data-value': String(j.job) }, 'Edit', 'pen'),
-            ' ', writeBtn('.is-small.is-danger', 'tj-remove', { 'data-value': String(j.job) }, 'Remove',
+          h('td.nowrap', btn('.is-small.ghost', 'tj-edit', { 'data-value': String(j.job) }, 'Edit', 'pen'),
+            ' ', writeBtn('.is-small.danger', 'tj-remove', { 'data-value': String(j.job) }, 'Remove',
               'Click again to remove ' + String(j.job), 'trash')));
       }))));
   }
@@ -6887,7 +6960,7 @@
           field('tj.job', { id: 'tj-job', class: 'is-short', maxlength: String((S.tl.meta.jobMax) || 32),
             placeholder: 'Job name (police)', disabled: !open, 'aria-label': 'Job name' })),
         tlLimitFields('tj', open),
-        h('div.btn-row', writeBtn('.is-primary', 'tj-save', { id: 'tj-save' }, 'Save job limits',
+        h('div.btn-row', writeBtn('.primary', 'tj-save', { id: 'tj-save' }, 'Save job limits',
           'Click again to save', 'floppy-disk')),
         answerBox(S.tl.jobAnswer))),
       card('Jobs with their own limits', tlJobTable(), '',
@@ -7115,7 +7188,7 @@
             disabled: !open, placeholder: 'Hours (0 = for good)', 'aria-label': 'Hours the override lasts' })),
         S.tl.exempt ? null : tlLimitFields('tpo', open),
         h('div.btn-row',
-          modBtn('.is-primary', 'tpo-set', a(), S.tl.exempt ? 'Make exempt' : 'Set their limits',
+          modBtn('.primary', 'tpo-set', a(), S.tl.exempt ? 'Make exempt' : 'Set their limits',
             'Click again to set', 'user-shield'),
           keys.length ? modBtn('', 'tpo-clear', a(), 'Lift their own limits', 'Click again to lift', 'unlock') : null))),
       answerBox(S.tl.answer));
@@ -7135,7 +7208,7 @@
         h('label.search', icon('magnifying-glass'),
           field('tp.q', { id: 'tp-q', placeholder: 'Player id, citizen id or name', 'data-enter': 'tp-lookup',
             'aria-label': 'Player id, citizen id or name' })),
-        btn('.is-primary', 'tp-lookup', {}, 'Look up', 'arrow-right')),
+        btn('.primary', 'tp-lookup', {}, 'Look up', 'arrow-right')),
       h('p.hint', 'Exact times, which players never see. Each lookup is on the record.'),
       h('div.stack', { id: 'tl-player' }, tlPlayerBody()));
   };
@@ -7210,91 +7283,12 @@
   };
   ACTIONS['tpo-clear'] = function (node) { tlWrite(node, TL_SEND.clear, {}); };
 
-  /* ---- current contracts ---- */
-
-  function loadTlCurrent() {
-    clearTimeout(S.tl.curTimer);
-    S.tl.curTimer = null;
-    var data = { page: S.tl.curPage };
-    var q = trim(S.forms['tc.q']).slice(0, 64);
-    if (q) data.query = q;
-    return ask('targetContracts', data, 'targetContracts').then(function (reply) {
-      if (!reply) return;
-      if (!reply.ok) { toast(words(reply), 'error'); S.tl.cur = { error: words(reply) }; }
-      else { S.tl.cur = reply.data || {}; S.tl.curPage = Number(S.tl.cur.page) || 1; }
-      drawTl();
-    });
-  }
-
-  function tlCurrentRows() {
-    var d = S.tl.cur;
-    if (!d) return loading('Reading the live contracts…');
-    if (d.error) return empty(d.error);
-    var rows = asList(d.rows);
-    if (!rows.length) return empty('No live contract matches.');
-    var out = [], last = null;
-    rows.forEach(function (row) {
-      if (row.group !== last) {
-        last = row.group;
-        out.push(h('tr.tl-group', h('td', { colspan: '6' }, icon('crosshairs'), ' ', String(row.target || '—'),
-          h('span.sub', ' · ' + num(row.onTarget) + ' live on them'))));
-      }
-      out.push(h('tr.row', { 'data-act': 'contract', 'data-id': String(row.id), tabindex: '0',
-        title: 'Open contract ' + row.id },
-        h('td.mono.nowrap', String(row.id)),
-        h('td', stateChip(row.state), row.frozen ? h('span.chip.is-warn.is-frozen', 'On hold') : null),
-        h('td.nowrap', RULE_LABEL[row.rule] || String(row.rule || '—')),
-        h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || 'Anonymous'))
-          : String(row.client || '—')),
-        h('td.num', num(row.claimed) + ' / ' + num(row.slots)),
-        h('td', { title: row.deadline_at ? when(row.deadline_at) : null },
-          row.deadline_at ? 'due ' + ago(row.deadline_at) : '—')));
-    });
-    return h('div.table-wrap', h('table.grid.is-rows',
-      h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), h('th', 'Rule'), h('th', 'Client'),
-        h('th.num', 'Payouts'), h('th', 'Deadline'))),
-      h('tbody', out)));
-  }
-
-  function tlCurrentPager() {
-    var d = S.tl.cur;
-    if (!d || d.error) return frag();
-    var page = Number(d.page) || 1, pages = Number(d.pages) || 1;
-    return frag(
-      btn('.is-small', 'tc-page', { 'data-value': String(page - 1), disabled: page <= 1 }, 'Previous', 'chevron-left'),
-      h('span.pager-text', 'Page ' + page + ' of ' + pages + ' · ' + num(d.total) + ' live contract'
-        + (Number(d.total) === 1 ? '' : 's') + ' on ' + num(d.targets) + ' target' + (Number(d.targets) === 1 ? '' : 's')),
-      btn('.is-small', 'tc-page', { 'data-value': String(page + 1), disabled: page >= pages }, 'Next', 'chevron-right'));
-  }
-
-  SHELL.tlcontracts = function () {
-    return h('section.view',
-      h('div.toolbar',
-        h('label.search', icon('magnifying-glass'),
-          field('tc.q', { id: 'tc-q', placeholder: 'Target name or citizen id', 'data-live': 'tc-search',
-            'data-enter': 'tc-search-now', 'aria-label': 'Search live contracts by target' }))),
-      h('p.hint', 'Every live contract (open, taken, settling, on hold), by target. A row opens the contract with '
-        + 'every staff action it has.'),
-      h('div.results', { id: 'tl-cur' }, tlCurrentRows()),
-      h('div.pager', { id: 'tl-cur-pager' }, tlCurrentPager()));
-  };
-  LOAD.tlcontracts = function () { loadTlCurrent(); };
-
-  ACTIONS['tc-search-now'] = function () { S.tl.curPage = 1; loadTlCurrent(); };
-  LIVE['tc-search'] = function () {
-    clearTimeout(S.tl.curTimer);
-    S.tl.curTimer = setTimeout(function () { S.tl.curTimer = null; S.tl.curPage = 1; loadTlCurrent(); }, DEBOUNCE_MS);
-  };
-  ACTIONS['tc-page'] = function (node) {
-    S.tl.curPage = Math.max(1, Number(node.getAttribute('data-value')) || 1);
-    loadTlCurrent();
-  };
 
   STAFF_ACTIONS.push(
     { title: 'Target limits', icon: 'user-clock', view: 'tlplayer', go: 'Open Per player',
       text: 'How often one person may have a contract placed on them: the defaults, a job\'s own, and one '
         + 'player\'s cooldown reset or extended, counts reset, own limits or exempt; the same for every player '
-        + 'of a job at once. Current contracts lists every live contract by target.',
+        + 'of a job at once. Live contracts by target opens Contracts with the live ones grouped by target.',
       also: { view: 'tljobs', go: 'Per job' } });
 
   HELP.push(
@@ -7302,8 +7296,8 @@
       text: 'The limits on how often one person may be targeted. A player\'s own override wins, then their job\'s '
         + '(the job they are working when the contract is placed), then the defaults. Day and week caps are off '
         + 'as shipped. Players are told only what the target rules always said, never a time, a job or staff.',
-      links: [{ key: 'Limits.MaxContractsPerTargetPerDay', view: 'tldefaults', label: 'Day cap' },
-        { key: 'Limits.MaxContractsPerTargetPerWeek', view: 'tldefaults', label: 'Week cap' }] });
+      links: [{ key: 'Limits.MaxContractsPerTargetPerDay', label: 'Day cap' },
+        { key: 'Limits.MaxContractsPerTargetPerWeek', label: 'Week cap' }] });
 
   /* ---------- the new layout's own clicks: chips, search, areas -------- */
 
@@ -7320,7 +7314,6 @@
     S.players.ref = null;
     S.players.subject = null;
     S.players.at = 0;
-    S.players.whois = {};
     resetPlayerStaff();
     if (PLAYER_VIEWS[S.section]) show('players'); else drawChrome();
   };
@@ -7352,7 +7345,6 @@
 
   ACTIONS['gr-area'] = function (node) {
     S.rules.area = node.getAttribute('data-value') || '';
-    S.rules.cat = '';
     S.forms['st.q'] = '';
     drawSettings();
     var main = byId('main');
@@ -7360,7 +7352,6 @@
   };
   ACTIONS['gr-type'] = function (node) {
     S.rules.type = node.getAttribute('data-value') || '';
-    S.rules.cat = '';
     drawSettings();
   };
   ACTIONS['st-details'] = function (node) {
@@ -7576,14 +7567,22 @@
   };
 
   /** A setting's row, in the section it is edited in, marked and opened. */
-  function goSetting(key, fallbackView) {
+  function goSetting(key) {
     var entry = settingEntry(key);
     S.forms['st.q'] = '';
     S.settings.focus = key;
     S.settings.open[key] = true;
-    if (!entry) { show(fallbackView || 'rules'); return; }
+    if (!entry && !S.settings.data) {
+      // The settings are not read yet (a help link before any settings
+      // view): read them, then land where the setting is.
+      loadSettings().then(function () {
+        if (settingEntry(key)) goSetting(key); else show('rules');
+      });
+      return;
+    }
+    if (!entry) { show('rules'); return; }
     var view = viewOfSetting(entry);
-    if (view === 'rules') { S.rules.area = areaOf(entry); S.rules.type = ''; S.rules.cat = ''; }
+    if (view === 'rules') { S.rules.area = areaOf(entry); S.rules.type = ''; }
     show(view);
     if (!SETTING_VIEWS[view]) focusRow();
   }
@@ -7666,11 +7665,11 @@
             h('td', h('div.inline-form',
               writeBtn('.is-small', 'dp-skip', { 'data-id': String(step.id), 'data-contract': cid }, 'Skip',
                 'Click again to skip', 'forward'),
-              writeBtn('.is-small.is-ghost', 'dp-respawn', { 'data-id': String(step.id), 'data-contract': cid },
+              writeBtn('.is-small.ghost', 'dp-respawn', { 'data-id': String(step.id), 'data-contract': cid },
                 'Respawn vehicle', 'Click again to respawn', 'truck'))));
         })))),
       answerBox(S.disposal.answers.list)), '.dp-steps',
-      btn('.is-small.is-ghost', 'dp-refresh', {}, 'Refresh', 'rotate'));
+      btn('.is-small.ghost', 'dp-refresh', {}, 'Refresh', 'rotate'));
   }
 
   function disposalWrite(op, data, slot, node) {
@@ -7812,7 +7811,7 @@
       return card('On, and not read yet', frag(
         h('p.about', 'The switch is on, but the organisation has not been read from the store yet. Create / sync '
           + 'registers the job in qbx_core and brings every online member in step.'),
-        h('div.btn-row', writeBtn('.is-primary', 'org-setup', {}, 'Create / sync job',
+        h('div.btn-row', writeBtn('.primary', 'org-setup', {}, 'Create / sync job',
           'Click again: register ' + String(d.job || 'the job') + ' in qbx_core', 'rotate')),
         orgAnswer('setup')), '.is-warn');
     }
@@ -7919,7 +7918,7 @@
               r.locked ? h('span.chip.is-warn', 'locked') : null),
             h('td.num', money(r.pay)), h('td', r.boss ? h('span.chip.is-panel', 'boss') : '—'),
             h('td.num', num(r.members)),
-            h('td', btn('.is-small.is-ghost', 'org-role-open', { 'data-id': String(r.grade) }, 'Edit & powers', 'pen')));
+            h('td', btn('.is-small.ghost', 'org-role-open', { 'data-id': String(r.grade) }, 'Edit & powers', 'pen')));
         })))) : empty('No roles yet. Add one below.'), '', h('span.sub', num(roles.length))),
       sel ? orgRoleCard(d, sel) : null,
       card('Add a role', frag(
@@ -7930,7 +7929,7 @@
           field('org.new.pay', { class: 'is-short', inputmode: 'numeric', placeholder: '$ pay', 'aria-label': 'Pay' }),
           segmented('org-new-boss', [{ value: 'no', label: 'Not boss' }, { value: 'yes', label: 'Boss' }],
             S.org.newBoss ? 'yes' : 'no'),
-          writeBtn('.is-primary', 'org-role-add', {}, 'Add role', 'Click again to add', 'plus')),
+          writeBtn('.primary', 'org-role-add', {}, 'Add role', 'Click again to add', 'plus')),
         orgAnswer('role-add'))));
   }
 
@@ -7955,8 +7954,8 @@
           (S.org.staged['boss:' + g] != null ? S.org.staged['boss:' + g] : !!r.boss) ? 'yes' : 'no', { 'data-id': g }),
         segmented('org-role-lock', [{ value: 'no', label: 'Bosses may edit' }, { value: 'yes', label: 'Locked' }],
           (S.org.staged['lock:' + g] != null ? S.org.staged['lock:' + g] : !!r.locked) ? 'yes' : 'no', { 'data-id': g }),
-        writeBtn('.is-primary', 'org-role-save', { 'data-id': g }, 'Save role', 'Click again to save', 'check'),
-        writeBtn('.is-danger', 'org-role-remove', { 'data-id': g, disabled: Number(r.members) > 0 || null,
+        writeBtn('.primary', 'org-role-save', { 'data-id': g }, 'Save role', 'Click again to save', 'check'),
+        writeBtn('.danger', 'org-role-remove', { 'data-id': g, disabled: Number(r.members) > 0 || null,
           title: Number(r.members) > 0 ? 'A role cannot be removed while it holds members' : null },
           'Remove role', 'Click again: remove ' + roleName(d, r.grade), 'trash-can')),
       Number(r.members) > 0 ? h('p.note', 'A role cannot be removed while it holds members.') : null,
@@ -7972,7 +7971,7 @@
             h('td', h('b', String(p.label)), h('span.sub', ' ' + String(AREA_NAMES[p.area] || p.area || ''))),
             h('td.detail', String(p.about || '')),
             h('td', above ? h('span.chip', 'above the ceiling') : h('span.chip.is-panel', 'within the ceiling')),
-            h('td', writeBtn('.is-small' + (on ? '.is-primary' : ''), 'org-role-power', { 'data-id': g,
+            h('td', writeBtn('.is-small' + (on ? '.primary' : ''), 'org-role-power', { 'data-id': g,
               'data-power': p.code, 'data-value': on ? 'off' : 'on' }, on ? 'Given' : 'Not given',
               on ? 'Click again: take ' + p.label + ' from ' + roleName(d, r.grade)
                 : 'Click again: give ' + p.label + ' to ' + roleName(d, r.grade), on ? 'check' : 'plus')));
@@ -8001,7 +8000,7 @@
             return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'org-hire-grade',
               'data-value': String(r.grade), 'aria-pressed': on ? 'true' : 'false' }, roleName(d, r.grade));
           })),
-          writeBtn('.is-primary', 'org-hire', {}, 'Hire', 'Click again to hire', 'user-plus')),
+          writeBtn('.primary', 'org-hire', {}, 'Hire', 'Click again to hire', 'user-plus')),
         orgAnswer('hire'))),
       card('Members', members.length ? h('div.table-wrap', h('table.grid',
         h('thead', h('tr', h('th', 'Name'), h('th', 'Role'), h('th', 'In the city'), h('th', 'Joined'), h('th', 'Last seen'),
@@ -8016,7 +8015,7 @@
               suspended ? h('span.chip.is-warn', 'suspended') : null,
               Object.keys(m.grants || {}).length ? h('span.chip', num(Object.keys(m.grants).length) + ' granted') : null,
               Object.keys(m.denies || {}).length ? h('span.chip', num(Object.keys(m.denies).length) + ' denied') : null),
-            h('td', btn('.is-small.is-ghost', 'org-member-open', { 'data-id': String(m.ref) }, 'Manage', 'pen')));
+            h('td', btn('.is-small.ghost', 'org-member-open', { 'data-id': String(m.ref) }, 'Manage', 'pen')));
         })))) : empty('Nobody is a member yet. Hire somebody above.'), '', h('span.sub', num(members.length))),
       sel ? orgMemberCard(d, sel) : null);
   }
@@ -8090,7 +8089,7 @@
       h('div.toolbar',
         field('org.m.' + ref + '.freason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason (kept in the log)',
           'aria-label': 'Reason for firing' }),
-        writeBtn('.is-danger', 'org-member-fire', { 'data-id': ref }, 'Fire', 'Click again: fire ' + name, 'user-minus')),
+        writeBtn('.danger', 'org-member-fire', { 'data-id': ref }, 'Fire', 'Click again: fire ' + name, 'user-minus')),
       orgAnswer('fire:' + ref)), '.is-identity');
   }
 
@@ -8119,9 +8118,9 @@
         h('header.card-head', h('h3', String(a.name || 'Applicant')), h('span.sub', a.at ? ago(a.at) : '')),
         h('p.al-text', String(a.body || '')),
         h('div.btn-row',
-          writeBtn('.is-primary', 'org-app', { 'data-id': id, 'data-value': 'yes' }, 'Accept',
+          writeBtn('.primary', 'org-app', { 'data-id': id, 'data-value': 'yes' }, 'Accept',
             'Click again: hire ' + String(a.name || 'them') + ' into the lowest role', 'check'),
-          writeBtn('.is-danger', 'org-app', { 'data-id': id, 'data-value': 'no' }, 'Reject',
+          writeBtn('.danger', 'org-app', { 'data-id': id, 'data-value': 'no' }, 'Reject',
             'Click again: reject ' + String(a.name || 'them'), 'xmark')),
         orgAnswer('app:' + id));
     })) : empty('No open applications. Players apply from the app (at a sign-up spot, when that is the rule).'),
@@ -8176,7 +8175,7 @@
           field('org.funds.amount', { class: 'is-short', inputmode: 'numeric', placeholder: '$ amount', 'aria-label': 'Amount' }),
           field('org.funds.reason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason (kept in the log)',
             'aria-label': 'Reason' }),
-          writeBtn('.is-primary', 'org-funds', {}, dir === 'deposit' ? 'Deposit' : dir === 'withdraw' ? 'Withdraw' : 'Pay bonus',
+          writeBtn('.primary', 'org-funds', {}, dir === 'deposit' ? 'Deposit' : dir === 'withdraw' ? 'Withdraw' : 'Pay bonus',
             'Click again', dir === 'withdraw' ? 'arrow-up-from-bracket' : 'arrow-down-to-bracket')),
         orgAnswer('funds'))),
       card('Cuts', frag(
@@ -8198,7 +8197,7 @@
                   placeholder: '%', 'aria-label': 'Cut for ' + roleName(d, r.grade) }),
                   writeBtn('.is-small', 'org-cut', { 'data-value': 'role', 'data-id': String(r.grade) }, 'Save',
                     'Click again to save', 'check'),
-                  v == null ? null : writeBtn('.is-small.is-ghost', 'org-cut-clear', { 'data-id': String(r.grade) },
+                  v == null ? null : writeBtn('.is-small.ghost', 'org-cut-clear', { 'data-id': String(r.grade) },
                     'Clear', 'Click again: ' + roleName(d, r.grade) + ' as the organisation', 'eraser'))));
             })))),
         byMember ? h('p.note', num(byMember) + ' member' + (byMember === 1 ? ' has a cut' : 's have cuts')
@@ -8215,7 +8214,7 @@
             canIdentify() ? h('td.mono', String(r.actor || '—')) : null);
         })))) : empty('Nothing has moved yet.'))
         : (S.org.fundsError ? empty(S.org.fundsError) : loading('Reading the ledger…')), '',
-        btn('.is-small.is-ghost', 'org-funds-refresh', {}, 'Refresh', 'rotate')));
+        btn('.is-small.ghost', 'org-funds-refresh', {}, 'Refresh', 'rotate')));
   }
 
   /** Where the funds are kept, as orgFunds (or orgGet) says: 'internal' or 'bank'. */
@@ -8250,7 +8249,7 @@
         h('p.note.is-error', 'The bank is down. Abandon leaves it carrying nothing: the funds start again from $0 in '
           + otherName + ', and whatever the bank holds is not moved or counted. Only do this if the bank will not '
           + 'come back.'),
-        h('div.btn-row', writeBtn('.is-danger', 'org-backend', { 'data-value': other, 'data-how': 'abandon' },
+        h('div.btn-row', writeBtn('.danger', 'org-backend', { 'data-value': other, 'data-how': 'abandon' },
           'Abandon the bank', 'Click again: abandon the bank, start from $0 in ' + otherName, 'triangle-exclamation')))
         : null,
       orgAnswer('backend')), ready ? '' : '.is-warn');
@@ -8330,8 +8329,8 @@
       h('div.toolbar',
         segmented('org-broadcast', [{ value: 'no', label: 'On the board' }, { value: 'yes', label: 'And message every member' }],
           S.org.staged.broadcast ? 'yes' : 'no'),
-        writeBtn('.is-primary', 'org-notice', {}, 'Post', 'Click again to post', 'thumbtack'),
-        text ? writeBtn('.is-ghost', 'org-notice-clear', {}, 'Take it down', 'Click again: take the notice down', 'eraser')
+        writeBtn('.primary', 'org-notice', {}, 'Post', 'Click again to post', 'thumbtack'),
+        text ? writeBtn('.ghost', 'org-notice-clear', {}, 'Take it down', 'Click again: take the notice down', 'eraser')
           : null),
       orgAnswer('notice')));
   }
@@ -8378,7 +8377,7 @@
   function orgAuditBody() {
     var rows = S.org.audit;
     return frag(
-      h('div.toolbar', dropdown('org-audit'), btn('.is-ghost', 'org-audit-refresh', {}, 'Refresh', 'rotate')),
+      h('div.toolbar', dropdown('org-audit'), btn('.ghost', 'org-audit-refresh', {}, 'Refresh', 'rotate')),
       card('Every boss and staff action on the organisation', rows ? (rows.length ? auditTable(rows)
         : empty('Nothing on the record yet.')) : (S.org.auditError ? empty(S.org.auditError) : loading('Reading the log…'))));
   }
@@ -8535,7 +8534,7 @@
           })),
           h('tr.bp-tools', h('th', ''), cols.map(function (c) {
             return h('th', h('div.bp-col-tools', dropdown('bp-copy:' + c.key, '.is-small'),
-              writeBtn('.is-small.is-danger', 'bp-revoke', { 'data-id': c.key }, 'Revoke all',
+              writeBtn('.is-small.danger', 'bp-revoke', { 'data-id': c.key }, 'Revoke all',
                 'Click again: revoke every power from ' + c.label, 'ban')));
           }))),
         h('tbody', areas.map(function (area) {
@@ -8563,9 +8562,9 @@
       card('Changes to save (' + num(pending.length) + ')', pending.length ? frag(
         h('ul.plain.bp-diff', pending.map(function (x) { return h('li', x.text); })),
         h('div.btn-row',
-          writeBtn('.is-primary', 'bp-save', {}, 'Save ' + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'),
+          writeBtn('.primary', 'bp-save', {}, 'Save ' + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'),
             'Click again: save ' + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'), 'check'),
-          btn('.is-ghost', 'bp-discard', {}, 'Discard', 'xmark'))) : empty('Nothing changed yet: click a cell.'),
+          btn('.ghost', 'bp-discard', {}, 'Discard', 'xmark'))) : empty('Nothing changed yet: click a cell.'),
         pending.length ? '.is-warn' : ''),
       orgAnswer('bp'));
   }
@@ -8595,7 +8594,7 @@
             h('td', h('div.inline-form', field('bp.lim.' + k, { class: 'is-short', inputmode: 'decimal',
               placeholder: String(lim[k]), 'aria-label': label }),
               writeBtn('.is-small', 'bp-limit', { 'data-id': k }, 'Save', 'Click again to save', 'check'),
-              e && Number(e.value) !== Number(lim[k]) ? writeBtn('.is-small.is-ghost', 'bp-limit-reset', { 'data-id': k },
+              e && Number(e.value) !== Number(lim[k]) ? writeBtn('.is-small.ghost', 'bp-limit-reset', { 'data-id': k },
                 'Reset', 'Click again: back to ' + show(e.value), 'arrow-rotate-left') : null)));
         })))), '', h('span.sub', num(keys.length))),
       orgAnswer('limits'));
@@ -8638,7 +8637,7 @@
     var rows = S.org.history;
     var d = S.org.data || {};
     return frag(
-      h('div.toolbar', btn('.is-ghost', 'bp-history-refresh', {}, 'Refresh', 'rotate')),
+      h('div.toolbar', btn('.ghost', 'bp-history-refresh', {}, 'Refresh', 'rotate')),
       card('Grant history', rows ? (rows.length ? h('div.table-wrap', h('table.grid.is-log',
         h('thead', h('tr', h('th', 'When'), h('th', 'By'), h('th', 'Column'), h('th', 'Power'), h('th', 'Before'),
           h('th', 'After'), h('th', ''))),
@@ -8649,7 +8648,7 @@
           return h('tr', h('td.nowrap', when(r.ts)), h('td', String(r.by || '—')),
             h('td', isRole ? 'Role: ' + roleName(d, det.id) : 'One boss'),
             h('td', powerName(d, det.power)), h('td', String(det.before || 'off')), h('td', String(det.after || 'off')),
-            h('td', isRole && det.before !== det.after ? writeBtn('.is-small.is-ghost', 'bp-undo', { 'data-index': String(i),
+            h('td', isRole && det.before !== det.after ? writeBtn('.is-small.ghost', 'bp-undo', { 'data-index': String(i),
               'data-id': String(det.id), 'data-power': String(det.power), 'data-value': undoTo }, 'Undo',
               'Click again: ' + powerName(d, det.power) + ' back to ' + undoTo, 'arrow-rotate-left')
               : (isRole ? null : h('span.sub', 'change it in the Matrix'))));
@@ -8797,9 +8796,9 @@
             f.radius ? h('td.num', fmt(r.radius) + ' m') : null, f.blip ? h('td', r.blip ? 'yes' : 'no') : null,
             f.enabled ? h('td', r.enabled === false ? 'off' : 'on') : null,
             h('td', h('div.inline-form',
-              !kind.single && open ? btn('.is-small.is-ghost', 'loc-edit', { 'data-id': String(r.id), 'data-value': k },
+              !kind.single && open ? btn('.is-small.ghost', 'loc-edit', { 'data-id': String(r.id), 'data-value': k },
                 'Edit', 'pen') : null,
-              open ? writeBtn('.is-small.is-danger', 'loc-remove', { 'data-id': String(r.id), 'data-value': k },
+              open ? writeBtn('.is-small.danger', 'loc-remove', { 'data-id': String(r.id), 'data-value': k },
                 kind.single ? 'Clear' : 'Remove', 'Click again: remove ' + String(r.label || 'it'), 'trash-can') : null)));
         })))) : empty(kind.single ? 'Not set.' : 'None set here.'),
       kind.using || kind.defaults ? placeDefaults(kind) : null,
@@ -8822,12 +8821,12 @@
           f.enabled ? segmented('loc-enabled', [{ value: 'yes', label: 'On' }, { value: 'no', label: 'Off' }],
             enabled ? 'yes' : 'no', { 'data-id': k }) : null,
           btn('.is-small', 'loc-mypos', { 'data-value': k }, 'Use my position', 'location-crosshairs'),
-          writeBtn('.is-primary.is-small', 'loc-save', { 'data-value': k, 'data-id': edit }, 'Save', 'Click again to save',
+          writeBtn('.primary.is-small', 'loc-save', { 'data-value': k, 'data-id': edit }, 'Save', 'Click again to save',
             'check'),
           writeBtn('.is-small', 'loc-here', { 'data-value': k, 'data-id': edit }, 'Save where I stand',
             'Click again: save where you stand', 'street-view'),
-          editing && !kind.single ? btn('.is-small.is-ghost', 'loc-new', { 'data-value': k }, 'New instead', 'plus') : null,
-          kind.reset && rows.length ? writeBtn('.is-small.is-ghost', 'loc-reset', { 'data-value': k }, 'Reset to config',
+          editing && !kind.single ? btn('.is-small.ghost', 'loc-new', { 'data-value': k }, 'New instead', 'plus') : null,
+          kind.reset && rows.length ? writeBtn('.is-small.ghost', 'loc-reset', { 'data-value': k }, 'Reset to config',
             'Click again: remove every place set here', 'rotate-left') : null),
         placeAnswer('loc:' + k)) : placeAnswer('loc:' + k)), '.loc-kind');
   }
@@ -9459,8 +9458,8 @@
         + 'on the phone and its own places. Every boss power is off until staff allow it in Boss permissions, for a '
         + 'boss role or one boss, within the limits staff set; staff may do everything from the panel. Cuts are '
         + 'frozen onto a contract when a member accepts it.',
-      links: [{ key: 'Organisation.Enabled', view: 'orgsetup', label: 'The switch' },
-        { key: 'Organisation.RequireJobToAccept', view: 'orgsetup', label: 'Only members may accept' }] });
+      links: [{ key: 'Organisation.Enabled', label: 'The switch' },
+        { key: 'Organisation.RequireJobToAccept', label: 'Only members may accept' }] });
   STAFF_ACTIONS.push(
     { title: 'Run the hitman organisation', icon: 'people-group', view: 'orgsetup', go: 'Hitman organisation',
       text: 'Turn it on, sync the job, edit roles and pay, hire, fire, suspend and set members\' limits, move money '

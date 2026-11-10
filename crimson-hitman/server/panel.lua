@@ -84,7 +84,7 @@ local OPS = {
     -- standing are reads; a job's own limits are settings, the staff ACE's;
     -- a player's cooldown, counts and override, and a job's players at
     -- once, a moderator's, as protecting a player is.
-    targetLimits = READ, targetStatus = READ, targetJobCount = READ, targetContracts = READ,
+    targetLimits = READ, targetStatus = READ, targetJobCount = READ,
     targetJobSet = WRITE, targetJobRemove = WRITE,
     targetReset = MOD, targetExtend = MOD, targetCounts = MOD, targetOverride = MOD,
     targetOverrideClear = MOD, targetJobAction = MOD,
@@ -1013,119 +1013,6 @@ H.overview = function()
     return true, nil, nil, overviewCache.data
 end
 
---- Contracts, searched and filtered, newest first, a page at a time.
----
---- `query` is a contract id (or part of one), a citizen id, or part of a
---- name. A citizen id finds every contract it is party to through the
---- store's own index, and a name the client's or the target's: but a
---- party who paid to stay anonymous is matched only for staff with
---- IdentityAce, or a search would be a way round whois.
-H.contracts = function(src, data)
-    local Storage = deps.storage
-    local canIdentify = identifies(src)
-    local query = shortText(data.query, 64)
-    local state = VALID_STATE[data.state] and data.state or nil
-    -- 'live': every contract still running (active, accepted, completing),
-    -- the list's default.
-    local live = data.state == 'live'
-    local rule = (data.rule == CH.FULFILMENT_RULE.ALIVE or data.rule == CH.FULFILMENT_RULE.EITHER)
-        and data.rule or nil
-    local from = wholeNumber(data.from, 0)
-    local to = wholeNumber(data.to, 0)
-    local page = wholeNumber(data.page, 1, 100000) or 1
-
-    -- One read of the store's index, in the form the server keeps the id:
-    -- upper case, as qbx_core's are, unless a player in the city holds it as
-    -- typed. typedCitizenId decides that with a read of its own, and this
-    -- read again after it: every search typed in lower case, a name among
-    -- them, walked every contract and every operative twice on json.
-    local viaCid = {}
-    local cid = query and Util.toCitizenId(query)
-    if cid and cid:upper() ~= cid then
-        local online = deps.identity.byCitizenId(cid)
-        if not (online and online.cid == cid) then cid = cid:upper() end
-    end
-    if cid then
-        -- Their operative rows in one read (Admin.operativeRows), where one
-        -- per contract in their history was an await each on mysql.
-        local rows = deps.admin and deps.admin.operativeRows and deps.admin.operativeRows(cid) or nil
-        for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
-            local visible
-            if contract.target_cid == cid then
-                visible = true
-            elseif contract.creator_cid == cid then
-                visible = canIdentify or contract.anon_creator ~= true
-            else
-                local hitman
-                if rows then hitman = rows[contract.id] else hitman = Storage.readHitman(contract.id, cid) end
-                visible = canIdentify or not (hitman and hitman.anon == true)
-            end
-            if visible then viaCid[contract.id] = true end
-        end
-    end
-
-    local lowered = query and query:lower()
-    local matched = {}
-    for _, contract in ipairs(everyContract()) do
-        local hit = not lowered
-        if lowered and not hit then
-            hit = viaCid[contract.id]
-                or tostring(contract.id):lower():find(lowered, 1, true) ~= nil
-                or tostring(contract.target_name or ''):lower():find(lowered, 1, true) ~= nil
-                or ((canIdentify or contract.anon_creator ~= true)
-                    and tostring(contract.creator_name or ''):lower():find(lowered, 1, true) ~= nil)
-        end
-        if hit and state and contract.state ~= state then hit = false end
-        if hit and live and CH.TERMINAL[contract.state] then hit = false end
-        if hit and rule and Util.fulfilmentRule(contract) ~= rule then hit = false end
-        if hit and from and (tonumber(contract.created_at) or 0) < from then hit = false end
-        if hit and to and (tonumber(contract.created_at) or 0) > to then hit = false end
-        if hit then matched[#matched + 1] = contract end
-    end
-    -- Already newest first (everyContract).
-
-    local size = pageSize()
-    local pages = math.max(1, math.ceil(#matched / size))
-    if page > pages then page = pages end
-    -- The page's live rows' rosters in one read, for the On hold badge, and
-    -- only while anybody is frozen (frozenShown reads nothing otherwise).
-    local rosters = {}
-    if deps.holds and (deps.holds.count() or 0) > 0 and Storage.readHitmenMany then
-        local ids = {}
-        for i = (page - 1) * size + 1, math.min(#matched, page * size) do
-            local contract = matched[i]
-            if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
-                ids[#ids + 1] = contract.id
-            end
-        end
-        if #ids > 0 then
-            local read, many = pcall(Storage.readHitmenMany, ids)
-            if read and type(many) == 'table' then rosters = many end
-        end
-    end
-    local rows = {}
-    for i = (page - 1) * size + 1, math.min(#matched, page * size) do
-        local contract = matched[i]
-        rows[#rows + 1] = {
-            id = contract.id, state = contract.state, mode = contract.mode,
-            rule = Util.fulfilmentRule(contract), created_at = contract.created_at,
-            deadline_at = contract.deadline_at, resolved_at = contract.resolved_at,
-            resolution = contract.resolution, target = contract.target_name,
-            client = (contract.anon_creator == true and not canIdentify) and 'Anonymous'
-                or contract.creator_name,
-            anonymous = contract.anon_creator == true,
-            slots = contract.payout_slots, claimed = contract.slots_claimed,
-            frozen = frozenShown(contract, rosters[contract.id], canIdentify) ~= nil or nil,
-        }
-    end
-
-    -- A search by a person is a lookup, and every lookup is on the record.
-    if query then
-        deps.audit.staff(canIdentify and 'admin_panel_search_identified' or 'admin_panel_search',
-            staffOf(src), nil, { query = query, rows = #matched })
-    end
-    return true, nil, nil, { rows = rows, page = page, pages = pages, total = #matched }
-end
 
 --- The lines /ch-stuck lists for one contract, with what settles each, or
 --- nil while recovery is still deciding them.
@@ -1803,6 +1690,211 @@ local function fromPlayerRef(src, ref)
     end
     return { cid = entry.cid, actor = deps.identity.byCitizenId(entry.cid), typed = entry.typed,
              viaContract = entry.viaContract }
+end
+
+--- The one list of contracts, searched and filtered, a page at a time: the
+--- panel's All contracts, a player's contracts and the live contracts on
+--- someone (Target limits) are this list with a filter.
+---
+--- `query` is a contract id (or part of one), a citizen id, or part of a
+--- name. A citizen id finds every contract it is party to through the
+--- store's own index, and a name the client's or the target's: but a
+--- party who paid to stay anonymous is matched only for staff with
+--- IdentityAce, or a search would be a way round whois.
+---
+--- The person filter: `ref` (the handle a player lookup gave) or `person`
+--- (a player id, citizen id or name, as Players' lookup takes) keeps the
+--- contracts that person is party to, each with their `role` on it
+--- (target, client, hitman), narrowed by `as` to one role. A party they
+--- were anonymously is left out for staff without IdentityAce, with
+--- nothing to say anything was.
+---
+--- `byTarget`: the live contracts (open, taken, settling, on hold) grouped
+--- by target, the query matching the target only; each row says its
+--- group (the target's citizen id only with IdentityAce, else a number
+--- telling one from the next) and how many are live on them.
+H.contracts = function(src, data)
+    local Storage = deps.storage
+    local canIdentify = identifies(src)
+    local query = shortText(data.query, 64)
+    local state = VALID_STATE[data.state] and data.state or nil
+    -- 'live': every contract still running (active, accepted, completing),
+    -- the list's default.
+    local live = data.state == 'live'
+    local rule = (data.rule == CH.FULFILMENT_RULE.ALIVE or data.rule == CH.FULFILMENT_RULE.EITHER)
+        and data.rule or nil
+    local from = wholeNumber(data.from, 0)
+    local to = wholeNumber(data.to, 0)
+    local page = wholeNumber(data.page, 1, 100000) or 1
+    local byTarget = data.byTarget == true
+    local as = (data.as == 'target' or data.as == 'client' or data.as == 'hitman') and data.as or nil
+
+    -- The person, from the lookup's handle or as typed; their part on each
+    -- contract they may be shown on.
+    local personCid, roleOn = nil, nil
+    if data.ref ~= nil or data.person ~= nil then
+        local who, err, message
+        if data.ref ~= nil then
+            who, err, message = fromPlayerRef(src, data.ref)
+        else
+            who, err, message = playerSubject(data.person, src)
+        end
+        if not who then return false, err, message end
+        personCid = who.cid
+        roleOn = {}
+        local hitmen = deps.admin and deps.admin.operativeRows and deps.admin.operativeRows(personCid) or nil
+        for _, contract in ipairs(Storage.contractsInvolving(personCid) or {}) do
+            local role, anonymous
+            if contract.target_cid == personCid then
+                role, anonymous = 'target', false
+            elseif contract.creator_cid == personCid then
+                role, anonymous = 'client', contract.anon_creator == true
+            else
+                local row
+                if hitmen then row = hitmen[contract.id] else row = Storage.readHitman(contract.id, personCid) end
+                role, anonymous = 'hitman', row ~= nil and row.anon == true
+            end
+            if canIdentify or not anonymous then
+                roleOn[contract.id] = { role = role, anonymous = anonymous }
+            end
+        end
+    end
+
+    -- One read of the store's index, in the form the server keeps the id:
+    -- upper case, as qbx_core's are, unless a player in the city holds it as
+    -- typed. typedCitizenId decides that with a read of its own, and this
+    -- read again after it: every search typed in lower case, a name among
+    -- them, walked every contract and every operative twice on json.
+    local viaCid = {}
+    local cid = query and not byTarget and Util.toCitizenId(query)
+    if cid and cid:upper() ~= cid then
+        local online = deps.identity.byCitizenId(cid)
+        if not (online and online.cid == cid) then cid = cid:upper() end
+    end
+    if cid then
+        -- Their operative rows in one read (Admin.operativeRows), where one
+        -- per contract in their history was an await each on mysql.
+        local rows = deps.admin and deps.admin.operativeRows and deps.admin.operativeRows(cid) or nil
+        for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
+            local visible
+            if contract.target_cid == cid then
+                visible = true
+            elseif contract.creator_cid == cid then
+                visible = canIdentify or contract.anon_creator ~= true
+            else
+                local hitman
+                if rows then hitman = rows[contract.id] else hitman = Storage.readHitman(contract.id, cid) end
+                visible = canIdentify or not (hitman and hitman.anon == true)
+            end
+            if visible then viaCid[contract.id] = true end
+        end
+    end
+
+    local lowered = query and query:lower()
+    local matched = {}
+    for _, contract in ipairs(byTarget and (Storage.unfinishedContracts() or {}) or everyContract()) do
+        local hit = not lowered
+        if lowered and not hit then
+            if byTarget then
+                hit = contract.target_cid == query
+                    or tostring(contract.target_name or ''):lower():find(lowered, 1, true) ~= nil
+            else
+                hit = viaCid[contract.id]
+                    or tostring(contract.id):lower():find(lowered, 1, true) ~= nil
+                    or tostring(contract.target_name or ''):lower():find(lowered, 1, true) ~= nil
+                    or ((canIdentify or contract.anon_creator ~= true)
+                        and tostring(contract.creator_name or ''):lower():find(lowered, 1, true) ~= nil)
+            end
+        end
+        if hit and roleOn then
+            local part = roleOn[contract.id]
+            hit = part ~= nil and (not as or part.role == as)
+        end
+        if hit and state and contract.state ~= state then hit = false end
+        if hit and live and CH.TERMINAL[contract.state] then hit = false end
+        if hit and rule and Util.fulfilmentRule(contract) ~= rule then hit = false end
+        if hit and from and (tonumber(contract.created_at) or 0) < from then hit = false end
+        if hit and to and (tonumber(contract.created_at) or 0) > to then hit = false end
+        if hit then matched[#matched + 1] = contract end
+    end
+    -- Newest first (everyContract); by target, each target's together.
+    local perTarget, targets = {}, 0
+    if byTarget then
+        table.sort(matched, function(a, b)
+            local ta, tb = tostring(a.target_name or ''):lower(), tostring(b.target_name or ''):lower()
+            if ta ~= tb then return ta < tb end
+            if a.target_cid ~= b.target_cid then return tostring(a.target_cid) < tostring(b.target_cid) end
+            return newestFirst(a, b)
+        end)
+        for _, c in ipairs(matched) do
+            local key = tostring(c.target_cid)
+            if not perTarget[key] then targets = targets + 1 end
+            perTarget[key] = (perTarget[key] or 0) + 1
+        end
+    end
+
+    local size = pageSize()
+    local pages = math.max(1, math.ceil(#matched / size))
+    if page > pages then page = pages end
+    -- The page's live rows' rosters in one read, for the On hold badge, and
+    -- only while anybody is frozen (frozenShown reads nothing otherwise).
+    local rosters = {}
+    if deps.holds and (deps.holds.count() or 0) > 0 and Storage.readHitmenMany then
+        local ids = {}
+        for i = (page - 1) * size + 1, math.min(#matched, page * size) do
+            local contract = matched[i]
+            if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
+                ids[#ids + 1] = contract.id
+            end
+        end
+        if #ids > 0 then
+            local read, many = pcall(Storage.readHitmenMany, ids)
+            if read and type(many) == 'table' then rosters = many end
+        end
+    end
+    local rows, alias, seq = {}, {}, 0
+    for i = (page - 1) * size + 1, math.min(#matched, page * size) do
+        local contract = matched[i]
+        local part = roleOn and roleOn[contract.id] or nil
+        local group
+        if byTarget then
+            group = tostring(contract.target_cid)
+            if not canIdentify then
+                if not alias[group] then
+                    seq = seq + 1
+                    alias[group] = 't' .. seq
+                end
+                group = alias[group]
+            end
+        end
+        rows[#rows + 1] = {
+            id = contract.id, state = contract.state, mode = contract.mode,
+            rule = Util.fulfilmentRule(contract), created_at = contract.created_at,
+            deadline_at = contract.deadline_at, resolved_at = contract.resolved_at,
+            resolution = contract.resolution, target = contract.target_name,
+            client = (contract.anon_creator == true and not canIdentify) and 'Anonymous'
+                or contract.creator_name,
+            anonymous = contract.anon_creator == true,
+            slots = contract.payout_slots, claimed = contract.slots_claimed,
+            frozen = frozenShown(contract, rosters[contract.id], canIdentify) ~= nil or nil,
+            role = part and part.role or nil, roleAnonymous = part and part.anonymous or nil,
+            group = group, onTarget = group and perTarget[tostring(contract.target_cid)] or nil,
+        }
+    end
+
+    -- A search by a person is a lookup, and every lookup is on the record.
+    if personCid then
+        deps.audit.staff(canIdentify and 'admin_contracts_identified' or 'admin_contracts',
+            staffOf(src), nil, { subject = personCid, rows = #matched })
+    end
+    if query and byTarget then
+        deps.audit.staff('admin_panel_target_contracts', staffOf(src), nil, { query = query, rows = #matched })
+    elseif query then
+        deps.audit.staff(canIdentify and 'admin_panel_search_identified' or 'admin_panel_search',
+            staffOf(src), nil, { query = query, rows = #matched })
+    end
+    return true, nil, nil, { rows = rows, page = page, pages = pages, total = #matched,
+                             targets = byTarget and targets or nil }
 end
 
 --- Who a write names: the handle of the lookup staff made (data.ref), a
@@ -3514,65 +3606,6 @@ H.targetJobAction = function(src, data)
             .. 'on that player.') or ''), done
 end
 
---- Every live contract (open, taken, settling, and those on hold), by
---- target, a page at a time: { query (a target's name, or their exact
---- citizen id), page }. Each row opens the contract's own view, with its
---- staff actions, as a row in Contracts does; scrubbed the same way.
-H.targetContracts = function(src, data)
-    local canIdentify = identifies(src)
-    local query = shortText(data.query, 64)
-    local lowered = query and query:lower()
-    local page = wholeNumber(data.page, 1, 100000) or 1
-    local rows = {}
-    for _, c in ipairs(deps.storage.unfinishedContracts() or {}) do
-        if not lowered or c.target_cid == query
-            or tostring(c.target_name or ''):lower():find(lowered, 1, true) then
-            rows[#rows + 1] = c
-        end
-    end
-    table.sort(rows, function(a, b)
-        local ta, tb = tostring(a.target_name or ''):lower(), tostring(b.target_name or ''):lower()
-        if ta ~= tb then return ta < tb end
-        if a.target_cid ~= b.target_cid then return tostring(a.target_cid) < tostring(b.target_cid) end
-        return newestFirst(a, b)
-    end)
-    local perTarget, targets = {}, 0
-    for _, c in ipairs(rows) do
-        local key = tostring(c.target_cid)
-        if not perTarget[key] then targets = targets + 1 end
-        perTarget[key] = (perTarget[key] or 0) + 1
-    end
-    local size = pageSize()
-    local pages = math.max(1, math.ceil(#rows / size))
-    if page > pages then page = pages end
-    local out, alias, seq = {}, {}, 0
-    for i = (page - 1) * size + 1, math.min(#rows, page * size) do
-        local c = rows[i]
-        -- Which target a row is on: their citizen id to staff with
-        -- IdentityAce, and to everybody else a number telling one from the next.
-        local group = tostring(c.target_cid)
-        if not canIdentify then
-            if not alias[group] then
-                seq = seq + 1
-                alias[group] = 't' .. seq
-            end
-            group = alias[group]
-        end
-        out[#out + 1] = {
-            id = c.id, state = c.state, rule = Util.fulfilmentRule(c), created_at = c.created_at,
-            deadline_at = c.deadline_at, target = c.target_name, group = group,
-            onTarget = perTarget[tostring(c.target_cid)],
-            client = (c.anon_creator == true and not canIdentify) and 'Anonymous' or c.creator_name,
-            anonymous = c.anon_creator == true,
-            slots = c.payout_slots, claimed = c.slots_claimed,
-            frozen = frozenShown(c, nil, canIdentify) ~= nil or nil,
-        }
-    end
-    if query then
-        deps.audit.staff('admin_panel_target_contracts', staffOf(src), nil, { query = query, rows = #rows })
-    end
-    return true, nil, nil, { rows = out, page = page, pages = pages, total = #rows, targets = targets }
-end
 
 --------------------------------------------------------------------------
 -- The one way in

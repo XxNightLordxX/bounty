@@ -15,10 +15,13 @@
   (function () {
     var build = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || String(Date.now());
     window.CH_ADMIN_BUILD = decodeURIComponent(build);
-    var css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'admin.css?v=' + build;
-    document.head.appendChild(css);
+    // The design system the phone app shares (kit.css), then this page's.
+    ['kit.css', 'admin.css'].forEach(function (name) {
+      var css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = name + '?v=' + build;
+      document.head.appendChild(css);
+    });
   })();
 </script>
 </head>

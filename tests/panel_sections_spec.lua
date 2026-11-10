@@ -454,7 +454,7 @@ describe('the panel, as an owner reads it', function()
     it('has a How it works card for every optional feature, linked to its switch', function()
         local src = adminSource()
         local linked = {}
-        for key in src:gmatch("{ key: '([%w_.]+)', view: '[%w]+'") do linked[key] = true end
+        for key in src:gmatch("{ key: '([%w_.]+)', label: '") do linked[key] = true end
         local missing = {}
         for _, root in ipairs({ 'Roleplay', 'Improvements' }) do
             for name, block in pairs(Config[root]) do

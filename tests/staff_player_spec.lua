@@ -598,7 +598,7 @@ describe('every panel op, for every level', function()
         addNote = 'write', removeHitman = 'write', editText = 'write',
         console = 'developer', whois = 'identity',
         -- Target limits.
-        targetLimits = 'read', targetStatus = 'read', targetJobCount = 'read', targetContracts = 'read',
+        targetLimits = 'read', targetStatus = 'read', targetJobCount = 'read',
         targetJobSet = 'write', targetJobRemove = 'write',
         targetReset = 'moderate', targetExtend = 'moderate', targetCounts = 'moderate',
         targetOverride = 'moderate', targetOverrideClear = 'moderate', targetJobAction = 'moderate',

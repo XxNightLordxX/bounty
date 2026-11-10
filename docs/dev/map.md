@@ -247,10 +247,11 @@ Choices that act as feature modes (not switches): `Completion.Fulfilment`
 | Developer | `health`, `devsettings`, `console`, `tools` |
 | Help | `help`, `howto`, `permissions` |
 
-`ui/admin.js:333` keeps `ALIASES` (old view names `settings`, `features`,
+`ui/admin.js:333` kept `ALIASES` (old view names `settings`, `features`,
 `timers`, `money`, `limits`, `targeting`, `reviews`, `stuck`, `actions`,
-`diagnostics`, `live`, `frozenlist`): old-name mappings that rule 4 says go;
-delete in step 4 (UI clean-up).
+`diagnostics`, `live`, `frozenlist`): deleted in step 4a. A link that chooses
+a filter in a view says so in the view's own name: `logs:<area>`,
+`inbox:<filter>`, `rules:<type>`, `contracts:bytarget`.
 
 **Other NUI**: the camera overlay for verification photos
 (`crimson:verificationCamera`, `client/main.lua:1305`), lb-phone gallery save,

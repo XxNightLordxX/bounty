@@ -14,79 +14,9 @@
      spinner on a near-black field reads as a rendering fault. */
   color-scheme: dark;
 
-  /* Ground and surfaces, warm rather than blue-black.
-
-     Measured before this: 1.06:1 between the page background and a card.
-     That is not a contrast step, it is the same colour twice — so nothing
-     read as a raised surface and the app looked like one flat sheet of mud
-     with text scattered on it. Three steps now, each visibly apart: the
-     page, a card lying on it, and the well a field or a payout is sunk
-     into. */
-  --bg: #0b0908;
-  --panel: #1d1815;          /* a card: a file lying on the desk */
-  --panel-2: #131010;        /* a well: fields, payouts, lists */
-  --panel-hi: #251f1b;       /* a quiet button's resting fill, on a card */
-  --line: #342b26;
-  --line-soft: rgba(237, 228, 211, 0.07);
-  --line-strong: rgba(237, 228, 211, 0.2);
-
-  /* Bone, the colour of old paper, in three weights.
-
-     The faintest carries most of the explaining — what a payout funds,
-     what a stake costs, why a request failed, every tab label — so it has
-     to clear WCAG AA (4.5:1) on every surface it is set on. #82776a did
-     not: 4.02:1 on a card, 4.32 in a well, 4.48 on the tab bar. This is
-     5.20 on a card, 5.59 in a well, 5.79 on the tab bar and 4.81 on the
-     lightest fill it meets, a quiet button. */
-  --ink: #ede4d3;
-  --ink-dim: #b3a795;
-  --ink-faint: #958a7c;
-
-  /* Crimson is money and the primary action, nothing else. */
-  --crimson: #b8142f;
-  --crimson-bright: #ef3d53;
-  --rose: #d77683;           /* crimson with the shout taken out: undo, walk away */
-  --primary-fill: linear-gradient(180deg, #c8193a 0%, var(--crimson) 45%, #9a1028 100%);
-  --primary-fill-hover: linear-gradient(180deg, #d82444 0%, #c4173a 45%, #a8122d 100%);
-
-  /* Brass is caution: a sworn officer, a stake, a contract that is full. */
-  --gold: #cfa962;
-  --gold-soft: rgba(207, 169, 98, 0.1);
-  --gold-line: rgba(207, 169, 98, 0.3);
-
-  --radius: 0.8rem;
-  --radius-sm: 0.55rem;
-
-  /* Three voices, all of them already on the machine — there is no network
-     guarantee inside a game, so nothing here is downloaded.
-       ui       the interface itself: Segoe UI on the Windows this runs on.
-       display  a serif for names and headings, the way a file is typed up.
-       figure   a squared grotesque for the money: DIN (Bahnschrift) on
-                Windows, which is what a rubber stamp is cut in.
-       mono     the clerk's hand: dividers and small file labels. */
-  --f-ui: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --f-display: Georgia, Charter, 'Bitstream Charter', 'Iowan Old Style', 'Palatino Linotype', 'DejaVu Serif', serif;
-  --f-figure: Bahnschrift, 'DIN Alternate', 'Roboto Condensed', 'Segoe UI', Arial, sans-serif;
-  --f-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
-
-  /* A type scale, because there was not one.
-
-     The sheet declared seventeen distinct font sizes, seven of them inside
-     a 1.6px band at this root size — differences below the threshold at
-     which a difference is visible. The effect is that nothing on a card
-     reads as more or less important than anything else: a size that is not
-     a step is just noise with a number on it.
-
-     Six steps, each a clear jump from the last. Anything that needs a size
-     picks one of these. */
-  --t-xs: 0.72rem;   /* labels, timestamps, the smallest legible thing here */
-  --t-sm: 0.82rem;   /* secondary text, hints, chips */
-  --t-md: 0.95rem;   /* body, button labels, form values */
-  --t-lg: 1.2rem;    /* the target's name */
-  --t-xl: 1.45rem;   /* the money, which is what a contract board is for */
-
-  --shadow: 0 1px 0 rgba(237, 228, 211, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.55),
-            0 8px 24px rgba(0, 0, 0, 0.35);
+  /* The colours, type, spacing and radii are kit.css's, shared with the
+     staff panel, and so is the touch density the phone uses. What follows
+     is only what this page has and the panel does not. */
 
   /* lb-phone draws a home indicator across the bottom of its frame and
      puts no inset inside the page, so the tab bar has to hold its own
@@ -108,9 +38,9 @@
      draws its status bar and home indicator black (see body::before). */
   --status-band-light: #ece5d9;
 
-  /* Nothing interactive is smaller than this. A phone screen inside a game
-     window is a small target already. */
-  --tap: 2.75rem;
+  /* Nothing interactive is smaller than this: a phone screen inside a game
+     window is a small target already. kit.css's --control is the same. */
+  --tap: var(--control);
 
   /* The line icons. One stroke weight on one 24px grid, drawn as masks so
      each takes the colour of the text beside it. Inline SVG rather than an
@@ -153,12 +83,6 @@
   --svg-select: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3a795' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6.5 9.5 5.5 5.5 5.5-5.5'/%3E%3C/svg%3E");
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-
-/* Author styles below set `display` on things the app hides with the
-   `hidden` attribute (the quantity field under an item picker), and an
-   author `display` beats the browser's own [hidden] rule. */
-[hidden] { display: none !important; }
 
 body {
   background: var(--bg);
@@ -315,10 +239,6 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
    and the faintest lift. No gradients and no glow — the stamp and the one
    crimson button are what should catch the eye, not the paper. */
 .card {
-  background: var(--panel);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  padding: 0.95rem;
   position: relative;
   overflow: hidden;
   box-shadow: var(--shadow);
@@ -339,10 +259,7 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
    will not share a line without the name being squeezed below a readable
    width, the stamp drops under them rather than the name giving way. That
    is what the wrap and the identity's basis below are for. */
-.card-head {
-  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start;
-  column-gap: 0.75rem; row-gap: 0.55rem;
-}
+.card-head { justify-content: space-between; align-items: flex-start; }
 .card-identity { display: flex; gap: 0.75rem; align-items: flex-start; min-width: 0; }
 .identity { min-width: 0; padding-top: 0.1rem; }
 
@@ -557,13 +474,6 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
   gap: 0.35rem 0.95rem; margin-top: 0.8rem;
 }
 
-.chip {
-  display: inline-flex; align-items: center; gap: 0.38rem;
-  font-size: var(--t-sm); line-height: 1.3;
-  color: var(--ink-dim);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
 .chip.ico::before { width: 0.95rem; height: 0.95rem; opacity: 0.75; }
 /* What is live right now — somebody is on it — in the crimson that says
    so. In bone it read as one more label, and the one cue on a card that a
@@ -571,13 +481,7 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 .chip.hot { color: var(--crimson-bright); }
 .chip.hot.ico::before { opacity: 1; }
 .chip.slots { color: var(--ink-dim); }
-.chip.warn {
-  color: var(--gold);
-  background: var(--gold-soft);
-  box-shadow: inset 0 0 0 1px rgba(207, 169, 98, 0.18);
-  padding: 0.16rem 0.5rem; border-radius: 0.35rem;
-}
-.chip.warn.ico::before { opacity: 1; }
+.chip.is-warn.ico::before { opacity: 1; }
 /* A role arrives as the raw word ("hitman"); the page shows it as a label. */
 .chip.role { text-transform: capitalize; }
 
@@ -593,45 +497,20 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
   gap: 0.45rem; margin-top: 0.75rem;
 }
 
-/* Three weights, and every button is one of them.
-     primary   crimson, filled: the one thing the card is for.
-     (plain)   a bone outline: a real alternative to the primary.
-     ghost     a quiet tile, no outline: everything else.
-   Before this, six actions on a card were six identical outlines, and
-   nothing said which one mattered. */
+/* Every button is kit.css's .btn (app.js's el() gives each one the
+   class), in one of its weights: primary, plain, ghost, danger. Here only
+   how one sits in a row: grow to share it, shrink when sharing it with too
+   many others, and never insist on being as wide as its own label —
+   min-width defaults to auto on a flex item, which is what made a row of
+   buttons refuse to fit rather than wrap. */
 button {
-  font: inherit; font-size: var(--t-md); font-weight: 600; line-height: 1.2;
-  cursor: pointer; border-radius: var(--radius-sm);
-  border: 1px solid var(--line-strong); background: transparent; color: var(--ink);
-  padding: 0.55rem 0.9rem;
-  /* Grow to share a row, shrink when sharing it with too many others, and
-     never insist on being as wide as its own label — min-width defaults to
-     auto on a flex item, which is what made a row of buttons refuse to fit
-     rather than wrap. */
   flex: 1 1 auto;
   min-width: 6.5rem;
-  min-height: var(--tap);
-  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
-  text-align: center;
+  gap: 0.5rem;
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-button:hover { background-color: rgba(237, 228, 211, 0.06); border-color: rgba(237, 228, 211, 0.32); }
-button:focus-visible { outline: 2px solid rgba(237, 228, 211, 0.55); outline-offset: 2px; }
-button:disabled { opacity: 0.45; cursor: default; }
-
-/* The one action per card. A gradient, not a flat fill: it is what makes a
-   primary a primary, and the layout suite looks for exactly that. */
-button.primary {
-  background: var(--primary-fill);
-  border-color: rgba(0, 0, 0, 0.35);
-  color: #fff8f2; font-weight: 700; letter-spacing: 0.005em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.5),
-              0 6px 16px -6px rgba(184, 20, 47, 0.55);
-}
-button.primary:hover {
-  background: var(--primary-fill-hover);
-  border-color: rgba(0, 0, 0, 0.35);
-}
+button.primary { letter-spacing: 0.005em; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.5),
+  0 6px 16px -6px rgba(184, 20, 47, 0.55); }
 
 /* The one action the whole form is for. It sat at its content width in the
    middle of the page, reading as one option among several. */
@@ -641,12 +520,6 @@ button.primary:hover {
    own money. */
 .place-total { color: var(--ink-dim); margin-top: 0; }
 
-button.ghost {
-  background: var(--panel-hi);
-  border-color: transparent;
-  color: var(--ink-dim);
-}
-button.ghost:hover { background: #2d2621; color: var(--ink); border-color: transparent; }
 button.ghost.ico::before { opacity: 0.85; }
 
 /* An outlined button with tinted text, which is what the buyout was.
@@ -662,12 +535,6 @@ button.ghost.ico::before { opacity: 0.85; }
    .danger stays for genuinely destructive secondary actions. The buyout
    now carries .primary as well, and this keeps it distinguishable from an
    ordinary primary by its border. */
-button.danger {
-  background: rgba(184, 20, 47, 0.08);
-  border-color: transparent;
-  color: var(--rose);
-}
-button.danger:hover { background: rgba(184, 20, 47, 0.16); color: #f0a0aa; border-color: transparent; }
 button.primary.danger,
 button.primary.danger:hover {
   background: var(--primary-fill);
@@ -797,9 +664,7 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
   font-size: var(--t-sm); font-weight: 600; padding: 0.5rem 0.7rem;
 }
 /* Tapped once: the next tap pays, for three seconds. */
-.tip-actions > button.is-armed {
-  color: #1b1408; background: var(--gold); border-color: var(--gold);
-}
+/* Armed, it is kit.css's brass .is-armed. */
 
 .more {
   flex-basis: 100%;
@@ -854,24 +719,13 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
 
 /* ---------- forms ---------- */
 
-.field { margin-bottom: 0.8rem; }
-.field:last-child { margin-bottom: 0; }
 label {
   display: block; font-size: var(--t-sm); font-weight: 600; color: var(--ink-dim);
   margin-bottom: 0.4rem;
 }
 
-/* Sunk into the paper rather than drawn on it: a well a shade darker than
-   the card, with a hairline and a little inner shadow at the top edge. */
-input, select, textarea {
-  width: 100%; font: inherit; font-size: var(--t-md); color: var(--ink);
-  background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); padding: 0.6rem 0.75rem;
-  min-height: var(--tap);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-}
-input::placeholder { color: var(--ink-faint); }
+/* Fields are kit.css's .input (app.js gives each control the class). */
+input, select, textarea { transition: border-color 120ms ease, box-shadow 120ms ease; }
 select {
   -webkit-appearance: none; appearance: none;
   padding-right: 2.3rem;
@@ -883,10 +737,6 @@ select {
 }
 /* A checkbox is not a text field and must not be stretched to one. */
 .toggle input[type="checkbox"] { min-height: 0; width: 1.15rem; height: 1.15rem; }
-input:focus, select:focus, textarea:focus {
-  outline: none; border-color: rgba(237, 228, 211, 0.4);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 3px rgba(237, 228, 211, 0.07);
-}
 
 .split { display: flex; gap: 0.5rem; align-items: flex-end; }
 .split > * { flex: 1; min-width: 0; margin-bottom: 0; }
@@ -928,7 +778,7 @@ input:focus, select:focus, textarea:focus {
 }
 .toggle span { font-size: var(--t-md); }
 
-.hint { font-size: var(--t-sm); color: var(--ink-faint); margin-top: 0.35rem; line-height: 1.45; }
+.hint { margin-top: 0.35rem; }
 
 /* A contract's reference, for quoting to staff. Quiet, because players
    need it once in a blue moon, and selectable, because they need it exact. */
@@ -1094,9 +944,9 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
   font-size: 0.7rem; padding: 0.12rem 0.45rem; border-radius: 0.3rem;
   background: rgba(237, 228, 211, 0.06);
 }
-.person-tags .chip.warn { background: var(--gold-soft); }
+.person-tags .chip.is-warn { background: var(--gold-soft); }
 
-.row.pager { align-items: center; flex-wrap: nowrap; margin-top: 0.5rem; }
+.row.pager { flex-wrap: nowrap; margin-top: 0.5rem; }
 .pager > button { flex: 0 1 auto; min-width: 0; padding: 0.5rem 0.8rem; font-size: var(--t-sm); }
 .page-of {
   flex: 1 1 auto; align-self: center; text-align: center;
@@ -1213,13 +1063,6 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
 
 .dialog {
   margin-top: auto;
-  border-color: var(--line);
-  border-radius: 1rem;
-  padding: 1.1rem 1rem 1rem;
-  background:
-    linear-gradient(180deg, rgba(237, 228, 211, 0.035), transparent 5rem),
-    var(--panel);
-  box-shadow: inset 0 1px 0 rgba(237, 228, 211, 0.06), 0 -0.5rem 2.5rem rgba(0, 0, 0, 0.6);
 
   /* Fits the screen it is on, whatever that is.
 
@@ -1305,44 +1148,26 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
   to   { opacity: 1; transform: none; }
 }
 
-.notice {
-  display: flex; gap: 0.6rem; align-items: flex-start;
-  border-radius: var(--radius-sm); padding: 0.75rem 0.85rem; font-size: 0.88rem;
-  line-height: 1.4;
-  border: 1px solid rgba(239, 61, 83, 0.32); background: rgba(184, 20, 47, 0.1);
-  color: var(--ink);
-  --icon: var(--svg-crosshair);
-}
+.notice { padding: 0.75rem 0.85rem; --icon: var(--svg-crosshair); }
 .notice::before { width: 1.1rem; height: 1.1rem; margin-top: 0.02rem; color: var(--crimson-bright); }
-.notice.gold {
-  border-color: var(--gold-line); background: rgba(207, 169, 98, 0.08); color: #ead3a4;
-  --icon: var(--svg-shield);
-}
+.notice.gold { --icon: var(--svg-shield); }
 .notice.gold::before { color: var(--gold); }
 /* A confirmation: plain ink and a tick, neither the crimson of a refusal nor
    the brass of a caution. Placed after the slot's own rule, whose alert icon
    would otherwise win. */
-.notice.ok {
-  border-color: rgba(237, 228, 211, 0.22); background: rgba(237, 228, 211, 0.05);
-  color: var(--ink);
-  --icon: var(--svg-usercheck);
-}
+.notice.ok { --icon: var(--svg-usercheck); }
 .notice.ok::before { color: var(--ink-dim); }
 .notice-slot .notice.ok { background: #221e1a; }
 /* On hold by staff (server/freeze.lua): brass, as a caution is, with a
    lock. Words a player can only wait out, never a refusal of theirs. */
-.notice.hold {
-  border-color: var(--gold-line); background: rgba(207, 169, 98, 0.08); color: #ead3a4;
-  --icon: var(--svg-lock);
-}
+.notice.hold { --icon: var(--svg-lock); }
 .notice.hold::before { color: var(--gold); }
 .card > .notice { margin-top: 0.8rem; }
 
 /* Nothing here, said quietly, under a faint seal. */
 .empty {
   display: flex; flex-direction: column; align-items: center; gap: 0.9rem;
-  text-align: center; color: var(--ink-faint);
-  padding: 3rem 1.5rem; font-size: 0.92rem; line-height: 1.5;
+  text-align: center; padding: 3rem 1.5rem;
   --icon: var(--svg-seal);
 }
 .empty::before { width: 2.75rem; height: 2.75rem; opacity: 0.45; }
@@ -1899,9 +1724,6 @@ button.is-held { opacity: 0.55; }
 .row.org-actions > button { min-width: 0; white-space: normal; }
 .row.org-choice > button { font-size: var(--t-sm); padding: 0.45rem 0.6rem; }
 .row.org-choice > button.is-on { color: var(--ink); background: #2d2621; box-shadow: inset 0 0 0 1px var(--line-strong); }
-.org-screen button.is-armed, .org-card button.is-armed, .org-member button.is-armed, .org-role button.is-armed {
-  color: #1b1408; background: var(--gold); border-color: var(--gold);
-}
 button.ghost.org-row { width: 100%; justify-content: flex-start; text-align: left; white-space: normal; }
 .org-member > .meta, .org-role > .meta { margin-top: 0.4rem; }
 .org-powers { margin-top: 0.6rem; border-top: 1px solid var(--line-soft); padding-top: 0.4rem; }

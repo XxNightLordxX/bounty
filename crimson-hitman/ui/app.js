@@ -281,8 +281,8 @@
       title.textContent = 'Diagnostics · ' + (window.CH_BUILD || 'dev');
       head.appendChild(title);
 
-      var close = document.createElement('button');
-      close.className = 'ghost';
+      var close = make('button');
+      close.className = 'btn ghost';
       close.textContent = 'Close';
       close.onclick = toggle;
       head.appendChild(close);
@@ -302,8 +302,8 @@
       }
       panel.appendChild(list);
 
-      var copy = document.createElement('button');
-      copy.className = 'ghost diag-copy';
+      var copy = make('button');
+      copy.className = 'btn ghost diag-copy';
       copy.textContent = 'Send this to the server log';
       // Built as dump() builds the log staff ask for: lines joined with the
       // marker the server splits on, and the newest 900 characters, which
@@ -1012,7 +1012,7 @@
       // a dialog could offer was a text box, so the Edit dialog asked for
       // free text on servers that refuse it.
       if (spec.type === 'select') {
-        var choose = document.createElement('select');
+        var choose = make('select');
         choose.id = 'dialog-' + spec.id;
         (spec.options || []).forEach(function (option) {
           var node = document.createElement('option');
@@ -1027,7 +1027,7 @@
         return;
       }
 
-      var input = document.createElement('input');
+      var input = make('input');
       input.id = 'dialog-' + spec.id;
       input.type = spec.type || 'text';
       input.value = current(spec);
@@ -1083,7 +1083,7 @@
     if (d.kind === 'number') {
       var opts = d.opts || {};
 
-      input = document.createElement('input');
+      input = make('input');
       input.type = 'number';
       input.id = 'dialog-value';
       input.min = opts.min !== undefined ? opts.min : 1;
@@ -2011,9 +2011,19 @@
     return [];
   }
 
-  function el(tag, className, text) {
+  /* Every control is one of kit.css's components (the design system the
+     staff panel shares): a button is a .btn, a field an .input. Made here,
+     so no control on the page is drawn without its class. */
+  var KIT_CLASS = { button: 'btn', input: 'input', select: 'input', textarea: 'input' };
+  function make(tag) {
     var node = document.createElement(tag);
-    if (className) node.className = className;
+    if (KIT_CLASS[tag]) node.className = KIT_CLASS[tag];
+    return node;
+  }
+
+  function el(tag, className, text) {
+    var node = make(tag);
+    if (className) node.className = (KIT_CLASS[tag] ? KIT_CLASS[tag] + ' ' : '') + className;
     if (text !== undefined && text !== null) node.textContent = String(text);
     return node;
   }
@@ -2024,7 +2034,8 @@
      text — the only thing a screen reader or a test reads — is exactly what
      it was without one. */
   function chip(text, variant, icon) {
-    return el('span', 'chip' + (variant ? ' ' + variant : '')
+    // A caution is a pill (kit.css .chip.is-warn); every other is a label.
+    return el('span', 'chip' + (variant === 'is-warn' ? '' : ' is-label') + (variant ? ' ' + variant : '')
       + (icon ? ' ico ' + icon : ''), text);
   }
 
@@ -2227,7 +2238,7 @@
       var full = contract.mode === 'competitive'
         && contract.hitmenMax
         && contract.hitmenActive >= contract.hitmenMax;
-      return chip(full ? crowd + ' — full' : crowd, full ? 'warn' : 'hot', 'i-users');
+      return chip(full ? crowd + ' — full' : crowd, full ? 'is-warn' : 'hot', 'i-users');
     }
 
     // What a client opens Mine to find out, first: is anyone on it. An
@@ -2251,7 +2262,7 @@
     // under the card says what it means for them. The same for every party,
     // never which of them or why. Chip, clock and note said it three times.
     if (contract.onHold && !clock) {
-      meta.appendChild(chip('On hold', 'warn', 'i-lock'));
+      meta.appendChild(chip('On hold', 'is-warn', 'i-lock'));
     }
 
     meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive',
@@ -2320,7 +2331,7 @@
     // acceptance debited it anyway, so the first a hitman knew of a stake
     // was the money leaving their bank.
     if (contract.penaltyAmount > 0) {
-      meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn', 'i-coin'));
+      meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'is-warn', 'i-coin'));
     }
     // The buyout as the server set it, on the client's own card. The server
     // moves a price outside what the reward allows to the nearest limit, and
@@ -2344,7 +2355,7 @@
         : 'Placed by ' + contract.creatorName, null, 'i-briefcase'));
     }
     if (flagged) {
-      meta.appendChild(chip(protectedWords(contract.targetProtectedAs).chip, 'warn', 'i-shield'));
+      meta.appendChild(chip(protectedWords(contract.targetProtectedAs).chip, 'is-warn', 'i-shield'));
     }
     // The placer's record (Config.Record.PlacerRecord): counts, never who.
     if (contract.placerRecord) {
@@ -3517,7 +3528,7 @@
   }
 
   function orgField(key, label, kind, placeholder, max) {
-    var input = document.createElement(kind === 'area' ? 'textarea' : 'input');
+    var input = make(kind === 'area' ? 'textarea' : 'input');
     if (kind !== 'area') { input.type = kind === 'number' ? 'number' : 'text'; }
     if (kind === 'number') { input.inputMode = 'numeric'; input.min = 0; }
     input.id = 'org-' + key.replace(/[^A-Za-z0-9]/g, '-');
@@ -5109,7 +5120,7 @@
     reasonFields(contract).forEach(function (spec) {
       var node;
       if (spec.type === 'select') {
-        node = document.createElement('select');
+        node = make('select');
         (spec.options || []).forEach(function (option) {
           var o = document.createElement('option');
           o.value = String(option.value);
@@ -5119,7 +5130,7 @@
         node.value = current('reasonPreset', spec.value === undefined ? '' : spec.value);
         remember('reasonPreset', node);
       } else {
-        node = document.createElement('input');
+        node = make('input');
         node.type = 'text';
         node.maxLength = spec.max;
         node.value = current('reason', spec.value || '');
@@ -5131,7 +5142,7 @@
 
     // The reward: more from cash or bank here; taking back, and goods, the
     // kidnapping bonus and dirty money, in the reward editor.
-    var add = document.createElement('input');
+    var add = make('input');
     add.type = 'number';
     add.inputMode = 'numeric';
     add.min = 0;
@@ -5159,7 +5170,7 @@
 
     // The stake, as a figure: lower applies at once, higher up to the most
     // this contract can ask.
-    var stake = document.createElement('input');
+    var stake = make('input');
     stake.type = 'number';
     stake.inputMode = 'numeric';
     stake.min = 0;
@@ -5170,7 +5181,7 @@
       + money(Math.max(stakeMostOf(contract), Number(contract.penaltyAmount) || 0)) + ')', stake));
 
     // The deadline, moved by whole hours either way.
-    var hours = document.createElement('input');
+    var hours = make('input');
     hours.type = 'number';
     hours.inputMode = 'numeric';
     hours.id = 'sheet-hours';
@@ -5192,7 +5203,7 @@
     // The buyout price, where the server runs buyouts (Contracts.revise
     // clamps it as placing does).
     if (settings().buyouts !== false) {
-      var buyoutField = document.createElement('input');
+      var buyoutField = make('input');
       buyoutField.type = 'number';
       buyoutField.inputMode = 'numeric';
       buyoutField.min = 0;
@@ -7023,7 +7034,7 @@
     var words = clockWords(contract);
     if (!words) { return; }
     node.textContent = words.text;
-    node.className = 'chip' + (words.warn ? ' warn' : '') + ' ico i-clock';
+    node.className = 'chip' + (words.warn ? ' is-warn' : ' is-label') + ' ico i-clock';
   }
 
   function clockChip(contract) {
@@ -7517,7 +7528,7 @@
       // sat beside a loud "Take back what I ticked" that did nothing.
       if (take) {
         var any = !!(amount || dirty || goods);
-        take.className = (any ? 'primary' : 'ghost') + ' take-back';
+        take.className = 'btn ' + (any ? 'primary' : 'ghost') + ' take-back';
         take.disabled = !any;
       }
 
@@ -7559,7 +7570,7 @@
         var row = el('label', 'toggle reward-line');
 
         if (line.id) {
-          var box = document.createElement('input');
+          var box = make('input');
           box.type = 'checkbox';
           box.id = 'reward-line-' + index;
           box.checked = edit.chosen[line.id] === true;
@@ -9069,7 +9080,7 @@
        only, on a phone, where whether the on-screen keyboard produces one
        depends on the keyboard. */
     var field = el('div', 'field compose');
-    var input = document.createElement('input');
+    var input = make('input');
     input.id = 'compose-input';
     input.placeholder = 'Say something';
     input.maxLength = settings().messageMaxLength || 200;
@@ -9219,7 +9230,7 @@
     var presets = asList(settings().reasonPresets);
 
     if (reasonMode === 'preset' && presets.length) {
-      var pick = document.createElement('select');
+      var pick = make('select');
       pick.id = 'reasonPreset';
       presets.forEach(function (text, i) {
         var opt = document.createElement('option');
@@ -9236,7 +9247,7 @@
                 'reason')));
     }
 
-    var mode = document.createElement('select');
+    var mode = make('select');
     mode.id = 'mode';
     [['exclusive', 'Exclusive — one hitman'],
      ['competitive', 'Competitive — first to finish']].forEach(function (o) {
@@ -9389,7 +9400,7 @@
     function drawAnonOption() {
       anonSlot.innerHTML = '';
       if (!anonymityOffered('creator', state.draft.targetProtected === true)) { return; }
-      var anon = document.createElement('input');
+      var anon = make('input');
       anon.type = 'checkbox'; anon.id = 'anon';
       anon.checked = state.draft.anon === true;
       anon.onclick = function () {
@@ -9699,7 +9710,7 @@
     var bonusCap = typeof caps.bonusPercent === 'number' ? caps.bonusPercent : null;
     if (placingAliveOnly()) { picked.aliveOnly = false; }
     if ((items.length > 0 || weapons.length > 0) && bonusCap !== 0 && !placingAliveOnly()) {
-      var alive = document.createElement('input');
+      var alive = make('input');
       alive.type = 'checkbox'; alive.id = 'slot-alive-' + index;
       alive.checked = picked.aliveOnly === true;
       alive.onclick = function () { picked.aliveOnly = alive.checked; };
@@ -9795,7 +9806,7 @@
      there is a choice to make. Somebody staking their one crowbar should
      not have to confirm that they mean one of it. */
   function itemPicker(index, items) {
-    var choose = document.createElement('select');
+    var choose = make('select');
     choose.id = 'slot-item-' + index;
 
     // How much of each is still unspoken for, so the quantity field can be
@@ -9890,7 +9901,7 @@
   }
 
   function weaponPicker(index, weapons) {
-    var choose = document.createElement('select');
+    var choose = make('select');
     choose.id = 'slot-weapon-' + index;
     weapons.forEach(function (weapon) {
       if (weaponTaken(weapon.slot)) { return; }
@@ -10180,7 +10191,7 @@
     if (!placeSubmit || !placeSubmit.parentNode || isBusy('create')) { return; }
     var armed = state.placeArmed;
     placeSubmit.textContent = armed ? armed.label : 'Place contract';
-    placeSubmit.className = armed ? 'danger' : 'primary';
+    placeSubmit.className = 'btn ' + (armed ? 'danger' : 'primary');
   }
 
   function submitContract() {
@@ -10716,14 +10727,14 @@
   }
 
   function textInput(id, placeholder, max) {
-    var input = document.createElement('input');
+    var input = make('input');
     input.id = id; input.placeholder = placeholder || '';
     if (max) input.maxLength = max;
     return input;
   }
 
   function numberInput(id, value) {
-    var input = document.createElement('input');
+    var input = make('input');
     input.type = 'number';
     input.id = id === 'slots' ? 'slots-count' : id;
     input.value = value;
@@ -10753,7 +10764,7 @@
     // no way to ask again. Who is chosen is said below the list instead.
     input.value = browse.query || '';
 
-    var handle = document.createElement('input');
+    var handle = make('input');
     handle.type = 'hidden'; handle.id = 'target-handle';
     handle.value = state.draft.target || '';
     handle.dataset.protected = state.draft.targetProtected ? 'true' : 'false';
@@ -10801,8 +10812,8 @@
     }
 
     function markScope() {
-      if (allButton) { allButton.className = (browse.scope === 'all') ? 'primary' : 'ghost'; }
-      if (nearButton) { nearButton.className = (browse.scope === 'nearby') ? 'primary' : 'ghost'; }
+      if (allButton) { allButton.className = 'btn ' + ((browse.scope === 'all') ? 'primary' : 'ghost'); }
+      if (nearButton) { nearButton.className = 'btn ' + ((browse.scope === 'nearby') ? 'primary' : 'ghost'); }
     }
 
     if (canBrowse) {
@@ -10993,7 +11004,7 @@
 
     function personRow(person) {
       var pick = el('button', 'person');
-      if (state.draft.target === person.handle) { pick.className = 'person is-chosen'; }
+      if (state.draft.target === person.handle) { pick.className = 'btn person is-chosen'; }
 
       // The same monogram the contract will carry on the board.
       pick.appendChild(portrait(person.name, null));
@@ -11003,7 +11014,7 @@
 
       var tags = el('span', 'person-tags');
       if (person.protected) {
-        tags.appendChild(el('span', 'chip warn ico i-shield', protectedWords(person.protectedAs).tag));
+        tags.appendChild(el('span', 'chip is-warn ico i-shield', protectedWords(person.protectedAs).tag));
       }
       // A band, never the figure: "under 20m" (app.lua, NEARBY_BAND).
       if (person.metres !== undefined && person.metres !== null) {

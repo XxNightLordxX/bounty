@@ -398,11 +398,23 @@ function serverStub() {
         MaxContractsPerTargetPerDay: 100, MaxContractsPerTargetPerWeek: 500 },
       adjustment: { until_at: NOW + 86400, override: { exempt: false, limits: {}, until_at: NOW + 3600,
         reason: REASON } } } } };
-  answers.targetContracts = { ok: true, data: { page: 1, pages: 4, total: 100, targets: 40,
+  // The one list of contracts: by target (Target limits' link), or one
+  // person's with their part on each, or everybody's.
+  const everyone = answers.contracts;
+  const byTarget = { ok: true, data: { page: 1, pages: 4, total: 100, targets: 40,
     rows: rows.slice(0, 20).map(function (r, i) {
       return Object.assign({}, r, { state: i % 2 ? 'active' : 'accepted', group: 't' + Math.floor(i / 3),
         target: i < 3 ? LONG : r.target, onTarget: 3, frozen: i % 4 === 0 });
     }) } };
+  const theirs = { ok: true, data: { page: 1, pages: 2, total: 30,
+    rows: rows.slice(0, 20).map(function (r, i) {
+      return Object.assign({}, r, { role: ['target', 'client', 'hitman'][i % 3], roleAnonymous: i % 3 === 1 });
+    }) } };
+  answers.contracts = function (data) {
+    if (data.byTarget) return byTarget;
+    if (data.ref || data.person) return theirs;
+    return everyone;
+  };
   // The hitman organisation, with the longest things each part holds.
   const POWERS = [];
   ['members', 'roles', 'pay', 'money', 'contracts', 'locations', 'notices', 'settings', 'delegation'].forEach(function (a, i) {
@@ -650,9 +662,9 @@ function measure(opts) {
   return out;
 }
 
-/* A view, as a link or the sidebar reaches it: through the page's own show,
-   which takes the old names too (ui/admin.js ALIASES). The sidebar's own
-   buttons are measured on their own below. */
+/* A view, as a link or the sidebar reaches it: through the page's own show
+   (a view has one name; 'logs:<area>' and 'inbox:<filter>' choose a filter
+   there). The sidebar's own buttons are measured on their own below. */
 async function go(page, view) {
   await page.evaluate(function (v) { window.CH_ADMIN_SHOW(v); }, view);
   await page.waitForTimeout(40);
@@ -702,11 +714,11 @@ async function main() {
     // A phone: every section, nothing sideways; tables scroll in their frame.
     { w: 390, h: 844, tablesFit: false, phone: true }
   ];
-  // Every view of every section (the old names among them land where their
-  // items are now), and a selected player's tabs once one is looked up.
-  const sections = ['inbox', 'overview', 'announce', 'players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime',
-    'phistory', 'pdiag', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
-    'tlcontracts', 'rules', 'changed', 'logs:settings', 'timers', 'money', 'limits', 'targeting', 'features',
+  // Every view of every section (Game rules once per type of setting), and
+  // a selected player's tabs once one is looked up.
+  const sections = ['inbox', 'overview', 'announce', 'players', 'pmeasures', 'pmoney', 'pplaytime',
+    'phistory', 'pdiag', 'their-contracts', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
+    'contracts:bytarget', 'rules', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
     'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'logs:org',
     'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'logs:audit', 'alerts', 'health', 'devsettings',
     'console', 'tools', 'help', 'howto', 'permissions'];
@@ -768,7 +780,13 @@ async function main() {
     });
 
     for (const section of sections) {
-      await go(page, section);
+      if (section === 'their-contracts') {
+        // The one list of contracts, filtered to the player looked up.
+        await go(page, 'players');
+        await page.click('button[data-act="pl-contracts"]');
+      } else {
+        await go(page, section);
+      }
       await page.waitForTimeout(120);
       if (section === 'players') {
         await page.fill('#pl-q', '123');
@@ -922,9 +940,9 @@ async function main() {
       truthy(/Click again/.test(tlArmed.label), tlArmed.label);
       truthy(tlArmed.sent === 0, 'sent on one click');
     });
-    await go(page, 'tlcontracts');
+    await page.click('#nav-contracts-bytarget');
     await page.waitForTimeout(150);
-    await page.click('#tl-cur tr.row');
+    await page.click('#ct-results tr.row');
     await page.waitForTimeout(200);
     const tlDrawer = await page.evaluate(function () {
       const d = document.getElementById('drawer');
@@ -941,7 +959,8 @@ async function main() {
 
     // The settings, grouped, with each control beside its words (on a
     // phone, below them).
-    await go(page, 'features');
+    await go(page, 'rules');
+    await page.click('[data-act="gr-type"][data-value="switch"]');
     await page.waitForTimeout(120);
     const sideBySide = function () {
       const out = [];
@@ -983,7 +1002,8 @@ async function main() {
 
     // And the limits, where a Save can carry a confirm label: armed, with
     // the row saying what lowering it deletes.
-    await go(page, 'timers');
+    await go(page, 'rules');
+    await page.click('[data-act="gr-type"][data-value="timer"]');
     await page.waitForTimeout(120);
     await page.fill('[data-bind="st.Ledger.PhotoRetentionDays"]', '1');
     await page.press('[data-bind="st.Ledger.PhotoRetentionDays"]', 'Enter');
@@ -1302,6 +1322,55 @@ async function main() {
     });
     await page.close();
   }
+
+  /* ---- one design system: the phone app and the panel draw the same
+     components the same way (ui/kit.css) ---- */
+  function probeKit() {
+    const sheets = Array.prototype.map.call(document.styleSheets, function (sh) {
+      return String(sh.href || '').replace(/^.*\/ui\//, '').replace(/\?.*$/, '');
+    });
+    const host = document.createElement('div');
+    host.innerHTML = '<button class="btn primary">P</button><button class="btn ghost">G</button>'
+      + '<button class="btn danger">D</button><button class="btn is-armed">A</button>'
+      + '<span class="chip">C</span><span class="chip is-warn">W</span><div class="card">K</div>'
+      + '<div class="notice">N</div><div class="notice ok">O</div><div class="notice gold">G</div>'
+      + '<p class="hint">H</p><p class="empty">E</p><table class="grid"><tr><th>T</th></tr></table>';
+    document.body.appendChild(host);
+    const out = {};
+    Array.prototype.forEach.call(host.querySelectorAll('*'), function (n, i) {
+      if (n.tagName === 'TBODY' || n.tagName === 'TR') return;
+      const st = getComputedStyle(n);
+      out[i + ':' + n.className] = [st.color, st.backgroundColor, st.backgroundImage, st.borderTopColor,
+        st.borderTopLeftRadius, st.fontWeight].join(' | ');
+    });
+    host.remove();
+    return { sheets: sheets, look: out,
+             tokens: ['--bg', '--panel', '--ink', '--crimson', '--gold', '--t-sm', '--radius'].map(function (t) {
+               return getComputedStyle(document.documentElement).getPropertyValue(t).trim(); }) };
+  }
+  const kitAdmin = await openAt(browser, 1280, 800);
+  const adminKit = await kitAdmin.evaluate(probeKit);
+  await kitAdmin.close();
+  const kitPhone = await browser.newPage({ viewport: { width: 390, height: 720 } });
+  await kitPhone.goto('file://' + path.join(__dirname, '..', '..', 'crimson-hitman', 'ui', 'index.html'));
+  await kitPhone.waitForTimeout(300);
+  const phoneKit = await kitPhone.evaluate(probeKit);
+  await kitPhone.close();
+  it('both pages link the one design system (kit.css) before their own sheet', function () {
+    truthy(adminKit.sheets.indexOf('kit.css') !== -1 && adminKit.sheets.indexOf('kit.css') < adminKit.sheets.indexOf('admin.css'),
+      'admin: ' + adminKit.sheets.join(','));
+    truthy(phoneKit.sheets.indexOf('kit.css') !== -1 && phoneKit.sheets.indexOf('kit.css') < phoneKit.sheets.indexOf('app.css'),
+      'phone: ' + phoneKit.sheets.join(','));
+  });
+  it('both pages share every token and draw buttons (armed too), chips, cards, notices, hints and tables alike', function () {
+    truthy(JSON.stringify(phoneKit.tokens) === JSON.stringify(adminKit.tokens),
+      'tokens: admin ' + adminKit.tokens.join(',') + ' / phone ' + phoneKit.tokens.join(','));
+    const differ = Object.keys(adminKit.look).filter(function (k) { return adminKit.look[k] !== phoneKit.look[k]; });
+    truthy(differ.length === 0, differ.map(function (k) {
+      return k + ': admin ' + adminKit.look[k] + ' / phone ' + phoneKit.look[k]; }).join(' || '));
+    truthy(/rgb\(207, 169, 98\)/.test(adminKit.look[Object.keys(adminKit.look)[3]]), 'armed is brass');
+    truthy(/gradient/.test(adminKit.look[Object.keys(adminKit.look)[0]]), 'primary is the crimson gradient');
+  });
 
   await browser.close();
   console.log('');

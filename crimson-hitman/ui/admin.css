@@ -12,58 +12,16 @@
   /* No color-scheme here. On the root, 'dark' makes the browser paint the
      whole page's backdrop dark grey instead of leaving it see-through, and
      this page covers the game screen even while the panel is closed: a grey
-     screen for every player. The panel asks for dark controls itself. */
+     screen for every player. The panel asks for dark controls itself.
 
-  --bg: #0b0908;
-  --panel: #1d1815;
-  --panel-2: #131010;
-  --panel-hi: #251f1b;
-  --line: #342b26;
-  --line-soft: rgba(237, 228, 211, 0.07);
-  --line-strong: rgba(237, 228, 211, 0.2);
-
-  --ink: #ede4d3;
-  --ink-dim: #b3a795;
-  --ink-faint: #958a7c;
-
-  --crimson: #b8142f;
-  --crimson-bright: #ef3d53;
-  --rose: #d77683;
-  --primary-fill: linear-gradient(180deg, #c8193a 0%, var(--crimson) 45%, #9a1028 100%);
-  --primary-fill-hover: linear-gradient(180deg, #d82444 0%, #c4173a 45%, #a8122d 100%);
-
-  --gold: #cfa962;
-  --gold-soft: rgba(207, 169, 98, 0.1);
-  --gold-line: rgba(207, 169, 98, 0.35);
-  --green: #8fbf8a;
-  --green-soft: rgba(143, 191, 138, 0.1);
-  --blue: #9db4d0;
-
-  --radius: 0.7rem;
-  --radius-sm: 0.45rem;
-
-  --f-ui: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --f-display: Georgia, Charter, 'Bitstream Charter', 'Iowan Old Style', 'Palatino Linotype', 'DejaVu Serif', serif;
-  --f-figure: Bahnschrift, 'DIN Alternate', 'Roboto Condensed', 'Segoe UI', Arial, sans-serif;
-  --f-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
-
-  --t-xs: 0.78rem;
-  --t-sm: 0.86rem;
-  --t-md: 0.95rem;
-  --t-lg: 1.15rem;
-  --t-xl: 1.7rem;
-
-  --nav-w: 13.5rem;
+     The tokens are kit.css's, shared with the phone app. The panel sets
+     only the desktop density and its own sidebar's width. */
   --control: 2.3rem;
-  --shadow: 0 1px 0 rgba(237, 228, 211, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.55),
-            0 8px 24px rgba(0, 0, 0, 0.35);
+  --control-font: var(--t-sm);
+  --control-pad: 0 0.85rem;
+  --field-w: 15rem;
+  --nav-w: 13.5rem;
 }
-
-* { box-sizing: border-box; }
-
-/* Author styles below set `display` on things the page hides with the
-   `hidden` attribute, and an author display beats the browser's own rule. */
-[hidden] { display: none !important; }
 
 /* A desktop window, read at arm's length: 13.5px at 1024 wide, about 14.4 at
    1280, and 16 from about 1680 up. */
@@ -78,8 +36,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3, p, ul, ol, dl, dd, pre { margin: 0; }
-ul, ol { padding: 0; list-style: none; }
+ul, ol { list-style: none; }
 
 /* ---------- the frame ---------- */
 
@@ -141,14 +98,11 @@ ul, ol { padding: 0; list-style: none; }
 }
 .icon-btn:hover { color: var(--ink); border-color: var(--line-strong); }
 
+/* The panel-wide notice (kit.css .notice), laid flat across the top. */
 .banner {
   grid-area: banner;
-  display: flex; align-items: flex-start; gap: 0.6rem;
-  padding: 0.6rem 1.15rem; font-size: var(--t-sm);
-  border-bottom: 1px solid var(--line);
+  padding: 0.6rem 1.15rem; border-radius: 0; border-width: 0 0 1px;
 }
-.banner.is-warn { background: var(--gold-soft); color: var(--gold); }
-.banner.is-error { background: rgba(184, 20, 47, 0.14); color: #f3b3bb; }
 
 .nav {
   grid-area: nav;
@@ -175,7 +129,7 @@ ul, ol { padding: 0; list-style: none; }
   font-size: var(--t-xs); font-weight: 700; text-align: center;
   color: var(--ink); background: var(--panel-hi); border: 1px solid var(--line);
 }
-.nav-count.is-warn { color: #1b1408; background: var(--gold); border-color: transparent; }
+.nav-count.is-warn { color: var(--on-gold); background: var(--gold); border-color: transparent; }
 
 /* A section's views, as tabs along the top of it. */
 .subnav {
@@ -232,13 +186,13 @@ ul, ol { padding: 0; list-style: none; }
 /* ---------- type and small things ---------- */
 
 .view, .stack { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
-.hint { color: var(--ink-faint); font-size: var(--t-sm); max-width: 70rem; }
+.hint { max-width: 70rem; }
 .note { color: var(--ink-faint); font-size: var(--t-sm); }
 .note.is-warn { color: var(--gold); }
 .sub { color: var(--ink-faint); font-size: var(--t-sm); font-weight: 400; }
 .about { color: var(--ink-dim); font-size: var(--t-sm); }
-.empty, .loading { color: var(--ink-faint); padding: 1rem 0.2rem; }
-.is-error { color: #f3b3bb; }
+.loading { color: var(--ink-faint); padding: 1rem 0.2rem; }
+.is-error { color: var(--error-ink); }
 .mono { font-family: var(--f-mono); font-size: 0.92em; }
 .figure { font-family: var(--f-figure); font-variant-numeric: tabular-nums; }
 .name { overflow-wrap: break-word; }
@@ -260,12 +214,7 @@ ul, ol { padding: 0; list-style: none; }
 .link:hover { color: var(--ink); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.5rem; }
-.chip {
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  margin-left: 0.4rem; padding: 0.08rem 0.5rem; border-radius: 999px;
-  font-size: var(--t-xs); font-weight: 600; line-height: 1.5; white-space: nowrap;
-  color: var(--ink-dim); background: var(--panel-hi); border: 1px solid var(--line);
-}
+.chip { margin-left: 0.4rem; }
 .chips .chip, td > .chip:first-child, .stuck-head .chip:first-child { margin-left: 0; }
 .chip.is-link {
   min-height: 2.1rem; padding: 0 0.7rem; cursor: pointer;
@@ -276,12 +225,11 @@ ul, ol { padding: 0; list-style: none; }
 .chip.is-live { color: var(--crimson-bright); border-color: rgba(239, 61, 83, 0.35); }
 .chip.is-closed { color: var(--ink-faint); }
 .chip.is-void { color: var(--rose); }
-.chip.is-warn { color: var(--gold); background: var(--gold-soft); border-color: var(--gold-line); }
 .chip.is-anon { color: var(--ink-dim); font-style: italic; }
 /* A player staff froze, and the contracts on hold through them (server/freeze.lua). */
 .chip.is-frozen { margin-left: 6px; white-space: nowrap; }
 .chip.is-panel { color: var(--blue); border-color: rgba(157, 180, 208, 0.35); }
-.chip.is-error { color: #f3b3bb; border-color: rgba(239, 61, 83, 0.45); }
+.chip.is-error { color: var(--error-ink); border-color: rgba(239, 61, 83, 0.45); }
 .chip.kind-financial { color: var(--gold); }
 .chip.kind-conduct { color: var(--blue); }
 .chip.kind-rejected { color: var(--rose); }
@@ -289,54 +237,13 @@ ul, ol { padding: 0; list-style: none; }
 
 /* ---------- controls ---------- */
 
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
-  min-height: var(--control); padding: 0 0.95rem;
-  font: inherit; font-size: var(--t-sm); font-weight: 600; line-height: 1.2; white-space: nowrap;
-  color: var(--ink); background: transparent;
-  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.btn:hover { background: rgba(237, 228, 211, 0.06); border-color: rgba(237, 228, 211, 0.34); }
-.btn:focus-visible, .nav-btn:focus-visible, .dd-btn:focus-visible, .seg-btn:focus-visible,
+/* Buttons are kit.css's .btn; on the panel a label stays on one line. */
+.btn { white-space: nowrap; }
+.nav-btn:focus-visible, .dd-btn:focus-visible, .seg-btn:focus-visible,
 .switch:focus-visible, .row:focus-visible, .link:focus-visible {
   outline: 2px solid rgba(237, 228, 211, 0.6); outline-offset: 2px;
 }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn.is-small { min-height: 2.15rem; padding: 0 0.7rem; font-size: var(--t-xs); }
-.btn.is-primary {
-  color: #fff8f2; background: var(--primary-fill); border-color: rgba(0, 0, 0, 0.35);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-.btn.is-primary:hover { background: var(--primary-fill-hover); }
-.btn.is-danger { color: var(--rose); background: rgba(184, 20, 47, 0.1); border-color: rgba(215, 118, 131, 0.35); }
-.btn.is-danger:hover { color: #f6c0c7; background: rgba(184, 20, 47, 0.2); }
-.btn.is-ghost { color: var(--ink-dim); background: var(--panel-hi); border-color: transparent; }
-.btn.is-ghost:hover { color: var(--ink); }
-.btn.is-busy { cursor: progress; opacity: 0.7; }
 
-/* Two clicks for anything that moves money or cannot be undone: the first
-   arms the button and says what the second does, in brass. Both labels
-   share one cell, the hidden one keeping its room, so the button is as wide
-   armed as not and the second click lands where the first did. */
-.btn[data-confirm] { display: inline-grid; grid-template-columns: auto auto; justify-content: center; column-gap: 0; }
-.btn[data-confirm] > i { grid-row: 1; grid-column: 1; margin-right: 0.45rem; }
-.btn[data-confirm] > .lbl, .btn[data-confirm] > .cfm { grid-row: 1; grid-column: 2; text-align: center; }
-.btn .cfm { visibility: hidden; }
-.btn.is-armed { color: #1b1408; background: var(--gold); border-color: var(--gold); }
-.btn.is-armed .lbl { visibility: hidden; }
-.btn.is-armed .cfm { visibility: visible; }
-
-.input {
-  min-height: var(--control); width: 15rem; max-width: 100%;
-  padding: 0 0.7rem;
-  font: inherit; font-size: var(--t-sm); color: var(--ink);
-  background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
-}
-.input::placeholder { color: var(--ink-faint); }
-.input:focus { outline: none; border-color: rgba(237, 228, 211, 0.45); }
-.input:disabled { opacity: 0.5; cursor: not-allowed; }
 .input.is-short { width: 7.5rem; }
 .input.is-mid { width: 11rem; }
 .input.is-date { width: 9.5rem; }
@@ -401,6 +308,8 @@ ul, ol { padding: 0; list-style: none; }
 
 /* Staff tools on a contract: notes, remove an operative, edit text, export,
    the player view. Labelled rows of choices that wrap at a phone's width. */
+/* The one list of contracts: whose they are, and how they are listed. */
+.ct-person { margin-top: -0.35rem; }
 .ct-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.4rem 0; }
 .ct-row .seg { flex-wrap: wrap; max-width: 100%; }
 .ct-label { min-width: 6.5rem; color: var(--ink-dim); font-size: 0.85rem; }
@@ -436,7 +345,7 @@ ul, ol { padding: 0; list-style: none; }
 /* A switch or a choice armed for its second click says what it sets, in
    brass, in place of its label. */
 .switch .cfm, .seg-btn .cfm { display: none; }
-.switch.is-armed, .seg-btn.is-armed { color: #1b1408; background: var(--gold); border-color: var(--gold); }
+.switch.is-armed, .seg-btn.is-armed { color: var(--on-gold); background: var(--gold); border-color: var(--gold); }
 .switch.is-armed .lbl, .seg-btn.is-armed .lbl { display: none; }
 .switch.is-armed .cfm, .seg-btn.is-armed .cfm { display: inline; }
 
@@ -444,29 +353,18 @@ ul, ol { padding: 0; list-style: none; }
 .inline-form.is-wide { display: flex; flex: 1 1 auto; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
 
-.answer {
-  display: flex; align-items: flex-start; gap: 0.55rem;
-  margin-top: 0.6rem; padding: 0.6rem 0.8rem; border-radius: var(--radius-sm);
-  font-size: var(--t-sm); line-height: 1.45;
-  border: 1px solid var(--line); background: var(--panel-2);
-}
-.answer i { margin-top: 0.15rem; }
-.answer.is-ok { border-color: rgba(143, 191, 138, 0.4); }
-.answer.is-ok i { color: var(--green); }
-.answer.is-error { border-color: rgba(239, 61, 83, 0.45); }
-.answer.is-error i { color: var(--crimson-bright); }
+/* What the server answered a write, as a kit.css .notice under it. */
+.answer { margin-top: 0.6rem; }
+.answer i { margin-top: 0.15rem; color: var(--crimson-bright); }
+.answer.ok i { color: var(--green); }
 .answer-text { overflow-wrap: anywhere; }
 
 /* ---------- cards, tiles and tables ---------- */
 
-.card {
-  min-width: 0;
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 0.9rem 1rem 1rem;
-}
+.card { padding: 0.9rem 1rem 1rem; }
 .card.is-warn { border-color: var(--gold-line); }
 .card.is-identity { border-color: rgba(215, 118, 131, 0.4); }
-.card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.65rem; }
+.card-head { margin-bottom: 0.65rem; }
 .card-head h3 {
   font-family: var(--f-mono); font-size: var(--t-xs); font-weight: 600;
   letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
@@ -501,14 +399,7 @@ ul, ol { padding: 0; list-style: none; }
 
 .table-wrap { overflow-x: auto; min-width: 0; }
 .results.is-loading { opacity: 0.55; }
-.grid { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
-.grid th {
-  text-align: left; font-weight: 600; color: var(--ink-faint); font-size: var(--t-xs);
-  letter-spacing: 0.04em; text-transform: uppercase;
-  padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line);
-}
 .grid th.num { text-align: right; }
-.grid td { padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--line-soft); vertical-align: middle; line-height: 1.4; }
 /* Job names break anywhere rather than push a table off its card. */
 .grid td.wrap { overflow-wrap: anywhere; }
 .grid tr.is-warn td { background: var(--gold-soft); }
@@ -524,7 +415,6 @@ ul, ol { padding: 0; list-style: none; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
-.pager { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .pager-text { color: var(--ink-faint); font-size: var(--t-sm); }
 
 .warnings { display: flex; flex-direction: column; gap: 0.4rem; font-size: var(--t-sm); }
@@ -625,7 +515,7 @@ ul, ol { padding: 0; list-style: none; }
 .st-key { font-family: var(--f-mono); font-size: var(--t-xs); color: var(--ink-faint); overflow-wrap: anywhere; }
 .st-about { color: var(--ink-dim); font-size: var(--t-sm); }
 .st-about.is-warn { color: var(--gold); }
-.st-about.is-error { color: #f3b3bb; }
+.st-about.is-error { color: var(--error-ink); }
 .st-inflight { color: var(--ink-faint); font-size: var(--t-sm); }
 .st-inflight b { color: var(--ink-dim); font-weight: 600; }
 .st-source { color: var(--ink-faint); font-size: var(--t-xs); }

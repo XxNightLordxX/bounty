@@ -9508,7 +9508,7 @@ async function main() {
       tab(app, 'place'); await settle(); await settle(); await settle();
       function person() {
         return app.view.all().filter(function (n) {
-          return n.tagName === 'BUTTON' && n._className.indexOf('person') === 0;
+          return n.tagName === 'BUTTON' && n.classList.contains('person');
         })[0];
       }
       person().onclick();

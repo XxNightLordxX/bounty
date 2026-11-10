@@ -1241,7 +1241,8 @@ end
 -- anything here.
 
 do
-    local css = read('crimson-hitman/ui/app.css') or ''
+    -- The design system both pages share (kit.css), then the phone's own.
+    local css = (read('crimson-hitman/ui/kit.css') or '') .. (read('crimson-hitman/ui/app.css') or '')
     local js = read('crimson-hitman/ui/app.js') or ''
 
     -- Comments hold example markup and old class names; they define nothing.
@@ -1256,7 +1257,7 @@ do
                 seen[class] = true
                 if not defined:find('%.' .. class:gsub('%-', '%%-')) then
                     failures[#failures + 1] =
-                        ('ui/app.js renders the class %q, which ui/app.css does not define. '
+                        ('ui/app.js renders the class %q, which ui/kit.css and ui/app.css do not define. '
                          .. 'It renders unstyled and says nothing.'):format(class)
                 end
             end
@@ -2272,7 +2273,7 @@ end
 do
     local page = read('crimson-hitman/ui/admin.js') or ''
     local html = read('crimson-hitman/ui/admin.html') or ''
-    local css = (read('crimson-hitman/ui/admin.css') or ''):gsub('/%*.-%*/', '')
+    local css = ((read('crimson-hitman/ui/kit.css') or '') .. (read('crimson-hitman/ui/admin.css') or '')):gsub('/%*.-%*/', '')
     local panelSrc = read('crimson-hitman/server/panel.lua') or ''
     local clientAdmin = read('crimson-hitman/client/admin.lua') or ''
     local code = page:gsub('/%*.-%*/', ''):gsub('\n%s*//[^\n]*', '\n')
@@ -2368,8 +2369,9 @@ do
     -- Its script and stylesheet are loaded with a build query, as the phone
     -- page's are, or CEF keeps the copy it first saw.
     if html:match('src%s*=%s*"admin%.js"') or html:match('href%s*=%s*"admin%.css"')
-        or not html:find("'admin.js?v='", 1, true) or not html:find("'admin.css?v='", 1, true) then
-        failures[#failures + 1] = 'ui/admin.html loads admin.js or admin.css without a build query'
+        or not html:find("'admin.js?v='", 1, true)
+        or not html:find("['kit.css', 'admin.css']", 1, true) or not html:find("name + '?v=' + build", 1, true) then
+        failures[#failures + 1] = 'ui/admin.html loads admin.js, kit.css or admin.css without a build query'
     end
 
     -- Every class it draws is one admin.css defines (Font Awesome's aside).
@@ -2378,7 +2380,7 @@ do
         if seen[class] or class == '' or class:find('^fa%-') or class:sub(-1) == '-' then return end
         seen[class] = true
         if not css:find('%.' .. class:gsub('%-', '%%-') .. '[^%w_%-]') then
-            failures[#failures + 1] = ('%s draws the class %q, which ui/admin.css does not define. '
+            failures[#failures + 1] = ('%s draws the class %q, which ui/kit.css and ui/admin.css do not define. '
                 .. 'It renders unstyled and says nothing.'):format(where, class)
         end
     end
@@ -2826,6 +2828,65 @@ do
                 failures[#failures + 1] = ('%s defines its own %s: use %s'):format(path, name,
                     name == 'copyOf' and 'Util.copy' or 'Words.dollars')
             end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- 40. One design system for both pages (ui/kit.css)
+--------------------------------------------------------------------------
+--
+-- The phone app and the staff panel share one sheet of tokens and
+-- components. A page that defines a token again, or draws a button, a
+-- field, a card, a chip or a notice its own way, is a second design
+-- system starting to grow back.
+
+do
+    local kit = (read('crimson-hitman/ui/kit.css') or ''):gsub('/%*.-%*/', '')
+    local manifest = read('crimson-hitman/fxmanifest.lua') or ''
+    if kit == '' then failures[#failures + 1] = 'ui/kit.css is missing' end
+    if not manifest:find("'ui/kit.css'", 1, true) then
+        failures[#failures + 1] = 'fxmanifest.lua does not list ui/kit.css in files: neither page gets its styles'
+    end
+    local tokens = {}
+    for name in (kit:match(':root%s*(%b{})') or ''):gmatch('(%-%-[%w%-]+)%s*:') do tokens[name] = true end
+    for _, page in ipairs({ { 'index.html', 'app.css' }, { 'admin.html', 'admin.css' } }) do
+        local html = read('crimson-hitman/ui/' .. page[1]) or ''
+        if not html:find("['kit.css', '" .. page[2] .. "']", 1, true) then
+            failures[#failures + 1] = ('ui/%s does not load kit.css before %s'):format(page[1], page[2])
+        end
+        local css = (read('crimson-hitman/ui/' .. page[2]) or ''):gsub('/%*.-%*/', '')
+        for name in (css:match(':root%s*(%b{})') or ''):gmatch('(%-%-[%w%-]+)%s*:') do
+            -- A density token is the one a page may set for itself.
+            if tokens[name] and not name:find('^%-%-control') and name ~= '--field-w' then
+                failures[#failures + 1] = ('ui/%s defines the token %s again; it is kit.css\'s'):format(page[2], name)
+            end
+        end
+        -- The base rule of a kit component, drawn again: its surface or ink.
+        for _, sel in ipairs({ '.btn', '.input', '.card', '.chip', '.notice', '.empty', '.hint', '.grid', '.dialog', 'button', 'input, select, textarea' }) do
+            local at = 1
+            while true do
+                local s, e = css:find('\n' .. sel:gsub('[%.%-]', '%%%0') .. '%s*{', at)
+                if not s then break end
+                local body = css:sub(e):match('%b{}') or ''
+                for _, prop in ipairs({ 'background:', 'background%-color:', 'border:', 'color:', 'font%-size:', 'border%-radius:', 'min%-height:' }) do
+                    if body:find('[%s;{]' .. prop) then
+                        failures[#failures + 1] = ('ui/%s draws %s itself (%s): kit.css draws it for both pages'):format(page[2], sel, prop:gsub('%%', ''))
+                        break
+                    end
+                end
+                at = e + 1
+            end
+        end
+    end
+    -- The two-click confirm looks the same on both pages: the kit's brass.
+    if not kit:find('%.btn%.is%-armed') then
+        failures[#failures + 1] = 'ui/kit.css does not draw the armed state of a button (.btn.is-armed)'
+    end
+    for _, page in ipairs({ 'app.css', 'admin.css' }) do
+        local css = (read('crimson-hitman/ui/' .. page) or ''):gsub('/%*.-%*/', '')
+        if css:find('button%.is%-armed%s*[{,]') then
+            failures[#failures + 1] = ('ui/%s draws an armed button itself; it is kit.css\'s .btn.is-armed'):format(page)
         end
     end
 end

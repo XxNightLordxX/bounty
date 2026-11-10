@@ -1043,6 +1043,36 @@ end)
 --------------------------------------------------------------------------
 
 describe('a player in the admin panel', function()
+    it('the one list of contracts filters to one person, with their part on each', function()
+        local s, f = stack()
+        place(s, f, { accept = true })
+        place(s, f, { anonymous = true, target = 'HITMAN01' })
+        -- The placer, looked up: Their contracts sends the lookup's handle.
+        local mine = ask(6, 'player', { subject = 1 })
+        eq(mine.ok, true, tostring(mine.message))
+        local theirs = ask(6, 'contracts', { ref = mine.data.player.ref })
+        eq(theirs.ok, true, tostring(theirs.message))
+        eq(theirs.data.total, 1, 'the one they placed openly; the anonymous one is not shown without the ACE')
+        eq(theirs.data.rows[1].role, 'client')
+        local unmask = ask(8, 'player', { subject = 1 })
+        local all = ask(8, 'contracts', { ref = unmask.data.player.ref })
+        eq(all.data.total, 2, 'crimson.identity sees the anonymous one too')
+        local anon = 0
+        for _, row in ipairs(all.data.rows) do if row.roleAnonymous then anon = anon + 1 end end
+        eq(anon, 1, 'and is told which part was anonymous')
+        -- Typed, as Players' lookup takes it, narrowed by their part.
+        eq(ask(8, 'contracts', { person = 'HITMAN01' }).data.total, 2, 'they took one, and one is on them')
+        eq(ask(8, 'contracts', { person = 'HITMAN01', as = 'hitman' }).data.rows[1].role, 'hitman')
+        eq(ask(8, 'contracts', { person = 'HITMAN01', as = 'target' }).data.total, 1)
+        eq(ask(8, 'contracts', { person = 'TARGET01', as = 'client' }).data.total, 0, 'they placed none')
+        -- A handle that is not this staff member's changes nothing and says so.
+        eq(ask(8, 'contracts', { ref = mine.data.player.ref }).err, 'stale_lookup')
+        -- And every person filtered is a lookup on the record.
+        s.audit.flush()
+        truthy(#stored(s, 'admin_contracts_identified') > 0, 'the identified lookup is on the record')
+        truthy(#stored(s, 'admin_contracts') > 0, 'and the other')
+    end)
+
     it('looks them up by server id, without their citizen id to staff who may not unmask', function()
         local s, f = stack()
         place(s, f, { accept = true })

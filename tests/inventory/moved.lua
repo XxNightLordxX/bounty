@@ -324,4 +324,13 @@ return {
     ['setting:Improvements.PlacerRecord.Enabled'] = 'setting:Record.PlacerRecord.Enabled',
     ['setting:Improvements.PlacerRecord.LookbackDays'] = 'setting:Record.PlacerRecord.LookbackDays',
     ['setting:Improvements.PlacerRecord.ShowForAnonymous'] = 'setting:Record.PlacerRecord.ShowForAnonymous',
+    -- Step 4a: one contracts list with a person filter (map item D2). The
+    -- player's Contracts tab is Contracts with `ref` (Their contracts on the
+    -- player's card), Target limits' Contracts on someone is Contracts with
+    -- `byTarget` (Live contracts by target, on Target limits' strip).
+    ['screen:admin.view:pcontracts'] = { to = 'screen:admin.view:contracts',
+        note = 'person filter: ref (or person) and as (target, client, hitman)' },
+    ['screen:admin.view:tlcontracts'] = { to = 'screen:admin.view:contracts',
+        note = "'contracts:bytarget': byTarget = true, the live ones grouped by target" },
+    ['op:targetContracts'] = { to = 'op:contracts', note = 'byTarget = true; audit admin_panel_target_contracts kept' },
 }

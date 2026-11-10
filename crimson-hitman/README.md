@@ -265,15 +265,15 @@ can do what* (every ACE, and how to grant it).
   under the tabs says where you are.
 - **On a phone-width window** the sidebar folds into one *Sections* menu, the
   tabs scroll along one line, and the drawer takes the whole screen.
-- A link or a view remembered from before the rebuild (Rules, Features,
-  Stuck escrow, Diagnostics, Permissions…) opens where its items are now.
+- A view has one name. A view remembered under a name it no longer has
+  opens on Home, like any name the panel does not know.
 
 | Section | Tabs | Use it to |
 |---|---|---|
 | **Home** | Inbox, Overview, Announce | The inbox lists what waits for staff in one place, with a chip and a count for each: **Needs review** (refund, pay or dismiss), **Money waiting** (escrow lines left for you to settle: Pay, Pay amount, Return, Delivered) and the open **Alerts** (Acknowledge); and, while a body is being disposed of, every such step with **Skip** and **Respawn vehicle**. The overview counts contracts, operatives, money held and owed, and who is frozen, suspended or protected, with the setup problems for staff who can change things. Announce sends one notice to every hitman holding a contract, or everybody with the app |
-| **Players** | Find & summary, then for the player looked up Contracts, Measures, Money, Playtime, History, *Why can't they see…*; and All measures | Look a player up (player id, citizen id or name; recent lookups are one click). Measures: **Freeze**, **Suspend**, **Protect**, and their standing in Target limits. Money: what they are owed, notices for their next login, **Pay**. *Why can't they see…* runs the diagnosis as them. All measures is one list of everybody frozen, suspended, protected or with target limits of their own, filtered by kind, each freeze, suspension and protection with **Unfreeze** or **Lift** (their own target limits are lifted in Target limits, Per player, with a reason) |
-| **Contracts** | All contracts | Search and filter, then open one. Above the list, every body being disposed of ([body disposal](#mission-steps)) with the exact time left, **Skip** and **Respawn vehicle**. The drawer has tabs: **Summary** (terms, the deadline with **Extend** / **Shorten**, open proposals), **Money** (lines waiting for staff, payouts, **Change reward** with the server's figures before it arms, escrow lines; its tab counts the lines waiting), **People** (operatives, **Remove an operative**, **Reassign to another hitman** looked up in Players, *As a player sees it*, Whois), **Notes & text** (staff notes, **Edit text**) and **Record** (timeline, export). **Void** is under **More** |
-| **Target limits** | Defaults, Per job, Per player, Contracts on someone; **History ▸** | See [Target limits](#target-limits). **History ▸** opens Records › Logs on the audit log's `staff_target_` rows |
+| **Players** | Find & summary, then for the player looked up **Their contracts** (Contracts, filtered to them), Measures, Money, Playtime, History, *Why can't they see…*; and All measures | Look a player up (player id, citizen id or name; recent lookups are one click). Measures: **Freeze**, **Suspend**, **Protect**, and their standing in Target limits. Money: what they are owed, notices for their next login, **Pay**. *Why can't they see…* runs the diagnosis as them. All measures is one list of everybody frozen, suspended, protected or with target limits of their own, filtered by kind, each freeze, suspension and protection with **Unfreeze** or **Lift** (their own target limits are lifted in Target limits, Per player, with a reason) |
+| **Contracts** | Contracts | The one list of contracts. Search and filter (state, rule, when placed), narrow it to **one person** (a player id, citizen id or name, or *Their contracts* from a player's card) with their part on each (**Target**, **Placer**, **Hitman**; an anonymous part only with `crimson.identity`, which also gets **Whois** on each row), or list the live ones **by target**; then open one. Above the list, every body being disposed of ([body disposal](#mission-steps)) with the exact time left, **Skip** and **Respawn vehicle**. The drawer has tabs: **Summary** (terms, the deadline with **Extend** / **Shorten**, open proposals), **Money** (lines waiting for staff, payouts, **Change reward** with the server's figures before it arms, escrow lines; its tab counts the lines waiting), **People** (operatives, **Remove an operative**, **Reassign to another hitman** looked up in Players, *As a player sees it*, Whois), **Notes & text** (staff notes, **Edit text**) and **Record** (timeline, export). **Void** is under **More** |
+| **Target limits** | Defaults, Per job, Per player; **History ▸**, **Live contracts by target ▸** | See [Target limits](#target-limits). **History ▸** opens Records › Logs on the audit log's `staff_target_` rows; **Live contracts by target ▸** opens Contracts listing the live ones by target |
 | **Game rules** | Areas, Changed from the panel; **Change history ▸** (Records › Logs, Setting changes) | Every rules and features setting by the area of the game it is about (who can use the app, placing contracts, anonymity, rewards, completing, buyouts, informants, police, messages, roleplay extras, staff tools): an area's switches first, then its numbers and lists. Chips narrow it to **Switches**, **Timers**, **Money**, **Limits**, **Lists** or **Changed**, across every area when none is picked. A row shows its label with its unit, its control and Save or Reset; **Details** shows its `Config` key, what it does, what happens to things under way and where its value comes from. **Undo all panel changes** is on *Changed from the panel*; every change, with **Undo**, on *Change history* |
 | **Hitman organisation** | Setup, Roles & pay, Members, Applications, Funds & cuts, Contract access, Notices; **Org audit ▸** (Records › Logs, Org audit) | See [Organisation](#organisation). Off as shipped: every tab is one card saying so, with its switch |
 | **Boss permissions** | Matrix, Limits, Delegation & office; **Grant history ▸** (Records › Logs, Grant history) | The ceiling on what bosses may do: powers by boss role and by one boss (**Allow**, **Deny** or **Inherit role**), every change listed before one **Save** that sends them together; **Revoke all** and **Copy from** per column; each power's limits; which powers need the boss office; every grant, with **Undo** on a role's |
@@ -337,9 +337,9 @@ every other write.
   buyout's immunity. The
   confirm names the job and how many players it reaches; one audit row
   records the action with the count. `crimson.moderator` or `crimson.admin`.
-- **Contracts on someone**: every live contract (open, taken, settling, on
-  hold) grouped by target, a page at a time, searchable by the target's name
-  or exact citizen id. A row opens the contract's own view, with every staff
+- **Live contracts by target ▸** (Contracts, listed *Live, by target*):
+  every live contract (open, taken, settling, on hold) grouped by target, a
+  page at a time, searchable by the target's name or exact citizen id. A row opens the contract's own view, with every staff
   action it has (Extend / Shorten, Void, remove an operative, edit text,
   notes), under the same ACEs and the same scrubbing.
 
@@ -391,7 +391,7 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 |---|---|---|
 | `access` | Read | What this staff member may do, and the Permissions list |
 | `overview` | Read | The overview: counts, money held, alerts, the server's state |
-| `contracts` | Read | The contract list and its search; `state = 'live'` (the page's default, *Live only*) lists every contract still running |
+| `contracts` | Read | The one contract list and its search; `state = 'live'` (the page's default, *Live only*) lists every contract still running; `ref` or `person` (and `as`) one person's, `byTarget` the live ones by target |
 | `contract` | Read | One contract's view and timeline |
 | `exportContract` | Read | One contract's record as text, for a ticket |
 | `playerView` | Read | A contract as one of its parties sees it |
@@ -434,7 +434,6 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `targetLimits` | Read | Target limits: the limits and every job's own |
 | `targetStatus` | Read | One player's standing as a target, exactly |
 | `targetJobCount` | Read | How many players a job action would reach |
-| `targetContracts` | Read | Every live contract, by target |
 | `targetJobSet` | Write | Add or change a job's own target limits |
 | `targetJobRemove` | Write | Remove a job's own target limits |
 | `targetReset` | Moderate | Reset a player's cooldown (or all of them) |

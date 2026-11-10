@@ -369,7 +369,7 @@ describe('target limits: ACEs and lookup handles', function()
             'not_allowed', 'a moderator may not set a job\'s limits')
         eq(ask(9, 'targetJobRemove', { job = 'police' }).err, 'not_allowed')
         truthy(ask(7, 'targetLimits', {}).ok, 'a reader reads')
-        truthy(ask(7, 'targetContracts', {}).ok, 'a reader reads the list')
+        truthy(ask(7, 'contracts', { byTarget = true }).ok, 'a reader reads the list')
         eq(adjOf(s, 'TARGET01'), nil, 'nothing was written')
     end)
 
@@ -456,7 +456,7 @@ describe('target limits: every live contract, by target', function()
             reward = { baseline = { cash = 1000 } } }))
         assert(s.contracts.create(s.identity.resolve(5), { targetCid = 'HITMAN01', reason = 'x',
             reward = { baseline = { cash = 1000 } } }))
-        local reply = ask(6, 'targetContracts', {})
+        local reply = ask(6, 'contracts', { byTarget = true })
         truthy(reply.ok)
         eq(reply.data.total, 3, 'live ones only')
         eq(reply.data.targets, 2)
@@ -467,11 +467,11 @@ describe('target limits: every live contract, by target', function()
             falsy(tostring(row.group):match('TARGET01'), 'no citizen id without the identity ACE')
         end
         eq(groups[1], groups[2], 'the two on one target together')
-        local seen = ask(8, 'targetContracts', {}).data.rows
+        local seen = ask(8, 'contracts', { byTarget = true }).data.rows
         local named = false
         for _, row in ipairs(seen) do if row.anonymous and row.client == 'Pat Four' then named = true end end
         truthy(named, 'with the identity ACE the placer is named')
-        eq(ask(6, 'targetContracts', { query = 'Rook' }).data.total, 1, 'searched by the target\'s name')
+        eq(ask(6, 'contracts', { byTarget = true, query = 'Rook' }).data.total, 1, 'searched by the target\'s name')
     end)
 end)
 
