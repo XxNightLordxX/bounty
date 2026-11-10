@@ -521,12 +521,15 @@ function boot(server, opts) {
       const event = url.split('/').pop();
       const body = JSON.parse(options.body);
       if (sent.length > 400) throw new Error('runaway request loop: ' + sent.length + ' requests');
-      sent.push({ event: event, op: body.op, data: body.data, body: body });
+      // Records › Logs is one op; each log is its area, answered and
+      // counted here as logs.<area> (logs alone: the audit log).
+      const op = body.op === 'logs' && body.data && body.data.area ? 'logs.' + body.data.area : body.op;
+      sent.push({ event: event, op: op, data: body.data, body: body });
       if (server.__fetchFails && server.__fetchFails(body)) return Promise.reject(new Error('no route'));
       let answer;
       if (event === 'adminClose') answer = { ok: true };
       else if (event === 'adminRequest') {
-        answer = server[body.op];
+        answer = server[op];
         if (typeof answer === 'function') answer = answer(body.data || {});
         if (answer === undefined) answer = { ok: false, err: 'unknown_op' };
       }
@@ -2549,11 +2552,11 @@ async function main() {
     const views = { inbox: 'Inbox', overview: 'Overview', announce: 'Announce', players: 'Find & summary',
       measures: 'All measures', contracts: 'All contracts',
       tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player', tlcontracts: 'Contracts on someone',
-      rules: 'Areas', changed: 'Changed from the panel', history: 'Change history', orgsetup: 'Setup',
+      rules: 'Areas', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
       orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
-      orgaccess: 'Contract access', orgnotices: 'Notices', orgaudit: 'Org audit', bpmatrix: 'Matrix',
-      bplimits: 'Limits', bpoffice: 'Delegation & office', bphistory: 'Grant history', locations: 'Map points',
-      logs: 'Audit log', alerts: 'Alerts', health: 'Health', devsettings: 'Engine settings', console: 'Console',
+      orgaccess: 'Contract access', orgnotices: 'Notices', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
+      bplimits: 'Limits', bpoffice: 'Delegation & office', 'logs:grants': 'Grant history', locations: 'Map points',
+      'logs:targets': 'Audit log', logs: 'Audit log', alerts: 'Alerts', health: 'Health', devsettings: 'Engine settings', console: 'Console',
       tools: 'Test tools', help: 'How it works', howto: 'How do I…', permissions: 'Who can do what' };
     const reached = [], drew = [];
     for (const view of Object.keys(views)) {
@@ -2573,7 +2576,7 @@ async function main() {
       announce: 'Announce', timers: 'Timers (was Rules, Timers)', money: 'Money (was Rules, Rewards & money)',
       limits: 'Limits (was Rules, Limits)', targeting: 'Targeting (was Rules, Targeting)',
       features: 'Switches (was Features)', settings: 'Switches (was Features)', logs: 'Audit log', alerts: 'Alerts', devsettings: 'Engine settings', console: 'Console',
-      diagnostics: 'Health', permissions: 'Who can do what', history: 'Change history', tldefaults: 'Defaults',
+      diagnostics: 'Health', permissions: 'Who can do what', tldefaults: 'Defaults',
       tljobs: 'Per job', tlplayer: 'Per player', tlcontracts: 'Contracts on someone' };
     const landed = {};
     for (const old of Object.keys(OLD)) {
@@ -2597,14 +2600,14 @@ async function main() {
       truthy(app.byId('sk-list'), 'Money waiting drawn');
       falsy(app.byId('rv-list'), 'and Needs review not');
     });
-    app.nav('history');
+    app.nav('changed');
     await settled();
     app.group('home');
     await settled();
     app.group('rules');
     await settled();
     it('a section opens on the sub-tab last open in it', function () {
-      eq(app.byId('nav-history').getAttribute('aria-current'), 'page');
+      eq(app.byId('nav-changed').getAttribute('aria-current'), 'page');
     });
     app.group('contracts');
     await settled();
@@ -2658,13 +2661,13 @@ async function main() {
     const first = boot(standardServer(), { storage: storage });
     first.open(ADMIN);
     await settled();
-    first.nav('history');
+    first.nav('changed');
     await settled();
     const again = boot(standardServer(), { storage: storage });
     again.open(ADMIN);
     await settled();
     it('the last section and sub-tab are remembered in this browser', function () {
-      eq(again.byId('nav-history').getAttribute('aria-current'), 'page');
+      eq(again.byId('nav-changed').getAttribute('aria-current'), 'page');
       eq(again.byId('grp-rules').getAttribute('aria-current'), 'page');
     });
     kept['crimson-hitman.admin.nav'] = JSON.stringify({ view: 'targeting', sub: { rules: 'limits', live: 'stuck' } });
@@ -3158,8 +3161,8 @@ async function main() {
         await settled();
         sweep(app, 'the tools, run');
         // The new sections too: the organisation, Boss permissions and Locations.
-        for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit',
-          'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'measures', 'howto']) {
+        for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'logs:org',
+          'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'howto']) {
           app.nav(view);
           await settled();
           sweep(app, view);
@@ -4528,7 +4531,7 @@ async function main() {
   }
   await (async function () {
     const server = standardServer({
-      settingsHistory: { ok: true, data: { rows: historyRows(true), next: 77 } },
+      'logs.settings': { ok: true, data: { rows: historyRows(true), next: 77 } },
       undoSetting: function () {
         return { ok: true, message: 'Undone: Relay.Enabled is on again (it was off).', data: { key: 'Relay.Enabled' } };
       }
@@ -4536,11 +4539,16 @@ async function main() {
     const app = boot(server);
     app.open(ADMIN);
     await settled();
-    app.nav('history');
+    app.group('rules');
     await settled();
-    it('Developer > Settings history lists each change: when, the setting, before, after and who', function () {
-      eq(app.byId('nav-history').getAttribute('aria-current'), 'page');
-      eq(app.requests('settingsHistory').length, 1);
+    app.click(app.byId('nav-logs-settings'));
+    await settled();
+    it('Records › Logs, Setting changes lists each change: when, the setting, before, after and who', function () {
+      eq(app.byId('nav-logs').getAttribute('aria-current'), 'page');
+      eq(app.$$('[data-act="lg-area"]').filter(function (b) { return b.getAttribute('aria-pressed') === 'true'; })[0]
+        .getAttribute('data-value'), 'settings', 'Game rules\' link opens Logs with its chip picked');
+      eq(app.requests('logs.settings').length, 1);
+      eq(app.requests('logs').length, 0, 'and not the audit log');
       const rows = app.$$('tr[data-key]');
       eq(rows.length, 4);
       has(app.text(rows[0]), 'Relay.Enabled');
@@ -4568,22 +4576,22 @@ async function main() {
       eq(app.requests('undoSetting').length, 1);
       eq(app.last('undoSetting').data, { ref: 'h2' });
       has(app.main(), 'Undone: Relay.Enabled is on again');
-      eq(app.requests('settingsHistory').length, 2, 'the history is read again');
+      eq(app.requests('logs.settings').length, 2, 'the history is read again');
     });
     app.click(app.button('Older'));
     await settled();
     it('Older reads the next page from the cursor, and Newer goes back', function () {
-      eq(app.last('settingsHistory').data, { cursor: 77 });
+      eq(app.last('logs.settings').data, { area: 'settings', cursor: 77 });
       app.click(app.button('Newer'));
     });
     await settled();
-    it('back at the first page', function () { eq(app.last('settingsHistory').data, {}); });
+    it('back at the first page', function () { eq(app.last('logs.settings').data, { area: 'settings' }); });
     clean(app, 'settings history');
   })();
 
   await (async function () {
     const server = standardServer({
-      settingsHistory: { ok: true, data: { rows: historyRows(false), hidden: 2 } }
+      'logs.settings': { ok: true, data: { rows: historyRows(false), hidden: 2 } }
     });
     const app = boot(server);
     app.open(access({ canWrite: false, canIdentify: false, canDevelop: false }));
@@ -4592,17 +4600,66 @@ async function main() {
     await settled();
     it('staff without the Developer section have the settings history under Game rules', function () {
       eq(app.byId('grp-developer').hidden, true);
-      truthy(app.byId('nav-history'), 'Change history');
+      truthy(app.byId('nav-logs-settings'), 'Change history');
     });
-    app.nav('history');
+    app.nav('logs:settings');
     await settled();
     it('a reader reads the history, with no Undo, told what is left out', function () {
-      eq(app.byId('nav-history').getAttribute('aria-current'), 'page');
+      eq(app.byId('nav-logs').getAttribute('aria-current'), 'page');
       eq(app.$$('tr[data-key]').length, 4);
       eq(app.byId('main').querySelectorAll('button[data-act="hs-undo"]').length, 0);
       has(app.main(), '2 change(s) to the Developer section');
     });
     clean(app, 'settings history reader');
+  })();
+
+  /* ---- step 3i: Records › Logs, one view for every log ---- */
+  await (async function () {
+    const server = standardServer({
+      'logs.settings': { ok: true, data: { rows: historyRows(true) } }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('logs');
+    await settled();
+    const chips = function () {
+      return app.$$('[data-act="lg-area"]').map(function (b) { return b.getAttribute('data-value'); });
+    };
+    const picked = function () {
+      return app.$$('[data-act="lg-area"]').filter(function (b) { return b.getAttribute('aria-pressed') === 'true'; })[0]
+        .getAttribute('data-value');
+    };
+    it('Logs has one chip per log, the audit log first and picked', function () {
+      eq(chips(), ['audit', 'settings', 'org', 'grants']);
+      eq(picked(), 'audit');
+      eq(app.requests('logs').length, 1, 'the audit log read');
+      truthy(app.byId('lg-results'), 'its search and rows');
+    });
+    app.click(app.$$('[data-act="lg-area"]').filter(function (b) { return b.getAttribute('data-value') === 'settings'; })[0]);
+    await settled();
+    it('a chip reads that log, through the same op, and says so on the breadcrumb', function () {
+      eq(picked(), 'settings');
+      eq(app.requests('logs.settings').length, 1);
+      eq(app.$$('tr[data-key]').length, 4);
+      eq(app.byId('lg-results'), null, 'and not the audit log\'s rows');
+      has(app.text(app.byId('crumbs')), 'Setting changes');
+    });
+    app.group('targets');
+    await settled();
+    it('Target limits links to its history', function () { truthy(app.byId('nav-logs-targets')); });
+    app.click(app.byId('nav-logs-targets'));
+    await settled();
+    it('which is the audit log filtered to the target-limit rows', function () {
+      eq(picked(), 'audit');
+      eq(app.last('logs').data.action, 'staff_target_');
+    });
+    app.group('home');
+    await settled();
+    app.nav('logs');
+    await settled();
+    it('the chip last picked stays picked', function () { eq(picked(), 'audit'); });
+    clean(app, 'one log view');
   })();
 
   /* ---- staff tools: a player's report in Needs review ---- */
@@ -5291,8 +5348,8 @@ async function main() {
     it('Actions offers the hardest one to find: undoing a setting change, in History', function () {
       has(app.main(), 'Undo a setting change');
       truthy(app.$$('button[data-act="section"]').some(function (b) {
-        return b.getAttribute('data-section') === 'history';
-      }), 'a button to History');
+        return b.getAttribute('data-section') === 'logs:settings';
+      }), 'a button to Logs, Setting changes');
     });
     clean(app, 'final pass panel');
   })();
@@ -5767,7 +5824,7 @@ async function main() {
       settings: orgSettings(true), orgGet: orgOn(),
       orgFunds: { ok: true, data: { balance: 12500, bank: false, rows: [
         { kind: 'staff_deposit', amount: 5000, at: NOW - 60, reason: 'Seed ' + XSS, actor: 'ADMIN001' }] } },
-      orgAudit: function (data) {
+      'logs.org': function (data) {
         return { ok: true, data: { rows: [{ ts: NOW - 30, action: data.action || 'org_grant', by: 'a staff member',
           detail: { subject: 'role', id: '3', power: 'M2', before: 'off', after: 'allow', note: XSS } }] } };
       },
@@ -6326,10 +6383,13 @@ async function main() {
     it('Post sends the text and whether every member is messaged', function () {
       eq(app.last('orgNotice').data, { text: 'Quiet week', broadcast: true });
     });
-    app.nav('orgaudit');
+    app.group('org');
     await settled();
-    it('Org audit reads the log, escaped', function () {
-      eq(app.last('orgAudit').data, { limit: 100 });
+    app.click(app.byId('nav-logs-org'));
+    await settled();
+    it('Org audit is Logs\' Org audit chip, reached from the section, and reads the log, escaped', function () {
+      eq(app.byId('nav-logs').getAttribute('aria-current'), 'page');
+      eq(app.last('logs.org').data, { area: 'org', limit: 100 });
       has(app.main(), XSS);
       eq(app.$$('img').length, 0);
     });
@@ -6451,10 +6511,10 @@ async function main() {
     it('the office requirement toggles a power, on two clicks', function () {
       eq(app.last('bossOfficeRule').data, { power: 'C7', on: false });
     });
-    app.nav('bphistory');
+    app.nav('logs:grants');
     await settled();
     it('Grant history reads the grants, escaped', function () {
-      eq(app.last('orgAudit').data, { limit: 100, action: 'org_grant' });
+      eq(app.last('logs.org').data, { area: 'org', limit: 100, action: 'org_grant' });
       eq(app.$$('img').length, 0);
     });
     const undo = app.button('Undo');
@@ -7327,7 +7387,7 @@ async function main() {
     await settled();
     const single = [];
     for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices',
-      'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'measures', 'inbox', 'changed']) {
+      'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'inbox', 'changed']) {
       app.nav(view);
       await settled();
       app.$$('[data-gate]').forEach(function (b) {

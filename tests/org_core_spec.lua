@@ -293,7 +293,7 @@ describe('the staff panel\'s member ops', function()
         s.audit.flush()
         local hired = s.storage.auditByAction('org_member_hired', 10)[1]
         eq(hired.detail.by, 'staff')
-        local audit = W.ask(6, 'orgAudit', {})
+        local audit = W.ask(6, 'logs', { area = 'org' })
         eq(audit.ok, true)
         truthy(#audit.data.rows >= 4, 'the organisation\'s log')
         eq(audit.data.rows[1].by, 'a staff member', 'without IdentityAce, no citizen id')

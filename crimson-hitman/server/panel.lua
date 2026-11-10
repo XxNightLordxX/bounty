@@ -77,9 +77,9 @@ local OPS = {
     -- Paying a player by hand (server/payments.lua): money staff choose.
     manualPay = WRITE,
     -- The staff tools: a notice to every hitman (a write, asked twice on
-    -- the page), the settings history every reader of the settings reads,
-    -- and an undo of one change through the normal set path.
-    announce = WRITE, settingsHistory = READ, undoSetting = WRITE,
+    -- the page) and an undo of one change through the normal set path (the
+    -- settings history is the logs op's 'settings' area).
+    announce = WRITE, undoSetting = WRITE,
     -- Target limits (server/targetlimits.lua): the lists and one player's
     -- standing are reads; a job's own limits are settings, the staff ACE's;
     -- a player's cooldown, counts and override, and a job's players at
@@ -119,6 +119,22 @@ Panel.COMMANDS = {
 }
 Panel.LEVELS = { READ = READ, MOD = MOD, WRITE = WRITE, IDENTITY = IDENTITY, DEVELOPER = DEVELOPER }
 Panel.OPS = OPS
+
+--- Records › Logs: every log staff read is one op, logs, and each is one of
+--- its areas (data.area): the audit log (none, or 'audit'), every setting
+--- change ('settings', below), and the hitman organisation's log ('org',
+--- its grant history being action 'org_grant'; server/org/staff_ops.lua).
+--- [area] = function(src, data) -> ok, err, message, payload, each paged and
+--- scrubbed as its own list always was, behind the logs op's gate (READ).
+local LOG_AREAS = {}
+Panel.LOG_AREAS = LOG_AREAS
+
+--- Add a log area (a module's own log), answered through the logs op.
+---@param area string
+---@param fn function(src, data)
+function Panel.logArea(area, fn)
+    if type(area) == 'string' and area ~= 'audit' and type(fn) == 'function' then LOG_AREAS[area] = fn end
+end
 
 --- Ops a module adds (the hitman organisation's, server/org/staff_ops.lua),
 --- answered through the same gate as OPS: [op] = level, and their handlers.
@@ -1482,6 +1498,11 @@ local OPEN_SEARCH_READS = 10
 --- includes the ones they acted in anonymously; for staff without it, only
 --- the rows they acted in openly (actedOpenly), each scrubbed as ever.
 H.logs = function(src, data)
+    if data.area ~= nil and data.area ~= 'audit' then
+        local area = type(data.area) == 'string' and LOG_AREAS[data.area] or nil
+        if not area then return false, CH.ERR.INVALID_INPUT, 'There is no such log.' end
+        return area(src, data)
+    end
     local canIdentify = identifies(src)
     local filter = {
         kind = VALID_KIND[data.kind] and data.kind or nil,
@@ -3125,13 +3146,14 @@ local function historyRef(key, value)
     return ref
 end
 
---- Every setting change, newest first, a page at a time: who, when, the
---- key and its value before and after (Settings.history). Read by every
---- staff member who may read the settings; the Developer section's own
---- keys only by staff who may open it, as the settings list shows them. A
---- secret's values are never shown. Who made a change is their citizen id
---- with IdentityAce, and 'a staff member' without it.
-H.settingsHistory = function(src, data)
+--- Logs, area 'settings': every setting change, newest first, a page at a
+--- time: who, when, the key and its value before and after
+--- (Settings.history). Read by every staff member who may read the
+--- settings; the Developer section's own keys only by staff who may open
+--- it, as the settings list shows them. A secret's values are never shown.
+--- Who made a change is their citizen id with IdentityAce, and 'a staff
+--- member' without it.
+LOG_AREAS.settings = function(src, data)
     local canIdentify = identifies(src)
     local isDeveloper = developer(src)
     local limit = math.min(LOG_ROWS_MAX, wholeNumber(data.limit, 1, LOG_ROWS_MAX) or pageSize())

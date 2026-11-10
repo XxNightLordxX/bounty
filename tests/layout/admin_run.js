@@ -273,7 +273,7 @@ function serverStub() {
         now: { contract: 'accepted' }, state: 'open', created_at: NOW - 300 }
     ] } },
     // The settings history: long labels, long values, a list, a secret.
-    settingsHistory: { ok: true, data: { next: 99, rows: (function () {
+    'logs.settings': { ok: true, data: { next: 99, rows: (function () {
       const out = [];
       for (let i = 0; i < 25; i++) {
         out.push({ ts: NOW - i * 300, key: i % 5 === 0 ? 'Advisory.RecipientJobNames' : 'Limits.SameCreatorSameTargetCooldownSeconds',
@@ -448,7 +448,7 @@ function serverStub() {
     }
     return out;
   })() } };
-  answers.orgAudit = { ok: true, data: { rows: (function () {
+  answers['logs.org'] = { ok: true, data: { rows: (function () {
     const out = [];
     for (let i = 0; i < 20; i++) {
       out.push({ ts: NOW - i * 60, action: i % 2 ? 'org_grant' : 'org_member_role_with_a_long_name',
@@ -540,8 +540,10 @@ function serverStub() {
   window.fetch = function (url, options) {
     const event = url.split('/').pop();
     const body = JSON.parse((options && options.body) || '{}');
-    window.__requests.push({ event: event, op: body.op });
-    let answer = event === 'adminRequest' ? (answers[body.op] || { ok: true }) : { ok: true };
+    // Records › Logs is one op; each log is its area, answered as logs.<area>.
+    const op = body.op === 'logs' && body.data && body.data.area ? 'logs.' + body.data.area : body.op;
+    window.__requests.push({ event: event, op: op });
+    let answer = event === 'adminRequest' ? (answers[op] || { ok: true }) : { ok: true };
     if (typeof answer === 'function') answer = answer(body.data || {});
     return Promise.resolve({ json: function () { return Promise.resolve(acrossTheWire(answer)); } });
   };
@@ -704,9 +706,9 @@ async function main() {
   // items are now), and a selected player's tabs once one is looked up.
   const sections = ['inbox', 'overview', 'announce', 'players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime',
     'phistory', 'pdiag', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
-    'tlcontracts', 'rules', 'changed', 'history', 'timers', 'money', 'limits', 'targeting', 'features',
-    'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit',
-    'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'logs', 'alerts', 'health', 'devsettings',
+    'tlcontracts', 'rules', 'changed', 'logs:settings', 'timers', 'money', 'limits', 'targeting', 'features',
+    'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'logs:org',
+    'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'logs:audit', 'alerts', 'health', 'devsettings',
     'console', 'tools', 'help', 'howto', 'permissions'];
 
   for (const size of sizes) {
@@ -850,7 +852,7 @@ async function main() {
         await page.click('button[data-act="an-send"]');
         await page.waitForTimeout(60);
       }
-      if (section === 'history') {
+      if (section === 'logs:settings') {
         // Measured with an Undo armed.
         await page.click('button[data-act="hs-undo"]');
         await page.waitForTimeout(60);

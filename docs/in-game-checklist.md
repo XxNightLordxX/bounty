@@ -404,7 +404,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 
 - [ ] The sidebar shows **Daily** (Home, Players, Contracts, Target limits), **Setup** (Game rules, Hitman organisation, Boss permissions, Locations), **Records** (Logs) and **Developer**, with **Help** in the header. Each opens on its first tab, and on the tab you last had open in it after; close and reopen the panel and it opens where you left it
 - [ ] Every old view is still there: Overview and the inbox (Needs review, Money waiting, open alerts) under Home; All measures (frozen, suspended, protected, own target limits) under Players; Health, Engine settings, Console and Test tools under Developer; Logs and Alerts under Logs; a view remembered from before (Rules, Features, Stuck escrow, Diagnostics, Permissions) opens where its items are now
-- [ ] On the `command`-only account there is no Developer section: **Help → Who can do what** lists the ACEs, **Game rules → Change history** has the history, and Game rules lists no debug, storage or rate-limit row. On the `crimson.admin` account **Developer** is there, with one line under its Engine settings saying how to grant `crimson.developer`. Grant `crimson.developer` to the `command` account (`add_ace identifier.license:<licence> crimson.developer allow`) and reopen: it has Developer too, read-only
+- [ ] On the `command`-only account there is no Developer section: **Help → Who can do what** lists the ACEs, **Game rules → Change history ▸** opens Records › Logs on Setting changes, with the history, and Game rules lists no debug, storage or rate-limit row. On the `crimson.admin` account **Developer** is there, with one line under its Engine settings saying how to grant `crimson.developer`. Grant `crimson.developer` to the `command` account (`add_ace identifier.license:<licence> crimson.developer allow`) and reopen: it has Developer too, read-only
 - [ ] **Help → Who can do what** lists `crimson.admin`, `crimson.identity`, `crimson.developer` and `command`, says *You hold it* or *You do not hold it* correctly on each account, and gives the grant line for each one not held. It has no button or box
 - [ ] **Help → How it works**: open a card; each link opens the setting it names in its area of Game rules, marked, with its Details open
 - [ ] Press `/` (or Ctrl+K) and type part of a setting's name, key or description: the header search lists it with its area, and picking it opens its row. Type a contract id and press Enter: its drawer opens; a player id: their card. Escape clears the search and leaves the panel open
@@ -672,6 +672,12 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Stop sc-dispatch: phones are still told, nothing errors.
 - [ ] Set `crimson_hitman_alert_webhook`, `crimson_hitman_webhook` and `crimson_hitman_stats_webhook` (set, never setr): Tools, Send a test alert posts to the alert channel; a refused money attempt (audit mirror) to the staff channel; the daily summary and weekly stats (when due) to their channels, with no mention pinging anybody and no link.
 - [ ] Unset the alert webhook: alerts and the daily summary go to the staff webhook, and the panel says staff.
+
+## Records › Logs: one view for every log (step 3i)
+
+- [ ] Records › Logs shows four chips: **Audit log** (as before: search, pages, Flush), **Setting changes** (each change, Undo on two clicks, Older / Newer), **Org audit** (every action, the action filter) and **Grant history** (every grant, Undo on a role's).
+- [ ] From Game rules, Hitman organisation, Boss permissions and Target limits, the last tab (**Change history ▸**, **Org audit ▸**, **Grant history ▸**, **History ▸**) opens Logs with its chip picked; Target limits' opens the audit log filtered to `staff_target_`.
+- [ ] Without `crimson.identity`: every chip shows *a staff member* / *a member*, never a citizen id, as each list did; a reader account sees every chip and no Undo.
 
 ## If something fails
 

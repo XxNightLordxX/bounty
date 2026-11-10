@@ -280,13 +280,15 @@
     { id: 'contracts', head: 'Daily', label: 'Contracts', icon: 'file-contract', views: ['contracts'] },
     // How often one person may be targeted (server/targetlimits.lua).
     { id: 'targets', head: 'Daily', label: 'Target limits', icon: 'user-clock',
-      views: ['tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'] },
-    { id: 'rules', head: 'Setup', label: 'Game rules', icon: 'scale-balanced', views: ['rules', 'changed', 'history'] },
+      views: ['tldefaults', 'tljobs', 'tlplayer', 'tlcontracts'], logs: ['logs:targets', 'History'] },
+    { id: 'rules', head: 'Setup', label: 'Game rules', icon: 'scale-balanced', views: ['rules', 'changed'],
+      logs: ['logs:settings', 'Change history'] },
     // The hitman organisation (server/org/), off as shipped.
     { id: 'org', head: 'Setup', label: 'Hitman organisation', icon: 'people-group',
-      views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit'] },
+      views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices'],
+      logs: ['logs:org', 'Org audit'] },
     { id: 'bossperms', head: 'Setup', label: 'Boss permissions', icon: 'key',
-      views: ['bpmatrix', 'bplimits', 'bpoffice', 'bphistory'] },
+      views: ['bpmatrix', 'bplimits', 'bpoffice'], logs: ['logs:grants', 'Grant history'] },
     { id: 'locations', head: 'Setup', label: 'Locations', icon: 'location-dot', views: ['locations'] },
     { id: 'logs', head: 'Records', label: 'Logs', icon: 'list-ul', views: ['logs', 'alerts'] },
     { id: 'developer', head: 'Developer', label: 'Developer', icon: 'code',
@@ -304,14 +306,12 @@
     tldefaults: ['Defaults', 'sliders'], tljobs: ['Per job', 'briefcase'], tlplayer: ['Per player', 'user-clock'],
     tlcontracts: ['Contracts on someone', 'list-check'],
     rules: ['Areas', 'layer-group'], changed: ['Changed from the panel', 'pen'],
-    history: ['Change history', 'clock-rotate-left'],
     orgsetup: ['Setup', 'gear'], orgroles: ['Roles & pay', 'id-badge'], orgmembers: ['Members', 'users'],
     orgapps: ['Applications', 'envelope-open-text'], orgfunds: ['Funds & cuts', 'vault'],
-    orgaccess: ['Contract access', 'door-open'], orgnotices: ['Notices', 'thumbtack'], orgaudit: ['Org audit', 'list-ul'],
+    orgaccess: ['Contract access', 'door-open'], orgnotices: ['Notices', 'thumbtack'],
     bpmatrix: ['Matrix', 'table-cells'], bplimits: ['Limits', 'sliders'], bpoffice: ['Delegation & office', 'building'],
-    bphistory: ['Grant history', 'clock-rotate-left'],
     locations: ['Map points', 'location-dot'],
-    logs: ['Audit log', 'list-ul'], alerts: ['Alerts', 'bell'],
+    logs: ['Logs', 'list-ul'], alerts: ['Alerts', 'bell'],
     health: ['Health', 'heart-pulse'], devsettings: ['Engine settings', 'gear'], console: ['Console', 'terminal'],
     tools: ['Test tools', 'screwdriver-wrench'],
     help: ['How it works', 'circle-question'], howto: ['How do I…', 'hand'], permissions: ['Who can do what', 'key']
@@ -323,8 +323,8 @@
   var PLAYER_VIEWS = { players: true, pcontracts: true, pmeasures: true, pmoney: true, pplaytime: true,
                        phistory: true, pdiag: true };
   var ORG_VIEWS = { orgsetup: true, orgroles: true, orgmembers: true, orgapps: true, orgfunds: true,
-                    orgaccess: true, orgnotices: true, orgaudit: true };
-  var BP_VIEWS = { bpmatrix: true, bplimits: true, bpoffice: true, bphistory: true };
+                    orgaccess: true, orgnotices: true };
+  var BP_VIEWS = { bpmatrix: true, bplimits: true, bpoffice: true };
   var SECTIONS = [];
   GROUPS.forEach(function (g) { SECTIONS = SECTIONS.concat(g.views); });
   /** Old names, so a link or a remembered view from before lands where its
@@ -353,9 +353,9 @@
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
                    alerts: true, console: true, measures: true, exportContract: true, playerView: true,
-                   history: true, settingsHistory: true,
+                   history: true,
                    targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true,
-                   orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, placeMyPosition: true,
+                   orgGet: true, bossPermsGet: true, orgFunds: true, placeMyPosition: true,
                    rewardPreview: true, reassignPreview: true, disposalList: true, placeList: true };
 
   var DEBOUNCE_MS = 250;
@@ -381,7 +381,7 @@
     reviews: { all: false, items: null, action: {}, answers: {} },
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
-    logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
+    logs: { area: 'audit', kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
     players: { data: null, whois: {}, subject: null, ref: null, playtime: null, freeze: null, measures: null,
                measureKind: '', at: 0, recent: [], lift: {} },
     inbox: 'all',           // which of the inbox's lists show: all, reviews, stuck, alerts
@@ -828,7 +828,7 @@
     if (!subnav) return;
     var g = groupOf(S.section);
     var views = g ? g.views.filter(viewShown) : [];
-    subnav.hidden = views.length < 2;
+    subnav.hidden = views.length + (g && g.logs ? 1 : 0) < 2;
     var counts = { inbox: 'count-inbox', changed: 'count-settings', alerts: 'count-alerts' };
     setHtml(subnav, frag(views.map(function (view) {
       var on = view === S.section;
@@ -838,7 +838,9 @@
           'aria-current': on ? 'page' : 'false' },
         icon(label[1]), h('span.lbl', label[0]),
         counts[view] ? h('span.nav-count.is-warn', { id: counts[view], hidden: true }) : null);
-    })));
+    }), g && g.logs ? h('button.sub-btn.is-link', { id: 'nav-' + g.logs[0].replace(':', '-'), type: 'button',
+      'data-act': 'section', 'data-section': g.logs[0], title: 'Records \u203a Logs, ' + g.logs[1] },
+      icon('list-ul'), h('span.lbl', g.logs[1] + ' \u25b8')) : null));
   }
 
   /** Where the staff member is: the section, the player or area chosen, the view. */
@@ -850,6 +852,7 @@
     if (g) parts.push(g.label);
     if (PERSON_VIEWS[S.section] || (S.section === 'players' && hasPlayer())) parts.push(playerChipText());
     parts.push((VIEW_LABEL[S.section] || [S.section])[0]);
+    if (S.section === 'logs') parts.push(logAreaLabel());
     if (S.section === 'rules' && S.rules.area) parts.push(areaLabel(S.rules.area));
     if (S.section === 'rules' && S.rules.cat) parts.push(OLD_TAB[S.rules.cat] || S.rules.cat);
     setHtml(node, frag(parts.map(function (part, i) {
@@ -1063,6 +1066,13 @@
   }
 
   function show(section) {
+    // A section's link to its own log: Records \u203a Logs with that log's
+    // filter (LOG_AREAS), as 'logs:<filter>'.
+    var at = typeof section === 'string' ? section.indexOf(':') : -1;
+    if (at > 0 && section.slice(0, at) === 'logs') {
+      pickLogArea(section.slice(at + 1));
+      section = 'logs';
+    }
     if (ALIASES[section]) {
       applyAlias(ALIASES[section][1]);
       section = ALIASES[section][0];
@@ -2669,8 +2679,46 @@
       btn('.is-small', 'lg-older', { disabled: d.next === undefined || d.next === null }, 'Older', 'chevron-right'));
   }
 
-  SHELL.logs = function () {
-    return h('section.view',
+  /* Records \u203a Logs: every log staff read, one view, one op (logs), each
+     log a filter chip (its area on the server). Each section links to its
+     own with that chip picked (a GROUPS entry's logs: 'logs:<filter>'):
+     Game rules to Setting changes, Hitman organisation to Org audit, Boss
+     permissions to Grant history, Target limits to the audit log's
+     staff_target_ rows. The chip last picked stays picked. */
+  var LOG_AREAS = [
+    { id: 'audit', label: 'Audit log' },
+    { id: 'settings', label: 'Setting changes' },
+    { id: 'org', label: 'Org audit' },
+    { id: 'grants', label: 'Grant history' }
+  ];
+  /** What each section link sets: the chip, and for Target limits the
+      audit log's action filter. */
+  var LOG_FILTERS = {
+    audit: { area: 'audit' }, settings: { area: 'settings' }, org: { area: 'org' }, grants: { area: 'grants' },
+    targets: { area: 'audit', action: 'staff_target_' }
+  };
+  function logArea() { return S.section === 'logs' ? S.logs.area : null; }
+  function logAreaLabel() {
+    var a = LOG_AREAS.filter(function (x) { return x.id === S.logs.area; })[0];
+    return a ? a.label : 'Audit log';
+  }
+  function pickLogArea(name) {
+    var f = LOG_FILTERS[name];
+    if (!f) return;
+    S.logs.area = f.area;
+    if (f.action !== undefined) {
+      ['lg.action', 'lg.contract', 'lg.actor', 'lg.from', 'lg.to'].forEach(function (k) { S.forms[k] = ''; });
+      S.forms['lg.action'] = f.action;
+      S.logs.kind = '';
+      S.logs.range = '';
+      S.logs.cursor = null;
+      S.logs.back = [];
+    }
+  }
+
+  /** The audit log: its search, its rows, its pages. */
+  function auditLogBody() {
+    return frag(
       h('div.toolbar',
         dropdown('lg-kind'),
         field('lg.action', { class: 'is-mid', placeholder: 'Action contains', 'data-live': 'lg-search',
@@ -2693,8 +2741,43 @@
           + 'own name.'),
       h('div.results', { id: 'lg-results' }, logRows()),
       h('div.pager', { id: 'lg-pager' }, logPager()));
+  }
+
+  /** The organisation's log and its grant history, as the organisation is. */
+  function orgLogBody() {
+    var d = S.org.data;
+    if (!d) return S.org.error ? empty(S.org.error) : loading('Reading the organisation…');
+    if (!d.enabled) {
+      return empty('The hitman organisation is off (Config.Organisation.Enabled): it has nothing on the record. '
+        + 'Hitman organisation, Setup turns it on.');
+    }
+    if (!d.loaded) return empty('The organisation has not been read from the store yet: Hitman organisation, Setup.');
+    return S.logs.area === 'grants' ? bpHistoryBody() : orgAuditBody();
+  }
+
+  SHELL.logs = function () {
+    var area = S.logs.area;
+    return h('section.view',
+      h('div.toolbar', segmented('lg-area', LOG_AREAS.map(function (a) {
+        return { value: a.id, label: a.label };
+      }), area)),
+      area === 'settings' ? settingsLogBody()
+        : (area === 'org' || area === 'grants') ? h('div.stack', { id: 'lg-org' }, orgLogBody())
+          : auditLogBody());
   };
-  LOAD.logs = function () { loadLogs(); };
+  LOAD.logs = function () {
+    var area = S.logs.area;
+    if (area === 'settings') { loadSettingsLog(); return; }
+    if (area === 'org' || area === 'grants') {
+      var ready = S.org.data ? Promise.resolve() : loadOrg();
+      ready.then(function () {
+        if (logArea() !== area || !orgOn()) return;
+        loadOrgAudit(area === 'grants' ? 'org_grant' : S.org.auditAction);
+      });
+      return;
+    }
+    loadLogs();
+  };
 
   /* ---- players ---- */
 
@@ -4016,7 +4099,7 @@
       text: 'Every rule is in Game rules, by the area of the game it is about, each area\'s switches first. Filter '
         + 'by Switches, Timers, Money, Limits or Lists, or search from the header. Each Save, reset or list edit takes '
         + 'two clicks.', also: { view: 'changed', go: 'Changed from the panel' } },
-    { title: 'Undo a setting change', icon: 'arrow-rotate-left', view: 'history', go: 'Change history',
+    { title: 'Undo a setting change', icon: 'arrow-rotate-left', view: 'logs:settings', go: 'Logs, Setting changes',
       text: 'History lists every setting changed from this panel, who changed it and when, with both values. '
         + 'Undo puts the value before back, on two clicks, checked as any change is.' },
     { title: 'Contract tools', icon: 'clipboard-list', view: 'contracts', go: 'Contracts',
@@ -4045,7 +4128,10 @@
   LOAD.howto = function () {};
 
   /** A view's name now, from an old one too. */
-  function resolveView(view) { return ALIASES[view] ? ALIASES[view][0] : view; }
+  function resolveView(view) {
+    if (typeof view === 'string' && view.indexOf('logs:') === 0) return 'logs';
+    return ALIASES[view] ? ALIASES[view][0] : view;
+  }
 
   /* ---- permissions: every ACE this resource checks, read-only ---- */
 
@@ -4579,6 +4665,12 @@
     else toast('This game would not copy it: select the lines and press Ctrl+C instead.', 'error');
   };
 
+  ACTIONS['lg-area'] = function (node) {
+    var v = node.getAttribute('data-value');
+    if (!LOG_FILTERS[v] || v === S.logs.area) return;
+    S.logs.area = v;
+    show('logs');
+  };
   ACTIONS['lg-search-now'] = function () { firstLogPage(true); };
   LIVE['lg-search'] = function () {
     clearTimeout(S.logs.timer);
@@ -4913,7 +5005,7 @@
 
      Staff actions > Announce: one phone notice, from 'Staff', to every
      hitman holding a contract or to everybody online with the app.
-     Developer > Settings history: every setting change with who, when and
+     Records › Logs, Setting changes: every setting change with who, when and
      both values, each with Undo (the server keeps the value it puts back).
      And the players' reports in Needs review: the role, the note and the
      thread's last messages, dismissed like any item. */
@@ -4993,7 +5085,7 @@
     });
   };
 
-  /* ---- Developer > Settings history ---- */
+  /* ---- Records › Logs, Setting changes (the logs op's settings area) ---- */
 
   /** A value as the history shows it; a secret never. */
   function historyValue(value, secret) {
@@ -5007,7 +5099,9 @@
 
   function loadHistory() {
     var hs = ST.history;
-    return ask('settingsHistory', hs.cursor != null ? { cursor: hs.cursor } : {}, 'history').then(function (reply) {
+    var data = { area: 'settings' };
+    if (hs.cursor != null) data.cursor = hs.cursor;
+    return ask('logs', data, 'history').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) hs.error = words(reply);
       else { hs.error = null; hs.data = reply.data || {}; }
@@ -5015,7 +5109,7 @@
     });
   }
 
-  function drawHistory() { if (S.section === 'history') setHtml(byId('hs'), historyBody()); }
+  function drawHistory() { if (logArea() === 'settings') setHtml(byId('hs'), historyBody()); }
 
   function historyBody() {
     var hs = ST.history;
@@ -5046,18 +5140,19 @@
         hs.data.next != null ? btn('.is-small.is-ghost', 'hs-older', {}, 'Older', 'arrow-right') : null));
   }
 
-  SHELL.history = function () {
-    return h('section.view',
+  /** Records \u203a Logs, Setting changes. */
+  function settingsLogBody() {
+    return frag(
       h('div.toolbar', btn('.is-ghost', 'hs-refresh', {}, 'Refresh', 'rotate')),
       h('p.hint', 'Every setting changed from the panel, newest first: when, the value before and after, and who. '
         + 'Undo puts the value before that change back, checked as any change is; it takes two clicks and is on '
         + 'the record. A secret is never shown.'),
       h('div.stack', { id: 'hs' }, historyBody()));
-  };
-  LOAD.history = function () {
+  }
+  function loadSettingsLog() {
     ST.history = { data: null, error: null, answer: null, cursor: null, back: [] };
     loadHistory();
-  };
+  }
 
   ACTIONS['hs-refresh'] = function () { ST.history.answer = null; loadHistory(); };
   ACTIONS['hs-older'] = function () {
@@ -7645,6 +7740,7 @@
     if (ORG_VIEWS[S.section] || BP_VIEWS[S.section]) {
       setHtml(byId('org-body'), orgViewBody());
     }
+    if (logArea() === 'org' || logArea() === 'grants') setHtml(byId('lg-org'), orgLogBody());
   }
   AFTER_SETTINGS.push(function () {
     // The switch turned on or off from the card: what the server holds now.
@@ -7715,11 +7811,9 @@
       case 'orgfunds': return orgFundsBody(d);
       case 'orgaccess': return orgAccessBody(d);
       case 'orgnotices': return orgNoticesBody(d);
-      case 'orgaudit': return orgAuditBody();
       case 'bpmatrix': return bpMatrixBody(d);
       case 'bplimits': return bpLimitsBody(d);
       case 'bpoffice': return bpOfficeBody(d);
-      case 'bphistory': return bpHistoryBody();
       default: return orgSetupBody(d);
     }
   }
@@ -8233,9 +8327,9 @@
   /* -- Org audit -- */
 
   function loadOrgAudit(action) {
-    var data = { limit: 100 };
+    var data = { area: 'org', limit: 100 };
     if (action) data.action = action;
-    return ask('orgAudit', data, 'orgAudit').then(function (reply) {
+    return ask('logs', data, 'orgAudit').then(function (reply) {
       if (!reply) return;
       var rows = reply.ok ? asList((reply.data || {}).rows) : null;
       if (action === 'org_grant') {
@@ -8914,8 +9008,6 @@
       ready.then(function () {
         if (S.section !== view || !orgOn()) return;
         if (view === 'orgfunds') loadOrgFunds();
-        if (view === 'orgaudit') loadOrgAudit(S.org.auditAction);
-        if (view === 'bphistory') loadOrgAudit('org_grant');
       });
     };
   });

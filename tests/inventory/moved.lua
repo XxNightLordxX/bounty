@@ -247,4 +247,11 @@ return {
     ['setting:Roleplay.Rumours.RotateHours'] = 'setting:Intel.Rumours.RotateHours',
     ['setting:Roleplay.Rumours.Scenario'] = 'setting:Intel.Rumours.Scenario',
     ['setting:Roleplay.Rumours.Zones'] = 'setting:Intel.Rumours.Zones',
+    -- Step 3i: one log view (Records › Logs); each log is an area of the
+    -- logs op and a filter chip of the logs view.
+    ['op:orgAudit'] = { to = 'op:logs', note = "area = 'org' (grant history: action = 'org_grant')" },
+    ['op:settingsHistory'] = { to = 'op:logs', note = "area = 'settings'" },
+    ['screen:admin.view:history'] = { to = 'screen:admin.view:logs', note = "chip Setting changes; Game rules' link 'logs:settings'" },
+    ['screen:admin.view:orgaudit'] = { to = 'screen:admin.view:logs', note = "chip Org audit; Hitman organisation's link 'logs:org'" },
+    ['screen:admin.view:bphistory'] = { to = 'screen:admin.view:logs', note = "chip Grant history; Boss permissions' link 'logs:grants'" },
 }

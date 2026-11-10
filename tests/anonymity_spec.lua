@@ -1252,7 +1252,7 @@ describe('every channel a player not entitled to it can read', function()
         admin(6, 'announce', { text = 'Event tonight: stay clear of the pier.' })
         admin(6, 'announce', { text = 'Server event at eight.', scope = 'online' })
         admin(6, 'setSetting', { key = 'Relay.AllowMaskedCalls', value = true })
-        admin(6, 'settingsHistory', {})
+        admin(6, 'logs', { area = 'settings' })
         Config.Staff.AlertRefusalsPer10Min = 1
         call('accept', 3, { id = 'ct0000000000' })
         call('accept', 3, { id = 'ct0000000000' })

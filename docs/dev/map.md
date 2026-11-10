@@ -791,3 +791,27 @@ the old baseline (so every removal is recorded in moved.lua first); then
 moved.lua entries the new baseline no longer needs may be dropped in the same
 commit, which keeps the commit's diff of baseline.lua the record of what
 moved. Never regenerate to make a failure go away.
+
+---
+
+## Step 3 done
+
+Merge proposals 1-10 are in (3a-3i): feature blocks, markers and GPS,
+Places, Measures, Holds, target classes and anonymity, Intel, Police &
+press with the one Discord sender (`server/police.lua`,
+`server/discord.lua`), and one Records › Logs view (the `logs` op's areas:
+audit, settings, org). Left over from the ten: the contracts lists (D2:
+`contracts`, the player's `pcontracts` and Target limits'
+`tlcontracts`, three readers of contract rows, not log rows) are still
+three views; they belong in one contracts list with a person filter, done
+with step 4's UI clean-up, not as Logs filters. The player's history card
+(`phistory`) stays the player's tab, as D3 said.
+
+What remains of the "later" items, and when:
+
+| Item | What is left | Risk | Recommendation |
+|---|---|---|---|
+| Record (B10) | trust (`progression.lua`), reputation (`rp_reputation.lua`), heat (`imp_heat.lua`), tiers, placer record, ledger, weekly stats and the history card each read the same completions their own way | medium | **Now**, as its own step: one per-citizen read model the others read; no money moves, and the specs that pin each number (`progression_spec`, `impB_board_spec`, `imp_staffeco_spec`) are the gate |
+| Payout checks (B3) | photo, proof item, proof of intent, disposal, placer confirm each hold and release a payout their own way | high (money) | **Next after Record**: one ordered list of checks over the one hold `rp_intent` already has, behind `money_paths_spec` / `conservation_spec`; it touches every completion |
+| Schema-driven storage (C) | memory / json / mysql still write each rp and staff row kind three times (~9,800 lines); `server/org/schema.lua` is the pattern | high (persistence) | **Leave for now**: largest payoff, but it rewrites every store write; do it once the features above stop adding row kinds, as one step per few row kinds, with `storage_spec` / `differential_spec` as the gate |
+| Money and lock helpers (A7, A8, B11) | `Lock.new` exists (step 2); left: the `busy` / `inFlight` tables (contracts, review, amendments, org funds), the refund copies `refundBuyout` (bailout) and `refundOwed` (rp_protection), three `leaveForStaff` (bailout, escrow, rp_protection), and the staff money shell (`manualPay`, `settle`, `resolve`, reward change, org funds) | high, low payoff | **Leave until last**, as the map ordered it: after Payout checks, one money shell at a time behind the race and money specs |

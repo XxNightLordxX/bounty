@@ -28,7 +28,7 @@ local deps
 --- [op] = level, for the docs and the specs.
 StaffOps.OPS = {}
 
---- Every action the organisation writes to the log, for orgAudit.
+--- Every action the organisation writes to the log, for its log area.
 StaffOps.ACTIONS = {
     'org_created', 'org_member_hired', 'org_member_fired', 'org_member_role', 'org_member_suspended',
     'org_member_limits', 'org_member_grant', 'org_member_staff', 'org_role_created', 'org_role_edited',
@@ -89,7 +89,10 @@ OPS.orgFunds = { 'read', function(src, data)
     return said(Org.fundsView(staff(src), tonumber(data.limit)))
 end }
 
-OPS.orgAudit = { 'read', function(src, data)
+--- Records › Logs, area 'org' (Panel.logArea): every boss and staff
+--- action on the organisation, newest first, at most data.limit (100); one
+--- action with data.action (the grant history: 'org_grant').
+local function orgLog(src, data)
     if not Org.current() then return off() end
     local limit = math.max(1, math.min(100, math.floor(tonumber(data.limit) or 50)))
     local only = Text.field(data.action, 40)
@@ -121,7 +124,7 @@ OPS.orgAudit = { 'read', function(src, data)
             detail = detail }
     end
     return true, nil, nil, { rows = out }
-end }
+end
 
 -- Setup -------------------------------------------------------------------
 
@@ -363,6 +366,7 @@ function StaffOps.register(d)
         StaffOps.OPS[name] = level
         d.panel.extend(name, level, entry[2])
     end
+    if d.panel.logArea then d.panel.logArea('org', orgLog) end
 end
 
 return StaffOps
