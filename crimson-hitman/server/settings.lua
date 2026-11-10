@@ -1857,7 +1857,7 @@ for _, key in ipairs({ 'Improvements.ContractDecay.Percent', 'Improvements.Contr
 end
 
 --- Proof items, serial scrubbing, the weekly stats and the completion cooldown
---- (server/imp_proof.lua, imp_scrub.lua, imp_weekly.lua, imp_staffeco.lua).
+--- (server/imp_proof.lua, imp_scrub.lua, imp_weekly.lua, targetlimits.lua).
 local IMP_PROOF, IMP_SCRUB = 'Improvements: Proof items', 'Improvements: Serial scrubbing'
 local IMP_WEEKLY = 'Improvements: Weekly stats'
 for _, entry in ipairs({
@@ -2065,7 +2065,7 @@ local NAMES = {
     -- The tiered board (server/imp_tiers.lua): 'name, least reward, level'.
     tier = { pattern = '^[^%c<>,]+,%s*%d+%s*,%s*%d+$', max = 60,
              says = 'tiers as name, least reward, level (such as Elite, 150000, 4), up to 60 characters' },
-    -- A tip safe zone (server/imp_tips.lua, Imp.parseZone): 'x, y, radius, name'.
+    -- A tip safe zone (server/imp_tips.lua, ImpTips.parseZone): 'x, y, radius, name'.
     zone = { pattern = '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,%s*%d+%.?%d*%s*,[^%c<>]+$', max = 80,
              says = 'zones as x, y, radius, name (such as 300, -590, 80, Pillbox), up to 80 characters' },
 }

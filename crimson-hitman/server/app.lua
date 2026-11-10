@@ -8,6 +8,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local App = {}
 
@@ -841,7 +842,7 @@ function App.register()
         out.proposals = proposalsOf(actor, out)
         -- Payouts of theirs held for proof of intent, the contract done
         -- or not (server/rp_intent.lua, off as shipped: absent).
-        out.intentHeld = deps.rpIntent and deps.rpIntent.enabled() and deps.rpIntent.heldFor(actor.cid) or nil
+        out.intentHeld = deps.rpIntent and Feature.on('Roleplay.ProofOfIntent') and deps.rpIntent.heldFor(actor.cid) or nil
         return out
     end)
 

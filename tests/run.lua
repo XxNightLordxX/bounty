@@ -437,7 +437,6 @@ function _G.newStack()
     for _, name in ipairs({ 'imp_board', 'imp_placer_record', 'imp_heat', 'imp_tiers', 'imp_decay' }) do
         package.loaded['server.' .. name] = nil
     end
-    package.loaded['server.imp_staffeco'] = nil
     package.loaded['server.imp_proof'] = nil
     package.loaded['server.imp_scrub'] = nil
     package.loaded['server.imp_weekly'] = nil
@@ -753,6 +752,7 @@ local suites = {
     'capability_inventory_spec',
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
     'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'lib_players_spec',
+    'lib_feature_spec',
     'docs_spec',
 }
 

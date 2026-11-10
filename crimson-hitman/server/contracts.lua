@@ -10,7 +10,7 @@ local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
 -- The completion cooldown (Config.Limits.TargetCooldownAfterCompletionSeconds).
-local Imp = CrimsonBoot.require('server.imp_staffeco')
+local TargetLimits = CrimsonBoot.require('server.targetlimits')
 
 local Contracts = {}
 
@@ -676,16 +676,16 @@ function Contracts.canCreate(actor, targetActor)
                 if not counts(c.resolved_at, false) then cooldown = 0 end
                 -- After a completed one, the longer wait where it is set
                 -- (Config.Limits.TargetCooldownAfterCompletionSeconds, off as
-                -- shipped: server/imp_staffeco.lua). Said in whole hours
+                -- shipped: server/targetlimits.lua). Said in whole hours
                 -- left, and nothing else about the contract: the hours of
                 -- the global wait only, while it runs, and none after. The
                 -- wait itself may be a job's or the player's own, and its
                 -- hours said which.
                 local afterCompletion = c.state == CH.STATE.COMPLETED and counts(c.resolved_at, false)
                     and (tl and (tonumber(limit.TargetCooldownAfterCompletionSeconds) or 0)
-                        or Imp.completionCooldown()) or 0
+                        or TargetLimits.completionCooldown()) or 0
                 if afterCompletion > (tonumber(cooldown) or 0) and since < afterCompletion then
-                    local global = Imp.completionCooldown()
+                    local global = TargetLimits.completionCooldown()
                     if since < global then
                         return false, CH.ERR.TARGET_RECENTLY_ON,
                             { hours = math.max(1, math.ceil((global - since) / 3600)) }

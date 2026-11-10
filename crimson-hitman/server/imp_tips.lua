@@ -31,6 +31,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local ImpTips = {}
 
@@ -94,6 +95,17 @@ end
 -- The settings
 --------------------------------------------------------------------------
 
+--- One safe zone, 'x, y, radius, name': its centre, radius and name, or nil.
+---@param text any
+---@return table|nil { x, y, radius, name }
+function ImpTips.parseZone(text)
+    if type(text) ~= 'string' or #text > 80 or text:find('[%c<>]') then return nil end
+    local x, y, r, name = text:match('^%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*,%s*(.-)%s*$')
+    x, y, r = tonumber(x), tonumber(y), tonumber(r)
+    if not x or not r or r <= 0 or r > 5000 or not name or name == '' then return nil end
+    return { x = x, y = y, radius = r, name = name }
+end
+
 --- Every block and its fields, as the start and the admin panel check them.
 ImpTips.RULES = {
     TipWarningDelay = {
@@ -117,7 +129,7 @@ ImpTips.RULES = {
     },
     TipSafeZones = {
         Enabled = { kind = 'switch' },
-        Zones = { kind = 'zones' },
+        Zones = { kind = 'list', each = ImpTips.parseZone, says = "a list of 'x, y, radius, name'" },
     },
     GoDark = {
         Enabled = { kind = 'switch' },
@@ -127,103 +139,23 @@ ImpTips.RULES = {
     },
 }
 
---- One safe zone, 'x, y, radius, name': its centre, radius and name, or nil.
----@param text any
----@return table|nil { x, y, radius, name }
-function ImpTips.parseZone(text)
-    if type(text) ~= 'string' or #text > 80 or text:find('[%c<>]') then return nil end
-    local x, y, r, name = text:match('^%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*,%s*(.-)%s*$')
-    x, y, r = tonumber(x), tonumber(y), tonumber(r)
-    if not x or not r or r <= 0 or r > 5000 or not name or name == '' then return nil end
-    return { x = x, y = y, radius = r, name = name }
-end
-
-local function fits(rule, value)
-    if rule.kind == 'switch' then return type(value) == 'boolean' end
-    if rule.kind == 'number' then
-        if type(value) ~= 'number' or value ~= value then return false end
-        if rule.integer and math.floor(value) ~= value then return false end
-        return value >= rule.min and value <= rule.max
-    end
-    if rule.kind == 'choice' then
-        for _, choice in ipairs(rule.choices) do if value == choice then return true end end
-        return false
-    end
-    if type(value) ~= 'table' or #value > 50 then return false end
-    for k in pairs(value) do
-        if math.type(k) ~= 'integer' or k < 1 or k > #value then return false end
-    end
-    for _, entry in ipairs(value) do
-        if not ImpTips.parseZone(entry) then return false end
-    end
-    return true
-end
-
-local function says(rule)
-    if rule.kind == 'switch' then return 'true or false' end
-    if rule.kind == 'number' then
-        return ('a whole number from %d to %d'):format(rule.min, rule.max)
-    end
-    if rule.kind == 'choice' then return 'one of ' .. table.concat(rule.choices, ', ') end
-    return "a list of 'x, y, radius, name'"
-end
-
---- A deep copy (Util.copy, the one shared copy).
-local copyOf = Util.copy
-
 --- Fill a block config.lua has none of from the shipped one, and hold every
 --- field to its rule: one that does not fit is put back to what ships, with
 --- a warning naming it. Run at the start and on the admin panel's quiet
 --- check of a change, as main.lua runs every other check.
 ---@param warn string[]
 function ImpTips.validate(warn)
-    if type(Config.Improvements) ~= 'table' then Config.Improvements = {} end
-    local shippedRoot = type(ConfigDefaults) == 'table' and ConfigDefaults.Improvements or nil
     local names = {}
     for name in pairs(ImpTips.RULES) do names[#names + 1] = name end
     table.sort(names)
     for _, name in ipairs(names) do
-        local shipped = type(shippedRoot) == 'table' and type(shippedRoot[name]) == 'table'
-            and shippedRoot[name] or {}
-        if type(Config.Improvements[name]) ~= 'table' then Config.Improvements[name] = copyOf(shipped) end
-        local block = Config.Improvements[name]
-        local fields = {}
-        for field in pairs(ImpTips.RULES[name]) do fields[#fields + 1] = field end
-        table.sort(fields)
-        for _, field in ipairs(fields) do
-            local rule = ImpTips.RULES[name][field]
-            if not fits(rule, block[field]) then
-                local fallback = shipped[field]
-                if fallback == nil then
-                    if rule.kind == 'switch' then fallback = false
-                    elseif rule.kind == 'zones' then fallback = {}
-                    elseif rule.kind == 'choice' then fallback = rule.choices[1]
-                    else fallback = rule.min end
-                end
-                if block[field] ~= nil then
-                    warn[#warn + 1] = ('Improvements.%s.%s has to be %s. Using what ships.')
-                        :format(name, field, says(rule))
-                end
-                block[field] = copyOf(fallback)
-            end
-        end
+        Feature.check('Improvements.' .. name, ImpTips.RULES[name], warn)
     end
     local delay = Config.Improvements.TipWarningDelay
     if delay.MinSeconds > delay.MaxSeconds then
         warn[#warn + 1] = 'Improvements.TipWarningDelay.MinSeconds is above MaxSeconds. Using MaxSeconds for both.'
         delay.MinSeconds = delay.MaxSeconds
     end
-end
-
-local function cfg(name)
-    local root = type(Config.Improvements) == 'table' and Config.Improvements or {}
-    return type(root[name]) == 'table' and root[name] or {}
-end
-ImpTips.cfg = cfg
-
----@return boolean
-function ImpTips.on(name)
-    return cfg(name).Enabled == true
 end
 
 local function int(value, fallback)
@@ -293,7 +225,7 @@ end
 --- Whether the warning is delayed now.
 ---@return boolean
 function ImpTips.delayOn()
-    return ImpTips.on('TipWarningDelay') and int(cfg('TipWarningDelay').MaxSeconds, 0) > 0
+    return Feature.on('Improvements.TipWarningDelay') and int(Feature.block('Improvements.TipWarningDelay').MaxSeconds, 0) > 0
 end
 
 --- A tip was bought and the target is to be told. Off: `now` runs at once,
@@ -304,7 +236,7 @@ end
 function ImpTips.warnTarget(contract, tip, now)
     if not ImpTips.delayOn() then return now() end
     load()
-    local block = cfg('TipWarningDelay')
+    local block = Feature.block('Improvements.TipWarningDelay')
     local low = math.max(0, int(block.MinSeconds, 0))
     local high = math.max(low, int(block.MaxSeconds, 0))
     local wait = low + math.floor(ImpTips.random() * (high - low + 1))
@@ -352,7 +284,7 @@ end
 ---@param count integer
 ---@return integer
 function ImpTips.tipPrice(base, count)
-    local block = cfg('TipLimits')
+    local block = Feature.block('Improvements.TipLimits')
     if block.Enabled ~= true or block.PriceDoubling ~= true or base <= 0 then return base end
     local cap = math.max(base, int(block.MaxCost, base))
     local price = base
@@ -367,7 +299,7 @@ end
 ---@param ownCount integer their tips on it
 ---@return boolean
 function ImpTips.usedOwn(ownCount)
-    local block = cfg('TipLimits')
+    local block = Feature.block('Improvements.TipLimits')
     return block.Enabled == true and block.OnePerHitman == true and ownCount >= 1
 end
 
@@ -377,8 +309,8 @@ end
 ---@param now integer
 ---@return integer
 function ImpTips.holdLeft(mine, now)
-    if not ImpTips.on('TipHoldFirst') then return 0 end
-    local need = math.max(0, int(cfg('TipHoldFirst').MinHeldMinutes, 0)) * 60
+    if not Feature.on('Improvements.TipHoldFirst') then return 0 end
+    local need = math.max(0, int(Feature.block('Improvements.TipHoldFirst').MinHeldMinutes, 0)) * 60
     local since = tonumber(mine and mine.accepted_at)
     if need <= 0 or not since then return 0 end
     return math.max(0, since + need - now)
@@ -387,8 +319,8 @@ end
 --- Whether a target standing at (x, y) is inside a safe zone.
 ---@return boolean
 function ImpTips.inSafeZone(x, y)
-    if not ImpTips.on('TipSafeZones') then return false end
-    for _, text in ipairs(cfg('TipSafeZones').Zones or {}) do
+    if not Feature.on('Improvements.TipSafeZones') then return false end
+    for _, text in ipairs(Feature.block('Improvements.TipSafeZones').Zones or {}) do
         local zone = ImpTips.parseZone(text)
         if zone and (x - zone.x) ^ 2 + (y - zone.y) ^ 2 <= zone.radius ^ 2 then return true end
     end
@@ -425,8 +357,8 @@ end
 ---@param purchases integer
 ---@return integer
 function ImpTips.informantPrice(base, purchases)
-    if not ImpTips.on('InformantSecondTry') or purchases < 1 or base <= 0 then return base end
-    local percent = math.max(0, int(cfg('InformantSecondTry').SecondTryCostPercent, 100))
+    if not Feature.on('Improvements.InformantSecondTry') or purchases < 1 or base <= 0 then return base end
+    local percent = math.max(0, int(Feature.block('Improvements.InformantSecondTry').SecondTryCostPercent, 100))
     -- Whole dollars, integer arithmetic (no binary fraction of money).
     return (base * percent) // 100
 end
@@ -493,7 +425,7 @@ function ImpTips.heldBack(contractId, from, to)
         return
     end
     load()
-    local minutes = math.max(1, int(cfg('GoDark').Minutes, 30))
+    local minutes = math.max(1, int(Feature.block('Improvements.GoDark').Minutes, 30))
     for _, row in pairs(dark) do
         if row.contract_id == contractId then
             local untilAt = tonumber(row.until_at) or 0
@@ -508,7 +440,7 @@ function ImpTips.heldBack(contractId, from, to)
 end
 
 local function goDarkTerms()
-    local block = cfg('GoDark')
+    local block = Feature.block('Improvements.GoDark')
     return math.max(0, int(block.Cost, 0)), block.Account == 'cash' and 'cash' or 'bank',
         math.max(1, int(block.Minutes, 30))
 end
@@ -527,13 +459,13 @@ function ImpTips.targetCard(out, contract, cid)
     -- same. A window already paid for is still shown to its end, whichever
     -- switch is off now: it holds whatever the switches say (targetDark).
     local untilAt = ImpTips.darkUntil(cid)
-    if ImpTips.on('GoDark') and out.tippedAt and LocationTip and LocationTip.enabled(contract) then
+    if Feature.on('Improvements.GoDark') and out.tippedAt and LocationTip and LocationTip.enabled(contract) then
         local cost, account, minutes = goDarkTerms()
         out.goDark = { cost = cost, account = account, minutes = minutes, untilAt = untilAt }
     elseif untilAt then
         out.goDark = { untilAt = untilAt }
     end
-    if ImpTips.on('InformantSecondTry') and Informant and Informant.purchasesBy and out.informantPicks then
+    if Feature.on('Improvements.InformantSecondTry') and Informant and Informant.purchasesBy and out.informantPicks then
         local base = math.max(0, int(Config.Informant.Cost, 0))
         local price = ImpTips.informantPrice(base, Informant.purchasesBy(contract.id, cid))
         if price ~= base then out.informantCost = price end
@@ -571,7 +503,7 @@ end
 ---@return string|nil err
 ---@return table|nil data
 function ImpTips.goDark(actor, contractId, shown)
-    if not ImpTips.on('GoDark') then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on('Improvements.GoDark') then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if not Contracts then return buyDark(actor, contractId, shown) end

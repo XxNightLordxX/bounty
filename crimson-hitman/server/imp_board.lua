@@ -15,11 +15,12 @@
 ---   * ContractDecay (server/imp_decay.lua): an untaken contract's reward
 ---     rises, charged to its placer, or it ends sooner.
 ---
---- This file holds what the four share: their rules, the start-up checks
---- (main.lua's validateConfig, which the admin panel also runs against a
---- copy with a change in it), the wiring, and the one tick job.
+--- This file holds what the four share: their rules (checked at the start
+--- through server/lib/feature.lua, in main.lua's validateConfig, which the
+--- admin panel also runs against a copy with a change in it), the wiring,
+--- and the one tick job.
 
-local Util = CrimsonBoot.requireShared('util')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local ImpBoard = {}
 
@@ -30,132 +31,65 @@ local Decay = CrimsonBoot.require('server.imp_decay')
 
 ImpBoard.record, ImpBoard.heat, ImpBoard.tiers, ImpBoard.decay = Record, Heat, Tiers, Decay
 
---- One feature's block, or nil when it is off or missing. Handed to the
---- four (as `board.on`), not exported.
----@param name string
----@return table|nil
-local function on(name)
-    local imp = type(Config.Improvements) == 'table' and Config.Improvements or nil
-    local block = imp and imp[name]
-    if type(block) == 'table' and block.Enabled == true then return block end
-    return nil
-end
-
---- One tier line, 'name, least reward, least level', read: nil when it is
---- not one. The name is what the card shows; nothing else reads it.
----@param line any
----@return table|nil { name, minReward, minLevel }
-function ImpBoard.parseTier(line)
-    if type(line) ~= 'string' or #line > 60 then return nil end
-    local name, reward, level = line:match('^%s*([^%c<>,]-)%s*,%s*(%d+)%s*,%s*(%d+)%s*$')
-    if not name or #name == 0 then return nil end
-    reward, level = tonumber(reward), tonumber(level)
-    if not reward or reward > 1000000000 or not level or level < 1 or level > 100 then return nil end
-    return { name = name, minReward = math.floor(reward), minLevel = math.floor(level) }
-end
-
---- What each setting must be, as the start holds config.lua to it and the
---- panel's catalogue (server/settings.lua) offers it.
+--- What each setting must be, as the start holds config.lua to it
+--- (Feature.check, server/lib/feature.lua) and the panel's catalogue
+--- (server/settings.lua) offers it.
 local TEXT = '^[^%c<>]+$'
 local RULES = {
     PlacerRecord = {
-        Enabled = { 'switch' }, ShowForAnonymous = { 'switch' },
-        LookbackDays = { 'integer', 1, 365 },
+        Enabled = { kind = 'switch' }, ShowForAnonymous = { kind = 'switch' },
+        LookbackDays = { kind = 'number', integer = true, min = 1, max = 365 },
     },
     HitmanHeat = {
-        Enabled = { 'switch' },
-        ProtectedCompletionHeat = { 'integer', 0, 100 }, WitnessHeat = { 'integer', 0, 100 },
-        AdvisoryHeat = { 'integer', 0, 100 }, DecayHours = { 'integer', 1, 720 },
-        Threshold = { 'integer', 1, 1000 }, WarnTargetChancePercent = { 'integer', 0, 100 },
-        BulletinEveryMinutes = { 'integer', 0, 1440 },
-        BulletinTitle = { 'text', TEXT, 60 }, BulletinText = { 'text', TEXT, 160 },
+        Enabled = { kind = 'switch' },
+        ProtectedCompletionHeat = { kind = 'number', integer = true, min = 0, max = 100 },
+        WitnessHeat = { kind = 'number', integer = true, min = 0, max = 100 },
+        AdvisoryHeat = { kind = 'number', integer = true, min = 0, max = 100 },
+        DecayHours = { kind = 'number', integer = true, min = 1, max = 720 },
+        Threshold = { kind = 'number', integer = true, min = 1, max = 1000 },
+        WarnTargetChancePercent = { kind = 'number', integer = true, min = 0, max = 100 },
+        BulletinEveryMinutes = { kind = 'number', integer = true, min = 0, max = 1440 },
+        BulletinTitle = { kind = 'text', pattern = TEXT, max = 60, says = 'text up to 60 characters, no < or >' },
+        BulletinText = { kind = 'text', pattern = TEXT, max = 160, says = 'text up to 160 characters, no < or >' },
     },
     Tiers = {
-        Enabled = { 'switch' }, CompletionsPerLevel = { 'integer', 1, 1000 },
-        Tiers = { 'tiers' },
+        Enabled = { kind = 'switch' },
+        CompletionsPerLevel = { kind = 'number', integer = true, min = 1, max = 1000 },
+        Tiers = { kind = 'list', each = Tiers.parseTier, most = 20,
+            says = "a list of tiers, each 'name, least reward, least level'" },
     },
     ContractDecay = {
-        Enabled = { 'switch' }, Mode = { 'choice', { rise = true, shorten = true } },
-        Percent = { 'integer', 1, 100 }, Hours = { 'integer', 1, 168 },
-        MaxIncreasePercent = { 'integer', 0, 1000 },
-        Account = { 'choice', { cash = true, bank = true } },
+        Enabled = { kind = 'switch' }, Mode = { kind = 'choice', choices = { 'rise', 'shorten' } },
+        Percent = { kind = 'number', integer = true, min = 1, max = 100 },
+        Hours = { kind = 'number', integer = true, min = 1, max = 168 },
+        MaxIncreasePercent = { kind = 'number', integer = true, min = 0, max = 1000 },
+        Account = { kind = 'choice', choices = { 'cash', 'bank' } },
     },
 }
 ImpBoard.RULES = RULES
 
---- Whether one value keeps its rule.
-local function fits(rule, value)
-    local kind = rule[1]
-    if kind == 'switch' then return type(value) == 'boolean' end
-    if kind == 'integer' then
-        if type(value) ~= 'number' or value ~= value or math.floor(value) ~= value then return false end
-        return value >= rule[2] and value <= rule[3]
-    end
-    if kind == 'text' then
-        return type(value) == 'string' and #value > 0 and #value <= rule[3] and value:match(rule[2]) ~= nil
-    end
-    if kind == 'choice' then return type(value) == 'string' and rule[2][value] == true end
-    if kind == 'tiers' then
-        if type(value) ~= 'table' or #value > 20 then return false end
-        for k in pairs(value) do
-            if math.type(k) ~= 'integer' or k < 1 or k > #value then return false end
-        end
-        for i = 1, #value do
-            if not ImpBoard.parseTier(value[i]) then return false end
-        end
-        return true
-    end
-    return false
-end
-
---- A deep copy (Util.copy, the one shared copy).
-local copyOf = Util.copy
-
 --- The start-up checks for these four blocks, against the global Config. A
 --- block or a setting missing is filled from defaults.lua; one that breaks
 --- its rule is put back to the shipped value, and said. A feature that
---- cannot work is never refused a start: it is off. Other blocks of
---- Config.Improvements (other features) are not looked at.
+--- cannot work is never refused a start: it is off.
 ---@param warn string[] where each correction is said
 ---@param filled string[] where each setting filled in is named
 function ImpBoard.checkConfig(warn, filled)
-    local shipped = type(ConfigDefaults) == 'table' and type(ConfigDefaults.Improvements) == 'table'
-        and ConfigDefaults.Improvements or {}
-    if type(Config.Improvements) ~= 'table' then Config.Improvements = {} end
     local names = {}
     for name in pairs(RULES) do names[#names + 1] = name end
     table.sort(names)
     for _, name in ipairs(names) do
-        local rules, defaults = RULES[name], shipped[name] or { Enabled = false }
-        local block = Config.Improvements[name]
-        if type(block) ~= 'table' then
-            block = copyOf(defaults)
-            Config.Improvements[name] = block
-            filled[#filled + 1] = 'Improvements.' .. name .. ' (whole block)'
-        end
-        for key, rule in pairs(rules) do
-            local value = block[key]
-            if value == nil then
-                block[key] = copyOf(defaults[key])
-                filled[#filled + 1] = ('Improvements.%s.%s'):format(name, key)
-            elseif not fits(rule, value) then
-                warn[#warn + 1] = ('Config.Improvements.%s.%s is %s, which it cannot be. Using the shipped %s.')
-                    :format(name, key, type(value) == 'table' and 'a list it cannot use' or tostring(value),
-                        type(defaults[key]) == 'table' and 'list' or tostring(defaults[key]))
-                block[key] = copyOf(defaults[key])
-            end
-        end
+        Feature.check('Improvements.' .. name, RULES[name], warn, filled)
     end
 end
 
 ---@param deps table { storage, identity, notify, audit, escrow, contracts, amendments,
 --- projection, progression, rpConsequences }
 function ImpBoard.init(deps)
-    local board = { on = on, parseTier = ImpBoard.parseTier }
-    Record.init(deps, board)
-    Heat.init(deps, board)
-    Tiers.init(deps, board)
-    Decay.init(deps, board)
+    Record.init(deps)
+    Heat.init(deps)
+    Tiers.init(deps)
+    Decay.init(deps)
 end
 
 --- The maintenance tick's minute job for the board (imp_board.tick): heat

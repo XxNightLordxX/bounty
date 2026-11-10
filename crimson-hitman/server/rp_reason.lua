@@ -12,19 +12,14 @@
 --- anything is taken.
 
 local Util = CrimsonBoot.requireShared('util')
-local Places = CrimsonBoot.require('server.rp_places')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Roleplay.ReasonQuality'
 
 local Reason = {}
 
 local deps
-
-function Reason.on()
-    return Places.on('ReasonQuality')
-end
-
-local function rules()
-    return Places.block('ReasonQuality')
-end
 
 --- The reason as words: lower case, anything but letters and digits a gap.
 local function words(text)
@@ -38,7 +33,8 @@ end
 ---@return string|nil
 function Reason.lowEffort(text)
     local padded = ' ' .. table.concat(words(text), ' ') .. ' '
-    for _, phrase in ipairs(type(rules().LowEffort) == 'table' and rules().LowEffort or {}) do
+    local phrases = Feature.block(BLOCK).LowEffort
+    for _, phrase in ipairs(type(phrases) == 'table' and phrases or {}) do
         local wanted = table.concat(words(tostring(phrase)), ' ')
         if wanted ~= '' and padded:find(' ' .. wanted .. ' ', 1, true) then return tostring(phrase) end
     end
@@ -51,14 +47,14 @@ end
 ---@return string|nil err
 ---@return table|nil refusal { rule }
 function Reason.check(reason)
-    if not Reason.on() or type(reason) ~= 'string' then return nil end
-    if utf8.len(reason) < (tonumber(rules().MinLength) or 0) then
-        return CH.ERR.REASON_REFUSED, { rule = 'short', min = rules().MinLength }
+    if not Feature.on(BLOCK) or type(reason) ~= 'string' then return nil end
+    if utf8.len(reason) < (tonumber(Feature.block(BLOCK).MinLength) or 0) then
+        return CH.ERR.REASON_REFUSED, { rule = 'short', min = Feature.block(BLOCK).MinLength }
     end
-    if #words(reason) < (tonumber(rules().MinWords) or 0) then
-        return CH.ERR.REASON_REFUSED, { rule = 'words', min = rules().MinWords }
+    if #words(reason) < (tonumber(Feature.block(BLOCK).MinWords) or 0) then
+        return CH.ERR.REASON_REFUSED, { rule = 'words', min = Feature.block(BLOCK).MinWords }
     end
-    if rules().LowEffortAction ~= 'review' and Reason.lowEffort(reason) then
+    if Feature.block(BLOCK).LowEffortAction ~= 'review' and Reason.lowEffort(reason) then
         return CH.ERR.REASON_REFUSED, { rule = 'low_effort' }
     end
     return nil
@@ -70,8 +66,8 @@ end
 --- without the identity ACE by their role only) and the phrase it matched.
 local queued = {}
 function Reason.after(name, actor, payload, result)
-    if (name ~= 'create' and name ~= 'revise') or not Reason.on() then return end
-    if rules().LowEffortAction ~= 'review' or Config.Reason.Mode ~= 'freetext' then return end
+    if (name ~= 'create' and name ~= 'revise') or not Feature.on(BLOCK) then return end
+    if Feature.block(BLOCK).LowEffortAction ~= 'review' or Config.Reason.Mode ~= 'freetext' then return end
     local id = name == 'create' and type(result) == 'table' and result.id or payload.id
     local contract = id and deps.storage.readContract(Util.toId(id))
     if not contract or type(contract.reason) ~= 'string' then return end
@@ -98,13 +94,13 @@ Reason.RULES = {
     Enabled = { kind = 'switch', default = false },
     MinLength = { kind = 'number', min = 0, max = 255, integer = true, default = 15 },
     MinWords = { kind = 'number', min = 0, max = 50, integer = true, default = 3 },
-    LowEffort = { kind = 'phrases', default = {} },
+    LowEffort = { kind = 'list', default = {} },
     LowEffortAction = { kind = 'choice', choices = { 'refuse', 'review' }, default = 'refuse' },
 }
 
 ---@param warn string[]
 function Reason.validate(warn)
-    Places.checkBlock('ReasonQuality', Reason.RULES, warn)
+    Feature.check(BLOCK, Reason.RULES, warn)
     -- A least length over the most a reason may be refuses every reason.
     local block = Config.Roleplay.ReasonQuality
     local most = Config.Reason and tonumber(Config.Reason.MaxLength)

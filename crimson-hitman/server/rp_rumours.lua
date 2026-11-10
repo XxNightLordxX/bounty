@@ -19,6 +19,10 @@
 local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Places = CrimsonBoot.require('server.rp_places')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Roleplay.Rumours'
 
 local Rumours = {}
 
@@ -38,14 +42,6 @@ function Rumours.init(d)
     deps = d
 end
 
-function Rumours.on()
-    return Places.on('Rumours')
-end
-
-local function rules()
-    return Places.block('Rumours')
-end
-
 --- Whether this player is briefed on this contract now.
 ---@param contractId string
 ---@param cid string
@@ -62,7 +58,7 @@ function Rumours.isBriefed(contractId, cid)
 end
 
 local function record(contractId, cid)
-    local minutes = tonumber(rules().BriefValidMinutes) or 30
+    local minutes = tonumber(Feature.block(BLOCK).BriefValidMinutes) or 30
     -- Briefings run out on their own: the ones that have are dropped here,
     -- so the table holds only what is still worth something.
     local now = os.time()
@@ -91,7 +87,7 @@ end
 ---@param actor table
 ---@return boolean
 function Rumours.isBroker(actor)
-    local jobs = rules().BrokerJobs
+    local jobs = Feature.block(BLOCK).BrokerJobs
     local job = actor and type(actor.job) == 'table' and actor.job.name
     if type(jobs) ~= 'table' or type(job) ~= 'string' then return false end
     return jobs[job:lower()] == true or jobs[job] == true
@@ -108,7 +104,7 @@ local function hashOf(text)
 end
 
 local function zoneFor(contract)
-    local zones = rules().Zones
+    local zones = Feature.block(BLOCK).Zones
     if type(zones) ~= 'table' or #zones == 0 then return 'somewhere in the city' end
     return tostring(zones[(hashOf(tostring(contract.id)) % #zones) + 1])
 end
@@ -118,7 +114,8 @@ end
 ---@return string|nil
 local function nearestDistrict(coords)
     local best, bestD
-    for _, text in ipairs(type(rules().Districts) == 'table' and rules().Districts or {}) do
+    local districts = Feature.block(BLOCK).Districts
+    for _, text in ipairs(type(districts) == 'table' and districts or {}) do
         local spot = Places.parseArea(text)
         if spot then
             local d = (spot.x - (coords.x or 0)) ^ 2 + (spot.y - (coords.y or 0)) ^ 2
@@ -133,7 +130,7 @@ end
 local function areaFor(contract)
     if areaOf[contract.id] then return areaOf[contract.id] end
     local area
-    if rules().AreaMode == 'district' then
+    if Feature.block(BLOCK).AreaMode == 'district' then
         local target = deps.identity.byCitizenId(contract.target_cid)
         local coords = target and target.source and Geo.position(target.source)
         if coords then area = nearestDistrict(coords) end
@@ -154,7 +151,7 @@ end
 local function rumourRow(row, contract)
     local reward = type(row.reward) == 'table' and row.reward or {}
     local value = (tonumber(reward.baseline) or 0) + (tonumber(reward.bonus) or 0)
-    local spread = (tonumber(rules().BandPercent) or 25) / 100
+    local spread = (tonumber(Feature.block(BLOCK).BandPercent) or 25) / 100
     local goods = type(reward.goods) == 'table'
         and ((tonumber(reward.goods.items) or 0) + (tonumber(reward.goods.weapons) or 0)) > 0
     return {
@@ -178,7 +175,7 @@ end
 ---@param actor table
 ---@return table listing
 function Rumours.shapeListing(listing, actor)
-    if not Rumours.on() or type(listing) ~= 'table' then return listing end
+    if not Feature.on(BLOCK) or type(listing) ~= 'table' then return listing end
     local rows = type(listing.contracts) == 'table' and listing.contracts or {}
     for i, row in ipairs(rows) do
         if type(row) == 'table' and row.role == 'public' and not Rumours.isBriefed(row.id, actor.cid) then
@@ -187,17 +184,18 @@ function Rumours.shapeListing(listing, actor)
         end
     end
     local broker = Places.current('broker')
+    local rules = Feature.block(BLOCK)
     listing.rumours = {
         npc = broker ~= nil,
         -- Where to ask around for the broker, as a district name only, on a
         -- server that does not mark them on the map (Blip off): never the
         -- spot. Marked on the map, the map says it.
-        brokerArea = (broker and rules().Blip ~= true and type(broker.x) == 'number')
+        brokerArea = (broker and rules.Blip ~= true and type(broker.x) == 'number')
             and nearestDistrict(broker) or nil,
-        blip = (broker and rules().Blip == true) or nil,
-        players = type(rules().BrokerJobs) == 'table' and next(rules().BrokerJobs) ~= nil,
+        blip = (broker and rules.Blip == true) or nil,
+        players = type(rules.BrokerJobs) == 'table' and next(rules.BrokerJobs) ~= nil,
         broker = Rumours.isBroker(actor) or nil,
-        minutes = tonumber(rules().BriefValidMinutes) or 30,
+        minutes = tonumber(rules.BriefValidMinutes) or 30,
     }
     return listing
 end
@@ -212,7 +210,7 @@ end
 --- (an abandoned one coming back is not) needs none.
 ---@return string|nil err
 function Rumours.gate(name, actor, payload)
-    if name ~= 'accept' or not Rumours.on() then return nil end
+    if name ~= 'accept' or not Feature.on(BLOCK) then return nil end
     local contract = deps.storage.readContract(Util.toId(payload.id))
     -- Anything that is not a contract is the handler's to refuse, in its words.
     if not contract then return nil end
@@ -231,7 +229,7 @@ end
 --- The broker NPC: the hitman asks about one rumour while standing beside
 --- it. The full card is in the reply.
 function Rumours.askBroker(actor, contractId)
-    if not Rumours.on() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     local contract = listed(contractId, actor.cid)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if not Places.near('broker', actor.source) then return false, CH.ERR.FIND_BROKER end
@@ -245,7 +243,7 @@ end
 local function nearby(actor)
     local mine = Geo.position(actor.source)
     if not mine then return {} end
-    local radius = tonumber(rules().Radius) or 0
+    local radius = tonumber(Feature.block(BLOCK).Radius) or 0
     local okB, bucket = pcall(GetPlayerRoutingBucket, actor.source)
     local out = {}
     for _, id in ipairs(GetPlayers()) do
@@ -272,7 +270,7 @@ end
 --- A broker player: who stands within Radius of them, by a handle that
 --- names nobody, nearest first. Never a name, an id or a source.
 function Rumours.brokerNearby(actor)
-    if not Rumours.on() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     if not Rumours.isBroker(actor) then return false, CH.ERR.NOT_BROKER end
     local now = os.time()
     local mine = {}
@@ -284,13 +282,13 @@ function Rumours.brokerNearby(actor)
         people[#people + 1] = { handle = handle, metres = person.metres }
     end
     shownTo[actor.cid] = mine
-    return { people = people, radius = tonumber(rules().Radius) or 0 }
+    return { people = people, radius = tonumber(Feature.block(BLOCK).Radius) or 0 }
 end
 
 --- A broker player briefs the person they picked on one rumour, if that
 --- person still stands within Radius of them.
 function Rumours.brokerBrief(actor, contractId, who)
-    if not Rumours.on() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     if not Rumours.isBroker(actor) then return false, CH.ERR.NOT_BROKER end
     local contract = listed(contractId, actor.cid)
     if not contract then return false, CH.ERR.NOT_FOUND end
@@ -300,7 +298,7 @@ function Rumours.brokerBrief(actor, contractId, who)
     local person = deps.identity.byCitizenId(picked.cid)
     local theirs = person and person.source and Geo.position(person.source)
     local mine = Geo.position(actor.source)
-    local radius = tonumber(rules().Radius) or 0
+    local radius = tonumber(Feature.block(BLOCK).Radius) or 0
     if not theirs or not mine or Geo.dist2(mine, theirs) > radius * radius then
         return false, CH.ERR.BROKER_TOO_FAR
     end
@@ -323,12 +321,14 @@ end
 Rumours.RULES = {
     Enabled = { kind = 'switch', default = false },
     AreaMode = { kind = 'choice', choices = { 'district', 'zones' }, default = 'district' },
-    Zones = { kind = 'phrases', default = {} },
-    Districts = { kind = 'areas', default = {} },
+    Zones = { kind = 'list', default = {} },
+    Districts = { kind = 'list', each = Places.parseArea, default = {},
+        says = "a list of 'x, y, name'" },
     BandPercent = { kind = 'number', min = 0, max = 100, integer = true, default = 25 },
     Radius = { kind = 'number', min = 1, max = 100, default = 5.0 },
     BriefValidMinutes = { kind = 'number', min = 1, max = 1440, integer = true, default = 30 },
-    Locations = { kind = 'points', default = {} },
+    Locations = { kind = 'list', each = Places.parsePoint, default = {},
+        says = "a list of places, each 'x, y, z, heading'" },
     RotateHours = { kind = 'number', min = 1, max = 168, integer = true, default = 4 },
     Model = { kind = 'text', default = 'g_m_m_armboss_01' },
     Scenario = { kind = 'text', default = 'WORLD_HUMAN_SMOKING' },
@@ -338,7 +338,7 @@ Rumours.RULES = {
 
 ---@param warn string[]
 function Rumours.validate(warn)
-    Places.checkBlock('Rumours', Rumours.RULES, warn)
+    Feature.check(BLOCK, Rumours.RULES, warn)
 end
 
 return Rumours

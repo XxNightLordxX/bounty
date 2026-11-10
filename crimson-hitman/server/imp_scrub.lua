@@ -22,7 +22,10 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
-local Imp = CrimsonBoot.require('server.imp_staffeco')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Improvements.SerialScrub'
 
 local Scrub = {}
 
@@ -132,17 +135,13 @@ function Scrub.serialFor(lineId)
     return ('%d%s%d'):format(100000 + nextValue() % 900000, letters, 100000 + nextValue() % 900000)
 end
 
-function Scrub.on()
-    return Imp.on('SerialScrub')
-end
-
 Scrub.RULES = {
     Enabled = { kind = 'switch', default = false },
 }
 
 ---@param warn string[]
 function Scrub.validate(warn)
-    Imp.checkBlock('SerialScrub', Scrub.RULES, warn)
+    Feature.check(BLOCK, Scrub.RULES, warn)
 end
 
 --- A serial as ox_inventory makes one (modules/items/server.lua
@@ -165,7 +164,7 @@ end
 ---@param meta table|nil the metadata Escrow would hand over
 ---@return table|nil
 function Scrub.scrub(recipientCid, line, meta)
-    if not Scrub.on() then return nil end
+    if not Feature.on(BLOCK) then return nil end
     if type(line) ~= 'table' or line.source ~= CH.SOURCE.WEAPON then return nil end
     if type(meta) ~= 'table' or type(meta.serial) ~= 'string' or meta.serial == '' then return nil end
     if line.taken_from ~= nil and line.taken_from == recipientCid then return nil end

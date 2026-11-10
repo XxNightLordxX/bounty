@@ -35,6 +35,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local MissionSteps = {}
 
@@ -163,8 +164,8 @@ end
 --- A protection job held: the guard, at their client's meeting pin.
 local function Guard(add)
     local protection = Deps.rpProtection
-    if not MissionSteps.enabled('Protection') or not protection or not protection.enabled
-        or not protection.enabled() then
+    if not MissionSteps.enabled('Protection') or not protection or not protection.all
+        or not Feature.on('Roleplay.Protection') then
         return
     end
     for _, job in ipairs(protection.all() or {}) do
@@ -275,8 +276,8 @@ end
 function MissionSteps.tick()
     local busy = next(Shown) ~= nil or next(Arms) ~= nil
         or (Deps.death and Deps.death.pendingCount and Deps.death.pendingCount() > 0)
-        or (MissionSteps.enabled('Protection') and Deps.rpProtection and Deps.rpProtection.enabled
-            and Deps.rpProtection.enabled())
+        or (MissionSteps.enabled('Protection') and Deps.rpProtection
+            and Feature.on('Roleplay.Protection'))
     if not busy then
         for _, provider in pairs(Providers) do
             local ok, has = pcall(provider.busy)

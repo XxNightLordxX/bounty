@@ -48,6 +48,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Text = CrimsonBoot.requireShared('text')
 local Geo = CrimsonBoot.requireShared('geo')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local Disposal = {}
 
@@ -84,13 +85,6 @@ local function Num(key, default)
     local v = tonumber(Cfg()[key])
     if not v or v ~= v then return default end
     return v
-end
-
---- Whether the feature is on now (read at every use: the panel's switch
---- applies at once).
----@return boolean
-function Disposal.enabled()
-    return Cfg().Enabled == true
 end
 
 Disposal.RULES = {
@@ -455,7 +449,7 @@ end
 function Disposal.holds(recipientCid, line)
     if not loaded then
         -- Off and never read: nothing is read for it, and nothing is held.
-        if not Disposal.enabled() then return false end
+        if not Feature.on('Disposal') then return false end
         -- Unread: whether a step stands is unknown, so a payout waits while
         -- the feature is on rather than pay out one held before a restart.
         if not Load() then return type(line) == 'table' and line.portion == CH.PORTION.BASELINE end
@@ -613,7 +607,7 @@ end
 --- contract a kill may complete, with both spots set, starts a step here,
 --- written down once the claim has gone through (Disposal.afterClaim).
 function Disposal.onClaim(contract, hitmanCid, fulfilment, opts)
-    if not Disposal.enabled() or type(contract) ~= 'table' or not hitmanCid then return end
+    if not Feature.on('Disposal') or type(contract) ~= 'table' or not hitmanCid then return end
     if fulfilment ~= CH.FULFILMENT.ELIMINATION then return end
     if type(opts) == 'table' and opts.outcome ~= nil and opts.outcome ~= CH.FULFILMENT.ELIMINATION then return end
     if Util.fulfilmentRule(contract) ~= CH.FULFILMENT_RULE.EITHER then return end
@@ -745,7 +739,7 @@ function Disposal.tick()
         -- Off and never read: nothing at all. A step kept from when it was on
         -- holds nothing meanwhile (Disposal.holds), and is finished once it
         -- is on again.
-        if not Disposal.enabled() or not Load() then return 0 end
+        if not Feature.on('Disposal') or not Load() then return 0 end
     end
     if next(Steps) == nil then return 0 end
     local now, finished = os.time(), 0
@@ -760,7 +754,7 @@ function Disposal.tick()
             local actor = ActorOf(step.hitman_cid)
             local was = rt.countedAt or now
             rt.countedAt = now
-            if not Disposal.enabled() then
+            if not Feature.on('Disposal') then
                 if Finish(step, 'switched_off') then finished = finished + 1 end
             elseif PastHold(step, now) and not Held(step) then
                 -- Stood past MaxHoldMinutes of real time, the hitman in the
@@ -990,7 +984,7 @@ local function AddOps(panel)
                 step.held = Steps[step.id] ~= nil and HeldShown(Steps[step.id]) or false
             end
         end
-        return true, nil, nil, { enabled = Disposal.enabled(), steps = steps,
+        return true, nil, nil, { enabled = Feature.on('Disposal'), steps = steps,
             spots = { vehicle = Disposal.spot('vehicle'), drop = Disposal.spot('drop') },
             limitSeconds = LimitSeconds(), onTimeout = Cfg().OnTimeout or 'pay' }
     end)

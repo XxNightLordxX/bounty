@@ -19,6 +19,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Text = CrimsonBoot.requireShared('text')
 local Org = CrimsonBoot.require('server.org.init')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local StaffOps = {}
 
@@ -135,7 +136,7 @@ end }
 --- Register (or register again) the job in qbx_core from the table, and
 --- bring every online player in step: the Create / sync job button.
 OPS.orgSetup = { 'write', function(src)
-    if not Org.enabled() then return off() end
+    if not Feature.on('Organisation') then return off() end
     local ok = Org.boot(false)
     if not ok then return false, Org.ERR.REFUSED, 'The organisation could not be read; the console says why.' end
     Org.record('org_setup', staff(src), {})

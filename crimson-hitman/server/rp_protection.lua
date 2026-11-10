@@ -52,6 +52,10 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Roleplay.Protection'
 
 local Protection = {}
 
@@ -72,22 +76,6 @@ local JobLock = Lock.new()
 --- that last ran (os.time()). See Protection.prune.
 local PRUNE_EVERY = 600
 local prunedAt = 0
-
-local function rp()
-    return type(Config.Roleplay) == 'table' and Config.Roleplay or {}
-end
-
-local function cfg()
-    return type(rp().Protection) == 'table' and rp().Protection or {}
-end
-
-function Protection.enabled()
-    return cfg().Enabled == true
-end
-
-function Protection.hitOnHitmanEnabled()
-    return type(rp().HitOnHitman) == 'table' and rp().HitOnHitman.Enabled == true
-end
 
 function Protection.init(deps)
     Storage, Identity, Audit, Notify = deps.storage, deps.identity, deps.audit, deps.notify
@@ -361,7 +349,7 @@ local function settle(job, outcome, why)
         if outcome == 'survived' then
             guardDue = amount
         elseif outcome == 'completed' then
-            local percent = math.floor(tonumber(cfg().PayOnCompletionPercent) or 0)
+            local percent = math.floor(tonumber(Feature.block(BLOCK).PayOnCompletionPercent) or 0)
             percent = math.max(0, math.min(100, percent))
             guardDue = math.floor(amount * percent / 100)
         end
@@ -534,7 +522,7 @@ end
 ---@return string|nil err
 ---@return table|nil refusal
 function Protection.post(actor, payload)
-    if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     -- The same for every contract and everybody: a job is a new engagement.
     if appPaused() then return false, CH.ERR.APP_PAUSED end
     load()
@@ -544,7 +532,7 @@ function Protection.post(actor, payload)
     if not contractId or not amount or amount ~= amount or math.floor(amount) ~= amount then
         return false, CH.ERR.INVALID_INPUT
     end
-    local rules = cfg()
+    local rules = Feature.block(BLOCK)
     local account = rules.Account == 'cash' and 'cash' or 'bank'
     -- The account the dialog said it is paid from: changed since, refused
     -- rather than taken from another.
@@ -653,7 +641,7 @@ function Protection.movePin(actor, payload)
     load()
     local job = type(payload.job) == 'string' and jobs[payload.job] or nil
     if not job or job.target_cid ~= actor.cid or not live(job) then
-        if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
+        if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
         return false, CH.ERR.NOT_FOUND
     end
     local pin = standing(actor.source)
@@ -688,8 +676,8 @@ end
 --- The offer on a contract card: what posting a job costs and from where,
 --- while the server offers it and none is posted.
 local function offerFor(contract)
-    if not Protection.enabled() or jobOn(contract.id) then return nil end
-    local rules = cfg()
+    if not Feature.on(BLOCK) or jobOn(contract.id) then return nil end
+    local rules = Feature.block(BLOCK)
     return { account = rules.Account == 'cash' and 'cash' or 'bank',
              min = math.floor(tonumber(rules.MinReward) or 0),
              max = math.floor(tonumber(rules.MaxReward) or 0) }
@@ -703,7 +691,7 @@ end
 --- that is not who this is about. Never one on it anonymously whom no
 --- look-up found. Only while the server offers it.
 local function counterTargets(contract, viewerCid, hitmen)
-    if not Protection.hitOnHitmanEnabled() or not App or not App.mintTargetHandle then
+    if not Feature.on('Roleplay.HitOnHitman') or not App or not App.mintTargetHandle then
         return nil
     end
     local out, seen = {}, {}
@@ -731,7 +719,7 @@ end
 --- the operatives they may place a contract on. Nothing for anybody else.
 function Protection.extend(out, contract, viewerCid, role, hitmen)
     if role ~= 'target' then return end
-    if Protection.enabled() or jobOn(contract.id) then
+    if Feature.on(BLOCK) or jobOn(contract.id) then
         out.protection = Protection.targetView(contract, viewerCid)
         if not CH.TERMINAL[contract.state] then out.protectionOffer = offerFor(contract) end
     end
@@ -746,8 +734,8 @@ end
 --- reward alone, and the jobs they guard, with the target's name and pin.
 function Protection.board(actor)
     load()
-    local out = { enabled = Protection.enabled(), open = {}, mine = {},
-                  maxJobs = math.floor(tonumber(cfg().MaxJobsPerGuard) or 0) }
+    local out = { enabled = Feature.on(BLOCK), open = {}, mine = {},
+                  maxJobs = math.floor(tonumber(Feature.block(BLOCK).MaxJobsPerGuard) or 0) }
     local ids = {}
     for id in pairs(jobs) do ids[#ids + 1] = id end
     table.sort(ids)
@@ -774,7 +762,7 @@ local function acceptUnlocked(actor, payload)
     if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.PROTECTION_TAKEN end
     -- The reward the board showed: a different one is refused, not taken on.
     if tonumber(payload.reward) ~= tonumber(job.amount) then return false, CH.ERR.TERMS_CHANGED end
-    local most = math.floor(tonumber(cfg().MaxJobsPerGuard) or 0)
+    local most = math.floor(tonumber(Feature.block(BLOCK).MaxJobsPerGuard) or 0)
     if guarding(actor.cid) >= most then return false, CH.ERR.PROTECTION_LIMIT, { max = most } end
     local contract = Storage.readContract(job.contract_id)
     if not contract or CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
@@ -807,7 +795,7 @@ end
 --- One acceptance per guard at a time, so two taken in one another's awaits
 --- cannot both pass MaxJobsPerGuard.
 function Protection.accept(actor, payload)
-    if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     if appPaused() then return false, CH.ERR.APP_PAUSED end
     local key = 'guard:' .. tostring(actor.cid)
     return JobLock.run(key, acceptUnlocked, actor, payload)
@@ -894,12 +882,12 @@ end
 function Protection.settings(out, viewerCid)
     if type(out) ~= 'table' then return end
     local guarding = false
-    if not Protection.enabled() and viewerCid ~= nil then
+    if not Feature.on(BLOCK) and viewerCid ~= nil then
         load()
         guarding = guardsLiveJob(viewerCid)
     end
-    out.protection = (Protection.enabled() or guarding) or nil
-    out.hitOnHitman = Protection.hitOnHitmanEnabled() or nil
+    out.protection = (Feature.on(BLOCK) or guarding) or nil
+    out.hitOnHitman = Feature.on('Roleplay.HitOnHitman') or nil
 end
 
 --- How many jobs are kept (the tests).
@@ -909,6 +897,33 @@ function Protection.all()
     for _, job in pairs(jobs) do out[#out + 1] = job end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
+end
+
+--- What each setting must be, as the start holds config.lua to it
+--- (Feature.check) and the panel's catalogue offers it: the bodyguards'
+--- block, and the hit on the hitman's (a switch).
+Protection.RULES = {
+    Enabled = { kind = 'switch' },
+    Account = { kind = 'choice', choices = { 'cash', 'bank' } },
+    MinReward = { kind = 'number', integer = true, min = 1, max = 10000000 },
+    MaxReward = { kind = 'number', integer = true, min = 1, max = 10000000 },
+    PayOnCompletionPercent = { kind = 'number', integer = true, min = 0, max = 100 },
+    MaxJobsPerGuard = { kind = 'number', integer = true, min = 1, max = 20 },
+}
+Protection.HIT_RULES = {
+    Enabled = { kind = 'switch' },
+}
+
+---@param warn string[]
+---@param filled string[]|nil
+function Protection.validate(warn, filled)
+    local rules = Feature.check(BLOCK, Protection.RULES, warn, filled)
+    Feature.check('Roleplay.HitOnHitman', Protection.HIT_RULES, warn, filled)
+    if rules.MinReward > rules.MaxReward then
+        warn[#warn + 1] = ('Config.Roleplay.Protection.MinReward (%d) is above MaxReward (%d). Using %d for both.')
+            :format(rules.MinReward, rules.MaxReward, rules.MaxReward)
+        rules.MinReward = rules.MaxReward
+    end
 end
 
 return Protection

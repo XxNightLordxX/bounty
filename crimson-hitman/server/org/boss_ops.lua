@@ -17,6 +17,7 @@
 
 local Text = CrimsonBoot.requireShared('text')
 local Org = CrimsonBoot.require('server.org.init')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local BossOps = {}
 
@@ -198,7 +199,7 @@ function BossOps.register(deps)
         local name, bucket, power, fn = entry[1], entry[2], entry[3], entry[4]
         BossOps.LIST[#BossOps.LIST + 1] = { name = name, bucket = bucket, power = power }
         deps.app.addHandler(name, bucket, function(actor, payload)
-            if not Org.enabled() and name ~= 'orgMine' then return answer(false, Org.ERR.OFF) end
+            if not Feature.on('Organisation') and name ~= 'orgMine' then return answer(false, Org.ERR.OFF) end
             if type(payload) ~= 'table' then payload = {} end
             return fn(actor, payload)
         end)
@@ -209,7 +210,7 @@ function BossOps.register(deps)
     -- read from the client.
     RegisterNetEvent('crimson-hitman:orgUse', function(id)
         local src = source
-        if src <= 0 or not Org.enabled() then return end
+        if src <= 0 or not Feature.on('Organisation') then return end
         if not deps.app.floodOk(src, 'orgUse') then return end
         if type(id) ~= 'string' or #id > 48 then return end
         Org.useSpot(src, id)

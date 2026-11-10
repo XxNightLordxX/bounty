@@ -12,6 +12,10 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Places = CrimsonBoot.require('server.rp_places')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Roleplay.InformantNpc'
 
 local Informant = {}
 
@@ -19,10 +23,6 @@ local deps
 
 function Informant.init(d)
     deps = d
-end
-
-function Informant.on()
-    return Places.on('InformantNpc')
 end
 
 --- The purchases the NPC stands in front of, and the informant feature each
@@ -34,7 +34,7 @@ Informant.PURCHASES = {
 ---@return string|nil err
 function Informant.gate(name, actor)
     local section = Informant.PURCHASES[name]
-    if not section or not Informant.on() then return nil end
+    if not section or not Feature.on(BLOCK) then return nil end
     if not Util.informantAnyOn(section) then return nil end
     if Places.near('informant', actor.source) then return nil end
     deps.audit.rejected('informant_not_found', actor.cid, nil, { request = name })
@@ -44,7 +44,8 @@ end
 Informant.RULES = {
     Enabled = { kind = 'switch', default = false },
     Radius = { kind = 'number', min = 1, max = 100, default = 5.0 },
-    Locations = { kind = 'points', default = {} },
+    Locations = { kind = 'list', each = Places.parsePoint, default = {},
+        says = "a list of places, each 'x, y, z, heading'" },
     RotateHours = { kind = 'number', min = 1, max = 168, integer = true, default = 3 },
     Model = { kind = 'text', default = 'a_m_y_hipster_01' },
     Scenario = { kind = 'text', default = 'WORLD_HUMAN_LEANING' },
@@ -53,9 +54,9 @@ Informant.RULES = {
 
 ---@param warn string[]
 function Informant.validate(warn)
-    Places.checkBlock('InformantNpc', Informant.RULES, warn)
+    Feature.check(BLOCK, Informant.RULES, warn)
     -- The broker's and informant's places set from the panel (rp_places.lua).
-    Places.checkBlock('NpcPlaces', { Enabled = { kind = 'switch', default = false } }, warn)
+    Feature.check('Roleplay.NpcPlaces', { Enabled = { kind = 'switch', default = false } }, warn)
 end
 
 return Informant

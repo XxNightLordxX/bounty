@@ -25,6 +25,7 @@ local Powers = CrimsonBoot.require('server.org.powers')
 local Engine = CrimsonBoot.require('server.org.engine')
 local Jobs = CrimsonBoot.require('server.org.jobs')
 local Funds = CrimsonBoot.require('server.org.funds')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local Org = {}
 
@@ -131,16 +132,10 @@ end
 --                              SWITCHES AND STATE
 -- ============================================================================
 
---- Whether the organisation is on now: one read of one switch.
----@return boolean
-function Org.enabled()
-    return type(Config.Organisation) == 'table' and Config.Organisation.Enabled == true
-end
-
 --- The organisation in force, or nil (off, or not loaded).
 ---@return table|nil
 function Org.current()
-    if not Org.enabled() then return nil end
+    if not Feature.on('Organisation') then return nil end
     return State
 end
 
@@ -308,7 +303,7 @@ end
 --- the job stays registered until the next start, which registers none.
 ---@param live boolean|nil turned on or off from the panel
 function Org.boot(live)
-    if not Org.enabled() then
+    if not Feature.on('Organisation') then
         if live and State then
             State = nil
             Org.pushSpotsAll()
@@ -973,7 +968,7 @@ end
 --- Whether codenames are on now.
 ---@return boolean
 function Org.codenamesOn()
-    return Org.enabled() and Config.Organisation.Codenames == true
+    return Feature.on('Organisation') and Config.Organisation.Codenames == true
 end
 
 --- The letters a codename is checked with: lower case, letters only, the
@@ -1163,7 +1158,7 @@ end
 ---@param contractId string|nil
 ---@return string|nil
 function Org.shownName(cid, name, contractId)
-    if name == nil or type(cid) ~= 'string' or not Org.enabled() then return name end
+    if name == nil or type(cid) ~= 'string' or not Feature.on('Organisation') then return name end
     if contractId ~= nil then
         local split = State and shownSplit(contractId, cid)
         if split then
@@ -1609,7 +1604,7 @@ end
 function Org.cutFor(recipientCid, line)
     if type(line) ~= 'table' or type(line.id) ~= 'string' then return 0 end
     local taken = Funds.taken(line.id)
-    if taken > 0 or not Org.enabled() then return taken end
+    if taken > 0 or not Feature.on('Organisation') then return taken end
     local org = State
     if not org then return 0 end
     if (tonumber(line.deliver_arrived) or 0) > 0 then return 0 end
@@ -1661,7 +1656,7 @@ end
 ---@return string|nil err
 ---@return table|nil data
 function Org.acceptGate(actor, contractId, opts, out)
-    if not Org.enabled() then return nil end
+    if not Feature.on('Organisation') then return nil end
     local org = State
     if not org or type(actor) ~= 'table' then return nil end
     local member = org.members[actor.cid]
@@ -1984,7 +1979,7 @@ end
 --- Whether payroll is on now.
 ---@return boolean
 function Org.payrollOn()
-    return Org.enabled() and Config.Organisation.Payroll == true
+    return Feature.on('Organisation') and Config.Organisation.Payroll == true
 end
 
 local function payDays()
@@ -2320,8 +2315,7 @@ end
 --- Inside one of the staff safe zones (Config.Improvements.TipSafeZones.Zones,
 --- 'x, y, radius, name'), where no organisation spot is placed by a boss.
 local function inSafeZone(x, y)
-    local zones = type(Config.Improvements) == 'table' and type(Config.Improvements.TipSafeZones) == 'table'
-        and Config.Improvements.TipSafeZones.Zones or {}
+    local zones = Feature.block('Improvements.TipSafeZones').Zones
     for _, text in ipairs(type(zones) == 'table' and zones or {}) do
         local zx, zy, r = tostring(text):match('^%s*(%-?[%d.]+)%s*,%s*(%-?[%d.]+)%s*,%s*([%d.]+)')
         zx, zy, r = tonumber(zx), tonumber(zy), tonumber(r)
@@ -2840,7 +2834,7 @@ end
 
 --- Everything, for staff (orgGet).
 function Org.staffView(viewer)
-    if not Org.enabled() then
+    if not Feature.on('Organisation') then
         return { enabled = false, job = orgId() }
     end
     local org = State

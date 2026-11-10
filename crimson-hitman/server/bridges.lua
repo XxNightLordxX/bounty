@@ -9,6 +9,7 @@ local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
 local Lifecycle = CrimsonBoot.require('server.lib.lifecycle')
 local Words = CrimsonBoot.requireShared('words')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local Bridges = {}
 
@@ -710,7 +711,7 @@ function Bridges.install(modules)
         local src = source
         -- Headshots switched off (Config.Mugshot.Enabled): refused before
         -- anything about the sender or the picture is looked at.
-        if not modules.mugshot.enabled() then return end
+        if not Feature.on('Mugshot') then return end
         if not modules.app.floodOk(src, 'mugshot') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
@@ -725,7 +726,7 @@ function Bridges.install(modules)
     RegisterNetEvent('crimson-hitman:appearanceChanged', function()
         local src = source
         -- Nothing is kept to go stale while headshots are off.
-        if not modules.mugshot.enabled() then return end
+        if not Feature.on('Mugshot') then return end
         if not modules.app.floodOk(src, 'appearanceChanged') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end

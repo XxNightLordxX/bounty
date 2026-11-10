@@ -25,10 +25,14 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads it).
+local BLOCK = 'Improvements.HitmanHeat'
 
 local Heat = {}
 
-local Storage, Identity, Notify, Audit, Board, Projection
+local Storage, Identity, Notify, Audit, Projection
 
 local KIND = 'imp_heat'
 
@@ -43,10 +47,6 @@ local coolsAt = math.huge
 --- Drawn for the target's warning. A test may replace it.
 Heat.random = math.random
 
-local function rules()
-    return Board and Board.on('HitmanHeat') or nil
-end
-
 local num = Util.num
 
 --- Drop what has cooled from one hitman's heat.
@@ -54,7 +54,7 @@ local num = Util.num
 local function prune(cid, now)
     local list = events[cid]
     if not list then return false end
-    local cfg = rules() or {}
+    local cfg = Feature.active(BLOCK) or {}
     local since = now - num(cfg.DecayHours, 24) * 3600
     local kept = {}
     for i = 1, #list do
@@ -82,7 +82,7 @@ end
 function Heat.of(cid)
     if type(cid) ~= 'string' then return 0 end
     local now = os.time()
-    local cfg = rules() or {}
+    local cfg = Feature.active(BLOCK) or {}
     local since = now - num(cfg.DecayHours, 24) * 3600
     local sum = 0
     for _, e in ipairs(events[cid] or {}) do
@@ -95,7 +95,7 @@ end
 ---@param cid string
 ---@return boolean
 function Heat.known(cid)
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg then return false end
     return Heat.of(cid) >= num(cfg.Threshold, 5)
 end
@@ -105,7 +105,7 @@ end
 ---@param points number
 ---@param why string
 function Heat.add(cid, points, why)
-    if not rules() or type(cid) ~= 'string' then return end
+    if not Feature.active(BLOCK) or type(cid) ~= 'string' then return end
     points = math.floor(num(points))
     if points <= 0 then return end
     local now = os.time()
@@ -113,7 +113,7 @@ function Heat.add(cid, points, why)
     local list = events[cid] or {}
     list[#list + 1] = { at = now, points = points }
     events[cid] = list
-    coolsAt = math.min(coolsAt, now + num((rules() or {}).DecayHours, 24) * 3600)
+    coolsAt = math.min(coolsAt, now + num((Feature.active(BLOCK) or {}).DecayHours, 24) * 3600)
     keep(cid)
     Audit.action('imp_heat_added', cid, nil, { points = points, why = why, heat = Heat.of(cid) })
 end
@@ -121,7 +121,7 @@ end
 --- A completion that paid (Contracts.afterClaim): on a whitelisted-job
 --- target, heat.
 function Heat.onClaimed(contractId, hitmanCid)
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg then return end
     local contract = Storage.readContract(contractId)
     if contract and contract.target_protected == true then
@@ -131,7 +131,7 @@ end
 
 --- A witness report on a completion went out (RpConsequences.afterWitness).
 function Heat.onWitness(_, hitmanCid)
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg then return end
     Heat.add(hitmanCid, cfg.WitnessHeat, 'witness')
 end
@@ -140,7 +140,7 @@ end
 --- about an acceptance or a tip on a whitelisted-job target is heat, and a
 --- known hitman's acceptance may warn the target.
 function Heat.after(name, actor, payload)
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg or (name ~= 'accept' and name ~= 'locationTip') or type(actor) ~= 'table' then return end
     local id = type(payload) == 'table' and Util.toId(payload.id) or nil
     local contract = id and Storage.readContract(id) or nil
@@ -191,7 +191,7 @@ end
 --- old enough. Names nobody; no position.
 ---@return boolean sent
 function Heat.bulletin(now)
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg then return false end
     local every = math.floor(num(cfg.BulletinEveryMinutes))
     if every <= 0 or now - lastBulletin < every * 60 then return false end
@@ -229,10 +229,10 @@ end
 --- The tick: heat that cooled dropped (and its row), once the oldest kept
 --- has cooled and not before, then the bulletin (its own wait).
 function Heat.tick()
-    if not rules() then return end
+    if not Feature.active(BLOCK) then return end
     local now = os.time()
     if now >= coolsAt then
-        local decay = num(rules().DecayHours, 24) * 3600
+        local decay = num(Feature.active(BLOCK).DecayHours, 24) * 3600
         coolsAt = math.huge
         for cid in pairs(events) do
             if prune(cid, now) then keep(cid) end
@@ -247,8 +247,8 @@ function Heat.reset()
     events, lastBulletin, coolsAt = {}, -math.huge, math.huge
 end
 
-function Heat.init(deps, board)
-    Storage, Identity, Notify, Audit, Board = deps.storage, deps.identity, deps.notify, deps.audit, board
+function Heat.init(deps)
+    Storage, Identity, Notify, Audit = deps.storage, deps.identity, deps.notify, deps.audit
     Projection = deps.projection
     Heat.reset()
     if Storage and Storage.readRpRows then

@@ -15,6 +15,7 @@
 --- once.
 
 local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local Mugshot = {}
 
@@ -52,16 +53,9 @@ function Mugshot.init(deps)
     handleSeq = 0
 end
 
---- Whether target headshots are on at all (Config.Mugshot.Enabled).
----@return boolean
-function Mugshot.enabled()
-    local rules = Config.Mugshot
-    return type(rules) ~= 'table' or rules.Enabled ~= false
-end
-
 --- The cached image for a citizen, or nil if none has been rendered yet.
 function Mugshot.get(cid)
-    if not Mugshot.enabled() then return nil end
+    if not Feature.on('Mugshot') then return nil end
     local entry = cache[cid]
     return entry and entry.data or nil
 end
@@ -69,7 +63,7 @@ end
 --- The handle of the citizen's current image, or nil if there is none.
 --- This is what a projection carries instead of forty kilobytes of base64.
 function Mugshot.handleFor(cid)
-    if not Mugshot.enabled() then return nil end
+    if not Feature.on('Mugshot') then return nil end
     local entry = cache[cid]
     return entry and entry.data and entry.id or nil
 end
@@ -78,7 +72,7 @@ end
 --- been replaced by a newer render or dropped — the app then simply shows no
 --- headshot, which is what it does before the first render anyway.
 function Mugshot.byHandle(handle)
-    if not Mugshot.enabled() or type(handle) ~= 'string' then return nil end
+    if not Feature.on('Mugshot') or type(handle) ~= 'string' then return nil end
     local cid = byHandle[handle]
     if not cid then return nil end
     local entry = cache[cid]
@@ -104,7 +98,7 @@ end
 --- floor. Returns whatever is cached right now; the new image arrives later.
 function Mugshot.request(cid)
     -- Switched off: nobody's game is asked for anything.
-    if not Mugshot.enabled() then return nil end
+    if not Feature.on('Mugshot') then return nil end
     local entry = cache[cid]
     if not rendererRunning() then return entry and entry.data or nil end
     local floor = (Config.Mugshot.MinRefreshMinutes or 5) * 60
@@ -157,7 +151,7 @@ function Mugshot.store(cid, image)
     -- can push a picture of its choosing into every viewer's listing without
     -- anything ever having requested a render.
     local entry = cache[cid]
-    if not Mugshot.enabled() then return false end
+    if not Feature.on('Mugshot') then return false end
     if not rendererRunning() then
         Audit.rejected('mugshot_no_renderer', cid, nil, {})
         return false

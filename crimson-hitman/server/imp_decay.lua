@@ -39,10 +39,14 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Words = CrimsonBoot.requireShared('words')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads it).
+local BLOCK = 'Improvements.ContractDecay'
 
 local Decay = {}
 
-local Storage, Identity, Notify, Audit, Escrow, Contracts, Amendments, Board, Projection
+local Storage, Identity, Notify, Audit, Escrow, Contracts, Amendments, Projection
 
 local KIND = 'imp_decay'
 
@@ -75,10 +79,6 @@ local rows = {}
 local OnSince = nil
 local SeenOff = false
 local ON_KIND = 'imp_decay_on'
-
-local function rules()
-    return Board and Board.on('ContractDecay') or nil
-end
 
 local num = Util.num
 
@@ -374,7 +374,7 @@ end
 --- nothing was written.
 ---@return integer stepped
 function Decay.tick()
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg then
         nextAt = 0
         SeenOff = true
@@ -477,7 +477,7 @@ end
 ---@param contract table
 ---@return table|nil
 function Decay.cardFor(contract)
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg or type(contract) ~= 'table' then return nil end
     local row = rows[contract.id]
     if contract.state ~= CH.STATE.ACTIVE and not row then return nil end
@@ -503,14 +503,14 @@ end
 ---@return boolean ok
 ---@return string|table err or the card's new decay
 function Decay.turnOff(actor, contractId)
-    if not rules() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.active(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     local contract = Storage.readContract(contractId)
     if not contract or contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
     local now = os.time()
-    local row = rowFor(contract, now, math.max(1, num(rules().Hours, 1)))
+    local row = rowFor(contract, now, math.max(1, num(Feature.active(BLOCK).Hours, 1)))
     if not row.off then
         row.off = true
         write(row)
@@ -519,12 +519,12 @@ function Decay.turnOff(actor, contractId)
     return true, nil, Decay.cardFor(contract)
 end
 
-function Decay.init(deps, board)
+function Decay.init(deps)
     Storage, Identity, Notify, Audit = deps.storage, deps.identity, deps.notify, deps.audit
-    Escrow, Contracts, Amendments, Board = deps.escrow, deps.contracts, deps.amendments, board
+    Escrow, Contracts, Amendments = deps.escrow, deps.contracts, deps.amendments
     Projection = deps.projection
     rows, nextAt, nextHours = {}, 0, nil
-    OnSince, SeenOff = nil, rules() == nil
+    OnSince, SeenOff = nil, Feature.active(BLOCK) == nil
     if Storage and Storage.readRpRows then
         local ok, kept = pcall(Storage.readRpRows, KIND)
         for _, row in ipairs(ok and type(kept) == 'table' and kept or {}) do
@@ -541,7 +541,7 @@ function Decay.init(deps, board)
             if role == 'creator' then out.decay = Decay.cardFor(contract) end
         end
         projection.settingsExtenders.impDecay = function(settings)
-            local cfg = rules()
+            local cfg = Feature.active(BLOCK)
             if not cfg then return end
             settings.contractDecay = {
                 mode = cfg.Mode == 'shorten' and 'shorten' or 'rise',

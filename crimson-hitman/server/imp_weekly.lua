@@ -22,7 +22,10 @@
 local Log = CrimsonBoot.requireShared('log')
 local Words = CrimsonBoot.requireShared('words')
 local Db = CrimsonBoot.require('server.lib.db')
-local Imp = CrimsonBoot.require('server.imp_staffeco')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Improvements.WeeklyStats'
 
 local Weekly = {}
 
@@ -43,15 +46,18 @@ Weekly.META = 'imp_weekly_day'
 Weekly.CONVAR = 'crimson_hitman_stats_webhook'
 local WEEK = 7 * 86400
 
+--- The days of the week, as os.date's wday counts them (1 = Sunday).
+Weekly.DAYS = { 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday' }
+
 Weekly.RULES = {
     Enabled = { kind = 'switch', default = false },
-    Day = { kind = 'choice', choices = Imp.DAYS, default = 'sunday' },
+    Day = { kind = 'choice', choices = Weekly.DAYS, default = 'sunday' },
     Hour = { kind = 'number', integer = true, min = 0, max = 23, default = 18 },
 }
 
 ---@param warn string[]
 function Weekly.validate(warn)
-    Imp.checkBlock('WeeklyStats', Weekly.RULES, warn)
+    Feature.check(BLOCK, Weekly.RULES, warn)
 end
 
 ---@param d table { storage, audit, alerts }
@@ -74,9 +80,9 @@ end
 ---@param now integer
 ---@return integer
 function Weekly.lastDue(now)
-    local rules = Imp.block('WeeklyStats')
+    local rules = Feature.block(BLOCK)
     local want = 1
-    for i, name in ipairs(Imp.DAYS) do if name == rules.Day then want = i end end
+    for i, name in ipairs(Weekly.DAYS) do if name == rules.Day then want = i end end
     local hour = math.floor(tonumber(rules.Hour) or 18)
     -- Counted back from now in seconds, from the clock's own fields: the
     -- start of today's hour moved to Hour, then back to the day.
@@ -195,14 +201,14 @@ end
 ---@return boolean posted
 ---@return string|nil why 'off' | 'early' | 'done' | 'no_webhook' | 'unavailable'
 function Weekly.tick()
-    if not Imp.on('WeeklyStats') then
+    if not Feature.on(BLOCK) then
         asleep = nil
         return false, 'off'
     end
     local now = os.time()
     -- It knows when the next post falls due, and sleeps until then: a
     -- comparison a tick, not the calendar worked out again.
-    local rules = Imp.block('WeeklyStats')
+    local rules = Feature.block(BLOCK)
     local key = tostring(rules.Day) .. '@' .. tostring(rules.Hour)
     if asleep and asleep.key == key and now < asleep.untilAt then return false, asleep.why end
     asleep = nil

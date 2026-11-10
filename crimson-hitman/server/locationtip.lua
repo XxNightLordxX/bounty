@@ -20,6 +20,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local LocationTip = {}
 
@@ -482,7 +483,7 @@ function LocationTip.cardFor(contract, cid)
     end
     local out = { off = (not on) or nil }
     if on then
-        local mine = ImpTips.on('TipHoldFirst') and Storage.readHitman(contract.id, cid) or nil
+        local mine = Feature.on('Improvements.TipHoldFirst') and Storage.readHitman(contract.id, cid) or nil
         ImpTips.tipCard(out, contract, mine, count, (boughtBy(contract.id, cid, now)), now)
     end
     if showing then

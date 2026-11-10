@@ -15,7 +15,10 @@
 --- be taken (ox_inventory raised or said no) is audited and the action
 --- stands. With ox_inventory not started the feature does nothing at all.
 
-local Places = CrimsonBoot.require('server.rp_places')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Roleplay.BurnerPhone'
 local Bridge = CrimsonBoot.require('server.lib.bridge')
 
 local Burner = {}
@@ -24,14 +27,6 @@ local deps
 
 function Burner.init(d)
     deps = d
-end
-
-function Burner.on()
-    return Places.on('BurnerPhone')
-end
-
-local function rules()
-    return Places.block('BurnerPhone')
 end
 
 --- The app's requests that are contract actions: refused without the item.
@@ -61,14 +56,14 @@ Burner.ACTIONS = {
 ---@return boolean|nil
 function Burner.has(actor)
     if not Bridge.started('ox_inventory') then return nil end
-    local item = tostring(rules().Item or 'burner_phone')
+    local item = tostring(Feature.block(BLOCK).Item or 'burner_phone')
     local ok, count = Bridge.call('ox_inventory', 'GetItemCount', actor.source, item)
     if not ok then return nil end
     return (tonumber(count) or 0) >= 1
 end
 
 local function missing(actor)
-    return Burner.on() and Burner.has(actor) == false
+    return Feature.on(BLOCK) and Burner.has(actor) == false
 end
 
 ---@return string|nil err
@@ -82,7 +77,7 @@ end
 --- The ox_inventory item a burner phone is, as configured.
 ---@return string|nil
 function Burner.itemName()
-    local item = rules().Item
+    local item = Feature.block(BLOCK).Item
     return type(item) == 'string' and item ~= '' and item or nil
 end
 
@@ -90,8 +85,8 @@ end
 --- while RequireToOpen is on. Said to the page as burnerMissing.
 function Burner.shape(name, actor, result)
     if (name ~= 'list' and name ~= 'mine') or type(result) ~= 'table' then return result end
-    if not Burner.on() then return result end
-    if rules().RequireToOpen ~= true or not missing(actor) then return result end
+    if not Feature.on(BLOCK) then return result end
+    if Feature.block(BLOCK).RequireToOpen ~= true or not missing(actor) then return result end
     if name == 'list' then
         result.contracts, result.page, result.pages = {}, 1, 1
     else
@@ -104,11 +99,11 @@ end
 
 --- One used up after a placing or an acceptance, where the settings say so.
 function Burner.after(name, actor)
-    if not Burner.on() then return end
-    local spend = (name == 'create' and rules().ConsumeOnPlace == true)
-        or (name == 'accept' and rules().ConsumeOnAccept == true)
+    if not Feature.on(BLOCK) then return end
+    local spend = (name == 'create' and Feature.block(BLOCK).ConsumeOnPlace == true)
+        or (name == 'accept' and Feature.block(BLOCK).ConsumeOnAccept == true)
     if not spend or not Bridge.started('ox_inventory') then return end
-    local item = tostring(rules().Item or 'burner_phone')
+    local item = tostring(Feature.block(BLOCK).Item or 'burner_phone')
     local ok, removed = Bridge.call('ox_inventory', 'RemoveItem', actor.source, item, 1)
     if ok and removed then
         deps.audit.action('burner_used', actor.cid, nil, { request = name, item = item })
@@ -127,7 +122,7 @@ Burner.RULES = {
 
 ---@param warn string[]
 function Burner.validate(warn)
-    Places.checkBlock('BurnerPhone', Burner.RULES, warn)
+    Feature.check(BLOCK, Burner.RULES, warn)
 end
 
 return Burner

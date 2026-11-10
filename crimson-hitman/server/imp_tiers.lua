@@ -13,15 +13,30 @@
 --- which every viewer already sees.
 
 local Util = CrimsonBoot.requireShared('util')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local Tiers = {}
 
-local Escrow, Progression, Projection, Board
+local Escrow, Progression, Projection
 
+--- One tier line, 'name, least reward, least level', read: nil when it is
+--- not one. The name is what the card shows; nothing else reads it.
+---@param line any
+---@return table|nil { name, minReward, minLevel }
+function Tiers.parseTier(line)
+    if type(line) ~= 'string' or #line > 60 then return nil end
+    local name, reward, level = line:match('^%s*([^%c<>,]-)%s*,%s*(%d+)%s*,%s*(%d+)%s*$')
+    if not name or #name == 0 then return nil end
+    reward, level = tonumber(reward), tonumber(level)
+    if not reward or reward > 1000000000 or not level or level < 1 or level > 100 then return nil end
+    return { name = name, minReward = math.floor(reward), minLevel = math.floor(level) }
+end
+
+--- The tiers' block while they are on, and progression with them (a
+--- level is read from it); nil otherwise.
 local function rules()
-    if not Board then return nil end
-    if type(Config.Progression) ~= 'table' or Config.Progression.Enabled ~= true then return nil end
-    return Board.on('Tiers')
+    if not Feature.on('Progression') then return nil end
+    return Feature.active('Improvements.Tiers')
 end
 
 --- The tiers in force, highest least reward first.
@@ -31,7 +46,7 @@ function Tiers.list()
     if not cfg then return {} end
     local out = {}
     for _, line in ipairs(type(cfg.Tiers) == 'table' and cfg.Tiers or {}) do
-        local tier = Board.parseTier(line)
+        local tier = Tiers.parseTier(line)
         if tier then out[#out + 1] = tier end
     end
     table.sort(out, function(a, b) return a.minReward > b.minReward end)
@@ -90,8 +105,8 @@ function Tiers.gate(name, actor, payload)
     return nil
 end
 
-function Tiers.init(deps, board)
-    Escrow, Progression, Projection, Board = deps.escrow, deps.progression, deps.projection, board
+function Tiers.init(deps)
+    Escrow, Progression, Projection = deps.escrow, deps.progression, deps.projection
     Tiers.storage = deps.storage
     if Projection and Projection.extenders then
         -- A card the viewer could take: the board's strangers' cards only.

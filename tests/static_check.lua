@@ -2799,6 +2799,26 @@ do
             end
         end
     end
+    -- Feature blocks (step 3a): one way to read and check them,
+    -- server/lib/feature.lua. A module reading Config.Roleplay or
+    -- Config.Improvements by hand, or keeping its own enabled() switch read
+    -- or block validator, is a second copy to drift.
+    for _, path in ipairs(files) do
+        local src = '\n' .. (read(path) or '')
+        if path:find('/server/', 1, true) and not path:find('server/lib/feature.lua', 1, true) then
+            if src:find('type%(Config%.Roleplay%)') or src:find('type%(Config%.Improvements%)') then
+                failures[#failures + 1] = ('%s reads a feature block by hand: use Feature.block / on / active '
+                    .. '(server/lib/feature.lua)'):format(path)
+            end
+            for _, name in ipairs({ 'cfg', 'enabled', 'checkBlock' }) do
+                if src:find('\n%s*local function ' .. name .. '%(')
+                    or src:find('\nfunction [%w_]+%.' .. name .. '%(%)') or src:find('\nfunction [%w_]+%.' .. name .. '%(name') then
+                    failures[#failures + 1] = ('%s defines its own %s: use Feature.on / block / check '
+                        .. '(server/lib/feature.lua)'):format(path, name)
+                end
+            end
+        end
+    end
     for _, path in ipairs(files) do
         local src = read(path) or ''
         for _, name in ipairs({ 'copyOf', 'money' }) do

@@ -25,9 +25,14 @@
 --- every viewer until the next, or for at most NAMED_KEEP_SECONDS, as the
 --- days counted move on.
 
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads it).
+local BLOCK = 'Improvements.PlacerRecord'
+
 local Record = {}
 
-local Storage, Projection, Board
+local Storage, Projection
 
 --- [placer cid .. '|' .. days] = record, for one generation of the
 --- contracts, worked out at `at` (os.time).
@@ -38,10 +43,6 @@ local named = { gen = nil, at = 0, by = {} }
 local NAMED_KEEP_SECONDS = 60
 --- [contract id .. '|' .. days] = banded record, kept for the contract's life.
 local anon = {}
-
-local function rules()
-    return Board and Board.on('PlacerRecord') or nil
-end
 
 --- The bands an anonymous placer's counts are shown in.
 ---@param n integer
@@ -79,7 +80,7 @@ end
 ---@param contract table
 ---@return table|nil { placed, paidOut, cancelled, days, banded }
 function Record.forCard(contract)
-    local cfg = rules()
+    local cfg = Feature.active(BLOCK)
     if not cfg or type(contract) ~= 'table' or type(contract.creator_cid) ~= 'string' then return nil end
     local days = math.floor(tonumber(cfg.LookbackDays) or 30)
     if contract.anon_creator == true then
@@ -137,8 +138,8 @@ function Record.reset()
     named, anon = { gen = nil, at = 0, by = {} }, {}
 end
 
-function Record.init(deps, board)
-    Storage, Projection, Board = deps.storage, deps.projection, board
+function Record.init(deps)
+    Storage, Projection = deps.storage, deps.projection
     Record.reset()
     if Projection and Projection.extenders then
         -- On a card the viewer may take, or holds: never the placer's own

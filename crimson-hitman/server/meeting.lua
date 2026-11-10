@@ -36,6 +36,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local Meeting = {}
 
@@ -72,13 +73,6 @@ function Meeting.init(deps)
     -- The 'What to do' line on each side's card says what their phone was
     -- told, word for word.
     if deps.projection then deps.projection.meetingSteps = function(role) return Meeting.steps(role) end end
-end
-
---- Whether the feature is on (Config.Kidnap.MeetingPoint), read at every
---- use, so the admin panel's switch applies at once.
----@return boolean
-function Meeting.enabled()
-    return type(Config.Kidnap) == 'table' and Config.Kidnap.MeetingPoint == true
 end
 
 --- The citizen ids of the hitmen holding the contract now.
@@ -212,7 +206,7 @@ end
 ---@return table
 local function partiesOf(contract)
     local want = {}
-    if not Meeting.enabled() or not contract or CH.TERMINAL[contract.state]
+    if not Feature.on('Kidnap.MeetingPoint') or not contract or CH.TERMINAL[contract.state]
         or contract.meeting_x == nil or contract.meeting_y == nil
         or Util.fulfilmentRule(contract) ~= CH.FULFILMENT_RULE.ALIVE then
         return want
@@ -293,7 +287,7 @@ end
 function Meeting.syncAll()
     local ids = {}
     for id in pairs(shown) do ids[id] = true end
-    if Meeting.enabled() and Storage.liveContracts then
+    if Feature.on('Kidnap.MeetingPoint') and Storage.liveContracts then
         for _, c in ipairs(Storage.liveContracts() or {}) do
             if c.meeting_x ~= nil then ids[c.id] = true end
         end
@@ -314,7 +308,7 @@ end
 ---@return table result { shown = integer }
 function Meeting.reshow(actor)
     local drawn = 0
-    if not Meeting.enabled() or not actor or not actor.cid then return { shown = 0 } end
+    if not Feature.on('Kidnap.MeetingPoint') or not actor or not actor.cid then return { shown = 0 } end
     local involved = Storage.contractsInvolving and Storage.contractsInvolving(actor.cid, true) or {}
     for _, contract in ipairs(involved) do
         if contract.meeting_x ~= nil and partiesOf(contract)[actor.cid] then
@@ -365,7 +359,7 @@ end
 ---@return string|nil err
 ---@return table|nil data { retryAfter } on MEETING_TOO_SOON
 function Meeting.set(actor, payload)
-    if not Meeting.enabled() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on('Kidnap.MeetingPoint') then return false, CH.ERR.FEATURE_OFF end
     local id = Util.toId(payload.id)
     local x, y, z = Geo.finite(payload.x, true), Geo.finite(payload.y, true), Geo.finite(payload.z, true)
     if not id or not x or not y or not z then return false, CH.ERR.INVALID_INPUT end
@@ -423,7 +417,7 @@ end
 ---@return string|nil err
 ---@return table|nil data
 function Meeting.clear(actor, payload)
-    if not Meeting.enabled() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on('Kidnap.MeetingPoint') then return false, CH.ERR.FEATURE_OFF end
     local id = Util.toId(payload.id)
     if not id then return false, CH.ERR.INVALID_INPUT end
 
@@ -465,7 +459,7 @@ end
 ---@return table|false result { x, y }
 ---@return string|nil err
 function Meeting.waypoint(actor, payload)
-    if not Meeting.enabled() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on('Kidnap.MeetingPoint') then return false, CH.ERR.FEATURE_OFF end
     local id = Util.toId(payload.id)
     if not id then return false, CH.ERR.INVALID_INPUT end
 

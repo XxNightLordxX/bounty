@@ -126,13 +126,15 @@ function TargetLimits.jobName(name)
     return text
 end
 
---- The start-up check of the two limits config.lua added for this
---- (Config.Limits.MaxContractsPerTargetPerDay, PerWeek): 0 (off) where a
---- config from before has none, a whole number in range otherwise.
+--- The start-up check of the three limits config.lua added later
+--- (Config.Limits.MaxContractsPerTargetPerDay, PerWeek and
+--- TargetCooldownAfterCompletionSeconds): 0 (off) where a config from
+--- before has none, a whole number in range otherwise.
 ---@param warn string[]
 function TargetLimits.checkConfig(warn)
     if type(Config.Limits) ~= 'table' then return end
-    for _, key in ipairs({ 'MaxContractsPerTargetPerDay', 'MaxContractsPerTargetPerWeek' }) do
+    for _, key in ipairs({ 'MaxContractsPerTargetPerDay', 'MaxContractsPerTargetPerWeek',
+        'TargetCooldownAfterCompletionSeconds' }) do
         local value = Config.Limits[key]
         if value == nil then
             Config.Limits[key] = 0
@@ -142,6 +144,16 @@ function TargetLimits.checkConfig(warn)
             Config.Limits[key] = 0
         end
     end
+end
+
+--- How long after a completed contract nobody may place on its target, in
+--- seconds (Config.Limits.TargetCooldownAfterCompletionSeconds): 0 while
+--- it is off.
+---@return integer
+function TargetLimits.completionCooldown()
+    local value = type(Config.Limits) == 'table' and tonumber(Config.Limits.TargetCooldownAfterCompletionSeconds)
+    if not value or value <= 0 then return 0 end
+    return math.floor(value)
 end
 
 -- ============================================================================

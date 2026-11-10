@@ -32,6 +32,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
+local Feature = CrimsonBoot.require('server.lib.feature')
 --- The named-area parser both roleplay area lists share.
 local Places = CrimsonBoot.require('server.rp_places')
 
@@ -65,83 +66,44 @@ local saidPostFailAt = -math.huge
 -- Settings
 --------------------------------------------------------------------------
 
---- One feature's block, or nil when it is off or missing.
----@param name string
----@return table|nil
-local function on(name)
-    local rp = type(Config.Roleplay) == 'table' and Config.Roleplay or nil
-    local block = rp and rp[name]
-    if type(block) == 'table' and block.Enabled == true then return block end
-    return nil
-end
-RpConsequences.on = on
-
---- What each setting must be, as the start holds config.lua to it and the
---- panel's catalogue (server/settings.lua) offers it: a number's range, a
---- text's pattern, a list's item pattern, a choice's values.
+--- What each setting must be, as the start holds config.lua to it
+--- (Feature.check, server/lib/feature.lua) and the panel's catalogue
+--- (server/settings.lua) offers it: a number's range, a text's pattern, a
+--- list's item pattern, a choice's values.
+local TEXT = '^[^%c<>]+$'
 local RULES = {
     WitnessHeat = {
-        Enabled = { 'switch' }, AlwaysAlert = { 'switch' }, SendCoords = { 'switch' },
-        WitnessRadius = { 'number', 1, 500 }, MinWitnesses = { 'integer', 1, 50 },
-        FuzzMeters = { 'number', 0, 1000 }, DispatchPriority = { 'integer', 1, 5 },
-        Title = { 'text', '^[^%c<>]+$', 60 },
-        Phrases = { 'list', '^[^%c<>]+$', 60 },
-        Areas = { 'areas' },  -- each read by Places.parseArea (server/rp_places.lua)
+        Enabled = { kind = 'switch' }, AlwaysAlert = { kind = 'switch' }, SendCoords = { kind = 'switch' },
+        WitnessRadius = { kind = 'number', min = 1, max = 500 },
+        MinWitnesses = { kind = 'number', integer = true, min = 1, max = 50 },
+        FuzzMeters = { kind = 'number', min = 0, max = 1000 },
+        DispatchPriority = { kind = 'number', integer = true, min = 1, max = 5 },
+        Title = { kind = 'text', pattern = TEXT, max = 60, says = 'text up to 60 characters, no < or >' },
+        Phrases = { kind = 'list', pattern = TEXT, max = 60 },
+        Areas = { kind = 'list', each = Places.parseArea, says = "a list of areas, each 'Name@x,y'" },
     },
     EmsRelisting = {
-        Enabled = { 'switch' }, RequireEMS = { 'switch' },
-        TreatedMinutes = { 'integer', 0, 240 }, MaxHoldMinutes = { 'integer', 1, 1440 },
+        Enabled = { kind = 'switch' }, RequireEMS = { kind = 'switch' },
+        TreatedMinutes = { kind = 'number', integer = true, min = 0, max = 240 },
+        MaxHoldMinutes = { kind = 'number', integer = true, min = 1, max = 1440 },
     },
     CityNews = {
-        Enabled = { 'switch' }, AllTargets = { 'switch' }, NameTarget = { 'switch' },
-        App = { 'choice', { birdy = true, event = true } },
-        Account = { 'text', '^[%w_%-%.]+$', 32 },
-        Event = { 'text', '^[%w_%-%.:]+$', 64 },
-        Templates = { 'list', '^[^%c<>]+$', 160 },
+        Enabled = { kind = 'switch' }, AllTargets = { kind = 'switch' }, NameTarget = { kind = 'switch' },
+        App = { kind = 'choice', choices = { 'birdy', 'event' } },
+        Account = { kind = 'text', pattern = '^[%w_%-%.]+$', max = 32 },
+        Event = { kind = 'text', pattern = '^[%w_%-%.:]+$', max = 64, says = 'an event name' },
+        Templates = { kind = 'list', pattern = TEXT, max = 160,
+            says = 'a list of sentences up to 160 characters, no < or >' },
     },
     DirtyPayouts = {
-        Enabled = { 'switch' },
-        Item = { 'text', '^[%w_%-]+$', 64 },
-        Mode = { 'choice', { count = true, worth = true } },
-        WorthKey = { 'text', '^[%w_%-]+$', 32 },
-        Rate = { 'integer', 1, 100 },
+        Enabled = { kind = 'switch' },
+        Item = { kind = 'text', pattern = '^[%w_%-]+$', max = 64 },
+        Mode = { kind = 'choice', choices = { 'count', 'worth' } },
+        WorthKey = { kind = 'text', pattern = '^[%w_%-]+$', max = 32 },
+        Rate = { kind = 'number', integer = true, min = 1, max = 100 },
     },
 }
 RpConsequences.RULES = RULES
-
---- Whether one value keeps its rule.
-local function fits(rule, value)
-    local kind = rule[1]
-    if kind == 'switch' then return type(value) == 'boolean' end
-    if kind == 'number' or kind == 'integer' then
-        if type(value) ~= 'number' or value ~= value then return false end
-        if kind == 'integer' and math.floor(value) ~= value then return false end
-        return value >= rule[2] and value <= rule[3]
-    end
-    if kind == 'text' then
-        return type(value) == 'string' and #value > 0 and #value <= rule[3] and value:match(rule[2]) ~= nil
-    end
-    if kind == 'choice' then return type(value) == 'string' and rule[2][value] == true end
-    if kind == 'list' or kind == 'areas' then
-        if type(value) ~= 'table' or #value > 50 then return false end
-        for k in pairs(value) do
-            if math.type(k) ~= 'integer' or k < 1 or k > #value then return false end
-        end
-        for i = 1, #value do
-            local item = value[i]
-            if kind == 'areas' then
-                if not Places.parseArea(item) then return false end
-            elseif type(item) ~= 'string' or #item == 0 or #item > rule[3] or not item:match(rule[2]) then
-                return false
-            end
-        end
-        return true
-    end
-    return false
-end
-
---- A deep copy (Util.copy, the one shared copy).
-local copyOf = Util.copy
 
 --- The start-up checks for these four blocks, against the global Config
 --- (main.lua's validateConfig, which the admin panel also runs against a
@@ -151,29 +113,11 @@ local copyOf = Util.copy
 ---@param warn string[] where each correction is said
 ---@param filled string[] where each setting filled in is named
 function RpConsequences.checkConfig(warn, filled)
-    local shipped = type(ConfigDefaults) == 'table' and type(ConfigDefaults.Roleplay) == 'table'
-        and ConfigDefaults.Roleplay or {}
-    if type(Config.Roleplay) ~= 'table' then Config.Roleplay = {} end
-    for name, rules in pairs(RULES) do
-        local defaults = shipped[name] or {}
-        local block = Config.Roleplay[name]
-        if type(block) ~= 'table' then
-            block = copyOf(defaults)
-            Config.Roleplay[name] = block
-            filled[#filled + 1] = 'Roleplay.' .. name .. ' (whole block)'
-        end
-        for key, rule in pairs(rules) do
-            local value = block[key]
-            if value == nil then
-                block[key] = copyOf(defaults[key])
-                filled[#filled + 1] = ('Roleplay.%s.%s'):format(name, key)
-            elseif not fits(rule, value) then
-                warn[#warn + 1] = ('Config.Roleplay.%s.%s is %s, which it cannot be. Using the shipped %s.')
-                    :format(name, key, type(value) == 'table' and 'a list it cannot use' or tostring(value),
-                        type(defaults[key]) == 'table' and 'list' or tostring(defaults[key]))
-                block[key] = copyOf(defaults[key])
-            end
-        end
+    local names = {}
+    for name in pairs(RULES) do names[#names + 1] = name end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        Feature.check('Roleplay.' .. name, RULES[name], warn, filled)
     end
 end
 
@@ -214,8 +158,7 @@ end
 --- The area list, parsed once per list it is given.
 local parsedFrom, parsed = nil, {}
 local function areas()
-    local block = type(Config.Roleplay) == 'table' and Config.Roleplay.WitnessHeat or nil
-    local list = type(block) == 'table' and block.Areas or nil
+    local list = Feature.block('Roleplay.WitnessHeat').Areas
     if list ~= parsedFrom then
         parsedFrom, parsed = list, {}
         for _, entry in ipairs(type(list) == 'table' and list or {}) do
@@ -296,7 +239,7 @@ end
 --- a phrase, a direction, an area, and a position only when SendCoords is
 --- on, moved by up to FuzzMeters.
 local function witnessAlert(contract, hitmanCid, slot)
-    local cfg = on('WitnessHeat')
+    local cfg = Feature.active('Roleplay.WitnessHeat')
     if not cfg then return false end
     local hitman = Identity.byCitizenId(hitmanCid)
     if not hitman then return false end
@@ -409,7 +352,7 @@ end
 ---@param targetActor table
 ---@return boolean held
 function RpConsequences.relistHold(targetActor)
-    local cfg = on('EmsRelisting')
+    local cfg = Feature.active('Roleplay.EmsRelisting')
     if not cfg or not targetActor then return false end
     local cid = targetActor.cid
     local kill = lastKill(cid)
@@ -452,7 +395,7 @@ end
 --- From the maintenance tick: each target still recovering looked at, so
 --- the time they have been up is counted while nobody asks.
 function RpConsequences.tick()
-    local cfg = on('EmsRelisting')
+    local cfg = Feature.active('Roleplay.EmsRelisting')
     if not cfg then
         if next(killedAt) then
             local cids = {}
@@ -482,7 +425,7 @@ end
 --- The words of one post, or nil where this contract is not news.
 ---@return string|nil
 function RpConsequences.newsText(contract, hitmanCid)
-    local cfg = on('CityNews')
+    local cfg = Feature.active('Roleplay.CityNews')
     if not cfg then return nil end
     local whitelisted, shown = Identity.whitelistedTarget(contract)
     if not whitelisted and cfg.AllTargets ~= true then return nil end
@@ -505,7 +448,7 @@ end
 --- answering success and the post's id), or a local server event another
 --- resource posts it from, for a News app with no server export.
 local function postNews(contract, hitmanCid)
-    local cfg = on('CityNews')
+    local cfg = Feature.active('Roleplay.CityNews')
     if not cfg then return false end
     local text = RpConsequences.newsText(contract, hitmanCid)
     if not text then return false end
@@ -539,7 +482,7 @@ RpConsequences.postNews = postNews
 --- goes back as it was taken.
 ---@return table|nil { item, rate } or { item, worth }
 function RpConsequences.payoutAs(recipientCid, line)
-    local cfg = on('DirtyPayouts')
+    local cfg = Feature.active('Roleplay.DirtyPayouts')
     if not cfg or type(line) ~= 'table' then return nil end
     if line.source ~= 'cash' and line.source ~= 'bank' then return nil end
     if line.portion ~= CH.PORTION.BASELINE and line.portion ~= CH.PORTION.BONUS then return nil end
@@ -557,14 +500,14 @@ end
 
 --- After every claim that paid (Contracts.afterClaim).
 function RpConsequences.onClaimed(contractId, hitmanCid, fulfilment, result)
-    if not (on('WitnessHeat') or on('EmsRelisting') or on('CityNews')) then return end
+    if not (Feature.active('Roleplay.WitnessHeat') or Feature.active('Roleplay.EmsRelisting') or Feature.active('Roleplay.CityNews')) then return end
     -- A proof item handed to the placer (server/imp_proof.lua): nobody was
     -- seen killed, so no EMS hold, and no news of an attack. Nor a witness
     -- report: it would say where the hitman stood, beside the placer.
     if fulfilment == CH.FULFILMENT.PROOF then return end
     local contract = Storage.readContract(contractId)
     if not contract then return end
-    if fulfilment == CH.FULFILMENT.ELIMINATION and on('EmsRelisting') then
+    if fulfilment == CH.FULFILMENT.ELIMINATION and Feature.active('Roleplay.EmsRelisting') then
         killedAt[contract.target_cid] = os.time()
         upSince[contract.target_cid], medicAt[contract.target_cid] = nil, nil
         carried[contract.target_cid] = nil

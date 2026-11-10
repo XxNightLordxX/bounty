@@ -19,6 +19,10 @@
 --- timed out are all audited.
 
 local Util = CrimsonBoot.requireShared('util')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Roleplay.ProofOfIntent'
 
 local Intent = {}
 
@@ -34,17 +38,6 @@ local recent = {}
 local RECENT_SECONDS = 5
 
 local KIND = 'intent'
-
-local function cfg()
-    local rp = type(Config.Roleplay) == 'table' and Config.Roleplay or {}
-    return type(rp.ProofOfIntent) == 'table' and rp.ProofOfIntent or {}
-end
-
---- Whether the feature is on now.
----@return boolean
-function Intent.enabled()
-    return cfg().Enabled == true
-end
 
 local function keyOf(contractId, cid)
     return tostring(contractId) .. ':' .. tostring(cid)
@@ -125,13 +118,13 @@ end
 ---@param contract table
 ---@return table|nil { messages }
 function Intent.rule(contract)
-    if not Intent.enabled() or type(contract) ~= 'table' then return nil end
+    if not Feature.on(BLOCK) or type(contract) ~= 'table' then return nil end
     if CH.TERMINAL[contract.state] then return nil end
     if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
         return nil
     end
     if contract.meeting_x ~= nil and contract.meeting_y ~= nil then return nil end
-    local want = math.floor(tonumber(cfg().MinMessages) or 0)
+    local want = math.floor(tonumber(Feature.block(BLOCK).MinMessages) or 0)
     if want <= 0 then return nil end
     return { messages = want }
 end
@@ -150,7 +143,7 @@ end
 function Intent.proof(contract, hitmanCid, fulfilment, claiming)
     if fulfilment == CH.FULFILMENT.KIDNAPPING then return true end
     if contract.meeting_x ~= nil and contract.meeting_y ~= nil then return true end
-    local want = math.floor(tonumber(cfg().MinMessages) or 0)
+    local want = math.floor(tonumber(Feature.block(BLOCK).MinMessages) or 0)
     if want <= 0 then return true end
     local sent = messagesSent(contract.id, hitmanCid)
     if sent >= want then return true end
@@ -165,7 +158,7 @@ end
 --- the hold is started (or the one already on is kept) and returned.
 ---@return table|nil hold { missing, minutes }
 function Intent.onClaim(contract, hitmanCid, fulfilment)
-    if not Intent.enabled() or type(contract) ~= 'table' then return nil end
+    if not Feature.on(BLOCK) or type(contract) ~= 'table' then return nil end
     load()
     local met, missing, closed = Intent.proof(contract, hitmanCid, fulfilment, true)
     if met then return nil end
@@ -181,7 +174,7 @@ function Intent.onClaim(contract, hitmanCid, fulfilment)
         holds[key] = row
     end
     recent[key] = { at = os.time(), met = false, missing = missing, closed = closed }
-    local minutes = math.floor(tonumber(cfg().HoldMaxMinutes) or 0)
+    local minutes = math.floor(tonumber(Feature.block(BLOCK).HoldMaxMinutes) or 0)
     return { missing = missing, closed = closed or nil, minutes = minutes }
 end
 
@@ -233,11 +226,11 @@ end
 ---@return string|nil missing
 ---@return boolean|nil closed nothing left to do but wait
 local function stillHolding(key, row)
-    if not Intent.enabled() then
+    if not Feature.on(BLOCK) then
         release(key, 'switched_off')
         return false
     end
-    local minutes = math.floor(tonumber(cfg().HoldMaxMinutes) or 0)
+    local minutes = math.floor(tonumber(Feature.block(BLOCK).HoldMaxMinutes) or 0)
     if os.time() - (tonumber(row.since) or 0) >= minutes * 60 then
         release(key, 'timeout')
         return false
@@ -270,7 +263,7 @@ function Intent.holds(recipientCid, line)
     -- The store could not be read: whether a hold stands is unknown, so
     -- the payout waits until a read succeeds. Answered 'not held', a hold
     -- written before a restart paid out the moment the store hiccupped.
-    if not loaded then return Intent.enabled() end
+    if not loaded then return Feature.on(BLOCK) end
     local key = keyOf(line.contract_id, recipientCid)
     local row = holds[key]
     if not row then return false end
@@ -288,7 +281,7 @@ function Intent.releasesAt(recipientCid, line)
     if not loaded then return nil end
     local row = holds[keyOf(line.contract_id, recipientCid)]
     if not row then return nil end
-    local minutes = math.floor(tonumber(cfg().HoldMaxMinutes) or 0)
+    local minutes = math.floor(tonumber(Feature.block(BLOCK).HoldMaxMinutes) or 0)
     return (tonumber(row.since) or 0) + minutes * 60
 end
 
@@ -302,7 +295,7 @@ function Intent.view(contractId, cid)
     if not row then return nil end
     local holding, missing, closed = stillHolding(key, row)
     if not holding then return nil end
-    local minutes = math.floor(tonumber(cfg().HoldMaxMinutes) or 0)
+    local minutes = math.floor(tonumber(Feature.block(BLOCK).HoldMaxMinutes) or 0)
     local left = math.max(0, (tonumber(row.since) or 0) + minutes * 60 - os.time())
     return { missing = missing, closed = closed or nil,
              minutesLeft = math.max(1, math.ceil(left / 60)) }
@@ -352,6 +345,20 @@ function Intent.count()
     local n = 0
     for _ in pairs(holds) do n = n + 1 end
     return n
+end
+
+--- What each setting must be, as the start holds config.lua to it
+--- (Feature.check) and the panel's catalogue offers it.
+Intent.RULES = {
+    Enabled = { kind = 'switch' },
+    MinMessages = { kind = 'number', integer = true, min = 0, max = 100 },
+    HoldMaxMinutes = { kind = 'number', integer = true, min = 1, max = 10080 },
+}
+
+---@param warn string[]
+---@param filled string[]|nil
+function Intent.validate(warn, filled)
+    Feature.check(BLOCK, Intent.RULES, warn, filled)
 end
 
 return Intent

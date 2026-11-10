@@ -1,6 +1,7 @@
 --- The roleplay features' shared helpers (Config.Roleplay, README, Optional
 --- features): where the broker and the informant NPC stand now, whether a
---- player is beside one, and the start-up check of each feature's block.
+--- player is beside one. Each feature's block is read and checked through
+--- server/lib/feature.lua.
 ---
 --- Where an NPC stands is worked out from the clock: its list of places
 --- (Locations, each 'x, y, z, heading'), one at a time, the next every
@@ -10,9 +11,9 @@
 --- against the place it works out now, from the player's ped, never from
 --- anything the game says.
 
-local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Text = CrimsonBoot.requireShared('text')
+local Feature = CrimsonBoot.require('server.lib.feature')
 
 local Places = {}
 
@@ -21,28 +22,9 @@ local deps
 --- The two NPCs: which block each reads, and an offset so the two lists do
 --- not move in step.
 Places.NPCS = {
-    broker = { block = 'Rumours', salt = 0 },
-    informant = { block = 'InformantNpc', salt = 1 },
+    broker = { block = 'Roleplay.Rumours', salt = 0 },
+    informant = { block = 'Roleplay.InformantNpc', salt = 1 },
 }
-
---- A deep copy (Util.copy, the one shared copy).
-local copyOf = Util.copy
-
---- One feature's block of Config.Roleplay, or an empty table.
----@param name string 'Rumours' | 'BurnerPhone' | 'InformantNpc' | 'ReasonQuality'
----@return table
-function Places.block(name)
-    local roleplay = type(Config) == 'table' and Config.Roleplay
-    local block = type(roleplay) == 'table' and roleplay[name]
-    return type(block) == 'table' and block or {}
-end
-
---- Whether a feature is on.
----@param name string
----@return boolean
-function Places.on(name)
-    return Places.block(name).Enabled == true
-end
 
 local function numbers(text, want)
     local out = {}
@@ -108,8 +90,8 @@ end
 ---@return integer|nil index in its list
 function Places.current(npc, now)
     local spec = Places.NPCS[npc]
-    if not spec or not Places.on(spec.block) then return nil end
-    local block = Places.block(spec.block)
+    local block = spec and Feature.active(spec.block)
+    if not block then return nil end
     -- The places staff set in Locations, where Config.Roleplay.NpcPlaces
     -- says so and one is set; the config list otherwise (the defaults).
     local list = Places.panelPoints(npc)
@@ -147,7 +129,7 @@ Places.MAX_PER_NPC = 20
 local Custom, CustomSeq = nil, 0
 
 local function panelOn()
-    return Places.on('NpcPlaces')
+    return Feature.on('Roleplay.NpcPlaces')
 end
 
 local function loadCustom()
@@ -206,7 +188,7 @@ function Places.panelView()
     local out = { enabled = panelOn(), readable = custom ~= nil, npcs = {} }
     for _, npc in ipairs({ 'broker', 'informant' }) do
         local spec = Places.NPCS[npc]
-        local block = Places.block(spec.block)
+        local block = Feature.block(spec.block)
         local defaults = {}
         for _, text in ipairs(type(block.Locations) == 'table' and block.Locations or {}) do
             local point = Places.parsePoint(text)
@@ -217,8 +199,8 @@ function Places.panelView()
             rows[#rows + 1] = { id = r.id, label = r.label, x = tonumber(r.x), y = tonumber(r.y), z = tonumber(r.z),
                 heading = tonumber(r.h) or 0, enabled = r.enabled ~= false }
         end
-        out.npcs[npc] = { on = Places.on(spec.block), rows = rows, defaults = defaults,
-            using = Places.panelPoints(npc) and 'panel' or 'config', key = 'Roleplay.' .. spec.block .. '.Locations' }
+        out.npcs[npc] = { on = Feature.on(spec.block), rows = rows, defaults = defaults,
+            using = Places.panelPoints(npc) and 'panel' or 'config', key = spec.block .. '.Locations' }
     end
     return out
 end
@@ -372,7 +354,7 @@ function Places.near(npc, src)
     if not point then return false end
     local coords = Geo.position(src)
     if not coords then return false end
-    local radius = tonumber(Places.block(Places.NPCS[npc].block).Radius) or 0
+    local radius = tonumber(Feature.block(Places.NPCS[npc].block).Radius) or 0
     return Geo.near(coords, point, radius)
 end
 
@@ -384,7 +366,7 @@ function Places.forClient()
     for npc, spec in pairs(Places.NPCS) do
         local point = Places.current(npc)
         if point then
-            local block = Places.block(spec.block)
+            local block = Feature.block(spec.block)
             out[npc] = {
                 x = point.x, y = point.y, z = point.z, h = point.h,
                 model = tostring(block.Model or ''), scenario = tostring(block.Scenario or ''),
@@ -445,102 +427,5 @@ end
 -- A place moves on the clock: looked at once a minute by the maintenance
 -- tick (main.lua, rp_places.announce, Places.announce above), not by a
 -- thread of its own. Idle with both NPCs off, it compares two short strings.
-
---------------------------------------------------------------------------
--- The start-up check of a feature's block
---------------------------------------------------------------------------
-
-local function describe(value)
-    if type(value) == 'string' then return ("'%s'"):format(value) end
-    return tostring(value)
-end
-
---- Whether one value is what its rule takes. kinds: switch, number (min,
---- max, integer), text (pattern), choice (choices), points, areas,
---- phrases, set (job names).
-local function fits(rule, value)
-    if rule.kind == 'switch' then return type(value) == 'boolean' end
-    if rule.kind == 'number' then
-        if type(value) ~= 'number' or value ~= value then return false end
-        if rule.integer and math.floor(value) ~= value then return false end
-        return value >= rule.min and value <= rule.max
-    end
-    if rule.kind == 'text' then
-        return type(value) == 'string' and #value > 0 and #value <= 64 and value:match('^[%w_%-]+$') ~= nil
-    end
-    if rule.kind == 'choice' then
-        for _, choice in ipairs(rule.choices) do if value == choice then return true end end
-        return false
-    end
-    if type(value) ~= 'table' then return false end
-    if rule.kind == 'set' then
-        for k, v in pairs(value) do
-            if type(k) ~= 'string' or v ~= true then return false end
-        end
-        return true
-    end
-    if #value > 50 then return false end
-    for k in pairs(value) do
-        if math.type(k) ~= 'integer' or k < 1 or k > #value then return false end
-    end
-    for _, entry in ipairs(value) do
-        if rule.kind == 'points' and not Places.parsePoint(entry) then return false end
-        if rule.kind == 'areas' and not Places.parseArea(entry) then return false end
-        if rule.kind == 'phrases' and (type(entry) ~= 'string' or #entry == 0 or #entry > 60
-            or entry:find('[%c<>]')) then
-            return false
-        end
-    end
-    return true
-end
-
-local function says(rule)
-    if rule.kind == 'switch' then return 'true or false' end
-    if rule.kind == 'number' then
-        return ('a %s from %s to %s'):format(rule.integer and 'whole number' or 'number',
-            tostring(rule.min), tostring(rule.max))
-    end
-    if rule.kind == 'text' then return 'a name of letters, digits, - and _' end
-    if rule.kind == 'choice' then return 'one of ' .. table.concat(rule.choices, ', ') end
-    if rule.kind == 'points' then return "a list of places, each 'x, y, z, heading'" end
-    if rule.kind == 'areas' then return "a list of 'x, y, name'" end
-    if rule.kind == 'phrases' then return 'a list of short phrases, no < or >' end
-    return 'a set of job names, each = true'
-end
-
---- Fill a feature's block where config.lua has none (one written before
---- it existed), then hold every field to its rule: one that does not fit
---- is put back to what ships, with a warning naming it. Every check reads
---- the block whole, so the admin panel's check of a change (run against a
---- copy, quiet) refuses a value this would put back, in these words.
----@param name string the block's name under Config.Roleplay
----@param rules table [field] = rule
----@param warn string[] where a problem is added
-function Places.checkBlock(name, rules, warn)
-    if type(Config.Roleplay) ~= 'table' then Config.Roleplay = {} end
-    local shippedRoot = type(ConfigDefaults) == 'table' and ConfigDefaults.Roleplay or nil
-    local shipped = type(shippedRoot) == 'table' and type(shippedRoot[name]) == 'table'
-        and shippedRoot[name] or {}
-    if type(Config.Roleplay[name]) ~= 'table' then Config.Roleplay[name] = copyOf(shipped) end
-    local block = Config.Roleplay[name]
-    local fields = {}
-    for field in pairs(rules) do fields[#fields + 1] = field end
-    table.sort(fields)
-    for _, field in ipairs(fields) do
-        local rule = rules[field]
-        if not fits(rule, block[field]) then
-            local fallback = shipped[field]
-            if fallback == nil then fallback = rule.default end
-            if block[field] ~= nil then
-                warn[#warn + 1] = ('Roleplay.%s.%s is %s; it has to be %s. Using %s.'):format(name, field,
-                    type(block[field]) == 'table' and 'a list with an entry that does not read'
-                    or describe(block[field]), says(rule),
-                    type(fallback) == 'table' and 'the shipped list' or describe(fallback))
-            end
-            block[field] = copyOf(fallback)
-        end
-    end
-end
-
 
 return Places

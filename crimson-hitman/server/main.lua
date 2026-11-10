@@ -748,11 +748,16 @@ local function validateConfig(quiet)
         end
     end
 
-    -- The roleplay consequences (server/rp_consequences.lua), checked by
-    -- their own module: a block or a setting missing is filled from
-    -- defaults.lua, and one that breaks its rule is put back, and said.
+    -- The roleplay consequences (server/rp_consequences.lua), checked
+    -- through server/lib/feature.lua: a block or a setting missing is filled
+    -- from defaults.lua, and one that breaks its rule is put back, and said.
     local rpFilled = {}
     CrimsonBoot.require('server.rp_consequences').checkConfig(warn, rpFilled)
+    -- Proof of intent, earned reputation, bodyguards and the hit on the
+    -- hitman (group rpC), the same way.
+    CrimsonBoot.require('server.rp_intent').validate(warn, rpFilled)
+    CrimsonBoot.require('server.rp_reputation').validate(warn, rpFilled)
+    CrimsonBoot.require('server.rp_protection').validate(warn, rpFilled)
     if #rpFilled > 0 and not quiet then
         table.sort(rpFilled)
         Log.problem(('your config.lua does not set %d roleplay setting(s); the shipped defaults '
@@ -767,68 +772,6 @@ local function validateConfig(quiet)
         table.sort(impFilled)
         Log.problem(('your config.lua does not set %d improvement setting(s); the shipped defaults '
             .. 'are being used for them: %s.'):format(#impFilled, table.concat(impFilled, ', ')), #impFilled)
-    end
-
-    -- Roleplay (group rpC, README, Optional features): proof of intent,
-    -- earned reputation, bodyguards and the hit on the hitman. A block this
-    -- config does not have (one written before it) is the shipped one; each
-    -- switch a switch, each figure in its range, corrected to the shipped
-    -- value and said.
-    if type(Config.Roleplay) ~= 'table' then Config.Roleplay = {} end
-    local rpShipped = type(ConfigDefaults) == 'table' and type(ConfigDefaults.Roleplay) == 'table'
-        and ConfigDefaults.Roleplay or {}
-    for _, name in ipairs({ 'ProofOfIntent', 'Reputation', 'Protection', 'HitOnHitman' }) do
-        if type(Config.Roleplay[name]) ~= 'table' then
-            Config.Roleplay[name] = copyOf(rpShipped[name] or { Enabled = false })
-        end
-        local block = Config.Roleplay[name]
-        if type(block.Enabled) ~= 'boolean' then
-            warn[#warn + 1] = ('Config.Roleplay.%s.Enabled is %s; it has to be true or false. Using false.')
-                :format(name, tostring(block.Enabled))
-            block.Enabled = false
-        end
-    end
-    for _, bound in ipairs({
-        { 'ProofOfIntent', 'MinMessages', 0, 100, 3, true },
-        { 'ProofOfIntent', 'HoldMaxMinutes', 1, 10080, 60, true },
-        { 'Reputation', 'BaseFactor', 0, 10, 0.5 },
-        { 'Reputation', 'ThreadBonus', 0, 10, 0.2 },
-        { 'Reputation', 'MeetingBonus', 0, 10, 0.2 },
-        { 'Reputation', 'HandoverBonus', 0, 10, 0.3 },
-        { 'Reputation', 'WitnessFreeBonus', 0, 10, 0.2 },
-        { 'Reputation', 'WitnessRadius', 1, 500, 50.0 },
-        { 'Reputation', 'MaxFactor', 0, 10, 1.5 },
-        { 'Protection', 'MinReward', 1, 10000000, 1000, true },
-        { 'Protection', 'MaxReward', 1, 10000000, 100000, true },
-        { 'Protection', 'PayOnCompletionPercent', 0, 100, 25, true },
-        { 'Protection', 'MaxJobsPerGuard', 1, 20, 2, true },
-    }) do
-        local block = Config.Roleplay[bound[1]]
-        local value = block[bound[2]]
-        if type(value) ~= 'number' or value ~= value or value < bound[3] or value > bound[4]
-            or (bound[6] and math.floor(value) ~= value) then
-            warn[#warn + 1] = ('Config.Roleplay.%s.%s is %s; it has to be %s from %s to %s. Using %s.')
-                :format(bound[1], bound[2], tostring(value), bound[6] and 'a whole number' or 'a number',
-                    tostring(bound[3]), tostring(bound[4]), tostring(bound[5]))
-            block[bound[2]] = bound[5]
-        end
-    end
-    local protection = Config.Roleplay.Protection
-    if protection.Account ~= 'cash' and protection.Account ~= 'bank' then
-        warn[#warn + 1] = ('Config.Roleplay.Protection.Account is %s; it has to be cash or bank. Using bank.')
-            :format(tostring(protection.Account))
-        protection.Account = 'bank'
-    end
-    if protection.MinReward > protection.MaxReward then
-        warn[#warn + 1] = ('Config.Roleplay.Protection.MinReward (%d) is above MaxReward (%d). Using %d for both.')
-            :format(protection.MinReward, protection.MaxReward, protection.MaxReward)
-        protection.MinReward = protection.MaxReward
-    end
-    local reputation = Config.Roleplay.Reputation
-    if reputation.BaseFactor > reputation.MaxFactor then
-        warn[#warn + 1] = ('Config.Roleplay.Reputation.BaseFactor (%s) is above MaxFactor (%s). Using %s for both.')
-            :format(tostring(reputation.BaseFactor), tostring(reputation.MaxFactor), tostring(reputation.MaxFactor))
-        reputation.BaseFactor = reputation.MaxFactor
     end
 
     local mode = Config.Database.Mode
@@ -1465,15 +1408,14 @@ local function validateConfig(quiet)
     CrimsonBoot.require('server.rp_informant').validate(warn)
     CrimsonBoot.require('server.rp_reason').validate(warn)
     -- The improvements (server/imp_*.lua, Config.Improvements), the same way
-    -- (the board's are checked above, with the defaults they fill); and the
-    -- completion cooldown, 0 (off) where config.lua has none.
+    -- (the board's are checked above, with the defaults they fill).
     CrimsonBoot.require('server.imp_tips').validate(warn)
     CrimsonBoot.require('server.imp_proof').validate(warn)
     CrimsonBoot.require('server.imp_scrub').validate(warn)
     CrimsonBoot.require('server.imp_weekly').validate(warn)
-    CrimsonBoot.require('server.imp_staffeco').checkCompletionCooldown(warn)
-    -- The day and week limits on contracts placed on one person
-    -- (server/targetlimits.lua), 0 (off) where config.lua has none.
+    -- The day and week limits on contracts placed on one person and the
+    -- completion cooldown (server/targetlimits.lua), 0 (off) where
+    -- config.lua has none.
     CrimsonBoot.require('server.targetlimits').checkConfig(warn)
     -- The hitman organisation (server/org/, Config.Organisation).
     CrimsonBoot.require('server.org.init').validate(warn)

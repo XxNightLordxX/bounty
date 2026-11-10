@@ -17,14 +17,14 @@
 --- contract ends and drops its meeting point. Nothing here moves money or
 --- stores anything; the trust itself is given by Progression.onCompleted.
 
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Roleplay.Reputation'
+
 local Reputation = {}
 
 local Storage, Identity
-
-local function cfg()
-    local rp = type(Config.Roleplay) == 'table' and Config.Roleplay or {}
-    return type(rp.Reputation) == 'table' and rp.Reputation or {}
-end
 
 local function num(value)
     local n = tonumber(value)
@@ -46,7 +46,7 @@ function Reputation.witnessFree(contract, hitmanCid)
     if not hitman or not hitman.source then return false end
     local ok, here = pcall(function() return GetEntityCoords(GetPlayerPed(hitman.source)) end)
     if not ok or not here then return false end
-    local radius = num(cfg().WitnessRadius)
+    local radius = num(Feature.block(BLOCK).WitnessRadius)
     -- Only those in the hitman's instance (routing bucket) saw anything:
     -- a player in an apartment shell at the same coordinates did not.
     local okB, bucket = pcall(GetPlayerRoutingBucket, hitman.source)
@@ -77,7 +77,7 @@ end
 ---@param fulfilment string
 ---@return table|nil { factor, parts = { { label, value } } }
 function Reputation.factorFor(contract, hitmanCid, fulfilment)
-    local rules = cfg()
+    local rules = Feature.block(BLOCK)
     if rules.Enabled ~= true or type(contract) ~= 'table' then return nil end
     local factor = num(rules.BaseFactor)
     local parts = { { label = 'plain', value = factor } }
@@ -122,6 +122,30 @@ function Reputation.describe(earned)
     end
     return ('Reputation x%s (%s%s).'):format(tostring(earned.factor), table.concat(words, ', '),
         earned.capped and ', capped' or '')
+end
+
+--- What each setting must be, as the start holds config.lua to it
+--- (Feature.check) and the panel's catalogue offers it.
+Reputation.RULES = {
+    Enabled = { kind = 'switch' },
+    BaseFactor = { kind = 'number', min = 0, max = 10 },
+    ThreadBonus = { kind = 'number', min = 0, max = 10 },
+    MeetingBonus = { kind = 'number', min = 0, max = 10 },
+    HandoverBonus = { kind = 'number', min = 0, max = 10 },
+    WitnessFreeBonus = { kind = 'number', min = 0, max = 10 },
+    WitnessRadius = { kind = 'number', min = 1, max = 500 },
+    MaxFactor = { kind = 'number', min = 0, max = 10 },
+}
+
+---@param warn string[]
+---@param filled string[]|nil
+function Reputation.validate(warn, filled)
+    local rules = Feature.check(BLOCK, Reputation.RULES, warn, filled)
+    if rules.BaseFactor > rules.MaxFactor then
+        warn[#warn + 1] = ('Config.Roleplay.Reputation.BaseFactor (%s) is above MaxFactor (%s). Using %s for both.')
+            :format(tostring(rules.BaseFactor), tostring(rules.MaxFactor), tostring(rules.MaxFactor))
+        rules.BaseFactor = rules.MaxFactor
+    end
 end
 
 return Reputation

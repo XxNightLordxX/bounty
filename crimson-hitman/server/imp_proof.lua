@@ -27,7 +27,10 @@ local Util = CrimsonBoot.requireShared('util')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
-local Imp = CrimsonBoot.require('server.imp_staffeco')
+local Feature = CrimsonBoot.require('server.lib.feature')
+
+--- This feature's block of config (server/lib/feature.lua reads and checks it).
+local BLOCK = 'Improvements.ProofItems'
 
 local Proof = {}
 
@@ -41,14 +44,6 @@ function Proof.init(d)
     working = {}
 end
 
-function Proof.on()
-    return Imp.on('ProofItems')
-end
-
-local function rules()
-    return Imp.block('ProofItems')
-end
-
 Proof.RULES = {
     Enabled = { kind = 'switch', default = false },
     Item = { kind = 'text', default = 'id_card' },
@@ -58,16 +53,16 @@ Proof.RULES = {
 
 ---@param warn string[]
 function Proof.validate(warn)
-    Imp.checkBlock('ProofItems', Proof.RULES, warn)
+    Feature.check(BLOCK, Proof.RULES, warn)
 end
 
 --- What the page is told: nothing while it is off, else the item's name and
 --- the distance, for the button and its words.
 ---@return table|nil
 function Proof.forPage()
-    if not Proof.on() then return nil end
-    return { item = tostring(rules().Item or 'id_card'),
-             radius = tonumber(rules().HandoverRadius) or 3.0 }
+    if not Feature.on(BLOCK) then return nil end
+    return { item = tostring(Feature.block(BLOCK).Item or 'id_card'),
+             radius = tonumber(Feature.block(BLOCK).HandoverRadius) or 3.0 }
 end
 
 --- A player's routing bucket, or nil when the server cannot say: nil is
@@ -115,7 +110,7 @@ end
 ---@return string|nil err
 ---@return table|nil result the claim's own answer
 function Proof.handover(actor, rawId)
-    if not Proof.on() then return false, CH.ERR.FEATURE_OFF end
+    if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     if not Bridge.started('ox_inventory') then return false, CH.ERR.FEATURE_OFF end
     local contractId = Util.toId(rawId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
@@ -142,8 +137,8 @@ function Proof.handover(actor, rawId)
     -- without the card is told only that, whoever stands beside them, so
     -- the answer can never be used to find out who the placer is or
     -- whether they are online (too far for the placer, missing for anyone).
-    local item = tostring(rules().Item or 'id_card')
-    local key = tostring(rules().MetadataKey or 'citizenid')
+    local item = tostring(Feature.block(BLOCK).Item or 'id_card')
+    local key = tostring(Feature.block(BLOCK).MetadataKey or 'citizenid')
     local slot, read = proofSlot(actor, item, key, contract.target_cid)
     if not read then return false, CH.ERR.FEATURE_OFF end
     if not slot then return false, CH.ERR.PROOF_MISSING end
@@ -152,7 +147,7 @@ function Proof.handover(actor, rawId)
     -- bucket: two players in two apartment shells stand at the same
     -- coordinates and are nowhere near each other. An anonymous placer away
     -- from the city, or in another instance, reads as one too far away.
-    local radius = tonumber(rules().HandoverRadius) or 3.0
+    local radius = tonumber(Feature.block(BLOCK).HandoverRadius) or 3.0
     local creator = deps.identity.byCitizenId(contract.creator_cid)
     local bucket = bucketOf(actor.source)
     local together = creator ~= nil and bucket ~= nil and bucketOf(creator.source) == bucket
