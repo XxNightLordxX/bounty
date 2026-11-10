@@ -30,6 +30,9 @@
 --- restart hold, the app pause) or an operative holds it, its count stands
 --- still (held_since on its row), and the time is added back when it is
 --- untaken and free again, so no step falls due the moment a hold ends.
+--- And while decay itself is switched off (off_since on its row): the
+--- stretch it was off for is added back when it is switched on again, so
+--- turning it off and on charges nothing for the time between.
 
 local Util = CrimsonBoot.requireShared('util')
 
@@ -58,7 +61,7 @@ local nextAt = 0
 local nextHours = nil
 
 --- [contractId] = row { id, kind, contract_id, steps, added, base, last_at, off, stopped,
----                      held_since }
+---                      held_since, off_since }
 local rows = {}
 
 local function rules()
@@ -302,6 +305,41 @@ local function pruneWhileOff()
     end
 end
 
+--- While decay is off: every kept row marked with when it was switched off
+--- (off_since), once, so the stretch it was off for is never counted as
+--- waiting time. Kept by the store, so a restart while it is off loses
+--- none of it. Nothing written while no row is kept, or every row is
+--- marked already.
+local function markOff(now)
+    for _, row in pairs(rows) do
+        if not row.off_since then
+            row.off_since = now
+            pcall(write, row)
+        end
+    end
+end
+
+--- Switched on again: each row marked off stood still from when it did
+--- (or from the hold or taking it already stood still from, the earlier),
+--- and that whole stretch is added to its start, as a hold's release adds
+--- one (resumeRow). Its count then stands still from now, as if held, and
+--- the pass below runs it on again only where nothing holds the contract
+--- and nobody has taken it: a contract switched back on while taken waits
+--- for the walk-away, and none of the time it was off, taken or held is
+--- counted. Charged at once, the placer paid for hours of nobody waiting.
+local function markOn(now)
+    for _, row in pairs(rows) do
+        local off = row.off_since
+        if off then
+            local from = math.min(num(row.held_since, off), num(off, now))
+            row.off_since = nil
+            row.last_at = num(row.last_at, from) + math.max(0, now - from)
+            row.held_since = now
+            write(row)
+        end
+    end
+end
+
 --- The tick (once a minute, on a tick of its own): one step on each
 --- untaken contract that is due one, at most STEPS_PER_PASS a pass, and the
 --- rows of contracts that ended forgotten. The steps sleep until the
@@ -315,9 +353,11 @@ function Decay.tick()
     if not cfg then
         nextAt = 0
         pruneWhileOff()
+        markOff(os.time())
         return 0
     end
     local now = os.time()
+    markOn(now)
     local hours = math.max(1, num(cfg.Hours, 1))
     if hours ~= nextHours then nextAt, nextHours = 0, hours end
     local stepping = now >= nextAt

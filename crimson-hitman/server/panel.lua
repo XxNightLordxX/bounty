@@ -948,10 +948,22 @@ end
 --- them frozen said that its anonymous party was the player just frozen.
 ---@return string[]|nil places, nil when none may be shown
 local function frozenShown(contract, hitmen, canIdentify)
-    local parties = deps.freeze and deps.freeze.partiesOf(contract, hitmen)
+    if not deps.freeze or not contract then return nil end
+    -- Nobody frozen and the freezes read: nothing is on hold, and nothing
+    -- is read to find that out.
+    local frozenCount, unknown = deps.freeze.count()
+    if (frozenCount or 0) == 0 and not unknown then return nil end
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return nil end
+    -- The roster read once, for the parties and their aliases both: read
+    -- in partiesOf and then again here, a page of 28 rows with anybody
+    -- frozen was 56 statements on mysql.
+    if hitmen == nil and (frozenCount or 0) > 0 then
+        hitmen = deps.storage.readHitmen(contract.id) or {}
+    end
+    local parties = deps.freeze.partiesOf(contract, hitmen)
     if not parties then return nil end
     local aliases = {}
-    for _, hitman in ipairs(hitmen or deps.storage.readHitmen(contract.id) or {}) do
+    for _, hitman in ipairs(hitmen or {}) do
         aliases[hitman.hitman_cid] = hitman.alias
     end
     local out = {}
@@ -1062,6 +1074,22 @@ H.contracts = function(src, data)
     local size = pageSize()
     local pages = math.max(1, math.ceil(#matched / size))
     if page > pages then page = pages end
+    -- The page's live rows' rosters in one read, for the On hold badge, and
+    -- only while anybody is frozen (frozenShown reads nothing otherwise).
+    local rosters = {}
+    if deps.freeze and (deps.freeze.count() or 0) > 0 and Storage.readHitmenMany then
+        local ids = {}
+        for i = (page - 1) * size + 1, math.min(#matched, page * size) do
+            local contract = matched[i]
+            if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
+                ids[#ids + 1] = contract.id
+            end
+        end
+        if #ids > 0 then
+            local read, many = pcall(Storage.readHitmenMany, ids)
+            if read and type(many) == 'table' then rosters = many end
+        end
+    end
     local rows = {}
     for i = (page - 1) * size + 1, math.min(#matched, page * size) do
         local contract = matched[i]
@@ -1074,7 +1102,7 @@ H.contracts = function(src, data)
                 or contract.creator_name,
             anonymous = contract.anon_creator == true,
             slots = contract.payout_slots, claimed = contract.slots_claimed,
-            frozen = frozenShown(contract, nil, canIdentify) ~= nil or nil,
+            frozen = frozenShown(contract, rosters[contract.id], canIdentify) ~= nil or nil,
         }
     end
 
@@ -1866,9 +1894,17 @@ H.player = function(src, data)
     -- Which of the contracts shown are on hold, by the same rule the list
     -- of contracts follows.
     if deps.freeze and (deps.freeze.count() > 0 or select(2, deps.freeze.count())) then
+        -- Their rosters in one read, not one each (and two, in frozenShown).
+        local ids = {}
+        for _, row in ipairs(contracts) do ids[#ids + 1] = row.id end
+        local rosters = {}
+        if #ids > 0 and Storage.readHitmenMany then
+            local read, many = pcall(Storage.readHitmenMany, ids)
+            if read and type(many) == 'table' then rosters = many end
+        end
         for _, row in ipairs(contracts) do
             local contract = Storage.readContract(row.id)
-            row.frozen = contract and frozenShown(contract, nil, canIdentify) ~= nil or nil
+            row.frozen = contract and frozenShown(contract, rosters[row.id], canIdentify) ~= nil or nil
         end
     end
 

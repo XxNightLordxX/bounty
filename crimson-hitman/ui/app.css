@@ -1860,6 +1860,9 @@ button.is-held { opacity: 0.55; }
 .edit-sheet > .sheet-body { flex: 1 1 auto; min-height: 5rem; overflow-y: auto; }
 .edit-sheet > .sheet-body > .field { margin: 0.8rem 0 0; }
 .edit-sheet .row.sheet-source, .edit-sheet .row.sheet-mode { margin: 0.25rem 0 0.5rem; }
+.edit-sheet .row.sheet-rule, .edit-sheet .row.sheet-anon { margin: 0.25rem 0 0.5rem; }
+/* Cancel and place again: the way to a different target, under the fields. */
+.edit-sheet .sheet-retarget { margin: 0.5rem 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .edit-sheet button.sheet-reward { width: 100%; margin: 0.5rem 0 0; }
 .edit-sheet > .sheet-changes { flex: none; max-height: 6.5rem; overflow-y: auto; margin: 0.4rem 0 0; }
 .edit-sheet > .hint { flex: none; }

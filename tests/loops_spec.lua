@@ -505,6 +505,35 @@ describe('the rest of the loops', function()
     end)
 end)
 
+describe('the expiry pass with a player frozen', function()
+    --- Sweep 6 J-1: once anybody at all was frozen, the pass asked every live
+    --- contract's freeze without the roster it already held, and each read
+    --- it again: 0 statements became 200 (16-18 ms) on this city, on every
+    --- login, logout, acceptance or hold change for as long as the freeze
+    --- lasted. Pinned: the same as with nobody frozen.
+    it('sends the database nothing more than with nobody frozen, on a busy mysql server', function()
+        local main, s = boot('mysql')
+        city(s)
+        main.tick()
+        tick(main)
+        local function pass()
+            main.markPresenceChanged()
+            local from = #Exec.statements
+            main.expire()
+            return #Exec.statements - from
+        end
+        pass()
+        local idle = pass()
+        Env.addPlayer({ source = 499, citizenid = 'BYSTAND1', license = 'license:bys1' })
+        truthy(s.freeze.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
+        pass()                                     -- the snapshot read again after the freeze's writes
+        local frozen = pass()
+        eq(frozen, idle, ('the pass sent %d statements with one player frozen, %d with none')
+            :format(frozen, idle))
+        eq(frozen, 0, 'the pass reads nothing it already holds')
+    end)
+end)
+
 --------------------------------------------------------------------------
 -- The optional features' jobs (Config.Improvements, Config.Roleplay)
 --------------------------------------------------------------------------

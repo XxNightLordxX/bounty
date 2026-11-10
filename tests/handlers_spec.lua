@@ -551,6 +551,27 @@ describe('pushes in one tick', function()
     end)
 end)
 
+describe('the admin panel\'s contract list with a player frozen', function()
+    --- Sweep 6 J-2: the On hold badge read each row's roster twice once
+    --- anybody was frozen (frozenShown, partiesOf): 1 statement became 26 to
+    --- 32 on a 28-row page, and the player view's list the same. One read
+    --- of the page's rosters now, whoever is frozen.
+    it('reads the page\'s rosters in one statement, not two a row', function()
+        local main, s = boot('mysql')
+        unlimited()
+        city(s)
+        main.tick()
+        local idle = selects(function() truthy(admin(402, 'contracts', { page = 1 }).ok) end)
+        Env.addPlayer({ source = 499, citizenid = 'BYSTAND1', license = 'license:bys1' })
+        truthy(s.freeze.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
+        truthy(admin(402, 'contracts', { page = 1 }).ok)
+        local frozen = selects(function() truthy(admin(402, 'contracts', { page = 1 }).ok) end)
+        truthy(frozen <= idle + 2, ('%d statements with one player frozen, %d with none'):format(frozen, idle))
+        local search = selects(function() truthy(admin(402, 'contracts', { query = 'get1' }).ok) end)
+        truthy(search <= idle + 4, ('the search sent %d statements with one player frozen'):format(search))
+    end)
+end)
+
 describe('an admin panel reply\'s size', function()
     it('is counted without encoding it, close enough to say which side of the line it falls', function()
         local main, s = boot('json')

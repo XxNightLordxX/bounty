@@ -322,6 +322,14 @@ buyUnlocked = function(actor, contractId, shown)
         return false, CH.ERR.LIMIT_REACHED, { most = 1, perHitman = true }
     end
     local untilAt = newest and ((tonumber(newest.bought_at) or 0) + wait) or 0
+    -- The wait stands still while the contract is held (the restart hold,
+    -- the app pause): its end gives the time back (LocationTip.heldBack),
+    -- and a tip bought meanwhile, on the wall clock's word, came before it.
+    if newest and untilAt > 0 and Contracts and Contracts.heldSince then
+        local since = Contracts.heldSince(contract)
+        local start = since and math.max(since, tonumber(newest.bought_at) or since)
+        if start and start < untilAt and now > start then untilAt = untilAt + (now - start) end
+    end
     if untilAt > now then
         return false, CH.ERR.TIP_COOLDOWN, { untilAt = untilAt, retryAfter = untilAt - now }
     end
@@ -529,6 +537,52 @@ end
 --------------------------------------------------------------------------
 -- Clearing
 --------------------------------------------------------------------------
+
+--- A hold on the contract has ended (server/freeze.lua's give-back, through
+--- ImpTips.heldBack): every tip on it is given the time it stood still,
+--- from `from` (or when it was bought, if later) to `to`. Its showing, if
+--- it was still showing when the hold began, ends that much later, and is
+--- put back on its buyer's map; its wait, if it was still running, does
+--- too, so the hitman held does not come back able to buy at once. Kept
+--- by the store first, then here.
+---@param contractId string
+---@param from integer os.time()
+---@param to integer os.time()
+function LocationTip.heldBack(contractId, from, to)
+    if not (Storage and Storage.moveLocationTip) then return end
+    -- Nothing read where none is sold and none was read: a hold's end gives
+    -- every live contract its time back, and as shipped tips are off.
+    if not byContract[contractId] and not LocationTip.enabled() then return end
+    local rows = rowsFor(contractId)
+    if #rows == 0 then return end
+    local wait = math.max(0, setting('CooldownMinutes', 0)) * 60
+    local now = os.time()
+    for _, row in ipairs(rows) do
+        local bought, expires = tonumber(row.bought_at) or 0, tonumber(row.expires_at) or 0
+        local start = math.max(from, bought)
+        local span = to - start
+        local newBought, newExpires = bought, expires
+        if span > 0 then
+            if start < expires then newExpires = expires + span end
+            if start < bought + wait then newBought = bought + span end
+        end
+        if newBought ~= bought or newExpires ~= expires then
+            local moved, err = pcall(Storage.moveLocationTip, row.id, newBought, newExpires)
+            if moved then
+                row.bought_at, row.expires_at = newBought, newExpires
+                if newExpires ~= expires and newExpires > now then
+                    disarm(row)
+                    local buyer = Identity and Identity.byCitizenId(row.buyer_cid)
+                    if buyer and stillOn(contractId, row.buyer_cid) then deliver(buyer.source, row, now) end
+                    armClear(row)
+                end
+            else
+                Log.always(('informant tip %s: the time a hold took could not be given back (%s)')
+                    :format(tostring(row.id), Util.dbError(err)))
+            end
+        end
+    end
+end
 
 --- The contract has ended: every tip on it comes off its buyer's map, and
 --- its records go.

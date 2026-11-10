@@ -270,15 +270,16 @@ local buyUnlocked
 ---@return boolean ok
 ---@return string|nil err
 ---@return boolean|table|nil queued, or on a refusal what the page is told
-function Bailout.buy(actor, contractId)
+---@param shown number|nil the price the page quoted; nil for a caller that is not a page
+function Bailout.buy(actor, contractId, shown)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if not Config.Bailout.Enabled then return false, CH.ERR.BAILOUT_OFF end
     return Contracts.serialized({ 'contract:' .. contractId, 'settle:' .. contractId },
-        buyUnlocked, actor, contractId)
+        buyUnlocked, actor, contractId, shown)
 end
 
-buyUnlocked = function(actor, contractId)
+buyUnlocked = function(actor, contractId, shown)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
@@ -288,6 +289,12 @@ buyUnlocked = function(actor, contractId)
     end
     if (contract.bailout_amount or 0) <= 0 then return false, CH.ERR.NO_BUYOUT_PRICE end
     if contract.bailout_queued_at then return false, CH.ERR.BUYOUT_PENDING end
+    -- The price the dialog quoted is the price charged: the placer can
+    -- change it while nobody holds the contract (Contracts.revise), and a
+    -- target who agreed to one figure was otherwise charged another.
+    if shown ~= nil and tonumber(shown) ~= contract.bailout_amount then
+        return false, CH.ERR.TERMS_CHANGED, { amount = contract.bailout_amount }
+    end
     -- On hold by staff (server/freeze.lua): nothing is charged.
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
 

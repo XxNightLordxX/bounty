@@ -2068,6 +2068,16 @@ function JsonStore.writeLocationTip(row)
     return true
 end
 
+--- A tip's times moved on by a hold (LocationTip.heldBack): see the memory
+--- backend.
+function JsonStore.moveLocationTip(id, boughtAt, expiresAt)
+    local row = db.locationTips[id]
+    if not row then return false end
+    row.bought_at, row.expires_at = boughtAt, expiresAt
+    touch(true)
+    return true
+end
+
 function JsonStore.deleteLocationTip(id)
     if db.locationTips[id] == nil then return true end
     db.locationTips[id] = nil
@@ -2795,7 +2805,9 @@ end
 --- an ending's resolution. Only these columns, and never the state, the
 --- slot counters, the clock or the buyout queue, which have their own.
 local SETTABLE = { reason = true, mode = true, bonus_percent = true, bailout_amount = true,
-    penalty_amount = true, resolved_at = true, resolution = true, expires_at = true }
+    penalty_amount = true, resolved_at = true, resolution = true, expires_at = true,
+    -- The placer's terms an untaken contract may still change (Contracts.revise).
+    anon_creator = true, fulfilment_rule = true }
 function JsonStore.setContractFields(id, fields)
     local c = db.contracts[id]
     if not c then return false end

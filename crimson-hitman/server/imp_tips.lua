@@ -50,9 +50,15 @@ ImpTips.NOT_FOUND = "Your informant couldn't find them."
 --- The pending warnings, [tip id] = row { id, kind, contract_id, tip_id,
 --- due_at }, and the timers sending them.
 local pending, timers = {}, {}
---- Who has gone dark, [target cid] = row { id, kind, cid, until_at }.
+--- Who has gone dark, [target cid] = row { id, kind, cid, until_at, bought_at,
+--- contract_id }.
 local dark = {}
 local loaded = false
+--- The time holds took, given back before this module was started
+--- (ImpTips.heldBack from the restart hold's give-back at the start, which
+--- runs before ImpTips.init): { contractId, from, to }, applied by init.
+local heldQueue = {}
+local heldOver
 
 --- Uniform [0, 1), replaceable by a test that needs a known draw.
 ImpTips.random = math.random
@@ -69,6 +75,16 @@ function ImpTips.init(deps)
     if deps.projection and deps.projection.extenders then
         deps.projection.extenders.impTips = function(out, contract, viewerCid, role)
             if role == 'target' then ImpTips.targetCard(out, contract, viewerCid) end
+        end
+    end
+    -- What the start's give-back asked for before this was started.
+    local waiting = heldQueue
+    heldQueue = {}
+    for i = 1, #waiting do
+        local gave, err = pcall(ImpTips.heldBack, waiting[i][1], waiting[i][2], waiting[i][3])
+        if not gave then
+            Log.always(('contract %s: the paid windows the restart hold took could not be given back (%s)')
+                :format(tostring(waiting[i][1]), Util.dbError(err)))
         end
     end
 end
@@ -418,6 +434,27 @@ end
 -- F6: going dark
 --------------------------------------------------------------------------
 
+--- Until when a go-dark window that has run out on the wall clock still
+--- stands, because the contract it was bought on is on hold now (a staff
+--- freeze, the restart hold, the app pause) or a hold on it is being
+--- released, its time not given back yet; nil when it does not. Read only
+--- for a window past its end.
+---@param row table
+---@param now integer
+---@return integer|nil
+heldOver = function(row, now)
+    if not (Contracts and Contracts.heldSince and Storage and row.contract_id) then return nil end
+    local read, contract = pcall(Storage.readContract, row.contract_id)
+    if not read or not contract or CH.TERMINAL[contract.state] then return nil end
+    local untilAt = tonumber(row.until_at) or 0
+    if Contracts.holdReleasing and Contracts.holdReleasing() then return now + 1 end
+    local since = Contracts.heldSince(contract)
+    if not since then return nil end
+    local start = math.max(since, tonumber(row.bought_at) or since)
+    if start >= untilAt then return nil end
+    return untilAt + math.max(0, now - start)
+end
+
 --- Whether a target has gone dark now, and until when.
 ---@param cid string
 ---@return integer|nil untilAt
@@ -425,11 +462,52 @@ function ImpTips.darkUntil(cid)
     load()
     local row = dark[cid]
     if not row then return nil end
+    local now = os.time()
     local untilAt = tonumber(row.until_at) or 0
-    if untilAt > os.time() then return untilAt end
+    if untilAt > now then return untilAt end
+    -- Run out on the wall clock while the contract it was bought on is on
+    -- hold: it stands still with the hold, whose end gives the time back
+    -- (ImpTips.heldBack). Dark until then, and kept.
+    local held = heldOver(row, now)
+    if held then return held end
     dark[cid] = nil
     if Storage and Storage.deleteRpRow then pcall(Storage.deleteRpRow, row.id) end
     return nil
+end
+
+--- A hold on a contract has ended (server/freeze.lua, giveBack): the
+--- go-dark window bought on it, and the tips on it (LocationTip.heldBack),
+--- given the time it stood still, from `from` (or when it was bought, if
+--- later) to `to`. Only a window still running when the hold began.
+--- Before this module is started (the restart hold's give-back at the
+--- start), kept for init.
+---@param contractId string
+---@param from integer os.time()
+---@param to integer os.time()
+function ImpTips.heldBack(contractId, from, to)
+    from, to = tonumber(from), tonumber(to)
+    if not (contractId and from and to) or to <= from then return end
+    if not Storage then
+        heldQueue[#heldQueue + 1] = { contractId, from, to }
+        return
+    end
+    load()
+    local minutes = math.max(1, int(cfg('GoDark').Minutes, 30))
+    for _, row in pairs(dark) do
+        if row.contract_id == contractId then
+            local untilAt = tonumber(row.until_at) or 0
+            local start = math.max(from, tonumber(row.bought_at) or (untilAt - minutes * 60))
+            if start < untilAt and to > start then
+                row.until_at = untilAt + (to - start)
+                local kept, err = pcall(Storage.writeRpRow, row)
+                if not kept then
+                    Log.always(('go dark: the time a hold took could not be kept (%s)')
+                        :format(Util.dbError(err)))
+                end
+            end
+        end
+    end
+    if LocationTip and LocationTip.heldBack then LocationTip.heldBack(contractId, from, to) end
 end
 
 local function goDarkTerms()
@@ -446,9 +524,17 @@ end
 ---@param cid string the target
 function ImpTips.targetCard(out, contract, cid)
     if contract.target_cid ~= cid or CH.TERMINAL[contract.state] then return end
-    if ImpTips.on('GoDark') and out.tippedAt then
+    -- Sold only while tips on this contract are (LocationTip.enabled: the
+    -- master switch, its own, and a whitelisted-job target's): with tips
+    -- switched off it hid the target from nobody, and was charged all the
+    -- same. A window already paid for is still shown to its end, whichever
+    -- switch is off now: it holds whatever the switches say (targetDark).
+    local untilAt = ImpTips.darkUntil(cid)
+    if ImpTips.on('GoDark') and out.tippedAt and LocationTip and LocationTip.enabled(contract) then
         local cost, account, minutes = goDarkTerms()
-        out.goDark = { cost = cost, account = account, minutes = minutes, untilAt = ImpTips.darkUntil(cid) }
+        out.goDark = { cost = cost, account = account, minutes = minutes, untilAt = untilAt }
+    elseif untilAt then
+        out.goDark = { untilAt = untilAt }
     end
     if ImpTips.on('InformantSecondTry') and Informant and Informant.purchasesBy and out.informantPicks then
         local base = math.max(0, int(Config.Informant.Cost, 0))
@@ -505,7 +591,11 @@ buyDark = function(actor, contractId, shown)
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
         return false, CH.ERR.CONTRACT_FROZEN
     end
-    if not (LocationTip and LocationTip.toldAt(contractId)) then return false, CH.ERR.NOT_TIPPED end
+    -- Tips switched off on this contract (the master switch, their own, or
+    -- a whitelisted-job target's): nobody can buy one, so going dark hides
+    -- them from nothing. Refused before anything is charged.
+    if not (LocationTip and LocationTip.enabled(contract)) then return false, CH.ERR.FEATURE_OFF end
+    if not LocationTip.toldAt(contractId) then return false, CH.ERR.NOT_TIPPED end
     local already = ImpTips.darkUntil(actor.cid)
     if already then return false, CH.ERR.ALREADY_DARK, { untilAt = already } end
     if shown ~= nil and cost > 0 then
@@ -517,6 +607,7 @@ buyDark = function(actor, contractId, shown)
     -- Read again with nothing between this and the charge.
     local now = Storage.readContract(contractId)
     if not now or CH.TERMINAL[now.state] then return false, CH.ERR.ALREADY_SETTLED end
+    if not LocationTip.enabled(now) then return false, CH.ERR.FEATURE_OFF end
     if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(now) then
         return false, CH.ERR.CONTRACT_FROZEN
     end
@@ -528,7 +619,7 @@ buyDark = function(actor, contractId, shown)
     -- the server restarted. Counted as dark only once paid and confirmed.
     local untilAt = os.time() + minutes * 60
     local row = { id = 'dk:' .. actor.cid, kind = ImpTips.KIND_DARK, cid = actor.cid, until_at = untilAt,
-                  contract_id = contractId, pending = true }
+                  bought_at = os.time(), contract_id = contractId, pending = true }
     local kept = pcall(Storage.writeRpRow, row)
     if not kept then
         pcall(Storage.deleteRpRow, row.id)
@@ -594,7 +685,8 @@ function ImpTips.prune()
     if not loaded or next(dark) == nil then return 0 end
     local now, gone = os.time(), {}
     for cid, row in pairs(dark) do
-        if (tonumber(row.until_at) or 0) <= now then
+        -- Not one standing still with a hold on its contract (heldOver).
+        if (tonumber(row.until_at) or 0) <= now and not heldOver(row, now) then
             gone[#gone + 1] = cid
             if #gone >= ImpTips.PRUNES_PER_PASS then break end
         end

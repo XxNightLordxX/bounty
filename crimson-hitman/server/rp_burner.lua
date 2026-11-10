@@ -47,6 +47,10 @@ Burner.ACTIONS = {
     -- Handing over a proof item (Config.Improvements.ProofItems): a hitman
     -- action like Verify kill, so it needs the burner too.
     proofItem = true,
+    -- The placer turning contract decay off on their contract
+    -- (Config.Improvements.ContractDecay): a placer's contract action like
+    -- Edit, so it needs the burner too.
+    decayOff = true,
 }
 
 --- Whether this player carries a burner now: true, false, or nil where it

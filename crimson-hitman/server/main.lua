@@ -3208,11 +3208,15 @@ end
 ---@return boolean
 function ContractClockMayRun(contract)
     if not (modules and modules.identity and contract) then return true end
-    if modules.freeze and (modules.freeze.restartHeld() or modules.freeze.holds(contract)
+    if modules.freeze and (modules.freeze.restartHeld()
         or (modules.freeze.appPaused and modules.freeze.appPaused())) then
         return false
     end
-    local verdict = judge(contract, os.time(), { actors = {} }, true)
+    -- Its operatives read once, for the freeze and the verdict both: asked
+    -- without them, a freeze on anybody read the roster again.
+    local hitmen = Storage.readHitmen(contract.id) or {}
+    if modules.freeze and modules.freeze.holds(contract, hitmen) then return false end
+    local verdict = judge(contract, os.time(), { actors = {}, hitmen = { [contract.id] = hitmen } })
     return not verdict.paused
 end
 
@@ -3252,7 +3256,11 @@ local function expireOne(contract, now, pass)
         pass.soonest = math.min(pass.soonest, now)
         return
     end
-    if (modules.freeze and modules.freeze.holds(contract))
+    -- With the roster the pass already holds: asked without it, once
+    -- anybody at all was frozen, every live contract's roster was read
+    -- again on every pass (one statement each on mysql).
+    if (modules.freeze and modules.freeze.holds(contract,
+            pass.hitmen and operativesOf(pass, contract) or nil))
         or (modules.freeze and modules.freeze.restartHeld())
         or (modules.freeze and modules.freeze.appPaused and modules.freeze.appPaused()) then
         if not contract.paused_since and not verdict.overdue

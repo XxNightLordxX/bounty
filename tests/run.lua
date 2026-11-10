@@ -702,6 +702,7 @@ local suites = {
     'imp_tips_spec', 'impB_board_spec', 'imp_staffeco_spec', 'sweep4_spec', 'sweep4_staff_spec',
     'sweep5_spec', 'sweep5b_spec', 'sweep5c_spec',
     'meeting_blip_spec',
+    'sweep6_spec',
     'docs_spec',
 }
 

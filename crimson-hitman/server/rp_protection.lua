@@ -649,12 +649,17 @@ function Protection.cancel(actor, payload)
     return { cancelled = true }
 end
 
---- The target moves the meeting pin to where they stand now.
+--- The target moves the meeting pin to where they stand now. Also with
+--- the feature switched off, while their job is live (as cancel is): the
+--- guard hired still works to it and is still owed, and the card still
+--- draws the button. Refused feature_off then, every press failed.
 function Protection.movePin(actor, payload)
-    if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
     load()
     local job = type(payload.job) == 'string' and jobs[payload.job] or nil
-    if not job or job.target_cid ~= actor.cid or not live(job) then return false, CH.ERR.NOT_FOUND end
+    if not job or job.target_cid ~= actor.cid or not live(job) then
+        if not Protection.enabled() then return false, CH.ERR.FEATURE_OFF end
+        return false, CH.ERR.NOT_FOUND
+    end
     local pin = standing(actor.source)
     if not pin then return false, CH.ERR.BUSY end
     job.pin = pin
@@ -879,10 +884,30 @@ function Protection.boot()
     end
 end
 
---- What the page needs to know to draw the Protection tab at all.
-function Protection.settings(out)
+--- Whether this player guards a live job now (taken, its contract not
+--- ended): from memory, no read.
+local function guardsLiveJob(cid)
+    if type(cid) ~= 'string' then return false end
+    for _, job in pairs(jobs) do
+        if job.state == 'taken' and job.guard_cid == cid then return true end
+    end
+    return false
+end
+
+--- What the page needs to know to draw the Protection tab at all. With
+--- the feature switched off, still drawn for a guard on a live job: their
+--- job, its pin and Set GPS are on it, and they are still owed. Without it
+--- they lost the tab they were told to use.
+---@param out table the page's settings
+---@param viewerCid string|nil who the page is for
+function Protection.settings(out, viewerCid)
     if type(out) ~= 'table' then return end
-    out.protection = Protection.enabled() or nil
+    local guarding = false
+    if not Protection.enabled() and viewerCid ~= nil then
+        load()
+        guarding = guardsLiveJob(viewerCid)
+    end
+    out.protection = (Protection.enabled() or guarding) or nil
     out.hitOnHitman = Protection.hitOnHitmanEnabled() or nil
 end
 

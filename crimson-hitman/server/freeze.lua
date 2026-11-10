@@ -122,18 +122,38 @@ local LIVE = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true }
 --- even under the contract's lock, the write put back whatever a staff
 --- extension added in between: that lock is refused as busy rather than
 --- waited for, so the extension ran beside it.
+---
+--- And the paid windows on it the same span (`from` to `from + back`): a
+--- target's go-dark and the informant tips' show and wait
+--- (server/imp_tips.lua, ImpTips.heldBack). Each ran on the wall clock
+--- through the hold, and a window bought for 30 minutes was gone after a
+--- 40-minute freeze.
 ---@param contractId string
 ---@param back integer seconds
-local function giveBack(contractId, back)
+---@param from integer|nil when the span given back began, os.time()
+local function giveBack(contractId, back, from)
     if not back or back <= 0 then return end
+    local live = false
     local ok, err = pcall(function()
         local fresh = Storage.readContract(contractId)
-        if not fresh or not LIVE[fresh.state] or not fresh.expires_at then return end
+        if not fresh or not LIVE[fresh.state] then return end
+        live = true
+        if not fresh.expires_at then return end
         Storage.addToExpires(contractId, back)
     end)
     if not ok then
         Log.always(('contract %s: the lifetime a hold took could not be given back (%s)')
             :format(contractId, Util.dbError(err)))
+    end
+    if live and from then
+        local tips = CrimsonBoot.require('server.imp_tips')
+        if tips and tips.heldBack then
+            local gave, why = pcall(tips.heldBack, contractId, from, from + back)
+            if not gave then
+                Log.always(('contract %s: the paid windows a hold took could not be given back (%s)')
+                    :format(contractId, Util.dbError(why)))
+            end
+        end
     end
 end
 
@@ -521,7 +541,7 @@ unfreezeUnlocked = function(staffCid, cid, reason)
         -- Nor past the app pause's: its end gives that back.
         if appPause then stop = math.min(stop, appPause.since) end
         local back = math.max(0, stop - row.frozen_at)
-        if back > 0 and contract.expires_at then giveBack(contract.id, back) end
+        if back > 0 and contract.expires_at then giveBack(contract.id, back, row.frozen_at) end
         -- And every open amendment proposal on it the time this freeze held
         -- it: none could be answered while it was held, and none ran out
         -- meanwhile (Amendments.expire), so each is given the hold back to
@@ -605,7 +625,7 @@ giveBackRestart = function(since, now)
             -- Nor the part the app pause covers, which its end gives back.
             if appPause then stop = math.min(stop, appPause.since) end
             local back = stop - from
-            if back > 0 then giveBack(contract.id, back) end
+            if back > 0 then giveBack(contract.id, back, from) end
         end
     end
 end
@@ -626,7 +646,7 @@ giveBackUnread = function(since, now)
             if restartHold then stop = math.min(stop, restartHold.since) end
             if appPause then stop = math.min(stop, appPause.since) end
             local back = stop - from
-            if back > 0 then giveBack(contract.id, back) end
+            if back > 0 then giveBack(contract.id, back, from) end
         end
     end
 end
@@ -811,7 +831,7 @@ local function giveBackApp(since, now)
             local stop = math.min(now, Freeze.heldSince(contract) or now)
             if restartHold then stop = math.min(stop, restartHold.since) end
             local back = stop - from
-            if back > 0 then giveBack(contract.id, back) end
+            if back > 0 then giveBack(contract.id, back, from) end
         end
     end
 end

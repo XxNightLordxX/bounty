@@ -1195,6 +1195,9 @@ function App.register()
     end)
 
     handler('revise', 'amend', function(actor, payload)
+        -- true, false, or not asked: `x and y or nil` turns false into nil.
+        local anonymous = nil
+        if type(payload.anonymous) == 'boolean' then anonymous = payload.anonymous end
         -- Busy says for how long (Contracts.serialized), for the page's words.
         local ok, err, detail = deps.contracts.revise(actor, payload.id, {
             reason = payload.reason,
@@ -1203,9 +1206,22 @@ function App.register()
             -- never arrived, and the edit was refused as invalid input.
             reasonPreset = payload.reasonPreset,
             deadlineSeconds = payload.deadlineSeconds,
+            -- The placer's terms an untaken contract may still change, each
+            -- checked there as placing checks it (Contracts.revise). Only
+            -- the types those checks take; anything else is not passed on.
+            bailoutAmount = type(payload.bailoutAmount) == 'number' and payload.bailoutAmount or nil,
+            fulfilment = type(payload.fulfilment) == 'string' and payload.fulfilment:sub(1, 16) or nil,
+            anonymous = anonymous,
+            -- The anonymity fee the page quoted, as the Place form echoes it.
+            shown = type(payload.shown) == 'table' and {
+                creatorFee = tonumber(payload.shown.creatorFee),
+                feeAccount = type(payload.shown.feeAccount) == 'string'
+                    and payload.shown.feeAccount:sub(1, 16) or nil,
+            } or nil,
         })
         if not ok then return false, err, detail end
-        return { id = payload.id }
+        -- And what going anonymous was charged, for the page to say.
+        return { id = payload.id, charged = detail }
     end)
 
     -- What the reward is made of, for the creator who is changing it.
@@ -1478,7 +1494,11 @@ function App.register()
     handler('bailout', 'bailout', function(actor, payload)
         -- The third is whether it was queued, or on a refusal what the
         -- target was short of.
-        local ok, err, third = deps.bailout.buy(actor, payload.id)
+        -- `shown` is the price the dialog quoted: the placer may change it
+        -- while nobody holds the contract (Contracts.revise), and a price
+        -- moved since is refused rather than charged.
+        local ok, err, third = deps.bailout.buy(actor, payload.id,
+            type(payload.shown) == 'number' and payload.shown or nil)
         if not ok then return false, err, third end
         -- Whether it closed now or waits on a hitman, so the page can say
         -- which: "closed" while somebody can still finish it is the target

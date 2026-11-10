@@ -1083,7 +1083,9 @@ local function buildListing(viewerCid, page)
             } or nil,
         },
     }
-    extendAll(Projection.settingsExtenders, out.settings)
+    -- With the viewer: what a page draws can depend on who reads it (the
+    -- Protection tab, for a guard on a live job: server/rp_protection.lua).
+    extendAll(Projection.settingsExtenders, out.settings, viewerCid)
     -- The rows' escrow as the board read it, and their rosters in one read
     -- (one each for the role and the card was two per row), kept with the
     -- board for the next viewer.

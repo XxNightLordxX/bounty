@@ -225,7 +225,9 @@ end
 --- an ending's resolution. Only these columns, and never the state, the
 --- slot counters, the clock or the buyout queue, which have their own.
 local SETTABLE = { reason = true, mode = true, bonus_percent = true, bailout_amount = true,
-    penalty_amount = true, resolved_at = true, resolution = true, expires_at = true }
+    penalty_amount = true, resolved_at = true, resolution = true, expires_at = true,
+    -- The placer's terms an untaken contract may still change (Contracts.revise).
+    anon_creator = true, fulfilment_rule = true }
 function Memory.setContractFields(id, fields)
     local c = db.contracts[id]
     if not c then return false end
@@ -1523,6 +1525,16 @@ end
 
 function Memory.writeLocationTip(row)
     db.locationTips[row.id] = tipCopy(row)
+    return true
+end
+
+--- A tip's times moved on by the time a hold on its contract took
+--- (LocationTip.heldBack): when it was bought, which its wait runs from, and
+--- when it stops showing. False where there is no such tip.
+function Memory.moveLocationTip(id, boughtAt, expiresAt)
+    local row = db.locationTips[id]
+    if not row then return false end
+    row.bought_at, row.expires_at = boughtAt, expiresAt
     return true
 end
 

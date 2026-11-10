@@ -102,6 +102,14 @@ function Contracts.heldSince(contract, hitmen)
     return since
 end
 
+--- Whether a hold is being released now, its time not all given back yet
+--- (Freeze.releasing): a window that ran out on the wall clock meanwhile is
+--- about to be given that time back, so nothing drops it yet.
+---@return boolean
+function Contracts.holdReleasing()
+    return Freeze ~= nil and Freeze.releasing ~= nil and Freeze.releasing()
+end
+
 --- Whether staff have paused the whole app (Config.Staff.AppPaused):
 --- nothing is placed or accepted meanwhile (server/freeze.lua).
 ---@return boolean
@@ -3629,9 +3637,36 @@ end
 --- out of a player's pocket and belongs on a path built for it:
 --- Amendments.addEscrow puts more up, and Contracts.withdrawReward takes
 --- part of it back. This changes only what the contract says.
+---
+--- And, as placing decides them, each by the rule placing one goes through
+--- (owner rule: the placer may change anything before a hitman accepts):
+---   * the buyout price (bailoutAmount, 0 for none), clamped as placing
+---     clamps it (Contracts.clampBailout) against the clean money it holds
+---     now; refused where it holds none (BUYOUT_NEEDS_CLEAN), where the
+---     server runs no buyouts, and while one already paid waits to close;
+---   * the fulfilment rule ('alive' | 'either'), only as this server places
+---     contracts now (Config.Completion.Fulfilment: 'either' allows both,
+---     'alive' only that); live transfer only refuses a contract that
+---     still carries a live-delivery bonus (NO_BONUS), as placing does;
+---   * placing anonymously (anonymous = true | false): put anonymous only
+---     where the anonymity switches allow it for this target (its
+---     whitelisted-job switches where it is on such a job, as recorded or
+---     as it is now), with no reward item that names the placer, and the
+---     creator fee charged last, as placing charges it, against the figure
+---     the page showed. Back under their name is always allowed; the fee is
+---     not given back.
+--- The target is not changed here: every check placing runs on a target
+--- (the cooldowns, the most per target, protected and immune players,
+--- barred jobs, the same placer's wait, and the server's own target
+--- limits) is a read of other contracts under the target's own lock, and
+--- its advisories, informants, tips and protection jobs are the old
+--- target's. The page offers Cancel and place again instead: the cancel
+--- hands everything back, and the new contract is placed through every
+--- one of those checks.
 ---@param actor table
 ---@param contractId string
----@param changes table { reason?: string, deadlineSeconds?: integer }
+---@param changes table { reason?: string, deadlineSeconds?: integer, bailoutAmount?: integer,
+--- fulfilment?: string, anonymous?: boolean, shown?: table }
 ---@return boolean ok
 ---@return string|nil err
 local function reviseUnlocked(actor, contractId, changes)
@@ -3647,6 +3682,100 @@ local function reviseUnlocked(actor, contractId, changes)
     -- when the deadline below is refused.
     local touched = {}
     local deadlineFor, newReason
+    -- The placer's terms (buyout, rule, anonymity), written together below
+    -- once every check has passed; the anonymity fee owed for it.
+    local terms, feeDue = {}, nil
+
+    -- The escrow as placing measures it: the creator's own held lines, not
+    -- a stake or a line owed to somebody. Read once, for whichever needs it.
+    local heldLines
+    local function creatorLines()
+        if heldLines then return heldLines end
+        heldLines = {}
+        for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+            if line.state == CH.ESCROW_STATE.HELD and not line.owed_to
+                and line.portion ~= CH.PORTION.STAKE and line.portion ~= CH.PORTION.OWED then
+                heldLines[#heldLines + 1] = line
+            end
+        end
+        return heldLines
+    end
+
+    if changes.bailoutAmount ~= nil then
+        local asked = tonumber(changes.bailoutAmount)
+        if not asked or asked ~= asked or asked < 0 or asked == math.huge
+            or asked > (Config.MaxContractValue or math.huge) then
+            return false, CH.ERR.INVALID_INPUT
+        end
+        if not Config.Bailout.Enabled then return false, CH.ERR.BAILOUT_OFF end
+        -- Paid for and waiting out its delay: it settles at the price paid.
+        if contract.bailout_queued_at then return false, CH.ERR.BUYOUT_PENDING end
+        local bailout, bailoutErr = Contracts.clampBailout(math.floor(asked), creatorLines())
+        if bailoutErr then return false, bailoutErr end
+        if bailout ~= (tonumber(contract.bailout_amount) or 0) then
+            terms.bailout_amount = bailout
+            touched[#touched + 1] = 'buyout'
+        end
+    end
+
+    if changes.fulfilment ~= nil then
+        local rule = changes.fulfilment
+        if rule ~= CH.FULFILMENT_RULE.ALIVE and rule ~= CH.FULFILMENT_RULE.EITHER then
+            return false, CH.ERR.INVALID_INPUT
+        end
+        -- A kill only where this server places contracts that allow one now.
+        if rule == CH.FULFILMENT_RULE.EITHER and Util.placingRule() ~= CH.FULFILMENT_RULE.EITHER then
+            return false, CH.ERR.RULE_CHANGED, { fulfilment = Util.placingRule() }
+        end
+        if rule ~= Util.fulfilmentRule(contract) then
+            -- Live transfer only pays the whole reward on delivery: a bonus
+            -- "only if alive" on top means nothing, and placing refuses it.
+            if rule == CH.FULFILMENT_RULE.ALIVE then
+                if (tonumber(contract.bonus_percent) or 0) > 0 then return false, CH.ERR.NO_BONUS end
+                local lines = creatorLines()
+                for i = 1, #lines do
+                    if lines[i].portion == CH.PORTION.BONUS then return false, CH.ERR.NO_BONUS end
+                end
+            end
+            terms.fulfilment_rule = rule
+            touched[#touched + 1] = 'fulfilment'
+        end
+    end
+
+    if changes.anonymous ~= nil then
+        if type(changes.anonymous) ~= 'boolean' then return false, CH.ERR.INVALID_INPUT end
+        local now = contract.anon_creator == true
+        if changes.anonymous and not now then
+            -- The switches for this target: its whitelisted-job ones where
+            -- it was on such a job when placed, or is now.
+            local targetActor = Identity.byCitizenId(contract.target_cid)
+            local protected = contract.target_protected == true
+                or (targetActor ~= nil and Identity.protectedBy(targetActor) ~= nil)
+            if not Util.anonymityAllowed('placer', protected) then return false, CH.ERR.ANONYMITY_OFF end
+            local named, item = Escrow.namesOwner(actor, creatorLines())
+            if named then return false, CH.ERR.ITEM_NAMES_OWNER, { item = item } end
+            local fee = math.floor(tonumber(Config.Anonymity.CreatorFee) or 0)
+            local feeAccount = Config.Anonymity.FeeAccount or 'bank'
+            if fee > 0 then
+                if changes.shown ~= nil then
+                    local shown = type(changes.shown) == 'table' and changes.shown or {}
+                    if tonumber(shown.creatorFee) ~= fee or shown.feeAccount ~= feeAccount then
+                        return false, CH.ERR.TERMS_CHANGED, { creatorFee = fee, feeAccount = feeAccount }
+                    end
+                end
+                local player = actor.player
+                local read, held = false, 0
+                if player and player.Functions then read, held = pcall(player.Functions.GetMoney, feeAccount) end
+                if not read or (tonumber(held) or 0) < fee then return false, CH.ERR.INSUFFICIENT end
+                feeDue = { amount = fee, account = feeAccount }
+            end
+            terms.anon_creator = true
+            touched[#touched + 1] = 'anonymous'
+        elseif not changes.anonymous and now then
+            terms.anon_creator = false
+            touched[#touched + 1] = 'anonymous'
+        end
+    end
 
     if changes.reason ~= nil or changes.reasonPreset ~= nil then
         -- Through the same function placing one goes through, so the two
@@ -3689,7 +3818,14 @@ local function reviseUnlocked(actor, contractId, changes)
         touched[#touched + 1] = 'deadline'
     end
 
-    if #touched == 0 then return false, CH.ERR.INVALID_INPUT end
+    if #touched == 0 then
+        -- A term asked for and already as it is (a buyout the clamp leaves
+        -- where it stands, say): nothing to change, and nothing wrong.
+        if changes.bailoutAmount ~= nil or changes.fulfilment ~= nil or changes.anonymous ~= nil then
+            return true
+        end
+        return false, CH.ERR.INVALID_INPUT
+    end
 
     -- The clock moves only through its own writes, and first: a new
     -- deadline, set from the clock as it stands, that is put back if
@@ -3711,10 +3847,38 @@ local function reviseUnlocked(actor, contractId, changes)
         and not Storage.setReason(contractId, newReason) then
         return false, CH.ERR.BAD_STATE
     end
+    -- The terms, only the named columns, and read once more first: every
+    -- read above is an await on mysql, and a buyout queued or an ending in
+    -- them is not repriced.
+    if next(terms) ~= nil then
+        local fresh = Storage.readContract(contractId)
+        if not fresh or CH.TERMINAL[fresh.state] then return false, CH.ERR.ALREADY_SETTLED end
+        if terms.bailout_amount ~= nil and fresh.bailout_queued_at then return false, CH.ERR.BUYOUT_PENDING end
+        if not Storage.setContractFields(contractId, terms) then return false, CH.ERR.BAD_STATE end
+        if terms.bailout_amount ~= nil then
+            Audit.financial('bailout_revised', actor.cid, contractId,
+                { from = tonumber(contract.bailout_amount) or 0, to = terms.bailout_amount })
+        end
+    end
+    -- The fee for going anonymous, last, as placing charges it: a balance
+    -- spent since the check leaves it anonymous and unpaid, and says so.
+    if feeDue then
+        if Util.charge(actor.player, feeDue.account, feeDue.amount) then
+            Audit.financial('anonymity_fee', actor.cid, contractId,
+                { amount = feeDue.amount, account = feeDue.account, role = 'creator', revised = true })
+        else
+            Audit.financial('anonymity_fee_unpaid', actor.cid, contractId,
+                { amount = feeDue.amount, account = feeDue.account, role = 'creator',
+                  reason = 'charge_refused', revised = true })
+        end
+    end
 
     Audit.action('contract_revised', actor.cid, contractId,
-        { changed = table.concat(touched, ',') })
-    return true
+        { changed = table.concat(touched, ','),
+          buyout = terms.bailout_amount, fulfilment = terms.fulfilment_rule,
+          anonymous = terms.anon_creator })
+    if next(terms) ~= nil and Contracts.onChanged then Contracts.onChanged() end
+    return true, nil, feeDue and { fee = feeDue.amount, account = feeDue.account } or nil
 end
 
 --- One at a time with an acceptance, on the key acceptance holds, as a

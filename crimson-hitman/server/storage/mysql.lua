@@ -1822,13 +1822,19 @@ local SETTABLE = {
     resolved_at = 'UPDATE crimson_contracts SET resolved_at = ? WHERE id = ?',
     resolution = 'UPDATE crimson_contracts SET resolution = ? WHERE id = ?',
     expires_at = 'UPDATE crimson_contracts SET expires_at = ? WHERE id = ?',
+    -- The placer's terms an untaken contract may still change (Contracts.revise).
+    anon_creator = 'UPDATE crimson_contracts SET anon_creator = ? WHERE id = ?',
+    fulfilment_rule = 'UPDATE crimson_contracts SET fulfilment_rule = ? WHERE id = ?',
 }
 function MySQLStore.setContractFields(id, fields)
     for k in pairs(fields) do
         if not SETTABLE[k] then error('setContractFields: not a settable field: ' .. tostring(k)) end
     end
     for column, sql in pairs(SETTABLE) do
-        if fields[column] ~= nil then db.update(sql, { fields[column], id }) end
+        local value = fields[column]
+        -- A TINYINT(1) is written 1 or 0, as writeContract writes it.
+        if type(value) == 'boolean' then value = value and 1 or 0 end
+        if value ~= nil then db.update(sql, { value, id }) end
     end
     return true
 end
@@ -2985,6 +2991,15 @@ function MySQLStore.writePlacerInformant(row)
         row.revealed and 1 or 0, row.alerted and 1 or 0,
     })
     return true
+end
+
+--- A tip's times moved on by a hold (LocationTip.heldBack): see the memory
+--- backend. One statement, on the primary key.
+function MySQLStore.moveLocationTip(id, boughtAt, expiresAt)
+    local affected = db.update(
+        'UPDATE crimson_location_tips SET bought_at = ?, expires_at = ? WHERE id = ?',
+        { boughtAt, expiresAt, id })
+    return (tonumber(affected) or 0) > 0
 end
 
 function MySQLStore.deleteLocationTip(id)

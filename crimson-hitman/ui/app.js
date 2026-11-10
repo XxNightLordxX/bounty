@@ -3629,6 +3629,51 @@
         } });
     }
 
+    // The buyout price, as placing sets it: the server clamps it to what the
+    // contract's cash and bank allow, 0 for none.
+    if (v.buyout !== undefined) {
+      var buyoutNow = Number(contract.bailoutAmount) || 0;
+      var buyout = whole(v.buyout);
+      if (isNaN(buyout) || buyout < 0) {
+        return { error: 'The buyout price is a whole number of dollars, 0 for none.' };
+      }
+      if (buyout !== buyoutNow) {
+        changes.push({ what: 'buyout', text: buyout > 0 ? 'Buyout price: ' + money(buyout) : 'No buyout',
+          send: function () { return post('revise', { id: contract.id, bailoutAmount: buyout }); } });
+      }
+    }
+
+    // How it may be completed, only as this server places contracts now.
+    var ruleNow = aliveOnly(contract) ? 'alive' : 'either';
+    if (v.rule && v.rule !== ruleNow) {
+      var rule = v.rule;
+      changes.push({ what: 'completion', text: rule === 'alive' ? 'Completed: alive only'
+        : 'Completed: alive or dead',
+        send: function () { return post('revise', { id: contract.id, fulfilment: rule }); } });
+    }
+
+    // Placed under their name or anonymously, where the server allows it,
+    // with the fee the page quotes echoed so a changed one is refused.
+    var anonNow = contract.creatorAnonymous === true;
+    if (v.anon !== undefined && (v.anon === 'anon') !== anonNow) {
+      var anon = v.anon === 'anon';
+      var fee = anonymityFee('creator');
+      changes.push({ what: 'anonymity', text: anon
+        ? 'Placed anonymously' + (fee > 0 ? ' (' + money(fee) + ' from your ' + anonymityAccount() + ')' : '')
+        : 'Under your name',
+        send: function () {
+          return post('revise', { id: contract.id, anonymous: anon,
+                                  shown: { creatorFee: fee, feeAccount: anonymityAccount() } });
+        },
+        // The fee raised under the sheet: the figure now, nothing taken.
+        explain: function (r) {
+          if (r.err === 'terms_changed' && r.data && typeof r.data.creatorFee === 'number') {
+            return 'placing it anonymously now costs ' + money(r.data.creatorFee) + '. Nothing was taken.';
+          }
+          return null;
+        } });
+    }
+
     var add = whole(v.add);
     if (isNaN(add) || add < 0) { return { error: 'Add a whole number of dollars to the reward, or 0.' }; }
     if (add > 0) {
@@ -3657,7 +3702,7 @@
       return change.send().then(function (r) {
         var failed = !r.ok || (r.data && r.data.outcome === 'failed');
         if (failed) {
-          var why = !r.ok ? (failText(r) || 'Not right now.')
+          var why = !r.ok ? ((change.explain && change.explain(r)) || failText(r) || 'Not right now.')
             : (ERRORS[r.data.err] || 'That change no longer fits this contract.');
           say((done.length ? 'Saved: ' + done.join(', ') + '. ' : '')
             + 'Not saved — ' + change.what + ': ' + why);
@@ -3668,6 +3713,57 @@
       });
     }
     return once('sheet:' + contract.id, next);
+  }
+
+  /* A different target: the contract is withdrawn (everything put up comes
+     back, nobody having taken it) and the Place form opened, where the new
+     one goes through every check placing makes. Two taps, three seconds
+     apart at most. The usual wait after withdrawing is said first. */
+  var retargetArmed = null;   // the contract id whose Cancel and place again waits for its second tap
+  function retargetBox(contract) {
+    var box = el('div', 'sheet-retarget');
+    var waits = relistWaitText(contract);
+    box.appendChild(el('div', 'hint', 'To put this contract on someone else, withdraw it and place '
+      + 'it again: nobody has taken it, so everything you put up comes back.'
+      + (waits ? ' ' + waits : '')));
+    var key = 'retarget:' + contract.id;
+    var armed = retargetArmed === contract.id;
+    var b;
+    if (isBusy(key)) {
+      b = actionButton('ghost ico i-swap', 'Cancel and place again', key, 'Withdrawing\u2026');
+    } else {
+      b = el('button', 'ghost ico i-swap' + (armed ? ' is-armed' : ''),
+        armed ? 'Tap again to withdraw it' : 'Cancel and place again');
+      b.onclick = function () {
+        if (retargetArmed !== contract.id) {
+          retargetArmed = contract.id;
+          setTimeout(function () {
+            if (retargetArmed === contract.id) { retargetArmed = null; render(); }
+          }, TIP_CONFIRM_MS);
+          return render();
+        }
+        retargetArmed = null;
+        once(key, function () {
+          return post('cancel', { id: contract.id }).then(function (r) {
+            if (!r.ok) { return takenOr(r); }
+            var queued = (r.data && Number(r.data.queued)) || 0;
+            say((queued > 0
+              ? 'Contract withdrawn. Some of what you put up is waiting for you \u2014 it arrives '
+                + 'when you next have room.'
+              : 'Contract withdrawn. Everything you put up has been returned.')
+              + ' Place the new one here.' + staffChecking(r.data), 'ok');
+            state.dialog = null;
+            state.draft = state.draft || {};
+            state.tab = 'place';
+            refresh();
+            render();
+          });
+        });
+      };
+    }
+    b.id = 'sheet-retarget-' + contract.id;
+    box.appendChild(b);
+    return box;
   }
 
   function renderSheet(view) {
@@ -3775,6 +3871,58 @@
       modes.appendChild(b);
     });
     panel.appendChild(labelled('Who can take it', modes));
+
+    // The buyout price, where the server runs buyouts (Contracts.revise
+    // clamps it as placing does).
+    if (settings().buyouts !== false) {
+      var buyoutField = document.createElement('input');
+      buyoutField.type = 'number';
+      buyoutField.inputMode = 'numeric';
+      buyoutField.min = 0;
+      buyoutField.id = 'sheet-buyout';
+      buyoutField.value = current('buyout', Number(contract.bailoutAmount) || 0);
+      remember('buyout', buyoutField);
+      panel.appendChild(labelled('Buyout price ($, 0 for none)', buyoutField));
+    }
+
+    // How it may be completed: alive only always; alive or dead only where
+    // this server places contracts that allow a kill now.
+    var ruleChoices = [['alive', 'Alive only']];
+    if (!placingAliveOnly()) { ruleChoices.push(['either', 'Alive or dead']); }
+    var ruleNow = aliveOnly(contract) ? 'alive' : 'either';
+    if (ruleChoices.length > 1 || ruleNow !== 'alive') {
+      var rules = el('div', 'row target-modes sheet-rule');
+      ruleChoices.forEach(function (pair) {
+        var on = (d.values.rule || ruleNow) === pair[0];
+        var b = el('button', on ? 'primary is-chosen' : 'ghost', pair[1]);
+        b.onclick = function () { d.values.rule = pair[0]; d.changes = null; render(); };
+        rules.appendChild(b);
+      });
+      panel.appendChild(labelled('How it is completed', rules));
+    }
+
+    // Under their name or anonymously: anonymous offered only where the
+    // server allows it for this target; back under their name always.
+    var anonNow = contract.creatorAnonymous === true;
+    if (anonNow || anonymityOffered('creator', contract.targetProtected === true)) {
+      var anons = el('div', 'row target-modes sheet-anon');
+      var fee = anonymityFee('creator');
+      var anonChoices = [['named', 'Under my name']];
+      if (anonNow || anonymityOffered('creator', contract.targetProtected === true)) {
+        anonChoices.push(['anon', 'Anonymously' + (fee > 0 && !anonNow ? ' (' + money(fee) + ')' : '')]);
+      }
+      anonChoices.forEach(function (pair) {
+        var on = (d.values.anon || (anonNow ? 'anon' : 'named')) === pair[0];
+        var b = el('button', on ? 'primary is-chosen' : 'ghost', pair[1]);
+        b.onclick = function () { d.values.anon = pair[0]; d.changes = null; render(); };
+        anons.appendChild(b);
+      });
+      panel.appendChild(labelled('Who it says placed it', anons));
+    }
+
+    // The target cannot be changed in place: every placing check runs on
+    // a new one. Cancel and place again, two taps, everything handed back.
+    panel.appendChild(retargetBox(contract));
 
     // Save, then Confirm: the first shows what will change, the second
     // makes it so.
@@ -4860,8 +5008,14 @@
           // Through `once`, so the button is disabled for the round trip: up
           // to half a million, and a second tap sent a second request.
           once('bailout:' + contract.id, function () {
-            return post('bailout', { id: contract.id }).then(function (r) {
+            return post('bailout', { id: contract.id, shown: Number(contract.bailoutAmount) || 0 })
+              .then(function (r) {
               if (!r.ok) {
+                // The placer changed the price under the dialog.
+                if (r.err === 'terms_changed' && r.data && typeof r.data.amount === 'number') {
+                  say('The buyout now costs ' + money(r.data.amount) + '. Nothing was taken.');
+                  return refresh();
+                }
                 // The figure the server asked for, when it says: the price
                 // can have been re-set under the dialog.
                 if (r.err === 'insufficient_funds') {
@@ -6810,8 +6964,13 @@
   }
 
   function viewBoard(view) {
-    // The board's Protection tab, where the server runs bodyguard jobs.
-    if (settings().protection === true) {
+    // The board's Protection tab, where the server runs bodyguard jobs; and
+    // for a guard on a live job after it was switched off (the server says
+    // so in settings, and the jobs read last say it too): their job, its
+    // pin and Set GPS are on it.
+    var guarding = !!(state.protection && state.protection.data
+      && asList(state.protection.data.mine).length);
+    if (settings().protection === true || guarding) {
       view.appendChild(boardTabs());
       if (state.boardTab === 'protection') { return viewProtection(view); }
     } else { state.boardTab = 'contracts'; }

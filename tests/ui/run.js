@@ -14088,6 +14088,235 @@ async function main() {
     drewCleanly(sheet, 'the Edit sheet');
   })();
 
+  /* Sweep 6 (tests/sweep6_spec.lua for the server halves).
+     J-3: the Edit sheet changes everything a placer set before anybody
+     accepts: the buyout price, how it is completed and whether it says who
+     placed it, each through revise after Save and Confirm, and offers
+     Cancel and place again (two taps) for a different target.
+     FE-4: a guard on a live job keeps the Protection tab, its pin and Set
+     GPS after the server switches protection jobs off. */
+  await (async function sweep6() {
+    function card6(extra) {
+      return Object.assign({
+        id: 'ct00000061', reason: 'Owes money', mode: 'exclusive', state: 'active',
+        reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 0, hitmenMax: 1, targetName: 'Dana Reyes', targetProtected: false,
+        creatorName: 'Vic Marlowe', role: 'creator', timeLeft: band(3 * 3600),
+        penaltyAmount: 0, bailoutAmount: 10000, valueHeld: 5000, fulfilment: 'either', hitmen: []
+      }, extra || {});
+    }
+    function board6(settings) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: Object.assign({ relay: true, calls: false, deadlineMaxMinutes: 2880,
+          buyouts: true, amendments: true, fulfilment: 'either', reasonMode: 'freetext',
+          anonymity: { placer: true, hitman: true, whitelisted: { placer: true, hitman: true } },
+          anonymityFees: { creator: 2500, hitman: 0, account: 'bank' },
+          relistWaits: { anyMinutes: 5, sameTargetMinutes: 0, everyoneMinutes: 0 } }, settings || {}) } };
+    }
+    function node6(app, id) {
+      return app.view.all().filter(function (n) { return n._id === id; })[0];
+    }
+    function labels6(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    function confirm6(app) {
+      click(app, 'Save');
+      const confirm = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Confirm') === 0;
+      })[0];
+      truthy(confirm, 'Save arms Confirm: ' + app.view.textContent);
+      if (confirm) { confirm.onclick(); }
+    }
+    async function sheet6(card, settings, over) {
+      const sent = [];
+      const app = boot(Object.assign({
+        list: board6(settings), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card6(card)], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        revise: function (b) { sent.push(['revise', b]); return { ok: true, data: { id: b.id } }; },
+        cancel: function (b) { sent.push(['cancel', b]); return { ok: true, data: { owed: 0, parked: 0 } }; }
+      }, over || {}));
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Edit');
+      return { app: app, sent: sent };
+    }
+
+    // The buyout price, through revise, after Save and Confirm.
+    await (async function () {
+      const t = await sheet6();
+      const box = node6(t.app, 'sheet-buyout');
+      it('S6 J-3: the Edit sheet shows the buyout price as it stands', function () {
+        truthy(box, 'no buyout field: ' + t.app.view.textContent);
+        eq(box && box.value, '10000');
+      });
+      if (!box) { return; }
+      box.value = '25000'; box.oninput();
+      click(t.app, 'Save');
+      it('S6 J-3: Save alone sends nothing: it shows the change and arms Confirm', function () {
+        eq(t.sent.length, 0, JSON.stringify(t.sent));
+        truthy(t.app.view.textContent.indexOf('Buyout price: $25,000') !== -1, t.app.view.textContent);
+      });
+      const confirm = t.app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Confirm') === 0;
+      })[0];
+      if (confirm) { confirm.onclick(); }
+      await settle(); await settle();
+      it('S6 J-3: Confirm sends the buyout price through revise', function () {
+        eq(t.sent.length, 1, JSON.stringify(t.sent));
+        eq(t.sent[0][0], 'revise');
+        eq(t.sent[0][1].bailoutAmount, 25000);
+      });
+      drewCleanly(t.app, 'the Edit sheet: buyout');
+    })();
+
+    // How it is completed: alive only, or alive or dead where the server places that.
+    await (async function () {
+      const t = await sheet6();
+      it('S6 J-3: offers both completion rules where the server places kills', function () {
+        const all = labels6(t.app);
+        truthy(all.indexOf('Alive only') !== -1 && all.indexOf('Alive or dead') !== -1, all.join(' | '));
+      });
+      click(t.app, 'Alive only');
+      confirm6(t.app); await settle(); await settle();
+      it('S6 J-3: and sends the rule chosen through revise', function () {
+        eq(t.sent.length, 1, JSON.stringify(t.sent));
+        eq(t.sent[0][1].fulfilment, 'alive');
+      });
+      const alive = await sheet6({ fulfilment: 'alive' }, { fulfilment: 'alive' });
+      it('S6 J-3: offers no kill on a server that places live handovers only', function () {
+        eq(labels6(alive.app).indexOf('Alive or dead'), -1, labels6(alive.app).join(' | '));
+      });
+    })();
+
+    // Who it says placed it, with the fee echoed.
+    await (async function () {
+      const t = await sheet6();
+      it('S6 J-3: offers placing it anonymously, with the fee', function () {
+        truthy(labels6(t.app).indexOf('Anonymously ($2,500)') !== -1, labels6(t.app).join(' | '));
+      });
+      click(t.app, 'Anonymously ($2,500)');
+      confirm6(t.app); await settle(); await settle();
+      it('S6 J-3: and sends anonymous with the fee it quoted', function () {
+        eq(t.sent.length, 1, JSON.stringify(t.sent));
+        eq(t.sent[0][1].anonymous, true);
+        eq(t.sent[0][1].shown.creatorFee, 2500);
+        eq(t.sent[0][1].shown.feeAccount, 'bank');
+      });
+      const off = await sheet6({}, { anonymity: { placer: false, hitman: false,
+        whitelisted: { placer: false, hitman: false } } });
+      it('S6 J-3: offers no anonymity where the server allows none', function () {
+        eq(labels6(off.app).indexOf('Anonymously ($2,500)'), -1, labels6(off.app).join(' | '));
+      });
+      const back = await sheet6({ creatorAnonymous: true, creatorName: undefined },
+        { anonymity: { placer: false, hitman: false, whitelisted: { placer: false, hitman: false } } });
+      click(back.app, 'Under my name');
+      confirm6(back.app); await settle(); await settle();
+      it('S6 J-3: back under their name is offered whatever the switches say', function () {
+        eq(back.sent.length, 1, JSON.stringify(back.sent));
+        eq(back.sent[0][1].anonymous, false);
+      });
+      const leo = await sheet6({ targetProtected: true }, { anonymity: { placer: true, hitman: true,
+        whitelisted: { placer: false, hitman: false } } });
+      it('S6 J-3: and none on a whitelisted-job target where its own switch is off', function () {
+        eq(labels6(leo.app).indexOf('Anonymously ($2,500)'), -1, labels6(leo.app).join(' | '));
+      });
+    })();
+
+    // A different target: Cancel and place again, two taps, three seconds.
+    await (async function () {
+      const t = await sheet6();
+      it('S6 J-3: says the target is changed by withdrawing and placing again, with the wait', function () {
+        const text = t.app.view.textContent;
+        truthy(text.indexOf('withdraw it and place it again') !== -1, text);
+        truthy(text.indexOf('everything you put up comes back') !== -1, text);
+        truthy(text.indexOf('any new contract for') !== -1, 'the wait after withdrawing: ' + text);
+      });
+      click(t.app, 'Cancel and place again');
+      it('S6 J-3: the first tap only arms it', function () {
+        eq(t.sent.length, 0, JSON.stringify(t.sent));
+        truthy(labels6(t.app).indexOf('Tap again to withdraw it') !== -1, labels6(t.app).join(' | '));
+      });
+      t.app.timers.filter(function (x) { return x.ms === 3000 && !x.cleared; })
+        .forEach(function (x) { x.cleared = true; x.fn(); });
+      it('S6 J-3: and disarms after three seconds', function () {
+        truthy(labels6(t.app).indexOf('Cancel and place again') !== -1, labels6(t.app).join(' | '));
+      });
+      click(t.app, 'Cancel and place again');
+      click(t.app, 'Tap again to withdraw it');
+      await settle(); await settle();
+      it('S6 J-3: the second tap withdraws it and opens the Place form', function () {
+        eq(t.sent.length, 1, JSON.stringify(t.sent));
+        eq(t.sent[0][0], 'cancel');
+        eq(t.sent[0][1].id, 'ct00000061');
+        truthy(t.app.notice().indexOf('Everything you put up has been returned') !== -1, t.app.notice());
+      });
+      drewCleanly(t.app, 'the Edit sheet: Cancel and place again');
+    })();
+
+    // FE-4: the guard keeps the Protection tab after it is switched off.
+    await (async function () {
+      let on = true;
+      const app = boot({
+        list: function () { return board6(on ? { protection: true } : {}); },
+        ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        protectionBoard: { ok: true, data: { enabled: false, maxJobs: 2, open: [],
+          mine: [{ job: 'prot00000061', reward: 4000, targetName: 'Kim Lane', pinSet: true }] } }
+      });
+      await settle(); await settle();
+      click(app, 'Protection');
+      await settle(); await settle();
+      it('S6 FE-4: a guard on a live job sees it, its pin and Set GPS with the feature off', function () {
+        const text = app.view.textContent;
+        truthy(text.indexOf('Kim Lane') !== -1, text);
+        truthy(labels6(app).indexOf('Set GPS to the pin') !== -1, labels6(app).join(' | '));
+        truthy(text.indexOf('not taking protection jobs right now') !== -1, text);
+      });
+      on = false;
+      app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+      app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; })
+        .forEach(function (t) { t.cleared = true; t.fn(); });
+      await settle(); await settle();
+      tab(app, 'board'); await settle(); await settle();
+      it('S6 FE-4: and keeps the tab while the jobs read last say they guard one', function () {
+        truthy(labels6(app).indexOf('Protection') !== -1, labels6(app).join(' | '));
+      });
+      drewCleanly(app, 'the Protection tab, switched off');
+    })();
+
+    // The buyout dialog echoes the price it quoted.
+    await (async function () {
+      let paid = null;
+      const target = card6({ role: 'target', bailoutAvailable: true, bailoutAmount: 30000,
+        creatorName: undefined });
+      const app = boot({
+        list: board6(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [target] } },
+        bailout: function (b) { paid = b; return { ok: false, err: 'terms_changed', data: { amount: 45000 } }; }
+      });
+      await settle(); await settle();
+      tab(app, 'onme'); await settle(); await settle();
+      const buy = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Buy out') === 0;
+      })[0];
+      it('S6 J-3: the target sees Buy out', function () { truthy(buy, labels6(app).join(' | ')); });
+      if (!buy) { return; }
+      buy.onclick();
+      const yes = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Pay $30,000') === 0;
+      })[0];
+      if (yes) { yes.onclick(); }
+      await settle(); await settle();
+      it('S6 J-3: Buy out sends the price it quoted, and a changed one is said, nothing taken', function () {
+        truthy(paid, 'nothing sent');
+        eq(paid && paid.shown, 30000);
+        truthy(app.notice().indexOf('The buyout now costs $45,000') !== -1, app.notice());
+      });
+    })();
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a
