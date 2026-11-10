@@ -1150,7 +1150,7 @@ describe('the admin panel requests', function()
                   'settings', 'diag', 'void', 'settle', 'resolve', 'setSetting',
                   'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois', 'adjustDeadline',
                   'addNote', 'removeHitman', 'editText', 'exportContract', 'playerView',
-                  'frozen', 'freeze', 'unfreeze', 'history', 'suspend', 'unsuspend', 'protect',
+                  'measures', 'freeze', 'unfreeze', 'history', 'suspend', 'unsuspend', 'protect',
                   'unprotect', 'manualPay', 'announce', 'settingsHistory', 'undoSetting' }
 
     local function ask(src, op, data)

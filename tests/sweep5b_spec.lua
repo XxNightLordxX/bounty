@@ -984,7 +984,7 @@ describe('sweep 5 review R1: the lifetime an unreadable freeze store took', func
         eq(#shown, 1, 'staff without IdentityAce shown nothing held')
         eq(shown[1], 'held')
         local overview = ask(6, 'overview')
-        truthy(overview.data.frozen.unknown, 'the overview counted 0 frozen')
+        truthy(overview.data.measures.unknown, 'the overview counted 0 frozen')
         Env.aces[6]['crimson.identity'] = true
         local identified = ask(6, 'contract', { id = c.id })
         eq((identified.data.frozen or {})[1], 'store unreadable')

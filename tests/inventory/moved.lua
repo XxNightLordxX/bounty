@@ -47,4 +47,14 @@ return {
     ['op:rpPlaceSet'] = { to = 'op:placeSet', note = 'kind broker | informant (npc)' },
     ['op:rpPlaceRemove'] = { to = 'op:placeRemove', note = 'by id' },
     ['op:rpPlaceReset'] = { to = 'op:placeReset', note = 'kind broker | informant (npc)' },
+    -- Step 3d: one Measures area (server/measures.lua). Every measure on a
+    -- player in force (frozen, suspended, protected, their own target
+    -- limits) is one list, filtered by kind, in Players, All measures; its
+    -- rows' handles, views and lifts are the one module's. Each kind's apply
+    -- and lift ops, rules, ACE, audit actions and wording stay.
+    ['op:frozen'] = { to = 'op:measures', note = "kind = 'freeze' (rows as before: ref, name, cid?, since, reason, by?)" },
+    ['op:sanctions'] = { to = 'op:measures', note = "kind = 'suspend' | 'protect'" },
+    ['screen:admin.view:frozen'] = { to = 'screen:admin.view:measures', note = 'filter Frozen' },
+    ['screen:admin.view:suspended'] = { to = 'screen:admin.view:measures', note = 'filter Suspended' },
+    ['screen:admin.view:protected'] = { to = 'screen:admin.view:measures', note = 'filter Protected' },
 }

@@ -244,7 +244,7 @@ Disposal.held = Held
 --- and a freeze only through a party they may see (the target, the placer
 --- unless placed anonymously, the hitman unless on it anonymously), as the
 --- panel shows a contract's own hold (Panel.frozenShown). "Held" through an
---- anonymous party, beside the Frozen list every reader sees, narrowed down
+--- anonymous party, beside the measures list every reader sees, narrowed down
 --- who that party was.
 local function HeldShown(step)
     local contracts, freeze = Deps.contracts, Deps.freeze

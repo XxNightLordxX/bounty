@@ -463,8 +463,8 @@ describe('nobody is told which party is frozen', function()
         end
 
         local overview = ask(6, 'overview', {})
-        eq(overview.data.frozen.players, 1, 'the overview counts frozen players')
-        local list = ask(7, 'frozen', {})
+        eq(overview.data.measures.freeze, 1, 'the overview counts frozen players')
+        local list = ask(7, 'measures', { kind = 'freeze' })
         truthy(list and list.ok, 'a reader may see the list')
         eq(#list.data.rows, 1)
         eq(list.data.rows[1].cid, nil, 'a citizen id shown without the identity ACE')

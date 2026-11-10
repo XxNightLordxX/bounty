@@ -403,7 +403,7 @@ Grant yourself `crimson.admin` (and, on a second account, only `command`, the
 usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 
 - [ ] The sidebar shows **Daily** (Home, Players, Contracts, Target limits), **Setup** (Game rules, Hitman organisation, Boss permissions, Locations), **Records** (Logs) and **Developer**, with **Help** in the header. Each opens on its first tab, and on the tab you last had open in it after; close and reopen the panel and it opens where you left it
-- [ ] Every old view is still there: Overview and the inbox (Needs review, Money waiting, open alerts) under Home; Frozen, Suspended and Protected under Players; Health, Engine settings, Console and Test tools under Developer; Logs and Alerts under Logs; a view remembered from before (Rules, Features, Stuck escrow, Diagnostics, Permissions) opens where its items are now
+- [ ] Every old view is still there: Overview and the inbox (Needs review, Money waiting, open alerts) under Home; All measures (frozen, suspended, protected, own target limits) under Players; Health, Engine settings, Console and Test tools under Developer; Logs and Alerts under Logs; a view remembered from before (Rules, Features, Stuck escrow, Diagnostics, Permissions) opens where its items are now
 - [ ] On the `command`-only account there is no Developer section: **Help → Who can do what** lists the ACEs, **Game rules → Change history** has the history, and Game rules lists no debug, storage or rate-limit row. On the `crimson.admin` account **Developer** is there, with one line under its Engine settings saying how to grant `crimson.developer`. Grant `crimson.developer` to the `command` account (`add_ace identifier.license:<licence> crimson.developer allow`) and reopen: it has Developer too, read-only
 - [ ] **Help → Who can do what** lists `crimson.admin`, `crimson.identity`, `crimson.developer` and `command`, says *You hold it* or *You do not hold it* correctly on each account, and gives the grant line for each one not held. It has no button or box
 - [ ] **Help → How it works**: open a card; each link opens the setting it names in its area of Game rules, marked, with its Details open
@@ -634,6 +634,13 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] The broker moves to the place set (the NPC and its blip), Reset to config puts it back on its Locations list; the disposal vehicle is made at the spawn set here.
 - [ ] A boss with L2 still places a sign-up spot from the phone where they stand, never in a safe zone; staff's spots show on the boss's map as before.
 - [ ] `restart crimson-hitman`: every spot is still where it was set.
+
+## Players, All measures: one list of measures (step 3d)
+
+- [ ] Freeze, suspend and protect three players, and give a fourth their own target limits (Target limits, Per player): Players, All measures lists all four, newest first; each filter (Frozen, Suspended, Protected, Own target limits) shows only its kind, with its count.
+- [ ] Unfreeze from the list: their contracts run again with the time on hold given back; Lift a suspension and a protection from the list: the suspended player is told it is lifted, the protected player nothing.
+- [ ] Without `crimson.identity` the list shows no citizen id and nobody who set a measure; with it, both.
+- [ ] Home, Overview: Measures on players counts each kind; its buttons open All measures on that kind.
 
 ## If something fails
 

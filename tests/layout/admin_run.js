@@ -511,12 +511,13 @@ function serverStub() {
         stage: i % 2 ? 'loaded' : 'body', secondsLeft: 86399 - i * 3600, held: i % 2 === 0, vehicle: i % 3 !== 0,
         respawns: i };
     }) } };
-  answers.sanctions = { ok: true, data: {
-    suspended: rows.slice(0, 6).map(function (r, i) {
-      return { ref: 'f' + i, name: i === 0 ? LONG : 'Dana Reyes ' + i, cid: 'CITIZEN' + i, online: i % 2 === 0,
-        since: NOW - 600 * i, until: i % 2 ? NOW + 86400 : null, reason: REASON, by: 'ADMIN001' };
-    }),
-    protected: [{ ref: 'f9', name: LONG, since: NOW - 60, reason: REASON }] } };
+  // Every measure in force (measures), with the longest names and reasons, each kind.
+  answers.measures = { ok: true, data: { rows: rows.slice(0, 6).map(function (r, i) {
+    return { kind: 'suspend', ref: 'f' + i, name: i === 0 ? LONG : 'Dana Reyes ' + i, cid: 'CITIZEN' + i,
+      online: i % 2 === 0, since: NOW - 600 * i, until: i % 2 ? NOW + 86400 : null, reason: REASON, by: 'ADMIN001' };
+  }).concat([{ kind: 'protect', ref: 'f9', name: LONG, since: NOW - 60, reason: REASON },
+    { kind: 'freeze', ref: 'f10', name: LONG, since: NOW - 30, reason: REASON },
+    { kind: 'limit', ref: 'f11', name: LONG, since: NOW - 20, reason: REASON, exempt: true }]) } };
   // The organisation's settings and the places, with the longest labels.
   settings.features.push({ key: 'Organisation.Enabled', category: 'organisation', group: 'Organisation',
     area: 'organisation', label: 'Hitman organisation', kind: 'switch', live: true, value: true, default: false,
@@ -702,7 +703,7 @@ async function main() {
   // Every view of every section (the old names among them land where their
   // items are now), and a selected player's tabs once one is looked up.
   const sections = ['inbox', 'overview', 'announce', 'players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime',
-    'phistory', 'pdiag', 'frozen', 'suspended', 'protected', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
+    'phistory', 'pdiag', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
     'tlcontracts', 'rules', 'changed', 'history', 'timers', 'money', 'limits', 'targeting', 'features',
     'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit',
     'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'logs', 'alerts', 'health', 'devsettings',

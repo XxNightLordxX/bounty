@@ -1291,7 +1291,7 @@ describe('every channel a player not entitled to it can read', function()
                 admin(src, 'history', { subject = subject })
             end
             admin(src, 'contract', { id = c.id })
-            admin(src, 'frozen', {})
+            admin(src, 'measures', {})
         end
         admin(8, 'protect', { subject = 'BYSTAND1', hours = 1, reason = 'checked' })
         admin(8, 'suspend', { subject = 'BYSTAND1', days = 1, reason = 'checked' })

@@ -276,8 +276,7 @@
   var GROUPS = [
     { id: 'home', head: 'Daily', label: 'Home', icon: 'house', views: ['inbox', 'overview', 'announce'] },
     { id: 'players', head: 'Daily', label: 'Players', icon: 'user',
-      views: ['players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag',
-              'frozen', 'suspended', 'protected'] },
+      views: ['players', 'pcontracts', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag', 'measures'] },
     { id: 'contracts', head: 'Daily', label: 'Contracts', icon: 'file-contract', views: ['contracts'] },
     // How often one person may be targeted (server/targetlimits.lua).
     { id: 'targets', head: 'Daily', label: 'Target limits', icon: 'user-clock',
@@ -300,7 +299,7 @@
     players: ['Find & summary', 'magnifying-glass'], pcontracts: ['Contracts', 'file-contract'],
     pmeasures: ['Measures', 'snowflake'], pmoney: ['Money', 'sack-dollar'], pplaytime: ['Playtime', 'clock'],
     phistory: ['History', 'clock-rotate-left'], pdiag: ['Why can’t they see…', 'stethoscope'],
-    frozen: ['Frozen', 'snowflake'], suspended: ['Suspended', 'ban'], protected: ['Protected', 'shield'],
+    measures: ['All measures', 'list-check'],
     contracts: ['All contracts', 'file-contract'],
     tldefaults: ['Defaults', 'sliders'], tljobs: ['Per job', 'briefcase'], tlplayer: ['Per player', 'user-clock'],
     tlcontracts: ['Contracts on someone', 'list-check'],
@@ -335,7 +334,7 @@
     timers: ['rules', { cat: 'rules-timers' }], money: ['rules', { cat: 'rules-rewards' }],
     limits: ['rules', { cat: 'rules-limits' }], targeting: ['rules', { cat: 'rules-targeting' }],
     reviews: ['inbox', { inbox: 'reviews' }], stuck: ['inbox', { inbox: 'stuck' }],
-    actions: ['howto'], diagnostics: ['health'], live: ['inbox'], frozenlist: ['frozen']
+    actions: ['howto'], diagnostics: ['health'], live: ['inbox'], frozenlist: ['measures']
   };
   window.CH_ADMIN_ALIASES = ALIASES;
 
@@ -353,8 +352,8 @@
       open), and the panel closes on it, as the README says it does. */
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
-                   alerts: true, console: true, frozen: true, exportContract: true, playerView: true,
-                   history: true, settingsHistory: true, sanctions: true,
+                   alerts: true, console: true, measures: true, exportContract: true, playerView: true,
+                   history: true, settingsHistory: true,
                    targetLimits: true, targetStatus: true, targetJobCount: true, targetContracts: true,
                    orgGet: true, bossPermsGet: true, orgFunds: true, orgAudit: true, placeMyPosition: true,
                    rewardPreview: true, reassignPreview: true, disposalList: true, placeList: true };
@@ -383,8 +382,8 @@
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
-    players: { data: null, whois: {}, subject: null, ref: null, playtime: null, freeze: null, frozen: null,
-               sanctions: null, at: 0, recent: [], lift: {} },
+    players: { data: null, whois: {}, subject: null, ref: null, playtime: null, freeze: null, measures: null,
+               measureKind: '', at: 0, recent: [], lift: {} },
     inbox: 'all',           // which of the inbox's lists show: all, reviews, stuck, alerts
     rules: { area: '', type: '', cat: '' },
     ctx: { contract: null },  // the contract last opened, for its header chip
@@ -1250,10 +1249,10 @@
     var hitmen = o.hitmen || {};
     var owed = o.owed || {};
     var warnings = asList(o.warnings);
-    var frozenCount = o.frozen ? Number(o.frozen.players) || 0 : 0;
+    var measures = o.measures || {};
+    var frozenCount = Number(measures.freeze) || 0;
     // The store's freezes could not be read: unknown, never 0.
-    var frozenUnknown = !!(o.frozen && o.frozen.unknown);
-    var sanctions = o.sanctions || {};
+    var frozenUnknown = !!measures.unknown;
     var held = frozenCount > 0 || frozenUnknown;
 
     return frag(
@@ -1278,14 +1277,16 @@
           h('dl.facts',
             h('dt', 'Frozen'), h('dd', h('span' + (held ? '.is-warn' : ''), { id: 'ov-frozen' },
               frozenUnknown ? 'Unknown' : num(frozenCount))),
-            h('dt', 'Suspended'), h('dd', sanctions.suspended == null ? '—' : num(sanctions.suspended)),
-            h('dt', 'Protected'), h('dd', sanctions.protected == null ? '—' : num(sanctions.protected))),
+            h('dt', 'Suspended'), h('dd', measures.suspend == null ? '—' : num(measures.suspend)),
+            h('dt', 'Protected'), h('dd', measures.protect == null ? '—' : num(measures.protect)),
+            h('dt', 'Own target limits'), h('dd', measures.limit == null ? '—' : num(measures.limit))),
           frozenUnknown ? h('p.sub', 'the store\'s freezes could not be read: every live contract is held until '
             + 'they can be') : null,
           h('div.btn-row',
-            btn('.is-small', 'section', { 'data-section': 'frozen' }, 'Frozen', 'arrow-right'),
-            btn('.is-small.is-ghost', 'section', { 'data-section': 'suspended' }, 'Suspended', 'arrow-right'),
-            btn('.is-small.is-ghost', 'section', { 'data-section': 'protected' }, 'Protected', 'arrow-right'))),
+            btn('.is-small', 'ms-open', { 'data-value': '' }, 'All measures', 'arrow-right'),
+            btn('.is-small.is-ghost', 'ms-open', { 'data-value': 'freeze' }, 'Frozen', 'arrow-right'),
+            btn('.is-small.is-ghost', 'ms-open', { 'data-value': 'suspend' }, 'Suspended', 'arrow-right'),
+            btn('.is-small.is-ghost', 'ms-open', { 'data-value': 'protect' }, 'Protected', 'arrow-right'))),
           held ? '.is-warn' : '')),
       h('p.foot', h('span', 'Recovery: ' + (o.recovery === 'ready' ? 'finished'
         : o.recovery === 'recovering' ? 'still running' : 'FAILED')),
@@ -2799,23 +2800,6 @@
   }
 
   /** Every player staff have frozen, with Unfreeze on each row. */
-  function frozenListCard() {
-    var list = S.players.frozen;
-    if (!list) return null;
-    var rows = asList(list.rows);
-    return card('Frozen players', rows.length ? h('div.table-wrap', h('table.grid',
-      h('thead', h('tr', h('th', 'Player'), h('th', 'Since'), h('th', 'Reason'), h('th', ''))),
-      h('tbody', rows.map(function (row) {
-        return h('tr',
-          h('td.name', String(row.name || 'No name on record'), row.cid ? h('span.cid', String(row.cid)) : null,
-            h('span.chip.is-warn.is-frozen', 'Frozen')),
-          h('td.nowrap', { title: when(row.since) }, ago(row.since)),
-          h('td', String(row.reason || '—')),
-          h('td', modBtn('.is-small', 'pl-unfreeze-row', { 'data-ref': String(row.ref) }, 'Unfreeze',
-            'Click again to unfreeze', 'play')));
-      })))) : empty('Nobody is frozen.'), '', h('span.sub', num(rows.length)));
-  }
-
   /** The last few lookups, to go back to one with a click. */
   var RECENT_MAX = 6;
   function rememberLookup(subject, found) {
@@ -2917,6 +2901,9 @@
       card('Target limits', frag(
         h('p.about', 'How often a contract may be placed on them: their cooldown, their counts, their own limits '
           + 'or an exemption, exactly, with Reset, Extend and Exempt.'),
+        d.limit ? h('p.note', (d.limit.exempt ? 'Exempt from the target limits' : 'Target limits of their own')
+          + ' since ' + when(d.limit.since) + (d.limit['until'] ? ', until ' + when(d.limit['until']) : ', for good')
+          + (d.limit.reason ? ': ' + String(d.limit.reason) : '.')) : null,
         h('div.btn-row', btn('.is-small', 'pl-tl', {}, 'Open them in Target limits', 'user-clock')))));
   }
 
@@ -2980,14 +2967,6 @@
       if (view === 'pdiag') S.tools.pdiag = null;
     };
   });
-
-  function loadFrozen() {
-    return ask('frozen', {}, 'frozen').then(function (reply) {
-      if (!reply || !reply.ok) return;
-      S.players.frozen = reply.data || {};
-      if (S.section === 'frozen') setHtml(byId('pl-frozen'), frozenListCard());
-    });
-  }
 
   /* ---- settings: Rules, Features and Developer ----
 
@@ -3913,62 +3892,85 @@
 
   /* ---- Players > Frozen, Suspended and Protected: the lists ---- */
 
-  SHELL.frozen = function () {
-    return h('section.view',
-      h('p.hint', 'Every player staff have frozen. Freeze somebody from their Measures tab, after looking them up.'),
-      h('div.stack', { id: 'pl-frozen' }, frozenListCard() || loading('Reading who is frozen…')));
-  };
-  LOAD.frozen = function () { loadFrozen(); };
+  /* ---- Players, Measures: every measure in force, one list ----
 
-  function loadSanctions() {
-    return ask('sanctions', {}, 'sanctions').then(function (reply) {
+     One read (measures, server/measures.lua) of every freeze, suspension,
+     protection and player target-limit override in force, newest first,
+     filtered by kind here. Each freeze, suspension and protection has its
+     own Lift (two clicks, by the list's handle: unfreeze, unsuspend,
+     unprotect); an override is lifted in Target limits, Per player, with a
+     reason for the record. The citizen id only with the identity ACE. */
+  var MEASURE_KINDS = [
+    { id: '', label: 'All' },
+    { id: 'freeze', label: 'Frozen', chip: '.is-warn.is-frozen', none: 'Nobody is frozen.', lift: 'unfreeze',
+      liftLabel: 'Unfreeze', confirm: function () { return 'Click again to unfreeze'; }, icon: 'play' },
+    { id: 'suspend', label: 'Suspended', chip: '.is-warn.is-suspended', none: 'Nobody is suspended.',
+      lift: 'unsuspend', liftLabel: 'Lift', icon: 'unlock',
+      confirm: function (row) { return 'Click again: lift for ' + String(row.name || 'them'); } },
+    { id: 'protect', label: 'Protected', chip: '.is-protected', none: 'Nobody is protected.', lift: 'unprotect',
+      liftLabel: 'Lift', icon: 'unlock',
+      confirm: function (row) { return 'Click again: lift for ' + String(row.name || 'them'); } },
+    { id: 'limit', label: 'Own target limits', chip: '', none: 'Nobody has target limits of their own.' }
+  ];
+  function measureKind(id) { return MEASURE_KINDS.filter(function (k) { return k.id === id; })[0] || MEASURE_KINDS[0]; }
+
+  function loadMeasures() {
+    return ask('measures', {}, 'measures').then(function (reply) {
       if (!reply) return;
-      S.players.sanctions = reply.ok ? (reply.data || {}) : { error: words(reply) };
-      drawSanctions();
+      S.players.measures = reply.ok ? (reply.data || {}) : { error: words(reply) };
+      drawMeasures();
     });
   }
-  function drawSanctions() {
-    if (S.section === 'suspended' || S.section === 'protected') setHtml(byId('pl-sanctions'), sanctionsCard(S.section));
+  function drawMeasures() {
+    if (S.section === 'measures') setHtml(byId('pl-measures'), measuresListCard());
   }
 
-  /** Everybody suspended or protected now, each with Lift (two clicks). */
-  function sanctionsCard(view) {
-    var d = S.players.sanctions;
-    if (!d) return loading('Reading the list…');
+  /** Every measure in force, filtered by kind, each freeze, suspension and protection with its Lift. */
+  function measuresListCard() {
+    var d = S.players.measures;
+    if (!d) return loading('Reading the measures in force…');
     if (d.error) return empty(d.error);
-    var suspended = view === 'suspended';
-    var rows = asList(suspended ? d.suspended : d.protected);
-    var what = suspended ? 'suspended' : 'protected';
-    return card(suspended ? 'Suspended players' : 'Protected players', rows.length ? h('div.table-wrap', h('table.grid',
-      h('thead', h('tr', h('th', 'Player'), h('th', 'Since'), h('th', 'Until'), h('th', 'Reason'), h('th', ''))),
-      h('tbody', rows.map(function (row) {
-        var ref = String(row.ref || '');
-        var answer = S.players.lift[ref];
-        return frag(h('tr',
-          h('td.name', String(row.name || 'No name on record'), row.cid ? h('span.cid', String(row.cid)) : null,
-            row.online ? h('span.chip.is-live', 'in the city') : null,
-            row.cid ? h('div.party', btn('.is-small.is-ghost', 'pl-open-cid', { 'data-value': String(row.cid) },
-              'Open', 'arrow-right')) : null),
-          h('td.nowrap', { title: when(row.since) }, ago(row.since)),
-          h('td.nowrap', row['until'] ? when(row['until']) : (suspended ? 'until lifted' : 'for good')),
-          h('td', String(row.reason || '—')),
-          h('td', modBtn('.is-small', 'pl-lift-row', { 'data-ref': ref, 'data-value': view },
-            'Lift', 'Click again: lift for ' + String(row.name || 'them'), 'unlock'))),
-          answer ? h('tr.more', h('td', { colspan: '5' }, answerBox(answer))) : null);
-      })))) : empty('Nobody is ' + what + '.'), '', h('span.sub', num(rows.length)));
+    var kind = measureKind(S.players.measureKind || '');
+    var rows = asList(d.rows).filter(function (r) { return !kind.id || r.kind === kind.id; });
+    var counts = {};
+    asList(d.rows).forEach(function (r) { counts[r.kind] = (counts[r.kind] || 0) + 1; });
+    return frag(
+      segmented('ms-kind', MEASURE_KINDS.map(function (k) {
+        return { value: k.id, label: k.label + (k.id ? ' (' + num(counts[k.id] || 0) + ')' : '') };
+      }), kind.id),
+      card(kind.id ? kind.label + ' players' : 'Every measure in force', rows.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Player'), h('th', 'Since'), h('th', 'Until'), h('th', 'Reason'), h('th', ''))),
+        h('tbody', rows.map(function (row) {
+          var k = measureKind(row.kind);
+          var ref = String(row.ref || '');
+          var answer = S.players.lift[row.kind + ':' + ref];
+          return frag(h('tr',
+            h('td.name', String(row.name || 'No name on record'), row.cid ? h('span.cid', String(row.cid)) : null,
+              h('span.chip' + (k.chip || ''), k.label + (row.kind === 'limit' ? (row.exempt ? ': exempt' : '') : '')),
+              row.online ? h('span.chip.is-live', 'in the city') : null,
+              row.cid ? h('div.party', btn('.is-small.is-ghost', 'pl-open-cid', { 'data-value': String(row.cid) },
+                'Open', 'arrow-right')) : null),
+            h('td.nowrap', { title: when(row.since) }, ago(row.since)),
+            h('td.nowrap', row['until'] ? when(row['until'])
+              : row.kind === 'suspend' ? 'until lifted' : row.kind === 'freeze' ? 'until unfrozen' : 'for good'),
+            h('td', String(row.reason || '—')),
+            h('td', k.lift ? modBtn('.is-small', 'pl-lift-row', { 'data-ref': ref, 'data-value': row.kind },
+              k.liftLabel, k.confirm(row), k.icon)
+              : h('span.sub', { title: 'Lift it in Target limits, Per player: a reason goes on the record.' },
+                'In Target limits'))),
+            answer ? h('tr.more', h('td', { colspan: '5' }, answerBox(answer))) : null);
+        })))) : empty(kind.id ? kind.none : 'No measure is in force on anybody.'), '', h('span.sub', num(rows.length))));
   }
 
-  ['suspended', 'protected'].forEach(function (view) {
-    SHELL[view] = function () {
-      return h('section.view',
-        h('p.hint', view === 'suspended'
-          ? 'Players barred from placing and accepting contracts, newest first. Suspend somebody from their '
-            + 'Measures tab.'
-          : 'Players no new contract may name, newest first. Protect somebody from their Measures tab.'),
-        h('div.stack', { id: 'pl-sanctions' }, sanctionsCard(view)));
-    };
-    LOAD[view] = function () { loadSanctions(); };
-  });
+  SHELL.measures = function () {
+    return h('section.view',
+      h('p.hint', 'Every measure staff have put on a player, newest first: frozen (their live contracts on hold), '
+        + 'suspended (barred from placing and accepting contracts), protected (no new contract may name them) and '
+        + 'their own target limits. Put one on somebody from their Measures tab, after looking them up; lift their '
+        + 'own target limits in Target limits, Per player, where a reason goes on the record.'),
+      h('div.stack', { id: 'pl-measures' }, measuresListCard()));
+  };
+  LOAD.measures = function () { loadMeasures(); };
 
   /* ---- staff actions: every write the panel has, in one place ----
 
@@ -3979,11 +3981,12 @@
     { title: 'Freeze or unfreeze a player', icon: 'snowflake', view: 'players', go: 'Players',
       text: 'Look the player up, then Freeze on their Measures tab puts every live contract they are party to on '
         + 'hold: its clocks stop and nothing on it moves. Unfreeze gives the time back. Every frozen player is '
-        + 'listed under Players, Frozen, each with its own Unfreeze.', also: { view: 'frozen', go: 'Frozen' } },
+        + 'listed under Players, All measures, each with its own Unfreeze.',
+      also: { view: 'measures', go: 'All measures' } },
     { title: 'Suspend or protect a player', icon: 'ban', view: 'players', go: 'Players',
       text: 'Look the player up, then Measures: Suspend bars them from placing and accepting; Protect stops new '
-        + 'contracts naming them. Players, Suspended and Protected list everybody, each with Lift.',
-      also: { view: 'suspended', go: 'Suspended' } },
+        + 'contracts naming them. Players, All measures lists everybody, each with Lift.',
+      also: { view: 'measures', go: 'All measures' } },
     { title: 'Pay a player or set their playtime', icon: 'sack-dollar', view: 'players', go: 'Players',
       text: 'Look the player up, then Money: Pay sends money you choose, up to the most the server allows. '
         + 'Playtime sets the hours counted for the new-player rule.' },
@@ -4644,7 +4647,7 @@
         if (S.players.data && !S.players.data.error && data.ref === S.players.ref) {
           S.players.data.frozen = op === 'freeze' ? (reply.data && reply.data.frozen) || { since: nowSeconds() } : null;
         }
-        loadFrozen();
+        if (S.players.measures) loadMeasures();
       }
       if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
     });
@@ -4666,17 +4669,6 @@
     freezeWrite('unfreeze', { ref: S.players.ref,
       reason: trim(S.forms['pl.freezeReason']).slice(0, 120) }, node);
   };
-  ACTIONS['pl-unfreeze-row'] = function (node) {
-    var ref = node.getAttribute('data-ref');
-    if (!ref || !confirmed(node)) return;
-    write('unfreeze', { ref: ref }, 'freeze', node).then(function (reply) {
-      if (!reply) return;
-      toast(words(reply), reply.ok ? 'ok' : 'error');
-      if (reply.ok && S.players.data && S.players.data.frozen) loadPlayer(true);
-      loadFrozen();
-    });
-  };
-
   /** A list's name typed into its box, added to what is being edited. */
   ACTIONS['st-list-add'] = function (node) {
     var key = node.getAttribute('data-key');
@@ -5599,8 +5591,8 @@
     S.players.ref = null;
     S.players.playtime = null;
     S.players.freeze = null;
-    S.players.frozen = null;
-    S.players.sanctions = null;
+    S.players.measures = null;
+    S.players.measureKind = '';
     S.players.at = 0;
     S.players.lift = {};
     S.ctx.contract = null;
@@ -7305,17 +7297,28 @@
       drawTools();
     });
   };
-  /** Lift on a row of Suspended or Protected, by the list's handle. */
+  ACTIONS['ms-kind'] = function (node) {
+    S.players.measureKind = node.getAttribute('data-value') || '';
+    drawMeasures();
+  };
+  /** The overview's counts open the list on one kind. */
+  ACTIONS['ms-open'] = function (node) {
+    S.players.measureKind = node.getAttribute('data-value') || '';
+    show('measures');
+  };
+  /** Lift on a row, by the list's handle: unfreeze, unsuspend or unprotect. */
   ACTIONS['pl-lift-row'] = function (node) {
     var ref = node.getAttribute('data-ref');
-    var kind = node.getAttribute('data-value');
-    if (!ref || !confirmed(node)) return;
-    write(kind === 'suspended' ? 'unsuspend' : 'unprotect', { ref: ref }, 'lift:' + ref, node).then(function (reply) {
+    var k = measureKind(node.getAttribute('data-value'));
+    if (!ref || !k.lift || !confirmed(node)) return;
+    var slot = k.id + ':' + ref;
+    write(k.lift, { ref: ref }, 'lift:' + slot, node).then(function (reply) {
       if (!reply) return;
       toast(words(reply), reply.ok ? 'ok' : 'error');
-      if (reply.ok) delete S.players.lift[ref];
-      else S.players.lift[ref] = { ok: false, text: words(reply) };
-      if (reply.ok) loadSanctions(); else drawSanctions();
+      if (reply.ok) delete S.players.lift[slot];
+      else S.players.lift[slot] = { ok: false, text: words(reply) };
+      if (reply.ok && S.players.data && S.players.data.frozen && k.id === 'freeze') loadPlayer(true);
+      if (reply.ok) loadMeasures(); else drawMeasures();
     });
   };
 

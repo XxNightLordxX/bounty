@@ -2547,7 +2547,7 @@ async function main() {
       eq(crumb(), 'Areas');
     });
     const views = { inbox: 'Inbox', overview: 'Overview', announce: 'Announce', players: 'Find & summary',
-      frozen: 'Frozen', suspended: 'Suspended', protected: 'Protected', contracts: 'All contracts',
+      measures: 'All measures', contracts: 'All contracts',
       tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player', tlcontracts: 'Contracts on someone',
       rules: 'Areas', changed: 'Changed from the panel', history: 'Change history', orgsetup: 'Setup',
       orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
@@ -2569,7 +2569,7 @@ async function main() {
     });
     // Every old view's name lands where its items are now.
     const OLD = { help: 'How it works', overview: 'Overview', contracts: 'All contracts', players: 'Find & summary',
-      frozen: 'Frozen', reviews: 'Inbox', stuck: 'Inbox', actions: 'How do I…', tools: 'Test tools',
+      frozenlist: 'All measures', reviews: 'Inbox', stuck: 'Inbox', actions: 'How do I…', tools: 'Test tools',
       announce: 'Announce', timers: 'Timers (was Rules, Timers)', money: 'Money (was Rules, Rewards & money)',
       limits: 'Limits (was Rules, Limits)', targeting: 'Targeting (was Rules, Targeting)',
       features: 'Switches (was Features)', settings: 'Switches (was Features)', logs: 'Audit log', alerts: 'Alerts', devsettings: 'Engine settings', console: 'Console',
@@ -2613,7 +2613,7 @@ async function main() {
     await settled();
     it('Players shows a selected player\'s tabs only once somebody is looked up', function () {
       eq(app.byId('nav-pmeasures'), null);
-      truthy(app.byId('nav-frozen'));
+      truthy(app.byId('nav-measures'));
     });
     app.window.CH_ADMIN_SHOW('pmeasures');
     await settled();
@@ -3079,7 +3079,7 @@ async function main() {
         app.open(who);
         await settled();
         sweep(app, 'overview');
-        for (const section of ['contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players', 'frozen',
+        for (const section of ['contracts', 'stuck', 'reviews', 'alerts', 'console', 'logs', 'players', 'measures',
           'actions', 'tools', 'help', 'timers', 'money', 'limits', 'targeting', 'features', 'devsettings',
           'diagnostics', 'permissions']) {
           app.nav(section);
@@ -3159,7 +3159,7 @@ async function main() {
         sweep(app, 'the tools, run');
         // The new sections too: the organisation, Boss permissions and Locations.
         for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgaudit',
-          'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'suspended', 'protected', 'howto']) {
+          'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'measures', 'howto']) {
           app.nav(view);
           await settled();
           sweep(app, view);
@@ -3801,8 +3801,8 @@ async function main() {
         if (frozen) reply.data.contracts[0].frozen = true;
         return reply;
       },
-      frozen: function () {
-        return { ok: true, data: { rows: frozen ? [{ ref: 'f1', name: 'Dana Reyes', online: true,
+      measures: function () {
+        return { ok: true, data: { rows: frozen ? [{ kind: 'freeze', ref: 'f1', name: 'Dana Reyes', online: true,
           since: NOW - 60, reason: 'RP dispute' }] : [] } };
       },
       freeze: function (data) {
@@ -3814,7 +3814,7 @@ async function main() {
         return { ok: true, message: 'Unfrozen. Their contracts run again, with the time on hold given back.' };
       },
       contracts: contracts({ rows: [contractRow(1, { frozen: true }), contractRow(2)] }),
-      overview: overview({ frozen: { players: 2 } }),
+      overview: overview({ measures: { freeze: 2, suspend: 0, protect: 0, limit: 0 } }),
     });
     const app = boot(server);
     app.open(ADMIN);
@@ -3828,16 +3828,22 @@ async function main() {
     it('badges a frozen contract in the list, and only that one', function () {
       eq(app.$$('.is-frozen').length, 1);
     });
-    app.nav('frozen');
+    app.nav('measures');
     await settled();
-    it('asks for the frozen list when Players, Frozen opens', function () {
-      truthy(app.requests('frozen').length >= 1, 'asked');
+    it('asks for the one measures list when Players, All measures opens', function () {
+      truthy(app.requests('measures').length >= 1, 'asked');
+      has(app.main(), 'No measure is in force on anybody.');
+    });
+    app.click(app.$$('[data-act="ms-kind"]').filter(function (b) { return b.getAttribute('data-value') === 'freeze'; })[0]);
+    await settled();
+    it('and filters it by kind, saying so for each', function () {
       has(app.main(), 'Nobody is frozen.');
+      eq(app.requests('measures').length, 1, 'filtered here, not asked again');
     });
     app.nav('players');
     await settled();
     it('and not on Find, which has no list under it any more', function () {
-      eq(app.requests('frozen').length, 1);
+      eq(app.requests('measures').length, 1);
     });
     app.type(app.byId('pl-q'), '12');
     app.key(app.byId('pl-q'), 'Enter');
@@ -3869,7 +3875,7 @@ async function main() {
       has(app.main(), 'Dana Reyes is frozen.');
       truthy(app.button('Unfreeze'), 'Unfreeze once frozen');
       truthy(app.$$('.is-frozen').length >= 1, 'the Frozen badge');
-      truthy(app.requests('frozen').length >= 2, 'the frozen list read again');
+      truthy(app.requests('measures').length >= 2, 'the measures list read again');
     });
     app.click(app.button('Unfreeze'));
     await settled();
@@ -3887,7 +3893,7 @@ async function main() {
   })();
 
   await (async function () {
-    const app = boot(standardServer({ frozen: { ok: true, data: { rows: [] } } }));
+    const app = boot(standardServer({ measures: { ok: true, data: { rows: [] } } }));
     app.open(READER);
     await settled();
     app.nav('players');
@@ -4153,7 +4159,7 @@ async function main() {
         return reply;
       },
       history: history,
-      frozen: { ok: true, data: { rows: [] } },
+      measures: { ok: true, data: { rows: [] } },
       suspend: function (data) {
         state.suspended = { since: NOW, until: data.days > 0 ? NOW + data.days * 86400 : null, reason: data.reason };
         return { ok: true, message: 'Dana Reyes is suspended from placing and accepting contracts for '
@@ -5382,7 +5388,7 @@ async function main() {
         reply.data.frozen = { since: NOW - 60, reason: 'RP dispute' };
         return reply;
       },
-      frozen: { ok: true, data: { rows: [] } },
+      measures: { ok: true, data: { rows: [] } },
       unfreeze: { ok: true, message: 'Unfrozen.' },
     });
     const app = boot(server);
@@ -5919,23 +5925,34 @@ async function main() {
     clean(app, 'context chips');
   })();
 
-  /* ---- Players: Suspended, Protected, and why can't they see ---- */
+  /* ---- Players: All measures (suspended, protected), and why can't they see ---- */
   await (async function () {
     const server = standardServer({
-      sanctions: { ok: true, data: {
-        suspended: [{ ref: 'f1', name: 'Dana ' + XSS, since: NOW - 600, until: NOW + 86400, reason: 'Spam ' + XSS,
-          online: true }],
-        protected: [{ ref: 'f2', name: 'Vic Marlowe', cid: 'CREATOR1', since: NOW - 60, reason: 'Event guest' }] } },
+      measures: { ok: true, data: { rows: [
+        { kind: 'suspend', ref: 'f1', name: 'Dana ' + XSS, since: NOW - 600, until: NOW + 86400, reason: 'Spam ' + XSS,
+          online: true },
+        { kind: 'protect', ref: 'f2', name: 'Vic Marlowe', cid: 'CREATOR1', since: NOW - 60, reason: 'Event guest' },
+        { kind: 'limit', ref: 'f3', name: 'Kai Holt', since: NOW - 30, reason: 'Event', exempt: true }] } },
       unsuspend: { ok: true, message: 'Suspension lifted.' },
       unprotect: { ok: false, err: 'not_active', message: 'They are not protected.' }
     });
     const app = boot(server);
     app.open(FULL);
     await settled();
-    app.nav('suspended');
+    const filter = function (k) {
+      app.click(app.$$('[data-act="ms-kind"]').filter(function (b) { return b.getAttribute('data-value') === k; })[0]);
+    };
+    app.nav('measures');
+    await settled();
+    it('All measures lists every kind, the override sent to Target limits to lift with a reason', function () {
+      has(app.main(), 'Kai Holt');
+      has(app.main(), 'exempt');
+      has(app.main(), 'In Target limits');
+    });
+    filter('suspend');
     await settled();
     it('Suspended lists everybody suspended now, escaped, each with Lift', function () {
-      eq(app.last('sanctions').op, 'sanctions');
+      eq(app.last('measures').op, 'measures');
       has(app.main(), 'Spam ' + XSS);
       eq(app.$$('img').length, 0);
       truthy(app.button('Lift'));
@@ -5951,9 +5968,9 @@ async function main() {
     await settled();
     it('and lifts by the list\'s handle, then reads the list again', function () {
       eq(app.last('unsuspend').data, { ref: 'f1' });
-      truthy(app.requests('sanctions').length >= 2);
+      truthy(app.requests('measures').length >= 2);
     });
-    app.nav('protected');
+    filter('protect');
     await settled();
     it('Protected lists the protected, with an Open for a citizen id staff may see', function () {
       has(app.main(), 'Vic Marlowe');
@@ -7301,7 +7318,7 @@ async function main() {
     await settled();
     const single = [];
     for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices',
-      'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'suspended', 'protected', 'inbox', 'changed']) {
+      'bpmatrix', 'bplimits', 'bpoffice', 'bphistory', 'locations', 'measures', 'inbox', 'changed']) {
       app.nav(view);
       await settled();
       app.$$('[data-gate]').forEach(function (b) {

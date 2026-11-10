@@ -494,6 +494,29 @@ function TargetLimits.status(cid, job, contracts, everTakenUp)
     }
 end
 
+--- A player's own limits in force (the player override), or nil:
+--- { cid, name, exempt, limits, until_at, reason, by_cid, at }.
+---@param cid string
+---@return table|nil
+function TargetLimits.overrideOf(cid)
+    local row = PlayerRow(cid)
+    local o = OverrideOf(row)
+    if not o then return nil end
+    return { cid = row.cid, name = row.name, exempt = o.exempt == true, limits = Util.copy(o.limits or {}),
+             until_at = o.until_at, reason = o.reason or row.reason, by_cid = row.by_cid, at = row.at }
+end
+
+--- Every player override in force, as overrideOf gives each (Players, All measures).
+---@return table[]
+function TargetLimits.overrides()
+    local out = {}
+    for cid in pairs(Players) do
+        local row = TargetLimits.overrideOf(cid)
+        if row then out[#out + 1] = row end
+    end
+    return out
+end
+
 -- ============================================================================
 --                              WRITES
 -- ============================================================================

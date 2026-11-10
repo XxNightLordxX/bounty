@@ -121,7 +121,7 @@ function Sanctions.suspended(cid) return current('suspend', cid) end
 function Sanctions.protected(cid) return current('protect', cid) end
 
 --- Every suspension or protection in force now, newest first: the admin
---- panel's Suspended and Protected lists. One whose time has passed is not
+--- panel's measures list (server/measures.lua). One whose time has passed is not
 --- listed, before the tick ends it.
 ---@param kind string 'suspend' | 'protect'
 ---@return table[] rows as the store keeps them

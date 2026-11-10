@@ -28,6 +28,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+local Measures = CrimsonBoot.require('server.measures')
 
 local Panel = {}
 
@@ -52,9 +53,12 @@ local OPS = {
     settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
     resetSettings = WRITE, refresh = WRITE, flush = WRITE, ackAlerts = WRITE, testAlert = WRITE,
     removePhotos = WRITE, setPlaytime = WRITE,
-    -- Staff freezes (server/freeze.lua): the list is a read; freezing and
-    -- releasing move no money and stop nothing for good: a moderator's.
-    frozen = READ, freeze = MOD, unfreeze = MOD,
+    -- Every measure on a player in force (server/measures.lua: frozen,
+    -- suspended, protected, their own target limits), one list: a read.
+    measures = READ,
+    -- Staff freezes (server/freeze.lua): freezing and releasing move no
+    -- money and stop nothing for good: a moderator's.
+    freeze = MOD, unfreeze = MOD,
     -- A live contract's deadline moved later or sooner (Admin.adjustDeadline):
     -- a moderator's, as void is, on the contract's view.
     adjustDeadline = MOD,
@@ -70,8 +74,6 @@ local OPS = {
     -- Suspending a player from contracts, and protecting one from them
     -- (server/sanctions.lua): a moderator's, as the freeze is.
     suspend = MOD, unsuspend = MOD, protect = MOD, unprotect = MOD,
-    -- Everybody suspended or protected now, as the frozen list is: a read.
-    sanctions = READ,
     -- Paying a player by hand (server/payments.lua): money staff choose.
     manualPay = WRITE,
     -- The staff tools: a notice to every hitman (a write, asked twice on
@@ -179,11 +181,6 @@ local LOG_ROWS_MAX = 100
 --- most (Acknowledge all shown).
 local ALERT_ROWS = 100
 
---- The handles the frozen list gives its rows, so Unfreeze there names a
---- player without the page holding their citizen id: [ref] = cid, and the
---- reverse. Kept for the life of the process.
-local freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
-
 --- The handles a player lookup gives (H.player), so a write from that card
 --- (freeze, suspend, protect, pay, set playtime, and their lifts) acts on
 --- exactly the character the lookup found. The page sent back what was
@@ -215,7 +212,8 @@ function Panel.init(d)
     deps = d
     overviewCache, contractsCache = nil, nil
     deniedLogged = {}
-    freezeRefs, freezeRefOf, freezeRefSeq = {}, {}, 0
+    -- The measures list and its handles (server/measures.lua).
+    Measures.init(d)
     playerRefs, playerRefSeq = {}, 0
     openPages, openPageSeq = {}, 0
 end
@@ -959,18 +957,14 @@ local function buildOverview()
     end
     out.overrides, out.notApplied = overrides, notApplied
     out.auditQueued = deps.audit.pending()
-    -- Players staff have put on hold (server/freeze.lua): a count only.
-    -- Unknown while the store's freezes cannot be read: never 0 of nobody known.
-    local players, unknown = 0, false
-    if deps.freeze then players, unknown = deps.freeze.count() end
-    out.frozen = { players = players or 0, unknown = unknown == true or nil }
-    -- And everybody suspended or protected now (server/sanctions.lua):
-    -- counts only, for the overview; the lists are the sanctions op's.
-    if deps.sanctions and deps.sanctions.listOpen then
-        local okS, suspended = pcall(deps.sanctions.listOpen, 'suspend')
-        local okP, protected = pcall(deps.sanctions.listOpen, 'protect')
-        out.sanctions = { suspended = okS and #suspended or nil, protected = okP and #protected or nil }
-    end
+    -- Every measure on a player in force (server/measures.lua): counts
+    -- only, for the overview; the list is the measures op's. The frozen
+    -- count is unknown while the store's freezes cannot be read: never 0 of
+    -- nobody known.
+    local counts = Measures.counts()
+    out.measures = { freeze = counts.freeze or 0, unknown = counts.unknown == true or nil,
+        suspend = deps.sanctions and counts.suspend or nil, protect = deps.sanctions and counts.protect or nil,
+        limit = deps.targetLimits and counts.limit or nil }
     -- The whole app paused by staff (Config.Staff.AppPaused), and since when.
     out.appPaused = deps.freeze and deps.freeze.appPausedSince and deps.freeze.appPausedSince() or nil
     return out
@@ -1879,11 +1873,7 @@ local function playtimeView(cid, actor)
 end
 
 --- Whether a player is frozen, as the panel shows it, or nil.
-freezeView = function(cid, canIdentify)
-    local row = deps.freeze and deps.freeze.of(cid)
-    if not row then return nil end
-    return { since = row.frozen_at, reason = row.reason, by = canIdentify and row.by_cid or nil }
-end
+freezeView = function(cid, canIdentify) return Measures.view('freeze', cid, canIdentify) end
 
 --- One player: their contracts as /ch-contracts lists them, their record,
 --- what they are owed, and the notices kept for their next login.
@@ -2009,8 +1999,10 @@ H.player = function(src, data)
         frozen = freezeView(cid, canIdentify),
         -- Whether staff have suspended them from contracts, or protect them
         -- from contracts (server/sanctions.lua), the same way.
-        suspended = Panel.sanctionView('suspend', cid, canIdentify),
-        protected = Panel.sanctionView('protect', cid, canIdentify),
+        suspended = Measures.view('suspend', cid, canIdentify),
+        protected = Measures.view('protect', cid, canIdentify),
+        -- And whether they have target limits of their own (server/targetlimits.lua).
+        limit = Measures.view('limit', cid, canIdentify),
         -- The most one manual payment may be now (Config.Staff), for Pay.
         payMax = deps.payments and deps.payments.max() or 0,
     }
@@ -2022,58 +2014,27 @@ end
 --- staff name the player as they looked them up, and nothing here says
 --- which contracts are theirs.
 
---- A handle for a frozen player's row in the list.
-local function freezeRef(cid)
-    local ref = freezeRefOf[cid]
-    if not ref then
-        freezeRefSeq = freezeRefSeq + 1
-        ref = 'f' .. freezeRefSeq
-        freezeRefOf[cid], freezeRefs[ref] = ref, cid
+--- Every measure on a player in force, newest first: Players, Measures.
+--- Each row carries the list's handle ('f'), so Unfreeze or Lift on a row
+--- names the player by it; the citizen id and who set it only with
+--- IdentityAce. { kind } filters to one kind.
+H.measures = function(src, data)
+    local kind = data.kind
+    if kind ~= nil and not Measures.known(kind) then
+        return false, CH.ERR.INVALID_INPUT, 'No such measure.'
     end
-    return ref
+    return true, nil, nil, { rows = Measures.list(kind, identifies(src)), kinds = Measures.KINDS }
 end
 
-H.frozen = function(src)
-    local canIdentify = identifies(src)
-    local rows = {}
-    for _, row in ipairs(deps.freeze and deps.freeze.list() or {}) do
-        local actor = deps.identity.byCitizenId(row.cid)
-        rows[#rows + 1] = {
-            ref = freezeRef(row.cid), name = (actor and actor.name) or row.name,
-            cid = canIdentify and row.cid or nil, online = actor ~= nil,
-            since = row.frozen_at, reason = row.reason,
-            by = canIdentify and row.by_cid or nil,
-        }
+--- The player a lift names: a row of the measures list ('f' handles), or
+--- as every other write (writeSubject).
+local function listedSubject(data, src)
+    local listed, cid = Measures.fromRef(data.ref)
+    if listed then
+        if not cid then return nil, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
+        return { cid = cid, actor = deps.identity.byCitizenId(cid) }
     end
-    return true, nil, nil, { rows = rows }
-end
-
---- Everybody suspended from contracts and everybody protected from them,
---- now, newest first: Players' Suspended and Protected lists. Each row
---- carries the list's handle (an 'f' one, as the frozen list's), so Lift on
---- a row names them by it; the citizen id and who set it only with
---- IdentityAce.
-H.sanctions = function(src)
-    local Sanctions = deps.sanctions
-    if not Sanctions or not Sanctions.listOpen then
-        return false, 'unavailable', 'Suspensions and protections are not available on this server.'
-    end
-    local canIdentify = identifies(src)
-    local out = {}
-    for _, kind in ipairs({ 'suspend', 'protect' }) do
-        local rows = {}
-        for _, row in ipairs(Sanctions.listOpen(kind)) do
-            local actor = deps.identity.byCitizenId(row.cid)
-            rows[#rows + 1] = {
-                ref = freezeRef(row.cid), name = (actor and actor.name) or row.name,
-                cid = canIdentify and row.cid or nil, online = actor ~= nil,
-                since = row.created_at, ['until'] = row.until_at, reason = row.reason,
-                by = canIdentify and row.by_cid or nil,
-            }
-        end
-        out[kind == 'suspend' and 'suspended' or 'protected'] = rows
-    end
-    return true, nil, nil, out
+    return writeSubject(data, src)
 end
 
 H.freeze = function(src, data)
@@ -2090,10 +2051,7 @@ H.freeze = function(src, data)
     end
     local name = actor and actor.name or (who.typed and cid) or nil
     local staffCid = staffOf(src)
-    local ok, err = deps.freeze.freeze(staffCid, cid, reason, name)
-    -- Kept for their history card too (server/sanctions.lua): the freeze's
-    -- own row goes when it is lifted.
-    if ok and deps.sanctions then pcall(deps.sanctions.noteFreeze, staffCid, cid, reason, name) end
+    local ok, err = Measures.apply('freeze', staffCid, cid, { reason = reason, name = name })
     if not ok then
         if err == 'already_frozen' then return false, err, 'They are already frozen.' end
         if err == CH.ERR.BUSY then
@@ -2108,19 +2066,10 @@ end
 
 H.unfreeze = function(src, data)
     if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
-    local cid
-    -- A row of the frozen list ('f' handles), or the player looked up.
-    if data.ref ~= nil and not (type(data.ref) == 'string' and data.ref:sub(1, 1) == 'p') then
-        cid = type(data.ref) == 'string' and freezeRefs[data.ref:sub(1, 16)] or nil
-        if not cid then return false, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
-    else
-        local who, whoErr, whoMessage = writeSubject(data, src)
-        if not who then return false, whoErr, whoMessage end
-        cid = who.cid
-    end
-    local staffCid = staffOf(src)
-    local ok, err = deps.freeze.unfreeze(staffCid, cid, shortText(data.reason, 120))
-    if ok and deps.sanctions then pcall(deps.sanctions.noteUnfreeze, staffCid, cid) end
+    -- A row of the measures list ('f' handles), or the player looked up.
+    local who, whoErr, whoMessage = listedSubject(data, src)
+    if not who then return false, whoErr, whoMessage end
+    local ok, err = Measures.lift('freeze', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then
         if err == 'not_frozen' then return false, err, 'They are not frozen.' end
         if err == CH.ERR.BUSY then
@@ -2998,22 +2947,6 @@ end
 -- Suspensions, protections, the history card and manual payments
 --------------------------------------------------------------------------
 
---- A suspension or a protection on a player as the panel shows it, or nil.
---- Who set it, a staff member's citizen id, only with IdentityAce.
----@param kind string 'suspend' | 'protect'
----@param cid string
----@param canIdentify boolean
----@return table|nil
-function Panel.sanctionView(kind, cid, canIdentify)
-    local Sanctions = deps and deps.sanctions
-    if not Sanctions then return nil end
-    local row
-    if kind == 'suspend' then row = Sanctions.suspended(cid) else row = Sanctions.protected(cid) end
-    if not row then return nil end
-    return { since = row.created_at, ['until'] = row.until_at, reason = row.reason,
-             by = canIdentify and row.by_cid or nil }
-end
-
 --- The player a staff action names, as the freeze takes one: the lookup's
 --- handle or an exact citizen id (writeSubject), and refused for a citizen
 --- id no character has and nothing here names. nil, the error and what to
@@ -3087,26 +3020,15 @@ H.suspend = function(src, data)
     end
     local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
-    local ok, err = Sanctions.place('suspend', staffOf(src), who.cid, days > 0 and days * 86400 or nil,
-        reason, who.name)
+    local ok, err = Measures.apply('suspend', staffOf(src), who.cid,
+        { seconds = days > 0 and days * 86400 or nil, reason = reason, name = who.name })
     if not ok then
         return sanctionRefusal(err, 'They are suspended already. Lift it first to set another.')
     end
     return true, nil, ('%s is suspended from placing and accepting contracts %s. Their live '
         .. 'contracts are not touched: freeze them for that.')
         :format(who.name or 'They', days > 0 and ('for ' .. spanWords(days * 86400)) or 'until you lift it'),
-        { suspended = Panel.sanctionView('suspend', who.cid, identifies(src)) }
-end
-
---- Who a lift names: a row of the Suspended or Protected list ('f'
---- handles, as the frozen list's), or as every other write (writeSubject).
-local function listedSubject(data, src)
-    if type(data.ref) == 'string' and data.ref:sub(1, 1) == 'f' then
-        local cid = freezeRefs[data.ref:sub(1, 16)]
-        if not cid then return nil, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
-        return { cid = cid, actor = deps.identity.byCitizenId(cid) }
-    end
-    return writeSubject(data, src)
+        { suspended = Measures.view('suspend', who.cid, identifies(src)) }
 end
 
 H.unsuspend = function(src, data)
@@ -3114,7 +3036,7 @@ H.unsuspend = function(src, data)
     if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
     local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end
-    local ok, err = Sanctions.lift('suspend', staffOf(src), who.cid, shortText(data.reason, 120))
+    local ok, err = Measures.lift('suspend', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not suspended.') end
     return true, nil, 'Suspension lifted. They may place and accept contracts again.'
 end
@@ -3133,15 +3055,15 @@ H.protect = function(src, data)
     end
     local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
-    local ok, err = Sanctions.place('protect', staffOf(src), who.cid, hours > 0 and hours * 3600 or nil,
-        reason, who.name)
+    local ok, err = Measures.apply('protect', staffOf(src), who.cid,
+        { seconds = hours > 0 and hours * 3600 or nil, reason = reason, name = who.name })
     if not ok then
         return sanctionRefusal(err, 'They are protected already. Lift it first to set another.')
     end
     return true, nil, ('%s is protected from new contracts %s. Contracts already on them run on: '
         .. 'freeze them to put those on hold.')
         :format(who.name or 'They', hours > 0 and ('for ' .. spanWords(hours * 3600)) or 'for good'),
-        { protected = Panel.sanctionView('protect', who.cid, identifies(src)) }
+        { protected = Measures.view('protect', who.cid, identifies(src)) }
 end
 
 H.unprotect = function(src, data)
@@ -3149,7 +3071,7 @@ H.unprotect = function(src, data)
     if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
     local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end
-    local ok, err = Sanctions.lift('protect', staffOf(src), who.cid, shortText(data.reason, 120))
+    local ok, err = Measures.lift('protect', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then return sanctionRefusal(err, nil, 'They are not protected.') end
     return true, nil, 'Protection lifted. New contracts may name them again.'
 end
@@ -3460,7 +3382,15 @@ local function targetWrite(src, data, action, args, said)
     if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
     args.reason = reason
     args.name = who.actor and who.actor.name or nil
-    local ok, err, detail = deps.targetLimits.adjust(staffOf(src), who.cid, action, args)
+    local ok, err, detail
+    -- A player's own limits are one of their measures (server/measures.lua).
+    if action == 'override' then
+        ok, err, detail = Measures.apply('limit', staffOf(src), who.cid, args)
+    elseif action == 'clear' then
+        ok, err, detail = Measures.lift('limit', staffOf(src), who.cid, args.reason, args.name)
+    else
+        ok, err, detail = deps.targetLimits.adjust(staffOf(src), who.cid, action, args)
+    end
     if not ok then return targetRefusal(err, detail) end
     if type(said) == 'function' then said = said(detail) end
     return true, nil, said

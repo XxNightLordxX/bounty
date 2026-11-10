@@ -44,18 +44,31 @@ local function ask(src, op, data)
     return nil
 end
 
+--- The measures list (one op, every kind), as the old Suspended and
+--- Protected lists were: { suspended = rows, protected = rows }.
+local function sanctions(src)
+    local reply = ask(src, 'measures')
+    if not (reply and reply.ok) then return reply end
+    local out = { suspended = {}, protected = {} }
+    for _, row in ipairs(reply.data.rows) do
+        if row.kind == 'suspend' then out.suspended[#out.suspended + 1] = row end
+        if row.kind == 'protect' then out.protected[#out.protected + 1] = row end
+    end
+    return { ok = true, data = out }
+end
+
 local function lookedUp(src, subject)
     local reply = ask(src, 'player', { subject = subject })
     truthy(reply and reply.ok, 'looked up ' .. tostring(subject) .. ': ' .. tostring(reply and reply.message))
     return reply.data.player.ref
 end
 
-describe('admin rebuild: the Suspended and Protected lists', function()
+describe('admin rebuild: the suspended and protected in the one measures list', function()
     it('lists who is suspended and protected now, scrubbed without IdentityAce', function()
         local s = world()
         truthy(ask(6, 'suspend', { ref = lookedUp(6, 1), days = 3, reason = 'Contract spam' }).ok)
         truthy(ask(6, 'protect', { ref = lookedUp(6, 2), hours = 0, reason = 'Event guest' }).ok)
-        local reply = ask(6, 'sanctions')
+        local reply = sanctions(6)
         truthy(reply and reply.ok, 'read: ' .. tostring(reply and reply.message))
         eq(#reply.data.suspended, 1)
         eq(#reply.data.protected, 1)
@@ -66,7 +79,7 @@ describe('admin rebuild: the Suspended and Protected lists', function()
         eq(row.by, nil, 'nor who set it')
         truthy(type(row.ref) == 'string' and row.ref:sub(1, 1) == 'f', 'a list handle')
         truthy(row['until'] and row['until'] > os.time(), 'until when')
-        local unmasked = ask(8, 'sanctions')
+        local unmasked = sanctions(8)
         eq(unmasked.data.suspended[1].cid, 'CREATOR1', 'the citizen id with IdentityAce')
         eq(unmasked.data.suspended[1].by, 'ADMIN001')
         eq(unmasked.data.protected[1]['until'], nil, 'protected for good')
@@ -75,7 +88,7 @@ describe('admin rebuild: the Suspended and Protected lists', function()
 
     it('is a read: an extra ACE alone reads it', function()
         world()
-        local reply = ask(7, 'sanctions')
+        local reply = sanctions(7)
         truthy(reply and reply.ok, tostring(reply and reply.err))
         eq(#reply.data.suspended, 0)
         eq(#reply.data.protected, 0)
@@ -85,10 +98,10 @@ describe('admin rebuild: the Suspended and Protected lists', function()
         world()
         truthy(ask(6, 'suspend', { ref = lookedUp(6, 1), days = 1, reason = 'x' }).ok)
         truthy(ask(6, 'protect', { ref = lookedUp(6, 2), hours = 5, reason = 'y' }).ok)
-        local list = ask(6, 'sanctions').data
+        local list = sanctions(6).data
         truthy(ask(6, 'unsuspend', { ref = list.suspended[1].ref }).ok, 'lifted from the row')
         truthy(ask(6, 'unprotect', { ref = list.protected[1].ref }).ok, 'lifted from the row')
-        local after = ask(6, 'sanctions').data
+        local after = sanctions(6).data
         eq(#after.suspended, 0)
         eq(#after.protected, 0)
         eq(ask(6, 'unsuspend', { ref = 'f99999' }).err, CH.ERR.NOT_FOUND, 'a row that is gone')
@@ -100,11 +113,11 @@ describe('admin rebuild: the Suspended and Protected lists', function()
         truthy(ask(6, 'suspend', { ref = lookedUp(6, 1), days = 1, reason = 'first' }).ok)
         Env.advance(5)
         truthy(ask(6, 'suspend', { ref = lookedUp(6, 2), days = 3, reason = 'second' }).ok)
-        local rows = ask(6, 'sanctions').data.suspended
+        local rows = sanctions(6).data.suspended
         eq(rows[1].reason, 'second')
         eq(rows[2].reason, 'first')
         Env.advance(86400 + 10)
-        rows = ask(6, 'sanctions').data.suspended
+        rows = sanctions(6).data.suspended
         eq(#rows, 1, 'the one-day suspension is over')
         eq(rows[1].reason, 'second')
         local _ = s
@@ -183,8 +196,8 @@ describe('admin rebuild: the overview counts the measures on players', function(
         Env.advance(60)
         local reply = ask(7, 'overview')
         truthy(reply and reply.ok, 'a read')
-        eq(reply.data.sanctions.suspended, 1)
-        eq(reply.data.sanctions.protected, 2)
+        eq(reply.data.measures.suspend, 1)
+        eq(reply.data.measures.protect, 2)
     end)
 end)
 
@@ -200,5 +213,65 @@ describe('admin rebuild: the organisation\'s boss menu layout reaches the panel'
         local reader = W.ask(7, 'orgGet', {})
         truthy(reader.ok, 'a read for every reader of the panel')
         Config.Organisation.Enabled = false
+    end)
+end)
+
+describe('one Measures area: every measure on a player in one list (server/measures.lua)', function()
+    local function setUp()
+        local s = world()
+        truthy(ask(6, 'freeze', { ref = lookedUp(6, 1), reason = 'RP dispute' }).ok)
+        Env.advance(1)
+        truthy(ask(6, 'suspend', { ref = lookedUp(6, 2), days = 1, reason = 'spam' }).ok)
+        Env.advance(1)
+        truthy(ask(6, 'protect', { ref = lookedUp(6, 3), hours = 0, reason = 'guest' }).ok)
+        Env.advance(1)
+        local o = ask(6, 'targetOverride', { ref = lookedUp(6, 2), hours = 0, exempt = true, reason = 'event' })
+        truthy(o and o.ok, tostring(o and o.message))
+        return s
+    end
+
+    it('lists all four kinds, newest first, filtered by kind, scrubbed without IdentityAce', function()
+        setUp()
+        local reply = ask(7, 'measures')
+        truthy(reply and reply.ok, 'a read')
+        local kinds = {}
+        for i, row in ipairs(reply.data.rows) do kinds[i] = row.kind end
+        eq(table.concat(kinds, ','), 'limit,protect,suspend,freeze')
+        for _, row in ipairs(reply.data.rows) do
+            eq(row.cid, nil, 'no citizen id without IdentityAce')
+            eq(row.by, nil, 'nor who set it')
+            truthy(row.ref:sub(1, 1) == 'f', 'a list handle')
+        end
+        eq(reply.data.rows[1].exempt, true, 'the override says exempt')
+        eq(reply.data.rows[1].reason, 'event')
+        local only = ask(7, 'measures', { kind = 'freeze' }).data.rows
+        eq(#only, 1)
+        eq(only[1].reason, 'RP dispute')
+        eq(ask(7, 'measures', { kind = 'jail' }).err, CH.ERR.INVALID_INPUT, 'no such kind')
+        eq(ask(8, 'measures', { kind = 'freeze' }).data.rows[1].cid, 'CREATOR1', 'the citizen id with IdentityAce')
+    end)
+
+    it('lifts each from its row, by the one handle, through each kind\'s own op', function()
+        setUp()
+        local rows = ask(6, 'measures').data.rows
+        local by = {}
+        for _, row in ipairs(rows) do by[row.kind] = row end
+        eq(by.suspend.ref, by.limit.ref, 'one handle per player, whatever the kind')
+        truthy(ask(6, 'unfreeze', { ref = by.freeze.ref }).ok, 'unfrozen from the row')
+        truthy(ask(6, 'unsuspend', { ref = by.suspend.ref }).ok)
+        truthy(ask(6, 'unprotect', { ref = by.protect.ref }).ok)
+        eq(#ask(6, 'measures').data.rows, 1, 'only the override left')
+        eq(ask(6, 'unfreeze', { ref = 'f99999' }).err, CH.ERR.NOT_FOUND, 'a row that is gone')
+    end)
+
+    it('counts every kind on the overview, and the old lists are gone', function()
+        setUp()
+        local o = ask(7, 'overview').data.measures
+        eq(o.freeze, 1)
+        eq(o.suspend, 1)
+        eq(o.protect, 1)
+        eq(o.limit, 1)
+        eq(ask(6, 'frozen').err, 'unknown_op')
+        eq(ask(6, 'sanctions').err, 'unknown_op')
     end)
 end)
