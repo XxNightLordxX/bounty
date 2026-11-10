@@ -2307,7 +2307,7 @@
       });
     } else if (contract.role === 'target') {
       // The operatives on it who took it under their name, where the server
-      // shows those to the target (Config.Anonymity.ShowOperativeNames). One
+      // shows those to the target (Config.TargetClasses.default.ShowOperativeNames). One
       // who took it anonymously is never listed, and stays an alias.
       asList(contract.operatives).forEach(function (o) {
         if (o && o.name) {
@@ -2653,7 +2653,7 @@
     // informant feature with Config.InformantsEnabled): no button at all. A
     // tip already bought stays on the map until it runs out, and says so.
     // Off for this contract alone (a target on a whitelisted job reads its
-    // own switch, Config.InformantsWhitelistedTargets.LocationTip): the same.
+    // own switch, Config.TargetClasses.whitelisted.LocationTip): the same.
     if (rules.enabled !== true || (own && own.off === true)) { return showing > 0 ? box : null; }
 
     var blocked = tipBlocked(rules, own, contract);
@@ -5529,7 +5529,7 @@
         detail: warning + (offered ? 'The person who placed it will see an operative, not your name.'
           : 'The person who placed it will see your name.')
           // And the target too, where the server shows named operatives to
-          // them (Config.Anonymity.ShowOperativeNames).
+          // them (Config.TargetClasses.default.ShowOperativeNames).
           + (namesToTarget(contract.targetProtected === true)
             ? (offered ? ' Under your name, the target sees it too.' : ' So will the target.')
             : '')
@@ -10658,7 +10658,7 @@
 
   /* The anonymity switches that apply to a target: on one on a whitelisted
      job (the pick's protected mark, a contract's targetProtected), the
-     server's Config.Anonymity.WhitelistedTargets, carried as
+     server's Config.TargetClasses.whitelisted, carried as
      settings().anonymity.whitelisted; on anyone else, the general ones. The
      server decides at the tap either way. */
   function anonymityRules(targetProtected) {
@@ -10672,7 +10672,7 @@
   }
 
   /* Whether an operative who accepts under their name is shown by it to the
-     target too (Config.Anonymity.ShowOperativeNames). A server that does
+     target too (Config.TargetClasses.default.ShowOperativeNames). A server that does
      not say does not. */
   function namesToTarget(targetProtected) {
     var rules = anonymityRules(targetProtected);
@@ -10680,7 +10680,7 @@
   }
 
   /* Whether the server offers anonymity for this role ('creator' on placing,
-     'hitman' on accepting): Config.Anonymity.AllowAnonymousPlacer and
+     'hitman' on accepting): Config.TargetClasses.default.AllowAnonymousPlacer and
      AllowAnonymousHitman, as the listing's settings carry them, or their
      whitelisted-target counterparts for a target on a whitelisted job. Off,
      the option is not drawn at all. A server that does not say offers it. */

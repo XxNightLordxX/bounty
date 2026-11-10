@@ -830,7 +830,7 @@ describe('the informants in the admin panel', function()
         Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
         resetConfig()
         -- Off for whitelisted-job targets too, so none is sold anywhere.
-        Config.InformantsWhitelistedTargets.PlacerInformant = false
+        Config.TargetClasses.whitelisted.PlacerInformant = false
         Config.Database.Mode = 'json'
         local again = require('server.main').start()
         eq(Config.PlacerInformant.Enabled, false)
@@ -996,7 +996,7 @@ end)
 --------------------------------------------------------------------------
 -- Shipped off, and decided per target: Config.Informant / PlacerInformant /
 -- LocationTip .Enabled for civilian targets, and
--- Config.InformantsWhitelistedTargets for a target on a whitelisted job
+-- Config.TargetClasses.whitelisted for a target on a whitelisted job
 -- (the flag the contract recorded, as the advisory reads it).
 --------------------------------------------------------------------------
 
@@ -1018,8 +1018,8 @@ describe('the informant features, per target', function()
             s.storage.writeContract(row)
         end
         -- Anonymously, so the target's informant has somebody to sell.
-        Config.Anonymity.AllowAnonymousHitman = true
-        Config.Anonymity.WhitelistedTargets.AllowAnonymousHitman = true
+        Config.TargetClasses.default.AllowAnonymousHitman = true
+        Config.TargetClasses.whitelisted.AllowAnonymousHitman = true
         truthy(s.contracts.accept(f.hitman, c.id, true), 'taken')
         for _, src in ipairs({ 1, 2, 3 }) do Env.players[src].PlayerData.money.bank = 100000 end
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
@@ -1062,11 +1062,14 @@ describe('the informant features, per target', function()
         end
     end)
 
-    --- Every feature off, then the given switches on.
+    --- Every feature off for every target class, then the given switches
+    --- on: a feature is sold where its own switch and its class's are both
+    --- on (Config.TargetClasses, Util.informantOn).
     local function only(s, switches)
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
             Config[section].Enabled = false
-            Config.InformantsWhitelistedTargets[section] = false
+            Config.TargetClasses.default[section] = false
+            Config.TargetClasses.whitelisted[section] = false
         end
         for _, path in ipairs(switches) do
             truthy(s.settings.set(path, true, 'ADMIN001'), path)
@@ -1077,7 +1080,7 @@ describe('the informant features, per target', function()
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
             for _, officer in ipairs({ false, true }) do
                 local s = newStack()
-                only(s, { section .. '.Enabled' })
+                only(s, { section .. '.Enabled', 'TargetClasses.default.' .. section })
                 local f, c = on(officer, s)
                 local money = total(s)
                 local err = tried(s, f, c)[section]
@@ -1097,7 +1100,7 @@ describe('the informant features, per target', function()
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
             for _, officer in ipairs({ false, true }) do
                 local s = newStack()
-                only(s, { 'InformantsWhitelistedTargets.' .. section })
+                only(s, { section .. '.Enabled', 'TargetClasses.whitelisted.' .. section })
                 local f, c = on(officer, s)
                 local money = total(s)
                 local err = tried(s, f, c)[section]
@@ -1112,12 +1115,38 @@ describe('the informant features, per target', function()
         end
     end)
 
+    it('sells nothing on a civilian while the default class switch is off, the feature on', function()
+        for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
+            local s = newStack()
+            only(s, { section .. '.Enabled' })
+            local f, c = on(false, s)
+            local money = total(s)
+            eq(tried(s, f, c)[section], CH.ERR.FEATURE_OFF, section .. ': refused (TargetClasses.default)')
+            eq(total(s), money, section .. ': nothing charged')
+        end
+    end)
+
+    it('sells nothing for a class whose switch is on while the feature is off', function()
+        for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
+            for _, officer in ipairs({ false, true }) do
+                local s = newStack()
+                only(s, { 'TargetClasses.default.' .. section, 'TargetClasses.whitelisted.' .. section })
+                local f, c = on(officer, s)
+                local money = total(s)
+                local err = tried(s, f, c)[section]
+                truthy(err == CH.ERR.FEATURE_OFF or err == CH.ERR.INFORMANT_PROTECTED,
+                    section .. ': refused with its own switch off: ' .. tostring(err))
+                eq(total(s), money, section .. ': nothing charged')
+            end
+        end
+    end)
+
     it('offers an officer target the informant on On me only while theirs is on', function()
         local s = newStack()
-        only(s, { 'Informant.Enabled' })
+        only(s, { 'Informant.Enabled', 'TargetClasses.default.Informant' })
         local _, c = on(true, s)
         eq(view(s, c, 'TARGET01').informantPicks, nil, 'the general switch is not theirs')
-        truthy(s.settings.set('InformantsWhitelistedTargets.Informant', true, 'ADMIN001'))
+        truthy(s.settings.set('TargetClasses.whitelisted.Informant', true, 'ADMIN001'))
         truthy(view(s, c, 'TARGET01').informantPicks, 'theirs on: offered')
         local before = bank(2)
         force(s, HIT)
@@ -1130,9 +1159,11 @@ describe('the informant features, per target', function()
         for _, officer in ipairs({ false, true }) do
             local s = newStack()
             only(s, { 'Informant.Enabled', 'PlacerInformant.Enabled', 'LocationTip.Enabled',
-                'InformantsWhitelistedTargets.Informant',
-                'InformantsWhitelistedTargets.PlacerInformant',
-                'InformantsWhitelistedTargets.LocationTip' })
+                'TargetClasses.default.Informant', 'TargetClasses.default.PlacerInformant',
+                'TargetClasses.default.LocationTip',
+                'TargetClasses.whitelisted.Informant',
+                'TargetClasses.whitelisted.PlacerInformant',
+                'TargetClasses.whitelisted.LocationTip' })
             truthy(s.settings.set('InformantsEnabled', false, 'ADMIN001'))
             local f, c = on(officer, s)
             local money = total(s)
@@ -1144,7 +1175,7 @@ describe('the informant features, per target', function()
 
     it('draws no tip button on a contract its switch is off for, while others sell', function()
         local s = newStack()
-        only(s, { 'LocationTip.Enabled' })
+        only(s, { 'LocationTip.Enabled', 'TargetClasses.default.LocationTip' })
         local _, c = on(true, s)
         eq(s.projection.listing('HITMAN01').settings.locationTip.enabled, true,
             'the server sells tips elsewhere')
@@ -1161,16 +1192,18 @@ describe('the informant features, per target', function()
                 found = found + 1
                 eq(entry.section, 'features')
                 eq(entry.kind, 'switch')
-                eq(entry.needs, 'InformantsEnabled')
+                -- Each needs its feature's own switch (which needs the master).
+                truthy(entry.needs == 'Informant.Enabled' or entry.needs == 'PlacerInformant.Enabled'
+                    or entry.needs == 'LocationTip.Enabled', entry.key)
             end
         end
         eq(found, 3)
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
-            local key = 'InformantsWhitelistedTargets.' .. section
+            local key = 'TargetClasses.whitelisted.' .. section
             -- The other way from where it stands, so the change is real.
-            local want = Config.InformantsWhitelistedTargets[section] ~= true
+            local want = Config.TargetClasses.whitelisted[section] ~= true
             truthy(s.settings.set(key, want, 'ADMIN001'), key)
-            eq(Config.InformantsWhitelistedTargets[section], want)
+            eq(Config.TargetClasses.whitelisted[section], want)
             eq(s.storage.readSettings()[key].value, want, 'kept in the store')
             falsy(s.settings.set(key, 'yes', 'ADMIN001'), 'not a true or false')
         end

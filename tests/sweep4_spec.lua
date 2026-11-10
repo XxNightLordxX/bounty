@@ -88,7 +88,7 @@ describe('sweep 4: the proof handover', function()
     local function held(anonymous)
         local s = newStack()
         local f = fixture(s)
-        Config.Anonymity.AllowAnonymousPlacer = true
+        Config.TargetClasses.default.AllowAnonymousPlacer = true
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt from last week', anonymous = anonymous,
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 40000 } },
@@ -367,7 +367,7 @@ local function decayStack()
     local f = fixture(s, { creatorCash = 500000, creatorBank = 200000 })
     Config.Limits.TargetCooldownAfterResolveSeconds = 0
     Config.Notifications.ParanoidAlert = false
-    Config.Anonymity.AllowAnonymousPlacer = true
+    Config.TargetClasses.default.AllowAnonymousPlacer = true
     Config.Improvements.ContractDecay.Enabled = true
     Config.Improvements.ContractDecay.Mode = 'rise'
     return s, f

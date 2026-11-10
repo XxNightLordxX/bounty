@@ -52,8 +52,8 @@ local function stack(opts)
     Config.Cooldowns.create = { per = 1, burst = 1000 }
     Config.Cooldowns.accept = { per = 1, burst = 1000 }
     Config.Cooldowns.load = { per = 1, burst = 1000 }
-    Config.Anonymity.AllowAnonymousPlacer = true
-    Config.Anonymity.AllowAnonymousHitman = true
+    Config.TargetClasses.default.AllowAnonymousPlacer = true
+    Config.TargetClasses.default.AllowAnonymousHitman = true
     -- The paranoid alert at placing is a test of its own; here it would
     -- start the target's cooldown and hide the heat's warning.
     Config.Notifications.ParanoidAlert = false

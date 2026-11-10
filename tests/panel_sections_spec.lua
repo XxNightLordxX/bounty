@@ -363,8 +363,8 @@ describe('the Developer section', function()
         eq(reset.ok, true, tostring(reset.message))
         -- Every other write stays the staff ACE's: another section's key, a
         -- deny-listed one, and any other write.
-        eq(ask(9, 'setSetting', { key = 'Anonymity.ShowPlacerOnBoard', value = true }).err, 'not_allowed')
-        eq(ask(9, 'resetSetting', { key = 'Anonymity.ShowPlacerOnBoard' }).err, 'not_allowed')
+        eq(ask(9, 'setSetting', { key = 'TargetClasses.default.ShowPlacerOnBoard', value = true }).err, 'not_allowed')
+        eq(ask(9, 'resetSetting', { key = 'TargetClasses.default.ShowPlacerOnBoard' }).err, 'not_allowed')
         eq(ask(9, 'setSetting', { key = 'Admin.Ace', value = 'x' }).err, 'not_allowed')
         eq(ask(9, 'resetSettings', {}).err, 'not_allowed')
         eq(ask(9, 'freeze', { subject = 2, reason = 'x' }).err, 'not_allowed')

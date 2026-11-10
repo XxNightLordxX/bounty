@@ -65,13 +65,13 @@ describe('projection', function()
         eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').creatorName, 'Vic Marlowe')
         eq(s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').creatorName, 'Vic Marlowe')
         -- The owner's switch puts it back on the board, read per contract.
-        Config.Anonymity.ShowPlacerOnBoard = true
+        Config.TargetClasses.default.ShowPlacerOnBoard = true
         eq(s.projection.contract(s.storage.readContract(c.id), 'PUBLIC01').creatorName, 'Vic Marlowe')
         local protected = s.storage.readContract(c.id)
         protected.target_protected = true
         falsy(s.projection.contract(protected, 'PUBLIC01').creatorName,
             'a whitelisted-job target reads its own switch, off')
-        Config.Anonymity.WhitelistedTargets.ShowPlacerOnBoard = true
+        Config.TargetClasses.whitelisted.ShowPlacerOnBoard = true
         eq(s.projection.contract(protected, 'PUBLIC01').creatorName, 'Vic Marlowe')
     end)
 

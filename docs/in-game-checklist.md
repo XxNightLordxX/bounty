@@ -649,6 +649,12 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] A stranger on the board sees no **On hold** for a frozen player's contract, and its band moves on; with the app paused, it stands still for them too.
 - [ ] Panel, a contract on an anonymous placer who is frozen: without `crimson.identity` no On hold badge; with it, *the placer*.
 
+## Target classes: one rules table per target class (step 3f)
+
+- [ ] As shipped (`Config.TargetClasses`): placing or accepting anonymously is offered to nobody, on a civilian or on an officer; the target sees a named operative's name; the board names no placer.
+- [ ] Settings, Features, Anonymity (whitelisted-job targets): turn **Placing anonymously** on: a contract on an SAST officer can be placed anonymously, one on a civilian cannot; turn it off again.
+- [ ] Turn **Target's informant** on (`Config.Informant.Enabled`): a civilian target can buy it; an officer target cannot until Informants (whitelisted-job targets), **Target's informant** is on too; with Informants (every other target), **Target's informant** off, a civilian target cannot.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

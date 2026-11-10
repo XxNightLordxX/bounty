@@ -660,7 +660,7 @@ function Protection.targetView(contract, viewerCid)
     -- their name is shown to its target (the anonymity switches), and only
     -- one who took the job under theirs.
     if job.state == 'taken' and job.guard_name and job.guard_anon ~= true
-        and Util.operativeNamesShown(contract.target_protected == true) then
+        and Util.targetRule('ShowOperativeNames', contract.target_protected == true) then
         out.guardName = job.guard_name
     end
     return out
@@ -696,7 +696,7 @@ local function counterTargets(contract, viewerCid, hitmen)
     local found = Informant and Informant.revealedOperatives
         and Informant.revealedOperatives(contract.id, viewerCid) or {}
     for i = 1, #found do add(found[i].cid, found[i].label, found[i].name) end
-    if type(hitmen) == 'table' and Util.operativeNamesShown(contract.target_protected == true) then
+    if type(hitmen) == 'table' and Util.targetRule('ShowOperativeNames', contract.target_protected == true) then
         for i = 1, #hitmen do
             local h = hitmen[i]
             if h.state == 'active' and h.anon ~= true and type(h.hitman_name) == 'string'
@@ -765,7 +765,7 @@ local function acceptUnlocked(actor, payload)
     if Holds.on(contract, nil, 'staff') then return false, CH.ERR.BAD_STATE end
     -- Anonymously only where an operative may take a contract anonymously.
     local anonymous = payload.anonymous == true
-    if anonymous and not Util.anonymityAllowed('hitman', contract.target_protected == true) then
+    if anonymous and not Util.targetRule('AllowAnonymousHitman', contract.target_protected == true) then
         return false, CH.ERR.ANONYMITY_OFF
     end
     if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.PROTECTION_TAKEN end

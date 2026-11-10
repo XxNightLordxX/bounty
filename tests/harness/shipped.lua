@@ -28,22 +28,27 @@ Shipped.VALUES = {
     { 'Mugshot', 'Enabled', true },
     { 'WhitelistedView', 'Enabled', true },
     { nil, 'Debug', true },
-    { 'Anonymity', 'AllowAnonymousPlacer', false },
-    { 'Anonymity', 'AllowAnonymousHitman', false },
-    { 'Anonymity', 'ShowOperativeNames', true },
+    { 'TargetClasses.default', 'AllowAnonymousPlacer', false },
+    { 'TargetClasses.default', 'AllowAnonymousHitman', false },
+    { 'TargetClasses.default', 'ShowOperativeNames', true },
+    { 'TargetClasses.default', 'ShowPlacerOnBoard', false },
+    { 'TargetClasses.default', 'Informant', true },
+    { 'TargetClasses.default', 'PlacerInformant', true },
+    { 'TargetClasses.default', 'LocationTip', true },
     { 'Informant', 'Enabled', false },
     { 'PlacerInformant', 'Enabled', false },
     { 'LocationTip', 'Enabled', false },
-    { 'Anonymity.WhitelistedTargets', 'AllowAnonymousPlacer', false },
-    { 'Anonymity.WhitelistedTargets', 'AllowAnonymousHitman', false },
-    { 'Anonymity.WhitelistedTargets', 'ShowOperativeNames', true },
-    { 'InformantsWhitelistedTargets', 'Informant', false },
-    { 'InformantsWhitelistedTargets', 'PlacerInformant', false },
-    { 'InformantsWhitelistedTargets', 'LocationTip', false },
+    { 'TargetClasses.whitelisted', 'AllowAnonymousPlacer', false },
+    { 'TargetClasses.whitelisted', 'AllowAnonymousHitman', false },
+    { 'TargetClasses.whitelisted', 'ShowOperativeNames', true },
+    { 'TargetClasses.whitelisted', 'ShowPlacerOnBoard', false },
+    { 'TargetClasses.whitelisted', 'Informant', false },
+    { 'TargetClasses.whitelisted', 'PlacerInformant', false },
+    { 'TargetClasses.whitelisted', 'LocationTip', false },
 }
 
 --- The table a section names in a config, dotted for a record inside one
---- ('Anonymity.WhitelistedTargets'); the config itself for nil.
+--- ('TargetClasses.whitelisted'); the config itself for nil.
 ---@param config table
 ---@param section string|nil
 ---@return table|nil

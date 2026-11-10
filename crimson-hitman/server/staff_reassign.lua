@@ -138,7 +138,7 @@ end
 ---@return boolean anonymous
 local function anonymousFor(contract, actor, identity)
     if identity == 'named' then return false end
-    if not Util.anonymityAllowed('hitman', contract.target_protected == true) then return false end
+    if not Util.targetRule('AllowAnonymousHitman', contract.target_protected == true) then return false end
     if identity == 'carry' then
         local previous = deps.storage.readHitman(contract.id, actor.cid)
         if previous and previous.state ~= 'refused' then return previous.anon == true end

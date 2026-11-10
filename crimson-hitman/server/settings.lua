@@ -194,6 +194,12 @@ local NEEDS_OFF = {
         .. 'on again.',
     ['InformantsEnabled'] = 'Does not apply while every informant feature is off '
         .. '(InformantsEnabled): none is offered, so this changes nothing until it is on again.',
+    ['Informant.Enabled'] = 'Does not apply while the target\'s informant is off '
+        .. '(Informant.Enabled): it is sold to nobody, so this changes nothing until it is on again.',
+    ['PlacerInformant.Enabled'] = 'Does not apply while the placer\'s informant is off '
+        .. '(PlacerInformant.Enabled): it is sold to nobody, so this changes nothing until it is on again.',
+    ['LocationTip.Enabled'] = 'Does not apply while the informant tip is off '
+        .. '(LocationTip.Enabled): it is sold to nobody, so this changes nothing until it is on again.',
     ['Kidnap.RequireCoercion'] = 'Does not apply while Target must be restrained is off '
         .. '(Kidnap.RequireCoercion): a handover needs no restraint, so this changes nothing '
         .. 'until it is on again.',
@@ -445,13 +451,13 @@ local CATALOGUE = {
       about = 'No call to or from an anonymous party on a phone that cannot hide the number.',
       inflight = AT_USE },
 
-    { key = 'Anonymity.AllowAnonymousPlacer', section = 'features', category = 'features', group = 'Anonymity',
+    { key = 'TargetClasses.default.AllowAnonymousPlacer', section = 'features', category = 'features', group = 'Anonymity',
       kind = 'switch', label = 'Placing anonymously',
       about = 'A contract may be placed anonymously. Off, the Place form has no such option and '
           .. 'the server refuses one, charging nothing.',
       inflight = 'Read at every placing, with no restart. Contracts already placed anonymously '
           .. 'stay anonymous: it is not retroactive.' },
-    { key = 'Anonymity.AllowAnonymousHitman', section = 'features', category = 'features', group = 'Anonymity',
+    { key = 'TargetClasses.default.AllowAnonymousHitman', section = 'features', category = 'features', group = 'Anonymity',
       kind = 'switch', label = 'Accepting anonymously',
       about = 'A contract may be accepted anonymously. Off, Accept has no such option and the '
           .. 'server refuses one, charging nothing: every new operative is named to the person '
@@ -459,7 +465,7 @@ local CATALOGUE = {
       inflight = 'Read at every acceptance, with no restart. Operatives already anonymous stay '
           .. 'anonymous, and one coming back to a contract they held anonymously comes back '
           .. 'under the same alias.' },
-    { key = 'Anonymity.ShowOperativeNames', section = 'features', category = 'features', group = 'Anonymity',
+    { key = 'TargetClasses.default.ShowOperativeNames', section = 'features', category = 'features', group = 'Anonymity',
       kind = 'switch', label = 'Operative names shown to the target',
       about = 'An operative who accepted under their name is shown by it to the contract\'s '
           .. 'target too (On me, and the informant\'s list), not only to the person who placed '
@@ -467,7 +473,7 @@ local CATALOGUE = {
           .. 'hitmen, law enforcement or Discord.',
       inflight = 'Read at every view, with no restart. Operatives who accepted anonymously keep '
           .. 'their alias either way.' },
-    { key = 'Anonymity.ShowPlacerOnBoard', section = 'features', category = 'features', group = 'Anonymity',
+    { key = 'TargetClasses.default.ShowPlacerOnBoard', section = 'features', category = 'features', group = 'Anonymity',
       kind = 'switch', label = 'Placer names shown on the board',
       about = 'A placer who put their name to a contract is named to everybody browsing the '
           .. 'board. Off, only the contract\'s parties see the name: the placer, the operatives '
@@ -475,16 +481,17 @@ local CATALOGUE = {
       inflight = 'Read at every view, with no restart. Contracts placed anonymously are never '
           .. 'named either way.' },
 
-    -- The same four, in place of those above, on a contract whose target is
-    -- on a whitelisted job (as the contract records it, like the advisory).
-    { key = 'Anonymity.WhitelistedTargets.AllowAnonymousPlacer', section = 'features', category = 'features',
+    -- The same four for the other target class (Config.TargetClasses), on a
+    -- contract whose target is on a whitelisted job (as the contract records
+    -- it, like the advisory).
+    { key = 'TargetClasses.whitelisted.AllowAnonymousPlacer', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
       label = 'Placing anonymously',
       about = 'A contract on a member of a whitelisted job may be placed anonymously. Applies '
           .. 'there in place of the general switch; off, the server refuses one, charging '
           .. 'nothing.',
       inflight = 'Read at every placing, with no restart. Not retroactive.' },
-    { key = 'Anonymity.WhitelistedTargets.AllowAnonymousHitman', section = 'features', category = 'features',
+    { key = 'TargetClasses.whitelisted.AllowAnonymousHitman', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
       label = 'Accepting anonymously',
       about = 'A contract on a member of a whitelisted job may be accepted anonymously. Applies '
@@ -492,14 +499,14 @@ local CATALOGUE = {
           .. 'nothing.',
       inflight = 'Read at every acceptance, with no restart. Operatives already anonymous stay '
           .. 'anonymous.' },
-    { key = 'Anonymity.WhitelistedTargets.ShowOperativeNames', section = 'features', category = 'features',
+    { key = 'TargetClasses.whitelisted.ShowOperativeNames', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
       label = 'Operative names shown to the target',
       about = 'A member of a whitelisted job sees an operative who accepted under their name by '
           .. 'it. Applies there in place of the general switch. Never to anybody else.',
       inflight = 'Read at every view, with no restart. Operatives who accepted anonymously keep '
           .. 'their alias either way.' },
-    { key = 'Anonymity.WhitelistedTargets.ShowPlacerOnBoard', section = 'features', category = 'features',
+    { key = 'TargetClasses.whitelisted.ShowPlacerOnBoard', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
       label = 'Placer names shown on the board',
       about = 'A placer who put their name to a contract on a member of a whitelisted job is '
@@ -523,23 +530,23 @@ local CATALOGUE = {
     { key = 'Informant.Enabled', section = 'features', category = 'features', group = 'Informant', kind = 'switch',
       needs = 'InformantsEnabled',
       label = 'Target\'s informant',
-      about = 'A target may pay for a chance to find out who is after them. For civilian '
-          .. 'targets; a target on a whitelisted job has its own switch.',
+      about = 'A target may pay for a chance to find out who is after them: for each class of '
+          .. 'target its switch allows (every other target, a whitelisted job\'s).',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
     { key = 'PlacerInformant.Enabled', section = 'features', group = 'Informant', kind = 'switch',
       category = 'features',
       needs = 'InformantsEnabled',
       label = 'Placer\'s informant',
-      about = 'The person who placed a contract may pay for a chance to find out who took it. '
-          .. 'On contracts on civilians; one on a whitelisted job has its own switch.',
+      about = 'The person who placed a contract may pay for a chance to find out who took it: '
+          .. 'on contracts on each class of target its switch allows.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
 
     { key = 'LocationTip.Enabled', section = 'features', group = 'Informant tip', kind = 'switch',
       category = 'features',
       needs = 'InformantsEnabled',
       label = 'Informant tip',
-      about = 'A hitman on a contract may pay for the rough area the target was in. On '
-          .. 'contracts on civilians; one on a whitelisted job has its own switch.',
+      about = 'A hitman on a contract may pay for the rough area the target was in: on '
+          .. 'contracts on each class of target its switch allows.',
       inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
           .. 'are refused while it is off.' },
     { key = 'LocationTip.NotifyTarget', section = 'features', category = 'features', group = 'Informant tip',
@@ -547,24 +554,45 @@ local CATALOGUE = {
       about = 'The target is told someone knows their rough area, never who or where.',
       inflight = 'Read when a tip is bought; a target already told stays told.' },
 
-    -- The three above, in place of their own switches, on a contract whose
-    -- target is on a whitelisted job (the flag it recorded, as the advisory
-    -- reads it). The master switch still turns them off.
-    { key = 'InformantsWhitelistedTargets.Informant', section = 'features', category = 'features',
-      group = 'Informants (whitelisted-job targets)', kind = 'switch',
-      needs = 'InformantsEnabled', label = 'Target\'s informant',
-      about = 'A target on a whitelisted job may pay for a chance to find out who is after '
-          .. 'them. Off, it is refused as before (informant_protected), charging nothing.',
+    -- Whom each of the three above is sold to, by the target's class
+    -- (Config.TargetClasses): every other target, and a target on a
+    -- whitelisted job (the flag the contract recorded, as the advisory reads
+    -- it). The master switch and the feature's own still turn each off.
+    { key = 'TargetClasses.default.Informant', section = 'features', category = 'features',
+      group = 'Informants (every other target)', kind = 'switch',
+      needs = 'Informant.Enabled', label = 'Target\'s informant',
+      about = 'A target not on a whitelisted job may pay for a chance to find out who is after '
+          .. 'them, while the target\'s informant is on.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
-    { key = 'InformantsWhitelistedTargets.PlacerInformant', section = 'features', category = 'features',
+    { key = 'TargetClasses.default.PlacerInformant', section = 'features', category = 'features',
+      group = 'Informants (every other target)', kind = 'switch',
+      needs = 'PlacerInformant.Enabled', label = 'Placer\'s informant',
+      about = 'The person who placed a contract on anybody not on a whitelisted job may pay for '
+          .. 'a chance to find out who took it, while the placer\'s informant is on.',
+      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+    { key = 'TargetClasses.default.LocationTip', section = 'features', category = 'features',
+      group = 'Informants (every other target)', kind = 'switch',
+      needs = 'LocationTip.Enabled', label = 'Informant tip',
+      about = 'A hitman on a contract on anybody not on a whitelisted job may pay for the rough '
+          .. 'area the target was in, while the informant tip is on.',
+      inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
+          .. 'are refused while it is off.' },
+    { key = 'TargetClasses.whitelisted.Informant', section = 'features', category = 'features',
       group = 'Informants (whitelisted-job targets)', kind = 'switch',
-      needs = 'InformantsEnabled', label = 'Placer\'s informant',
+      needs = 'Informant.Enabled', label = 'Target\'s informant',
+      about = 'A target on a whitelisted job may pay for a chance to find out who is after '
+          .. 'them, while the target\'s informant is on. Off, it is refused as before '
+          .. '(informant_protected), charging nothing.',
+      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+    { key = 'TargetClasses.whitelisted.PlacerInformant', section = 'features', category = 'features',
+      group = 'Informants (whitelisted-job targets)', kind = 'switch',
+      needs = 'PlacerInformant.Enabled', label = 'Placer\'s informant',
       about = 'The person who placed a contract on a member of a whitelisted job may pay for a '
           .. 'chance to find out who took it.',
       inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
-    { key = 'InformantsWhitelistedTargets.LocationTip', section = 'features', category = 'features',
+    { key = 'TargetClasses.whitelisted.LocationTip', section = 'features', category = 'features',
       group = 'Informants (whitelisted-job targets)', kind = 'switch',
-      needs = 'InformantsEnabled', label = 'Informant tip',
+      needs = 'LocationTip.Enabled', label = 'Informant tip',
       about = 'A hitman on a contract on a member of a whitelisted job may pay for the rough '
           .. 'area the target was in.',
       inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
@@ -2769,6 +2797,7 @@ local AREA_OF_GROUP = {
     ['Improvements: Proof items'] = 'completing',
     ['Buyouts'] = 'buyouts', ['Buyout pricing'] = 'buyouts',
     ['Informant'] = 'informants', ['Informant prices'] = 'informants', ['Informant tip'] = 'informants',
+    ['Informants (every other target)'] = 'informants',
     ['Informants (whitelisted-job targets)'] = 'informants', ['Roleplay: Informant in person'] = 'informants',
     ['Improvements: Tip warning delay'] = 'informants', ['Improvements: Tip limits'] = 'informants',
     ['Improvements: Hold before a tip'] = 'informants', ['Improvements: Informant second try'] = 'informants',

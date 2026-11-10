@@ -241,7 +241,7 @@ describe('Confirm handover: on', function()
     end)
 
     it('names nobody: an anonymous placer and the hitman are not told of each other', function()
-        local s, _, c = placed(true, function() Config.Anonymity.AllowAnonymousPlacer = true end, true)
+        local s, _, c = placed(true, function() Config.TargetClasses.default.AllowAnonymousPlacer = true end, true)
         local mark = #Env.clientEvents + 1
         truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         ticks(s, full())

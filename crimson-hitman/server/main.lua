@@ -296,18 +296,27 @@ local DEFAULTS = {
     --- is not a decision: as shipped, neither placing nor accepting
     --- anonymously is offered, and a named operative is shown to the target
     --- by name. Checked below.
-    Anonymity = {
-        AllowAnonymousPlacer = false,
-        AllowAnonymousHitman = false,
-        ShowOperativeNames = true,
-        ShowPlacerOnBoard = false,
-        --- Their counterparts for a target on a whitelisted job, shipped
-        --- the same.
-        WhitelistedTargets = {
+    --- One table per target class (Util.targetRule), both shipped the same
+    --- for anonymity; the informants sold to every target but a
+    --- whitelisted job's, each feature still off by its own switch.
+    TargetClasses = {
+        default = {
             AllowAnonymousPlacer = false,
             AllowAnonymousHitman = false,
             ShowOperativeNames = true,
             ShowPlacerOnBoard = false,
+            Informant = true,
+            PlacerInformant = true,
+            LocationTip = true,
+        },
+        whitelisted = {
+            AllowAnonymousPlacer = false,
+            AllowAnonymousHitman = false,
+            ShowOperativeNames = true,
+            ShowPlacerOnBoard = false,
+            Informant = false,
+            PlacerInformant = false,
+            LocationTip = false,
         },
     },
     --- Read inside the purchase. A missing price is not a free informant;
@@ -339,13 +348,6 @@ local DEFAULTS = {
         CooldownMinutes = 10,
         MaxPurchasesPerContract = 3,
         NotifyTarget = true,
-    },
-    --- The three informant features where the target is on a whitelisted
-    --- job. Absent is off, as shipped. Checked below.
-    InformantsWhitelistedTargets = {
-        Informant = false,
-        PlacerInformant = false,
-        LocationTip = false,
     },
     --- Compared against a count in Kidnap.arm, so a missing one is not a
     --- disabled cap but a comparison against nil: every attempt to start a
@@ -951,43 +953,45 @@ local function validateConfig(quiet)
           off = 'no target may buy a look-up on who is after them; names found stay shown' },
         { section = 'PlacerInformant', key = 'Enabled',
           off = 'no placer may buy a look-up on who took it; names found stay shown' },
-        -- Off is the side that offers nobody anonymity: placed and taken
-        -- under their names, and nothing charged for it. Never retroactive.
-        { section = 'Anonymity', key = 'AllowAnonymousPlacer',
+        -- The rules per target class (Config.TargetClasses, Util.targetRule),
+        -- each class's the same way. Off is the side that offers nobody
+        -- anonymity (placed and taken under their names, nothing charged;
+        -- never retroactive), names nobody to the target, names a placer to
+        -- the contract's own parties only, and sells nothing.
+        { section = 'TargetClasses', sub = 'default', key = 'AllowAnonymousPlacer',
           off = 'no contract can be placed anonymously; ones placed so stay anonymous' },
-        { section = 'Anonymity', key = 'AllowAnonymousHitman',
+        { section = 'TargetClasses', sub = 'default', key = 'AllowAnonymousHitman',
           off = 'no contract can be accepted anonymously; operatives already so stay anonymous' },
-        -- Off is the side that names nobody to the target: every operative
-        -- is an alias to them, as before the switch.
-        { section = 'Anonymity', key = 'ShowOperativeNames',
+        { section = 'TargetClasses', sub = 'default', key = 'ShowOperativeNames',
           off = 'the target sees every operative by alias only, named or not' },
-        -- Off is the side that names a placer to nobody but the contract's
-        -- own parties.
-        { section = 'Anonymity', key = 'ShowPlacerOnBoard',
+        { section = 'TargetClasses', sub = 'default', key = 'ShowPlacerOnBoard',
           off = 'a named placer is named to the contract\'s parties only, never on the board' },
-        -- The same three where the target is on a whitelisted job.
-        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'AllowAnonymousPlacer',
-          off = 'no contract on a whitelisted job can be placed anonymously' },
-        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'AllowAnonymousHitman',
-          off = 'no contract on a whitelisted job can be accepted anonymously' },
-        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'ShowOperativeNames',
-          off = 'a target on a whitelisted job sees every operative by alias only' },
-        { section = 'Anonymity', sub = 'WhitelistedTargets', key = 'ShowPlacerOnBoard',
-          off = 'a named placer of a contract on a whitelisted job is named on the board to nobody' },
-        -- The three informant features where the target is on a whitelisted
-        -- job: off sells nothing there, as each general one does.
-        { section = 'InformantsWhitelistedTargets', key = 'Informant',
+        { section = 'TargetClasses', sub = 'default', key = 'Informant',
+          off = 'no target may buy the target\'s informant' },
+        { section = 'TargetClasses', sub = 'default', key = 'PlacerInformant',
+          off = 'no placer of a contract may buy the placer\'s informant' },
+        { section = 'TargetClasses', sub = 'default', key = 'LocationTip',
+          off = 'no informant tip is sold on a contract' },
+        { section = 'TargetClasses', sub = 'whitelisted', key = 'AllowAnonymousPlacer',
+          off = 'no contract on a whitelisted job can be placed anonymously; ones placed so stay anonymous' },
+        { section = 'TargetClasses', sub = 'whitelisted', key = 'AllowAnonymousHitman',
+          off = 'no contract on a whitelisted job can be accepted anonymously; operatives already so stay anonymous' },
+        { section = 'TargetClasses', sub = 'whitelisted', key = 'ShowOperativeNames',
+          off = 'a target on a whitelisted job sees every operative by alias only, named or not' },
+        { section = 'TargetClasses', sub = 'whitelisted', key = 'ShowPlacerOnBoard',
+          off = 'a named placer on a whitelisted job is named to the contract\'s parties only, never on the board' },
+        { section = 'TargetClasses', sub = 'whitelisted', key = 'Informant',
           off = 'no target on a whitelisted job may buy the target\'s informant' },
-        { section = 'InformantsWhitelistedTargets', key = 'PlacerInformant',
+        { section = 'TargetClasses', sub = 'whitelisted', key = 'PlacerInformant',
           off = 'no placer of a contract on a whitelisted job may buy the placer\'s informant' },
-        { section = 'InformantsWhitelistedTargets', key = 'LocationTip',
+        { section = 'TargetClasses', sub = 'whitelisted', key = 'LocationTip',
           off = 'no informant tip is sold on a contract on a whitelisted job' },
     }) do
         local block = Config[switch.section]
         local name = switch.section
         if switch.sub then
-            -- A WhitelistedTargets that is not a table is one with every
-            -- switch absent, read the safe way below.
+            -- A class that is not a table is one with every switch
+            -- absent, read the safe way below.
             if type(block[switch.sub]) ~= 'table' then block[switch.sub] = {} end
             block, name = block[switch.sub], name .. '.' .. switch.sub
         end

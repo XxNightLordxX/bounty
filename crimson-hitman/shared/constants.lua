@@ -250,7 +250,7 @@ CH.ERR = {
     --- whatever was already under way finishes under the rules it began.
     FEATURE_OFF          = 'feature_off',
     --- An anonymous placing or acceptance on a server that has turned it off
-    --- (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman). Refused
+    --- (Config.TargetClasses.default.AllowAnonymousPlacer / AllowAnonymousHitman). Refused
     --- before anything is taken: no fee, no escrow, no stake, no row.
     ANONYMITY_OFF        = 'anonymity_off',
     --- An informant tip (Config.LocationTip) asked for while the target is
@@ -273,7 +273,7 @@ CH.ERR = {
     PLACER_KNOWN         = 'placer_known',
     --- The target's informant asked about an operative who took the
     --- contract under their name, while names are shown to the target
-    --- (Config.Anonymity.ShowOperativeNames): already known, so not sold.
+    --- (Config.TargetClasses.default.ShowOperativeNames): already known, so not sold.
     OPERATIVE_KNOWN      = 'operative_known',
     --- An informant asked about somebody the buyer already knows: found out
     --- by an earlier look-up, or (the placer's) an operative who took it

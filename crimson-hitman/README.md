@@ -48,8 +48,8 @@ panel's **Features** section (live, kept across restarts) and in
 
 | Feature | Switch | Shipped |
 |---|---|---|
-| Anonymity | `Config.Anonymity.AllowAnonymousPlacer`, `AllowAnonymousHitman` (and `.WhitelistedTargets`) | off |
-| Informants (target's, placer's, the tip) | `Config.InformantsEnabled`, then `Config.Informant.Enabled`, `Config.PlacerInformant.Enabled`, `Config.LocationTip.Enabled` | off |
+| Anonymity | `Config.TargetClasses.default.AllowAnonymousPlacer`, `AllowAnonymousHitman` (and `Config.TargetClasses.whitelisted`) | off |
+| Informants (target's, placer's, the tip) | `Config.InformantsEnabled`, then `Config.Informant.Enabled`, `Config.PlacerInformant.Enabled`, `Config.LocationTip.Enabled`, per target class (`Config.TargetClasses`) | off |
 | Law enforcement advisory | `Config.Advisory.Enabled` | on |
 | Staff tools (app pause, daily summary, alerts) | `Config.Holds.AppPaused`, `Config.Staff.DailySummary`, `Config.Staff.Alert*`, `Config.Alerts.ToDiscord` | pause and summary off, alerts on |
 | Roleplay (12 features) | `Config.Roleplay.<Feature>.Enabled` | all off |
@@ -484,10 +484,12 @@ the nearby target list (`Config.Targeting.AllowNearby`, off).
 
 ### Anonymity
 
-Off as shipped. `Config.Anonymity.AllowAnonymousPlacer` and
+Off as shipped. `Config.TargetClasses.default.AllowAnonymousPlacer` and
 `AllowAnonymousHitman` let a contract be placed or accepted anonymously, for
-a fee (`CreatorFee`, `HitmanFee`); whitelisted-job targets follow
-`Config.Anonymity.WhitelistedTargets` instead. An anonymous party is
+a fee (`Config.Anonymity.CreatorFee`, `HitmanFee`). Every rule that differs
+by who the target is lives in one table per target class,
+`Config.TargetClasses`: `default` for every target, `whitelisted` for a target
+on a whitelisted job (read by one resolver, `Util.targetRule`). An anonymous party is
 *Anonymous* to every player; staff need `crimson.identity` to see who it is.
 
 ### Informants
@@ -496,8 +498,9 @@ Three paid look-ups, each off as shipped, all behind `Config.InformantsEnabled`:
 the **target's** (`Config.Informant`: who is after me, with a chance of an
 answer), the **placer's** (`Config.PlacerInformant`: which operative took it)
 and the hitman's **tip** (`Config.LocationTip`: the target's rough area on the
-map, and the target is told). `Config.InformantsWhitelistedTargets` decides
-each on a whitelisted-job target. The informant improvements below refine
+map, and the target is told). Each is sold where its own `Enabled` is on and
+its switch for the target's class is (`Config.TargetClasses.default` /
+`.whitelisted` `.Informant`, `.PlacerInformant`, `.LocationTip`). The informant improvements below refine
 them.
 
 ### Advisory
@@ -552,7 +555,7 @@ All off as shipped, each `Config.Improvements.<Feature>.Enabled`.
 | **Hold before a tip** (`TipHoldFirst`) | A tip only once the hitman has held the contract `MinHeldMinutes` |
 | **Informant second try** (`InformantSecondTry`) | The target's later look-ups cost `SecondTryCostPercent` of the price |
 | **Tip safe zones** (`TipSafeZones`) | No tip while the target is inside a zone (`'x, y, radius, name'`); the hitman is told only that the informant can't place them |
-| **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back. Sold only while tips on that contract are (`Config.InformantsEnabled`, `Config.LocationTip.Enabled`, and `Config.InformantsWhitelistedTargets.LocationTip` for a whitelisted-job target); a window already paid for holds, and stays on the card, to its end. The window stands still while its contract is on hold (a staff freeze, the restart hold and the restart, the app pause), as an informant tip's showing and wait do. Kept across a restart only once paid: a purchase the store could not keep is refunded, and a window that has passed is cleared from the store on the minute |
+| **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back. Sold only while tips on that contract are (`Config.InformantsEnabled`, `Config.LocationTip.Enabled`, and `Config.TargetClasses.whitelisted.LocationTip` for a whitelisted-job target); a window already paid for holds, and stays on the card, to its end. The window stands still while its contract is on hold (a staff freeze, the restart hold and the restart, the app pause), as an informant tip's showing and wait do. Kept across a restart only once paid: a purchase the store could not keep is refunded, and a window that has passed is cleared from the store on the minute |
 | **Placer record** (`PlacerRecord`) | A board card shows its placer's placed / paid out / cancelled counts over `LookbackDays`, never who; anonymous placers in bands with `ShowForAnonymous` |
 | **Hitman heat** (`HitmanHeat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` (every officer alike, a known hitman who holds a police job too) |
 | **Tiered board** (`Tiers`) | Bigger rewards locked to a progression level (needs `Config.Progression.Enabled`) |
@@ -1073,21 +1076,24 @@ The app itself, proposals, notices, messages and calls, progression and the aler
 
 ### Features: Anonymity
 
-Whether a contract may be placed or accepted anonymously, what that costs, and the same four switches where the target is on a whitelisted job.
+What placing or accepting anonymously costs, and the rules that differ by the target's class (`Config.TargetClasses`: `default`, or `whitelisted` for a target on a whitelisted job): anonymity, names shown, and for whom each informant feature is sold (the feature's own `Enabled` still turns it on).
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Anonymity.AllowAnonymousPlacer` | `false` | a contract may be placed anonymously |
-| `Config.Anonymity.AllowAnonymousHitman` | `false` | a contract may be accepted anonymously |
-| `Config.Anonymity.ShowOperativeNames` | `true` | the target sees a named operative's name |
-| `Config.Anonymity.ShowPlacerOnBoard` | `false` | the board names a named placer; off: parties only |
+| `Config.TargetClasses.default.AllowAnonymousPlacer` | `false` | a contract may be placed anonymously |
+| `Config.TargetClasses.default.AllowAnonymousHitman` | `false` | a contract may be accepted anonymously |
+| `Config.TargetClasses.default.ShowOperativeNames` | `true` | the target sees a named operative's name |
+| `Config.TargetClasses.default.ShowPlacerOnBoard` | `false` | the board names a named placer; off: parties only |
+| `Config.TargetClasses.default.Informant` | `true` | the target may buy the target's informant |
+| `Config.TargetClasses.default.PlacerInformant` | `true` | the placer may buy the placer's informant |
+| `Config.TargetClasses.default.LocationTip` | `true` | a hitman may buy an informant tip |
 | `Config.Anonymity.CreatorFee` | `0` | fee to place anonymously; 0 = free |
 | `Config.Anonymity.HitmanFee` | `0` | fee to accept anonymously; 0 = free |
 | `Config.Anonymity.FeeAccount` | `'bank'` | 'cash' \| 'bank' |
-| `Config.Anonymity.WhitelistedTargets.AllowAnonymousPlacer` | `false` | such a contract may be placed anonymously |
-| `Config.Anonymity.WhitelistedTargets.AllowAnonymousHitman` | `false` | such a contract may be accepted anonymously |
-| `Config.Anonymity.WhitelistedTargets.ShowOperativeNames` | `true` | such a target sees a named operative's name |
-| `Config.Anonymity.WhitelistedTargets.ShowPlacerOnBoard` | `false` | the same, on such a contract |
+| `Config.TargetClasses.whitelisted.AllowAnonymousPlacer` | `false` | such a contract may be placed anonymously |
+| `Config.TargetClasses.whitelisted.AllowAnonymousHitman` | `false` | such a contract may be accepted anonymously |
+| `Config.TargetClasses.whitelisted.ShowOperativeNames` | `true` | such a target sees a named operative's name |
+| `Config.TargetClasses.whitelisted.ShowPlacerOnBoard` | `false` | the same, on such a contract |
 
 ### Features: Informants
 
@@ -1120,9 +1126,9 @@ Three paid look-ups: the target's (who is after me), the placer's (who took it) 
 | `Config.LocationTip.CooldownMinutes` | `10` | minutes between two tips on one contract, by anybody |
 | `Config.LocationTip.MaxPurchasesPerContract` | `3` | tips per contract, all its hitmen together |
 | `Config.LocationTip.NotifyTarget` | `true` | tell the target someone knows their rough area |
-| `Config.InformantsWhitelistedTargets.Informant` | `false` | such a target may buy the target's informant |
-| `Config.InformantsWhitelistedTargets.PlacerInformant` | `false` | the placer of such a contract may buy the placer's informant |
-| `Config.InformantsWhitelistedTargets.LocationTip` | `false` | a hitman on such a contract may buy an informant tip |
+| `Config.TargetClasses.whitelisted.Informant` | `false` | such a target may buy the target's informant |
+| `Config.TargetClasses.whitelisted.PlacerInformant` | `false` | the placer of such a contract may buy the placer's informant |
+| `Config.TargetClasses.whitelisted.LocationTip` | `false` | a hitman on such a contract may buy an informant tip |
 
 ### Features: Advisory
 

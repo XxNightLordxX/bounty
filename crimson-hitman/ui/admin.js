@@ -3418,7 +3418,7 @@
       Advisory, Staff tools, Roleplay and Improvements. */
   var FEATURE_AREAS = [
     ['Anonymity', 'Anonymity (whitelisted-job targets)'],
-    ['Informant', 'Informant tip', 'Informants (whitelisted-job targets)'],
+    ['Informant', 'Informant tip', 'Informants (every other target)', 'Informants (whitelisted-job targets)'],
     ['Law enforcement advisory'],
     ['Staff tools']
   ];
@@ -3439,10 +3439,11 @@
   var GROUP_INTRO = {
     'Anonymity': 'Whether a contract may be placed or accepted anonymously, and whether a target sees an '
       + 'operative\'s name.',
-    'Anonymity (whitelisted-job targets)': 'The same, in place of the above, where the target is on a whitelisted job.',
+    'Anonymity (whitelisted-job targets)': 'The same, for the other target class: where the target is on a whitelisted job.',
     'Informant': 'The paid look-ups: the target\'s (who is after me) and the placer\'s (who took it), and their '
       + 'master switch.',
     'Informant tip': 'The hitman\'s paid tip on the target\'s rough area, and whether the target is told.',
+    'Informants (every other target)': 'Whether each informant feature is offered on a target not on a whitelisted job.',
     'Informants (whitelisted-job targets)': 'Whether each informant feature is offered on a whitelisted-job target.',
     'Law enforcement advisory': 'What officers are told when one of them, or another whitelisted-job member, is '
       + 'targeted, and when.',
@@ -4100,9 +4101,9 @@
         + 'does not. When it is allowed, the placer or operative shows as Anonymous everywhere a player looks, '
         + 'and only staff with the identity ACE see who it is. A fee can be charged for it. Contracts on a '
         + 'whitelisted-job target (police, EMS and the like) follow their own three switches instead.',
-      links: [{ key: 'Anonymity.AllowAnonymousPlacer', view: 'features', label: 'Anonymous placing' },
-        { key: 'Anonymity.AllowAnonymousHitman', view: 'features', label: 'Anonymous accepting' },
-        { key: 'Anonymity.WhitelistedTargets.AllowAnonymousPlacer', view: 'features',
+      links: [{ key: 'TargetClasses.default.AllowAnonymousPlacer', view: 'features', label: 'Anonymous placing' },
+        { key: 'TargetClasses.default.AllowAnonymousHitman', view: 'features', label: 'Anonymous accepting' },
+        { key: 'TargetClasses.whitelisted.AllowAnonymousPlacer', view: 'features',
           label: 'On whitelisted-job targets' },
         { key: 'Anonymity.CreatorFee', view: 'money', label: 'Anonymity fees' }] },
     { title: 'The informants', icon: 'user-secret',

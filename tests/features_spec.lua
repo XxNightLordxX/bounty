@@ -280,7 +280,7 @@ describe('the informant, switched from the panel', function()
         local s, f = stack()
         Config.Informant.Cost = 100
         -- The operative an alias to the target, so a name can be bought.
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         local c = place(s, f)
         truthy(s.contracts.accept(f.hitman, c.id, false))
         s.informant.setRandom(function() return 1 end)

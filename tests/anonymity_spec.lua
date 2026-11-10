@@ -704,7 +704,7 @@ describe('a contract placed on somebody, two worlds apart', function()
         resetConfig()
         require('tests.harness.shipped').apply()
         -- Placed anonymously: allowed here, explicitly, though it ships off.
-        Config.Anonymity.AllowAnonymousPlacer = true
+        Config.TargetClasses.default.AllowAnonymousPlacer = true
         Config.Database.Mode = 'json'
         Natives.files = {}
         local s = require('server.main').start()
@@ -1149,8 +1149,8 @@ describe('every channel a player not entitled to it can read', function()
         local s = newStack()
         -- The target is an officer: their contract reads the whitelisted-job
         -- switches, set both ways here with the general ones.
-        Config.Anonymity.ShowOperativeNames = namesShown ~= false
-        Config.Anonymity.WhitelistedTargets.ShowOperativeNames = namesShown ~= false
+        Config.TargetClasses.default.ShowOperativeNames = namesShown ~= false
+        Config.TargetClasses.whitelisted.ShowOperativeNames = namesShown ~= false
         Config.Completion.Fulfilment = 'alive'
         Config.Cooldowns.admin = { per = 10, burst = 500 }
         Natives.convars['crimson_hitman_webhook'] = 'https://discord.example/api/webhooks/1/x'
@@ -1426,7 +1426,7 @@ describe('every channel a player not entitled to it can read', function()
         truthy(c)
         -- The named operative's name reaches the client always, and the
         -- target only while names are shown to the target
-        -- (Config.Anonymity.ShowOperativeNames); his citizen id and licence
+        -- (Config.TargetClasses.default.ShowOperativeNames); his citizen id and licence
         -- nobody. Never the board, another hitman, police, staff without
         -- IdentityAce, or Discord.
         local namedIds = { 'HITMAN02', 'license:ggg' }
@@ -1491,7 +1491,7 @@ describe('every channel a player not entitled to it can read', function()
 end)
 
 --------------------------------------------------------------------------
--- Anonymity switched off (Config.Anonymity.AllowAnonymousPlacer and
+-- Anonymity switched off (Config.TargetClasses.default.AllowAnonymousPlacer and
 -- AllowAnonymousHitman)
 --------------------------------------------------------------------------
 
@@ -1517,7 +1517,7 @@ describe('anonymity switched off', function()
         local s = newStack()
         local f = fixture(s)
         Config.Anonymity.CreatorFee = 500
-        turn(s, 'Anonymity.AllowAnonymousPlacer', false)
+        turn(s, 'TargetClasses.default.AllowAnonymousPlacer', false)
         local before = wealth(1)
         local placed, err = place(s, f, true)
         falsy(placed, 'not placed')
@@ -1535,7 +1535,7 @@ describe('anonymity switched off', function()
         local f = fixture(s)
         local c = place(s, f, false)
         Config.Anonymity.HitmanFee, Config.Anonymity.FeeAccount = 1000, 'bank'
-        turn(s, 'Anonymity.AllowAnonymousHitman', false)
+        turn(s, 'TargetClasses.default.AllowAnonymousHitman', false)
         local before = wealth(3)
         local reply = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 0,
             shown = { hitmanFee = 1000, feeAccount = 'bank' } })
@@ -1553,7 +1553,7 @@ describe('anonymity switched off', function()
         local f = fixture(s)
         local entries = {}
         for _, entry in ipairs(s.settings.CATALOGUE) do entries[entry.key] = entry end
-        for _, key in ipairs({ 'Anonymity.AllowAnonymousPlacer', 'Anonymity.AllowAnonymousHitman' }) do
+        for _, key in ipairs({ 'TargetClasses.default.AllowAnonymousPlacer', 'TargetClasses.default.AllowAnonymousHitman' }) do
             truthy(entries[key], key .. ' is in the panel')
             eq(entries[key].section, 'features')
             eq(entries[key].group, 'Anonymity')
@@ -1561,17 +1561,17 @@ describe('anonymity switched off', function()
         end
         local shown = s.projection.listing(f.hitman.cid).settings.anonymity
         eq(shown.placer, true); eq(shown.hitman, true)
-        turn(s, 'Anonymity.AllowAnonymousPlacer', false)
-        turn(s, 'Anonymity.AllowAnonymousHitman', false)
-        eq(Config.Anonymity.AllowAnonymousPlacer, false)
+        turn(s, 'TargetClasses.default.AllowAnonymousPlacer', false)
+        turn(s, 'TargetClasses.default.AllowAnonymousHitman', false)
+        eq(Config.TargetClasses.default.AllowAnonymousPlacer, false)
         local kept = s.storage.readSettings()
-        eq(kept['Anonymity.AllowAnonymousPlacer'].value, false, 'kept in the store')
-        eq(kept['Anonymity.AllowAnonymousHitman'].value, false)
+        eq(kept['TargetClasses.default.AllowAnonymousPlacer'].value, false, 'kept in the store')
+        eq(kept['TargetClasses.default.AllowAnonymousHitman'].value, false)
         shown = s.projection.listing(f.hitman.cid).settings.anonymity
         eq(shown.placer, false); eq(shown.hitman, false)
-        turn(s, 'Anonymity.AllowAnonymousPlacer', true)
+        turn(s, 'TargetClasses.default.AllowAnonymousPlacer', true)
         truthy(place(s, f, true), 'on again, placed anonymously')
-        falsy(s.settings.set('Anonymity.AllowAnonymousHitman', 'no', 'ADMIN001'),
+        falsy(s.settings.set('TargetClasses.default.AllowAnonymousHitman', 'no', 'ADMIN001'),
             'not a true or false')
     end)
 
@@ -1581,8 +1581,8 @@ describe('anonymity switched off', function()
         local c = place(s, f, true)
         truthy(c and c.anon_creator, 'placed anonymously')
         truthy(s.contracts.accept(f.hitman, c.id, true), 'taken anonymously')
-        turn(s, 'Anonymity.AllowAnonymousPlacer', false)
-        turn(s, 'Anonymity.AllowAnonymousHitman', false)
+        turn(s, 'TargetClasses.default.AllowAnonymousPlacer', false)
+        turn(s, 'TargetClasses.default.AllowAnonymousHitman', false)
         local contract = s.storage.readContract(c.id)
         eq(contract.anon_creator, true, 'the placing stays anonymous')
         eq(s.projection.contract(contract, 'HITMAN01').creatorName, nil, 'no name to the hitman')
@@ -1601,8 +1601,8 @@ end)
 
 --------------------------------------------------------------------------
 -- As shipped: anonymity off, and a named operative shown to the target
--- (Config.Anonymity.ShowOperativeNames); and the same three switches for a
--- target on a whitelisted job (Config.Anonymity.WhitelistedTargets)
+-- (Config.TargetClasses.default.ShowOperativeNames); and the same three switches for a
+-- target on a whitelisted job (Config.TargetClasses.whitelisted)
 --------------------------------------------------------------------------
 
 describe('anonymity as shipped, and names shown to the target', function()
@@ -1633,8 +1633,8 @@ describe('anonymity as shipped, and names shown to the target', function()
     --- Rook Ash (3) under his name, and a second operative, Nel Vey (4),
     --- anonymously.
     local function twoOperatives(s, c)
-        Config.Anonymity.AllowAnonymousHitman = true
-        Config.Anonymity.WhitelistedTargets.AllowAnonymousHitman = true
+        Config.TargetClasses.default.AllowAnonymousHitman = true
+        Config.TargetClasses.whitelisted.AllowAnonymousHitman = true
         truthy(s.contracts.accept(s.identity.resolve(3), c.id, false), 'named')
         Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:hh2',
             cash = 5000, bank = 5000, firstname = 'Nel', lastname = 'Vey' })
@@ -1693,7 +1693,7 @@ describe('anonymity as shipped, and names shown to the target', function()
         local f = fixture(s)
         local c = place(s, f, false)
         twoOperatives(s, c)
-        turn(s, 'Anonymity.ShowOperativeNames', false)
+        turn(s, 'TargetClasses.default.ShowOperativeNames', false)
         local card = onMe(s, c)
         eq(card.operatives, nil, 'no roster')
         for _, p in ipairs(card.informantPicks) do
@@ -1738,7 +1738,7 @@ describe('anonymity as shipped, and names shown to the target', function()
         falsy(ok)
         eq(err, CH.ERR.OPERATIVE_KNOWN)
         eq(wealth(2), before, 'nothing charged')
-        turn(s, 'Anonymity.ShowOperativeNames', false)
+        turn(s, 'TargetClasses.default.ShowOperativeNames', false)
         local _, offErr = s.informant.buy(f.target, c.id,
             { cost = Config.Informant.Cost, account = Config.Informant.Account }, named)
         truthy(offErr ~= CH.ERR.OPERATIVE_KNOWN, 'an alias to them again, so sold')
@@ -1749,21 +1749,21 @@ describe('anonymity as shipped, and names shown to the target', function()
         local f = fixture(s)
         local entry
         for _, e in ipairs(s.settings.CATALOGUE) do
-            if e.key == 'Anonymity.ShowOperativeNames' then entry = e end
+            if e.key == 'TargetClasses.default.ShowOperativeNames' then entry = e end
         end
         truthy(entry)
         eq(entry.section, 'features'); eq(entry.group, 'Anonymity'); eq(entry.kind, 'switch')
-        turn(s, 'Anonymity.ShowOperativeNames', false)
-        eq(Config.Anonymity.ShowOperativeNames, false)
-        eq(s.storage.readSettings()['Anonymity.ShowOperativeNames'].value, false, 'kept')
+        turn(s, 'TargetClasses.default.ShowOperativeNames', false)
+        eq(Config.TargetClasses.default.ShowOperativeNames, false)
+        eq(s.storage.readSettings()['TargetClasses.default.ShowOperativeNames'].value, false, 'kept')
         eq(s.projection.listing(f.hitman.cid).settings.anonymity.namesToTarget, false)
-        falsy(s.settings.set('Anonymity.ShowOperativeNames', 'no', 'ADMIN001'))
+        falsy(s.settings.set('TargetClasses.default.ShowOperativeNames', 'no', 'ADMIN001'))
     end)
 
     describe('for a target on a whitelisted job', function()
         local function both(s, general, whitelisted, key)
-            Config.Anonymity[key] = general
-            Config.Anonymity.WhitelistedTargets[key] = whitelisted
+            Config.TargetClasses.default[key] = general
+            Config.TargetClasses.whitelisted[key] = whitelisted
         end
 
         it('places anonymously by the whitelisted switch, both ways, charging nothing on refusal', function()
@@ -1849,14 +1849,14 @@ describe('anonymity as shipped, and names shown to the target', function()
             eq(found, 4)
             for _, key in ipairs({ 'AllowAnonymousPlacer', 'AllowAnonymousHitman', 'ShowOperativeNames',
                                    'ShowPlacerOnBoard' }) do
-                local path = 'Anonymity.WhitelistedTargets.' .. key
-                local want = Config.Anonymity.WhitelistedTargets[key] ~= true
+                local path = 'TargetClasses.whitelisted.' .. key
+                local want = Config.TargetClasses.whitelisted[key] ~= true
                 turn(s, path, want)
-                eq(Config.Anonymity.WhitelistedTargets[key], want)
+                eq(Config.TargetClasses.whitelisted[key], want)
                 eq(s.storage.readSettings()[path].value, want, 'kept')
             end
             local listed = s.projection.listing('HITMAN01').settings.anonymity.whitelisted
-            eq(listed.placer, Config.Anonymity.WhitelistedTargets.AllowAnonymousPlacer)
+            eq(listed.placer, Config.TargetClasses.whitelisted.AllowAnonymousPlacer)
         end)
     end)
 end)

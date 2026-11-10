@@ -171,7 +171,7 @@ describe('buying informant data on a contract that has closed', function()
         truthy(s.contracts.accept(f.hitman, c.id))
         -- The operative an alias to the target, as the informant sells them
         -- (named operatives shown to the target are not sold).
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
             .informantPicks[1].pick
         truthy(s.informant.buy(f.target, c.id, nil, pick),
@@ -484,7 +484,7 @@ describe('informant data across a crash', function()
         s.informant.setRandom(function() return 100 end)
         -- The operative an alias to the target, as the informant sells them
         -- (named operatives shown to the target are not sold).
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
             .informantPicks[1].pick
         truthy(s.informant.buy(f.target, c.id, nil, pick), 'the first purchase')

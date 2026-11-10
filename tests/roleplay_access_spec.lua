@@ -280,7 +280,7 @@ describe('rumours and the broker', function()
         local s = newStack()
         local f = fixture(s)
         Env.players[2]._coords = TARGET_AT
-        Config.Anonymity.AllowAnonymousPlacer = true
+        Config.TargetClasses.default.AllowAnonymousPlacer = true
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', anonymous = true,
             reason = 'Unpaid debt from last week', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 40000 } } })
@@ -393,7 +393,7 @@ describe('the informant in person', function()
         turn(s, 'Roleplay.InformantNpc.Enabled', true)
         Env.players[1]._coords, Env.players[2]._coords = ELSEWHERE, ELSEWHERE
         -- The informant features themselves off: refused by their own rule.
-        Config.Informant.Enabled, Config.InformantsWhitelistedTargets.Informant = false, false
+        Config.Informant.Enabled, Config.TargetClasses.whitelisted.Informant = false, false
         eq(call('informant', 2, { id = c.id, shown = {} }).err, CH.ERR.FEATURE_OFF)
         turn(s, 'Informant.Enabled', true)
         turn(s, 'PlacerInformant.Enabled', true)

@@ -4336,7 +4336,7 @@ async function main() {
       return app;
     }
 
-    /* Named operatives shown to the target (Config.Anonymity.ShowOperativeNames):
+    /* Named operatives shown to the target (Config.TargetClasses.default.ShowOperativeNames):
        by alias and name on their On me card; one taken anonymously is not
        sent at all, and stays an alias in the informant's list. */
     const namedOp = await onMeWith({}, { hitmenActive: 2,
@@ -5024,7 +5024,7 @@ async function main() {
       truthy(named.app.notice().indexOf('under your name') !== -1, named.app.notice());
     });
 
-    /* Anonymity turned off by the server (Config.Anonymity.AllowAnonymousPlacer
+    /* Anonymity turned off by the server (Config.TargetClasses.default.AllowAnonymousPlacer
        and AllowAnonymousHitman): the option is not drawn at all, rather
        than drawn disabled, and nothing anonymous or priced is sent. */
     const placerOff = await place({ anonymity: { placer: false, hitman: true },
@@ -5059,7 +5059,7 @@ async function main() {
     });
 
     /* A target on a whitelisted job reads its own anonymity switches
-       (Config.Anonymity.WhitelistedTargets, settings.anonymity.whitelisted):
+       (Config.TargetClasses.whitelisted, settings.anonymity.whitelisted):
        the Place form drops the option once such a target is picked, and the
        accept dialog on such a contract offers none. A civilian keeps the
        general ones. */
@@ -11363,7 +11363,7 @@ async function main() {
     const offShowing = await hitmanWith(tipCard({ locationTip: { secondsLeft: 300 } }), {},
       Object.assign({}, TIP_RULES, { enabled: false }));
     /* Sold elsewhere, but off on this contract (a target on a whitelisted job
-       reads Config.InformantsWhitelistedTargets.LocationTip): no button. */
+       reads Config.TargetClasses.whitelisted.LocationTip): no button. */
     const offHere = await hitmanWith(tipCard({ targetProtected: true, locationTip: { off: true } }));
     it('hitman: no tip button on a contract its switch is off for', function () {
       falsy(button(offHere, 'Buy informant tip'), offHere.view.textContent);
@@ -11530,7 +11530,7 @@ async function main() {
   /* An officer target's own entry, where anonymity is off for the contract:
      the named placer and the named operatives, as On me shows them, and the
      informant where the server sells it to a member of a whitelisted job
-     (Config.InformantsWhitelistedTargets.Informant). A colleague's entry
+     (Config.TargetClasses.whitelisted.Informant). A colleague's entry
      never carries a name. */
   await (async function whitelistedViewNames() {
     let bought = null;

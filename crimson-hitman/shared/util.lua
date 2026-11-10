@@ -401,25 +401,44 @@ function Util.killPhotos()
     return type(completion) == 'table' and completion.KillPhotos == true
 end
 
---- Whether one of the three informant features is on for a contract: the
---- master switch over all three (Config.InformantsEnabled), and then, on a
---- contract whose target is on a whitelisted job (the protected flag it
---- recorded, as the advisory reads it), Config.InformantsWhitelistedTargets
---- [section]; on any other, its own switch (Config.Informant,
---- Config.PlacerInformant or Config.LocationTip .Enabled, by section name).
---- Read at every use, so the admin panel's switches apply to the next
---- action; anything but true is off.
+--- The class of a contract's target, for the rules that differ by it
+--- (Config.TargetClasses): 'whitelisted' on a contract whose target is on a
+--- whitelisted job (the protected flag the contract records, or the
+--- target's job at placement), 'default' on any other.
+---@param protected boolean|nil the target is on a whitelisted job
+---@return string
+function Util.targetClass(protected)
+    return protected == true and 'whitelisted' or 'default'
+end
+
+--- The one reader of Config.TargetClasses: whether rule `name` is on for a
+--- target of this class (AllowAnonymousPlacer, AllowAnonymousHitman,
+--- ShowOperativeNames, ShowPlacerOnBoard, Informant, PlacerInformant,
+--- LocationTip). Read at every use, so the admin panel's switches apply to
+--- the next action; anything but true is off, as is a class that is not a
+--- table.
+---@param name string
+---@param protected boolean|nil the target is on a whitelisted job
+---@return boolean
+function Util.targetRule(name, protected)
+    local classes = Config and Config.TargetClasses
+    local rules = type(classes) == 'table' and classes[Util.targetClass(protected)] or nil
+    return type(rules) == 'table' and rules[name] == true
+end
+
+--- Whether one of the three informant features is sold on a contract: the
+--- master switch over all three (Config.InformantsEnabled), the feature's
+--- own switch (Config.Informant, Config.PlacerInformant or
+--- Config.LocationTip .Enabled, by section name), and its switch for the
+--- target's class (Config.TargetClasses, Util.targetRule).
 ---@param section string 'Informant' | 'PlacerInformant' | 'LocationTip'
 ---@param protected boolean|nil the target is on a whitelisted job
 ---@return boolean
 function Util.informantOn(section, protected)
     if not Config or Config.InformantsEnabled ~= true then return false end
-    if protected == true then
-        local whitelisted = Config.InformantsWhitelistedTargets
-        return type(whitelisted) == 'table' and whitelisted[section] == true
-    end
     local block = Config[section]
-    return type(block) == 'table' and block.Enabled == true
+    if not (type(block) == 'table' and block.Enabled == true) then return false end
+    return Util.targetRule(section, protected)
 end
 
 --- Whether one of the three informant features is on for any target at
@@ -431,44 +450,6 @@ function Util.informantAnyOn(section)
     return Util.informantOn(section, false) or Util.informantOn(section, true)
 end
 
---- The anonymity switches that apply to a contract: on one whose target is
---- on a whitelisted job (the protected flag the contract records, or the
---- target's job at placement), Config.Anonymity.WhitelistedTargets, in place
---- of the general ones; on any other, Config.Anonymity itself.
----@param protected boolean|nil the target is on a whitelisted job
----@return table|nil
-local function anonymityRules(protected)
-    local anonymity = Config and Config.Anonymity
-    if type(anonymity) ~= 'table' then return nil end
-    if protected == true then
-        local whitelisted = anonymity.WhitelistedTargets
-        return type(whitelisted) == 'table' and whitelisted or nil
-    end
-    return anonymity
-end
-
---- Whether a new anonymous placing ('placer') or acceptance ('hitman') is
---- offered (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman,
---- or their Config.Anonymity.WhitelistedTargets counterparts on a contract
---- whose target is on a whitelisted job). Read at every use; anything but
---- true is off. Never retroactive: what was placed or taken anonymously
---- stays anonymous.
----@param role string 'placer' | 'hitman'
----@param protected boolean|nil the target is on a whitelisted job
----@return boolean
-function Util.anonymityAllowed(role, protected)
-    local rules = anonymityRules(protected)
-    if not rules then return false end
-    if role == 'placer' then return rules.AllowAnonymousPlacer == true end
-    return rules.AllowAnonymousHitman == true
-end
-
---- Whether an operative who accepted under their name is shown by it to the
---- contract's target (Config.Anonymity.ShowOperativeNames, or
---- Config.Anonymity.WhitelistedTargets.ShowOperativeNames on a contract
---- whose target is on a whitelisted job). Read at every use; anything but
---- true is off, and the target sees aliases only. Never an operative who
---- accepted anonymously.
 --- The name shown for a hitman where their name is shown at all: the one
 --- the contract keeps. The hitman organisation (server/org/init.lua,
 --- Config.Organisation.Codenames) puts its own in place on the server, a
@@ -482,26 +463,6 @@ end
 function Util.shownHitmanName(cid, name, contractId)
     local _, _ = cid, contractId
     return name
-end
-
----@param protected boolean|nil the target is on a whitelisted job
----@return boolean
-function Util.operativeNamesShown(protected)
-    local rules = anonymityRules(protected)
-    return rules ~= nil and rules.ShowOperativeNames == true
-end
-
---- Whether a placer who put their name to a contract is named on the board,
---- to every viewer, not only to its parties (Config.Anonymity.ShowPlacerOnBoard,
---- or Config.Anonymity.WhitelistedTargets.ShowPlacerOnBoard on a contract
---- whose target is on a whitelisted job). Read per contract at every view;
---- anything but true is off, and only the placer, the operatives on it and
---- its target see the name.
----@param protected boolean|nil the target is on a whitelisted job
----@return boolean
-function Util.placerShownOnBoard(protected)
-    local rules = anonymityRules(protected)
-    return rules ~= nil and rules.ShowPlacerOnBoard == true
 end
 
 --- Count digits, used to blunt phone numbers and addresses in free text (§14.30).

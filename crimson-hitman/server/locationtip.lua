@@ -63,7 +63,7 @@ end
 --- switch Config.InformantsEnabled), read at every use so the admin panel's
 --- switches apply at once. With a contract, on that contract: one whose
 --- target is on a whitelisted job reads
---- Config.InformantsWhitelistedTargets.LocationTip instead. Without one,
+--- Config.TargetClasses.whitelisted.LocationTip instead. Without one,
 --- whether any tip is sold at all.
 ---@param contract table|nil
 ---@return boolean

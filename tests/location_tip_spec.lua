@@ -673,7 +673,7 @@ describe('an informant tip coming off the map', function()
             local s, _, c = taken({ bridges = true })
             -- Off for whitelisted-job targets too, so the server sells none
             -- anywhere and the app is told so.
-            Config.InformantsWhitelistedTargets.LocationTip = false
+            Config.TargetClasses.whitelisted.LocationTip = false
             truthy(buy(3, c).ok)
             truthy(s.settings.set(key, false, 'ADMIN001'), key)
             local card = s.projection.accepted('HITMAN01')[1].locationTip

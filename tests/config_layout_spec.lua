@@ -24,10 +24,6 @@ local CHANGED = {
     -- Every informant feature ships off (the owner's request); the master
     -- switch stays on, so turning one on is enough.
     ['Informant.Enabled'] = { true, false },
-    -- Anonymity ships off (the owner's request): new since the rewrite, and
-    -- shipped false, so listed here (ADDED reads a false as absent).
-    ['Anonymity.AllowAnonymousPlacer'] = { nil, false },
-    ['Anonymity.AllowAnonymousHitman'] = { nil, false },
     -- The placer's informant, new, and its own rate-limit bucket.
     ['PlacerInformant'] = { nil, {
         Enabled = false, Cost = 25000, Account = 'bank', RevealChancePercent = 20,
@@ -69,20 +65,20 @@ local ADDED = {
     -- an officer is called off.
     ['Holds'] = { AppPaused = false, RestartPauseBeforeSeconds = 1800, RestartMaxHoldMinutes = 45 },
     ['Advisory.OnCancel'] = true,
-    -- The owner's switches: anonymity off entirely, and every informant
-    -- feature off at once. Anonymity ships off (the owner's request), and
-    -- a named operative is shown to the target by name.
-    ['Anonymity.ShowOperativeNames'] = true,
-    -- A named placer shown on the board to every viewer: off, parties only.
-    ['Anonymity.ShowPlacerOnBoard'] = false,
-    -- The same three where the target is on a whitelisted job, and the
-    -- three informant features there.
-    ['Anonymity.WhitelistedTargets'] = {
-        AllowAnonymousPlacer = false, AllowAnonymousHitman = false, ShowOperativeNames = true,
-        ShowPlacerOnBoard = false,
-    },
-    ['InformantsWhitelistedTargets'] = {
-        Informant = false, PlacerInformant = false, LocationTip = false,
+    -- The owner's switches, one table per target class (step 3f): anonymity
+    -- off entirely (the owner's request), a named operative shown to the
+    -- target by name, a named placer to the parties only; the informants
+    -- sold to every target but a whitelisted job's, each feature off by its
+    -- own switch.
+    ['TargetClasses'] = {
+        default = {
+            AllowAnonymousPlacer = false, AllowAnonymousHitman = false, ShowOperativeNames = true,
+            ShowPlacerOnBoard = false, Informant = true, PlacerInformant = true, LocationTip = true,
+        },
+        whitelisted = {
+            AllowAnonymousPlacer = false, AllowAnonymousHitman = false, ShowOperativeNames = true,
+            ShowPlacerOnBoard = false, Informant = false, PlacerInformant = false, LocationTip = false,
+        },
     },
     ['InformantsEnabled'] = true,
     -- The ACE of the admin panel's Developer section.
@@ -394,11 +390,27 @@ describe('the configuration as one short file', function()
                 or path == 'Limits.MaxContractsPerTargetPerDay' or path == 'Limits.MaxContractsPerTargetPerWeek') then
                 addedSince = true
             end
-            -- The board's placer switch, and its whitelisted-job counterpart,
-            -- both new and shipped off.
-            if pair[1] == nil and pair[2] == false and (path == 'Anonymity.ShowPlacerOnBoard'
-                or path == 'Anonymity.WhitelistedTargets.ShowPlacerOnBoard') then
+            -- The anonymity switches and the whitelisted-job informant switches,
+            -- moved into one table per target class (step 3f) with the values
+            -- they had (the board's placer switch, new since, shipped off), and
+            -- the informants sold to every other target as before.
+            if path:match('^Anonymity%.') or path == 'InformantsWhitelistedTargets' then
+                addedSince = pair[2] == nil
+            end
+            if path == 'TargetClasses' and pair[1] == nil then
+                local old, informants = was.Anonymity or {}, was.InformantsWhitelistedTargets or {}
+                local white = old.WhitelistedTargets or {}
+                local fresh = pair[2]
                 addedSince = true
+                for _, key in ipairs({ 'AllowAnonymousPlacer', 'AllowAnonymousHitman', 'ShowOperativeNames',
+                    'ShowPlacerOnBoard' }) do
+                    addedSince = addedSince and fresh.default[key] == (old[key] or false)
+                        and fresh.whitelisted[key] == (white[key] or false)
+                end
+                for _, key in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
+                    addedSince = addedSince and fresh.default[key] == true
+                        and fresh.whitelisted[key] == (informants[key] or false)
+                end
             end
             -- qbx_medical's client-only exports, taken off its entry (F2).
             local f2 = CHANGED[path] ~= nil and path:match('^Completion%.DeathStateProviders%.2%.') ~= nil
@@ -461,7 +473,9 @@ describe('the configuration as one short file', function()
         -- And the organisation's codenames and payroll (six lines and two
         -- staff bounds), and the panel-set NPC places' block (four lines).
         -- And the payroll's PaySuspended switch and PayrollPerDayMax bound.
-        truthy(lines < 868, 'config.lua is ' .. lines .. ' lines')
+        -- And one table per target class (step 3f): the anonymity and
+        -- informant switches of both classes, three new for every target.
+        truthy(lines < 874, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

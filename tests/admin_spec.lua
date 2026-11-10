@@ -782,7 +782,7 @@ describe('refreshing every timer for testing', function()
         Config.Informant.MaxPurchasesPerContract = 1
         -- The operative an alias to the target, as the informant sells them
         -- (named operatives shown to the target are not sold).
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         Env.players[2].PlayerData.money.bank = 50000
         s.informant.setRandom(function() return 100 end)
         local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')

@@ -26,8 +26,8 @@ local function stack()
     local s = Shipped.newStack()
     -- Anonymous contracts are what the scrubbing is for: placing
     -- anonymously allowed, explicitly, though the resource ships it off.
-    Config.Anonymity.AllowAnonymousPlacer = true
-    Config.Anonymity.AllowAnonymousHitman = true
+    Config.TargetClasses.default.AllowAnonymousPlacer = true
+    Config.TargetClasses.default.AllowAnonymousHitman = true
     local f = fixture(s)
     Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001',
         firstname = 'Sam', lastname = 'Steward' })

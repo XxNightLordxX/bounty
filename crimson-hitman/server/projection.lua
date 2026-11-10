@@ -496,7 +496,7 @@ end
 --- paid for under the rules of the moment it was bought. The picks and the
 --- count only while the server sells look-ups to this target: a member of a
 --- whitelisted job (by the flag the contract recorded, or `protected`) only
---- while Config.InformantsWhitelistedTargets.Informant is on, anybody else
+--- while Config.TargetClasses.whitelisted.Informant is on, anybody else
 --- while Config.Informant.Enabled is. Otherwise their card does not offer
 --- it at all.
 ---@return table[]|nil found { label, text }
@@ -514,12 +514,12 @@ local function informantFor(contract, viewerCid, hitmen, protected)
 end
 
 --- The operatives on a contract who took it under their name, by alias and
---- name, for its target, while Config.Anonymity.ShowOperativeNames (or its
---- WhitelistedTargets counterpart on a contract on a whitelisted job) is
+--- name, for its target, while Config.TargetClasses.default.ShowOperativeNames (or its
+--- whitelisted-class counterpart on a contract on a whitelisted job) is
 --- on; nil otherwise. Never one who took it anonymously.
 ---@return table[]|nil { alias, name }
 local function namedOperatives(contract, hitmen)
-    if not Util.operativeNamesShown(contract.target_protected == true) then return nil end
+    if not Util.targetRule('ShowOperativeNames', contract.target_protected == true) then return nil end
     local named = {}
     for i = 1, #hitmen do
         local h = hitmen[i]
@@ -675,12 +675,12 @@ function Projection.contract(contract, viewerCid, opts)
     -- The creator's identity is present only when they chose to be seen,
     -- and then only to the contract's parties (the placer, an operative on
     -- it, its target): a stranger browsing the board is not told who placed
-    -- it unless Config.Anonymity.ShowPlacerOnBoard (or its WhitelistedTargets
+    -- it unless Config.TargetClasses.default.ShowPlacerOnBoard (or its whitelisted class
     -- counterpart) says so, and no key carrying it is on their payload.
     -- When anonymous, no key carrying it exists on anybody's.
     if contract.anon_creator then
         out.creatorAnonymous = true
-    elseif role ~= 'public' or Util.placerShownOnBoard(contract.target_protected == true) then
+    elseif role ~= 'public' or Util.targetRule('ShowPlacerOnBoard', contract.target_protected == true) then
         out.creatorName = contract.creator_name
     end
 
@@ -836,7 +836,7 @@ function Projection.contract(contract, viewerCid, opts)
             informantFor(contract, viewerCid, hitmen)
         -- The operatives on it who took it under their name, by alias and
         -- name, while names are shown to the target
-        -- (Config.Anonymity.ShowOperativeNames, or its WhitelistedTargets
+        -- (Config.TargetClasses.default.ShowOperativeNames, or its whitelisted class
         -- counterpart on a contract on a whitelisted job). Never one who
         -- took it anonymously, who stays an alias; with the switch off,
         -- absent.
@@ -967,25 +967,25 @@ local function buildListing(viewerCid, page)
                 account = Config.Anonymity.FeeAccount or 'bank',
             },
             -- Whether placing and accepting anonymously are offered at all
-            -- (Config.Anonymity.AllowAnonymousPlacer / AllowAnonymousHitman).
+            -- (Config.TargetClasses.default.AllowAnonymousPlacer / AllowAnonymousHitman).
             -- Off, the page draws no such option; the server refuses one
             -- sent anyway (anonymity_off), so this only decides the drawing.
             anonymity = {
-                placer = Util.anonymityAllowed('placer'),
-                hitman = Util.anonymityAllowed('hitman'),
+                placer = Util.targetRule('AllowAnonymousPlacer'),
+                hitman = Util.targetRule('AllowAnonymousHitman'),
                 -- Whether accepting under a name shows it to the target too
-                -- (Config.Anonymity.ShowOperativeNames), for the accept
+                -- (Config.TargetClasses.default.ShowOperativeNames), for the accept
                 -- dialog's words.
-                namesToTarget = Util.operativeNamesShown(),
+                namesToTarget = Util.targetRule('ShowOperativeNames'),
                 -- The same three for a target on a whitelisted job
-                -- (Config.Anonymity.WhitelistedTargets), which apply in
+                -- (Config.TargetClasses.whitelisted), which apply in
                 -- their place there. The page picks by what it already
                 -- shows: the picked target's protected mark, and a
                 -- contract's targetProtected. Nothing about any target.
                 whitelisted = {
-                    placer = Util.anonymityAllowed('placer', true),
-                    hitman = Util.anonymityAllowed('hitman', true),
-                    namesToTarget = Util.operativeNamesShown(true),
+                    placer = Util.targetRule('AllowAnonymousPlacer', true),
+                    hitman = Util.targetRule('AllowAnonymousHitman', true),
+                    namesToTarget = Util.targetRule('ShowOperativeNames', true),
                 },
             },
             -- Whether this server runs buyouts at all, so the page can tell
@@ -1459,7 +1459,7 @@ local function buildWhitelistedView(viewerCid, viewerJob, heldJob)
             local hitmen = rosterOf(c.id)
             entry.operatives = namedOperatives(c, hitmen)
             -- Their informant, as On me offers it, where it is sold to a
-            -- member of a whitelisted job (InformantsWhitelistedTargets).
+            -- member of a whitelisted job (TargetClasses.whitelisted).
             entry.informantFound, entry.informantLeft, entry.informantPicks =
                 informantFor(c, viewerCid, hitmen, true)
             onYou[#onYou + 1] = entry

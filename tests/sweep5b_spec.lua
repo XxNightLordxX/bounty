@@ -96,8 +96,8 @@ local function staffStack()
     Env.aces[6] = { ['crimson.admin'] = true }
     Config.Cooldowns.admin = { per = 10, burst = 500 }
     Config.Cooldowns.adminWrite = { per = 10, burst = 500 }
-    Config.Anonymity.AllowAnonymousPlacer = true
-    Config.Anonymity.AllowAnonymousHitman = true
+    Config.TargetClasses.default.AllowAnonymousPlacer = true
+    Config.TargetClasses.default.AllowAnonymousHitman = true
     s.bridges.install(s)
     return s, f
 end

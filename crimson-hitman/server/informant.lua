@@ -150,10 +150,10 @@ local function labelOf(row)
 end
 
 --- Whether the target is already shown this operative's name: one who took
---- the contract under it, while Config.Anonymity.ShowOperativeNames is on.
+--- the contract under it, while Config.TargetClasses.default.ShowOperativeNames is on.
 --- One who took it anonymously never is.
 local function namedToTarget(contract, row)
-    return row.anon ~= true and Util.operativeNamesShown(contract.target_protected == true)
+    return row.anon ~= true and Util.targetRule('ShowOperativeNames', contract.target_protected == true)
 end
 
 --- What a look-up that found somebody tells the buyer, by RevealMode: a
@@ -298,7 +298,7 @@ end
 --- Whether this target counts as a member of a whitelisted job for the
 --- informant: by the flag the contract recorded when it was placed, or by a
 --- barred job they hold now. Sold to them only while
---- Config.InformantsWhitelistedTargets.Informant is on; their buyout stays.
+--- Config.TargetClasses.whitelisted.Informant is on; their buyout stays.
 local function shielded(contract, actor)
     return contract.target_protected == true or (Identity.isBarred and Identity.isBarred(actor)) == true
 end
@@ -347,7 +347,7 @@ targetBuy = function(actor, contractId, shown, pick)
     -- On hold by staff (server/holds.lua): nothing is charged.
     if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     -- The switch for this target: a member of a whitelisted job reads
-    -- Config.InformantsWhitelistedTargets.Informant, refused as before
+    -- Config.TargetClasses.whitelisted.Informant, refused as before
     -- (informant_protected) while it is off; anybody else the general one.
     if shielded(contract, actor) then
         if not Util.informantOn('Informant', true) then return false, CH.ERR.INFORMANT_PROTECTED end
@@ -485,7 +485,7 @@ end
 function Informant.targetPicks(contract, cid, hitmen, protected)
     if contract.target_cid ~= cid or CH.TERMINAL[contract.state] then return nil end
     -- A target on a whitelisted job by the contract's flag reads
-    -- Config.InformantsWhitelistedTargets.Informant; anybody else the
+    -- Config.TargetClasses.whitelisted.Informant; anybody else the
     -- general switch.
     if protected == nil then protected = contract.target_protected == true end
     if not Util.informantOn('Informant', protected) then return nil end
@@ -623,7 +623,7 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
     -- The placer's, named or anonymous, and nobody else's: never a hitman
     -- on it or its target.
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
-    -- On a contract on a whitelisted job, Config.InformantsWhitelistedTargets
+    -- On a contract on a whitelisted job, Config.TargetClasses.whitelisted
     -- .PlacerInformant decides it; on any other, the general switch.
     if not Util.informantOn('PlacerInformant', contract.target_protected == true) then
         return false, CH.ERR.FEATURE_OFF

@@ -464,7 +464,7 @@ describe('S12: the hit on the hitman offers an operative already named to the ta
         local s = newStack()
         local f = fixture(s)
         Config.Roleplay.HitOnHitman.Enabled = true
-        Config.Anonymity.ShowOperativeNames = true
+        Config.TargetClasses.default.ShowOperativeNames = true
         local c = place(s, f)
         truthy(s.contracts.accept(f.hitman, c.id, false), 'accepted under their name')
         local card = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
@@ -472,7 +472,7 @@ describe('S12: the hit on the hitman offers an operative already named to the ta
         eq(card.counterTargets[1].name, 'Rook Ash')
         eq(type(card.counterTargets[1].handle), 'string')
         falsy(card.counterTargets[1].cid, 'no citizen id')
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         eq(s.projection.contract(s.storage.readContract(c.id), 'TARGET01').counterTargets, nil,
             'names hidden from the target, nothing offered')
     end)

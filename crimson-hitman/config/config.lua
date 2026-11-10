@@ -287,22 +287,34 @@ Config.Alerts = {
 -- ============================================================================
 --                            FEATURES: ANONYMITY
 -- ============================================================================
--- Whether a contract may be placed or accepted anonymously, what that costs,
--- and the same four switches where the target is on a whitelisted job.
+-- What placing or accepting anonymously costs, and the rules that differ
+-- by the target's class: anonymity, names shown, and who may buy intel (an
+-- informant switch here says for whom; the feature's own Enabled turns it on).
 
 Config.Anonymity = {
-    AllowAnonymousPlacer = false,   -- a contract may be placed anonymously
-    AllowAnonymousHitman = false,   -- a contract may be accepted anonymously
-    ShowOperativeNames   = true,    -- the target sees a named operative's name
-    ShowPlacerOnBoard    = false,   -- the board names a named placer; off: parties only
     CreatorFee           = 0,       -- fee to place anonymously; 0 = free
     HitmanFee            = 0,       -- fee to accept anonymously; 0 = free
     FeeAccount           = 'bank',  -- 'cash' | 'bank'
-    WhitelistedTargets   = { -- the same four, where the target is on a whitelisted job
+}
+
+Config.TargetClasses = { -- by target: default, or whitelisted (on a whitelisted job)
+    default = {
+        AllowAnonymousPlacer = false,  -- a contract may be placed anonymously
+        AllowAnonymousHitman = false,  -- a contract may be accepted anonymously
+        ShowOperativeNames   = true,   -- the target sees a named operative's name
+        ShowPlacerOnBoard    = false,  -- the board names a named placer; off: parties only
+        Informant            = true,   -- the target may buy the target's informant
+        PlacerInformant      = true,   -- the placer may buy the placer's informant
+        LocationTip          = true,   -- a hitman may buy an informant tip
+    },
+    whitelisted = {
         AllowAnonymousPlacer = false,  -- such a contract may be placed anonymously
         AllowAnonymousHitman = false,  -- such a contract may be accepted anonymously
         ShowOperativeNames   = true,   -- such a target sees a named operative's name
         ShowPlacerOnBoard    = false,  -- the same, on such a contract
+        Informant            = false,  -- such a target may buy the target's informant
+        PlacerInformant      = false,  -- the placer of such a contract may buy the placer's informant
+        LocationTip          = false,  -- a hitman on such a contract may buy an informant tip
     },
 }
 
@@ -345,12 +357,6 @@ Config.LocationTip = {
     CooldownMinutes         = 10,      -- minutes between two tips on one contract, by anybody
     MaxPurchasesPerContract = 3,       -- tips per contract, all its hitmen together
     NotifyTarget            = true,    -- tell the target someone knows their rough area
-}
-
-Config.InformantsWhitelistedTargets = { -- the three above, where the target is on a whitelisted job
-    Informant       = false,  -- such a target may buy the target's informant
-    PlacerInformant = false,  -- the placer of such a contract may buy the placer's informant
-    LocationTip     = false,  -- a hitman on such a contract may buy an informant tip
 }
 
 -- ============================================================================

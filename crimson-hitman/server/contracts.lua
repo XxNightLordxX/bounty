@@ -1124,13 +1124,13 @@ end
 
 local function createUnlocked(actor, req, targetActor)
     -- Placing anonymously, where the server has turned it off
-    -- (Config.Anonymity.AllowAnonymousPlacer, or its WhitelistedTargets
+    -- (Config.TargetClasses.default.AllowAnonymousPlacer, or its whitelisted class
     -- counterpart where the target is on a whitelisted job now, as the
     -- contract will record it): refused before anything is read, charged
     -- or held, so no fee and no escrow. Read here, at the tap, never from
     -- the page.
     if req.anonymous == true
-        and not Util.anonymityAllowed('placer', Identity.protectedBy(targetActor) ~= nil) then
+        and not Util.targetRule('AllowAnonymousPlacer', Identity.protectedBy(targetActor) ~= nil) then
         return nil, CH.ERR.ANONYMITY_OFF
     end
     -- What it costs and how it is completed, read once, before anything
@@ -1664,14 +1664,14 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     end
 
     -- Accepting anonymously, where the server has turned it off
-    -- (Config.Anonymity.AllowAnonymousHitman, or its WhitelistedTargets
+    -- (Config.TargetClasses.default.AllowAnonymousHitman, or its whitelisted class
     -- counterpart on a contract that recorded its target as on a
     -- whitelisted job): refused before anything is taken, no fee, no stake,
     -- no row. Not retroactive: a hitman back on a contract they held
     -- anonymously comes back under the same alias, still anonymous and
     -- charged nothing again (paidBefore, below). Naming them now would name
     -- the anonymous stint the client has already seen.
-    if not Util.anonymityAllowed('hitman', contract.target_protected == true) then
+    if not Util.targetRule('AllowAnonymousHitman', contract.target_protected == true) then
         if stint and previousAnon == true then
             anonymous = true
         elseif anonymous then
@@ -3912,7 +3912,7 @@ local function reviseUnlocked(actor, contractId, changes)
             local targetActor = Identity.byCitizenId(contract.target_cid)
             local protected = contract.target_protected == true
                 or (targetActor ~= nil and Identity.protectedBy(targetActor) ~= nil)
-            if not Util.anonymityAllowed('placer', protected) then return false, CH.ERR.ANONYMITY_OFF end
+            if not Util.targetRule('AllowAnonymousPlacer', protected) then return false, CH.ERR.ANONYMITY_OFF end
             local named, item = Escrow.namesOwner(actor, creatorLines())
             if named then return false, CH.ERR.ITEM_NAMES_OWNER, { item = item } end
             local fee = math.floor(tonumber(Config.Anonymity.CreatorFee) or 0)

@@ -377,7 +377,7 @@ end)
 describe('a player\'s history card', function()
     local function city()
         local s, f = world()
-        Config.Anonymity.AllowAnonymousPlacer = true
+        Config.TargetClasses.default.AllowAnonymousPlacer = true
         Config.Anonymity.CreatorFee = 0
         Env.addPlayer({ source = 10, citizenid = 'TARGET02', license = 'license:t2',
             cash = 1000, bank = 1000, firstname = 'Kit', lastname = 'Bell' })
@@ -649,7 +649,7 @@ describe('every panel op, for every level', function()
 
     it('lets a moderator void, move a deadline and freeze, scrubbed as without IdentityAce', function()
         local s, f = world()
-        Config.Anonymity.AllowAnonymousPlacer = true
+        Config.TargetClasses.default.AllowAnonymousPlacer = true
         Config.Anonymity.CreatorFee = 0
         local c = place(s, f.creator, 'TARGET01', { anonymous = true })
         truthy(s.contracts.accept(f.hitman, c.id))

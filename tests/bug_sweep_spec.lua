@@ -372,7 +372,7 @@ end)
 describe('bug sweep S3: a guard who takes a job anonymously is never named', function()
     it('keeps the choice the page sent', function()
         local s, _, c = setup()
-        Config.Anonymity.ShowOperativeNames = true
+        Config.TargetClasses.default.ShowOperativeNames = true
         local job = post(2, c).data.job
         truthy(call('protectionAccept', 4, { job = job, reward = 2000, anonymous = true }).ok)
         eq(s.rpProtection.all()[1].guard_anon, true)
@@ -383,7 +383,7 @@ describe('bug sweep S3: a guard who takes a job anonymously is never named', fun
 
     it('names one who took it under their name, where the server shows names', function()
         local s, _, c = setup()
-        Config.Anonymity.ShowOperativeNames = true
+        Config.TargetClasses.default.ShowOperativeNames = true
         local job = post(2, c).data.job
         truthy(call('protectionAccept', 4, { job = job, reward = 2000 }).ok)
         local view = s.rpProtection.targetView(s.storage.readContract(c.id), 'TARGET01')

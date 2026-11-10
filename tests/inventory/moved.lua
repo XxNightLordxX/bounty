@@ -73,4 +73,38 @@ return {
         note = 'Rules, Timers, Server restart, as before' },
     ['tick:freeze.restartTick'] = { to = 'tick:holds.tick', note = 'the unread retry and the restart hold\'s longest' },
     ['tick:freeze.syncAppPause'] = { to = 'tick:holds.syncAppPause', note = 'the app pause in line with its switch' },
+    -- Step 3f: one rules table per target class (Config.TargetClasses,
+    -- read by Util.targetRule): `default` and `whitelisted` (a target on a
+    -- whitelisted job), each with the four anonymity switches and the three
+    -- informant switches. The anonymity fees stay in Config.Anonymity. An
+    -- informant is sold where its feature's Enabled and its class's switch
+    -- are both on (the default class ships on, so as before).
+    ['config:Anonymity.AllowAnonymousPlacer'] = 'config:TargetClasses.default.AllowAnonymousPlacer',
+    ['config:Anonymity.WhitelistedTargets.AllowAnonymousPlacer'] = 'config:TargetClasses.whitelisted.AllowAnonymousPlacer',
+    ['config:Anonymity.AllowAnonymousHitman'] = 'config:TargetClasses.default.AllowAnonymousHitman',
+    ['config:Anonymity.WhitelistedTargets.AllowAnonymousHitman'] = 'config:TargetClasses.whitelisted.AllowAnonymousHitman',
+    ['config:Anonymity.ShowOperativeNames'] = 'config:TargetClasses.default.ShowOperativeNames',
+    ['config:Anonymity.WhitelistedTargets.ShowOperativeNames'] = 'config:TargetClasses.whitelisted.ShowOperativeNames',
+    ['config:Anonymity.ShowPlacerOnBoard'] = 'config:TargetClasses.default.ShowPlacerOnBoard',
+    ['config:Anonymity.WhitelistedTargets.ShowPlacerOnBoard'] = 'config:TargetClasses.whitelisted.ShowPlacerOnBoard',
+    ['config:InformantsWhitelistedTargets.Informant'] = { to = 'config:TargetClasses.whitelisted.Informant',
+        note = 'with the feature\'s own Enabled on' },
+    ['config:InformantsWhitelistedTargets.PlacerInformant'] = { to = 'config:TargetClasses.whitelisted.PlacerInformant',
+        note = 'with the feature\'s own Enabled on' },
+    ['config:InformantsWhitelistedTargets.LocationTip'] = { to = 'config:TargetClasses.whitelisted.LocationTip',
+        note = 'with the feature\'s own Enabled on' },
+    ['setting:Anonymity.AllowAnonymousPlacer'] = 'setting:TargetClasses.default.AllowAnonymousPlacer',
+    ['setting:Anonymity.WhitelistedTargets.AllowAnonymousPlacer'] = 'setting:TargetClasses.whitelisted.AllowAnonymousPlacer',
+    ['setting:Anonymity.AllowAnonymousHitman'] = 'setting:TargetClasses.default.AllowAnonymousHitman',
+    ['setting:Anonymity.WhitelistedTargets.AllowAnonymousHitman'] = 'setting:TargetClasses.whitelisted.AllowAnonymousHitman',
+    ['setting:Anonymity.ShowOperativeNames'] = 'setting:TargetClasses.default.ShowOperativeNames',
+    ['setting:Anonymity.WhitelistedTargets.ShowOperativeNames'] = 'setting:TargetClasses.whitelisted.ShowOperativeNames',
+    ['setting:Anonymity.ShowPlacerOnBoard'] = 'setting:TargetClasses.default.ShowPlacerOnBoard',
+    ['setting:Anonymity.WhitelistedTargets.ShowPlacerOnBoard'] = 'setting:TargetClasses.whitelisted.ShowPlacerOnBoard',
+    ['setting:InformantsWhitelistedTargets.Informant'] = { to = 'setting:TargetClasses.whitelisted.Informant',
+        note = 'with the feature\'s own Enabled on' },
+    ['setting:InformantsWhitelistedTargets.PlacerInformant'] = { to = 'setting:TargetClasses.whitelisted.PlacerInformant',
+        note = 'with the feature\'s own Enabled on' },
+    ['setting:InformantsWhitelistedTargets.LocationTip'] = { to = 'setting:TargetClasses.whitelisted.LocationTip',
+        note = 'with the feature\'s own Enabled on' },
 }

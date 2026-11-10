@@ -1489,7 +1489,7 @@ end)
 
 --------------------------------------------------------------------------
 -- Who is after an officer, on their own entry (anonymity off for the
--- contract: Config.Anonymity.WhitelistedTargets)
+-- contract: Config.TargetClasses.whitelisted)
 --------------------------------------------------------------------------
 
 describe('the whitelisted-job view, with names', function()
@@ -1537,7 +1537,7 @@ describe('the whitelisted-job view, with names', function()
     it('names no operative while names are not shown to them, and no anonymous placer', function()
         local w = world()
         truthy(w.s.contracts.accept(w.f.hitman, w.mine.id, false), 'taken named')
-        Config.Anonymity.WhitelistedTargets.ShowOperativeNames = false
+        Config.TargetClasses.whitelisted.ShowOperativeNames = false
         local own = view(11).onYou[1]
         eq(own.operatives, nil, 'no operative named with the switch off')
         eq(own.creatorName, 'Vic Marlowe', 'the named placer still')

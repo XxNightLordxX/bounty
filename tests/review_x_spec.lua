@@ -218,7 +218,7 @@ local function setup(config, anonymous)
     local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 } } })
     truthy(c, 'placed')
-    if anonymous then Config.Anonymity.AllowAnonymousHitman = true end
+    if anonymous then Config.TargetClasses.default.AllowAnonymousHitman = true end
     truthy(s.contracts.accept(f.hitman, c.id, anonymous == true), 'taken')
     at(3, { x = 100.0, y = 100.0, z = 30.0 })
     at(2, BODY)
@@ -360,7 +360,7 @@ end)
 describe('review-x F4: a hitman staff assign is anonymous unless staff choose otherwise', function()
     local function assigned(data)
         local s, f = stack()
-        Config.Anonymity.AllowAnonymousHitman = true
+        Config.TargetClasses.default.AllowAnonymousHitman = true
         Config.Anonymity.HitmanFee = 500
         local c = place(s, f, { mode = CH.MODE.EXCLUSIVE })
         truthy(s.contracts.accept(f.hitman, c.id, false))

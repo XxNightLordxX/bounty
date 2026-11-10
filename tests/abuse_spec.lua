@@ -508,7 +508,7 @@ describe('informant data bought by the creator', function()
         local f = fixture(s)
         -- With named operatives shown to the target off: an alias to them,
         -- so the informant still sells it (anonymity_spec has the switch on).
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         local c = place(s, f.creator)
         truthy(s.contracts.accept(f.hitman, c.id, false))
         Env.players[2].PlayerData.money.bank = Config.Informant.Cost
@@ -913,7 +913,7 @@ describe('a friend filling the cap on a target', function()
         local s = Shipped.newStack()
         -- Anonymous friends among them: placing anonymously allowed,
         -- explicitly, though the resource ships it off.
-        Config.Anonymity.AllowAnonymousPlacer = true
+        Config.TargetClasses.default.AllowAnonymousPlacer = true
         local f = fixture(s)
         for i, who in ipairs({ 'FRIEND01', 'FRIEND02', 'ENEMY001' }) do
             Env.addPlayer({ source = 10 + i, citizenid = who, license = 'license:f' .. i,

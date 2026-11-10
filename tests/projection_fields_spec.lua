@@ -108,7 +108,7 @@ local CONDITIONAL = {
     -- no key carrying their name exists on the payload at all.
     creatorAnonymous = 'present only when the creator chose anonymity',
     creatorName      = 'present only when they did not, and to a stranger on the board only '
-        .. 'with Config.Anonymity.ShowPlacerOnBoard',
+        .. 'with Config.TargetClasses.default.ShowPlacerOnBoard',
     -- The creator learns how many operatives are on it and, where a hitman
     -- chose to be seen, who. Nobody else gets the list.
     hitmen          = 'creator-only',
@@ -131,7 +131,7 @@ local CONDITIONAL = {
     locationTip      = 'hitman-only, on their own card, where tips are sold or one is showing',
     tippedAt         = 'target-only, and only once they were told a tip was bought',
     -- The operatives who took it under their name, shown to the target
-    -- while Config.Anonymity.ShowOperativeNames is on (anonymity_spec).
+    -- while Config.TargetClasses.default.ShowOperativeNames is on (anonymity_spec).
     operatives       = 'target-only, while names are shown and a named operative is on it',
     -- Roleplay (server/rp_intent.lua, server/rp_protection.lua), all off
     -- as shipped: a payout of the hitman's held for proof of intent; the
@@ -284,7 +284,7 @@ describe('the fields whose presence is a rule', function()
             local s = newStack()
             -- Named on the board (to this stranger) only with the switch on;
             -- off, see projection_spec.
-            Config.Anonymity.ShowPlacerOnBoard = true
+            Config.TargetClasses.default.ShowPlacerOnBoard = true
             local f = fixture(s)
             Env.players[1].PlayerData.money.bank = 400000
             truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01',

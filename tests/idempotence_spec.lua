@@ -616,7 +616,7 @@ describe('buying informant data twice', function()
         s.informant.setRandom(function() return 100 end)
         -- The operative an alias to the target, as the informant sells them
         -- (named operatives shown to the target are not sold).
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         local pick = pickOf(s, c, 'TARGET01', 'informantPicks')
 
         local first, second, third = replay(s, 'informant', function()
@@ -656,7 +656,7 @@ describe('buying informant data twice', function()
         s.informant.setRandom(function() return 100 end)
         -- The operative an alias to the target, as the informant sells them
         -- (named operatives shown to the target are not sold).
-        Config.Anonymity.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
         local pick = pickOf(s, c, 'TARGET01', 'informantPicks')
         local real, fired, inner = s.storage.readHitman, false, nil
         s.storage.readHitman = function(...)

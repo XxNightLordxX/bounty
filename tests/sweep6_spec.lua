@@ -39,13 +39,13 @@ local function it(name, fn)
         local saved = {
             tip = deepCopy(Config.LocationTip), anon = deepCopy(Config.Anonymity),
             bailout = deepCopy(Config.Bailout), completion = deepCopy(Config.Completion),
-            informants = Config.InformantsEnabled, white = deepCopy(Config.InformantsWhitelistedTargets),
+            informants = Config.InformantsEnabled, white = deepCopy(Config.TargetClasses.whitelisted),
             paused = Config.Holds.AppPaused,
         }
         local out = table.pack(pcall(fn, ...))
         Config.LocationTip, Config.Anonymity, Config.Bailout = saved.tip, saved.anon, saved.bailout
         Config.Completion, Config.InformantsEnabled = saved.completion, saved.informants
-        Config.InformantsWhitelistedTargets, Config.Holds.AppPaused = saved.white, saved.paused
+        Config.TargetClasses.whitelisted, Config.Holds.AppPaused = saved.white, saved.paused
         if not out[1] then error(out[2], 0) end
     end)
 end
@@ -139,7 +139,7 @@ describe('sweep 6 FE-1: go dark is sold only while tips are', function()
             row.target_protected = true
             return row
         end)())
-        Config.InformantsWhitelistedTargets.LocationTip = false
+        Config.TargetClasses.whitelisted.LocationTip = false
         falsy(targetCard(s, c).goDark and targetCard(s, c).goDark.cost, 'offered')
         local before = bank(2)
         eq(call('goDark', 2, { id = c.id, shown = DARK }).err, CH.ERR.FEATURE_OFF)
@@ -597,7 +597,7 @@ describe('sweep 6 J-3: the placer changes anything before a hitman accepts', fun
         eq(before - bank(1), 2500, 'the fee, once')
         truthy(targetCard(s, c).creatorAnonymous, 'the target is shown it anonymous now')
         -- Back under their name: always allowed, nothing given back.
-        Config.Anonymity.AllowAnonymousPlacer = false
+        Config.TargetClasses.default.AllowAnonymousPlacer = false
         r = call('revise', 1, { id = c.id, anonymous = false })
         truthy(r and r.ok, 'back under their name refused: ' .. tostring(r and r.err))
         eq(s.storage.readContract(c.id).anon_creator, false)
@@ -607,11 +607,11 @@ describe('sweep 6 J-3: the placer changes anything before a hitman accepts', fun
 
     it('anonymous refused where the switch is off, and by the whitelisted-target switch', function()
         local s, f, c = untaken()
-        Config.Anonymity.AllowAnonymousPlacer = false
+        Config.TargetClasses.default.AllowAnonymousPlacer = false
         local _, err = s.contracts.revise(f.creator, c.id, { anonymous = true })
         eq(err, CH.ERR.ANONYMITY_OFF)
-        Config.Anonymity.AllowAnonymousPlacer = true
-        Config.Anonymity.WhitelistedTargets.AllowAnonymousPlacer = false
+        Config.TargetClasses.default.AllowAnonymousPlacer = true
+        Config.TargetClasses.whitelisted.AllowAnonymousPlacer = false
         local row = s.storage.readContract(c.id)
         row.target_protected = true
         s.storage.writeContract(row)

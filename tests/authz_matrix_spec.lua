@@ -618,8 +618,8 @@ MATRIX.informant = {
     -- informant sells them (one named to the target is not sold).
     arrange = function(w)
         w.s.informant.setRandom(function() return 100 end)
-        Config.Anonymity.ShowOperativeNames = false
-        Config.Anonymity.WhitelistedTargets.ShowOperativeNames = false
+        Config.TargetClasses.default.ShowOperativeNames = false
+        Config.TargetClasses.whitelisted.ShowOperativeNames = false
     end,
     -- With the price quoted, as the page sends it, and the operative the
     -- target's card offers (a handle the server minted).

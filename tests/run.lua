@@ -140,7 +140,7 @@ CONFIG_DEFAULTS.Kidnap.RequireCoercion = true
 CONFIG_DEFAULTS.Debug = false
 
 --- And with placing and accepting anonymously allowed, though the resource
---- ships both off (Config.Anonymity.AllowAnonymousPlacer and
+--- ships both off (Config.TargetClasses.default.AllowAnonymousPlacer and
 --- AllowAnonymousHitman = false, the owner's request).
 ---
 --- Anonymity is what a great many specs guard: that an anonymous placer or
@@ -151,13 +151,13 @@ CONFIG_DEFAULTS.Debug = false
 --- shipped off does is the business of the specs that set it
 --- (anonymity_spec, "anonymity switched off" and "as shipped"), and the
 --- shipped values are held to config.lua by Shipped.VALUES.
-CONFIG_DEFAULTS.Anonymity.AllowAnonymousPlacer = true
-CONFIG_DEFAULTS.Anonymity.AllowAnonymousHitman = true
+CONFIG_DEFAULTS.TargetClasses.default.AllowAnonymousPlacer = true
+CONFIG_DEFAULTS.TargetClasses.default.AllowAnonymousHitman = true
 --- The same two for a target on a whitelisted job
---- (Config.Anonymity.WhitelistedTargets), for the specs that place and
+--- (Config.TargetClasses.whitelisted), for the specs that place and
 --- take contracts on officers anonymously.
-CONFIG_DEFAULTS.Anonymity.WhitelistedTargets.AllowAnonymousPlacer = true
-CONFIG_DEFAULTS.Anonymity.WhitelistedTargets.AllowAnonymousHitman = true
+CONFIG_DEFAULTS.TargetClasses.whitelisted.AllowAnonymousPlacer = true
+CONFIG_DEFAULTS.TargetClasses.whitelisted.AllowAnonymousHitman = true
 
 --- And with the three informant features on for civilian targets, though
 --- the resource ships them off (Config.Informant, Config.PlacerInformant
@@ -167,7 +167,7 @@ CONFIG_DEFAULTS.Anonymity.WhitelistedTargets.AllowAnonymousHitman = true
 --- sells, charges and tells, and every one of them was written with the
 --- feature on; off, each is refused as feature_off before reaching what it
 --- tests. Set on here explicitly so they keep guarding it. Whitelisted-job
---- targets keep the shipped off (Config.InformantsWhitelistedTargets), which
+--- targets keep the shipped off (Config.TargetClasses.whitelisted), which
 --- is today's rule for them (informant_protected). What the shipped off does
 --- is the business of the specs that set it (informant_spec "as shipped"),
 --- and the shipped values are held to config.lua by Shipped.VALUES.
@@ -178,8 +178,8 @@ CONFIG_DEFAULTS.LocationTip.Enabled = true
 --- too, as both were for every target before the per-target switches: the
 --- specs that tip off on an officer, and tell law enforcement so, were
 --- written that way. The target's informant stays off for them, as it was.
-CONFIG_DEFAULTS.InformantsWhitelistedTargets.PlacerInformant = true
-CONFIG_DEFAULTS.InformantsWhitelistedTargets.LocationTip = true
+CONFIG_DEFAULTS.TargetClasses.whitelisted.PlacerInformant = true
+CONFIG_DEFAULTS.TargetClasses.whitelisted.LocationTip = true
 
 --- Restore in place, recursing into tables that exist in both. Assigning a
 --- fresh table would leave anything holding a subtable — a module that did
@@ -731,7 +731,7 @@ end
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
     'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec', 'admin_panel_spec', 'settings_spec', 'features_spec', 'console_spec', 'staff_output_spec', 'whitelisted_view_spec', 'alerts_spec', 'admin_console_spec', 'meeting_spec', 'speed_spec', 'handover_spec', 'config_layout_spec',
-    'location_tip_spec', 'informant_spec', 'freeze_spec', 'holds_spec', 'clock_rule_spec', 'untaken_terms_spec',
+    'location_tip_spec', 'informant_spec', 'freeze_spec', 'holds_spec', 'target_classes_spec', 'clock_rule_spec', 'untaken_terms_spec',
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',
