@@ -596,14 +596,14 @@ local UI_EVENTS = {
     -- The placer's Confirm handover (Config.Kidnap.PlacerConfirms).
     'confirmHandover',
     -- Clearing the handover's meeting point. Setting it and Set GPS are
-    -- answered here (crimson:setMeeting, crimson:meetingGps), below.
+    -- answered here (crimson:setMeeting, crimson:gps), below.
     'clearMeeting',
     -- Verify kill with kill photos off (Config.Completion.KillPhotos): no
     -- token and no picture, so nothing here is held back from the page.
     'verifyKill',
     'bailout', 'informant', 'placerInformant',
     -- Buying an informant tip. The area is never in the reply: the server
-    -- sends it to this game alone (crimson-hitman:locationTip, below).
+    -- sends it to this game alone, as a map marker (client/missionsteps.lua).
     'locationTip',
     -- The one read of the whitelisted-job view (Config.WhitelistedView),
     -- which the server answers only for a player on a job the app bars, and
@@ -623,7 +623,7 @@ local UI_EVENTS = {
     -- Bodyguard contracts (server/rp_protection.lua): the board's Protection
     -- tab, posting, cancelling and taking a job, and moving the pin (read by
     -- the server where it sees this player stand). Set GPS is answered here
-    -- (crimson:protectionGps), below.
+    -- (crimson:gps), below.
     'protectionBoard', 'protectionPost', 'protectionCancel', 'protectionAccept', 'protectionPin',
     -- Roleplay (Config.Roleplay): asking the broker NPC about a rumour, and
     -- a broker player's who-is-near and brief.
@@ -762,120 +762,56 @@ RegisterNUICallback('crimson:setMeeting', function(data, cb)
                                 z = coords.z + 0.0 }, cb)
 end)
 
---- Set GPS: the server answers an active hitman of the contract with where
---- the meeting point is, and it is marked on their map here. The page is
---- told only that it was: the coordinates go no further than this.
-RegisterNUICallback('crimson:meetingGps', function(data, cb)
-    local id = type(data) == 'table' and data.id or nil
-    App.request('meetingWaypoint', { id = id }, function(result)
+--- Set GPS, every one through this one callback: the informant tip's area
+--- (the centre this game was sent), the handover's meeting point and a
+--- protection job's meeting pin (the server answers the hitman of the
+--- contract, or the guard who holds the job, with where it is). The waypoint
+--- is set here; the page is told only that it was, never where.
+local GPS = {
+    meeting = { request = 'meetingWaypoint', field = 'id', err = 'no_meeting' },
+    protection = { request = 'protectionWaypoint', field = 'job', err = 'not_found' },
+}
+
+RegisterNUICallback('crimson:gps', function(data, cb)
+    local kind = type(data) == 'table' and data.kind or nil
+    if kind == 'tip' then
+        local id = data.id
+        local tip = type(id) == 'string' and CrimsonMarkers.get('tip:' .. id) or nil
+        if not tip then return cb({ ok = false, event = 'gps', err = 'no_tip' }) end
+        SetNewWaypoint(tip.x + 0.0, tip.y + 0.0)
+        return cb({ ok = true, event = 'gps' })
+    end
+    local way = GPS[kind]
+    if not way then return cb({ ok = false, event = 'gps', err = 'invalid_input' }) end
+    local ref = data[way.field]
+    if way.field == 'job' and type(ref) ~= 'string' then ref = nil end
+    App.request(way.request, { [way.field] = ref }, function(result)
         local where = type(result) == 'table' and result.ok == true
             and type(result.data) == 'table' and result.data or nil
         local x, y = where and tonumber(where.x), where and tonumber(where.y)
         if x and y then
             SetNewWaypoint(x + 0.0, y + 0.0)
-            return cb({ ok = true, event = 'meetingWaypoint' })
+            return cb({ ok = true, event = 'gps' })
         end
-        cb({ ok = false, event = 'meetingWaypoint',
-             err = type(result) == 'table' and result.err or 'no_meeting' })
+        cb({ ok = false, event = 'gps', err = type(result) == 'table' and result.err or way.err })
     end)
 end)
 
---- The meeting point on this player's map, while they are a party to it:
---- the placer and each hitman on the contract (the server decides,
---- Meeting.sync, and sends crimson-hitman:meetingBlip to their game alone).
---- One marker per contract, replaced when the point moves, and taken off
---- when the server says so (crimson-hitman:meetingBlipClear: cleared, the
---- contract over, this player no longer on it, the switch off), on logout
---- and as the resource stops. The page is never sent where it is. Drawn by
---- the one marker system every step uses (client/missionsteps.lua, kind
---- 'meeting': the point-of-interest marker in yellow, apart from the tip's
---- red circle), which also takes them all off at a logout and at the stop.
-
-RegisterNetEvent('crimson-hitman:meetingBlip', function(data)
-    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
-    local x, y = tonumber(data.x), tonumber(data.y)
-    if not x or not y then return end
-    CrimsonMarkers.set('meeting:' .. data.id, { kind = 'meeting', x = x, y = y })
-end)
-
-RegisterNetEvent('crimson-hitman:meetingBlipClear', function(data)
-    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
-    CrimsonMarkers.remove('meeting:' .. data.id)
-end)
-
--- Another character, or none: their meeting points are not this one's. The
--- server draws them again for whoever logs in (Meeting.reshow).
-local function clearMeetingBlips() CrimsonMarkers.removePrefix('meeting:') end
-AddEventHandler('QBCore:Client:OnPlayerUnload', clearMeetingBlips)
-AddEventHandler('qbx_core:client:playerLoggedOut', clearMeetingBlips)
-AddEventHandler('onResourceStop', function(resource)
-    if resource ~= GetCurrentResourceName() then return end
-    clearMeetingBlips()
-end)
+--- The meeting point on this player's map, while they are a party to it
+--- (the placer and each hitman on the contract), and an informant tip's
+--- area on its buyer's: the server decides (Meeting.sync, LocationTip) and
+--- sends each as a marker to this game alone (server/lib/markers.lua, keys
+--- 'meeting:<contract>' and 'tip:<contract>'), drawn and taken off by the one
+--- marker system (client/missionsteps.lua), which also takes them off at a
+--- logout and at the stop. The page is never sent where either is.
 
 --------------------------------------------------------------------------
 -- Informant tips (server/locationtip.lua)
 --------------------------------------------------------------------------
---
--- The rough area a target was in when this player bought a tip: a centre
--- and a radius from the server, to this game alone, drawn as a red circle
--- with a marker in its middle until the time it was sold with runs out,
--- the contract ends or this player leaves it (the server says so:
--- crimson-hitman:locationTipClear). Never sent to the page: Set GPS hands it
--- the contract id, and the waypoint is set here.
-
---- Drawn by the one marker system (client/missionsteps.lua, kind 'tip': a
---- see-through red circle with the plain round marker in its middle), which
---- takes it off by itself when its time runs out, should the server's word
---- not arrive: only this one, not a newer tip on the same contract.
-
-local function removeTip(contractId) CrimsonMarkers.remove('tip:' .. contractId) end
-local function clearTips() CrimsonMarkers.removePrefix('tip:') end
-
-RegisterNetEvent('crimson-hitman:locationTip', function(data)
-    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
-    local x, y, radius = tonumber(data.x), tonumber(data.y), tonumber(data.radius)
-    local seconds = tonumber(data.secondsLeft)
-    if not x or not y or not radius or radius <= 0 or not seconds or seconds <= 0 then return end
-    CrimsonMarkers.set('tip:' .. data.id, { kind = 'tip', x = x, y = y, radius = radius, secondsLeft = seconds })
-end)
-
-RegisterNetEvent('crimson-hitman:locationTipClear', function(data)
-    if type(data) ~= 'table' or type(data.id) ~= 'string' then return end
-    removeTip(data.id)
-end)
-
---- Set GPS on a tip: the waypoint on the centre of the area this game was
---- sent. The page is told only that it was set.
---- Set GPS on a protection job's meeting pin: the server answers the guard
---- who holds the job with where the pin is, and it is marked on their map
---- here. The page is told only that it was.
-RegisterNUICallback('crimson:protectionGps', function(data, cb)
-    local job = type(data) == 'table' and type(data.job) == 'string' and data.job or nil
-    App.request('protectionWaypoint', { job = job }, function(result)
-        local where = type(result) == 'table' and result.ok == true
-            and type(result.data) == 'table' and result.data or nil
-        local x, y = where and tonumber(where.x), where and tonumber(where.y)
-        if x and y then
-            SetNewWaypoint(x + 0.0, y + 0.0)
-            return cb({ ok = true, event = 'protectionGps' })
-        end
-        cb({ ok = false, event = 'protectionGps',
-             err = type(result) == 'table' and result.err or 'not_found' })
-    end)
-end)
-
-RegisterNUICallback('crimson:tipGps', function(data, cb)
-    local id = type(data) == 'table' and data.id or nil
-    local tip = type(id) == 'string' and CrimsonMarkers.get('tip:' .. id) or nil
-    if not tip then return cb({ ok = false, event = 'tipGps', err = 'no_tip' }) end
-    SetNewWaypoint(tip.x + 0.0, tip.y + 0.0)
-    cb({ ok = true, event = 'tipGps' })
-end)
 
 --- Ask for the tips still showing, once the app is this player's: the
---- server sends each as crimson-hitman:locationTip, and with them the
---- meeting points this player is a party to (crimson-hitman:meetingBlip).
+--- server sends each as a marker, and with them the meeting points this
+--- player is a party to.
 --- Asked again a few times while the server is still starting up.
 function App.askTips(attempt)
     attempt = attempt or 1
@@ -885,16 +821,6 @@ function App.askTips(attempt)
         end
     end)
 end
-
--- Another character, or none: their tips are not this one's.
-AddEventHandler('QBCore:Client:OnPlayerUnload', clearTips)
-AddEventHandler('qbx_core:client:playerLoggedOut', clearTips)
-
--- A restart leaves nothing on the map; the server sends them again after.
-AddEventHandler('onResourceStop', function(resource)
-    if resource ~= GetCurrentResourceName() then return end
-    clearTips()
-end)
 
 --- Save the kill photo the player has open to their phone's Photos.
 ---

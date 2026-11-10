@@ -754,6 +754,7 @@ describe('the client\'s NPC loop', function()
             BeginTextCommandSetBlipName = function() end,
             AddTextComponentSubstringPlayerName = function() end,
             EndTextCommandSetBlipName = function() end, RemoveBlip = function() end,
+            DoesBlipExist = function() return 1 end, SetBlipColour = function() end,
             GetEntityCoords = function() return vec(t.me.x, t.me.y, t.me.z) end,
             PlayerPedId = function() return 1 end,
             LocalPlayer = { state = t.state },
@@ -766,8 +767,13 @@ describe('the client\'s NPC loop', function()
             GetCurrentResourceName = function() return 'crimson-hitman' end,
             CreateThread = function(fn) t.threads[#t.threads + 1] = coroutine.create(fn) end,
         }, { __index = _G })
+        -- As the manifest loads them: CrimsonGeo, CrimsonMarkers (the blips)
+        -- and CrimsonNpc before client/rp_npc.lua.
+        assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
+        assert(loadfile('crimson-hitman/client/missionsteps.lua', 't', env))()
         assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
         t.loop = assert(loadfile('crimson-hitman/client/rp_npc.lua', 't', env))()
+        t.markers = env.CrimsonMarkers
         --- Run thread `i` to its next wait: the wait, or 'ended'.
         function t.step(i)
             local co = t.threads[i]
@@ -792,6 +798,21 @@ describe('the client\'s NPC loop', function()
         t.place({})
         eq(#t.threads, 1, 'nothing placed: no distance loop is started')
         falsy(t.loop.running(), 'and none is running')
+    end)
+
+    it('marks an NPC with a blip through the one marker system, and takes it off with the NPC', function()
+        local t = npcClient()
+        t.step(1); t.step(1)
+        t.place({ broker = { x = 1.0, y = 2.0, z = 3.0, model = 'g_m_m_armboss_01', scenario = '', blip = true },
+            informant = { x = 4.0, y = 5.0, z = 6.0, model = 'a_m_y_hipster_01', scenario = '' } })
+        local broker = t.markers.get('npc:broker')
+        truthy(broker, 'the broker\'s blip is a marker')
+        eq(broker.x, 1.0)
+        eq(t.markers.get('npc:informant'), nil, 'no blip where the server says none')
+        t.handlers['QBCore:Client:OnPlayerUnload']()
+        truthy(t.markers.get('npc:broker'), 'a logout leaves the map\'s own blip')
+        t.place({})
+        eq(t.markers.get('npc:broker'), nil, 'gone with the NPC')
     end)
 
     it('sleeps two seconds while nothing is near, and one second near an NPC', function()

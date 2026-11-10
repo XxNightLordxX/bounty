@@ -272,6 +272,7 @@ describe('client/org.lua', function()
             SetBlipSprite = function() end, SetBlipScale = function() end, SetBlipAsShortRange = function() end,
             BeginTextCommandSetBlipName = function() end, AddTextComponentSubstringPlayerName = function() end,
             EndTextCommandSetBlipName = function() end, RemoveBlip = function() t.blips = t.blips - 1 end,
+            DoesBlipExist = function() return 1 end, SetBlipColour = function() end,
             GetEntityCoords = function() return vec(t.me.x, t.me.y, t.me.z) end,
             PlayerPedId = function() return 1 end, LocalPlayer = { state = { isLoggedIn = true } },
             vector3 = vec, Wait = function(ms) coroutine.yield(ms) end,
@@ -281,9 +282,12 @@ describe('client/org.lua', function()
             GetCurrentResourceName = function() return 'crimson-hitman' end,
             CreateThread = function(fn) t.threads[#t.threads + 1] = coroutine.create(fn) end,
         }, { __index = _G })
-        -- As the manifest loads them: CrimsonGeo and CrimsonNpc before client/org.lua.
+        -- As the manifest loads them: CrimsonGeo, CrimsonMarkers and CrimsonNpc
+        -- before client/org.lua.
         assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
+        assert(loadfile('crimson-hitman/client/missionsteps.lua', 't', env))()
         assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
+        t.markers = env.CrimsonMarkers
         t.mod = assert(loadfile('crimson-hitman/client/org.lua', 't', env))()
         function t.step(i)
             local ok, ms = coroutine.resume(t.threads[i])
@@ -318,6 +322,8 @@ describe('client/org.lua', function()
         } })
         eq(live(t), 2, 'two zones, the junk left out')
         eq(t.blips, 1)
+        truthy(t.markers.get('org:a'), 'the blip is the one marker system\'s')
+        eq(t.markers.get('org:b'), nil, 'and only where the spot asks for one')
         eq(#t.threads, 0, 'no loop without an NPC')
         t.zones[1].options[1].onSelect()
         eq(t.sent[1][1], 'crimson-hitman:orgUse')

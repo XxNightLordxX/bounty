@@ -26,8 +26,9 @@ local OrgSpots = {}
 
 --- The spots last sent: [id] = { id, kind, label, at, radius, blip, npc }
 local Spots = {}
---- What is drawn: zones [id] = ox_target zone id, blips [id], peds [id].
-local Zones, Blips, Peds = {}, {}, {}
+--- What is drawn: zones [id] = ox_target zone id, peds [id]. The blips are
+--- CrimsonMarkers' (client/missionsteps.lua), keyed 'org:<id>'.
+local Zones, Peds = {}, {}
 local Draw, Model = 40.0, 'g_m_m_armboss_01'
 local watching = false
 
@@ -50,10 +51,7 @@ local function clearAll()
         if targetUp() then pcall(function() exports.ox_target:removeZone(zone, true) end) end
         Zones[id] = nil
     end
-    for id, blip in pairs(Blips) do
-        RemoveBlip(blip)
-        Blips[id] = nil
-    end
+    CrimsonMarkers.removePrefix('org:')
 end
 
 local function option(spot)
@@ -77,7 +75,8 @@ local function addZone(spot)
 end
 
 local function addBlip(spot)
-    Blips[spot.id] = Npc.blip(spot.at.x, spot.at.y, spot.at.z, spot.kind == 'office' and 475 or 280, 0.7, spot.label)
+    CrimsonMarkers.set('org:' .. spot.id, { kind = spot.kind == 'office' and 'org_office' or 'org_spot',
+        x = spot.at.x, y = spot.at.y, z = spot.at.z, name = spot.label })
 end
 
 local function spawn(spot)

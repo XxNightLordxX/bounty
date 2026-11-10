@@ -11202,7 +11202,7 @@ async function main() {
     });
 
     const hit = await mineWith([], [hitmanCard({ meetingSet: true, meetingSteps: HITMAN_STEPS })],
-      { meetingGps: { ok: true } });
+      { gps: { ok: true } });
     it('hitman: says a meeting point is set, and offers Set GPS', function () {
       truthy(hit.view.textContent.indexOf('Meeting point set') !== -1, hit.view.textContent);
       truthy(labels(hit).indexOf('Set GPS') !== -1, labels(hit).join(' | '));
@@ -11216,14 +11216,15 @@ async function main() {
     click(hit, 'Set GPS');
     await settle(); await settle();
     it('hitman: Set GPS has the game mark it, sending which contract alone', function () {
-      const posts = sentNamed(hit, 'meetingGps');
+      const posts = sentNamed(hit, 'gps');
       eq(posts.length, 1);
-      eq(JSON.stringify(Object.keys(posts[0].body)), JSON.stringify(['id']));
+      eq(JSON.stringify(Object.keys(posts[0].body)), JSON.stringify(['kind', 'id']));
+      eq(posts[0].body.kind, 'meeting');
       truthy(hit.notice().indexOf('The meeting point is marked on your GPS.') !== -1, hit.notice());
     });
 
     const gone = await mineWith([], [hitmanCard({ meetingSet: true })],
-      { meetingGps: { ok: false, err: 'no_meeting' } });
+      { gps: { ok: false, err: 'no_meeting' } });
     const readsBefore = sentNamed(gone, 'mine').length;
     click(gone, 'Set GPS');
     await settle(); await settle();
@@ -11334,7 +11335,7 @@ async function main() {
     });
 
     const showing = await hitmanWith(tipCard({ locationTip: { left: 2, secondsLeft: 600,
-      cooldownSeconds: 600 } }), { tipGps: { ok: true } });
+      cooldownSeconds: 600 } }), { gps: { ok: true } });
     it('hitman: a tip on the map says until when, with Set GPS, and why no other yet', function () {
       const text = showing.view.textContent;
       truthy(/Informant tip on your map until \d\d:\d\d\./.test(text), text);
@@ -11346,9 +11347,10 @@ async function main() {
     button(showing, 'Set GPS').onclick();
     await settle(); await settle();
     it('hitman: Set GPS sends which contract alone, and the game marks it', function () {
-      const posts = sentNamed(showing, 'tipGps');
+      const posts = sentNamed(showing, 'gps');
       eq(posts.length, 1);
-      eq(JSON.stringify(Object.keys(posts[0].body)), JSON.stringify(['id']));
+      eq(JSON.stringify(Object.keys(posts[0].body)), JSON.stringify(['kind', 'id']));
+      eq(posts[0].body.kind, 'tip');
       truthy(showing.notice().indexOf('The middle of the area is marked on your GPS.') !== -1,
         showing.notice());
     });
@@ -13176,14 +13178,14 @@ async function main() {
     board.data.settings.protection = true;
 
     // The guard's side: the Protection tab.
-    let gpsAnswer = { ok: true, event: 'protectionGps' };
+    let gpsAnswer = { ok: true, event: 'gps' };
     let guarding = [{ job: 'prot00000002', reward: 4000, targetName: 'Kim Lane', pinSet: true }];
     const guard = boot({
       list: board, mine: MINE, ledger: LEDGER,
       protectionBoard: function () {
         return { ok: true, data: { enabled: true, maxJobs: 2, open: [], mine: guarding } };
       },
-      protectionGps: function () { return gpsAnswer; }
+      gps: function () { return gpsAnswer; }
     });
     await settle(); await settle();
     click(guard, 'Protection');
@@ -13197,16 +13199,16 @@ async function main() {
     click(guard, 'Set GPS to the pin');
     await settle(); await settle();
     it('bodyguard: Set GPS sends the job alone and says the waypoint is set', function () {
-      const posts = sentNamed(guard, 'protectionGps');
+      const posts = sentNamed(guard, 'gps');
       eq(posts.length, 1);
-      eq(JSON.stringify(posts[0].body), JSON.stringify({ job: 'prot00000002' }));
+      eq(JSON.stringify(posts[0].body), JSON.stringify({ kind: 'protection', job: 'prot00000002' }));
       truthy(guard.notice().indexOf('Waypoint set to the meeting pin.') !== -1, guard.notice());
     });
-    gpsAnswer = { ok: false, event: 'protectionGps', err: 'not_found' };
+    gpsAnswer = { ok: false, event: 'gps', err: 'not_found' };
     click(guard, 'Set GPS to the pin');
     await settle(); await settle();
     it('bodyguard: a pin the server no longer has says it is gone, not that it was set', function () {
-      eq(sentNamed(guard, 'protectionGps').length, 2);
+      eq(sentNamed(guard, 'gps').length, 2);
       truthy(guard.notice().indexOf('That is gone.') !== -1, guard.notice());
       drewCleanly(guard, 'after Set GPS refused');
     });

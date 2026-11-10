@@ -817,6 +817,7 @@ describe('bug sweep U2: the roleplay NPC loop survives an NPC moving mid-load', 
             BeginTextCommandSetBlipName = function() end,
             AddTextComponentSubstringPlayerName = function() end,
             EndTextCommandSetBlipName = function() end, RemoveBlip = function() end,
+            DoesBlipExist = function() return 1 end, SetBlipColour = function() end,
             GetEntityCoords = function() return vec(0.0, 0.0, 0.0) end,
             PlayerPedId = function() return 1 end,
             vector3 = vec,
@@ -828,6 +829,8 @@ describe('bug sweep U2: the roleplay NPC loop survives an NPC moving mid-load', 
             GetCurrentResourceName = function() return 'crimson-hitman' end,
             CreateThread = function(fn) thread = coroutine.create(fn) end,
         }, { __index = _G })
+        assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
+        assert(loadfile('crimson-hitman/client/missionsteps.lua', 't', env))()
         assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
         assert(loadfile('crimson-hitman/client/rp_npc.lua', 't', env))()
         local function step()

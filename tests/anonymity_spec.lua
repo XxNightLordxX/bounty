@@ -1461,7 +1461,7 @@ describe('every channel a player not entitled to it can read', function()
         local kinds = {}
         for _, event in ipairs(Env.clientEvents) do kinds[event.name] = true end
         for _, name in ipairs({ 'lb-phone:CreateCall', 'lb-phone:SendNotification',
-                                'crimson-hitman:locationTip', 'crimson-hitman:adminResult' }) do
+                                'crimson-hitman:client:StepMarker', 'crimson-hitman:adminResult' }) do
             truthy(kinds[name], 'the journey never used ' .. name)
         end
         truthy(#(Natives.calls.dispatch or {}) > 0, 'no advisory reached sc-dispatch')

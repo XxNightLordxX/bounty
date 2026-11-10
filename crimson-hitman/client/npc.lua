@@ -1,5 +1,5 @@
---- Scenery peds and their map blips (CrimsonNpc): the one copy of making,
---- removing and marking a local NPC, of "is ox_target up" and of "is a
+--- Scenery peds (CrimsonNpc): the one copy of making and removing a local
+--- NPC, of "is ox_target up" and of "is a
 --- character loaded".
 ---
 --- Every ped made here is local (never networked), invincible, frozen and
@@ -77,25 +77,6 @@ end
 ---@param ped integer|nil
 function CrimsonNpc.remove(ped)
     if ped and DoesEntityExist(ped) then DeleteEntity(ped) end
-end
-
---- A short-range map blip at x, y, z with a sprite, a scale and a name.
----@param x number
----@param y number
----@param z number
----@param sprite integer
----@param scale number
----@param label string
----@return integer blip
-function CrimsonNpc.blip(x, y, z, sprite, scale, label)
-    local blip = AddBlipForCoord(x, y, z)
-    SetBlipSprite(blip, sprite)
-    SetBlipScale(blip, scale)
-    SetBlipAsShortRange(blip, true)
-    BeginTextCommandSetBlipName('STRING')
-    AddTextComponentSubstringPlayerName(label)
-    EndTextCommandSetBlipName(blip)
-    return blip
 end
 
 return CrimsonNpc

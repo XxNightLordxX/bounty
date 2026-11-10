@@ -2923,7 +2923,7 @@ describe('the handover meeting point on the client', function()
         Client.boot()
         local marked, real = {}, _G.SetNewWaypoint
         _G.SetNewWaypoint = function(x, y) marked[#marked + 1] = { x = x, y = y } end
-        Client.nuiCall('crimson:meetingGps', { id = 'ct00000001' })
+        Client.nuiCall('crimson:gps', { kind = 'meeting', id = 'ct00000001' })
         local asked = Client.toServer[#Client.toServer]
         eq(asked.name, 'crimson-hitman:meetingWaypoint')
         Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid,
@@ -2935,7 +2935,7 @@ describe('the handover meeting point on the client', function()
         eq(Client.answer.ok, true)
         eq(Client.answer.data, nil, 'the page is told it was marked, and nothing of where')
 
-        Client.nuiCall('crimson:meetingGps', { id = 'ct00000001' })
+        Client.nuiCall('crimson:gps', { kind = 'meeting', id = 'ct00000001' })
         asked = Client.toServer[#Client.toServer]
         Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid,
             event = 'meetingWaypoint', ok = false, err = 'no_meeting' })

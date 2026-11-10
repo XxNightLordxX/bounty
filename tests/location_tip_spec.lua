@@ -56,6 +56,35 @@ local function eventsNamed(name, target)
     return out
 end
 
+--- The one marker event pair (server/lib/markers.lua, client/missionsteps.lua).
+local MARK, UNMARK = 'crimson-hitman:client:StepMarker', 'crimson-hitman:client:StepMarkerClear'
+
+--- The tips put on a map by the last call (markers of kind 'tip').
+local function tipsSent(target)
+    local out = {}
+    for _, event in ipairs(eventsNamed(MARK, target)) do
+        if type(event.args[1]) == 'table' and event.args[1].kind == 'tip' then out[#out + 1] = event end
+    end
+    return out
+end
+
+--- The tips taken off a map by the last call (keys 'tip:<contract>').
+local function tipsCleared(target)
+    local out = {}
+    for _, event in ipairs(eventsNamed(UNMARK, target)) do
+        local key = type(event.args[1]) == 'table' and event.args[1].key
+        if type(key) == 'string' and key:sub(1, 4) == 'tip:' then out[#out + 1] = event end
+    end
+    return out
+end
+
+--- A tip as the server sends it, for the client half: { id, x, y, radius,
+--- secondsLeft } as a marker. Anything else is sent as it is.
+local function tipMarker(t)
+    if type(t) ~= 'table' or type(t.id) ~= 'string' then return t end
+    return { key = 'tip:' .. t.id, kind = 'tip', x = t.x, y = t.y, radius = t.radius, secondsLeft = t.secondsLeft }
+end
+
 --- The phone notices one player was sent by the last call: { title, content }.
 local function noticesTo(src)
     local out = {}
@@ -129,15 +158,15 @@ describe('an informant tip, bought', function()
         eq(r.data.left, 2, 'two more on this contract')
         falsy(r.data.x or r.data.y or r.data.centre, 'the reply carries no area')
 
-        local sent = eventsNamed('crimson-hitman:locationTip')
+        local sent = tipsSent()
         eq(#sent, 1, 'one tip sent')
         eq(sent[1].target, 3, 'to the buyer\'s game alone')
         local tip = sent[1].args[1]
         local keys = {}
         for k in pairs(tip) do keys[#keys + 1] = k end
         table.sort(keys)
-        eq(table.concat(keys, ','), 'id,radius,secondsLeft,x,y', 'the centre and the radius only')
-        eq(tip.id, c.id)
+        eq(table.concat(keys, ','), 'key,kind,radius,secondsLeft,x,y', 'the centre and the radius only')
+        eq(tip.key, 'tip:' .. c.id)
         eq(tip.radius, 350)
         local d = distance(TARGET_AT, tip.x, tip.y)
         truthy(d <= 350, 'the target is inside the circle: ' .. d)
@@ -168,7 +197,7 @@ describe('an informant tip, bought', function()
         local s, _, c = taken()
         steadyDraw(s)
         truthy(buy(3, c).ok)
-        local tip = eventsNamed('crimson-hitman:locationTip')[1].args[1]
+        local tip = tipsSent()[1].args[1]
         s.audit.flush()
         local rows = s.storage.auditByAction('location_tip_bought', 10)
         eq(#rows, 1, 'one row')
@@ -194,7 +223,7 @@ describe('an informant tip refused, nothing charged', function()
     local function refused(s, c, src, r, code)
         truthy(r and not r.ok, 'refused')
         eq(r.err, code)
-        eq(#eventsNamed('crimson-hitman:locationTip'), 0, 'no area sent')
+        eq(#tipsSent(), 0, 'no area sent')
         eq(#s.storage.readLocationTips(c.id), 0, 'nothing kept')
         local _ = src
     end
@@ -339,7 +368,7 @@ describe('an informant tip under a double tap and a contract ending', function()
         -- The reward the placer put up came home with the ending; the tip's
         -- price came home to the hitman; nothing else moved.
         eq(moneyInTheCity(), city + 5000, 'and nothing lost')
-        eq(#eventsNamed('crimson-hitman:locationTip'), 0, 'nothing sent')
+        eq(#tipsSent(), 0, 'nothing sent')
         eq(#s.storage.readLocationTips(c.id), 0, 'nothing kept')
         s.audit.flush()
         eq(#s.storage.auditByAction('location_tip_refunded', 10), 1, 'the refund recorded')
@@ -468,7 +497,7 @@ describe('the target of an informant tip', function()
         local s, _, c = taken()
         steadyDraw(s)
         truthy(buy(3, c).ok)
-        local tip = eventsNamed('crimson-hitman:locationTip')[1].args[1]
+        local tip = tipsSent()[1].args[1]
         local notices = noticesTo(2)
         eq(#notices, 1, 'one notice')
         eq(notices[1].content, TEXT)
@@ -547,7 +576,7 @@ describe('who is sent an informant tip\'s area', function()
             bank = 100000, firstname = 'Sly', lastname = 'Fox' })
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false), 'a second hitman')
         truthy(buy(3, c).ok)
-        local tip = eventsNamed('crimson-hitman:locationTip')[1].args[1]
+        local tip = tipsSent()[1].args[1]
         local needles = { tostring(tip.x), tostring(tip.y) }
 
         local function clean(value, who)
@@ -574,7 +603,7 @@ describe('who is sent an informant tip\'s area', function()
         eq(mine.locationTip.secondsLeft, 600, 'the buyer\'s card says it is showing')
 
         for _, event in ipairs(Env.clientEvents) do
-            if not (event.name == 'crimson-hitman:locationTip' and event.target == 3) then
+            if not (event.name == MARK and event.args[1].kind == 'tip' and event.target == 3) then
                 clean(event.args, event.name .. ' to ' .. tostring(event.target))
             end
         end
@@ -590,7 +619,7 @@ describe('who is sent an informant tip\'s area', function()
         Env.aces[8] = { ['crimson.admin'] = true, ['crimson.identity'] = true }
         Config.Cooldowns.admin = { per = 10, burst = 500 }
         truthy(buy(3, c).ok)
-        local tip = eventsNamed('crimson-hitman:locationTip')[1].args[1]
+        local tip = tipsSent()[1].args[1]
 
         local function logs(src)
             Env.clientEvents = {}
@@ -627,11 +656,11 @@ describe('an informant tip coming off the map', function()
         truthy(buy(3, c).ok)
         Env.clientEvents = {}
         Env.advance(599)
-        eq(#eventsNamed('crimson-hitman:locationTipClear', 3), 0, 'not yet')
+        eq(#tipsCleared(3), 0, 'not yet')
         Env.advance(2)
-        local cleared = eventsNamed('crimson-hitman:locationTipClear', 3)
+        local cleared = tipsCleared(3)
         eq(#cleared, 1, 'cleared once its time is up')
-        eq(cleared[1].args[1].id, c.id)
+        eq(cleared[1].args[1].key, 'tip:' .. c.id)
         eq(s.projection.accepted('HITMAN01')[1].locationTip.secondsLeft, nil, 'and off the card')
     end)
 
@@ -658,7 +687,7 @@ describe('an informant tip coming off the map', function()
             eq(#noticesTo(2), 0, key .. ': the target is told nothing')
             Env.clientEvents = {}
             Env.advance(601)
-            eq(#eventsNamed('crimson-hitman:locationTipClear', 3), 1,
+            eq(#tipsCleared(3), 1,
                 key .. ': cleared from the map once its time is up')
             eq(s.projection.accepted('HITMAN01')[1].locationTip, nil,
                 key .. ': and nothing of a tip left on the card')
@@ -670,7 +699,7 @@ describe('an informant tip coming off the map', function()
         truthy(buy(3, c).ok)
         Env.clientEvents = {}
         s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'test_ended')
-        eq(#eventsNamed('crimson-hitman:locationTipClear', 3), 1, 'off the buyer\'s map')
+        eq(#tipsCleared(3), 1, 'off the buyer\'s map')
         eq(#s.storage.readLocationTips(c.id), 0, 'its records gone')
     end)
 
@@ -679,18 +708,18 @@ describe('an informant tip coming off the map', function()
         truthy(buy(3, c).ok)
         Env.clientEvents = {}
         truthy(s.contracts.abandon(f.hitman, c.id))
-        eq(#eventsNamed('crimson-hitman:locationTipClear', 3), 1, 'off their map')
+        eq(#tipsCleared(3), 1, 'off their map')
         eq(#s.storage.readLocationTips(c.id), 1, 'the record stays, for the wait and the count')
         Env.clientEvents = {}
         Env.advance(601)
-        eq(#eventsNamed('crimson-hitman:locationTipClear', 3), 0, 'its timer went with it')
+        eq(#tipsCleared(3), 0, 'its timer went with it')
     end)
 
     it('comes back on the buyer\'s map after a restart while it has time left', function()
         local s, f, c = taken()
         steadyDraw(s)
         truthy(buy(3, c).ok)
-        local first = eventsNamed('crimson-hitman:locationTip')[1].args[1]
+        local first = tipsSent()[1].args[1]
         Env.advance(120)
         -- A fresh process over the same store: nothing in memory.
         s.locationTip.init({ storage = s.storage, identity = s.identity, audit = s.audit,
@@ -698,12 +727,12 @@ describe('an informant tip coming off the map', function()
         local r = call('locationTips', 3, {})
         truthy(r and r.ok, tostring(r and r.err))
         eq(r.data.shown, 1)
-        local again = eventsNamed('crimson-hitman:locationTip', 3)
+        local again = tipsSent(3)
         eq(#again, 1, 'sent again')
         eq(again[1].args[1].x, first.x, 'the same area')
         eq(again[1].args[1].y, first.y)
         eq(again[1].args[1].secondsLeft, 480, 'for the time it has left')
-        eq(#eventsNamed('crimson-hitman:locationTip', 2), 0, 'to nobody else')
+        eq(#tipsSent(2), 0, 'to nobody else')
 
         r = call('locationTips', 2, {})
         eq(r.data.shown, 0, 'the target asking gets nothing')
@@ -796,8 +825,7 @@ describe('an informant tip on the client', function()
     it('draws a see-through red circle and a named centre, and takes both off when told', function()
         Env.reset()
         Client.boot()
-        truthy(Client.fire('crimson-hitman:locationTip',
-            { id = 'ct00000001', x = 1234, y = -568, radius = 350, secondsLeft = 600 }))
+        truthy(Client.fire(MARK, tipMarker({ id = 'ct00000001', x = 1234, y = -568, radius = 350, secondsLeft = 600 })))
         local area, centre = shown()
         truthy(area, 'a radius blip')
         eq(area.radius, 350.0)
@@ -808,7 +836,7 @@ describe('an informant tip on the client', function()
         eq(centre.name, 'Informant tip')
         eq(centre.y, -568.0)
 
-        Client.fire('crimson-hitman:locationTipClear', { id = 'ct00000001' })
+        Client.fire(UNMARK, { key = 'tip:ct00000001' })
         eq(next(Client.blips), nil, 'both removed')
         truthy(Client.blipsMade[1].removed and Client.blipsMade[2].removed)
     end)
@@ -816,11 +844,10 @@ describe('an informant tip on the client', function()
     it('sets the GPS on the centre, and tells the page nothing of where', function()
         Env.reset()
         Client.boot()
-        Client.fire('crimson-hitman:locationTip',
-            { id = 'ct00000001', x = 1234, y = -568, radius = 350, secondsLeft = 600 })
+        Client.fire(MARK, tipMarker({ id = 'ct00000001', x = 1234, y = -568, radius = 350, secondsLeft = 600 }))
         local marked, real = {}, _G.SetNewWaypoint
         _G.SetNewWaypoint = function(x, y) marked[#marked + 1] = { x = x, y = y } end
-        Client.nuiCall('crimson:tipGps', { id = 'ct00000001' })
+        Client.nuiCall('crimson:gps', { kind = 'tip', id = 'ct00000001' })
         eq(#marked, 1)
         eq(marked[1].x, 1234.0)
         eq(marked[1].y, -568.0)
@@ -828,8 +855,8 @@ describe('an informant tip on the client', function()
         eq(Client.answer.data, nil, 'nothing of where to the page')
         eq(#Client.toServer, 0, 'nothing asked of the server')
 
-        Client.fire('crimson-hitman:locationTipClear', { id = 'ct00000001' })
-        Client.nuiCall('crimson:tipGps', { id = 'ct00000001' })
+        Client.fire(UNMARK, { key = 'tip:ct00000001' })
+        Client.nuiCall('crimson:gps', { kind = 'tip', id = 'ct00000001' })
         _G.SetNewWaypoint = real
         eq(#marked, 1, 'nothing marked once it is gone')
         eq(Client.answer.err, 'no_tip')
@@ -838,10 +865,8 @@ describe('an informant tip on the client', function()
     it('takes it off by itself when its time runs out, and replaces an older one', function()
         Env.reset()
         Client.boot()
-        Client.fire('crimson-hitman:locationTip',
-            { id = 'ct00000001', x = 10, y = 20, radius = 350, secondsLeft = 60 })
-        Client.fire('crimson-hitman:locationTip',
-            { id = 'ct00000001', x = 30, y = 40, radius = 350, secondsLeft = 600 })
+        Client.fire(MARK, tipMarker({ id = 'ct00000001', x = 10, y = 20, radius = 350, secondsLeft = 60 }))
+        Client.fire(MARK, tipMarker({ id = 'ct00000001', x = 30, y = 40, radius = 350, secondsLeft = 600 }))
         local count = 0
         for _ in pairs(Client.blips) do count = count + 1 end
         eq(count, 2, 'one circle and one centre: the older pair went')
@@ -854,12 +879,11 @@ describe('an informant tip on the client', function()
     it('ignores what is not a tip, and leaves nothing after a restart', function()
         Env.reset()
         Client.boot()
-        Client.fire('crimson-hitman:locationTip', 'not a table')
-        Client.fire('crimson-hitman:locationTip', { id = 'ct00000001', x = 'a', y = 2, radius = 3,
-            secondsLeft = 60 })
+        Client.fire(MARK, tipMarker('not a table'))
+        Client.fire(MARK, tipMarker({ id = 'ct00000001', x = 'a', y = 2, radius = 3,
+            secondsLeft = 60 }))
         eq(next(Client.blips), nil, 'nothing drawn')
-        Client.fire('crimson-hitman:locationTip',
-            { id = 'ct00000001', x = 1, y = 2, radius = 350, secondsLeft = 60 })
+        Client.fire(MARK, tipMarker({ id = 'ct00000001', x = 1, y = 2, radius = 350, secondsLeft = 60 }))
         truthy(Client.fire('onResourceStop', 'crimson-hitman'))
         eq(next(Client.blips), nil, 'cleared as the resource stops')
     end)

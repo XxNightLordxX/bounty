@@ -22,13 +22,13 @@
 --- changes, and takes no point off any contract.
 ---
 --- The map marker: while one is set, the placer and every active hitman of
---- the contract have a marker on their map at it (crimson-hitman:meetingBlip,
---- to their game alone, never to the page), and each is told on their phone
+--- the contract have a marker on their map at it (key 'meeting:<contract>',
+--- through server/lib/markers.lua to their game alone, never to the page), and each is told on their phone
 --- what to do to finish the handover (Meeting.steps, the same words as the
 --- 'What to do' line on their card). Who has it is worked out again from the
 --- store at every change (Meeting.sync): the point set, moved or cleared, a
 --- hitman joining or leaving, the contract ending, the switch turned. Anybody
---- no longer a party has it taken off (crimson-hitman:meetingBlipClear); a
+--- no longer a party has it taken off (Markers.clear); a
 --- party who comes back to the city has it drawn again (Meeting.reshow). The
 --- target, bystanders and staff who are not a party are never sent it.
 
@@ -37,6 +37,7 @@ local Geo = CrimsonBoot.requireShared('geo')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Markers = CrimsonBoot.require('server.lib.markers')
 
 local Meeting = {}
 
@@ -224,14 +225,11 @@ end
 local function draw(cid, contractId, x, y)
     local game = Identity and Identity.sourceOf(cid)
     if not game then return false end
-    TriggerClientEvent('crimson-hitman:meetingBlip', game, { id = contractId, x = x, y = y })
-    return true
+    return Markers.show(game, 'meeting:' .. contractId, { kind = 'meeting', x = x, y = y })
 end
 
 local function erase(cid, contractId)
-    local game = Identity and Identity.sourceOf(cid)
-    if not game then return end
-    TriggerClientEvent('crimson-hitman:meetingBlipClear', game, { id = contractId })
+    Markers.clear(Identity and Identity.sourceOf(cid), 'meeting:' .. contractId)
 end
 
 --- Bring every map in line with the store for one contract: drawn for each
@@ -313,8 +311,7 @@ function Meeting.reshow(actor)
     for _, contract in ipairs(involved) do
         if contract.meeting_x ~= nil and partiesOf(contract)[actor.cid] then
             local x, y = tonumber(contract.meeting_x), tonumber(contract.meeting_y)
-            TriggerClientEvent('crimson-hitman:meetingBlip', actor.source,
-                { id = contract.id, x = x, y = y })
+            Markers.show(actor.source, 'meeting:' .. contract.id, { kind = 'meeting', x = x, y = y })
             local entry = shown[contract.id]
             if not entry or entry.x ~= x or entry.y ~= y then
                 entry = { x = x, y = y, cids = entry and entry.cids or {} }
@@ -449,7 +446,7 @@ end
 --------------------------------------------------------------------------
 
 --- The meeting point, for an active hitman's Set GPS: their game marks it
---- on their map (client/main.lua, crimson:meetingGps) and hands the page
+--- on their map (client/main.lua, crimson:gps) and hands the page
 --- nothing but that it did.
 ---
 --- Anybody else is told there is no such contract, as for one that does

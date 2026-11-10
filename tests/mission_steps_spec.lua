@@ -415,8 +415,7 @@ describe('the client\'s markers', function()
         Client.boot()
         for _, payload in ipairs({ 'x', 42, {}, { key = 'kill:a', kind = 'kill', x = 0 / 0, y = 1 },
             { key = 'kill:a', kind = 'kill', x = math.huge, y = 1 }, { key = 'kill:a', kind = 'kill', x = 'a', y = 1 },
-            { key = 'tip:a', kind = 'tip', x = 1, y = 1, radius = 10, secondsLeft = 60 },
-            { key = 'meeting:a', kind = 'meeting', x = 1, y = 1 }, { key = 'x', kind = 'broker', x = 1, y = 1 },
+            { key = 'x', kind = 'broker', x = 1, y = 1 },
             { key = ('k'):rep(65), kind = 'kill', x = 1, y = 1 }, { key = 'a b', kind = 'kill', x = 1, y = 1 },
             { key = 'handover:a', kind = 'handover', x = 1, y = 1 } }) do
             truthy(Client.fire(STEP_EVENT, payload))
@@ -431,8 +430,9 @@ describe('the client\'s markers', function()
             Env.reset()
             Client.boot()
             Client.fire(STEP_EVENT, { key = 'kill:ct00000001', kind = 'kill', x = 1, y = 2 })
-            Client.fire('crimson-hitman:meetingBlip', { id = 'ct00000002', x = 3, y = 4 })
-            Client.fire('crimson-hitman:locationTip', { id = 'ct00000003', x = 5, y = 6, radius = 50, secondsLeft = 60 })
+            Client.fire(STEP_EVENT, { key = 'meeting:ct00000002', kind = 'meeting', x = 3, y = 4 })
+            Client.fire(STEP_EVENT, { key = 'tip:ct00000003', kind = 'tip', x = 5, y = 6, radius = 50,
+                secondsLeft = 60 })
             eq(#drawn(), 4)
             if event == 'onResourceStop' then
                 Client.fire(event, 'some-other-resource')
@@ -483,13 +483,132 @@ describe('the client\'s markers', function()
     it('keeps the tip and the meeting point as they were, on the same system', function()
         Env.reset()
         Client.boot()
-        Client.fire('crimson-hitman:meetingBlip', { id = 'ct00000002', x = 3, y = 4 })
+        Client.fire(STEP_EVENT, { key = 'meeting:ct00000002', kind = 'meeting', x = 3, y = 4 })
         local meeting = drawn()[1]
         eq(meeting.sprite, 162)
         eq(meeting.colour, 5)
         eq(meeting.name, 'Meeting point')
         truthy(Client.markers.get('meeting:ct00000002'))
-        Client.fire('crimson-hitman:meetingBlipClear', { id = 'ct00000002' })
+        Client.fire(CLEAR_EVENT, { key = 'meeting:ct00000002' })
         eq(#drawn(), 0)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- One marker system, one sender, one Set GPS (step 3b)
+--------------------------------------------------------------------------
+
+describe('every marker and Set GPS through one system', function()
+    local function drawn()
+        local out = {}
+        for _, blip in pairs(Client.blips) do out[#out + 1] = blip end
+        return out
+    end
+
+    it('has no event of its own for the tip or the meeting point any more', function()
+        Env.reset()
+        Client.boot()
+        for _, name in ipairs({ 'crimson-hitman:meetingBlip', 'crimson-hitman:meetingBlipClear',
+            'crimson-hitman:locationTip', 'crimson-hitman:locationTipClear' }) do
+            eq(Client.netEvents[name], nil, name .. ' is gone: the marker pair carries it')
+        end
+        for _, name in ipairs({ 'crimson:meetingGps', 'crimson:protectionGps', 'crimson:tipGps' }) do
+            eq(Client.nui and Client.nui[name] or nil, nil, name .. ' is gone: crimson:gps answers it')
+        end
+    end)
+
+    it('draws a tip only with the time it shows for, and takes it off by itself', function()
+        Env.reset()
+        Client.boot()
+        Client.fire(STEP_EVENT, { key = 'tip:ct00000003', kind = 'tip', x = 5, y = 6, radius = 50 })
+        eq(#drawn(), 0, 'a tip with no time is not drawn')
+        Client.fire(STEP_EVENT, { key = 'tip:ct00000003', kind = 'tip', x = 5, y = 6, radius = 50, secondsLeft = 60 })
+        eq(#drawn(), 2, 'the circle and its centre')
+        Client.runTimeouts()
+        eq(#drawn(), 0, 'off when its time is up')
+    end)
+
+    it('keeps the NPCs\' blips over a logout, and takes every one off at the stop', function()
+        Env.reset()
+        Client.boot()
+        -- What client/rp_npc.lua and client/org.lua draw, as they draw it.
+        Client.handlers['test:places'] = function()
+            Client.markers.set('npc:broker', { kind = 'broker', x = 1, y = 2 })
+            Client.markers.set('org:a', { kind = 'org_office', x = 3, y = 4, name = 'Office' })
+        end
+        truthy(Client.fire('test:places'))
+        Client.handlers['test:places'] = nil
+        truthy(Client.markers.get('org:a'))
+        Client.fire(STEP_EVENT, { key = 'meeting:ct00000002', kind = 'meeting', x = 3, y = 4 })
+        local broker
+        for _, blip in pairs(Client.blips) do if blip.name == 'Broker' then broker = blip end end
+        truthy(broker, 'named as before')
+        eq(broker.sprite, 280)
+        eq(broker.shortRange, true, 'short range, as before')
+        eq(broker.colour, nil, 'the sprite\'s own colour, as before')
+        local net = Client.netEvents['qbx_core:client:playerLoggedOut']
+        Client.netEvents['qbx_core:client:playerLoggedOut'] = nil
+        Client.fire('qbx_core:client:playerLoggedOut')
+        Client.netEvents['qbx_core:client:playerLoggedOut'] = net
+        truthy(Client.markers.get('npc:broker'), 'the map\'s own blip stays')
+        eq(Client.markers.get('meeting:ct00000002'), nil, 'the character\'s go')
+        Client.fire('onResourceStop', 'crimson-hitman')
+        eq(#drawn(), 0, 'nothing left at the stop')
+    end)
+
+    it('the server field cannot draw the places this game draws itself', function()
+        Env.reset()
+        Client.boot()
+        Client.fire(STEP_EVENT, { key = 'npc:broker', kind = 'broker', x = 1, y = 2 })
+        Client.fire(STEP_EVENT, { key = 'org:a', kind = 'org_spot', x = 1, y = 2 })
+        eq(#drawn(), 0)
+    end)
+
+    it('answers every Set GPS from one callback, and refuses a kind it does not know', function()
+        Env.reset()
+        Client.boot()
+        local marked, real = {}, _G.SetNewWaypoint
+        _G.SetNewWaypoint = function(x, y) marked[#marked + 1] = { x = x, y = y } end
+        Client.nuiCall('crimson:gps', { kind = 'protection', job = 'prot00000002' })
+        local asked = Client.toServer[#Client.toServer]
+        eq(asked.name, 'crimson-hitman:protectionWaypoint')
+        eq(asked.args[1].job, 'prot00000002')
+        Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid,
+            event = 'protectionWaypoint', ok = true, data = { x = 10, y = 20 } })
+        eq(#marked, 1)
+        eq(Client.answer.ok, true)
+        eq(Client.answer.data, nil, 'nothing of where to the page')
+        Client.nuiCall('crimson:gps', { kind = 'protection', job = 'prot00000002' })
+        asked = Client.toServer[#Client.toServer]
+        Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid,
+            event = 'protectionWaypoint', ok = false })
+        eq(Client.answer.err, 'not_found', 'the refusal it always gave')
+        local before = #Client.toServer
+        Client.nuiCall('crimson:gps', { kind = 'everything' })
+        eq(Client.answer.ok, false)
+        eq(Client.answer.err, 'invalid_input')
+        eq(#Client.toServer, before, 'nothing asked of the server')
+        _G.SetNewWaypoint = real
+        eq(#marked, 1)
+    end)
+end)
+
+describe('the one marker sender (server/lib/markers.lua)', function()
+    local Markers = require('server.lib.markers')
+
+    it('sends a marker and its removal to one game alone, and nothing without one', function()
+        Env.reset()
+        Env.clientEvents = {}
+        truthy(Markers.show(3, 'tip:ct00000001', { kind = 'tip', x = 1, y = 2, radius = 50, secondsLeft = 60 }))
+        truthy(Markers.clear(3, 'tip:ct00000001'))
+        falsy(Markers.show(nil, 'tip:ct00000001', { kind = 'tip' }), 'nobody to send to')
+        falsy(Markers.clear(nil, 'tip:ct00000001'))
+        eq(#Env.clientEvents, 2)
+        eq(Env.clientEvents[1].name, STEP_EVENT)
+        eq(Env.clientEvents[1].target, 3)
+        eq(Env.clientEvents[1].args[1].key, 'tip:ct00000001')
+        eq(Env.clientEvents[1].args[1].kind, 'tip')
+        eq(Env.clientEvents[2].name, CLEAR_EVENT)
+        eq(Env.clientEvents[2].args[1].key, 'tip:ct00000001')
     end)
 end)

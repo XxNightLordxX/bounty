@@ -2517,7 +2517,7 @@
     var row = el('div', 'row meeting-actions');
     row.appendChild(actionButton('ghost ico i-pin', 'Set GPS', 'gps:' + contract.id,
       'Setting GPS\u2026', function () {
-        return post('meetingGps', { id: contract.id }).then(function (r) {
+        return post('gps', { kind: 'meeting', id: contract.id }).then(function (r) {
           if (!r.ok) {
             fail(r);
             // Cleared, or taken off, since the card was drawn.
@@ -2637,7 +2637,7 @@
       var gps = el('div', 'row tip-actions');
       gps.appendChild(actionButton('ghost ico i-pin', 'Set GPS', 'tipgps:' + contract.id,
         'Setting GPS\u2026', function () {
-          return post('tipGps', { id: contract.id }).then(function (r) {
+          return post('gps', { kind: 'tip', id: contract.id }).then(function (r) {
             if (!r.ok) {
               fail(r);
               if (r.err === 'no_tip') { refresh(); }
@@ -12074,7 +12074,7 @@
           var row = el('div', 'row actions');
           row.appendChild(actionButton('ghost ico i-pin', 'Set GPS to the pin',
             'protection:gps:' + job.job, 'Setting…', function () {
-              return post('protectionGps', { job: job.job }).then(function (r) {
+              return post('gps', { kind: 'protection', job: job.job }).then(function (r) {
                 if (r.ok) { say('Waypoint set to the meeting pin.', 'ok'); } else { fail(r); }
               });
             }));

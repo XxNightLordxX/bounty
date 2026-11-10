@@ -9,7 +9,16 @@ local Bridges = require('crimson-hitman.server.bridges')
 --- Where the person who placed it stands. Kept as 1234, -568.
 local SPOT = { x = 1234.4, y = -567.6, z = 30.0 }
 
-local BLIP, CLEAR = 'crimson-hitman:meetingBlip', 'crimson-hitman:meetingBlipClear'
+--- The one marker event pair (server/lib/markers.lua, client/missionsteps.lua):
+--- the meeting point is kind 'meeting', keyed 'meeting:<contract>'.
+local BLIP, CLEAR = 'crimson-hitman:client:StepMarker', 'crimson-hitman:client:StepMarkerClear'
+
+--- A meeting point as the server sends it, for the client half: { id, x, y }
+--- as a marker. Anything else is sent as it is.
+local function meetingMarker(d)
+    if type(d) ~= 'table' or type(d.id) ~= 'string' then return d end
+    return { key = 'meeting:' .. d.id, kind = 'meeting', x = d.x, y = d.y }
+end
 
 --- Fire a net event as a client does and return the reply the page gets.
 --- Env.clientEvents keeps what the call sent (emptied first).
@@ -32,7 +41,8 @@ end
 local function sent(name)
     local out = {}
     for _, event in ipairs(Env.clientEvents) do
-        if event.name == name then
+        local key = type(event.args[1]) == 'table' and event.args[1].key
+        if event.name == name and type(key) == 'string' and key:sub(1, 8) == 'meeting:' then
             out[event.target] = out[event.target] or {}
             table.insert(out[event.target], event.args[1])
         end
@@ -126,7 +136,7 @@ describe('the meeting point marker: who is shown it', function()
         for _, src in ipairs({ 1, 3 }) do
             truthy(blips[src], 'source ' .. src .. ' shown it')
             eq(#blips[src], 1)
-            eq(blips[src][1].id, c.id)
+            eq(blips[src][1].key, 'meeting:' .. c.id)
             eq(blips[src][1].x, 1234)
             eq(blips[src][1].y, -568)
         end
@@ -250,7 +260,7 @@ describe('the meeting point marker: what each side is told', function()
             local keys = {}
             for k in pairs(payload) do keys[#keys + 1] = k end
             table.sort(keys)
-            eq(table.concat(keys, ','), 'id,x,y', 'the marker carries the point and nothing else')
+            eq(table.concat(keys, ','), 'key,kind,x,y', 'the marker carries the point and nothing else')
         end
     end)
 end)
@@ -286,7 +296,7 @@ describe('the meeting point marker: when it comes off', function()
         eq(#blips[3], 1)
         -- The client draws one per contract id, so the new one replaces the
         -- old (the client spec below).
-        eq(blips[3][1].id, c.id)
+        eq(blips[3][1].key, 'meeting:' .. c.id)
     end)
 
     it('when the handover completes the contract', function()
@@ -479,7 +489,7 @@ describe('the meeting point marker on the client', function()
     it('draws one named, long-range marker per contract, and replaces it when moved', function()
         Env.reset()
         Client.boot()
-        truthy(Client.fire(BLIP, { id = 'ct00000001', x = 1234, y = -568 }))
+        truthy(Client.fire(BLIP, meetingMarker({ id = 'ct00000001', x = 1234, y = -568 })))
         local shown = markers()
         eq(#shown, 1)
         eq(shown[1].kind, 'coord')
@@ -490,14 +500,14 @@ describe('the meeting point marker on the client', function()
         truthy(shown[1].sprite and shown[1].sprite ~= 1, 'its own sprite, not the tip\'s')
         truthy(shown[1].colour and shown[1].colour ~= 1, 'its own colour, not the tip\'s red')
 
-        Client.fire(BLIP, { id = 'ct00000001', x = 1300, y = -500 })
+        Client.fire(BLIP, meetingMarker({ id = 'ct00000001', x = 1300, y = -500 }))
         shown = markers()
         eq(#shown, 1, 'moved, not doubled')
         eq(shown[1].x, 1300.0)
-        Client.fire(BLIP, { id = 'ct00000002', x = 1, y = 2 })
+        Client.fire(BLIP, meetingMarker({ id = 'ct00000002', x = 1, y = 2 }))
         eq(#markers(), 2, 'one each for two contracts')
 
-        Client.fire(CLEAR, { id = 'ct00000001' })
+        Client.fire(CLEAR, { key = 'meeting:ct00000001' })
         shown = markers()
         eq(#shown, 1, 'cleared one')
         eq(shown[1].x, 1.0, 'the other contract\'s stays')
@@ -506,9 +516,9 @@ describe('the meeting point marker on the client', function()
     it('ignores what is not a marker', function()
         Env.reset()
         Client.boot()
-        Client.fire(BLIP, 'nope')
-        Client.fire(BLIP, { id = 'ct00000001', x = 'a', y = 2 })
-        Client.fire(BLIP, { id = 5, x = 1, y = 2 })
+        Client.fire(BLIP, meetingMarker('nope'))
+        Client.fire(BLIP, meetingMarker({ id = 'ct00000001', x = 'a', y = 2 }))
+        Client.fire(BLIP, meetingMarker({ id = 5, x = 1, y = 2 }))
         eq(#markers(), 0)
         Client.fire(CLEAR, 'nope')
     end)
@@ -518,8 +528,8 @@ describe('the meeting point marker on the client', function()
             'onResourceStop' }) do
             Env.reset()
             Client.boot()
-            Client.fire(BLIP, { id = 'ct00000001', x = 1, y = 2 })
-            Client.fire(BLIP, { id = 'ct00000002', x = 3, y = 4 })
+            Client.fire(BLIP, meetingMarker({ id = 'ct00000001', x = 1, y = 2 }))
+            Client.fire(BLIP, meetingMarker({ id = 'ct00000002', x = 3, y = 4 }))
             eq(#markers(), 2)
             -- The engine's handlers for it, not another file's net event of
             -- the same name (Client.fire prefers those).
@@ -534,7 +544,7 @@ describe('the meeting point marker on the client', function()
     it('is never passed to the page', function()
         Env.reset()
         Client.boot()
-        Client.fire(BLIP, { id = 'ct00000001', x = 1234, y = -568 })
+        Client.fire(BLIP, meetingMarker({ id = 'ct00000001', x = 1234, y = -568 }))
         falsy(dump(Client.nuiMessages):find('1234', 1, true), 'nothing of where to the page')
     end)
 end)

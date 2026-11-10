@@ -36,6 +36,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Markers = CrimsonBoot.require('server.lib.markers')
 
 local MissionSteps = {}
 
@@ -59,8 +60,6 @@ MissionSteps.KINDS = {
     disposal_body = true, disposal_vehicle = true, disposal_drop = true,
 }
 
-local SET_EVENT = 'crimson-hitman:client:StepMarker'
-local CLEAR_EVENT = 'crimson-hitman:client:StepMarkerClear'
 
 -- ============================================================================
 --                              SETTINGS
@@ -218,10 +217,7 @@ function MissionSteps.refresh()
                 if not (wanted and wanted[key]) then
                     keys[key] = nil
                     local src = Deps.identity and Deps.identity.sourceOf(cid)
-                    if src then
-                        TriggerClientEvent(CLEAR_EVENT, src, { key = key })
-                        n = n + 1
-                    end
+                    if Markers.clear(src, key) then n = n + 1 end
                 end
             end
             if next(keys) == nil then Shown[cid] = nil end
@@ -233,9 +229,7 @@ function MissionSteps.refresh()
                 if not Same(had, marker) then
                     src = src or (Deps.identity and Deps.identity.sourceOf(cid))
                     if not src then break end
-                    local payload = Util.copy(marker)
-                    payload.key = key
-                    TriggerClientEvent(SET_EVENT, src, payload)
+                    Markers.show(src, key, marker)
                     Shown[cid] = Shown[cid] or {}
                     Shown[cid][key] = marker
                     n = n + 1

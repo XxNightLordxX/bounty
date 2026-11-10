@@ -34,7 +34,8 @@ local places = {}
 --- place to measure, and ends on the pass that finds none.
 local watching = false
 local NpcLoop = {}
---- What is drawn now: [npc] = { ped, blip, key }.
+--- What is drawn now: [npc] = { ped, key }. The blip is CrimsonMarkers'
+--- (client/missionsteps.lua), keyed 'npc:<npc>'; it stays over a logout.
 local drawn = {}
 
 local asked = 0
@@ -52,9 +53,7 @@ local function removePed(npc)
 end
 
 local function removeBlip(npc)
-    local d = drawn[npc]
-    if d and d.blip then RemoveBlip(d.blip) end
-    if d then d.blip = nil end
+    CrimsonMarkers.remove('npc:' .. npc)
 end
 
 local function removeAll()
@@ -88,8 +87,7 @@ end
 local function blipFor(npc, p)
     removeBlip(npc)
     if not p.blip then return end
-    drawn[npc].blip = CrimsonNpc.blip(p.x, p.y, p.z, npc == 'broker' and 280 or 480, 0.8,
-        npc == 'broker' and 'Broker' or 'Informant')
+    CrimsonMarkers.set('npc:' .. npc, { kind = npc, x = p.x, y = p.y, z = p.z })
 end
 
 --- Make what is drawn match what the server said.

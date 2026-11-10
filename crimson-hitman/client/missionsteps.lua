@@ -5,27 +5,30 @@
     ╚═══════════════════════════════════════════════════════════════════════════╝
 ]]
 
---- One marker system for every step (server/missionsteps.lua decides who is
---- sent which): the informant tip's circle and the meeting point (both set
---- from client/main.lua, from their own events), the kill to verify, the
---- handover circle, a guard's pin, and body disposal's body, vehicle spawn
---- and drop-off (crimson-hitman:client:StepMarker / StepMarkerClear). Each is
---- a fixed point the server sent this game alone; the page is never sent
---- one. A body or drop-off marker carries an ox_target sphere at the spot,
+--- One marker system for every blip this resource puts on the map. What the
+--- server decides on comes over one event pair
+--- (crimson-hitman:client:StepMarker / StepMarkerClear, sent by
+--- server/lib/markers.lua to this game alone): the informant tip's circle,
+--- the meeting point, the kill to verify, the handover circle, a guard's pin,
+--- and body disposal's body, vehicle spawn and drop-off. The places this game
+--- already knows draw theirs here too: the broker and informant NPCs
+--- (client/rp_npc.lua) and the organisation's spots (client/org.lua). Each
+--- is a fixed point; the page is never sent one. A body or drop-off marker carries an ox_target sphere at the spot,
 --- whose option asks the server, which checks where it sees the player and
 --- the vehicle. No thread, no loop: blips and zones are made when a marker
---- arrives and removed when it goes, at a logout and at the resource's stop.
---- The places that are not steps of a contract keep their own blips: the
---- broker and informant NPCs (client/rp_npc.lua) and the organisation's
---- spots (client/org.lua).
+--- arrives and removed when it goes, at a logout (but the NPCs', which are
+--- the map's, not the character's: `world`) and at the resource's stop.
 
 CrimsonMarkers = {}
 
 --- How each kind looks. Sprites and colours are GTA's blip ids (check them in
 --- game; docs/in-game-checklist.md). `area` adds a see-through circle of the
---- marker's radius under it; `shortRange` shows it only near the player.
+--- marker's radius under it; `shortRange` shows it only near the player;
+--- `timed` needs the seconds it shows for; `world` stays over a logout; no
+--- `colour` keeps the sprite's own.
 local STYLES = {
-    tip              = { sprite = 1,   colour = 1,  scale = 0.8, name = 'Informant tip', area = true, alpha = 90 },
+    tip              = { sprite = 1,   colour = 1,  scale = 0.8, name = 'Informant tip', area = true, alpha = 90,
+                         timed = true },
     meeting          = { sprite = 162, colour = 5,  scale = 0.9, name = 'Meeting point' },
     kill             = { sprite = 303, colour = 1,  scale = 0.9, name = 'Kill to verify' },
     handover         = { sprite = 161, colour = 17, scale = 0.8, name = 'Handover', area = true, alpha = 80 },
@@ -33,13 +36,17 @@ local STYLES = {
     disposal_body    = { sprite = 310, colour = 40, scale = 0.9, name = 'Body to collect' },
     disposal_vehicle = { sprite = 67,  colour = 40, scale = 0.9, name = 'Disposal vehicle' },
     disposal_drop    = { sprite = 274, colour = 40, scale = 1.0, name = 'Body drop-off' },
+    broker           = { sprite = 280, scale = 0.8, name = 'Broker', shortRange = true, world = true },
+    informant        = { sprite = 480, scale = 0.8, name = 'Informant', shortRange = true, world = true },
+    org_office       = { sprite = 475, scale = 0.7, name = 'Organisation office', shortRange = true },
+    org_spot         = { sprite = 280, scale = 0.7, name = 'Organisation spot', shortRange = true },
 }
 CrimsonMarkers.STYLES = STYLES
 
---- The kinds the server's step event may draw: never the tip or meeting
---- point (their own events) or the places (their own modules).
+--- The kinds the server's marker event may draw: never the places this game
+--- draws from what it already has (the NPCs, the organisation's spots).
 local SENT_KINDS = {
-    kill = true, handover = true, guard = true,
+    tip = true, meeting = true, kill = true, handover = true, guard = true,
     disposal_body = true, disposal_vehicle = true, disposal_drop = true,
 }
 
@@ -80,10 +87,14 @@ function CrimsonMarkers.removePrefix(prefix)
     for i = 1, #keys do CrimsonMarkers.remove(keys[i]) end
 end
 
---- Every marker off: a logout, another character, the resource's stop.
-function CrimsonMarkers.clearAll()
+--- Every marker off: the resource's stop. With `character`, a logout or
+--- another character: every one but the map's own (`world`).
+---@param character boolean|nil
+function CrimsonMarkers.clearAll(character)
     local keys = {}
-    for key in pairs(Drawn) do keys[#keys + 1] = key end
+    for key, entry in pairs(Drawn) do
+        if not (character and STYLES[entry.kind] and STYLES[entry.kind].world) then keys[#keys + 1] = key end
+    end
     for i = 1, #keys do CrimsonMarkers.remove(keys[i]) end
 end
 
@@ -138,7 +149,7 @@ function CrimsonMarkers.set(key, spec)
     local radius = CrimsonGeo.finite(spec.radius)
     local seconds = CrimsonGeo.finite(spec.secondsLeft)
     if style.area and (not radius or radius <= 0) then return false end
-    if seconds ~= nil and seconds <= 0 then return false end
+    if (seconds ~= nil and seconds <= 0) or (style.timed and seconds == nil) then return false end
     CrimsonMarkers.remove(key)
 
     local blips = {}
@@ -150,7 +161,7 @@ function CrimsonMarkers.set(key, spec)
     end
     local centre = AddBlipForCoord(x + 0.0, y + 0.0, 0.0)
     SetBlipSprite(centre, style.sprite)
-    SetBlipColour(centre, style.colour)
+    if style.colour then SetBlipColour(centre, style.colour) end
     SetBlipScale(centre, style.scale)
     SetBlipAsShortRange(centre, style.shortRange == true)
     local name = type(spec.name) == 'string' and spec.name ~= '' and spec.name:sub(1, 64) or style.name or key
@@ -158,7 +169,7 @@ function CrimsonMarkers.set(key, spec)
     blips[#blips + 1] = centre
 
     Gen = Gen + 1
-    local entry = { x = x, y = y, z = CrimsonGeo.finite(spec.z), blips = blips, gen = Gen }
+    local entry = { kind = spec.kind, x = x, y = y, z = CrimsonGeo.finite(spec.z), blips = blips, gen = Gen }
     Drawn[key] = entry
     AddZone(entry, spec)
     -- Off by itself when its time runs out, should the server's word not
@@ -175,11 +186,12 @@ end
 --                              NET EVENTS
 -- ============================================================================
 
---- A step marker from the server, to this game alone.
+--- A marker from the server (server/lib/markers.lua), to this game alone.
 RegisterNetEvent('crimson-hitman:client:StepMarker', function(data)
     if type(data) ~= 'table' or type(data.key) ~= 'string' or not data.key:match('^[%w_:%-]+$') then return end
     if not SENT_KINDS[data.kind] then return end
     local spec = { kind = data.kind, x = data.x, y = data.y, z = data.z, radius = data.radius,
+        secondsLeft = data.secondsLeft,
         act = (data.act == 'load' or data.act == 'drop') and data.act or nil,
         ref = type(data.ref) == 'string' and data.ref:match('^[%w_%-]+$') and data.ref:sub(1, 32) or nil }
     CrimsonMarkers.set(data.key, spec)
@@ -190,10 +202,11 @@ RegisterNetEvent('crimson-hitman:client:StepMarkerClear', function(data)
     CrimsonMarkers.remove(data.key)
 end)
 
--- Another character, or none: their markers are not this one's. The server
--- sends them again when the app asks (MissionSteps.reshow).
-AddEventHandler('QBCore:Client:OnPlayerUnload', function() CrimsonMarkers.clearAll() end)
-AddEventHandler('qbx_core:client:playerLoggedOut', function() CrimsonMarkers.clearAll() end)
+-- Another character, or none: their markers are not this one's (the NPCs'
+-- stay: they are the map's). The server sends them again when the app asks
+-- (MissionSteps.reshow, Meeting.reshow, LocationTip.reshow).
+AddEventHandler('QBCore:Client:OnPlayerUnload', function() CrimsonMarkers.clearAll(true) end)
+AddEventHandler('qbx_core:client:playerLoggedOut', function() CrimsonMarkers.clearAll(true) end)
 AddEventHandler('onResourceStop', function(resource)
     if resource ~= GetCurrentResourceName() then return end
     CrimsonMarkers.clearAll()

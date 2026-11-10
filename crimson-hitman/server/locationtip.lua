@@ -21,6 +21,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Markers = CrimsonBoot.require('server.lib.markers')
 
 local LocationTip = {}
 
@@ -199,8 +200,8 @@ end
 --- Put a tip on its buyer's map: the centre and the radius, to their game
 --- alone, and nothing else.
 local function deliver(src, row, now)
-    TriggerClientEvent('crimson-hitman:locationTip', src, {
-        id = row.contract_id, x = tonumber(row.centre_x), y = tonumber(row.centre_y),
+    Markers.show(src, 'tip:' .. row.contract_id, {
+        kind = 'tip', x = tonumber(row.centre_x), y = tonumber(row.centre_y),
         radius = tonumber(row.radius),
         secondsLeft = math.max(0, (tonumber(row.expires_at) or 0) - now),
     })
@@ -210,8 +211,7 @@ end
 local function clearFor(cid, contractId)
     local actor = Identity.byCitizenId(cid)
     if not actor then return false end
-    TriggerClientEvent('crimson-hitman:locationTipClear', actor.source, { id = contractId })
-    return true
+    return Markers.clear(actor.source, 'tip:' .. contractId)
 end
 
 --- Take the tip off the map when its time runs out, unless a newer one on
