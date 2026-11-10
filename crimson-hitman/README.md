@@ -141,7 +141,7 @@ already settled by hand.
 - A crash never charges downtime to a deadline: running contracts are paused for at least as long as the server was down. Claims and endings the crash cut short are finished at the next start, and their parties told.
 - Balances move through `qbx_core`'s `Save`; items and dirty money are `ox_inventory`'s, saved every five minutes. After a hard crash, compare the last five minutes of `escrow_*`, `stake_taken` and `pending_delivered` audit rows with what those players carry.
 - `mysql`: no statement waits longer than `Config.Database.QueryTimeoutSeconds` (10 s). The console says when the database stopped answering and when it answers again; players are told *The server's records did not answer in time*, and a payment caught in the middle is settled by the server once it answers (kept on the machine meanwhile, restarts included). `/ch-diag` says whether it answers now. Wait; restart only once it says `database: answering`. Back up with `mysqldump --single-transaction`, never `--lock-tables` during play.
-- If the staff freezes cannot be read (at the start or later), every live contract is held until they can be: the console says so once and then every five minutes, the read is tried again after a wait that grows to five minutes, the Overview's **Frozen players** reads *Unknown*, and a held contract's badge reads *store unreadable* (*held* without IdentityAce). The first good read gives every contract back the lifetime the outage took.
+- If the staff freezes cannot be read (at the start or later), every live contract is held until they can be: the console says so once and then every five minutes, the read is tried again after a wait that grows to five minutes, the Dashboard's **Frozen** reads *Unknown*, and a held contract's badge reads *store unreadable* (*held* without IdentityAce). The first good read gives every contract back the lifetime the outage took.
 
 ## Roles and how a contract works
 
@@ -209,6 +209,15 @@ Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays th
 - Every request is rate-limited per player (`Config.Cooldowns`), every write is audited, and nothing a player's game sends is trusted for money, items or position.
 - Anonymous parties stay anonymous to everybody but staff holding `crimson.identity`, in every view and log.
 
+### The app's screens
+
+Every screen says in one line, at its top, what it is for. The **Board**,
+where the app opens, also sums up what you have going (*N taken*, *N
+placed*, *N on you*: a tap on each opens where they are) and has one
+**search** over the contracts on the board and the app's own screens: type
+a name or a word, and the cards that do not match step aside while the
+screens that do (*Open Ledger*, *Open Place*…) are one tap away.
+
 ### The most common actions, in taps
 
 Every write takes two taps (the second confirms). Counted from the tab the
@@ -267,10 +276,23 @@ can do what* (every ACE, and how to grant it).
   tabs scroll along one line, and the drawer takes the whole screen.
 - A view has one name. A view remembered under a name it no longer has
   opens on Home, like any name the panel does not know.
+- **One line of help** under every view's title says what it is for.
+- **A gear** beside that line (*Settings for this screen*) opens the
+  settings the view works by, above it, as rows of the settings list (two
+  clicks, on the record, undone from Change history); *All settings* there
+  opens Game rules, the view of every setting. Views that are settings
+  already have none.
+- **Home opens on its dashboard**: what waits for you (each count opens its
+  list), the live counts (contracts by state, operatives, money held and
+  owed, measures on players), **quick actions** (Find a player, Contracts,
+  Live by target, Announce, Game rules) and the server's **health** at a
+  glance (recovery, storage, setup problems, settings changed here).
+- A refusal the server gives without words of its own says so in a
+  sentence; no internal code is shown.
 
 | Section | Tabs | Use it to |
 |---|---|---|
-| **Home** | Inbox, Overview, Announce | The inbox lists what waits for staff in one place, with a chip and a count for each: **Needs review** (refund, pay or dismiss), **Money waiting** (escrow lines left for you to settle: Pay, Pay amount, Return, Delivered) and the open **Alerts** (Acknowledge); and, while a body is being disposed of, every such step with **Skip** and **Respawn vehicle**. The overview counts contracts, operatives, money held and owed, and who is frozen, suspended or protected, with the setup problems for staff who can change things. Announce sends one notice to every hitman holding a contract, or everybody with the app |
+| **Home** | Dashboard, Inbox, Announce | The dashboard is described above. The inbox lists what waits for staff in one place, with a chip and a count for each: **Needs review** (refund, pay or dismiss), **Money waiting** (escrow lines left for you to settle: Pay, Pay amount, Return, Delivered) and the open **Alerts** (Acknowledge); and, while a body is being disposed of, every such step with **Skip** and **Respawn vehicle**. The dashboard counts contracts, operatives, money held and owed, and who is frozen, suspended or protected, with the setup problems for staff who can change things. Announce sends one notice to every hitman holding a contract, or everybody with the app |
 | **Players** | Find & summary, then for the player looked up **Their contracts** (Contracts, filtered to them), Measures, Money, Playtime, History, *Why can't they see…*; and All measures | Look a player up (player id, citizen id or name; recent lookups are one click). Measures: **Freeze**, **Suspend**, **Protect**, and their standing in Target limits. Money: what they are owed, notices for their next login, **Pay**. *Why can't they see…* runs the diagnosis as them. All measures is one list of everybody frozen, suspended, protected or with target limits of their own, filtered by kind, each freeze, suspension and protection with **Unfreeze** or **Lift** (their own target limits are lifted in Target limits, Per player, with a reason) |
 | **Contracts** | Contracts | The one list of contracts. Search and filter (state, rule, when placed), narrow it to **one person** (a player id, citizen id or name, or *Their contracts* from a player's card) with their part on each (**Target**, **Placer**, **Hitman**; an anonymous part only with `crimson.identity`, which also gets **Whois** on each row), or list the live ones **by target**; then open one. Above the list, every body being disposed of ([body disposal](#mission-steps)) with the exact time left, **Skip** and **Respawn vehicle**. The drawer has tabs: **Summary** (terms, the deadline with **Extend** / **Shorten**, open proposals), **Money** (lines waiting for staff, payouts, **Change reward** with the server's figures before it arms, escrow lines; its tab counts the lines waiting), **People** (operatives, **Remove an operative**, **Reassign to another hitman** looked up in Players, *As a player sees it*, Whois), **Notes & text** (staff notes, **Edit text**) and **Record** (timeline, export). **Void** is under **More** |
 | **Target limits** | Defaults, Per job, Per player; **History ▸**, **Live contracts by target ▸** | See [Target limits](#target-limits). **History ▸** opens Records › Logs on the audit log's `staff_target_` rows; **Live contracts by target ▸** opens Contracts listing the live ones by target |

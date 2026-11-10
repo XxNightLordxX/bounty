@@ -718,7 +718,7 @@ async function main() {
   // a selected player's tabs once one is looked up.
   const sections = ['inbox', 'overview', 'announce', 'players', 'pmeasures', 'pmoney', 'pplaytime',
     'phistory', 'pdiag', 'their-contracts', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
-    'contracts:bytarget', 'rules', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
+    'contracts:bytarget', 'gear:contracts', 'gear:tljobs', 'rules', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
     'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'logs:org',
     'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'logs:audit', 'alerts', 'health', 'devsettings',
     'console', 'tools', 'help', 'howto', 'permissions'];
@@ -784,6 +784,11 @@ async function main() {
         // The one list of contracts, filtered to the player looked up.
         await go(page, 'players');
         await page.click('button[data-act="pl-contracts"]');
+      } else if (section.indexOf('gear:') === 0) {
+        // A screen with its own settings opened in place by its gear.
+        await go(page, section.slice(5));
+        await page.waitForTimeout(80);
+        await page.click('button[data-act="gear"]');
       } else {
         await go(page, section);
       }

@@ -2572,7 +2572,7 @@ async function main() {
       has(app.text(app.byId('crumbs')), 'Game rules');
       eq(crumb(), 'Areas');
     });
-    const views = { inbox: 'Inbox', overview: 'Overview', announce: 'Announce', players: 'Find & summary',
+    const views = { inbox: 'Inbox', overview: 'Dashboard', announce: 'Announce', players: 'Find & summary',
       measures: 'All measures', contracts: 'Contracts',
       tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player',
       rules: 'Areas', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
@@ -2581,17 +2581,28 @@ async function main() {
       bplimits: 'Limits', bpoffice: 'Delegation & office', 'logs:grants': 'Grant history', locations: 'Map points',
       'logs:targets': 'Audit log', logs: 'Audit log', alerts: 'Alerts', health: 'Health', devsettings: 'Engine settings', console: 'Console',
       tools: 'Test tools', help: 'How it works', howto: 'How do I…', permissions: 'Who can do what' };
-    const reached = [], drew = [];
+    const reached = [], drew = [], helped = [];
     for (const view of Object.keys(views)) {
       app.nav(view);
       await settled();
       if (crumb() === views[view]) reached.push(view);
       if (app.main().length > 20) drew.push(view);
+      // One line of help under its title: one sentence, short enough for one line.
+      const help = app.$$('.view-help');
+      if (help.length === 1 && help[0].textContent.length >= 20 && help[0].textContent.length <= 110
+          && (help[0].textContent.match(/[.!?](\s|$)/g) || []).length === 1) helped.push(view);
     }
     it('every view is reachable, says so on its breadcrumb, and draws something', function () {
       eq(reached, Object.keys(views));
       eq(drew, Object.keys(views));
       clean(app, 'every view');
+    });
+    it('every view has one line of help under its title (step 4b)', function () {
+      eq(helped, Object.keys(views));
+      const help = app.window.CH_ADMIN_VIEW_HELP;
+      ['pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag'].forEach(function (v) {
+        truthy(help[v] && help[v].length <= 110, 'a player\'s ' + v + ' tab');
+      });
     });
     // A view has one name: an old one (rule 4: no old-name mappings) is
     // not a view, and lands on Home's inbox like any other unknown name.
@@ -5609,6 +5620,89 @@ async function main() {
           client: 'Vic Marlowe', slots: 1, claimed: 0, created_at: NOW - 30 }] } }
     }, extra || {}));
   }
+
+  /* Step 4b: Home is a dashboard (live counts, the inbox, quick actions and
+     health at a glance), and nothing the server refuses shows a code. */
+  await (async function homeDashboard() {
+    const app = boot(standardServer({ overview: overview({ warnings: ['A problem with the setup'], overrides: 2 }),
+      announce: { ok: false, err: 'some_internal_code' } }));
+    app.open(ADMIN);
+    await settled();
+    app.group('home');
+    await settled();
+    it('Home opens on its dashboard', function () {
+      eq(app.byId('nav-overview').getAttribute('aria-current'), 'page');
+      has(app.text(app.byId('crumbs')), 'Dashboard');
+    });
+    it('with what waits, live counts, quick actions and the server\'s health at a glance', function () {
+      const text = app.main();
+      has(text, 'waiting for you');
+      has(text, 'Operatives');
+      has(text, 'Quick actions');
+      has(text, 'Health');
+      has(text, '1 problem');
+      has(text, '2 settings');
+    });
+    app.click(app.button('Live by target'));
+    await settled();
+    it('a quick action is one click to where it is done', function () {
+      eq(app.byId('nav-contracts').getAttribute('aria-current'), 'page');
+      eq(app.last('contracts').data, { page: 1, state: 'live', byTarget: true });
+    });
+    app.nav('announce');
+    await settled();
+    it('a refusal with no words of its own shows no internal code', function () {
+      const words = app.window.CH_ADMIN_WORDS({ ok: false, err: 'some_internal_code' });
+      lacks(words, 'some_internal_code');
+      lacks(words, 'Refused (');
+      has(words, 'The audit log has the details');
+    });
+    clean(app, 'the dashboard');
+  })();
+
+  /* Step 4b: a gear on each screen opens that screen's settings in place;
+     Game rules stays the view of all of them. */
+  await (async function settingsGear() {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    const gear = app.$('[data-act="gear"]');
+    it('Contracts carries a gear beside its line of help', function () {
+      truthy(gear, 'the gear');
+      eq(app.byId('gear').hidden, true, 'closed until asked');
+    });
+    app.click(gear);
+    await settled();
+    it('the gear opens the screen\'s own settings above it, without leaving it', function () {
+      eq(app.byId('nav-contracts').getAttribute('aria-current'), 'page');
+      eq(app.byId('gear').hidden, false);
+      has(app.text(app.byId('gear')), 'Settings for this screen');
+      truthy(app.byId('gear').querySelector('#st-row-Bailout\\.Enabled') || app.byId('st-row-Bailout.Enabled'),
+        'the buyout switch, a setting of contracts');
+      falsy(app.text(app.byId('gear')).indexOf('Put the app on every home screen') !== -1, 'and not another screen\'s');
+      truthy(app.button('All settings', app.byId('gear')), 'one click to every setting');
+    });
+    const sw = app.byId('st-row-Bailout.Enabled').querySelector('.switch');
+    app.click(sw);
+    await settled();
+    it('a change there takes two clicks, as everywhere', function () {
+      eq(app.requests('setSetting').length, 0, 'sent on one click');
+    });
+    app.click(app.byId('st-row-Bailout.Enabled').querySelector('.switch'));
+    await settled();
+    it('and the second click saves it', function () {
+      eq(app.last('setSetting').data.key, 'Bailout.Enabled');
+    });
+    app.click(app.$('[data-act="gear"]'));
+    await settled();
+    it('the gear closes it again', function () { eq(app.byId('gear').hidden, true); });
+    app.nav('rules');
+    await settled();
+    it('a screen that is settings already has no gear', function () { eq(app.$('[data-act="gear"]'), null); });
+    clean(app, 'the settings gear');
+  })();
 
   await (async function targetLimitsSection() {
     const app = boot(tlServer());

@@ -233,6 +233,16 @@ main > * { flex: none; }
 main::-webkit-scrollbar { width: 0.3rem; }
 main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 
+/* ---------- one line of help, the Board's summary and search ---------- */
+
+.screen-help { margin: 0 0.1rem; }
+.home-summary { margin-top: 0; }
+.home-summary > button { min-width: 0; flex: 1 1 0; font-size: var(--t-sm); padding: 0.4rem 0.5rem; }
+.board-search { display: flex; flex-direction: column; gap: 0.45rem; }
+.search-field { -webkit-appearance: none; appearance: none; }
+.search-screens { margin-top: 0; }
+.search-screens > button { flex: 0 1 auto; font-size: var(--t-sm); }
+
 /* ---------- contract card ---------- */
 
 /* A card is a file on the desk: a flat, warm sheet with a hairline edge

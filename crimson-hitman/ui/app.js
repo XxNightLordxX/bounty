@@ -577,7 +577,7 @@
     // mysql mode only: the item's own data is more than the escrow table
     // holds. Refused before anything was taken.
     item_too_large: 'One of those items carries more data than this server can hold '
-      + 'in escrow. Leave it out.',
+      + 'for a reward. Leave it out.',
     invalid_input: 'Check what you entered.',
     server_error: 'Something broke on the server, not on your end. '
       + 'An admin can see what in the server console.',
@@ -8354,6 +8354,90 @@
     return 'You are suspended from contracts until ' + until + ': ' + reason;
   }
 
+  /* ---------- one line of help, and the Board's top ----------
+
+     Every screen says in one line what it is for, under the status bar.
+     The Board, where the app opens, also sums up what this player has
+     going (contracts taken, placed, on them: each a tap to where they are)
+     and searches the contracts on it and the app's own screens. */
+  var SCREEN_HELP = {
+    board: 'Open contracts you can take. Accept one to work it.',
+    mine: 'The contracts you took and the ones you placed, with their messages.',
+    place: 'Put a price on someone: pick who, the reward and the terms.',
+    onme: 'Contracts with you as the target, and what you can do about them.',
+    ledger: 'Your record: the contracts you finished, placed and survived.',
+    org: 'The hitman organisation: your place in it, its members and its money.'
+  };
+  var SCREENS = [['board', 'Board', 'open contracts to take'], ['mine', 'Mine', 'contracts you took or placed, messages'],
+    ['place', 'Place', 'put a contract on someone, reward'], ['onme', 'On me', 'contracts on you, buy out'],
+    ['ledger', 'Ledger', 'your record, finished contracts'], ['org', 'Org', 'the organisation, members, money']];
+
+  /** Opens a tab as its own button does (wireTab), so it reads afresh. */
+  function tabNode(name) {
+    return Array.prototype.filter.call(document.querySelectorAll('.tab'), function (t) {
+      return t.dataset && t.dataset.tab === name;
+    })[0] || null;
+  }
+  function goTab(name) {
+    var tab = tabNode(name);
+    if (tab && tab.onclick) { tab.onclick(); }
+  }
+
+  function screenHelp() {
+    return SCREEN_HELP[state.tab] ? el('p', 'hint screen-help', SCREEN_HELP[state.tab]) : null;
+  }
+
+  /** What this player has going, from Mine's answer: one tap to each. */
+  function homeSummary() {
+    var data = state.mine;
+    if (!data || data.burnerMissing) { return null; }
+    var parts = [['mine', asList(data.accepted).length, 'taken'], ['mine', asList(data.created).length, 'placed'],
+      ['onme', asList(data.onMe).length, 'on you']];
+    var row = el('div', 'row home-summary');
+    parts.forEach(function (p) {
+      var b = el('button', 'ghost' + (p[2] === 'on you' && p[1] > 0 ? ' danger' : ''), p[1] + ' ' + p[2]);
+      b.onclick = function () { goTab(p[0]); };
+      row.appendChild(b);
+    });
+    return row;
+  }
+
+  /** The search: the board's cards that match, hidden in place (no redraw,
+      so the field keeps the keyboard), and the screens whose words match. */
+  function boardSearch() {
+    var box = el('div', 'board-search');
+    var input = el('input', 'search-field');
+    input.type = 'search';
+    input.placeholder = 'Search contracts and screens';
+    input.setAttribute('aria-label', 'Search contracts and screens');
+    input.value = state.find || '';
+    var screens = el('div', 'row search-screens');
+    function apply() {
+      var q = String(input.value || '').trim().toLowerCase();
+      state.find = input.value;
+      box.cards.forEach(function (node) {
+        node.hidden = !!q && String(node.textContent || '').toLowerCase().indexOf(q) === -1;
+      });
+      screens.innerHTML = '';
+      if (q) {
+        SCREENS.forEach(function (sc) {
+          if (!tabNode(sc[0])) { return; }
+          if ((sc[1] + ' ' + sc[2]).toLowerCase().indexOf(q) === -1) { return; }
+          var go = el('button', 'ghost ico ico-end i-right', 'Open ' + sc[1]);
+          go.onclick = function () { goTab(sc[0]); };
+          screens.appendChild(go);
+        });
+      }
+      screens.hidden = !screens.children.length;
+    }
+    input.oninput = apply;
+    box.appendChild(input);
+    box.appendChild(screens);
+    box.cards = [];
+    box.apply = apply;
+    return box;
+  }
+
   function viewBoard(view) {
     // The board's Protection tab, where the server runs bodyguard jobs; and
     // for a guard on a live job after it was switched off (the server says
@@ -8376,16 +8460,24 @@
       view.appendChild(el('div', 'empty is-refusal', burnerText(data.burnerItem)));
       return;
     }
+    var summary = homeSummary();
+    if (summary) { view.appendChild(summary); }
+    var search = boardSearch();
+    view.appendChild(search);
     // A broker player's tools (Config.Intel.Rumours), above the board.
     if (data && data.rumours && data.rumours.broker) { view.appendChild(brokerPanel()); }
     var contracts = asList(data && data.contracts);
     if (!data || contracts.length === 0) {
       view.appendChild(el('div', 'empty', 'No contracts on the board.'));
+      search.apply();
       return;
     }
     contracts.forEach(function (c) {
-      view.appendChild(c && c.rumour ? rumourCard(c, data.rumours || {}) : card(c, 'board'));
+      var node = c && c.rumour ? rumourCard(c, data.rumours || {}) : card(c, 'board');
+      search.cards.push(node);
+      view.appendChild(node);
     });
+    search.apply();
 
     // The board is sent a page at a time. With no pager, every contract past
     // the first page could never be seen or taken from the phone.
@@ -9277,7 +9369,7 @@
       ceilingNote.id = 'slots-ceiling';
       pay.appendChild(ceilingNote);
       pay.appendChild(el('div', 'hint',
-        'Every payout is funded and escrowed up front. More hitmen may accept than there are ' +
+        'Every payout is paid in and held up front. More hitmen may accept than there are ' +
         'payouts — the first to finish are paid.'));
     }
     // The least a contract may be worth (caps.minValue, 0 for none), said
@@ -11255,6 +11347,8 @@
       var invite = inviteBanner();
       if (invite) { view.appendChild(invite); }
     }
+    var help = screenHelp();
+    if (help) { view.appendChild(help); }
 
     ({
       board: viewBoard, mine: viewMine, place: viewPlace,
@@ -11491,7 +11585,7 @@
           state.mine = r.data;
           keepAnswer('mine', seen.text, r.data);
           [r.data.created, r.data.accepted, r.data.onMe].forEach(stampClocks);
-          redrawFor(['mine', 'onme']);
+          redrawFor(['mine', 'onme', 'board']);
         }
         var data = state.mine;
         if (proposals && typeof proposals === 'object') {

@@ -273,7 +273,7 @@
      names kept for it. Developer is only for staff the server says may open
      it (access.canDevelop). */
   var GROUPS = [
-    { id: 'home', head: 'Daily', label: 'Home', icon: 'house', views: ['inbox', 'overview', 'announce'] },
+    { id: 'home', head: 'Daily', label: 'Home', icon: 'house', views: ['overview', 'inbox', 'announce'] },
     { id: 'players', head: 'Daily', label: 'Players', icon: 'user',
       views: ['players', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag', 'measures'] },
     { id: 'contracts', head: 'Daily', label: 'Contracts', icon: 'file-contract', views: ['contracts'] },
@@ -298,7 +298,7 @@
   ];
   /** Each view's name on its sub-tab, its icon, and on the breadcrumb. */
   var VIEW_LABEL = {
-    inbox: ['Inbox', 'inbox'], overview: ['Overview', 'gauge-high'], announce: ['Announce', 'bullhorn'],
+    inbox: ['Inbox', 'inbox'], overview: ['Dashboard', 'gauge-high'], announce: ['Announce', 'bullhorn'],
     players: ['Find & summary', 'magnifying-glass'],
     pmeasures: ['Measures', 'snowflake'], pmoney: ['Money', 'sack-dollar'], pplaytime: ['Playtime', 'clock'],
     phistory: ['History', 'clock-rotate-left'], pdiag: ['Why can’t they see…', 'stethoscope'],
@@ -316,6 +316,47 @@
     tools: ['Test tools', 'screwdriver-wrench'],
     help: ['How it works', 'circle-question'], howto: ['How do I…', 'hand'], permissions: ['Who can do what', 'key']
   };
+  /** One line of help under every view's title (drawn with the breadcrumb). */
+  var VIEW_HELP = {
+    overview: 'Everything at a glance: what waits for you, live counts, quick actions and the server\'s health.',
+    inbox: 'What waits for staff: reviews no rule could settle, money left for you, alerts not seen yet.',
+    announce: 'Send one notice to every hitman holding a contract, or to everybody with the app.',
+    players: 'Look a player up by player id, citizen id or name, then act from their card.',
+    pmeasures: 'Freeze, suspend or protect this player, and their standing in Target limits.',
+    pmoney: 'What this player is owed, notices waiting for their next login, and Pay.',
+    pplaytime: 'The hours counted for this player, for the new-player rule.',
+    phistory: 'This player\'s contracts, money and measures over time.',
+    pdiag: 'Why a contract, the board or a feature is not showing for this player.',
+    measures: 'Everybody frozen, suspended, protected or with target limits of their own.',
+    contracts: 'Every contract: search, filter by state or by one person, then open one to act on it.',
+    tldefaults: 'How often one person may have a contract placed on them, for everybody.',
+    tljobs: 'A job\'s own target limits, and one action for every player of a job.',
+    tlplayer: 'One target\'s cooldown and counts, exactly, with Reset, Extend and Exempt.',
+    rules: 'Every game rule by the area it is about; pick an area or a type of setting.',
+    changed: 'The settings changed from this panel, each with Reset to config.lua.',
+    orgsetup: 'The hitman organisation\'s switch, its job and how it runs.',
+    orgroles: 'The organisation\'s roles, their rank and their pay.',
+    orgmembers: 'Who is in the organisation, their role and duty.',
+    orgapps: 'Applications to join the organisation, to accept or turn down.',
+    orgfunds: 'The organisation\'s money and the cut it takes of contracts.',
+    orgaccess: 'Which contracts the organisation\'s members may take.',
+    orgnotices: 'Notices pinned for the organisation\'s members.',
+    bpmatrix: 'What each boss role, and each boss, may do in the organisation.',
+    bplimits: 'The limits on each boss power.',
+    bpoffice: 'Which powers bosses may hand down, and which need the boss office.',
+    locations: 'Every place on the map this resource uses, set where you stand or by hand.',
+    logs: 'Every staff and game action on the record, filtered by area, player or time.',
+    alerts: 'Problems the server raised, to acknowledge once handled.',
+    health: 'What the server itself is doing: jobs, stores, other resources.',
+    devsettings: 'Engine settings: storage, timings and limits only developers change.',
+    console: 'Run a staff console command from the panel.',
+    tools: 'Test tools: try a feature without a real player.',
+    help: 'How the contract app works, in plain words, each card linked to its settings.',
+    howto: 'Short answers to how do I…, each with a button to where it is done.',
+    permissions: 'Who can do what: every permission this resource checks.'
+  };
+  window.CH_ADMIN_VIEW_HELP = VIEW_HELP;
+
   /** The views only the Developer section's staff see. */
   var DEV_VIEWS = { health: true, devsettings: true, console: true };
   /** A selected player's own tabs, shown once somebody is looked up. */
@@ -469,8 +510,10 @@
     if (!reply) return WORDS.no_answer;
     if (reply.message) return String(reply.message);
     if (reply.ok) return 'Done.';
-    return WORDS[reply.err] || ('Refused (' + (reply.err || 'no reason given') + ').');
+    return WORDS[reply.err] || 'Not done: the server refused it without saying why. The audit log has the details.';
   }
+  /** For the tests. */
+  window.CH_ADMIN_WORDS = words;
 
   /** Ask the server. Resolves the reply ({ ok, err, message, data }, or one
       saying nothing answered), or null when nobody is waiting for it any more:
@@ -854,7 +897,11 @@
     setHtml(node, frag(parts.map(function (part, i) {
       return frag(i ? h('span.crumb-sep', { 'aria-hidden': 'true' }, '›') : null,
         h('span.crumb' + (i === parts.length - 1 ? '.is-here' : ''), part));
-    })));
+    }), VIEW_HELP[S.section] ? h('div.view-help-row', h('p.view-help', VIEW_HELP[S.section]),
+      VIEW_SETTINGS[S.section] ? frag(h('button.link.gear-btn', { type: 'button', 'data-act': 'gear',
+        'aria-expanded': S.gearOpen === S.section ? 'true' : 'false', 'aria-controls': 'gear',
+        title: 'This screen\'s settings, here' }, icon('gear'), ' ', S.gearOpen === S.section
+        ? 'Hide its settings' : 'Settings for this screen')) : null) : null));
   }
 
   /** Whether a player is selected: looked up, with a handle to act on. */
@@ -1101,7 +1148,8 @@
     drawSearch();
     drawChrome();
     var main = byId('main');
-    setHtml(main, SHELL[section]());
+    if (S.gearOpen !== section) S.gearOpen = null;
+    setHtml(main, frag(h('div.gear', { id: 'gear', hidden: S.gearOpen !== section }, gearBody()), SHELL[section]()));
     if (main) main.scrollTop = 0;
     LOAD[section](before);
     // The overview's pace follows the section: quicker on Home and the live views.
@@ -1271,9 +1319,33 @@
     var frozenUnknown = !!measures.unknown;
     var held = frozenCount > 0 || frozenUnknown;
 
+    var problems = canWrite() ? warnings.length : 0;
     return frag(
       h('div.tiles',
         tile('Inbox', inboxCounts(o)),
+        tile('Quick actions', h('div.btn-row.quick',
+          btn('.is-small', 'section', { 'data-section': 'players' }, 'Find a player', 'magnifying-glass'),
+          btn('.is-small', 'section', { 'data-section': 'contracts' }, 'Contracts', 'file-contract'),
+          btn('.is-small', 'section', { 'data-section': 'contracts:bytarget' }, 'Live by target', 'crosshairs'),
+          btn('.is-small', 'section', { 'data-section': 'announce' }, 'Announce', 'bullhorn'),
+          btn('.is-small', 'section', { 'data-section': 'rules' }, 'Game rules', 'scale-balanced'))),
+        tile('Health', frag(
+          h('p.big' + (o.recovery !== 'ready' || problems ? '.is-warn' : '') + '.is-word',
+            o.recovery === 'recovering' ? 'Recovering' : o.recovery !== 'ready' ? 'Recovery failed'
+              : problems ? num(problems) + ' problem' + (problems === 1 ? '' : 's') : 'All well'),
+          h('dl.facts',
+            h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'finished'
+              : o.recovery === 'recovering' ? 'still running' : 'FAILED'),
+            h('dt', 'Storage'), h('dd', String(o.storage || '—')),
+            h('dt', 'Setup problems'), h('dd', canWrite() ? num(warnings.length) : '—'),
+            h('dt', 'Changed here'), h('dd', Number(o.overrides) > 0 ? h('button.link', { type: 'button',
+              'data-act': 'section', 'data-section': 'changed' }, num(o.overrides) + ' setting'
+              + (Number(o.overrides) === 1 ? '' : 's')) : 'none')),
+          o.storage === 'memory' ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are '
+            + 'gone at the next start' }, 'memory mode: nothing is kept across a restart') : null,
+          canDevelop() ? h('div.btn-row', btn('.is-small.ghost', 'section', { 'data-section': 'health' },
+            'Server health', 'heart-pulse')) : null),
+          o.recovery !== 'ready' || problems ? '.is-warn' : ''),
         tile('Contracts', frag(
           h('p.big', num(contracts.total)),
           h('div.chips', states.filter(function (s) { return byState[s]; }).map(function (s) {
@@ -1304,12 +1376,6 @@
             btn('.is-small.ghost', 'ms-open', { 'data-value': 'suspend' }, 'Suspended', 'arrow-right'),
             btn('.is-small.ghost', 'ms-open', { 'data-value': 'protect' }, 'Protected', 'arrow-right'))),
           held ? '.is-warn' : '')),
-      h('p.foot', h('span', 'Recovery: ' + (o.recovery === 'ready' ? 'finished'
-        : o.recovery === 'recovering' ? 'still running' : 'FAILED')),
-        Number(o.overrides) > 0 ? h('button.link', { type: 'button', 'data-act': 'section', 'data-section': 'changed' },
-          num(o.overrides) + ' setting' + (Number(o.overrides) === 1 ? '' : 's') + ' changed from the panel') : null,
-        o.storage === 'memory' ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are '
-          + 'gone at the next start' }, 'memory mode: nothing is kept across a restart') : null),
       warnings.length && canWrite() ? card('Setup problems (' + num(warnings.length) + ')', frag(
         h('ul.warnings', warnings.map(function (line) { return h('li', String(line)); })),
         S.tools.diag && S.section === 'overview' ? linesBox(S.tools.diag.lines, S.tools.diag.later) : null),
@@ -4342,12 +4408,79 @@
   LOAD.help = function () {};
 
 
+  /* ---------- a screen's own settings, in place (the gear) -------------
+
+     Every screen that has settings of its own carries a gear beside its
+     line of help: it opens that screen's settings above it, as rows of the
+     settings list (the same Save, two clicks, Reset and Details), without
+     leaving the screen. Game rules (every setting, by area) stays the view
+     of all of them, one click from the panel. The screens that are settings
+     already (Game rules, Changed, Defaults, Engine settings, the
+     organisation's Setup, Boss limits, Locations) have no gear. */
+  var VIEW_SETTINGS = {
+    overview: { areas: ['staff'] }, inbox: { areas: ['staff'] }, announce: { areas: ['messages', 'staff'] },
+    players: { areas: ['staff'] }, pmeasures: { areas: ['staff'] }, measures: { areas: ['staff'] },
+    pmoney: { areas: ['rewards'] }, pplaytime: { areas: ['access'] }, pdiag: { areas: ['access'] },
+    phistory: { areas: ['record'] },
+    contracts: { areas: ['placing', 'completing', 'buyouts', 'anonymity'] },
+    tljobs: { view: 'tldefaults' }, tlplayer: { view: 'tldefaults' },
+    orgroles: { view: 'orgsetup' }, orgmembers: { view: 'orgsetup' }, orgapps: { view: 'orgsetup' },
+    orgfunds: { view: 'orgsetup' }, orgaccess: { view: 'orgsetup' }, orgnotices: { view: 'orgsetup' },
+    bpmatrix: { view: 'bplimits' }, bpoffice: { view: 'bplimits' },
+    logs: { areas: ['staff'] }, alerts: { areas: ['staff'] },
+    health: { view: 'devsettings' }, console: { view: 'devsettings' }, tools: { view: 'devsettings' }
+  };
+  window.CH_ADMIN_VIEW_SETTINGS = VIEW_SETTINGS;
+
+  /** The settings a screen's gear shows. */
+  function gearEntries(view) {
+    var spec = VIEW_SETTINGS[view];
+    if (!spec) return [];
+    var d = S.settings.data || {};
+    var out = [];
+    ['features', 'limits', 'readonly'].forEach(function (list) {
+      asList(d[list]).forEach(function (entry) {
+        if (spec.view ? viewOfSetting(entry) === spec.view
+          : inRules(entry) && spec.areas.indexOf(areaOf(entry)) !== -1) out.push(entry);
+      });
+    });
+    return out;
+  }
+
+  function gearBody() {
+    if (S.gearOpen !== S.section) return frag();
+    if (!S.settings.data) return loading('Reading the settings…');
+    var rows = gearEntries(S.section);
+    var gr = grouped(rows, 'rules');
+    return card('Settings for this screen', frag(
+      h('p.hint', 'The settings this screen works by. Every change takes two clicks, is on the record and can be '
+        + 'undone from Change history.'),
+      rows.length ? gr.groups.map(function (g) { return groupSection(g, gr.byGroup[g]); })
+        : empty('This screen has no settings of its own.'),
+      h('div.btn-row', btn('.is-small.ghost', 'section', { 'data-section': 'rules' }, 'All settings', 'sliders'))),
+      '.gear-card');
+  }
+
+  function drawGear() {
+    var node = byId('gear');
+    if (!node) return;
+    node.hidden = S.gearOpen !== S.section;
+    setHtml(node, gearBody());
+  }
+  AFTER_SETTINGS.push(function () { if (S.gearOpen === S.section) drawGear(); });
+
   /* ---------- what a click, a key or typing does ----------------------- */
 
   var ACTIONS = {};
   var LIVE = {};
 
   ACTIONS.close = function () { close(); };
+  ACTIONS.gear = function () {
+    S.gearOpen = S.gearOpen === S.section ? null : S.section;
+    drawCrumbs();
+    drawGear();
+    if (S.gearOpen && !S.settings.data) loadSettings();
+  };
   ACTIONS.section = function (node) { show(node.getAttribute('data-section')); };
   /** Look up / Freeze in the contract view: Players, on that party. */
   ACTIONS['party-lookup'] = function (node) {

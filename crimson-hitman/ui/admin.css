@@ -740,6 +740,14 @@ ul, ol { list-style: none; }
   padding: 0.5rem 1.3rem 0; font-size: var(--t-xs); color: var(--ink-faint); min-width: 0;
 }
 .crumb { overflow-wrap: anywhere; }
+/* One line of help under every view's title. */
+.view-help-row { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.6rem; margin-top: 0.15rem; }
+.view-help { color: var(--ink-dim); font-size: var(--t-sm); }
+.btn-row.quick { margin-top: 0.2rem; }
+/* A screen's own settings, opened in place by the gear beside its help. */
+.gear-btn { font-size: var(--t-sm); }
+.gear { margin-bottom: 1rem; }
+.gear-card { border-color: var(--line-strong); }
 .crumb.is-here { color: var(--ink-dim); font-weight: 600; }
 .crumb-sep { color: var(--ink-faint); }
 .sub-btn.is-person { border-style: dashed; border-color: var(--line); }

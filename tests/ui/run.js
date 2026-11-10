@@ -547,6 +547,102 @@ async function main() {
     });
   })();
 
+  /* Step 4b: plain words. Every refusal either page can show (this page's
+     ERRORS, the staff panel's WORDS) is a sentence a player or a staff
+     member reads without knowing the code: no internal code, no snake_case,
+     no nil, no escrow. */
+  (function plainWords() {
+    function grab(file, name) {
+      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'ui', file), 'utf8');
+      const at = src.indexOf('var ' + name + ' = {');
+      const open = src.indexOf('{', at);
+      let depth = 0;
+      for (let k = open; k < src.length; k++) {
+        if (src[k] === '{') depth++;
+        else if (src[k] === '}' && --depth === 0) return require('vm').runInNewContext('(' + src.slice(open, k + 1) + ')');
+      }
+      return {};
+    }
+    const JARGON = [/\b[a-z]+_[a-z_]+\b/, /\bnil\b/, /\bnull\b/, /\bundefined\b/, /\bescrow/i, /\bCH\./,
+      /\bNUI\b/, /\bcallback\b/i, /\bpayload\b/i];
+    const found = [];
+    [['app.js', 'ERRORS'], ['admin.js', 'WORDS']].forEach(function (pair) {
+      const texts = grab(pair[0], pair[1]);
+      Object.keys(texts).forEach(function (code) {
+        const text = texts[code];
+        if (text == null) return;
+        JARGON.forEach(function (re) { if (re.test(text)) found.push(pair[0] + ' ' + code + ': ' + text); });
+        if (text.indexOf(code) !== -1 && code.indexOf('_') !== -1) found.push(pair[0] + ' ' + code + ' names its code');
+      });
+    });
+    it('every refusal text is plain words, with no internal code or jargon', function () {
+      truthy(found.length === 0, found.join(' | '));
+    });
+  })();
+
+  /* Step 4b: one line of help on every screen, the Board's summary of what
+     this player has going, and a search over contracts and screens. */
+  await (async function homeAndSearch() {
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.contracts.push(Object.assign({}, board.data.contracts[0],
+      { id: 'ct00000002', targetName: 'Pia Nolan', reason: 'Owes the docks' }));
+    const mine = { ok: true, data: { created: [Object.assign({}, BOARD.data.contracts[0], { id: 'ct00000003', role: 'creator' })],
+      accepted: [], onMe: [Object.assign({}, BOARD.data.contracts[0], { id: 'ct00000004', role: 'target' })] } };
+    const app = boot({ list: board, mine: mine, ledger: LEDGER });
+    await settle(); await settle();
+    function helpLine() {
+      const n = app.view.all().filter(function (x) { return x.classList && x.classList.contains('screen-help'); });
+      return n.length === 1 ? n[0].textContent : 'lines: ' + n.length;
+    }
+    it('the Board says in one line what it is for', function () {
+      eq(helpLine(), 'Open contracts you can take. Accept one to work it.');
+    });
+    it('and sums up what this player has going, each a tap away', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('0 taken') !== -1 && labels.indexOf('1 placed') !== -1 && labels.indexOf('1 on you') !== -1,
+        labels.join(' | '));
+    });
+    const field = app.view.all().filter(function (n) { return n.tagName === 'INPUT' && n.type === 'search'; })[0];
+    truthy(field, 'a search field on the Board');
+    field.value = 'pia';
+    field.oninput();
+    it('the search hides the contracts that do not match, without a redraw', function () {
+      const cards = app.view.all().filter(function (n) { return n.classList && n.classList.contains('card'); });
+      eq(cards.length, 2);
+      const shown = cards.filter(function (c) { return !c.hidden; });
+      eq(shown.length, 1);
+      truthy(shown[0].textContent.indexOf('Pia Nolan') !== -1, shown[0].textContent);
+    });
+    field.value = 'record';
+    field.oninput();
+    it('and offers the screens whose words match', function () {
+      truthy(app.view.all().some(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Open Ledger'; }),
+        app.view.textContent);
+    });
+    click(app, 'Open Ledger');
+    await settle();
+    it('one tap opens that screen, with its own one line of help', function () {
+      eq(app.document.querySelectorAll('.tab').filter(function (t) { return t.classList.contains('is-active'); })[0].dataset.tab,
+        'ledger');
+      eq(helpLine(), 'Your record: the contracts you finished, placed and survived.');
+    });
+    for (const name of ['mine', 'place', 'onme', 'board']) {
+      tab(app, name);
+      await settle();
+      it('the ' + name + ' screen has exactly one line of help', function () {
+        truthy(helpLine().indexOf('lines:') !== 0, helpLine());
+      });
+    }
+    click(app, '1 on you');
+    await settle();
+    it('the summary\'s "on you" opens On me', function () {
+      eq(app.document.querySelectorAll('.tab').filter(function (t) { return t.classList.contains('is-active'); })[0].dataset.tab,
+        'onme');
+    });
+    drewCleanly(app, 'the Board\'s summary and search');
+  })();
+
   /* The board a page at a time: past the first, nothing was reachable. */
   await (async function boardPages() {
     const asked = [];
