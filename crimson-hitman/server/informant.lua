@@ -12,6 +12,7 @@
 --- contract; which row it stands for never leaves the server.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 
 local Informant = {}
 
@@ -186,20 +187,15 @@ local function live(contract)
     return contract ~= nil and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED)
 end
 
---- After the charge and before the roll: the contract still open, and the
---- operative (where there is one) still on it. The contract as read now, or
---- nil and why not.
---- Whether staff hold the contract (server/freeze.lua): no money moves on
---- one that is, so it is asked on every read again before and after the
---- charge, and a freeze that lands in the awaits refunds.
-local function held(contract)
-    return Contracts ~= nil and Contracts.heldByStaff ~= nil and Contracts.heldByStaff(contract) == true
-end
-
+--- After the charge and before the roll: the contract still open, not held
+--- by staff (Holds.on, 'staff': no money moves on one that is, so it is
+--- asked on every read again before and after the charge, and a freeze that
+--- lands in the awaits refunds), and the operative (where there is one)
+--- still on it. The contract as read now, or nil and why not.
 local function stillOn(contractId, pick, row)
     local now = Storage.readContract(contractId)
     if not live(now) then return nil, CH.ERR.ALREADY_SETTLED end
-    if held(now) then return nil, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(now, nil, 'staff') then return nil, CH.ERR.CONTRACT_FROZEN end
     if row and not operativeFor(contractId, pick) then return nil, CH.ERR.OPERATIVE_GONE end
     return now
 end
@@ -348,8 +344,8 @@ targetBuy = function(actor, contractId, shown, pick)
     -- The target's, and only the target's: the placer has an informant of
     -- their own (Informant.placerBuy).
     if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
-    -- On hold by staff (server/freeze.lua): nothing is charged.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- On hold by staff (server/holds.lua): nothing is charged.
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     -- The switch for this target: a member of a whitelisted job reads
     -- Config.InformantsWhitelistedTargets.Informant, refused as before
     -- (informant_protected) while it is off; anybody else the general one.
@@ -406,7 +402,7 @@ targetBuy = function(actor, contractId, shown, pick)
     -- was read before every await since.
     local fresh = Storage.readContract(contractId)
     if not live(fresh) then return false, CH.ERR.ALREADY_SETTLED end
-    if held(fresh) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(fresh, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if row and not operativeFor(contractId, pick) then return false, CH.ERR.OPERATIVE_GONE end
 
     -- Charged last. Balance read first: RemoveMoney answers true on an empty
@@ -633,8 +629,8 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
         return false, CH.ERR.FEATURE_OFF
     end
     if Identity.isBarred and Identity.isBarred(actor) then return false, CH.ERR.BLACKLISTED_JOB end
-    -- On hold by staff (server/freeze.lua): nothing is charged.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- On hold by staff (server/holds.lua): nothing is charged.
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
 
     local row = operativeFor(contractId, pick)
@@ -659,7 +655,7 @@ placerBuyUnlocked = function(actor, contractId, shown, pick)
 
     local fresh = Storage.readContract(contractId)
     if not live(fresh) then return false, CH.ERR.ALREADY_SETTLED end
-    if held(fresh) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(fresh, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if not operativeFor(contractId, pick) then return false, CH.ERR.OPERATIVE_GONE end
 
     if not Util.charge(actor.player, account, cost) then

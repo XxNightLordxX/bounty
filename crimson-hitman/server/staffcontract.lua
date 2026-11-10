@@ -25,6 +25,7 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 
 local StaffContract = {}
 
@@ -233,7 +234,7 @@ function StaffContract.removeHitman(staff, contractId, hitmanId, reason, opts)
     -- exactly the contracts a frozen player is on, anonymous ones too.
     if not hitman then return false, 'no_operative' end
     if hitman.state ~= 'active' then return false, 'not_active', { state = hitman.state } end
-    if Contracts.heldByStaff(contract, hitmen) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, hitmen, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
 
     local row = newRow(contractId, 'removal', staff, {
         body = reason, subject_cid = hitman.hitman_cid, subject_account = hitman.hitman_account,

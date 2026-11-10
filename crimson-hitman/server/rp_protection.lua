@@ -38,8 +38,8 @@
 --- written again on the tick. Every step is audited.
 ---
 --- Nothing is posted, taken or cancelled on a contract staff put on hold
---- (Contracts.heldByStaff), and nothing posted or taken while staff pause
---- the app (Contracts.appPaused). A guard may not take a contract on the
+--- (Holds.on, 'staff'), and nothing posted or taken while staff pause
+--- the app (Holds.on, 'app'). A guard may not take a contract on the
 --- person they guard (Contracts.guardsTarget), and one who holds or held
 --- the contract is paid no share of the job.
 ---
@@ -50,6 +50,7 @@
 --- everything after is the normal place flow and its rules.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
 local Feature = CrimsonBoot.require('server.lib.feature')
@@ -125,14 +126,6 @@ local function save(job)
     return true
 end
 
---- Whether staff put this contract on hold, or paused the app.
-local function heldByStaff(contract)
-    return Contracts ~= nil and Contracts.heldByStaff ~= nil and Contracts.heldByStaff(contract) == true
-end
-
-local function appPaused()
-    return Contracts ~= nil and Contracts.appPaused ~= nil and Contracts.appPaused() == true
-end
 
 --- Leave a job's money for staff: an item in the review queue, settled by
 --- its own Refund, Pay or Dismiss (Review.resolve). Its id comes from the
@@ -524,7 +517,7 @@ end
 function Protection.post(actor, payload)
     if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
     -- The same for every contract and everybody: a job is a new engagement.
-    if appPaused() then return false, CH.ERR.APP_PAUSED end
+    if Holds.on(nil, nil, 'app') then return false, CH.ERR.APP_PAUSED end
     load()
     if not loaded then return false, CH.ERR.BUSY end
     local contractId = Util.toId(payload.id)
@@ -549,7 +542,7 @@ function Protection.post(actor, payload)
     end
     if Notify.shownToTarget and not Notify.shownToTarget(contract) then return false, CH.ERR.NOT_FOUND end
     -- On hold by staff: no money moves on it. Told to its own target only.
-    if heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if jobOn(contractId) then return false, CH.ERR.PROTECTION_EXISTS end
     if refundOwed(contractId, actor.cid) then return false, CH.ERR.PROTECTION_REFUND_PENDING end
     local pin = standing(actor.source)
@@ -577,9 +570,9 @@ function Protection.post(actor, payload)
         local late
         if not fresh or CH.TERMINAL[fresh.state] or fresh.state == CH.STATE.COMPLETING then
             late = CH.ERR.ALREADY_SETTLED
-        elseif heldByStaff(fresh) then
+        elseif Holds.on(fresh, nil, 'staff') then
             late = CH.ERR.CONTRACT_FROZEN
-        elseif appPaused() then
+        elseif Holds.on(nil, nil, 'app') then
             late = CH.ERR.APP_PAUSED
         end
         if late then
@@ -624,7 +617,7 @@ function Protection.cancel(actor, payload)
     if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.ALREADY_SETTLED end
     -- On hold by staff: no money moves on it. Told to its own target only.
     local contract = Storage.readContract(job.contract_id)
-    if contract and heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if contract and Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if job.state ~= 'open' or JobLock.held(job.id) then return false, CH.ERR.ALREADY_SETTLED end
     -- Through the same settling as an ending, so the refund is owed if it
     -- cannot be given now. Nothing yields between the check above and here.
@@ -769,7 +762,7 @@ local function acceptUnlocked(actor, payload)
     if partyTo(contract, actor.cid) then return false, CH.ERR.PROTECTION_PARTY end
     -- On hold by staff: nothing is taken on. Not right now, to somebody who
     -- is no party to the contract (as Contracts.accept says it).
-    if heldByStaff(contract) then return false, CH.ERR.BAD_STATE end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.BAD_STATE end
     -- Anonymously only where an operative may take a contract anonymously.
     local anonymous = payload.anonymous == true
     if anonymous and not Util.anonymityAllowed('hitman', contract.target_protected == true) then
@@ -796,7 +789,7 @@ end
 --- cannot both pass MaxJobsPerGuard.
 function Protection.accept(actor, payload)
     if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
-    if appPaused() then return false, CH.ERR.APP_PAUSED end
+    if Holds.on(nil, nil, 'app') then return false, CH.ERR.APP_PAUSED end
     local key = 'guard:' .. tostring(actor.cid)
     return JobLock.run(key, acceptUnlocked, actor, payload)
 end

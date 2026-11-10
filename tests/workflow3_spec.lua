@@ -293,26 +293,26 @@ describe('S1: the board says what refuses writes', function()
     it('says staff paused the app', function()
         local s = newStack()
         fixture(s)
-        Config.Staff.AppPaused = true
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = true
+        s.holds.syncAppPause()
         local reply = call('list', 3, {})
         eq(reply.data.holds.appPaused, true)
-        Config.Staff.AppPaused = false
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = false
+        s.holds.syncAppPause()
     end)
 
     it('says the restart hold is on, and how long it can last at most', function()
         local s = newStack()
         fixture(s)
-        Config.Restart.PauseBeforeSeconds = 1800
-        Config.Restart.MaxHoldMinutes = 45
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 300 }), 'held')
+        Config.Holds.RestartPauseBeforeSeconds = 1800
+        Config.Holds.RestartMaxHoldMinutes = 45
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 300 }), 'held')
         local ok, err = pcall(function()
             local reply = call('list', 3, {})
             truthy(reply.data.holds.restartHold, 'the restart hold')
             eq(reply.data.holds.restartHold.endsIn, 45 * 60)
         end)
-        s.freeze.releaseRestart('skipped')
+        s.holds.releaseRestart('skipped')
         if not ok then error(err, 0) end
     end)
 
@@ -396,7 +396,7 @@ describe('S8: staff look a party up from the contract', function()
         local reply = ask(6, 'freeze', { subject = 'contract:' .. c.id .. ':op:' .. tostring(row.id),
                                          reason = 'checking' })
         truthy(reply and reply.ok, tostring(reply and reply.message))
-        truthy(s.freeze.frozen and s.freeze.frozen('HITMAN01') or s.freeze.count() == 1, 'frozen')
+        truthy(s.holds.of and s.holds.of('HITMAN01') or s.holds.count() == 1, 'frozen')
     end)
 
     it('takes a name, as Contracts does, and says when several match', function()

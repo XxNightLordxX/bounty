@@ -269,7 +269,7 @@ describe('what starts a disposal', function()
 
     it('a refused claim leaves no step behind', function()
         local s, f, c = setup({ unverified = true })
-        s.freeze.freeze('ADMIN001', 'HITMAN01', 'test')
+        s.holds.freeze('ADMIN001', 'HITMAN01', 'test')
         local ok = s.photo.verifyAtScene(f.hitman, c.id)
         falsy(ok, 'refused on hold')
         eq(s.disposal.count(), 0)
@@ -454,27 +454,27 @@ describe('a disposal on hold', function()
     end
 
     it('a staff freeze on the hitman', function()
-        heldWith(function(s) truthy(s.freeze.freeze('ADMIN001', 'HITMAN01', 'test')) end,
-            function(s) truthy(s.freeze.unfreeze('ADMIN001', 'HITMAN01', 'done')) end)
+        heldWith(function(s) truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'test')) end,
+            function(s) truthy(s.holds.unfreeze('ADMIN001', 'HITMAN01', 'done')) end)
     end)
 
     it('the app pause', function()
         heldWith(function(s)
-            Config.Staff.AppPaused = true
-            s.freeze.syncAppPause()
-            truthy(s.freeze.appPaused(), 'paused')
+            Config.Holds.AppPaused = true
+            s.holds.syncAppPause()
+            truthy(s.holds.global('app'), 'paused')
         end, function(s)
-            Config.Staff.AppPaused = false
-            s.freeze.syncAppPause()
+            Config.Holds.AppPaused = false
+            s.holds.syncAppPause()
         end)
     end)
 
     it('the restart hold', function()
         heldWith(function(s)
-            Config.Restart.PauseBeforeSeconds = 1800
-            truthy(s.freeze.scheduledRestart({ secondsRemaining = 600 }))
+            Config.Holds.RestartPauseBeforeSeconds = 1800
+            truthy(s.holds.scheduledRestart({ secondsRemaining = 600 }))
         end, function(s)
-            s.freeze.releaseRestart()
+            s.holds.releaseRestart()
         end)
     end)
 end)

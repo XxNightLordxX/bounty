@@ -681,7 +681,7 @@ local SCHEMA = {
         INDEX idx_tip_buyer (buyer_cid, expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- The players staff have put on hold from the admin panel
-    -- (server/freeze.lua), by citizen id: a row is the freeze, and
+    -- (server/holds.lua), by citizen id: a row is the freeze, and
     -- unfreezing deletes it. There is no timer. Created on an existing
     -- database by the CREATE TABLE IF NOT EXISTS at the next start, like any
     -- table added since.

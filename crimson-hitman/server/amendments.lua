@@ -6,6 +6,7 @@
 --- a contract is never amendable.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 
 local Amendments = {}
 
@@ -235,8 +236,8 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec, opts)
         return false, CH.ERR.BAD_STATE
     end
     if opts and opts.onlyActive and contract.state ~= CH.STATE.ACTIVE then return false, CH.ERR.BAD_STATE end
-    -- On hold by staff (server/freeze.lua): nothing is taken.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- On hold by staff (server/holds.lua): nothing is taken.
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
 
     -- Counted against what the contract still holds, so a creator cannot top
     -- up past the line ceiling in small increments — but settled lines are
@@ -338,8 +339,8 @@ improveUnlocked = function(actor, contractId, kind, payload)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.BAD_STATE end
-    -- On hold by staff (server/freeze.lua): its terms stand as they are.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- On hold by staff (server/holds.lua): its terms stand as they are.
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
 
     payload = type(payload) == 'table' and payload or {}
 
@@ -677,8 +678,8 @@ proposeUnlocked = function(actor, contractId, kind, payload)
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
         return nil, CH.ERR.BAD_STATE
     end
-    -- On hold by staff (server/freeze.lua): no change is proposed.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return nil, CH.ERR.CONTRACT_FROZEN end
+    -- On hold by staff (server/holds.lua): no change is proposed.
+    if Holds.on(contract, nil, 'staff') then return nil, CH.ERR.CONTRACT_FROZEN end
 
     -- The target is never amendable: retargeting is a new contract (§12.3).
     -- A payload is a table or nothing. Indexed as one when it was a boolean
@@ -954,8 +955,7 @@ respondUnlocked = function(actor, amendmentId, approve, keyHeld)
         -- that time was never given. A party is told it is on hold, as
         -- below; anybody else only that they are not one.
         local live = Storage.readContract(proposal.contract_id)
-        if live and not CH.TERMINAL[live.state] and Contracts and Contracts.heldByStaff
-            and Contracts.heldByStaff(live) then
+        if live and not CH.TERMINAL[live.state] and Holds.on(live, nil, 'staff') then
             if not participants(live)[actor.cid] then return false, CH.ERR.NOT_PARTICIPANT end
             return false, CH.ERR.CONTRACT_FROZEN
         end
@@ -997,9 +997,9 @@ respondUnlocked = function(actor, amendmentId, approve, keyHeld)
     -- Live participants, not the set captured when the proposal was made.
     local people = participants(contract)
     if not people[actor.cid] then return false, CH.ERR.NOT_PARTICIPANT end
-    -- On hold by staff (server/freeze.lua): left open, answered once it is
+    -- On hold by staff (server/holds.lua): left open, answered once it is
     -- released.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
 
     if not approve then
         proposal.outcome = 'declined'
@@ -1302,13 +1302,13 @@ function Amendments.expire()
         local open = Storage.readOpenAmendments(contractId)
         local remaining = 0
         local closed = false
-        -- On hold by staff (server/freeze.lua): nobody can answer a proposal
+        -- On hold by staff (server/holds.lua): nobody can answer a proposal
         -- meanwhile, so none runs out. The release gives each back the time
-        -- the hold took (Freeze.unfreeze). Read only once one is due.
+        -- the hold took (Holds.unfreeze). Read only once one is due.
         local held
         for j = 1, #open do
             if held == nil and now > open[j].expires_at then
-                held = Contracts.heldByStaff(Storage.readContract(contractId)) == true
+                held = Holds.on(Storage.readContract(contractId), nil, 'staff')
             end
             if held and now > open[j].expires_at then
                 remaining = remaining + 1

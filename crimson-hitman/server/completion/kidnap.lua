@@ -6,6 +6,7 @@
 --- reports nothing.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Geo = CrimsonBoot.requireShared('geo')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
@@ -230,12 +231,12 @@ function Kidnap.arm(contractId, hitmanCid)
     local hitman = Storage.readHitman(contractId, hitmanCid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
 
-    -- On hold by staff (server/freeze.lua): the payout at the end would be
+    -- On hold by staff (server/holds.lua): the payout at the end would be
     -- refused, so nobody is held for it.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
-    -- Every contract is on the restart hold (Freeze.scheduledRestart): a
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
+    -- Every contract is on the restart hold (Holds.scheduledRestart): a
     -- countdown armed now could not finish before the restart.
-    if Contracts and Contracts.restartHeld and Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
+    if Holds.on(nil, nil, 'restart') then return false, CH.ERR.RESTART_HOLD end
 
     -- The wait between payouts, for the same reason as the immunity check
     -- below: the claim at the end would be refused either way. It is ten
@@ -378,7 +379,7 @@ local REFUSED_WORDS = {
     [CH.ERR.LOCKED] = 'Another payout on this contract was being settled at '
         .. 'the same moment, and it got there first.',
     -- Staff put it on hold while the payout was being settled
-    -- (server/freeze.lua). Plain, and never which party it is about.
+    -- (server/holds.lua). Plain, and never which party it is about.
     [CH.ERR.CONTRACT_FROZEN] = 'This contract is on hold by staff.',
 }
 
@@ -402,7 +403,7 @@ function Kidnap.cancel(contractId, hitmanCid, reason)
     if not active[k] then return false end
     active[k] = nil
     Audit.action('kidnap_cancelled', hitmanCid, contractId, { reason = reason })
-    -- Stopped by a staff freeze (Freeze.freeze): the hitman's page is told
+    -- Stopped by a staff freeze (Holds.freeze): the hitman's page is told
     -- it is on hold, not that the handover ended for no reason.
     if reason == 'on_hold' then
         remember(k, { outcome = 'refused', reason = CH.ERR.CONTRACT_FROZEN })
@@ -437,8 +438,8 @@ function Kidnap.tick(deltaMs)
             local stepped, stepError = pcall(function()
             local contract = Storage.readContract(state.contractId)
             if contract and contract.state == CH.STATE.ACCEPTED
-                and Contracts and Contracts.restartHeld and Contracts.restartHeld() then
-                -- The restart hold (Freeze.scheduledRestart): stood still,
+                and Holds.on(nil, nil, 'restart') then
+                -- The restart hold (Holds.scheduledRestart): stood still,
                 -- neither advanced nor charged grace, so it cannot finish
                 -- during it. One already running when the hold began goes
                 -- on once it is released; a restart ends it with the
@@ -487,9 +488,9 @@ function Kidnap.tick(deltaMs)
                 -- being what proves the handover. Paid once confirmed; at
                 -- the end of the window, by Config.Kidnap.ConfirmMissed.
                 -- The window stands still on the restart hold (above) and
-                -- while the app is paused (Config.Staff.AppPaused), as every
+                -- while the app is paused (Config.Holds.AppPaused), as every
                 -- clock does.
-                if not state.confirmed and not (Contracts.appPaused and Contracts.appPaused()) then
+                if not state.confirmed and not Holds.on(nil, nil, 'app') then
                     state.confirmLeftMs = state.confirmLeftMs - deltaMs
                 end
                 if not state.confirmed and state.confirmLeftMs <= 0 then
@@ -863,9 +864,9 @@ function Kidnap.answer(contractId, cid, yes)
         end
     end
     if not pick then return false, CH.ERR.NO_HANDOVER end
-    if Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
-    if yes and Contracts.restartHeld and Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
-    -- The hold (Freeze) is a read, and the tick runs in its awaits: a window
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
+    if yes and Holds.on(nil, nil, 'restart') then return false, CH.ERR.RESTART_HOLD end
+    -- The hold (Holds) is a read, and the tick runs in its awaits: a window
     -- it closed meanwhile (run out, rearmed or paid) is not answered as if
     -- it were still open.
     if active[pickKey] ~= pick or not pick.confirmLeftMs or pick.confirmed then

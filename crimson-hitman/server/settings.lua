@@ -52,7 +52,7 @@ Settings.onChanged = nil
 
 --- Functions called after one key changes live, by key: what a switch
 --- starts or stops the moment it is turned (the app pause,
---- Freeze.syncAppPause). Kept across Settings.init. [key] = fn
+--- Holds.syncAppPause). Kept across Settings.init. [key] = fn
 local watchers = {}
 
 --- Call `fn` after `key` changes live (set, reset, reset all, an undo).
@@ -606,7 +606,7 @@ local CATALOGUE = {
           .. 'section still lists every one.',
       inflight = 'Read at the next post, with no restart: turned off, alerts waiting to be posted '
           .. 'are dropped, and nothing said while it is off is posted later.' },
-    { key = 'Staff.AppPaused', section = 'features', category = 'features', group = 'Staff tools',
+    { key = 'Holds.AppPaused', section = 'features', category = 'features', group = 'Staff tools',
       kind = 'switch', label = 'Pause the whole app',
       about = 'For an event: no contract is placed or accepted anywhere, and every live contract '
           .. 'keeps both its clocks stopped, as the restart hold stops them. Players are told '
@@ -834,11 +834,11 @@ local CATALOGUE = {
       kind = 'number', integer = true, min = 1, max = 50,
       label = 'Tips per contract, all its hitmen together', inflight = AT_USE },
 
-    { key = 'Restart.PauseBeforeSeconds', section = 'limits', category = 'rules-timers', group = 'Server restart',
+    { key = 'Holds.RestartPauseBeforeSeconds', section = 'limits', category = 'rules-timers', group = 'Server restart',
       kind = 'number', integer = true, min = 0, max = 3600,
       label = 'Pause contracts this long before a txAdmin restart (s, 0 = off)',
       inflight = 'A pause already on stays until the restart, a skip or its longest.' },
-    { key = 'Restart.MaxHoldMinutes', section = 'limits', category = 'rules-timers', group = 'Server restart',
+    { key = 'Holds.RestartMaxHoldMinutes', section = 'limits', category = 'rules-timers', group = 'Server restart',
       kind = 'number', integer = true, min = 1, max = 240,
       label = 'Longest the pause lasts with no restart (min)',
       inflight = 'A pause already on ends at the new length.' },

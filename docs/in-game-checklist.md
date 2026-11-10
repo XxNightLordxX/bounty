@@ -642,6 +642,13 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Without `crimson.identity` the list shows no citizen id and nobody who set a measure; with it, both.
 - [ ] Home, Overview: Measures on players counts each kind; its buttons open All measures on that kind.
 
+## Holds: one service for everything that stops a contract (step 3e)
+
+- [ ] Freeze the target of a taken contract, then switch **Pause the whole app** on (Features, Staff tools; `Config.Holds.AppPaused`), wait a few minutes, unfreeze, wait, switch the pause off: the hitman's card says **On hold** only while the freeze was on, the time band stood still throughout, and the time left afterwards is what it was before the freeze (`/ch-timeline` shows the lifetime moved by the whole span, once).
+- [ ] A txAdmin scheduled restart 30 minutes out (Rules, Timers, Server restart; `Config.Holds.RestartPauseBeforeSeconds`): every party is told *Contracts are paused until the server restart.* once; skip it: *Contracts are no longer paused for the server restart.*, and every clock runs again where nothing else stops it.
+- [ ] A stranger on the board sees no **On hold** for a frozen player's contract, and its band moves on; with the app paused, it stands still for them too.
+- [ ] Panel, a contract on an anonymous placer who is frozen: without `crimson.identity` no On hold badge; with it, *the placer*.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

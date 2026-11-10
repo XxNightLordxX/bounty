@@ -46,6 +46,7 @@
 --- placer that staff gave it to another hitman; nobody is told who.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 
 local StaffReassign = {}
 
@@ -98,7 +99,7 @@ local function eligible(subject, contract)
             or deps.identity.sameAccount(contract.target_account, actor.account)) then
         return nil, CH.ERR.SAME_ACCOUNT
     end
-    if C.frozenPlayer(actor.cid) then return nil, CH.ERR.CONTRACT_FROZEN end
+    if Holds.of(actor.cid) then return nil, CH.ERR.CONTRACT_FROZEN end
     if C.suspension(actor.cid) then return nil, CH.ERR.SUSPENDED end
     if C.staffContract and C.staffContract.barred(contract.id, actor.cid, actor.account) then
         return nil, CH.ERR.STAFF_BARRED
@@ -116,7 +117,7 @@ local function contractRefusal(contract)
     end
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return CH.ERR.BAD_STATE end
     if contract.bailout_queued_at then return 'buyout_queued' end
-    if deps.contracts.heldByStaff(contract) then return CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return CH.ERR.CONTRACT_FROZEN end
     return nil
 end
 
@@ -309,7 +310,7 @@ local MESSAGES = {
     [CH.ERR.LIMIT_REACHED] = 'That hitman holds as many contracts as they may (Config.Limits.MaxAcceptedPerHitman).',
     [CH.ERR.INSUFFICIENT] = 'That hitman cannot cover the stake (Config.Staff.ReassignStake is charge).',
     [CH.ERR.BLACKLISTED_JOB] = 'That player\'s job is barred from the app.',
-    [CH.ERR.APP_PAUSED] = 'The app is paused (Config.Staff.AppPaused).',
+    [CH.ERR.APP_PAUSED] = 'The app is paused (Config.Holds.AppPaused).',
     [CH.ERR.ANONYMITY_OFF] = 'Accepting anonymously is off on this server.',
 }
 
@@ -341,7 +342,7 @@ end
 
 local function frozenSaid(src, id, err)
     local contract = deps.storage.readContract(id)
-    if contract and deps.panel.frozenShown and deps.panel.frozenShown(contract, deps.panel.identifies(src)) then
+    if contract and Holds.shown(contract, nil, deps.panel.identifies(src)) then
         return false, err, 'It is on hold by staff, and nothing on it moves: unfreeze first.'
     end
     return false, 'not_reassigned', 'Not reassigned: try again in a moment.'

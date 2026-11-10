@@ -52,9 +52,10 @@ ConfigDefaults.Limits = {
     JailZone                             = { x = 1693.3, y = 2569.5, radius = 300 },  -- the prison grounds
 }
 
-ConfigDefaults.Restart = {
-    PauseBeforeSeconds = 1800,  -- pause every contract this long before a txAdmin restart; 0 = off
-    MaxHoldMinutes     = 45,    -- end the pause if the restart has not come by then
+ConfigDefaults.Holds = { -- what stops every contract's clocks (server/holds.lua)
+    AppPaused                 = false,  -- pause the whole app: no placing, no accepting, clocks held
+    RestartPauseBeforeSeconds = 1800,   -- pause every contract this long before a txAdmin restart; 0 = off
+    RestartMaxHoldMinutes     = 45,     -- end the restart pause if the restart has not come by then
 }
 
 -- ============================================================================
@@ -416,7 +417,6 @@ ConfigDefaults.Admin = {
 
 ConfigDefaults.Staff = {
     ManualPaymentMax      = 100000, -- most one manual staff payment may be ($); 0 = off
-    AppPaused             = false,  -- pause the whole app: no placing, no accepting, clocks held
     DailySummary          = false,  -- post one count-only summary a day to the staff Discord
     DailySummaryHour      = 6,      -- the hour it is posted, server time (0-23)
     AlertPlacedPerHour    = 5,      -- alert past this many placed by one player an hour; 0 = off

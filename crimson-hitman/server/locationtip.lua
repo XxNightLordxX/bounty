@@ -19,6 +19,7 @@
 --- (Config.LocationTip.NotifyTarget), and nothing of who or where.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Markers = CrimsonBoot.require('server.lib.markers')
@@ -181,13 +182,13 @@ local function stillOn(contractId, cid)
     return true, nil, contract
 end
 
---- stillOn, for a purchase: and not on hold by staff (server/freeze.lua),
+--- stillOn, for a purchase: and not on hold by staff (server/holds.lua),
 --- so a freeze that lands while the purchase awaits moves no money. Showing
 --- a tip already bought again (LocationTip.reshow) asks stillOn alone.
 local function stillBuyable(contractId, cid)
     local open, err, contract = stillOn(contractId, cid)
     if not open then return false, err end
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
+    if Holds.on(contract, nil, 'staff') then
         return false, CH.ERR.CONTRACT_FROZEN
     end
     return true, nil, contract
@@ -305,8 +306,8 @@ buyUnlocked = function(actor, contractId, shown)
     -- Off for this contract (a target on a whitelisted job reads its own
     -- switch): refused before anything is charged.
     if not LocationTip.enabled(contract) then return false, CH.ERR.FEATURE_OFF end
-    -- On hold by staff (server/freeze.lua): nothing is charged.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
+    -- On hold by staff (server/holds.lua): nothing is charged.
+    if Holds.on(contract, nil, 'staff') then
         return false, CH.ERR.CONTRACT_FROZEN
     end
 
@@ -326,8 +327,8 @@ buyUnlocked = function(actor, contractId, shown)
     -- The wait stands still while the contract is held (the restart hold,
     -- the app pause): its end gives the time back (LocationTip.heldBack),
     -- and a tip bought meanwhile, on the wall clock's word, came before it.
-    if newest and untilAt > 0 and Contracts and Contracts.heldSince then
-        local since = Contracts.heldSince(contract)
+    if newest and untilAt > 0 then
+        local since = Holds.since(contract)
         local start = since and math.max(since, tonumber(newest.bought_at) or since)
         if start and start < untilAt and now > start then untilAt = untilAt + (now - start) end
     end
@@ -539,7 +540,7 @@ end
 -- Clearing
 --------------------------------------------------------------------------
 
---- A hold on the contract has ended (server/freeze.lua's give-back, through
+--- A hold on the contract has ended (server/holds.lua's give-back, through
 --- ImpTips.heldBack): every tip on it is given the time it stood still,
 --- from `from` (or when it was bought, if later) to `to`. Its showing, if
 --- it was still showing when the hold began, ends that much later, and is

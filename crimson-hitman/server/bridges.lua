@@ -7,6 +7,7 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Lifecycle = CrimsonBoot.require('server.lib.lifecycle')
 local Words = CrimsonBoot.requireShared('words')
 local Feature = CrimsonBoot.require('server.lib.feature')
@@ -179,11 +180,11 @@ function Bridges.onPlayerDropped(modules, cid)
         local contracts = modules.storage.allContracts()
         for i = 1, #contracts do
             local c = contracts[i]
-            -- Not one staff have put on hold (server/freeze.lua): it stays
+            -- Not one staff have put on hold (server/holds.lua): it stays
             -- as it is, and the stop's refund returns it if nobody
             -- releases it first.
             if c.creator_cid == cid and c.state == CH.STATE.ACTIVE
-                and not modules.contracts.heldByStaff(c) then
+                and not Holds.on(c, nil, 'staff') then
                 modules.contracts.resolve(c.id, CH.STATE.CANCELLED, cid, nil,
                     'creator_disconnected_memory_mode')
             end
@@ -398,17 +399,17 @@ function Bridges.install(modules)
     -- txAdmin's scheduled restart (its Events Broadcasted documentation):
     -- server events, which no client can raise. 'scheduledRestart' carries { secondsRemaining,
     -- translatedMessage } at 30, 15, 10, 5, 4, 3, 2 and 1 minutes before;
-    -- the one inside Config.Restart.PauseBeforeSeconds puts every live
-    -- contract on the restart hold (Freeze.scheduledRestart). A skip ends it:
+    -- the one inside Config.Holds.RestartPauseBeforeSeconds puts every live
+    -- contract on the restart hold (Holds.scheduledRestart). A skip ends it:
     -- 'scheduledRestartSkipped' since txAdmin v8, and the older
     -- 'skippedNextScheduledRestart' it still sends for now.
-    if modules.freeze then
+    if modules.holds then
         AddEventHandler('txAdmin:events:scheduledRestart', function(data)
-            local ok, err = pcall(modules.freeze.scheduledRestart, data)
+            local ok, err = pcall(Holds.scheduledRestart, data)
             if not ok then Log.always(('the restart hold could not start: %s'):format(tostring(err))) end
         end)
         local function skipped()
-            pcall(modules.freeze.releaseRestart, 'skipped')
+            pcall(Holds.releaseRestart, 'skipped')
         end
         AddEventHandler('txAdmin:events:scheduledRestartSkipped', skipped)
         AddEventHandler('txAdmin:events:skippedNextScheduledRestart', skipped)

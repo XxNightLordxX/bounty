@@ -40,12 +40,12 @@ local function it(name, fn)
     IMP.it(name, function(...)
         local tip = deepCopy(Config.LocationTip)
         local amendments = deepCopy(Config.Amendments)
-        local paused = Config.Staff.AppPaused
+        local paused = Config.Holds.AppPaused
         local panel = Config.Admin.Commands.panel
         local out = table.pack(pcall(fn, ...))
         Config.LocationTip = tip
         Config.Amendments = amendments
-        Config.Staff.AppPaused = paused
+        Config.Holds.AppPaused = paused
         Config.Admin.Commands.panel = panel
         if not out[1] then error(out[2], 0) end
     end)
@@ -120,19 +120,19 @@ describe('sweep 5 K1: a proposal held by a freeze inside the app pause', functio
         local s, _, c, p = proposed()
         local due = p.expires_at
         Env.advance(60)
-        Config.Staff.AppPaused = true
-        eq(s.freeze.syncAppPause(), 'paused')
+        Config.Holds.AppPaused = true
+        eq(s.holds.syncAppPause(), 'paused')
         Env.advance(60)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(900)
         eq(s.amendments.expire(), 0, 'nobody can answer it on hold: none runs out')
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         local after = s.storage.readOpenAmendments(c.id)[1]
         truthy(after, 'still open')
         eq(after.expires_at, due + 900, 'given back the 15 minutes the freeze held it')
         eq(s.amendments.expire(), 0, 'not run out the moment the freeze ends')
-        Config.Staff.AppPaused = false
-        eq(s.freeze.syncAppPause(), 'resumed')
+        Config.Holds.AppPaused = false
+        eq(s.holds.syncAppPause(), 'resumed')
         eq(s.storage.readOpenAmendments(c.id)[1].expires_at, due + 900,
             'the app pause gives nothing more: a proposal can be answered under it')
     end)
@@ -140,18 +140,18 @@ describe('sweep 5 K1: a proposal held by a freeze inside the app pause', functio
     it('gives it the freeze back under the restart hold too', function()
         local s, _, c, p = proposed()
         local due = p.expires_at
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 600 }), 'restart hold on')
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 600 }), 'restart hold on')
         Env.advance(30)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(700)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         eq(s.storage.readOpenAmendments(c.id)[1].expires_at, due + 700)
     end)
 
     it('lets a proposal run out under the app pause alone: it can be answered meanwhile', function()
         local s, f, c = proposed()
-        Config.Staff.AppPaused = true
-        eq(s.freeze.syncAppPause(), 'paused')
+        Config.Holds.AppPaused = true
+        eq(s.holds.syncAppPause(), 'paused')
         local open = s.storage.readOpenAmendments(c.id)[1]
         truthy(s.amendments.respond(f.hitman, open.id, false), 'answered under the pause')
         truthy(s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
@@ -197,7 +197,7 @@ describe('sweep 5 K2: an idle release refused by a hold keeps its clocks', funct
         s.storage.readHitman = function(...)
             if not landed and debug.traceback():find('releaseIdleHold', 1, true) then
                 landed = true
-                s.freeze.freeze('ADMIN001', 'TARGET01', 'probe')
+                s.holds.freeze('ADMIN001', 'TARGET01', 'probe')
             end
             return readHitman(...)
         end
@@ -207,7 +207,7 @@ describe('sweep 5 K2: an idle release refused by a hold keeps its clocks', funct
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'refused on hold')
 
         run(s, 30)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         run(s, 1)
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released',
             'released on the first pass after: its idle time was kept through the hold')
@@ -585,11 +585,11 @@ describe('sweep 5 K9: the decay count keeps the untaken stretch before a freeze'
         Env.advance(100)
         truthy(s.contracts.abandon(f.hitman, c.id), 'walked away')
         Env.advance(2400)                                      -- 40 min untaken
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(60)
         s.impBoard.tick()                                      -- held
         Env.advance(7200)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         s.impBoard.tick()                                      -- runs again: 50 min counted
         local before = s.escrow.moneyValue(c.id)
         Env.advance(660)

@@ -8,6 +8,8 @@ local Log = CrimsonBoot.requireShared('log')
 
 local Storage
 local modules = {}
+--- The expiry pass's presence pause, for the holds service (defined with it).
+local presencePaused
 
 --------------------------------------------------------------------------
 -- Boot validation (§14.47)
@@ -143,11 +145,10 @@ local DEFAULTS = {
     --- The cap on a manual staff payment (server/payments.lua), read on
     --- every payment: a config with a Staff section and no cap in it has the
     --- shipped one, never none. And the staff tools added to a config with
-    --- a Staff section that does not name them: the app pause and the daily
-    --- summary off, and the alert thresholds as shipped. Checked below.
+    --- a Staff section that does not name them: the daily summary off, and
+    --- the alert thresholds as shipped. Checked below.
     Staff = {
         ManualPaymentMax = 100000,
-        AppPaused = false,
         DailySummary = false,
         DailySummaryHour = 6,
         AlertPlacedPerHour = 5,
@@ -283,11 +284,13 @@ local DEFAULTS = {
     Amendments = {
         CancelCooldownSeconds = 300,
     },
-    --- The restart hold (Freeze.scheduledRestart), read on txAdmin's event
+    --- The holds on every contract (server/holds.lua): the app pause off,
+    --- and the restart hold (Holds.scheduledRestart), read on txAdmin's event
     --- and by the maintenance tick. Checked below.
-    Restart = {
-        PauseBeforeSeconds = 1800,
-        MaxHoldMinutes = 45,
+    Holds = {
+        AppPaused = false,
+        RestartPauseBeforeSeconds = 1800,
+        RestartMaxHoldMinutes = 45,
     },
     --- The anonymity switches, added to a section every config has. Absent
     --- is not a decision: as shipped, neither placing nor accepting
@@ -701,20 +704,20 @@ local function validateConfig(quiet)
         end
     end
 
-    -- The restart hold (Freeze.scheduledRestart): how long before a txAdmin
+    -- The restart hold (Holds.scheduledRestart): how long before a txAdmin
     -- restart every contract is paused, from 0 (off) to the hour txAdmin's
     -- first warning cannot come before; and the most it may last when the
     -- restart never comes, at least a minute. Corrected to the shipped
     -- figure, and said.
     for _, bound in ipairs({
-        { 'PauseBeforeSeconds', 0, 3600, 1800 },
-        { 'MaxHoldMinutes', 1, 240, 45 },
+        { 'RestartPauseBeforeSeconds', 0, 3600, 1800 },
+        { 'RestartMaxHoldMinutes', 1, 240, 45 },
     }) do
-        local block = Config.Restart
+        local block = Config.Holds
         local value = type(block) == 'table' and block[bound[1]] or nil
         if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
             or math.floor(value) ~= value or value < bound[2] or value > bound[3]) then
-            warn[#warn + 1] = ('Config.Restart.%s is %s; it has to be a whole number from %d to %d. '
+            warn[#warn + 1] = ('Config.Holds.%s is %s; it has to be a whole number from %d to %d. '
                 .. 'Using %d.'):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
             block[bound[1]] = bound[4]
         end
@@ -739,12 +742,12 @@ local function validateConfig(quiet)
             block[bound[1]] = bound[4]
         end
     end
-    for _, switch in ipairs({ 'AppPaused', 'DailySummary' }) do
-        local block = Config.Staff
-        if type(block) == 'table' and type(block[switch]) ~= 'boolean' then
-            warn[#warn + 1] = ('Config.Staff.%s is %s; it has to be true or false. Using false.')
-                :format(switch, tostring(block[switch]))
-            block[switch] = false
+    for _, switch in ipairs({ { 'Holds', 'AppPaused' }, { 'Staff', 'DailySummary' } }) do
+        local block = Config[switch[1]]
+        if type(block) == 'table' and type(block[switch[2]]) ~= 'boolean' then
+            warn[#warn + 1] = ('Config.%s.%s is %s; it has to be true or false. Using false.')
+                :format(switch[1], switch[2], tostring(block[switch[2]]))
+            block[switch[2]] = false
         end
     end
 
@@ -1915,7 +1918,7 @@ function StartCrimsonHitman()
     local meeting    = CrimsonBoot.require('server.meeting')
     local playtime   = CrimsonBoot.require('server.playtime')
     local locationTip = CrimsonBoot.require('server.locationtip')
-    local freeze     = CrimsonBoot.require('server.freeze')
+    local holds      = CrimsonBoot.require('server.holds')
     local staffContract = CrimsonBoot.require('server.staffcontract')
     local sanctions  = CrimsonBoot.require('server.sanctions')
     local payments   = CrimsonBoot.require('server.payments')
@@ -1974,7 +1977,7 @@ function StartCrimsonHitman()
     progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
                      audit = audit, notify = notify, progression = progression,
-                     death = death, review = review, ledger = ledger, freeze = freeze,
+                     death = death, review = review, ledger = ledger,
                      sanctions = sanctions, projection = projection })
     photos.init({ storage = Storage, audit = audit })
     ledger.init({ storage = Storage, photos = photos, notify = notify })
@@ -2000,10 +2003,12 @@ function StartCrimsonHitman()
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify,
-                      locationTip = locationTip, freeze = freeze, staffContract = staffContract })
-    -- Staff freezes (server/freeze.lua): read from the store once, here.
-    freeze.init({ storage = Storage, audit = audit, notify = notify, kidnap = kidnap,
+                      locationTip = locationTip, staffContract = staffContract })
+    -- Every hold on a contract (server/holds.lua): staff freezes read from
+    -- the store once, here, the app pause and the restart hold's give-back.
+    holds.init({ storage = Storage, audit = audit, notify = notify, kidnap = kidnap,
                   contracts = contracts, death = death })
+    holds.presence(function(contract, hitmen) return presencePaused(contract, hitmen) end)
     -- Staff notes, removals and text edits on a contract
     -- (server/staffcontract.lua): the edits and removals read once, here.
     staffContract.init({ storage = Storage, audit = audit, notify = notify,
@@ -2018,9 +2023,9 @@ function StartCrimsonHitman()
     payments.init({ storage = Storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
     -- The app pause follows its switch the moment it changes.
-    settings.watch('Staff.AppPaused', freeze.syncAppPause)
+    settings.watch('Holds.AppPaused', holds.syncAppPause)
     -- The daily summary counts the suspended players through sanctions.
-    summary.init({ storage = Storage, review = review, freeze = freeze, audit = audit,
+    summary.init({ storage = Storage, review = review, holds = holds, audit = audit,
                    alerts = alerts, sanctions = sanctions })
     thresholds.init({ audit = audit })
     announce.init({ storage = Storage, notify = notify, audit = audit, identity = identity })
@@ -2084,7 +2089,7 @@ function StartCrimsonHitman()
     missionSteps.init({ identity = identity, storage = Storage, death = death, kidnap = kidnap,
                         rpProtection = rpProtection })
     disposal.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
-                    escrow = escrow, contracts = contracts, death = death, freeze = freeze,
+                    escrow = escrow, contracts = contracts, death = death,
                     missionSteps = missionSteps, ratelimit = ratelimit, app = app, panel = panel })
 
     modules = {
@@ -2113,7 +2118,7 @@ function StartCrimsonHitman()
         playtime = playtime,
         -- The players staff have put on hold, for the expiry pass and the
         -- admin panel.
-        freeze = freeze,
+        holds = holds,
         -- Staff notes, removals and text edits on a contract, for the
         -- admin panel.
         staffContract = staffContract,
@@ -2865,7 +2870,7 @@ local SCHEDULE = {
     -- The app pause follows its switch the moment it changes (Settings.watch
     -- in the start: a set, a reset, a reset of all and an undo); this is
     -- only for a change made some other way.
-    ['freeze.syncAppPause'] = { every = 60, phase = 40 },
+    ['holds.syncAppPause'] = { every = 60, phase = 40 },
     -- The alert thresholds' books aged out: windows of an hour and more.
     ['thresholds.sweep'] = { every = 60, phase = 10 },
     -- The improvements' minute (server/imp_board.lua): heat cooled and the
@@ -2881,8 +2886,8 @@ local SCHEDULE = {
     -- out of the store (server/targetlimits.lua). Nothing while none has.
     ['target_limits.prune'] = { every = 300, phase = 45 },
     -- Not here, and on every tick: the restart hold's end
-    -- (freeze.restartTick), released on the tick it reaches
-    -- Config.Restart.MaxHoldMinutes; a suspension's end (sanctions.tick),
+    -- (holds.tick), released on the tick it reaches
+    -- Config.Holds.RestartMaxHoldMinutes; a suspension's end (sanctions.tick),
     -- which tells the player; the daily summary (summary.tick), posted on
     -- the tick its hour comes; and the notices kept past a budget
     -- (notify.deliverKept), sent on the tick their minute opens. Each is a
@@ -2941,13 +2946,14 @@ function Tick()
     job('audit.flush', modules.audit.flush)
     job('amendments.expire', modules.amendments.expire)
     job('bailout.processQueue', modules.bailout.processQueue)
-    -- A restart hold the restart never came for (Config.Restart.MaxHoldMinutes).
-    if modules.freeze and modules.freeze.restartTick then job('freeze.restartTick', modules.freeze.restartTick) end
+    -- A restart hold the restart never came for (Config.Holds.RestartMaxHoldMinutes),
+    -- and the staff freezes the start could not read.
+    if modules.holds and modules.holds.tick then job('holds.tick', modules.holds.tick) end
     -- Suspensions and protections whose time has passed, written down as ended.
     if modules.sanctions then job('sanctions.tick', modules.sanctions.tick) end
     if modules.targetLimits then every('target_limits.prune', modules.targetLimits.prune, now) end
     -- The app pause in line with its switch, however it was changed.
-    if modules.freeze and modules.freeze.syncAppPause then every('freeze.syncAppPause', modules.freeze.syncAppPause, now) end
+    if modules.holds and modules.holds.syncAppPause then every('holds.syncAppPause', modules.holds.syncAppPause, now) end
     -- The staff tools' own clocks: the once-a-day summary, and the alert
     -- thresholds' counts aged out.
     if modules.summary then job('summary.tick', modules.summary.tick) end
@@ -3089,7 +3095,7 @@ local presenceChanged = true
 
 --- Called from the connection bridge. A player arriving or leaving is, with
 --- an operative taking a contract up or leaving it (Contracts.onChanged) and
---- a hold beginning or ending (server/freeze.lua), the only thing besides
+--- a hold beginning or ending (server/holds.lua), the only thing besides
 --- the clock that can change a contract's pause state.
 function MarkPresenceChanged()
     presenceChanged = true
@@ -3218,24 +3224,17 @@ local function acts(contract, verdict, now)
         or (contract.deadline_at ~= nil and now > contract.deadline_at)
 end
 
---- Whether a contract's deadline may run now, as the expiry pass would
---- judge it: everybody in the city and no hold on it. Asked by an unfreeze
---- (Freeze.clockMayRun), which banks a hold's pause itself only where
---- nothing else would keep it stopped.
+--- Whether somebody's absence (or a target in prison) stops a contract's
+--- deadline now, as the expiry pass would judge it: the presence pause,
+--- which the holds service asks with every other hold (Holds.clockMayRun;
+--- registered with it at the start, Holds.presence).
 ---@param contract table
----@return boolean
-function ContractClockMayRun(contract)
-    if not (modules and modules.identity and contract) then return true end
-    if modules.freeze and (modules.freeze.restartHeld()
-        or (modules.freeze.appPaused and modules.freeze.appPaused())) then
-        return false
-    end
-    -- Its operatives read once, for the freeze and the verdict both: asked
-    -- without them, a freeze on anybody read the roster again.
-    local hitmen = Storage.readHitmen(contract.id) or {}
-    if modules.freeze and modules.freeze.holds(contract, hitmen) then return false end
-    local verdict = judge(contract, os.time(), { actors = {}, hitmen = { [contract.id] = hitmen } })
-    return not verdict.paused
+---@param hitmen table[]|nil its operatives
+---@return boolean paused
+presencePaused = function(contract, hitmen)
+    if not (modules and modules.identity and contract) then return false end
+    local verdict = judge(contract, os.time(), { actors = {}, hitmen = { [contract.id] = hitmen or {} } })
+    return verdict.paused == true
 end
 
 --- One live contract's turn in the expiry pass. `pass` carries what the
@@ -3250,7 +3249,7 @@ local function expireOne(contract, now, pass)
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return end
     local verdict = judge(contract, now, pass)
 
-    -- On hold by staff (server/freeze.lua): neither clock runs, and nothing
+    -- On hold by staff (server/holds.lua): neither clock runs, and nothing
     -- ends it, its lifetime included. The deadline is stopped by the pause
     -- every contract has (the freeze starts it; this only makes sure, after
     -- a restart that found it running), and the lifetime is given back the
@@ -3258,29 +3257,26 @@ local function expireOne(contract, now, pass)
     -- with the clock running stays as late as it was, and ends once it is
     -- released.
     --
-    -- The restart hold the same way (Freeze.scheduledRestart): every live
+    -- The restart hold the same way (Holds.scheduledRestart): every live
     -- contract for the last half hour before a scheduled restart, nothing
     -- ending it, its lifetime included, until the restart or its release.
     -- Neither hold ends the other, nor a pause for somebody's absence: each
     -- only makes sure the clock is stopped, and it runs again only on a
     -- pass that finds nothing at all stopping it, below.
-    -- And the app pause (Config.Staff.AppPaused, Freeze.syncAppPause): every
+    -- And the app pause (Config.Holds.AppPaused, Holds.syncAppPause): every
     -- live contract while staff have the whole app paused, the same way.
-    -- And while a hold is being released (Freeze.releasing): it has let go
+    -- And while a hold is being released (Holds.releasing): it has let go
     -- of its hold but not yet given each contract back the lifetime it
     -- took, so one whose lifetime ran out while held reads as over. Looked
     -- at again on the next tick, once that time is back.
-    if modules.freeze and modules.freeze.releasing and modules.freeze.releasing() then
+    if modules.holds and modules.holds.releasing() then
         pass.soonest = math.min(pass.soonest, now)
         return
     end
     -- With the roster the pass already holds: asked without it, once
     -- anybody at all was frozen, every live contract's roster was read
     -- again on every pass (one statement each on mysql).
-    if (modules.freeze and modules.freeze.holds(contract,
-            pass.hitmen and operativesOf(pass, contract) or nil))
-        or (modules.freeze and modules.freeze.restartHeld())
-        or (modules.freeze and modules.freeze.appPaused and modules.freeze.appPaused()) then
+    if modules.holds and modules.holds.on(contract, pass.hitmen and operativesOf(pass, contract) or nil) then
         if not contract.paused_since and not verdict.overdue
             and Storage.startPause(contract.id, now) then
             contract.paused_since = now

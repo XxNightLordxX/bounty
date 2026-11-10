@@ -1,4 +1,4 @@
---- Staff freezes (server/freeze.lua): a player's contracts put on hold from
+--- Staff freezes (server/holds.lua): a player's contracts put on hold from
 --- the admin panel.
 ---
 --- Booted through main.lua, so the expiry pass and the maintenance tick are
@@ -191,14 +191,14 @@ describe('a freeze stops both clocks, and gives the time back to the second', fu
         local row = s.storage.readContract(c.id)
         local lifetimeLeft = row.expires_at - os.time()
         local deadlineLeft = row.deadline_at - os.time()
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'a'), 'target frozen')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'a'), 'target frozen')
         Env.advance(100)
-        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'b'), 'client frozen')
+        truthy(s.holds.freeze('ADMIN001', 'CREATOR1', 'b'), 'client frozen')
         Env.advance(100)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'target released')
-        truthy(s.freeze.holds(s.storage.readContract(c.id)), 'still on hold through the client')
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01'), 'target released')
+        truthy(s.holds.on(s.storage.readContract(c.id), nil, 'staff'), 'still on hold through the client')
         Env.advance(100)
-        truthy(s.freeze.unfreeze('ADMIN001', 'CREATOR1'), 'client released')
+        truthy(s.holds.unfreeze('ADMIN001', 'CREATOR1'), 'client released')
         row = s.storage.readContract(c.id)
         eq(row.expires_at - os.time(), lifetimeLeft, 'the lifetime was given back twice, or short')
         eq(row.deadline_at - os.time(), deadlineLeft, 'the deadline was given back twice, or short')
@@ -294,7 +294,7 @@ describe('every action on a contract on hold is refused, with nothing charged', 
             return sum
         end
         local start = total()
-        truthy(s.freeze.freeze('ADMIN001', 'HITMAN01', 'x'), 'the operative frozen')
+        truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'x'), 'the operative frozen')
         s.bailout.buy(f.target, c.id)
         s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {})
         s.contracts.abandon(f.hitman, c.id)
@@ -302,7 +302,7 @@ describe('every action on a contract on hold is refused, with nothing charged', 
         main.markPresenceChanged()
         main.tick()
         eq(total(), start, 'money appeared or vanished while on hold')
-        truthy(s.freeze.unfreeze('ADMIN001', 'HITMAN01'), 'released')
+        truthy(s.holds.unfreeze('ADMIN001', 'HITMAN01'), 'released')
         main.markPresenceChanged()
         main.tick()
         eq(total(), start, 'money appeared or vanished on the release')
@@ -319,10 +319,10 @@ describe('a freeze across a restart', function()
             truthy(ask(6, 'freeze', { ref = lookedUp(6, 2), reason = 'held over' }).ok, 'frozen')
 
             local main2, after = restart(mode, s)
-            local row = after.freeze.of('TARGET01')
+            local row = after.holds.of('TARGET01')
             truthy(row, mode .. ': the freeze was lost to the restart')
             eq(row.reason, 'held over', mode)
-            eq(after.freeze.count(), 1, mode)
+            eq(after.holds.count(), 1, mode)
             local ok, err = after.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {})
             falsy(ok, mode .. ': paid out after the restart')
             eq(err, CH.ERR.CONTRACT_FROZEN, mode)
@@ -332,9 +332,9 @@ describe('a freeze across a restart', function()
             eq(after.storage.readContract(c.id).state, CH.STATE.ACCEPTED, mode .. ': expired on hold')
 
             truthy(ask(6, 'unfreeze', { ref = lookedUp(6, 2) }).ok, mode .. ': unfrozen')
-            eq(after.freeze.of('TARGET01'), nil, mode)
+            eq(after.holds.of('TARGET01'), nil, mode)
             local _, third = restart(mode, after)
-            eq(third.freeze.of('TARGET01'), nil, mode .. ': the release was lost to the restart')
+            eq(third.holds.of('TARGET01'), nil, mode .. ': the release was lost to the restart')
         end)
     end
 end)
@@ -350,7 +350,7 @@ describe('nobody is told which party is frozen', function()
         local targetBefore = s.projection.contract(row, 'TARGET01')
 
         Env.clientEvents = {}
-        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'dispute'), 'the anonymous placer frozen')
+        truthy(s.holds.freeze('ADMIN001', 'CREATOR1', 'dispute'), 'the anonymous placer frozen')
         local toPlacer, toHitman, toTarget = notices(1), notices(3), notices(2)
         truthy(has(toPlacer, 'Staff have put your contracts on hold.'), 'the frozen player was not told')
         falsy(has(toPlacer, 'This contract is on hold by staff.'), 'the frozen player told per contract')
@@ -420,7 +420,7 @@ describe('nobody is told which party is frozen', function()
         end
         local before = strangerRow()
         truthy(before, 'listed to the stranger')
-        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'dispute'), 'the anonymous placer frozen')
+        truthy(s.holds.freeze('ADMIN001', 'CREATOR1', 'dispute'), 'the anonymous placer frozen')
         eq(strangerRow(), before, 'the stranger\'s row changed at the freeze')
         eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').onHold, true,
             'the operative\'s card still says On hold')
@@ -483,11 +483,11 @@ describe('who may freeze', function()
             local undo = ask(src, 'unfreeze', { subject = 2 })
             eq(undo and undo.err, 'not_allowed', tostring(src))
         end
-        eq(s.freeze.count(), 0, 'somebody was frozen')
+        eq(s.holds.count(), 0, 'somebody was frozen')
         eq(#stored(s, 'freeze_player'), 0, 'a refused freeze was recorded as one')
         local noReason = ask(6, 'freeze', { ref = lookedUp(6, 2) })
         falsy(noReason.ok, 'frozen without a reason')
-        eq(s.freeze.count(), 0)
+        eq(s.holds.count(), 0)
     end)
 end)
 
@@ -515,7 +515,7 @@ describe('a freeze and a release of one player, interleaved at the store', funct
     -- As races_spec does: the second call lands in the gap the first one's
     -- store await leaves.
     local function consistent(s)
-        eq(s.freeze.count(), #s.freeze.list(), 'the count is not what is frozen')
+        eq(s.holds.count(), #s.holds.list(), 'the count is not what is frozen')
     end
 
     it('two releases at once: one runs, the lifetime is given back once', function()
@@ -524,26 +524,26 @@ describe('a freeze and a release of one player, interleaved at the store', funct
         local c = place(s, f.creator, 'TARGET01')
         truthy(s.contracts.accept(f.hitman, c.id), 'taken')
         local lifetimeLeft = s.storage.readContract(c.id).expires_at - os.time()
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'a'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'a'), 'frozen')
         Env.advance(300)
         local real, second, secondErr = s.storage.deleteFreeze, nil, nil
         s.storage.deleteFreeze = function(...)
-            if second == nil then second, secondErr = s.freeze.unfreeze('ADMIN001', 'TARGET01') end
+            if second == nil then second, secondErr = s.holds.unfreeze('ADMIN001', 'TARGET01') end
             return real(...)
         end
-        local first = s.freeze.unfreeze('ADMIN001', 'TARGET01')
+        local first = s.holds.unfreeze('ADMIN001', 'TARGET01')
         s.storage.deleteFreeze = real
         truthy(first, 'the first release')
         falsy(second, 'the second ran alongside it')
         eq(secondErr, CH.ERR.BUSY)
         consistent(s)
-        eq(s.freeze.count(), 0)
+        eq(s.holds.count(), 0)
         eq(s.storage.readContract(c.id).expires_at - os.time(), lifetimeLeft,
             'the lifetime was given back twice')
         -- A later freeze still holds.
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'b'), 'frozen again')
-        truthy(s.freeze.of('TARGET01'), 'a later freeze is in force')
-        truthy(s.freeze.holds(s.storage.readContract(c.id)), 'and holds the contract')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'b'), 'frozen again')
+        truthy(s.holds.of('TARGET01'), 'a later freeze is in force')
+        truthy(s.holds.on(s.storage.readContract(c.id), nil, 'staff'), 'and holds the contract')
     end)
 
     it('two freezes at once: one runs, and one release ends it', function()
@@ -553,23 +553,23 @@ describe('a freeze and a release of one player, interleaved at the store', funct
         truthy(s.contracts.accept(f.hitman, c.id), 'taken')
         local real, second, secondErr = s.storage.writeFreeze, nil, nil
         s.storage.writeFreeze = function(...)
-            if second == nil then second, secondErr = s.freeze.freeze('ADMIN001', 'TARGET01', 'b') end
+            if second == nil then second, secondErr = s.holds.freeze('ADMIN001', 'TARGET01', 'b') end
             return real(...)
         end
-        local first = s.freeze.freeze('ADMIN001', 'TARGET01', 'a')
+        local first = s.holds.freeze('ADMIN001', 'TARGET01', 'a')
         s.storage.writeFreeze = real
         truthy(first, 'the first freeze')
         falsy(second, 'the second ran alongside it')
         eq(secondErr, CH.ERR.BUSY)
         consistent(s)
-        eq(s.freeze.count(), 1)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'released')
+        eq(s.holds.count(), 1)
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01'), 'released')
         consistent(s)
-        eq(s.freeze.count(), 0)
-        falsy(s.freeze.holds(s.storage.readContract(c.id)), 'still on hold after the release')
+        eq(s.holds.count(), 0)
+        falsy(s.holds.on(s.storage.readContract(c.id), nil, 'staff'), 'still on hold after the release')
         -- And a later freeze still holds.
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'c'), 'frozen again')
-        truthy(s.freeze.holds(s.storage.readContract(c.id)), 'a later freeze holds')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'c'), 'frozen again')
+        truthy(s.holds.on(s.storage.readContract(c.id), nil, 'staff'), 'a later freeze holds')
     end)
 
     it('a freeze inside a release, and a release inside a freeze, are refused as busy', function()
@@ -580,25 +580,25 @@ describe('a freeze and a release of one player, interleaved at the store', funct
 
         local realWrite, unfreezeOk, unfreezeErr = s.storage.writeFreeze, nil, nil
         s.storage.writeFreeze = function(...)
-            if unfreezeOk == nil then unfreezeOk, unfreezeErr = s.freeze.unfreeze('ADMIN001', 'TARGET01') end
+            if unfreezeOk == nil then unfreezeOk, unfreezeErr = s.holds.unfreeze('ADMIN001', 'TARGET01') end
             return realWrite(...)
         end
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'a'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'a'), 'frozen')
         s.storage.writeFreeze = realWrite
         falsy(unfreezeOk); eq(unfreezeErr, CH.ERR.BUSY)
         consistent(s)
-        truthy(s.freeze.holds(s.storage.readContract(c.id)), 'the freeze stands')
+        truthy(s.holds.on(s.storage.readContract(c.id), nil, 'staff'), 'the freeze stands')
 
         local realDelete, freezeOk, freezeErr = s.storage.deleteFreeze, nil, nil
         s.storage.deleteFreeze = function(...)
-            if freezeOk == nil then freezeOk, freezeErr = s.freeze.freeze('ADMIN001', 'TARGET01', 'b') end
+            if freezeOk == nil then freezeOk, freezeErr = s.holds.freeze('ADMIN001', 'TARGET01', 'b') end
             return realDelete(...)
         end
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'released')
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01'), 'released')
         s.storage.deleteFreeze = realDelete
         falsy(freezeOk); eq(freezeErr, CH.ERR.BUSY)
         consistent(s)
-        eq(s.freeze.count(), 0)
-        falsy(s.freeze.holds(s.storage.readContract(c.id)), 'the release stands')
+        eq(s.holds.count(), 0)
+        falsy(s.holds.on(s.storage.readContract(c.id), nil, 'staff'), 'the release stands')
     end)
 end)

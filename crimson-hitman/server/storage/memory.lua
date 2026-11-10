@@ -1743,7 +1743,7 @@ end
 --------------------------------------------------------------------------
 
 --- The players staff have put on hold from the admin panel
---- (server/freeze.lua), by citizen id: { cid, name, reason, by_cid,
+--- (server/holds.lua), by citizen id: { cid, name, reason, by_cid,
 --- frozen_at }. A row is the freeze, and unfreezing removes it; there is no
 --- timer. Read whole once at the start and kept by the module; written at
 --- once on every change.
@@ -1883,7 +1883,7 @@ end
 --- Small whole numbers the staff tools keep across a restart, by name:
 --- 'staff_summary_day' (the day the daily summary was last posted, as
 --- yyyymmdd, server/summary.lua) and 'staff_pause_since' (when the app
---- pause began, os.time(), server/freeze.lua); and 'imp_weekly_day' (the
+--- pause began, os.time(), server/holds.lua); and 'imp_weekly_day' (the
 --- day the weekly stats were last posted, yyyymmdd, server/imp_weekly.lua);
 --- and 'imp_serial_secret' (the secret scrubbed serials are worked out with,
 --- server/imp_scrub.lua); and 'org_funds_backend' (where the organisation's

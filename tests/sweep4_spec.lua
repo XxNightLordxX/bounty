@@ -33,11 +33,11 @@ local function it(name, fn)
     IMP.it(name, function(...)
         local tip = deepCopy(Config.LocationTip)
         local informant = deepCopy(Config.Informant)
-        local paused = Config.Staff.AppPaused
+        local paused = Config.Holds.AppPaused
         local out = table.pack(pcall(fn, ...))
         Config.LocationTip = tip
         Config.Informant = informant
-        Config.Staff.AppPaused = paused
+        Config.Holds.AppPaused = paused
         if not out[1] then error(out[2], 0) end
     end)
 end
@@ -122,7 +122,7 @@ describe('sweep 4: the proof handover', function()
     it('D4 refuses under the restart hold before the card is taken', function()
         local s, _, c = held(false)
         card(3, 'TARGET01')
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 600 }), 'restart hold on')
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 600 }), 'restart hold on')
         Natives.calls.inventory = {}
         local reply = call('proofItem', 3, { id = c.id })
         eq(reply.err, CH.ERR.RESTART_HOLD)
@@ -133,8 +133,8 @@ describe('sweep 4: the proof handover', function()
     it('D4 refuses under the app pause before the card is taken', function()
         local s, _, c = held(false)
         card(3, 'TARGET01')
-        Config.Staff.AppPaused = true
-        eq(s.freeze.syncAppPause(), 'paused')
+        Config.Holds.AppPaused = true
+        eq(s.holds.syncAppPause(), 'paused')
         Natives.calls.inventory = {}
         local reply = call('proofItem', 3, { id = c.id })
         eq(reply.err, CH.ERR.APP_PAUSED)
@@ -222,7 +222,7 @@ local function freezeOnCall(s, fnName, nth)
         n = n + 1
         if n == nth and not armed then
             armed = true
-            s.freeze.freeze('ADMIN001', 'TARGET01', 'probe')
+            s.holds.freeze('ADMIN001', 'TARGET01', 'probe')
         end
         return orig(...)
     end
@@ -240,7 +240,7 @@ describe('sweep 4: no money moves on a contract staff hold', function()
         Config.Improvements.GoDark.Minutes = 30
         local t = call('locationTip', 3, { id = c.id, shown = PRICE })
         truthy(t and t.ok, 'tip bought: ' .. tostring(t and t.err))
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         local before = bank(2)
         local r = call('goDark', 2, { id = c.id, shown = { cost = 50000, account = 'bank' } })
         eq(r and r.err, CH.ERR.CONTRACT_FROZEN)
@@ -278,7 +278,7 @@ describe('sweep 4: no money moves on a contract staff hold', function()
         local before = bank(3)
         local orig = s.storage.writeLocationTip
         s.storage.writeLocationTip = function(...)
-            s.freeze.freeze('ADMIN001', 'TARGET01', 'probe')
+            s.holds.freeze('ADMIN001', 'TARGET01', 'probe')
             return orig(...)
         end
         local t = call('locationTip', 3, { id = c.id, shown = PRICE })
@@ -344,7 +344,7 @@ describe('sweep 4: no money moves on a contract staff hold', function()
             player.Functions.GetMoney = function(account)
                 if not armed then
                     armed = true
-                    s.freeze.freeze('ADMIN001', 'TARGET01', 'probe')
+                    s.holds.freeze('ADMIN001', 'TARGET01', 'probe')
                 end
                 return getMoney(account)
             end
@@ -428,7 +428,7 @@ describe('sweep 4: contract decay', function()
         s.storage.readContract = function(id, ...)
             if not armed and id == c.id and debug.traceback():find('imp_decay', 1, true) then
                 armed = true
-                s.freeze.freeze('ADMIN001', 'TARGET01', 'probe')
+                s.holds.freeze('ADMIN001', 'TARGET01', 'probe')
             end
             return orig(id, ...)
         end
@@ -442,7 +442,7 @@ describe('sweep 4: contract decay', function()
                     'no false "could not rise from your bank"')
             end
         end
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         Env.advance(3600)
         local bankBefore = bank(1)
         s.impBoard.tick()
@@ -458,10 +458,10 @@ describe('sweep 4: contract decay', function()
         local c = place(s, f)
         s.impBoard.tick()
         Env.advance(600)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(5 * 3600)
         s.impBoard.tick()
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         local bankBefore = bank(1)
         Env.advance(60)
         s.impBoard.tick()
@@ -477,7 +477,7 @@ describe('sweep 4: contract decay', function()
         local c = place(s, f)
         s.impBoard.tick()
         Env.advance(3500)
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 600 }), 'restart hold on')
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 600 }), 'restart hold on')
         Env.advance(200)
         local bankBefore = bank(1)
         s.impBoard.tick()
@@ -543,7 +543,7 @@ describe('sweep 4: a staff extension and a give-back', function()
         truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
         local row = s.storage.readContract(c.id)
         s.storage.setContractFields(c.id, { expires_at = row.deadline_at + 100 })
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(3600)
         local setDeadline = s.storage.setDeadline
         local fired = false
@@ -551,7 +551,7 @@ describe('sweep 4: a staff extension and a give-back', function()
             local out = table.pack(setDeadline(...))
             if not fired then
                 fired = true
-                truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+                truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
             end
             return table.unpack(out, 1, out.n)
         end
@@ -637,7 +637,7 @@ describe('sweep 4 review: the lifetime moves in one write', function()
         truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
         local row = s.storage.readContract(c.id)
         s.storage.setContractFields(c.id, { expires_at = row.deadline_at + 100 })
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(3600)
         local exp0 = s.storage.readContract(c.id).expires_at
         local setFields, add = s.storage.setContractFields, s.storage.addToExpires
@@ -657,7 +657,7 @@ describe('sweep 4 review: the lifetime moves in one write', function()
                 return add(...)
             end
         end
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         s.storage.setContractFields, s.storage.addToExpires = setFields, add
         truthy(fired, 'the extension landed in the give-back')
         truthy(ok, 'the extension: ' .. tostring(err))
@@ -753,7 +753,7 @@ describe('sweep 4 review: the staff panel\'s lookup handles', function()
         local late = ask(6, 'freeze', { ref = ref, reason = 'x' })
         falsy(late.ok, 'a handle from before the drop')
         truthy(tostring(late.message):find('Look them up again', 1, true), tostring(late.message))
-        falsy(s.freeze.of('TARGET01'))
+        falsy(s.holds.of('TARGET01'))
     end)
 
     it('mints no handle for staff with no character, and takes none from them', function()
@@ -765,6 +765,6 @@ describe('sweep 4 review: the staff panel\'s lookup handles', function()
         eq(ref, nil, 'a handle no write could tell from any other nobody\'s')
         local made = ask(7, 'freeze', { ref = ref or 'p1_100000', reason = 'x' })
         falsy(made and made.ok, 'frozen by nobody')
-        falsy(s.freeze.of('TARGET01'))
+        falsy(s.holds.of('TARGET01'))
     end)
 end)

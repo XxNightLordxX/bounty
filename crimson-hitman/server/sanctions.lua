@@ -4,7 +4,7 @@
 --- number of days, or until staff lift it, with a reason. They are told
 --- "You are suspended from contracts until <date>: <reason>" when they
 --- try, and on the app's board. Nothing on their live contracts is touched:
---- the freeze (server/freeze.lua) is the tool for that.
+--- the freeze (server/holds.lua) is the tool for that.
 ---
 --- A protection makes one player untargetable for a number of hours or
 --- days, or for good: a new player, a break from roleplay, a staff member
@@ -359,7 +359,7 @@ function Sanctions.note(fields)
     return row
 end
 
---- A freeze put on a player (server/freeze.lua), kept for their history:
+--- A freeze put on a player (server/holds.lua), kept for their history:
 --- the freeze itself lives in its own store, and its row is deleted when it
 --- is lifted.
 function Sanctions.noteFreeze(staffCid, cid, reason, name)

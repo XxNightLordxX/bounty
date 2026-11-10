@@ -222,7 +222,7 @@ function History.build(deps, cid, canIdentify)
             }
         end
     end
-    local frozen = deps.freeze and deps.freeze.of(cid)
+    local frozen = deps.holds and deps.holds.of(cid)
     if frozen and not frozenNoted then
         measures[#measures + 1] = { kind = 'freeze', from = frozen.frozen_at, state = 'in force',
             reason = frozen.reason, by = canIdentify and frozen.by_cid or nil }

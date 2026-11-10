@@ -29,6 +29,7 @@
 --- (TERMS_CHANGED otherwise), as the modules it extends do.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
 local Feature = CrimsonBoot.require('server.lib.feature')
@@ -376,12 +377,12 @@ end
 ---@param now integer
 ---@return integer|nil
 heldOver = function(row, now)
-    if not (Contracts and Contracts.heldSince and Storage and row.contract_id) then return nil end
+    if not (Storage and row.contract_id) then return nil end
     local read, contract = pcall(Storage.readContract, row.contract_id)
     if not read or not contract or CH.TERMINAL[contract.state] then return nil end
     local untilAt = tonumber(row.until_at) or 0
-    if Contracts.holdReleasing and Contracts.holdReleasing() then return now + 1 end
-    local since = Contracts.heldSince(contract)
+    if Holds.releasing() then return now + 1 end
+    local since = Holds.since(contract)
     if not since then return nil end
     local start = math.max(since, tonumber(row.bought_at) or since)
     if start >= untilAt then return nil end
@@ -408,7 +409,7 @@ function ImpTips.darkUntil(cid)
     return nil
 end
 
---- A hold on a contract has ended (server/freeze.lua, giveBack): the
+--- A hold on a contract has ended (server/holds.lua, giveBack): the
 --- go-dark window bought on it, and the tips on it (LocationTip.heldBack),
 --- given the time it stood still, from `from` (or when it was bought, if
 --- later) to `to`. Only a window still running when the hold began.
@@ -516,8 +517,8 @@ buyDark = function(actor, contractId, shown)
     local contract = Storage.readContract(contractId)
     if not contract or contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
-    -- On hold by staff (server/freeze.lua): no money moves on it.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then
+    -- On hold by staff (server/holds.lua): no money moves on it.
+    if Holds.on(contract, nil, 'staff') then
         return false, CH.ERR.CONTRACT_FROZEN
     end
     -- Tips switched off on this contract (the master switch, their own, or
@@ -537,7 +538,7 @@ buyDark = function(actor, contractId, shown)
     local now = Storage.readContract(contractId)
     if not now or CH.TERMINAL[now.state] then return false, CH.ERR.ALREADY_SETTLED end
     if not LocationTip.enabled(now) then return false, CH.ERR.FEATURE_OFF end
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(now) then
+    if Holds.on(now, nil, 'staff') then
         return false, CH.ERR.CONTRACT_FROZEN
     end
 
@@ -567,7 +568,7 @@ buyDark = function(actor, contractId, shown)
         refusal = CH.ERR.SERVER_ERROR
     elseif not after or CH.TERMINAL[after.state] then
         refusal = CH.ERR.ALREADY_SETTLED
-    elseif Contracts and Contracts.heldByStaff and Contracts.heldByStaff(after) then
+    elseif Holds.on(after, nil, 'staff') then
         refusal = CH.ERR.CONTRACT_FROZEN
     end
     if not refusal then

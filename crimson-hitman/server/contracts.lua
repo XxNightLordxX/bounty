@@ -14,7 +14,12 @@ local TargetLimits = CrimsonBoot.require('server.targetlimits')
 
 local Contracts = {}
 
-local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger, Freeze
+local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger
+--- Every hold on a contract (server/holds.lua): staff freezes, the restart
+--- hold, the app pause. Every path that would accept, complete, pay, refund,
+--- amend or end a contract asks, after it has checked who is asking, so a
+--- stranger is never told a contract is on hold.
+local Holds = CrimsonBoot.require('server.holds')
 --- Staff suspensions and protections (server/sanctions.lua).
 local Sanctions
 --- The shared read of what is running (Projection.liveSnapshot).
@@ -38,9 +43,6 @@ function Contracts.init(deps)
     -- Where money no rule here can settle is left for staff
     -- (server/review.lua).
     Review      = deps.review
-    -- The players staff have put on hold (server/freeze.lua): nothing on a
-    -- contract one of them is party to moves until they are released.
-    Freeze      = deps.freeze
     -- The players staff have suspended from contracts, and the ones they
     -- protect from them (server/sanctions.lua).
     Sanctions   = deps.sanctions
@@ -57,75 +59,6 @@ function Contracts.init(deps)
 end
 
 local LIVE_STATES = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true, [CH.STATE.COMPLETING] = true }
-
---- Whether staff have put this contract on hold: a party to it frozen from
---- the admin panel (server/freeze.lua). Every path that would accept,
---- complete, pay, refund, amend or end it asks, after it has checked who is
---- asking, so a stranger is never told a contract is on hold.
----@param contract table|nil
----@param hitmen table[]|nil
----@return boolean
-function Contracts.heldByStaff(contract, hitmen)
-    return Freeze ~= nil and Freeze.holds(contract, hitmen)
-end
-
---- Whether every live contract is on the restart hold: the last half hour
---- before a scheduled restart (Freeze.scheduledRestart). Meanwhile no hit
---- goes through: no kill is claimed (Contracts.claimSlot), no instant
---- buyout is charged (Bailout.buy), no queued buyout pays out, no handover
---- is armed or finishes, and no deadline, lifetime or idle clock runs, so
---- nothing expires. The placer's cancel and an agreed cancel stay open:
---- withdrawing a contract is not a hit.
----@return boolean
-function Contracts.restartHeld()
-    return Freeze ~= nil and Freeze.restartHeld()
-end
-
---- When the restart hold began, os.time(), while it is on; else nil.
----@return integer|nil
-function Contracts.restartHeldSince()
-    return Freeze ~= nil and Freeze.restartHeldSince and Freeze.restartHeldSince() or nil
-end
-
---- When whatever holds a contract now began, os.time(): the earliest of a
---- staff freeze on one of its parties, the restart hold and the app pause
---- that are on. nil when none is.
----@param contract table|nil
----@param hitmen table[]|nil
----@return integer|nil
-function Contracts.heldSince(contract, hitmen)
-    if Freeze == nil then return nil end
-    local since = Freeze.heldSince and Freeze.heldSince(contract, hitmen) or nil
-    local function earliest(at)
-        at = tonumber(at)
-        if at and (not since or at < since) then since = at end
-    end
-    if Freeze.restartHeld() and Freeze.restartHeldSince then earliest(Freeze.restartHeldSince()) end
-    if Freeze.appPausedSince then earliest(Freeze.appPausedSince()) end
-    return since
-end
-
---- Whether a hold is being released now, its time not all given back yet
---- (Freeze.releasing): a window that ran out on the wall clock meanwhile is
---- about to be given that time back, so nothing drops it yet.
----@return boolean
-function Contracts.holdReleasing()
-    return Freeze ~= nil and Freeze.releasing ~= nil and Freeze.releasing()
-end
-
---- Whether staff have paused the whole app (Config.Staff.AppPaused):
---- nothing is placed or accepted meanwhile (server/freeze.lua).
----@return boolean
-function Contracts.appPaused()
-    return Freeze ~= nil and Freeze.appPaused ~= nil and Freeze.appPaused()
-end
-
---- Whether staff have frozen this player.
----@param cid string|nil
----@return boolean
-function Contracts.frozenPlayer(cid)
-    return Freeze ~= nil and Freeze.of(cid) ~= nil
-end
 
 --- The suspension staff have put on this player (server/sanctions.lua):
 --- they may neither place nor accept a contract while it lasts. Or nil.
@@ -1214,8 +1147,8 @@ local function createUnlocked(actor, req, targetActor)
     -- anything is charged. A frozen placer is told so: it is about them. A
     -- frozen target is refused as a protected one is, so a stranger placing
     -- on them is never told staff hold them.
-    if Contracts.frozenPlayer(actor.cid) then return nil, CH.ERR.CONTRACT_FROZEN end
-    if Contracts.frozenPlayer(req.targetCid) then return nil, CH.ERR.TARGET_PROTECTED end
+    if Holds.of(actor.cid) then return nil, CH.ERR.CONTRACT_FROZEN end
+    if Holds.of(req.targetCid) then return nil, CH.ERR.TARGET_PROTECTED end
     -- Suspended by staff (server/sanctions.lua): told until when and why.
     -- Before anything is charged.
     local suspension = Contracts.suspension(actor.cid)
@@ -1463,7 +1396,7 @@ end
 function Contracts.create(actor, req)
     -- Staff have paused the app for an event: nothing is looked up, held
     -- or charged.
-    if Contracts.appPaused() then return nil, CH.ERR.APP_PAUSED end
+    if Holds.on(nil, nil, 'app') then return nil, CH.ERR.APP_PAUSED end
     local targetActor = Identity.byCitizenId(req.targetCid)
     local keys = { 'creator:' .. tostring(actor.account or actor.cid) }
     if targetActor then keys[#keys + 1] = 'target:' .. tostring(targetActor.cid) end
@@ -1523,12 +1456,13 @@ local function stakeTimeRefusal(contract, shown, shownBand)
     end
     local was = Util.bandRank(shownBand)
     -- The band the card shows, the lifetime's included (Util.bandLeft),
-    -- standing still from the hold start the card's does (Freeze.bandStart):
+    -- standing still from the hold start the card's does (Holds.why):
     -- worked out from now, under the restart hold every acceptance of a
     -- staked contract the lifetime ends was refused as terms changed. A
-    -- staff freeze is refused before this (Contracts.heldByStaff), so a
+    -- staff freeze is refused before this (Holds.on, 'staff'), so a
     -- stranger's start is the one.
-    local start = Freeze and Freeze.bandStart and Freeze.bandStart(contract, nil, true) or nil
+    local hold = Holds.why(contract, nil, 'public')
+    local start = hold and hold.since or nil
     local _, now = Util.timeBand(Util.bandLeft(contract, start))
     if was and now and now > was then
         return CH.ERR.TERMS_CHANGED
@@ -1629,11 +1563,11 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- On hold by staff, or the hitman is: nothing is taken. Somebody not on
     -- it is told only "not right now": "on hold" to a stranger tapping Accept
     -- said which contracts a frozen player was on, anonymous ones included.
-    if Contracts.frozenPlayer(actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.of(actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
     -- Suspended by staff (server/sanctions.lua): nothing is taken.
     local suspension = Contracts.suspension(actor.cid)
     if suspension then return false, CH.ERR.SUSPENDED, Sanctions.refusal(suspension) end
-    if Contracts.heldByStaff(contract) then
+    if Holds.on(contract, nil, 'staff') then
         if Storage.readHitman(contract.id, actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
         return false, CH.ERR.BAD_STATE
     end
@@ -2154,7 +2088,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     -- The same for every contract and everybody, so it says nothing about
     -- this one.
-    if Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
+    if Holds.on(nil, nil, 'app') then return false, CH.ERR.APP_PAUSED end
     -- The hitman organisation's rules (server/org/init.lua, off as shipped):
     -- members only, a suspension, a role's access rules, the cut shown.
     -- Nothing is taken before it answers. Asked while this acceptance holds
@@ -2197,7 +2131,7 @@ end
 function Contracts.acceptHeld(actor, contractId, anonymous, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
-    if Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
+    if Holds.on(nil, nil, 'app') then return false, CH.ERR.APP_PAUSED end
     -- The organisation's gate as Contracts.accept asks it: inside this
     -- hitman's hold, a gate that raised refusing, and the cut it checked
     -- the one frozen (Org.afterAccept, told inside the same hold).
@@ -2555,7 +2489,7 @@ local function walkAway(actor, contractId, opts)
     local hitman = Storage.readHitman(contractId, actor.cid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
     -- On hold by staff: their stake stays where it is.
-    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
 
     -- Only an active row of a contract still open (Storage.abandonHitman).
     -- Both reads above are awaits on mysql, and a claim, a void, an expiry
@@ -2938,7 +2872,7 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     -- is released and no stake moves. Said as held, so the sweep keeps the
     -- hold's clocks: a hold landing between the sweep's look and this lock
     -- is not the hitman working it.
-    if Contracts.heldByStaff(contract) or Contracts.restartHeld() or Contracts.appPaused() then
+    if Holds.on(contract) then
         return false, IDLE_HELD
     end
 
@@ -3220,8 +3154,7 @@ function Contracts.releaseIdleHolds()
             -- And no clock runs while staff hold it, the restart hold is on or
             -- the app is paused: nothing could be worked meanwhile, and the
             -- release would forfeit a stake for time nobody could use.
-            local held = #hitmen > 0 and (Contracts.heldByStaff(c, hitmen) or Contracts.restartHeld()
-                or Contracts.appPaused())
+            local held = #hitmen > 0 and Holds.on(c, hitmen)
             local bothHere = false
             if #hitmen > 0 and not held then
                 local targetActor = present(c.target_cid)
@@ -3472,10 +3405,10 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
 
     -- On hold by staff: no completion and no payout.
-    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     -- Nor on the restart hold: no hit goes through in the last half hour
-    -- before a restart (Contracts.restartHeld).
-    if Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
+    -- before a restart (Holds.on, 'restart').
+    if Holds.on(nil, nil, 'restart') then return false, CH.ERR.RESTART_HOLD end
 
     -- The same hitman may not collect two slots back to back; without this a
     -- multi-slot contract is a respawn-camping machine (§3.5).
@@ -3526,10 +3459,10 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- And the holds again: a freeze or the restart hold that landed in the
     -- reads since the first look takes no key, and the claim paid out "on
     -- hold". Asked of the contract as it was taken: a hold leaves one
-    -- already completing alone (Freeze.partiesOf).
-    elseif Contracts.heldByStaff(setmetatable({ state = CH.STATE.ACCEPTED }, { __index = held })) then
+    -- already completing alone (Holds.partiesOf).
+    elseif Holds.on(setmetatable({ state = CH.STATE.ACCEPTED }, { __index = held }), nil, 'staff') then
         refusal = CH.ERR.CONTRACT_FROZEN
-    elseif Contracts.restartHeld() then
+    elseif Holds.on(nil, nil, 'restart') then
         refusal = CH.ERR.RESTART_HOLD
     end
     if refusal then
@@ -3791,7 +3724,7 @@ local function cancelUnlocked(actor, contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
-    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if heldByAnyone(contractId) then return false, CH.ERR.CONTRACT_TAKEN end
 
     -- Read before it closes. An operative who took it and walked away is not
@@ -3902,7 +3835,7 @@ local function reviseUnlocked(actor, contractId, changes)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
-    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if heldByAnyone(contractId) then return false, CH.ERR.CONTRACT_TAKEN end
 
     -- Held as values, never written onto `contract`: on the memory store it
@@ -4160,7 +4093,7 @@ local function withdrawRewardUnlocked(actor, contractId, lineIds)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
-    if Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     if heldByAnyone(contractId) then return false, CH.ERR.CONTRACT_TAKEN end
 
     -- Bounded before anything is read: a client naming ten thousand ids
@@ -4499,7 +4432,7 @@ local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
     -- On hold by staff: no ending moves its money, whoever asks. Only a
     -- staff void, which is staff's own decision about it.
-    if terminal ~= CH.STATE.VOIDED and Contracts.heldByStaff(contract) then
+    if terminal ~= CH.STATE.VOIDED and Holds.on(contract, nil, 'staff') then
         return false, CH.ERR.CONTRACT_FROZEN
     end
 

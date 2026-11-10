@@ -40,6 +40,7 @@
 --- whom, and nothing about any other party.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 
 local StaffReward = {}
 
@@ -113,7 +114,7 @@ local function refusal(contract)
     end
     if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return CH.ERR.BAD_STATE end
     if contract.bailout_queued_at then return 'buyout_queued' end
-    if deps.contracts.heldByStaff(contract) then return CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return CH.ERR.CONTRACT_FROZEN end
     if (contract.next_slot or 1) > (contract.payout_slots or 1) then return CH.ERR.ALREADY_SETTLED end
     return nil
 end
@@ -351,8 +352,7 @@ local function refused(src, contractId, err, detail)
         -- Said as on hold only where this staff member's view says so: held
         -- through an anonymous party they may not see, no more than that.
         local contract = deps.storage.readContract(contractId)
-        if contract and deps.panel.frozenShown
-            and deps.panel.frozenShown(contract, deps.panel.identifies(src)) then
+        if contract and Holds.shown(contract, nil, deps.panel.identifies(src)) then
             return false, err, 'It is on hold by staff, and nothing on it moves: unfreeze first.'
         end
         return false, 'not_changed', 'Not changed: try again in a moment.'

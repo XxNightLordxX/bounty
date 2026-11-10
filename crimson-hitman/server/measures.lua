@@ -8,7 +8,7 @@
 --- The one place the admin panel reads and changes the measures staff put
 --- on one player (Players, Measures):
 ---
----   freeze    their live contracts on hold (server/freeze.lua; its clocks,
+---   freeze    their live contracts on hold (server/holds.lua; its clocks,
 ---             holds and give-backs stay there), kept for their history
 ---             card too (Sanctions.noteFreeze / noteUnfreeze)
 ---   suspend   barred from placing and accepting (server/sanctions.lua)
@@ -72,7 +72,7 @@ end
 
 --- The row in force of one kind on one player, as each module keeps it, or nil.
 local function rowOf(kind, cid)
-    if kind == 'freeze' then return deps.freeze and deps.freeze.of(cid) or nil end
+    if kind == 'freeze' then return deps.holds and deps.holds.of(cid) or nil end
     if kind == 'suspend' then return deps.sanctions and deps.sanctions.suspended(cid) or nil end
     if kind == 'protect' then return deps.sanctions and deps.sanctions.protected(cid) or nil end
     if kind == 'limit' then return deps.targetLimits and deps.targetLimits.overrideOf
@@ -107,7 +107,7 @@ end
 
 --- Every one of a kind in force, as each module lists them.
 local function inForce(kind)
-    if kind == 'freeze' then return deps.freeze and deps.freeze.list() or {} end
+    if kind == 'freeze' then return deps.holds and deps.holds.list() or {} end
     if kind == 'suspend' or kind == 'protect' then
         return deps.sanctions and deps.sanctions.listOpen and deps.sanctions.listOpen(kind) or {}
     end
@@ -151,7 +151,7 @@ end
 ---@return table
 function Measures.counts()
     local out = {}
-    if deps.freeze then out.freeze, out.unknown = deps.freeze.count() end
+    if deps.holds then out.freeze, out.unknown = deps.holds.count() end
     for _, k in ipairs({ 'suspend', 'protect', 'limit' }) do
         local ok, rows = pcall(inForce, k)
         out[k] = ok and #rows or nil
@@ -172,8 +172,8 @@ end
 function Measures.apply(kind, staffCid, cid, args)
     args = args or {}
     if kind == 'freeze' then
-        if not deps.freeze then return false, 'unavailable' end
-        local ok, err = deps.freeze.freeze(staffCid, cid, args.reason, args.name)
+        if not deps.holds then return false, 'unavailable' end
+        local ok, err = deps.holds.freeze(staffCid, cid, args.reason, args.name)
         -- Kept for their history card too: the freeze's own row goes when it is lifted.
         if ok and deps.sanctions then pcall(deps.sanctions.noteFreeze, staffCid, cid, args.reason, args.name) end
         return ok, err
@@ -196,8 +196,8 @@ end
 ---@return table|nil detail
 function Measures.lift(kind, staffCid, cid, reason, name)
     if kind == 'freeze' then
-        if not deps.freeze then return false, 'unavailable' end
-        local ok, err = deps.freeze.unfreeze(staffCid, cid, reason)
+        if not deps.holds then return false, 'unavailable' end
+        local ok, err = deps.holds.unfreeze(staffCid, cid, reason)
         if ok and deps.sanctions then pcall(deps.sanctions.noteUnfreeze, staffCid, cid) end
         return ok, err
     end

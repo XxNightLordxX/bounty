@@ -274,7 +274,7 @@ describe('review-x F2: a disposal step stands no longer than MaxHoldMinutes of r
 
     it('stops naming the target past the cap even while staff hold the step', function()
         local s = setup()
-        truthy(s.freeze.freeze('ADMIN001', 'HITMAN01', 'test'))
+        truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'test'))
         for _ = 1, 13 do tick(s, 600) end
         eq(s.disposal.count(), 1, 'a held step is not timed out')
         local again, err = another(s)
@@ -517,8 +517,8 @@ describe('review-x F6: a placer\'s declines are capped, and a late answer is not
             local s, f, c = placed(function() Config.Kidnap.ConfirmMissed = case.missed end)
             truthy(s.kidnap.arm(c.id, 'HITMAN01'))
             ticks(s, full())
-            local real, inside = s.contracts.heldByStaff, false
-            s.contracts.heldByStaff = function(...)
+            local real, inside = s.holds.on, false
+            s.holds.on = function(...)
                 local out = table.pack(real(...))
                 if not inside then
                     inside = true
@@ -527,7 +527,7 @@ describe('review-x F6: a placer\'s declines are capped, and a late answer is not
                 return table.unpack(out, 1, out.n)
             end
             local ok, err, data = s.kidnap.answer(c.id, 'CREATOR1', case.yes)
-            s.contracts.heldByStaff = real
+            s.holds.on = real
             truthy(inside, 'the tick ran in the answer\'s await')
             falsy(ok, 'not answered as done: ' .. tostring(data and (data.confirmed or data.declined)))
             eq(err, CH.ERR.NO_HANDOVER)
@@ -583,17 +583,17 @@ describe('admin review F3: a disposal step held through an anonymous party is no
             truthy(reply and reply.ok)
             return reply.data.steps[1].held
         end
-        truthy(s.freeze.freeze('ADMIN001', 'HITMAN01', 'test'))
+        truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'test'))
         eq(held(6), false, 'held only through the anonymous hitman: not said without the identity ACE')
         eq(held(8), true, 'said with it')
-        truthy(s.freeze.unfreeze('ADMIN001', 'HITMAN01', 'done'))
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'test'))
+        truthy(s.holds.unfreeze('ADMIN001', 'HITMAN01', 'done'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'test'))
         eq(held(6), true, 'through the target, whom every reader sees')
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
-        Config.Staff.AppPaused = true
-        s.freeze.syncAppPause()
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        Config.Holds.AppPaused = true
+        s.holds.syncAppPause()
         eq(held(6), true, 'the app pause names nobody')
-        Config.Staff.AppPaused = false
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = false
+        s.holds.syncAppPause()
     end)
 end)

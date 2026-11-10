@@ -311,20 +311,20 @@ CH.ERR = {
     --- or taken off when the last hitman left.
     NO_MEETING           = 'no_meeting',
     --- Staff have put a party to this contract on hold from the admin panel
-    --- (server/freeze.lua): its clocks are stopped and nothing on it is
+    --- (server/holds.lua): its clocks are stopped and nothing on it is
     --- taken, paid, refunded or moved until they release it. Also a frozen
     --- player placing or taking a contract, and a contract placed on one.
     --- Never says which party: to the player it is only "on hold by staff".
     CONTRACT_FROZEN      = 'contract_frozen',
     --- Every contract is on the restart hold, the last half hour before a
-    --- scheduled restart (server/freeze.lua): a handover is not armed.
+    --- scheduled restart (server/holds.lua): a handover is not armed.
     RESTART_HOLD         = 'restart_hold',
     --- Staff have suspended this player from contracts from the admin panel
     --- (server/sanctions.lua): they may neither place nor accept one until
     --- it ends or is lifted. Sent with { untilAt = os.time() or nil for
     --- until lifted, reason }, their own suspension's, never who set it.
     SUSPENDED            = 'suspended',
-    --- Staff have paused the whole app (Config.Staff.AppPaused, under
+    --- Staff have paused the whole app (Config.Holds.AppPaused, under
     --- Features): no contract is placed or accepted, and every live one
     --- keeps its clocks stopped, until it is switched off again. To the
     --- player: "Contracts are paused by staff."

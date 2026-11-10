@@ -51,7 +51,7 @@ panel's **Features** section (live, kept across restarts) and in
 | Anonymity | `Config.Anonymity.AllowAnonymousPlacer`, `AllowAnonymousHitman` (and `.WhitelistedTargets`) | off |
 | Informants (target's, placer's, the tip) | `Config.InformantsEnabled`, then `Config.Informant.Enabled`, `Config.PlacerInformant.Enabled`, `Config.LocationTip.Enabled` | off |
 | Law enforcement advisory | `Config.Advisory.Enabled` | on |
-| Staff tools (app pause, daily summary, alerts) | `Config.Staff.AppPaused`, `Config.Staff.DailySummary`, `Config.Staff.Alert*`, `Config.Alerts.ToDiscord` | pause and summary off, alerts on |
+| Staff tools (app pause, daily summary, alerts) | `Config.Holds.AppPaused`, `Config.Staff.DailySummary`, `Config.Staff.Alert*`, `Config.Alerts.ToDiscord` | pause and summary off, alerts on |
 | Roleplay (12 features) | `Config.Roleplay.<Feature>.Enabled` | all off |
 | Improvements (13 features and a cooldown) | `Config.Improvements.<Feature>.Enabled`, `Config.Limits.TargetCooldownAfterCompletionSeconds` | all off |
 
@@ -191,7 +191,7 @@ Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays th
 - **Decline, or no answer**: a decline pays nothing; the contract stays open, and the hitman may tap **Deliver alive** again after `Config.Kidnap.RearmCooldownSeconds`, as after any failed handover. A window that runs out does the same, unless `Config.Kidnap.ConfirmMissed = 'pay'`, which pays as if confirmed. The hitman reads the same words for a decline and a timeout.
 - **Declines are capped** (`Config.Kidnap.MaxDeclines`, 2 as shipped; 0 = no limit): each decline, and each window left to run out under `'rearm'`, counts against the contract. Once a placer has used them all, the next handover held for its countdown pays without asking them (pay by default rather than a staff review, so an alive-only contract cannot be held open by declining for ever), and the placer is told why. Counted in memory: a restart, which ends every handover, starts the count again. A Confirm or Decline that arrives after the window closed (run out, rearmed or paid by the tick meanwhile) is answered *no handover* rather than reported as done.
 - **Anonymity**: the hitman is told the person who placed it confirms; the placer is told nothing of who holds the target. Only the placer is answered; anybody else asking is told not found.
-- **Holds**: a staff freeze stops a handover waiting on its confirm, and nothing is paid. The window stands still on the restart hold (a confirm is refused until it lifts) and while the app is paused (`Config.Staff.AppPaused`; a confirm still pays). A handover keeps the rule it was armed under if the switch is changed meanwhile.
+- **Holds**: a staff freeze stops a handover waiting on its confirm, and nothing is paid. The window stands still on the restart hold (a confirm is refused until it lifts) and while the app is paused (`Config.Holds.AppPaused`; a confirm still pays). A handover keeps the rule it was armed under if the switch is changed meanwhile.
 
 ### Money rules
 
@@ -517,7 +517,7 @@ first and the card is marked on the board.
 - **On a contract**: staff notes, remove an operative (stake to the placer as a walk-away, or returned), edit a player's text, export, *As a player sees it*.
 - **Change reward** on a live contract (`crimson.admin`, a reason, two clicks, at most `Config.Staff.RewardChangeMax` at once): a raise is *added by staff* (taken from nobody, and handed back to staff, never to the placer, if the contract is cancelled, expires, is bought out or voided), or charged to the placer's cash or bank if staff choose that and the placer is in the city; a cut comes off what staff added first, then the placer's own, each part going back to whoever funded it (queued for a placer who is away), never below `Config.Limits.MinContractReward` and never touching money already owed or being paid: the store cuts a line only while it is owed to nobody and being given to nobody, and the change stops at a claim that starts while it runs, so a claim's hitman is paid what the claim owed them. Refused while a payout is being settled, a buyout waits out its delay, or the contract is on hold (unfreeze first). The placer and every operative are told staff changed it; nobody is named.
 - **Reassign** a live contract to another hitman (`crimson.admin`, a reason, two clicks): the hitman is named by a Players lookup and must be in the city and pass every check their own Accept would (job, eligibility, not the target, the placer or the target's guard, their limits, the stake rule). Every operative on it is taken off as **Remove** does (their stake to the placer, or returned; barred from taking it again unless staff untick it), all under the contract's own key, so nobody takes it from the board in between. The new hitman's stake is waived (`Config.Staff.ReassignStake = 'waive'`, as shipped) or charged as on Accept (`'charge'`). They go on it **anonymously** and are never charged the anonymity fee, unless staff choose **Named to the placer** or **As they chose before** (their own earlier stint on it); only a server with a hitman's anonymity turned off names them anyway, as it names every hitman. Every check of the acceptance (the stake money, `MaxAcceptedPerHitman`, anonymity, a walk-away's wait) is asked before anybody is taken off, and the preview asks the same, so it refuses what the reassignment would. If the acceptance is still refused once the operatives are off (a balance or a limit that moved in between), every operative is put back on it with their stake still held and the bar this set lifted, and staff are told so.
-- **App pause** (`Config.Staff.AppPaused`): nothing can be placed or taken, and every clock is held, for an event.
+- **App pause** (`Config.Holds.AppPaused`): nothing can be placed or taken, and every clock is held, for an event.
 - **Daily summary** (`Config.Staff.DailySummary`, off) at `DailySummaryHour`; **alerts** past the `Config.Staff.Alert*` thresholds, posted to Discord with `Config.Alerts.ToDiscord`.
 - **Moderators** (`crimson.moderator`): read without identities, freeze, suspend, protect, void and move deadlines; settings, payments and settling stay with `crimson.admin`.
 
@@ -930,8 +930,8 @@ How long things last. The deadline runs only while the placer, the target and on
 | `Config.Limits.ExclusiveAttemptWindowSeconds` | `7200` | release one who never makes an attempt; 0 = off |
 | `Config.Limits.PauseWhileTargetJailed` | `true` | the deadline stops while the target serves time |
 | `Config.Limits.JailZone` | `{ radius = 300, x = 1693.3, y = 2569.5 }` | the prison grounds |
-| `Config.Restart.PauseBeforeSeconds` | `1800` | pause every contract this long before a txAdmin restart; 0 = off |
-| `Config.Restart.MaxHoldMinutes` | `45` | end the pause if the restart has not come by then |
+| `Config.Holds.RestartPauseBeforeSeconds` | `1800` | pause every contract this long before a txAdmin restart; 0 = off |
+| `Config.Holds.RestartMaxHoldMinutes` | `45` | end the pause if the restart has not come by then |
 
 ### Rules: Rewards and money
 
@@ -1163,7 +1163,7 @@ The staff tools: /hitmanadmin and the F8 commands. ACE names are never changed f
 | `Config.Admin.PanelRefreshSeconds` | `10` | how often the overview refreshes |
 | `Config.Admin.TimelineRows` | `200` | audit rows read for one timeline |
 | `Config.Staff.ManualPaymentMax` | `100000` | most one manual staff payment may be ($); 0 = off |
-| `Config.Staff.AppPaused` | `false` | pause the whole app: no placing, no accepting, clocks held |
+| `Config.Holds.AppPaused` | `false` | pause the whole app: no placing, no accepting, clocks held |
 | `Config.Staff.DailySummary` | `false` | post one count-only summary a day to the staff Discord |
 | `Config.Staff.DailySummaryHour` | `6` | the hour it is posted, server time (0-23) |
 | `Config.Staff.AlertPlacedPerHour` | `5` | alert past this many placed by one player an hour; 0 = off |
@@ -1498,8 +1498,8 @@ a trade-off is left on purpose, it says which and why.
 | `bridges.refreshAccess` | 30 s | 0.32 / 0.29 ms (7 ms seen live) | The backstop for every event that tells a player at once (login, job, duty, setting); one job read a player is the least it can check |
 | `notify.deliverKept` | 10 s | 0.00 ms with nothing kept | A kept notice goes on the first tick its minute opens |
 | `rp_places.announce` | 60 s | 0.02 ms off, 0.14 ms on | NPC places rotate by the hour; a change from the panel is announced at once |
-| `freeze.syncAppPause`, `thresholds.sweep` | 60 s | 0.00 ms | Each is a comparison or two; the pause follows its switch at once anyway |
-| `freeze.restartTick`, `sanctions.tick`, `summary.tick` | 10 s | 0.00 ms | One comparison each; the end they guard happens on the tick it falls due |
+| `holds.syncAppPause`, `thresholds.sweep` | 60 s | 0.00 ms | Each is a comparison or two; the pause follows its switch at once anyway |
+| `holds.tick`, `sanctions.tick`, `summary.tick` | 10 s | 0.00 ms | One comparison each; the end they guard happens on the tick it falls due |
 | `contracts.finishEndings`, `ledger.forgetOldPhotos`, `photo.loadAllowedHosts`, `escrow.retryWaiting` | 30 s, 600 s, `PhotoHostRefreshSeconds`, 30 s per player | under 0.15 ms | Gated inside; each runs when what it guards can have changed |
 | `imp_board.tick` (heat and the police bulletin, placer records) | 60 s | 0.01 ms, 0 statements, off **and** on | Off: one switch read. On: heat is kept in memory and pruned only once the oldest heat has cooled; the bulletin waits its own `BulletinEveryMinutes`, and finds a working hitman in the shared snapshot (was two reads per known hitman) |
 | `imp_decay.tick` (contract decay) | 60 s, on a tick of its own | off 0.01 ms; on, nothing due 0.08 ms and 0 statements; due, 91 / 136 ms and about 300 statements for its cap of **25 steps** | Sleeps until its soonest step is due and reads the snapshot. Trade-off: each `rise` step is a charge that re-reads its contract and goes through the placer's own add-to-reward path, kept because it moves money; 100 contracts due together take four passes (was all in one: 1,951 statements, 0.7 to 1.1 s) |
@@ -1688,7 +1688,7 @@ The audit log records every money movement and every refused attempt:
 - The meeting point is a marker on the map of the placer and every hitman on the contract, and both are told on their phone, and on their card, exactly what to do to finish the handover; it comes off every map when it is cleared, moved, or no longer needed.
 - Staff without `crimson.identity`: a log search by a player's citizen id pages with a handle good for that staff member and that search only (ten minutes), and offers **Older** only when a row they may see is left, so no page or its absence points at an anonymous contract; a party's phone view says *On hold* only where the contract's own frozen badge would.
 - A handover arm refused because the placer is not close enough waits up to 15 seconds (at most `Config.Kidnap.RearmCooldownSeconds`) before the next try.
-- Ending a staff freeze, the app pause or the restart hold gives every contract its held time back before the expiry pass can end one; a kill made in the minutes before the restart hold can still be verified once the hold is skipped; skipping the hold (or reaching `Config.Restart.MaxHoldMinutes`) tells every party *Contracts are no longer paused for the server restart.* and refreshes their pages.
+- Ending a staff freeze, the app pause or the restart hold gives every contract its held time back before the expiry pass can end one; a kill made in the minutes before the restart hold can still be verified once the hold is skipped; skipping the hold (or reaching `Config.Holds.RestartMaxHoldMinutes`) tells every party *Contracts are no longer paused for the server restart.* and refreshes their pages.
 - Answering a lapsed proposal while its contract is frozen is refused as on hold and leaves it open; the time band on a card is worked out from whichever ends first, the deadline or the two-day lifetime; an idle release never lands on a hitman being paid; a claim checks the holds again under its lock; if the freezes cannot be read at the start, every live contract is held until a tick reads them.
 - Withdrawing every cash and bank line of a contract takes its buyout off (the placer is told *Buyout removed*): a contract funded only in dirty money or goods cannot carry one. A give cut off by a restart records what the player held before it, and the start says when it probably arrived; tip and go-dark refunds whose credit raised go to staff as a buyout refund does; a decay step whose top-up raised after the charge is not charged again; a top-up's audit row lists each line.
 

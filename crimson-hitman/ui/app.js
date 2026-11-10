@@ -466,7 +466,7 @@
     // failText says until when and why where the server sends them.
     suspended: 'You are suspended from contracts. '
       + 'The banner says until when; ask staff if you think it is wrong.',
-    // Staff paused the whole app (Config.Staff.AppPaused). Nothing was taken.
+    // Staff paused the whole app (Config.Holds.AppPaused). Nothing was taken.
     app_paused: 'Contracts are paused by staff. Try again once they switch them back on.',
     // Killed on a contract and not yet treated (Config.Roleplay.EmsRelisting).
     target_recovering: 'They are still recovering. Try again once they have been treated.',

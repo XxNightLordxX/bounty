@@ -480,7 +480,7 @@ function _G.newStack()
     local meeting    = require('crimson-hitman.server.meeting')
     local playtime   = require('crimson-hitman.server.playtime')
     local locationTip = require('crimson-hitman.server.locationtip')
-    local freeze     = require('crimson-hitman.server.freeze')
+    local holds      = require('server.holds')
     local staffContract = require('crimson-hitman.server.staffcontract')
     local sanctions  = require('crimson-hitman.server.sanctions')
     local targetLimits = require('crimson-hitman.server.targetlimits')
@@ -523,7 +523,7 @@ function _G.newStack()
         audit = audit, notify = notify, progression = progression, death = death,
         -- With the ledger, as main.lua wires it: an ending without a payout
         -- writes its rows there (Ledger.ended), and a recovered claim its.
-        review = review, ledger = ledger, freeze = freeze, sanctions = sanctions,
+        review = review, ledger = ledger, sanctions = sanctions,
     })
 
     photos.init({ storage = storage, audit = audit })
@@ -555,8 +555,8 @@ function _G.newStack()
     projection.init({ storage = storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
                       comms = comms, informant = informant, notify = notify,
-                      locationTip = locationTip, freeze = freeze, staffContract = staffContract })
-    freeze.init({ storage = storage, audit = audit, notify = notify, kidnap = kidnap,
+                      locationTip = locationTip, staffContract = staffContract })
+    holds.init({ storage = storage, audit = audit, notify = notify, kidnap = kidnap,
                   contracts = contracts, death = death })
     staffContract.init({ storage = storage, audit = audit, notify = notify,
                          contracts = contracts, identity = identity })
@@ -564,8 +564,8 @@ function _G.newStack()
     targetLimits.init({ storage = storage, audit = audit, contracts = contracts, identity = identity })
     payments.init({ storage = storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
-    settings.watch('Staff.AppPaused', freeze.syncAppPause)
-    summary.init({ storage = storage, review = review, freeze = freeze, audit = audit, alerts = alerts,
+    settings.watch('Holds.AppPaused', holds.syncAppPause)
+    summary.init({ storage = storage, review = review, holds = holds, audit = audit, alerts = alerts,
                    sanctions = sanctions })
     thresholds.init({ audit = audit })
     announce.init({ storage = storage, notify = notify, audit = audit, identity = identity })
@@ -607,7 +607,7 @@ function _G.newStack()
     missionSteps.init({ identity = identity, storage = storage, death = death, kidnap = kidnap,
                         rpProtection = rpProtection })
     disposal.init({ storage = storage, identity = identity, audit = audit, notify = notify,
-                    escrow = escrow, contracts = contracts, death = death, freeze = freeze,
+                    escrow = escrow, contracts = contracts, death = death,
                     missionSteps = missionSteps, ratelimit = ratelimit, app = app, panel = panel })
 
     -- Wired exactly as main.lua wires it. The app was previously left
@@ -635,8 +635,8 @@ function _G.newStack()
         playtime = playtime,
         -- The informant tip a hitman can buy.
         locationTip = locationTip,
-        -- Staff freezes.
-        freeze = freeze,
+        -- Every hold on a contract (server/holds.lua).
+        holds = holds,
         -- Staff notes, removals and text edits on a contract.
         staffContract = staffContract,
         -- Suspensions and protections, manual payments, the history card.
@@ -681,7 +681,7 @@ function _G.newStack()
         mugshot = mugshot, progression = progression, app = app, admin = admin,
         photos = photos, review = review, settings = settings, panel = panel, timing = timing,
         alerts = alerts, meeting = meeting, playtime = playtime, locationTip = locationTip,
-        freeze = freeze, staffContract = staffContract,
+        holds = holds, staffContract = staffContract,
         sanctions = sanctions, payments = payments, history = history,
         targetLimits = targetLimits,
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
@@ -731,7 +731,7 @@ end
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
     'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec', 'admin_panel_spec', 'settings_spec', 'features_spec', 'console_spec', 'staff_output_spec', 'whitelisted_view_spec', 'alerts_spec', 'admin_console_spec', 'meeting_spec', 'speed_spec', 'handover_spec', 'config_layout_spec',
-    'location_tip_spec', 'informant_spec', 'freeze_spec', 'clock_rule_spec', 'untaken_terms_spec',
+    'location_tip_spec', 'informant_spec', 'freeze_spec', 'holds_spec', 'clock_rule_spec', 'untaken_terms_spec',
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',

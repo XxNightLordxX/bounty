@@ -723,12 +723,12 @@ describe('round 3 L6: a proposal does not run out while staff hold the contract'
         local proposal = s.storage.readOpenAmendments(c.id)[1]
         local left = proposal.expires_at - os.time()
         truthy(left > 0, 'open')
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'a staff situation'), 'held')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'a staff situation'), 'held')
         local held = Config.Amendments.ProposalExpirySeconds + 3600
         Env.advance(held)
         s.amendments.expire()
         eq(#s.storage.readOpenAmendments(c.id), 1, 'not run out while it could not be answered')
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'released')
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01'), 'released')
         local after = s.storage.readOpenAmendments(c.id)[1]
         truthy(after, 'still open')
         eq(after.expires_at - os.time(), left, 'the same time left to answer as when the hold began')
@@ -747,13 +747,13 @@ describe('round 3 L8: a give-back adds to the lifetime as it is when it writes',
         -- Copies from every read, as mysql answers: the memory store hands
         -- out the stored row, which a stale read cannot be told from.
         local copying = require('tests.harness.copying_store')(s.storage)
-        s.freeze.init({ storage = copying, audit = s.audit, notify = s.notify, kidnap = s.kidnap,
+        s.holds.init({ storage = copying, audit = s.audit, notify = s.notify, kidnap = s.kidnap,
                         contracts = s.contracts })
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'a staff situation'), 'held')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'a staff situation'), 'held')
         Env.advance(600)
         -- The placer frozen too: the release then asks who else holds the
         -- contract, which reads its roster (an await on mysql).
-        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'another'), 'held by the placer as well')
+        truthy(s.holds.freeze('ADMIN001', 'CREATOR1', 'another'), 'held by the placer as well')
         Env.advance(300)
         local before = s.storage.readContract(c.id).expires_at
         -- A staff lifetime change, landing in one of the release's awaits.
@@ -765,7 +765,7 @@ describe('round 3 L8: a give-back adds to the lifetime as it is when it writes',
             end
             return read(...)
         end
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'released')
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01'), 'released')
         copying.readHitmen = read
         truthy(landed, 'the change landed mid-release')
         eq(s.storage.readContract(c.id).expires_at, before + 1000 + 600,

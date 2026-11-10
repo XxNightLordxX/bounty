@@ -83,7 +83,7 @@ function Summary.counts(now)
     out.reviews = deps.review and deps.review.openCount() or 0
     -- nil, said as unknown, while the store's freezes cannot be read.
     local frozen, unknown = 0, false
-    if deps.freeze then frozen, unknown = deps.freeze.count() end
+    if deps.holds then frozen, unknown = deps.holds.count() end
     out.frozen = (not unknown) and (frozen or 0) or nil
     -- Suspensions are server/sanctions.lua's (Sanctions.count, wired in by
     -- main.lua): counted where it is, and said not tracked where it is not.

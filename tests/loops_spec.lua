@@ -138,12 +138,12 @@ end
 --- The scheduled jobs and their interval, in ticks of ten seconds.
 local SCHEDULED = {
     ['bridges.refreshAccess'] = 3, ['rp_places.announce'] = 6,
-    ['freeze.syncAppPause'] = 6, ['thresholds.sweep'] = 6,
+    ['holds.syncAppPause'] = 6, ['thresholds.sweep'] = 6,
     ['imp_board.tick'] = 6, ['imp_decay.tick'] = 6,
 }
 
 --- And jobs that stay on every tick: money, expiry, the holds, the flush.
-local EVERY_TICK = { 'freeze.restartTick', 'sanctions.tick', 'summary.tick', 'contracts.releaseIdleHolds',
+local EVERY_TICK = { 'holds.tick', 'sanctions.tick', 'summary.tick', 'contracts.releaseIdleHolds',
     'expireContracts', 'escrow.retryWaiting', 'rp_protection.sweep', 'rp_intent.sweep', 'rp.tick',
     'audit.flush', 'storage.flush', 'bailout.processQueue', 'notify.deliverKept' }
 
@@ -228,7 +228,7 @@ describe('the maintenance tick\'s schedule', function()
         for t in pairs(setOf(heartbeat)) do heavy[t] = true end
         local seen = {}
         for _, name in ipairs({ 'rp_places.announce', 'bridges.refreshAccess',
-            'thresholds.sweep', 'freeze.syncAppPause', 'imp_decay.tick' }) do
+            'thresholds.sweep', 'holds.syncAppPause', 'imp_decay.tick' }) do
             for _, t in ipairs(at[name] or {}) do
                 if t > 1 then
                     falsy(heavy[t], ('%s shares tick %d with the playtime pass or the heartbeat')
@@ -339,15 +339,15 @@ describe('the idle-hold sweep', function()
         truthy(c, 'placed')
         truthy(s.contracts.accept(f.hitman, c.id), 'taken')
         s.contracts.releaseIdleHolds()
-        Config.Staff.AppPaused = true
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = true
+        s.holds.syncAppPause()
         for _ = 1, 10 do
             Env.time = Env.time + 10
             s.contracts.releaseIdleHolds()
         end
         eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'held through the pause')
-        Config.Staff.AppPaused = false
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = false
+        s.holds.syncAppPause()
         for _ = 1, 7 do
             Env.time = Env.time + 10
             s.contracts.releaseIdleHolds()
@@ -525,7 +525,7 @@ describe('the expiry pass with a player frozen', function()
         pass()
         local idle = pass()
         Env.addPlayer({ source = 499, citizenid = 'BYSTAND1', license = 'license:bys1' })
-        truthy(s.freeze.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
+        truthy(s.holds.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
         pass()                                     -- the snapshot read again after the freeze's writes
         local frozen = pass()
         eq(frozen, idle, ('the pass sent %d statements with one player frozen, %d with none')

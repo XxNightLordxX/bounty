@@ -38,6 +38,7 @@
 --- after that, never sooner.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Words = CrimsonBoot.requireShared('words')
 local Feature = CrimsonBoot.require('server.lib.feature')
 
@@ -117,12 +118,9 @@ end
 --- When whatever holds this contract now began (a staff freeze, the
 --- restart hold, the app pause), or nil when nothing does.
 local function heldSince(contract, hitmen, now)
-    local held = (Contracts.heldByStaff and Contracts.heldByStaff(contract, hitmen))
-        or (Contracts.restartHeld and Contracts.restartHeld())
-        or (Contracts.appPaused and Contracts.appPaused())
-    if not held then return nil end
-    local since = Contracts.heldSince and Contracts.heldSince(contract, hitmen) or nil
-    return math.min(num(since, now), now)
+    local since = Holds.since(contract, hitmen)
+    if not since then return nil end
+    return math.min(since, now)
 end
 
 --- When a taken contract was taken: the earliest acceptance among its

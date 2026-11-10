@@ -40,12 +40,12 @@ local function it(name, fn)
             tip = deepCopy(Config.LocationTip), anon = deepCopy(Config.Anonymity),
             bailout = deepCopy(Config.Bailout), completion = deepCopy(Config.Completion),
             informants = Config.InformantsEnabled, white = deepCopy(Config.InformantsWhitelistedTargets),
-            paused = Config.Staff.AppPaused,
+            paused = Config.Holds.AppPaused,
         }
         local out = table.pack(pcall(fn, ...))
         Config.LocationTip, Config.Anonymity, Config.Bailout = saved.tip, saved.anon, saved.bailout
         Config.Completion, Config.InformantsEnabled = saved.completion, saved.informants
-        Config.InformantsWhitelistedTargets, Config.Staff.AppPaused = saved.white, saved.paused
+        Config.InformantsWhitelistedTargets, Config.Holds.AppPaused = saved.white, saved.paused
         if not out[1] then error(out[2], 0) end
     end)
 end
@@ -237,11 +237,11 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
         local untilAt = s.impTips.darkUntil('TARGET01')
         truthy(untilAt)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(35 * 60)
         truthy(s.impTips.targetDark('TARGET01'), 'the window ran out while on hold by staff')
         Env.advance(5 * 60)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         eq(s.impTips.darkUntil('TARGET01'), untilAt + 40 * 60, 'the hold not given back')
         -- And pruned only once it really has run out.
         Env.advance(29 * 60)
@@ -256,9 +256,9 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
         Config.LocationTip.MaxPurchasesPerContract = 5
         truthy(call('locationTip', 3, { id = c.id, shown = TIP }).ok, 'tipped')
         Env.advance(5 * 60)
-        truthy(s.freeze.freeze('ADMIN001', 'HITMAN01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'probe'))
         Env.advance(40 * 60)
-        truthy(s.freeze.unfreeze('ADMIN001', 'HITMAN01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'HITMAN01', 'done'))
         local card = s.locationTip.cardFor(s.storage.readContract(c.id), 'HITMAN01')
         eq(card.secondsLeft, 5 * 60, 'the showing ran out while on hold')
         local r = call('locationTip', 3, { id = c.id, shown = TIP })
@@ -273,11 +273,11 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
         Config.LocationTip.MaxPurchasesPerContract = 5
         truthy(call('locationTip', 3, { id = c.id, shown = TIP }).ok, 'tipped')
         Env.advance(10 * 60)
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(25 * 60)
         local r = call('locationTip', 3, { id = c.id, shown = TIP })
         eq(r and r.err, CH.ERR.TIP_COOLDOWN, 'bought inside the hold on the wall clock')
-        truthy(s.freeze.releaseRestart('skipped'))
+        truthy(s.holds.releaseRestart('skipped'))
         r = call('locationTip', 3, { id = c.id, shown = TIP })
         eq(r and r.err, CH.ERR.TIP_COOLDOWN)
         eq(r.data.retryAfter, 20 * 60)
@@ -288,7 +288,7 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
         local untilAt = s.impTips.darkUntil('TARGET01')
         Env.advance(10 * 60)
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(45 * 60)                                  -- the hold, the restart, the boot
         -- The start, in main.lua's order: imp_tips loaded, not started, when
         -- the freeze module gives the restart's time back.
@@ -296,7 +296,7 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
         local fresh = CrimsonBoot.require('server.imp_tips')
         s.locationTip.init({ storage = s.storage, identity = s.identity, audit = s.audit,
             notify = s.notify, contracts = s.contracts, review = s.review })
-        s.freeze.init({ storage = s.storage, audit = s.audit, notify = s.notify, kidnap = s.kidnap,
+        s.holds.init({ storage = s.storage, audit = s.audit, notify = s.notify, kidnap = s.kidnap,
             contracts = s.contracts, death = s.death })
         fresh.init({ storage = s.storage, audit = s.audit, notify = s.notify, contracts = s.contracts,
             locationTip = s.locationTip, informant = s.informant, projection = s.projection,
@@ -425,7 +425,7 @@ describe('sweep 6 J-1 / J-2: a freeze on anybody reads no roster twice', functio
 
     it('J-1: the expiry pass reads no roster with an unrelated player frozen', function()
         local main, s = booted()
-        truthy(s.freeze.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
+        truthy(s.holds.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
         Env.advance(10)
         main.markContractsChanged()
         main.markPresenceChanged()
@@ -437,14 +437,14 @@ describe('sweep 6 J-1 / J-2: a freeze on anybody reads no roster twice', functio
 
     it('J-1: and the clock check an unfreeze asks reads the roster once', function()
         local _, s, made = booted()
-        truthy(s.freeze.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
-        local counts = counted(s, function() ContractClockMayRun(s.storage.readContract(made[2])) end)
+        truthy(s.holds.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
+        local counts = counted(s, function() s.holds.clockMayRun(s.storage.readContract(made[2])) end)
         eq(counts.readHitmen or 0, 1, ('read the roster %d times'):format(counts.readHitmen or 0))
     end)
 
     it('J-2: the panel\'s contract list reads the page\'s rosters in one go', function()
         local _, s = booted()
-        truthy(s.freeze.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
+        truthy(s.holds.freeze('ADMIN001', 'BYSTAND1', 'unrelated'))
         Env.aces[1] = { ['crimson.admin'] = true }
         local reply
         local counts = counted(s, function()
@@ -521,10 +521,10 @@ describe('sweep 6 J-3: the placer changes anything before a hitman accepts', fun
 
     it('nothing once a hitman holds it, nor while it is on hold by staff', function()
         local s, f, c = untaken()
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         local _, frozenErr = s.contracts.revise(f.creator, c.id, { bailoutAmount = 20000 })
         eq(frozenErr, CH.ERR.CONTRACT_FROZEN)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         truthy(s.contracts.accept(f.hitman, c.id, false), 'taken')
         for _, change in ipairs({ { bailoutAmount = 20000 }, { fulfilment = 'alive' }, { anonymous = true } }) do
             local ok, err = s.contracts.revise(f.creator, c.id, change)

@@ -856,12 +856,12 @@ describe('an exclusive contract held by somebody who is not working it', functio
         end
         -- Staff hold the hitman: no clock runs, so nothing is written.
         s.contracts.releaseIdleHolds()
-        local frozen = s.contracts.heldByStaff
-        s.contracts.heldByStaff = function() return true end
+        local frozen = s.holds.on
+        s.holds.on = function() return true end
         for _ = 1, 30 do Env.advance(10); s.contracts.releaseIdleHolds() end
         eq(writes, 0, 'held: nothing counted, nothing written')
         eq(#s.storage.readRpRows('idle_clock'), 0)
-        s.contracts.heldByStaff = frozen
+        s.holds.on = frozen
         -- A pass every ten seconds for five minutes: thirty passes.
         for _ = 1, 30 do Env.advance(10); s.contracts.releaseIdleHolds() end
         truthy(writes >= 4 and writes <= 6, 'once a minute, not every pass: ' .. writes)

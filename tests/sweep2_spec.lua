@@ -48,10 +48,10 @@ end
 --- Run `fn` under the restart hold, released whichever way it ends: the
 --- hold is the freeze module's own state, which no new stack clears.
 local function underRestartHold(s, fn)
-    Config.Restart.PauseBeforeSeconds = 1800
-    truthy(s.freeze.scheduledRestart({ secondsRemaining = 300 }), 'the restart hold began')
+    Config.Holds.RestartPauseBeforeSeconds = 1800
+    truthy(s.holds.scheduledRestart({ secondsRemaining = 300 }), 'the restart hold began')
     local ok, err = pcall(fn)
-    s.freeze.releaseRestart('skipped')
+    s.holds.releaseRestart('skipped')
     if not ok then error(err, 0) end
 end
 
@@ -146,12 +146,12 @@ describe('sweep 2 fix 2: a kill on a frozen contract opens no pending kill', fun
         local f = fixture(s)
         local c = place(s, f)
         truthy(s.contracts.accept(f.hitman, c.id, false), 'accepted')
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'dispute'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'dispute'), 'frozen')
         eq(killTarget(s), 0, 'a kill opened on a contract staff hold')
         falsy(s.death.getPending(c.id, 'HITMAN01'), 'nothing pending while frozen')
 
         Env.advance(math.max(1, Config.Completion.PhotoTokenLifetimeSeconds // 4))
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01'), 'released')
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01'), 'released')
         falsy(s.death.getPending(c.id, 'HITMAN01'), 'nothing claimable once released')
         local token, err = s.photo.issue(f.hitman, c.id)
         falsy(token, 'a photo token for a kill made on hold')
@@ -195,7 +195,7 @@ describe('sweep 2 fix 3: a handover stopped or refused by a freeze says so', fun
     it('records a countdown a freeze stopped as refused, on hold', function()
         local s, _, c = armed()
         run(s, 2)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'dispute'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'dispute'), 'frozen')
         falsy(s.kidnap.progress(c.id, 'HITMAN01'), 'the countdown stopped')
         local ended = s.kidnap.outcome(c.id, 'HITMAN01')
         truthy(ended, 'how it ended is kept for the hitman\'s page')
@@ -209,7 +209,7 @@ describe('sweep 2 fix 3: a handover stopped or refused by a freeze says so', fun
         s.contracts.claimSlot = function(...)
             -- The freeze lands in the claim's awaits, after the countdown
             -- left the running list: nothing is left for it to cancel.
-            s.freeze.freeze('ADMIN001', 'TARGET01', 'dispute')
+            s.holds.freeze('ADMIN001', 'TARGET01', 'dispute')
             return claim(...)
         end
         Env.clientEvents = {}
@@ -235,7 +235,7 @@ describe('sweep 2 fix 4: placing on a frozen target tells nobody they are frozen
     it('refuses a stranger as for a protected target', function()
         local s = newStack()
         local f = fixture(s)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'dispute'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'dispute'), 'frozen')
         local before = money(1)
         local c, err = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
             reward = { baseline = { cash = 5000 } } })
@@ -247,7 +247,7 @@ describe('sweep 2 fix 4: placing on a frozen target tells nobody they are frozen
     it('still tells a frozen placer it is about them', function()
         local s = newStack()
         local f = fixture(s)
-        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'dispute'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'CREATOR1', 'dispute'), 'frozen')
         local c, err = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
             reward = { baseline = { cash = 5000 } } })
         falsy(c)
@@ -270,7 +270,7 @@ describe('sweep 2 fix 5: a buyout frozen after its charge says on hold and refun
         Util.charge = function(...)
             local paid = charge(...)
             -- Staff freeze the target the moment the premium is taken.
-            s.freeze.freeze('ADMIN001', 'TARGET01', 'dispute')
+            s.holds.freeze('ADMIN001', 'TARGET01', 'dispute')
             return paid
         end
         Env.clientEvents = {}

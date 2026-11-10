@@ -270,7 +270,7 @@ describe('bug sweep M3: no protection money moves on a contract on hold', functi
     it('refuses to post on a frozen contract, charging nothing', function()
         local s, _, c = setup()
         local targetBank = bank(2)
-        truthy(s.freeze.freeze('ADMIN001', 'HITMAN01', 'dispute'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'dispute'), 'frozen')
         eq(post(2, c).err, CH.ERR.CONTRACT_FROZEN)
         eq(bank(2), targetBank, 'nothing taken')
         eq(#s.rpProtection.all(), 0, 'no row')
@@ -281,7 +281,7 @@ describe('bug sweep M3: no protection money moves on a contract on hold', functi
         local targetBank = bank(2)
         local write = s.storage.writeRpRow
         s.storage.writeRpRow = function(row)
-            if row.state == 'charging' then s.freeze.freeze('ADMIN001', 'HITMAN01', 'dispute') end
+            if row.state == 'charging' then s.holds.freeze('ADMIN001', 'HITMAN01', 'dispute') end
             return write(row)
         end
         local r = post(2, c)
@@ -295,36 +295,36 @@ describe('bug sweep M3: no protection money moves on a contract on hold', functi
         local s, _, c = setup()
         local job = post(2, c).data.job
         local before = total(s)
-        truthy(s.freeze.freeze('ADMIN001', 'HITMAN01', 'dispute'), 'frozen')
+        truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'dispute'), 'frozen')
         eq(call('protectionCancel', 2, { job = job }).err, CH.ERR.CONTRACT_FROZEN)
         eq(call('protectionAccept', 4, { job = job, reward = 2000 }).err, CH.ERR.BAD_STATE,
             'not right now, to somebody who is no party to it')
         eq(s.rpProtection.all()[1].state, 'open')
         eq(total(s), before, 'nothing moved')
-        truthy(s.freeze.unfreeze('ADMIN001', 'HITMAN01'), 'released')
+        truthy(s.holds.unfreeze('ADMIN001', 'HITMAN01'), 'released')
         truthy(call('protectionCancel', 2, { job = job }).ok, 'cancelled once released')
     end)
 
     it('posts and takes nothing while staff pause the app', function()
         local s, _, c = setup()
         local job = post(2, c).data.job
-        Config.Staff.AppPaused = true
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = true
+        s.holds.syncAppPause()
         eq(call('protectionAccept', 4, { job = job, reward = 2000 }).err, CH.ERR.APP_PAUSED)
         local c2 = s.storage.readContract(c.id)
         truthy(c2)
-        Config.Staff.AppPaused = false
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = false
+        s.holds.syncAppPause()
         truthy(call('protectionAccept', 4, { job = job, reward = 2000 }).ok, 'taken once resumed')
         -- And posting.
         local s2, _, c3 = setup()
-        Config.Staff.AppPaused = true
-        s2.freeze.syncAppPause()
+        Config.Holds.AppPaused = true
+        s2.holds.syncAppPause()
         local targetBank = bank(2)
         eq(post(2, c3).err, CH.ERR.APP_PAUSED)
         eq(bank(2), targetBank, 'nothing taken')
-        Config.Staff.AppPaused = false
-        s2.freeze.syncAppPause()
+        Config.Holds.AppPaused = false
+        s2.holds.syncAppPause()
     end)
 end)
 
@@ -446,8 +446,8 @@ describe('bug sweep C1: no idle release while staff pause the app', function()
         truthy(s.contracts.accept(f.hitman, c.id, false), 'held')
         Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
         s.contracts.releaseIdleHolds()
-        Config.Staff.AppPaused = true
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = true
+        s.holds.syncAppPause()
         for _ = 1, 30 do
             Env.advance(60)
             s.death.watchTargets(s.storage.allContracts())
@@ -455,8 +455,8 @@ describe('bug sweep C1: no idle release while staff pause the app', function()
         end
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'still theirs while paused')
         -- Resumed, the clock starts from where it was, not from thirty minutes.
-        Config.Staff.AppPaused = false
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = false
+        s.holds.syncAppPause()
         Env.advance(60)
         s.contracts.releaseIdleHolds()
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'a minute after is not ten')
@@ -480,18 +480,18 @@ describe('bug sweep C2: the app pause gives the lifetime back once', function()
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
             reward = { baseline = { cash = 5000 } } })
         truthy(c, 'placed')
-        Config.Staff.AppPaused = true
-        eq(s.freeze.syncAppPause(), 'paused')
+        Config.Holds.AppPaused = true
+        eq(s.holds.syncAppPause(), 'paused')
         Env.advance(600)
         local before = s.storage.readContract(c.id).expires_at
-        Config.Staff.AppPaused = false
+        Config.Holds.AppPaused = false
         local write = s.storage.writeStaffMeta
         local inner = 'not run'
         s.storage.writeStaffMeta = function(...)
-            if inner == 'not run' then inner = s.freeze.syncAppPause() end
+            if inner == 'not run' then inner = s.holds.syncAppPause() end
             return write(...)
         end
-        eq(s.freeze.syncAppPause(), 'resumed')
+        eq(s.holds.syncAppPause(), 'resumed')
         s.storage.writeStaffMeta = write
         eq(inner, nil, 'the second sync found nothing to do')
         eq(s.storage.readContract(c.id).expires_at - before, 600, 'given back once')
@@ -500,18 +500,18 @@ describe('bug sweep C2: the app pause gives the lifetime back once', function()
     it('starts it once when a second sync lands in the first one\'s write', function()
         local s = newStack()
         fixture(s)
-        Config.Staff.AppPaused = true
+        Config.Holds.AppPaused = true
         local write = s.storage.writeStaffMeta
         local inner = 'not run'
         s.storage.writeStaffMeta = function(...)
-            if inner == 'not run' then inner = s.freeze.syncAppPause() end
+            if inner == 'not run' then inner = s.holds.syncAppPause() end
             return write(...)
         end
-        eq(s.freeze.syncAppPause(), 'paused')
+        eq(s.holds.syncAppPause(), 'paused')
         s.storage.writeStaffMeta = write
         eq(inner, nil, 'the second sync found it on')
-        Config.Staff.AppPaused = false
-        s.freeze.syncAppPause()
+        Config.Holds.AppPaused = false
+        s.holds.syncAppPause()
     end)
 end)
 
@@ -523,17 +523,17 @@ describe('bug sweep hardening: a restart hold replaced gives its span back', fun
     it('releases an expired hold the tick has not, before a new one starts', function()
         local s = newStack()
         local f = fixture(s)
-        Config.Restart.PauseBeforeSeconds = 1800
-        Config.Restart.MaxHoldMinutes = 45
+        Config.Holds.RestartPauseBeforeSeconds = 1800
+        Config.Holds.RestartMaxHoldMinutes = 45
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
             reward = { baseline = { cash = 5000 } } })
         truthy(c, 'placed')
         local before = s.storage.readContract(c.id).expires_at
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 300 }), 'held')
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 300 }), 'held')
         Env.advance(46 * 60)
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 300 }), 'a new hold')
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 300 }), 'a new hold')
         truthy(s.storage.readContract(c.id).expires_at - before >= 45 * 60, 'the first one\'s span given back')
-        s.freeze.releaseRestart('skipped')
+        s.holds.releaseRestart('skipped')
     end)
 end)
 
@@ -691,7 +691,7 @@ describe('bug sweep S2: removing an operative tells nothing of who is frozen', f
         truthy(other, 'placed by somebody else')
         truthy(s.contracts.accept(f.hitman, suspect.id, false), 'taken')
         truthy(s.contracts.accept(f.hitman, other.id, false), 'taken')
-        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'suspect'), 'the suspect frozen')
+        truthy(s.holds.freeze('ADMIN001', 'CREATOR1', 'suspect'), 'the suspect frozen')
         local onSuspect = ask(6, 'removeHitman', { id = suspect.id, hitman = 'hn99999999', reason = 'probe' })
         local onOther = ask(6, 'removeHitman', { id = other.id, hitman = 'hn99999999', reason = 'probe' })
         eq(onSuspect.err, 'no_operative')
@@ -727,8 +727,8 @@ describe('bug sweep U1: text kept for the store is never cut through a character
     it('a freeze\'s reason and name', function()
         local s = newStack()
         fixture(s)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', reason, name))
-        local row = s.freeze.of('TARGET01')
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', reason, name))
+        local row = s.holds.of('TARGET01')
         valid(row.reason, 'the reason')
         valid(row.name, 'the name')
         eq(row.reason, reason, 'kept whole: 120 characters')

@@ -6,6 +6,7 @@
 --- is queued for a short processing delay first.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 
@@ -296,8 +297,8 @@ buyUnlocked = function(actor, contractId, shown)
     if shown ~= nil and tonumber(shown) ~= contract.bailout_amount then
         return false, CH.ERR.TERMS_CHANGED, { amount = contract.bailout_amount }
     end
-    -- On hold by staff (server/freeze.lua): nothing is charged.
-    if Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    -- On hold by staff (server/holds.lua): nothing is charged.
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
 
     -- A target cannot buy their way out from the floor mid-fight.
     if Config.Bailout.BlockWhileIncapacitated then
@@ -326,11 +327,11 @@ buyUnlocked = function(actor, contractId, shown)
     end
 
     -- An instant buyout ends the contract now, and nothing ends one on the
-    -- restart hold (Contracts.restartHeld): refused before the charge. One
+    -- restart hold (Holds.on, 'restart'): refused before the charge. One
     -- queued behind a hitman is taken, and waits out the hold in the queue
     -- (Bailout.processQueue).
     if not (engaged and Config.Bailout.ProcessingDelaySeconds > 0)
-        and Contracts and Contracts.restartHeld and Contracts.restartHeld() then
+        and Holds.on(nil, nil, 'restart') then
         return false, CH.ERR.RESTART_HOLD
     end
 
@@ -981,10 +982,9 @@ function Bailout.processQueue()
     for i = 1, #pending do
         local contract = pending[i]
         -- One paid before the contract went on hold waits for its release
-        -- (server/freeze.lua): nothing on it settles meanwhile.
+        -- (server/holds.lua): nothing on it settles meanwhile.
         -- And none while every contract is on the restart hold.
-        local held = Contracts and Contracts.heldByStaff and (Contracts.heldByStaff(contract)
-            or (Contracts.restartHeld and Contracts.restartHeld()))
+        local held = Holds.on(contract, nil, { 'staff', 'restart' })
         if not held and os.time() - contract.bailout_queued_at >= Config.Bailout.ProcessingDelaySeconds then
             local ran, ok = pcall(Bailout.settle, contract.id, contract.bailout_paid_amount,
                 contract.bailout_paid_by, contract.bailout_paid_account, { retryable = true })

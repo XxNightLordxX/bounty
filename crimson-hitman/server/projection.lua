@@ -21,6 +21,7 @@ local function extendAll(list, ...)
 end
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 -- Proof items (Config.Improvements.ProofItems), for the page's settings.
 local ImpProof = CrimsonBoot.require('server.imp_proof')
 
@@ -28,8 +29,6 @@ local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant,
 --- Informant tips (server/locationtip.lua): a hitman's own, on their card,
 --- and when the target was told, on theirs.
 local LocationTip
---- Staff freezes (server/freeze.lua): whether a contract is on hold.
-local Freeze
 --- Staff records on a contract (server/staffcontract.lua): whether staff
 --- replaced its text, and who they barred from taking it again.
 local StaffContract
@@ -43,7 +42,6 @@ function Projection.init(deps)
         deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
         deps.comms, deps.informant, deps.notify
     LocationTip = deps.locationTip
-    Freeze = deps.freeze
     StaffContract = deps.staffContract
     Projection.watchStore(Storage)
 end
@@ -546,7 +544,9 @@ function Projection.contract(contract, viewerCid, opts)
     local peek = type(opts) == 'table' and opts.peek == true
     local role = roleOf(contract, viewerCid)
     local hitmen = rosterOf(contract.id)
-    local heldSince = role ~= 'public' and Freeze and Freeze.heldSince(contract, hitmen) or nil
+    -- What this viewer may be told of a hold on it (Holds.why): a stranger
+    -- only the holds that stop every contract alike.
+    local hold = Holds.why(contract, hitmen, role == 'public' and 'public' or 'party')
 
     local activeHitmen = 0
     for i = 1, #hitmen do
@@ -611,15 +611,14 @@ function Projection.contract(contract, viewerCid, opts)
         -- changes the moment anybody logs off or on. Staff see the exact
         -- times (server/panel.lua).
         -- It stands still from the start the stake's check at an acceptance
-        -- asks too (Freeze.bandStart), and for a stranger only through a
+        -- asks too (Holds.why), and for a stranger only through a
         -- hold that stops every contract alike, never a staff freeze.
-        timeLeft      = Util.timeBand(Util.bandLeft(contract,
-            Freeze and Freeze.bandStart and Freeze.bandStart(contract, hitmen, role == 'public') or nil)),
-        -- Staff have put it on hold (server/freeze.lua). The same one word
+        timeLeft      = Util.timeBand(Util.bandLeft(contract, hold and hold.since or nil)),
+        -- Staff have put it on hold (Holds.why's staff). The same one word
         -- to each of its parties, never which of them or why: true or
         -- absent. Never to a stranger on the board, where it told them
         -- which anonymous contracts belonged to the player staff froze.
-        onHold        = heldSince ~= nil or nil,
+        onHold        = (hold and hold.staff ~= nil) or nil,
         role          = role,
         -- What accepting costs, to everyone who can see the contract.
         --
@@ -1322,14 +1321,14 @@ local function whitelistedEntry(contract, job, advised)
             if hitmen[i].state == 'active' then active = active + 1 end
         end
     end
+    local hold = posted and Holds.why(contract, nil, advised ~= nil and 'public' or 'party') or nil
     return {
         targetName   = contract.target_name,
         targetJob    = job,
         postedAt     = posted and (posted - (posted % Util.CLOCK_STEP)) or nil,
         state        = active and (active > 0 and 'taken' or 'open') or nil,
         hitmenActive = active,
-        timeLeft     = posted and Util.timeBand(Util.bandLeft(contract,
-            Freeze and Freeze.bandStart and Freeze.bandStart(contract, nil, advised ~= nil) or nil)) or nil,
+        timeLeft     = posted and Util.timeBand(Util.bandLeft(contract, hold and hold.since or nil)) or nil,
     }
 end
 

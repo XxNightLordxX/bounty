@@ -4093,7 +4093,7 @@
         + 'the target is in prison. A hard ceiling ends any contract after two days, pauses included.',
       links: [{ key: 'Limits.DefaultDeadlineSeconds', view: 'timers', label: 'Deadline' },
         { key: 'Limits.ContractLifetimeSeconds', view: 'timers', label: 'Hard ceiling' },
-        { key: 'Restart.PauseBeforeSeconds', view: 'timers', label: 'Restart pause' },
+        { key: 'Holds.RestartPauseBeforeSeconds', view: 'timers', label: 'Restart pause' },
         { key: 'Limits.PauseWhileTargetJailed', view: 'features', label: 'Pause while jailed' }] },
     { title: 'Anonymity', icon: 'mask',
       text: 'A contract can be placed or accepted anonymously only if the server allows it, and as shipped it '
@@ -4780,7 +4780,7 @@
   };
   LIVE['st-filter'] = function () { filterSettings(); };
   /* A switch, a choice and a Save each take two clicks too: a switch live
-     for the whole server (Staff.AppPaused pauses every contract) went on a
+     for the whole server (Holds.AppPaused pauses every contract) went on a
      single misclick. The armed one names the value the second click sets. */
   ACTIONS['st-switch'] = function (node) {
     var key = node.getAttribute('data-key');

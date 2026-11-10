@@ -75,7 +75,7 @@ local CONDITIONAL = {
     -- it starts. The creator's own contract, and every acceptance and walk-
     -- away was told to them as it happened.
     everTaken = 'creator-only',
-    -- Only on a contract staff have put on hold (server/freeze.lua): its
+    -- Only on a contract staff have put on hold (server/holds.lua): its
     -- absence is a contract running as usual.
     onHold = 'only while staff hold the contract, and only to its parties',
     -- Staff replaced what a player wrote on it: true or absent.

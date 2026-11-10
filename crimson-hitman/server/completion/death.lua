@@ -8,14 +8,13 @@
 --- them" is not evidence and is dropped.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 
 local Death = {}
 
 local Storage, Identity, Audit, Timing
--- Asked whether staff hold a contract (Contracts.heldByStaff).
-local Contracts
 -- The shared read of what is running (Projection.liveSnapshot), optional.
 local Projection
 
@@ -194,7 +193,6 @@ end
 function Death.init(deps)
     Storage, Identity, Audit =
         deps.storage, deps.identity, deps.audit
-    Contracts = deps.contracts
     -- Optional: times each sampler pass for /ch-diag (server/timing.lua).
     Timing = deps.timing
     -- Optional: the running contracts and their rosters, read once per
@@ -1238,9 +1236,9 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
         local hitmen = contract.target_cid == victim.cid and contract.state == CH.STATE.ACCEPTED
             and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.EITHER
             and Storage.readHitmen(contract.id) or nil
-        -- Nor one staff hold (server/freeze.lua): a kill made while it is
+        -- Nor one staff hold (server/holds.lua): a kill made while it is
         -- frozen opens nothing, so nothing is claimable once it is released.
-        if hitmen and Contracts and Contracts.heldByStaff and Contracts.heldByStaff(contract, hitmen) then
+        if hitmen and Holds.on(contract, hitmen, 'staff') then
             Audit.action('death_while_frozen', nil, contract.id, { victim = victim.cid })
             hitmen = nil
         end
@@ -1375,7 +1373,7 @@ end
 local function aged(record, now)
     local ends = endsAt(record)
     if now <= ends then return false end
-    local since = Contracts and Contracts.restartHeldSince and Contracts.restartHeldSince()
+    local since = Holds.global('restart')
     if since then
         local startMs = now - math.max(0, os.time() - since) * 1000
         if ends > startMs then return false end
@@ -1383,7 +1381,7 @@ local function aged(record, now)
     return true
 end
 
---- The restart hold has ended without a restart (Freeze.releaseRestart):
+--- The restart hold has ended without a restart (Holds.releaseRestart):
 --- each kill still waiting when it began is given the time it had left
 --- then, from now.
 ---@param since integer when the hold began, os.time()

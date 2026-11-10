@@ -64,9 +64,10 @@ local ADDED = {
     },
     ['Cooldowns.locationTip'] = { per = 60, burst = 2 },
     ['Advisory.OnLocationTip'] = true,
-    -- Every contract paused for the half hour before a txAdmin restart, and
-    -- the bulletin when a contract on an officer is called off.
-    ['Restart'] = { PauseBeforeSeconds = 1800, MaxHoldMinutes = 45 },
+    -- Every contract paused for the half hour before a txAdmin restart, the
+    -- app pause off (server/holds.lua), and the bulletin when a contract on
+    -- an officer is called off.
+    ['Holds'] = { AppPaused = false, RestartPauseBeforeSeconds = 1800, RestartMaxHoldMinutes = 45 },
     ['Advisory.OnCancel'] = true,
     -- The owner's switches: anonymity off entirely, and every informant
     -- feature off at once. Anonymity ships off (the owner's request), and
@@ -92,12 +93,12 @@ local ADDED = {
     ['Limits.StaffDeadlineMinLeftSeconds'] = 300,
     -- The admin panel's moderator level (Staff and permissions).
     ['Admin.ModeratorAce'] = 'crimson.moderator',
-    -- The Staff section: the cap on a manual staff payment, the app pause
-    -- and the daily summary (both off), the summary's hour and the alert
+    -- The Staff section: the cap on a manual staff payment, the daily
+    -- summary (off), the summary's hour and the alert
     -- thresholds; and the report button's bucket.
     ['Staff'] = {
         ManualPaymentMax = 100000,
-        AppPaused = false, DailySummary = false, DailySummaryHour = 6,
+        DailySummary = false, DailySummaryHour = 6,
         AlertPlacedPerHour = 5, AlertTargetPerDay = 3, AlertRefusalsPer10Min = 30,
         -- The panel's Change reward and Reassign (server/staff_reward.lua,
         -- server/staff_reassign.lua).
@@ -372,6 +373,16 @@ describe('the configuration as one short file', function()
                 or ((path:match('^Roleplay%.') or path:match('^Improvements%.')) and ADDED[path] ~= nil)) then
                 local off = differences(ADDED[path], pair[2])
                 addedSince = next(off) == nil
+            end
+            -- The restart hold's two numbers, moved into the Holds section
+            -- (server/holds.lua, step 3e) beside the app pause, the same.
+            if path == 'Restart' and pair[2] == nil and type(pair[1]) == 'table'
+                and ADDED.Holds.RestartPauseBeforeSeconds == pair[1].PauseBeforeSeconds
+                and ADDED.Holds.RestartMaxHoldMinutes == pair[1].MaxHoldMinutes then
+                addedSince = true
+            end
+            if path == 'Holds' and pair[1] == nil then
+                addedSince = next(differences(ADDED.Holds, pair[2])) == nil
             end
             -- The placer's Confirm handover, new, as ADDED says.
             if pair[1] == nil and path:match('^Kidnap%.') and ADDED[path] == pair[2] then

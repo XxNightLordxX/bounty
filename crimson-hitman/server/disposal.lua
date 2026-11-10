@@ -45,6 +45,7 @@
 --- where it was; the vehicle is made again once the hitman is in the city.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Text = CrimsonBoot.requireShared('text')
 local Geo = CrimsonBoot.requireShared('geo')
@@ -227,13 +228,9 @@ end
 --- Whether anything holds this step's clock now: a staff freeze on one of
 --- its parties, the app pause or the restart hold.
 local function Held(step)
-    local contracts, freeze = Deps.contracts, Deps.freeze
-    if contracts and contracts.restartHeld and contracts.restartHeld() then return true end
-    if freeze and freeze.appPaused and freeze.appPaused() then return true end
-    if freeze and freeze.of then
-        for _, cid in ipairs({ step.hitman_cid, step.creator_cid, step.target_cid }) do
-            if cid and freeze.of(cid) then return true end
-        end
+    if Holds.on(nil, nil, { 'restart', 'app' }) then return true end
+    for _, cid in ipairs({ step.hitman_cid, step.creator_cid, step.target_cid }) do
+        if cid and Holds.of(cid) then return true end
     end
     return false
 end
@@ -243,21 +240,18 @@ Disposal.held = Held
 --- anonymous party: the restart hold and the app pause, which name nobody,
 --- and a freeze only through a party they may see (the target, the placer
 --- unless placed anonymously, the hitman unless on it anonymously), as the
---- panel shows a contract's own hold (Panel.frozenShown). "Held" through an
+--- panel shows a contract's own hold (Holds.shown). "Held" through an
 --- anonymous party, beside the measures list every reader sees, narrowed down
 --- who that party was.
 local function HeldShown(step)
-    local contracts, freeze = Deps.contracts, Deps.freeze
-    if contracts and contracts.restartHeld and contracts.restartHeld() then return true end
-    if freeze and freeze.appPaused and freeze.appPaused() then return true end
-    if not (freeze and freeze.of) then return false end
-    if step.target_cid and freeze.of(step.target_cid) then return true end
+    if Holds.on(nil, nil, { 'restart', 'app' }) then return true end
+    if step.target_cid and Holds.of(step.target_cid) then return true end
     local okC, contract = pcall(Deps.storage.readContract, step.contract_id)
     contract = okC and contract or nil
-    if step.creator_cid and freeze.of(step.creator_cid) and contract and contract.anon_creator ~= true then
+    if step.creator_cid and Holds.of(step.creator_cid) and contract and contract.anon_creator ~= true then
         return true
     end
-    if step.hitman_cid and freeze.of(step.hitman_cid) then
+    if step.hitman_cid and Holds.of(step.hitman_cid) then
         local okH, row = pcall(Deps.storage.readHitman, step.contract_id, step.hitman_cid)
         if okH and row and row.anon ~= true then return true end
     end

@@ -57,4 +57,20 @@ return {
     ['screen:admin.view:frozen'] = { to = 'screen:admin.view:measures', note = 'filter Frozen' },
     ['screen:admin.view:suspended'] = { to = 'screen:admin.view:measures', note = 'filter Suspended' },
     ['screen:admin.view:protected'] = { to = 'screen:admin.view:measures', note = 'filter Protected' },
+    -- Step 3e: one Holds service (server/holds.lua, was server/freeze.lua).
+    -- Every reason a contract stands still (staff freeze, freezes unread,
+    -- restart hold, app pause, and the expiry pass's presence pause) is asked
+    -- through one API (Holds.on / since / why / shown), given back by one
+    -- routine and released by one path. The app pause's switch and the
+    -- restart hold's two numbers are one Holds section.
+    ['config:Staff.AppPaused'] = { to = 'config:Holds.AppPaused', note = 'same switch, shipped off' },
+    ['config:Restart.PauseBeforeSeconds'] = { to = 'config:Holds.RestartPauseBeforeSeconds', note = 'same, 1800' },
+    ['config:Restart.MaxHoldMinutes'] = { to = 'config:Holds.RestartMaxHoldMinutes', note = 'same, 45' },
+    ['setting:Staff.AppPaused'] = { to = 'setting:Holds.AppPaused', note = 'Features, Staff tools, as before' },
+    ['setting:Restart.PauseBeforeSeconds'] = { to = 'setting:Holds.RestartPauseBeforeSeconds',
+        note = 'Rules, Timers, Server restart, as before' },
+    ['setting:Restart.MaxHoldMinutes'] = { to = 'setting:Holds.RestartMaxHoldMinutes',
+        note = 'Rules, Timers, Server restart, as before' },
+    ['tick:freeze.restartTick'] = { to = 'tick:holds.tick', note = 'the unread retry and the restart hold\'s longest' },
+    ['tick:freeze.syncAppPause'] = { to = 'tick:holds.syncAppPause', note = 'the app pause in line with its switch' },
 }

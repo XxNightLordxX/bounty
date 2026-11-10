@@ -24,6 +24,7 @@
 --- two collections. With ox_inventory not started the feature does nothing.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
@@ -126,11 +127,11 @@ function Proof.handover(actor, rawId)
     if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
         return false, CH.ERR.KILL_NOT_ALLOWED
     end
-    if Contracts.heldByStaff and Contracts.heldByStaff(contract) then return false, CH.ERR.CONTRACT_FROZEN end
+    if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
     -- On hold for the restart, or the whole app paused: the claim below
     -- would be refused anyway, so the item is never taken to be given back.
-    if Contracts.restartHeld and Contracts.restartHeld() then return false, CH.ERR.RESTART_HOLD end
-    if Contracts.appPaused and Contracts.appPaused() then return false, CH.ERR.APP_PAUSED end
+    if Holds.on(nil, nil, 'restart') then return false, CH.ERR.RESTART_HOLD end
+    if Holds.on(nil, nil, 'app') then return false, CH.ERR.APP_PAUSED end
     if Contracts.slotCoolingDown(hitman) then return false, CH.ERR.SLOT_COOLDOWN end
 
     -- The item first, before anybody's whereabouts are looked at: a hitman

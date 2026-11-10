@@ -252,11 +252,11 @@ describe('sweep 5 X2: the party view says On hold only where the badge would', f
     it('still says so where a party it may name is frozen, and with IdentityAce', function()
         local s, f = staffStack()
         local c = place(s, f, { anonymous = true })
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'the target'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'the target'))
         local pv = ask(6, 'playerView', { id = c.id, role = 'placer' })
         eq(pv.data.view.onHold, true, 'the target is frozen, which the badge says too')
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
-        truthy(s.freeze.freeze('ADMIN001', 'CREATOR1', 'the placer'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.freeze('ADMIN001', 'CREATOR1', 'the placer'))
         Env.aces[6]['crimson.identity'] = true
         pv = ask(6, 'playerView', { id = c.id, role = 'placer' })
         eq(pv.data.view.onHold, true, 'staff who may identify them see it')
@@ -370,10 +370,10 @@ describe('sweep 5 C5-1: an expiry pass inside a hold\'s release', function()
 
     it('an unfreeze gives the lifetime back before the pass can end it', function()
         local main, s, _, c = shortLived()
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(1200)
         local undo = passInside(main, s, 'contractsInvolving')
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         undo()
         eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'ended with its held time not given back')
         main.markPresenceChanged()
@@ -383,23 +383,23 @@ describe('sweep 5 C5-1: an expiry pass inside a hold\'s release', function()
 
     it('the app pause\'s end gives the lifetime back before the pass can end it', function()
         local main, s, _, c = shortLived()
-        Config.Staff.AppPaused = true
-        eq(s.freeze.syncAppPause(), 'paused')
+        Config.Holds.AppPaused = true
+        eq(s.holds.syncAppPause(), 'paused')
         Env.advance(1200)
-        Config.Staff.AppPaused = false
+        Config.Holds.AppPaused = false
         local undo = passInside(main, s, 'writeStaffMeta')
-        eq(s.freeze.syncAppPause(), 'resumed')
+        eq(s.holds.syncAppPause(), 'resumed')
         undo()
         eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'ended with its paused time not given back')
     end)
 
     it('the restart hold\'s end gives the lifetime back before the pass can end it', function()
         local main, s, _, c = shortLived()
-        Config.Restart.PauseBeforeSeconds = 1800
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        Config.Holds.RestartPauseBeforeSeconds = 1800
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(1200)
         local undo = passInside(main, s, 'liveContracts')
-        truthy(s.freeze.releaseRestart('skipped'))
+        truthy(s.holds.releaseRestart('skipped'))
         undo()
         eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'ended with its held time not given back')
     end)
@@ -462,7 +462,7 @@ describe('sweep 5 C5-3 and C5-4: when the restart hold ends without a restart', 
         local c = place(s, f)
         truthy(s.contracts.accept(f.hitman, c.id, false))
         Config.Completion.KillPhotos = false
-        Config.Restart.PauseBeforeSeconds = 1800
+        Config.Holds.RestartPauseBeforeSeconds = 1800
         return s, f, c
     end
 
@@ -479,7 +479,7 @@ describe('sweep 5 C5-3 and C5-4: when the restart hold ends without a restart', 
         local s, f, c = seeded()
         kill(s)
         Env.advance(30)
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         local ok, err = s.photo.verifyAtScene(f.hitman, c.id)
         falsy(ok)
         eq(err, CH.ERR.RESTART_HOLD)
@@ -487,7 +487,7 @@ describe('sweep 5 C5-3 and C5-4: when the restart hold ends without a restart', 
             Env.advance(60)
             s.death.sweep()
         end
-        truthy(s.freeze.releaseRestart('skipped'))
+        truthy(s.holds.releaseRestart('skipped'))
         local before = Env.players[3].PlayerData.money.cash
         ok, err = s.photo.verifyAtScene(f.hitman, c.id)
         truthy(ok, 'the kill was lost to the hold: ' .. tostring(err))
@@ -498,9 +498,9 @@ describe('sweep 5 C5-3 and C5-4: when the restart hold ends without a restart', 
         local s, f, c = seeded()
         kill(s)
         Env.advance(30)
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(600)
-        truthy(s.freeze.releaseRestart('skipped'))
+        truthy(s.holds.releaseRestart('skipped'))
         Env.advance(2 * Config.Completion.PhotoTokenLifetimeSeconds + 5)
         s.death.sweep()
         falsy(s.photo.verifyAtScene(f.hitman, c.id), 'not kept for good')
@@ -508,7 +508,7 @@ describe('sweep 5 C5-3 and C5-4: when the restart hold ends without a restart', 
 
     it('tells the parties the pause is over, and refreshes their pages', function()
         local s = seeded()
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(300)
         Env.clientEvents = {}
         local push, pushed = s.notify.push, {}
@@ -516,7 +516,7 @@ describe('sweep 5 C5-3 and C5-4: when the restart hold ends without a restart', 
             pushed[cid] = true
             return push(cid, ...)
         end
-        local released = s.freeze.releaseRestart('skipped')
+        local released = s.holds.releaseRestart('skipped')
         s.notify.push = push
         truthy(released)
         for src, cid in pairs({ [1] = 'CREATOR1', [3] = 'HITMAN01' }) do
@@ -533,11 +533,11 @@ describe('sweep 5 C5-3 and C5-4: when the restart hold ends without a restart', 
 
     it('says nothing when a new hold takes its place at once', function()
         local s = seeded()
-        Config.Restart.MaxHoldMinutes = 20
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        Config.Holds.RestartMaxHoldMinutes = 20
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(21 * 60)
         Env.clientEvents = {}
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 600 }))
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 600 }))
         for _, note in ipairs(noticesTo(1)) do
             falsy(note.content:find('no longer paused', 1, true), 'told it was over as it began again')
         end
@@ -558,7 +558,7 @@ describe('sweep 5 C5-5: a proposal past its time while its contract is frozen', 
         truthy(s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
             { reason = 'A better reason' }), 'proposed')
         local p = s.storage.readOpenAmendments(c.id)[1]
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(900)
         local ok, err = s.amendments.respond(f.hitman, p.id, true)
         falsy(ok)
@@ -567,7 +567,7 @@ describe('sweep 5 C5-5: a proposal past its time while its contract is frozen', 
         local _, strangerErr = s.amendments.respond(s.identity.resolve(9), p.id, true)
         eq(strangerErr, CH.ERR.NOT_PARTICIPANT, 'a stranger learns nothing of the hold')
         eq(s.storage.readAmendment(p.id).outcome, 'open', 'still open')
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         truthy(s.amendments.respond(f.hitman, p.id, true), 'answered after the unfreeze')
     end)
 end)
@@ -600,7 +600,7 @@ describe('sweep 5 C5-6: the time band counts the lifetime ceiling', function()
     it('stands still while a hold stops the lifetime', function()
         local s, _, c = longDeadline()
         Env.advance(600)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(1000)
         local view = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(view.timeLeft, 'Under 1 hour left', 'the band moved on while the lifetime stood still')
@@ -624,7 +624,7 @@ describe('sweep 5 C5: a freeze that lands in a claim\'s reads', function()
         s.contracts.isImmune = function(...)
             if not landed then
                 landed = true
-                truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'mid-claim'))
+                truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'mid-claim'))
             end
             return isImmune(...)
         end
@@ -657,17 +657,17 @@ describe('sweep 5 C5: freezes the start could not read', function()
         local c = place(s, f)
         local real = s.storage.readFreezes
         s.storage.readFreezes = function() error('Lost connection to server during query', 0) end
-        s.freeze.reload()
+        s.holds.reload()
         local contract = s.storage.readContract(c.id)
-        truthy(s.freeze.holds(contract), 'read as nobody frozen')
+        truthy(s.holds.on(contract, nil, 'staff'), 'read as nobody frozen')
         falsy(s.contracts.accept(f.hitman, c.id, false), 'taken while the freezes are unknown')
-        s.freeze.restartTick()
-        truthy(s.freeze.holds(contract), 'still held while the read fails')
+        s.holds.tick()
+        truthy(s.holds.on(contract, nil, 'staff'), 'still held while the read fails')
         s.storage.readFreezes = real
         -- Tried again after the outage's wait, not on every tick.
         Env.advance(300)
-        s.freeze.restartTick()
-        falsy(s.freeze.holds(contract), 'let go once they are read')
+        s.holds.tick()
+        falsy(s.holds.on(contract, nil, 'staff'), 'let go once they are read')
         truthy(s.contracts.accept(f.hitman, c.id, false))
     end)
 end)
@@ -892,8 +892,8 @@ describe('sweep 5 review R1: the lifetime an unreadable freeze store took', func
     local function tickUntilRead(s, contract, step, max)
         for _ = 1, max do
             Env.advance(step)
-            s.freeze.restartTick()
-            if not s.freeze.holds(s.storage.readContract(contract.id)) then return true end
+            s.holds.tick()
+            if not s.holds.on(s.storage.readContract(contract.id), nil, 'staff') then return true end
         end
         return false
     end
@@ -907,10 +907,10 @@ describe('sweep 5 review R1: the lifetime an unreadable freeze store took', func
         row.expires_at = os.time() + 600
         s.storage.writeContract(row)
         local restore = outage(s)
-        s.freeze.reload()
+        s.holds.reload()
         for _ = 1, 20 do
             Env.advance(60)
-            s.freeze.restartTick()
+            s.holds.tick()
             main.markPresenceChanged()
             main.expire()
         end
@@ -934,14 +934,14 @@ describe('sweep 5 review R1: the lifetime an unreadable freeze store took', func
         local before = s.storage.readContract(c.id).expires_at
         local restore = outage(s)
         local t0 = os.time()
-        s.freeze.reload()
+        s.holds.reload()
         Env.advance(300)
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(600)
         restore()
         falsy(tickUntilRead(s, c, 300, 3), 'still held by the real freeze')
         eq(s.storage.readContract(c.id).expires_at - before, 300, 'the outage up to the freeze, once')
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'done'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
         eq(s.storage.readContract(c.id).expires_at - before, os.time() - t0, 'the whole span, once')
     end)
 
@@ -956,10 +956,10 @@ describe('sweep 5 review R1: the lifetime an unreadable freeze store took', func
             if tostring(text):find('staff freezes could not be read', 1, true) then said = said + 1 end
         end
         local ok, err = pcall(function()
-            s.freeze.reload()
+            s.holds.reload()
             for _ = 1, 1200 do
                 Env.advance(1)
-                s.freeze.restartTick()
+                s.holds.tick()
             end
         end)
         _G.print = realPrint
@@ -974,8 +974,8 @@ describe('sweep 5 review R1: the lifetime an unreadable freeze store took', func
         local s, f = staffStack()
         local c = place(s, f)
         local restore = outage(s)
-        s.freeze.reload()
-        local count, unknown = s.freeze.count()
+        s.holds.reload()
+        local count, unknown = s.holds.count()
         eq(count, 0)
         truthy(unknown, 'the count read 0 as if known')
         local plain = ask(6, 'contract', { id = c.id })
@@ -999,7 +999,7 @@ describe('sweep 5 review R2: a death sweep inside the restart hold\'s release', 
         local c = place(s, f)
         truthy(s.contracts.accept(f.hitman, c.id, false))
         Config.Completion.KillPhotos = false
-        Config.Restart.PauseBeforeSeconds = 1800
+        Config.Holds.RestartPauseBeforeSeconds = 1800
         Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
         Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
         Env.players[2]._health = 140
@@ -1007,7 +1007,7 @@ describe('sweep 5 review R2: a death sweep inside the restart hold\'s release', 
         Env.players[2].PlayerData.metadata.isdead = true
         eq(s.death.onVictimReport(2), 1, 'the kill is attributed')
         Env.advance(30)
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         for _ = 1, 10 do
             Env.advance(60)
             s.death.sweep()
@@ -1017,7 +1017,7 @@ describe('sweep 5 review R2: a death sweep inside the restart hold\'s release', 
             if not ran then ran = true; s.death.sweep() end
             return real(...)
         end
-        truthy(s.freeze.releaseRestart('skipped'))
+        truthy(s.holds.releaseRestart('skipped'))
         s.storage.liveContracts = real
         truthy(ran, 'the sweep ran inside the release')
         local ok, err = s.photo.verifyAtScene(f.hitman, c.id)
@@ -1039,8 +1039,8 @@ describe('sweep 5 review R3: the stake\'s band and the card\'s are one', functio
 
     it('an acceptance on the band the card shows under the restart hold is taken', function()
         local s, f, c = staked()
-        Config.Restart.PauseBeforeSeconds = 1800
-        truthy(s.freeze.scheduledRestart({ secondsRemaining = 1800 }))
+        Config.Holds.RestartPauseBeforeSeconds = 1800
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(300)
         local card = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(card.timeLeft, 'Under 1 hour left', 'the card stands still under the hold')
@@ -1051,7 +1051,7 @@ describe('sweep 5 review R3: the stake\'s band and the card\'s are one', functio
 
     it('a stranger\'s card does not stand still for a staff freeze', function()
         local s, _, c = staked()
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'probe'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(300)
         local contract = s.storage.readContract(c.id)
         eq(s.projection.contract(contract, 'STRANGER').timeLeft, 'Under 15 minutes left',

@@ -56,7 +56,7 @@ local OPS = {
     -- Every measure on a player in force (server/measures.lua: frozen,
     -- suspended, protected, their own target limits), one list: a read.
     measures = READ,
-    -- Staff freezes (server/freeze.lua): freezing and releasing move no
+    -- Staff freezes (server/holds.lua): freezing and releasing move no
     -- money and stop nothing for good: a moderator's.
     freeze = MOD, unfreeze = MOD,
     -- A live contract's deadline moved later or sooner (Admin.adjustDeadline):
@@ -965,51 +965,15 @@ local function buildOverview()
     out.measures = { freeze = counts.freeze or 0, unknown = counts.unknown == true or nil,
         suspend = deps.sanctions and counts.suspend or nil, protect = deps.sanctions and counts.protect or nil,
         limit = deps.targetLimits and counts.limit or nil }
-    -- The whole app paused by staff (Config.Staff.AppPaused), and since when.
-    out.appPaused = deps.freeze and deps.freeze.appPausedSince and deps.freeze.appPausedSince() or nil
+    -- The whole app paused by staff (Config.Holds.AppPaused), and since when.
+    out.appPaused = deps.holds and deps.holds.global('app') or nil
     return out
 end
 
---- Who a staff member may be shown has put a contract on hold: its frozen
---- parties (server/freeze.lua), each as their place on it, leaving out an
---- anonymous one for staff without IdentityAce. Empty is shown as not
---- frozen at all: a badge on a contract whose visible parties are none of
---- them frozen said that its anonymous party was the player just frozen.
----@return string[]|nil places, nil when none may be shown
+--- Which of a contract's parties this staff member may be shown has put it
+--- on hold (Holds.shown), or nil.
 local function frozenShown(contract, hitmen, canIdentify)
-    if not deps.freeze or not contract then return nil end
-    -- Nobody frozen and the freezes read: nothing is on hold, and nothing
-    -- is read to find that out.
-    local frozenCount, unknown = deps.freeze.count()
-    if (frozenCount or 0) == 0 and not unknown then return nil end
-    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return nil end
-    -- The roster read once, for the parties and their aliases both: read
-    -- in partiesOf and then again here, a page of 28 rows with anybody
-    -- frozen was 56 statements on mysql.
-    if hitmen == nil and (frozenCount or 0) > 0 then
-        hitmen = deps.storage.readHitmen(contract.id) or {}
-    end
-    local parties = deps.freeze.partiesOf(contract, hitmen)
-    if not parties then return nil end
-    local aliases = {}
-    for _, hitman in ipairs(hitmen or {}) do
-        aliases[hitman.hitman_cid] = hitman.alias
-    end
-    local out = {}
-    for _, party in ipairs(parties) do
-        if party.role == 'unknown' then
-            -- The store's freezes could not be read: every live contract is
-            -- held alike, through nobody. Said as that with IdentityAce, and
-            -- to everybody else as held, which names nobody either.
-            out[#out + 1] = canIdentify and 'store unreadable' or 'held'
-        elseif canIdentify or not party.anonymous then
-            out[#out + 1] = party.role == 'target' and 'the target'
-                or party.role == 'client' and 'the placer'
-                or ('operative %s'):format(tostring(aliases[party.cid] or '?'))
-        end
-    end
-    table.sort(out)
-    return #out > 0 and out or nil
+    return deps.holds and deps.holds.shown(contract, hitmen, canIdentify) or nil
 end
 
 --------------------------------------------------------------------------
@@ -1110,7 +1074,7 @@ H.contracts = function(src, data)
     -- The page's live rows' rosters in one read, for the On hold badge, and
     -- only while anybody is frozen (frozenShown reads nothing otherwise).
     local rosters = {}
-    if deps.freeze and (deps.freeze.count() or 0) > 0 and Storage.readHitmenMany then
+    if deps.holds and (deps.holds.count() or 0) > 0 and Storage.readHitmenMany then
         local ids = {}
         for i = (page - 1) * size + 1, math.min(#matched, page * size) do
             local contract = matched[i]
@@ -1149,7 +1113,6 @@ end
 
 --- The lines /ch-stuck lists for one contract, with what settles each, or
 --- nil while recovery is still deciding them.
-Panel._frozenShown = frozenShown
 
 local function stuckOf(src, id)
     if recoveryState() ~= 'ready' then return nil end
@@ -1288,7 +1251,7 @@ H.contract = function(src, data, quiet)
             maxAdjust = adjustLimits(),
             minLeft = select(2, adjustLimits()),
         },
-        -- On hold by staff (server/freeze.lua), with which of its parties
+        -- On hold by staff (server/holds.lua), with which of its parties
         -- this staff member may be told.
         frozen = frozenShown(contract, hitmen, canIdentify),
         -- Staff notes, removals and text edits on it (server/staffcontract.lua).
@@ -1856,9 +1819,6 @@ Panel.staffActor = function(src)
     return { cid = actor and actor.cid or staffOf(src), name = actor and actor.name or nil, source = src }
 end
 Panel.identifies = function(src) return identifies(src) end
---- Whether a contract's view says it is on hold, as this reader may see it
---- (frozenShown, defined below): for a module's refusal of a held contract.
-Panel.frozenShown = function(contract, canIdentify) return Panel._frozenShown(contract, nil, canIdentify) end
 
 --- A character's playtime as the panel shows it: what the built-in tracker
 --- counted (Playtime.view), the floor, and what the rule reads for them
@@ -1941,7 +1901,7 @@ H.player = function(src, data)
 
     -- Which of the contracts shown are on hold, by the same rule the list
     -- of contracts follows.
-    if deps.freeze and (deps.freeze.count() > 0 or select(2, deps.freeze.count())) then
+    if deps.holds and (deps.holds.count() > 0 or select(2, deps.holds.count())) then
         -- Their rosters in one read, not one each (and two, in frozenShown).
         local ids = {}
         for _, row in ipairs(contracts) do ids[#ids + 1] = row.id end
@@ -1994,7 +1954,7 @@ H.player = function(src, data)
         -- Hours counted here and whether they are grandfathered: nothing
         -- about any contract, so shown to every reader of the panel.
         playtime = playtimeView(cid, actor),
-        -- Whether staff have put them on hold (server/freeze.lua). Who did,
+        -- Whether staff have put them on hold (server/holds.lua). Who did,
         -- a staff member's citizen id, only with IdentityAce.
         frozen = freezeView(cid, canIdentify),
         -- Whether staff have suspended them from contracts, or protect them
@@ -2008,7 +1968,7 @@ H.player = function(src, data)
     }
 end
 
---- Freezing and releasing a player (server/freeze.lua), from Players.
+--- Freezing and releasing a player (server/holds.lua), from Players.
 --- Writes, needing the ACE itself, as void and settle do; each is audited
 --- by the freeze itself (freeze_player, unfreeze_player). Not IdentityAce:
 --- staff name the player as they looked them up, and nothing here says
@@ -2038,7 +1998,7 @@ local function listedSubject(data, src)
 end
 
 H.freeze = function(src, data)
-    if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
+    if not deps.holds then return false, 'unavailable', 'Freezing is not available on this server.' end
     local reason = shortText(data.reason, 120)
     if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
     local who, whoErr, whoMessage = writeSubject(data, src)
@@ -2065,7 +2025,7 @@ H.freeze = function(src, data)
 end
 
 H.unfreeze = function(src, data)
-    if not deps.freeze then return false, 'unavailable', 'Freezing is not available on this server.' end
+    if not deps.holds then return false, 'unavailable', 'Freezing is not available on this server.' end
     -- A row of the measures list ('f' handles), or the player looked up.
     local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end

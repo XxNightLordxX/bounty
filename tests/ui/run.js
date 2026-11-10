@@ -12856,7 +12856,7 @@ async function main() {
     it('drew it all without a throw', function () { drewCleanly(app, 'reporting'); });
   })();
 
-  // The whole app paused by staff (Config.Staff.AppPaused): the refusal is
+  // The whole app paused by staff (Config.Holds.AppPaused): the refusal is
   // said in the words the server's notice uses.
   await (async function appPaused() {
     const app = boot({

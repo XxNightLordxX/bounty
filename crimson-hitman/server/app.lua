@@ -6,6 +6,7 @@
 --- from its payload, and none of them is reachable without passing the gate.
 
 local Util = CrimsonBoot.requireShared('util')
+local Holds = CrimsonBoot.require('server.holds')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
@@ -778,11 +779,10 @@ function App.register()
         -- at most), or this player is suspended (until when; 0 until staff
         -- lift it). The server's gates stay as they are: this only says.
         if type(listing) == 'table' then
-            local freeze = deps.freeze
             local holds = {}
-            if freeze and freeze.appPaused and freeze.appPaused() then holds.appPaused = true end
-            if freeze and freeze.restartHeld and freeze.restartHeld() then
-                local ends = freeze.restartHoldEnds and freeze.restartHoldEnds()
+            if Holds.global('app') then holds.appPaused = true end
+            if Holds.global('restart') then
+                local ends = Holds.restartHoldEnds()
                 holds.restartHold = { endsIn = ends and math.max(0, ends - os.time()) or nil }
             end
             if suspension then holds.suspendedUntil = tonumber(suspension.until_at) or 0 end

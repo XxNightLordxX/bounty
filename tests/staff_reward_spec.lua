@@ -285,9 +285,9 @@ describe('Change reward: refusals and races', function()
         s.storage.readContract(c.id).bailout_queued_at = os.time()
         eq(ask(s, 6, 'rewardChange', { id = c.id, by = -100, reason = 'r' }).err, 'buyout_queued')
         s.storage.readContract(c.id).bailout_queued_at = nil
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'x'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'x'))
         eq(ask(s, 6, 'rewardChange', { id = c.id, by = 100, reason = 'r' }).err, CH.ERR.CONTRACT_FROZEN)
-        truthy(s.freeze.unfreeze('ADMIN001', 'TARGET01', 'x'))
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'x'))
         truthy(claim(s, c))
         eq(ask(s, 6, 'rewardChange', { id = c.id, by = 100, reason = 'r' }).err, CH.ERR.ALREADY_SETTLED)
         eq(ask(s, 6, 'rewardChange', { id = 'ctnothere1', by = 100, reason = 'r' }).err, CH.ERR.NOT_FOUND)
@@ -477,7 +477,7 @@ describe('Reassign', function()
             { id = c.id, ref = 'made-up', reason = 'r' }, { id = 1, ref = ref, reason = 'r' } }) do
             falsy(ask(s, 6, 'reassignHitman', data).ok, 'payload ' .. i)
         end
-        truthy(s.freeze.freeze('ADMIN001', 'TARGET01', 'x'))
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'x'))
         eq(ask(s, 6, 'reassignHitman', { id = c.id, ref = ref, reason = 'r' }).err, CH.ERR.CONTRACT_FROZEN)
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
         for _, src in ipairs({ 7, 10 }) do

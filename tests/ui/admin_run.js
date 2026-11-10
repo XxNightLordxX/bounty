@@ -5197,7 +5197,7 @@ async function main() {
     }
     view.data.features.push(sw('Improvements.GoDark.Enabled', 'Improvements: Go dark'));
     view.data.features.push(sw('Roleplay.CityNews.Enabled', 'Roleplay: City news'));
-    view.data.features.push(sw('Staff.AppPaused', 'Staff tools'));
+    view.data.features.push(sw('Holds.AppPaused', 'Staff tools'));
     view.data.features.push(sw('Advisory.Enabled', 'Law enforcement advisory'));
     view.data.features.push(sw('InformantsEnabled', 'Informant'));
     view.data.features.push(sw('Anonymity.AllowAnonymousCreate', 'Anonymity'));
@@ -5250,7 +5250,7 @@ async function main() {
       eq(unit({ key: 'Sources.cash.max' }), '$');
       eq(unit({ key: 'Limits.SlotCooldownSeconds' }), ' s');
       eq(unit({ key: 'PendingEscrow.LoginRetryDelayMs' }), ' ms');
-      eq(unit({ key: 'Restart.MaxHoldMinutes' }), ' min');
+      eq(unit({ key: 'Holds.RestartMaxHoldMinutes' }), ' min');
       eq(unit({ key: 'Improvements.HitmanHeat.DecayHours' }), ' h');
       eq(unit({ key: 'Audit.ContractRetentionDays' }), ' d');
       eq(unit({ key: 'Roleplay.WitnessHeat.WitnessRadius' }), ' m');
