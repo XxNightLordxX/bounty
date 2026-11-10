@@ -1,7 +1,7 @@
---- The two informants (server/informant.lua): the placer's
---- (Config.PlacerInformant), which lets the person who placed a contract
+--- The two informants (server/intel/informants.lua): the placer's
+--- (Config.Intel.PlacerInformant), which lets the person who placed a contract
 --- pay for a chance to find out who took it, and the target's
---- (Config.Informant), which lets a target pay for a chance to find out who
+--- (Config.Intel.Informant), which lets a target pay for a chance to find out who
 --- is after them, an operative or the placer.
 ---
 --- Every roll is forced through the harness's random source
@@ -81,11 +81,11 @@ local function total(s)
 end
 
 local function placerShown()
-    return { cost = Config.PlacerInformant.Cost, account = Config.PlacerInformant.Account }
+    return { cost = Config.Intel.PlacerInformant.Cost, account = Config.Intel.PlacerInformant.Account }
 end
 
 local function targetShown()
-    return { cost = Config.Informant.Cost, account = Config.Informant.Account }
+    return { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account }
 end
 
 --- Notices that say a placer found an operative out, and who got them.
@@ -115,7 +115,7 @@ describe('the placer\'s informant', function()
     -- the placer's informant on for the specs (tests/run.lua), and this
     -- passed or failed by whether a stack had been opened before it.
     it('ships with the figures the owner asked for', function()
-        local p = require('tests.harness.shipped').fromFile().PlacerInformant
+        local p = require('tests.harness.shipped').fromFile().Intel.PlacerInformant
         eq(p.Enabled, false, 'off as shipped, the owner\'s request')
         eq(p.Cost, 25000)
         eq(p.Account, 'bank')
@@ -324,7 +324,7 @@ describe('the placer\'s informant', function()
             truthy(s.informant.placerBuy(f.creator, c.id, placerShown(), placerPick(s, c)))
             local other = secondOperative(s, c)
             local pick = placerPick(s, c)
-            Config.PlacerInformant.Enabled = false
+            Config.Intel.PlacerInformant.Enabled = false
             refused(s, f.creator, c, pick, CH.ERR.FEATURE_OFF)
             local card = view(s, c, 'CREATOR1')
             eq(card.placerInformantFound[1].text, 'Rook Ash', 'a name already found stays')
@@ -338,7 +338,7 @@ describe('the placer\'s informant', function()
             force(s, HIT, MISS)
             local pick = placerPick(s, c)
             truthy(s.informant.placerBuy(f.creator, c.id, placerShown(), pick))
-            Env.advance(Config.PlacerInformant.CooldownMinutes * 60 + 1)
+            Env.advance(Config.Intel.PlacerInformant.CooldownMinutes * 60 + 1)
             refused(s, f.creator, c, pick, CH.ERR.ALREADY_REVEALED)
         end)
 
@@ -569,10 +569,10 @@ end)
 
 describe('the target\'s informant', function()
     it('ships at a 10% chance and two look-ups, with the proximity rule gone', function()
-        eq(Config.Informant.RevealChancePercent, 10)
-        eq(Config.Informant.MaxPurchasesPerContract, 2)
-        eq(Config.Informant.RequireProximity, nil)
-        eq(Config.Informant.ProximityWindowMinutes, nil)
+        eq(Config.Intel.Informant.RevealChancePercent, 10)
+        eq(Config.Intel.Informant.MaxPurchasesPerContract, 2)
+        eq(Config.Intel.Informant.RequireProximity, nil)
+        eq(Config.Intel.Informant.ProximityWindowMinutes, nil)
     end)
 
     it('names an operative on a hit, charged once, and keeps it on On me', function()
@@ -661,7 +661,7 @@ describe('the target\'s informant', function()
         truthy(s.informant.buy(f.target, c.id, targetShown(), targetPick(s, c)))
         truthy(s.informant.buy(f.target, c.id, targetShown(), 'placer'))
         local before = bank(2)
-        Env.advance(Config.Informant.RerollLockMinutes * 60 + 1)
+        Env.advance(Config.Intel.Informant.RerollLockMinutes * 60 + 1)
         local ok, err = s.informant.buy(f.target, c.id, targetShown(), targetPick(s, c))
         falsy(ok)
         eq(err, CH.ERR.LIMIT_REACHED)
@@ -682,7 +682,7 @@ describe('the target\'s informant', function()
         eq(bank(2), before, 'free')
         eq(drawn(), 1, 'no second roll')
         eq(view(s, c, 'TARGET01').informantLeft, 1, 'and no attempt spent')
-        Env.advance(Config.Informant.RerollLockMinutes * 60)
+        Env.advance(Config.Intel.Informant.RerollLockMinutes * 60)
         ok, _, data = s.informant.buy(f.target, c.id, targetShown(), pick)
         truthy(ok)
         eq(data.name, 'Rook Ash', 'after the lock, a fresh roll')
@@ -797,16 +797,16 @@ describe('the informants in the admin panel', function()
         local s = newStack()
         local keys = {}
         for _, entry in ipairs(s.settings.CATALOGUE) do keys[entry.key] = entry end
-        eq(keys['PlacerInformant.Enabled'].section, 'features')
-        for _, key in ipairs({ 'PlacerInformant.Cost', 'PlacerInformant.RevealChancePercent',
-            'PlacerInformant.AlertChancePercent', 'PlacerInformant.MaxPurchasesPerContract',
-            'PlacerInformant.CooldownMinutes', 'Informant.RevealChancePercent' }) do
+        eq(keys['Intel.PlacerInformant.Enabled'].section, 'features')
+        for _, key in ipairs({ 'Intel.PlacerInformant.Cost', 'Intel.PlacerInformant.RevealChancePercent',
+            'Intel.PlacerInformant.AlertChancePercent', 'Intel.PlacerInformant.MaxPurchasesPerContract',
+            'Intel.PlacerInformant.CooldownMinutes', 'Intel.Informant.RevealChancePercent' }) do
             truthy(keys[key], key .. ' is in the panel')
             eq(keys[key].section, 'limits', key)
         end
         eq(keys['Informant.RequireProximity'], nil, 'the proximity switch is gone')
-        eq(keys['PlacerInformant.RevealChancePercent'].max, 100)
-        eq(keys['PlacerInformant.AlertChancePercent'].min, 0)
+        eq(keys['Intel.PlacerInformant.RevealChancePercent'].max, 100)
+        eq(keys['Intel.PlacerInformant.AlertChancePercent'].min, 0)
     end)
 
     it('keeps the placer\'s settings across a restart', function()
@@ -820,9 +820,9 @@ describe('the informants in the admin panel', function()
             if type(name) == 'string' and name:sub(1, 7) == 'server.' then package.loaded[name] = nil end
         end
         local s = require('server.main').start()
-        truthy(s.settings.set('PlacerInformant.Enabled', false, 'ADMIN001'))
-        truthy(s.settings.set('PlacerInformant.AlertChancePercent', 55, 'ADMIN001'))
-        truthy(s.settings.set('Informant.RevealChancePercent', 35, 'ADMIN001'))
+        truthy(s.settings.set('Intel.PlacerInformant.Enabled', false, 'ADMIN001'))
+        truthy(s.settings.set('Intel.PlacerInformant.AlertChancePercent', 55, 'ADMIN001'))
+        truthy(s.settings.set('Intel.Informant.RevealChancePercent', 35, 'ADMIN001'))
         for name in pairs(package.loaded) do
             if type(name) == 'string' and name:sub(1, 7) == 'server.' then package.loaded[name] = nil end
         end
@@ -833,9 +833,9 @@ describe('the informants in the admin panel', function()
         Config.TargetClasses.whitelisted.PlacerInformant = false
         Config.Database.Mode = 'json'
         local again = require('server.main').start()
-        eq(Config.PlacerInformant.Enabled, false)
-        eq(Config.PlacerInformant.AlertChancePercent, 55)
-        eq(Config.Informant.RevealChancePercent, 35)
+        eq(Config.Intel.PlacerInformant.Enabled, false)
+        eq(Config.Intel.PlacerInformant.AlertChancePercent, 55)
+        eq(Config.Intel.Informant.RevealChancePercent, 35)
         local f = fixture(again)
         eq(select(2, again.informant.placerBuy(f.creator, 'ct00000001', nil, 'op_x')),
             CH.ERR.FEATURE_OFF)
@@ -856,7 +856,7 @@ describe('the informants in the admin panel', function()
             for _, path in ipairs({ { 'Informant', 'RevealChancePercent' },
                 { 'PlacerInformant', 'RevealChancePercent' }, { 'PlacerInformant', 'AlertChancePercent' } }) do
                 local candidate = copy(Config)
-                candidate[path[1]][path[2]] = bad
+                candidate.Intel[path[1]][path[2]] = bad
                 local _, _, warn = check(candidate)
                 local name = path[1] .. '.' .. path[2]
                 truthy(table.concat(warn, '\n'):find(name .. ' is', 1, true),
@@ -864,11 +864,11 @@ describe('the informants in the admin panel', function()
             end
         end
         local fine = copy(Config)
-        fine.PlacerInformant.AlertChancePercent, fine.Informant.RevealChancePercent = 0, 100
+        fine.Intel.PlacerInformant.AlertChancePercent, fine.Intel.Informant.RevealChancePercent = 0, 100
         local _, _, warn = check(fine)
         falsy(table.concat(warn, '\n'):find('ChancePercent', 1, true), '0 and 100 are whole chances')
         local s = newStack()
-        eq((select(2, s.settings.check('PlacerInformant.RevealChancePercent', 101))), 'invalid_value',
+        eq((select(2, s.settings.check('Intel.PlacerInformant.RevealChancePercent', 101))), 'invalid_value',
             'and the panel will not take one either')
     end)
 
@@ -887,7 +887,7 @@ describe('the informants in the admin panel', function()
 end)
 
 --------------------------------------------------------------------------
--- Every informant feature at once (Config.InformantsEnabled)
+-- Every informant feature at once (Config.Intel.Enabled)
 --------------------------------------------------------------------------
 
 describe('every informant feature switched off at once', function()
@@ -899,15 +899,15 @@ describe('every informant feature switched off at once', function()
         local s = newStack()
         local first
         for _, entry in ipairs(s.settings.CATALOGUE) do
-            if entry.group == 'Informant' and entry.section == 'features' then
+            if entry.group == 'Intel: Informants' and entry.section == 'features' then
                 first = first or entry
             end
-            if entry.key == 'Informant.Enabled' or entry.key == 'PlacerInformant.Enabled'
-                or entry.key == 'LocationTip.Enabled' then
-                eq(entry.needs, 'InformantsEnabled', entry.key)
+            if entry.key == 'Intel.Informant.Enabled' or entry.key == 'Intel.PlacerInformant.Enabled'
+                or entry.key == 'Intel.LocationTip.Enabled' then
+                eq(entry.needs, 'Intel.Enabled', entry.key)
             end
         end
-        eq(first and first.key, 'InformantsEnabled')
+        eq(first and first.key, 'Intel.Enabled')
         eq(first.kind, 'switch')
     end)
 
@@ -917,15 +917,15 @@ describe('every informant feature switched off at once', function()
         local targetAt = targetPick(s, c)
         truthy(placerAt and targetAt, 'both offered while on')
         Env.players[3].PlayerData.money.bank = 100000
-        truthy(s.settings.set('InformantsEnabled', false, 'ADMIN001'))
-        eq(s.storage.readSettings().InformantsEnabled.value, false, 'kept in the store')
-        eq(Config.Informant.Enabled, true, 'its own switches untouched')
+        truthy(s.settings.set('Intel.Enabled', false, 'ADMIN001'))
+        eq(s.storage.readSettings()['Intel.Enabled'].value, false, 'kept in the store')
+        eq(Config.Intel.Informant.Enabled, true, 'its own switches untouched')
         local money, told = total(s), notices()
         eq(select(2, s.informant.buy(f.target, c.id, targetShown(), targetAt)), CH.ERR.FEATURE_OFF)
         eq(select(2, s.informant.placerBuy(f.creator, c.id, placerShown(), placerAt)),
             CH.ERR.FEATURE_OFF)
-        eq(select(2, s.locationTip.buy(f.hitman, c.id, { cost = Config.LocationTip.Cost,
-            account = Config.LocationTip.Account })), CH.ERR.FEATURE_OFF)
+        eq(select(2, s.locationTip.buy(f.hitman, c.id, { cost = Config.Intel.LocationTip.Cost,
+            account = Config.Intel.LocationTip.Account })), CH.ERR.FEATURE_OFF)
         eq(total(s), money, 'nothing charged')
         eq(notices(), told, 'no notice to anybody')
         eq(#alerts(), 0)
@@ -937,7 +937,7 @@ describe('every informant feature switched off at once', function()
         eq(view(s, c, 'CREATOR1').placerInformantPicks, nil, 'none on the placer\'s')
         eq(view(s, c, 'HITMAN01').locationTip, nil, 'no tip on the hitman\'s')
 
-        truthy(s.settings.set('InformantsEnabled', true, 'ADMIN001'))
+        truthy(s.settings.set('Intel.Enabled', true, 'ADMIN001'))
         truthy(targetPick(s, c), 'on again, offered again')
         truthy(s.projection.listing(f.hitman.cid).settings.placerInformant)
     end)
@@ -952,13 +952,13 @@ describe('every informant feature switched off at once', function()
         end
         for _, bad in ipairs({ 'yes', 1 }) do
             local candidate = copy(Config)
-            candidate.InformantsEnabled = bad
+            candidate.Intel.Enabled = bad
             local _, _, warn = check(candidate)
-            truthy(table.concat(warn, '\n'):find('InformantsEnabled is', 1, true), tostring(bad))
+            truthy(table.concat(warn, '\n'):find('Intel.Enabled is', 1, true), tostring(bad))
         end
         for _, path in ipairs({ { 'Informant', 'Enabled' }, { 'PlacerInformant', 'Enabled' } }) do
             local candidate = copy(Config)
-            candidate[path[1]][path[2]] = 'false'
+            candidate.Intel[path[1]][path[2]] = 'false'
             local _, _, warn = check(candidate)
             truthy(table.concat(warn, '\n'):find(path[1] .. '.Enabled is', 1, true),
                 path[1] .. ': a string is not a switch')
@@ -970,7 +970,7 @@ describe('each informant switched off on its own', function()
     it('the target\'s: refused with nothing charged, and no picker on the card', function()
         local s, f, c = setup()
         local pick = targetPick(s, c)
-        truthy(s.settings.set('Informant.Enabled', false, 'ADMIN001'))
+        truthy(s.settings.set('Intel.Informant.Enabled', false, 'ADMIN001'))
         local before = bank(2)
         eq(select(2, s.informant.buy(f.target, c.id, targetShown(), pick)), CH.ERR.FEATURE_OFF)
         eq(bank(2), before, 'nothing charged')
@@ -982,7 +982,7 @@ describe('each informant switched off on its own', function()
     it('the placer\'s: refused with nothing charged, and no picker on the card', function()
         local s, f, c = setup()
         local pick = placerPick(s, c)
-        truthy(s.settings.set('PlacerInformant.Enabled', false, 'ADMIN001'))
+        truthy(s.settings.set('Intel.PlacerInformant.Enabled', false, 'ADMIN001'))
         local before = bank(1)
         eq(select(2, s.informant.placerBuy(f.creator, c.id, placerShown(), pick)),
             CH.ERR.FEATURE_OFF)
@@ -994,7 +994,7 @@ describe('each informant switched off on its own', function()
 end)
 
 --------------------------------------------------------------------------
--- Shipped off, and decided per target: Config.Informant / PlacerInformant /
+-- Shipped off, and decided per target: Config.Intel.Informant / PlacerInformant /
 -- LocationTip .Enabled for civilian targets, and
 -- Config.TargetClasses.whitelisted for a target on a whitelisted job
 -- (the flag the contract recorded, as the advisory reads it).
@@ -1034,7 +1034,7 @@ describe('the informant features, per target', function()
         local placerAt = placerPick(s, c) or 'op_none'
         out.PlacerInformant = select(2, s.informant.placerBuy(f.creator, c.id, placerShown(), placerAt))
         out.LocationTip = select(2, s.locationTip.buy(f.hitman, c.id,
-            { cost = Config.LocationTip.Cost, account = Config.LocationTip.Account }))
+            { cost = Config.Intel.LocationTip.Cost, account = Config.Intel.LocationTip.Account }))
         return out
     end
 
@@ -1058,16 +1058,16 @@ describe('the informant features, per target', function()
             eq(view(s, c, 'TARGET01').informantPicks, nil)
             eq(view(s, c, 'CREATOR1').placerInformantPicks, nil)
             eq(view(s, c, 'HITMAN01').locationTip, nil)
-            eq(Config.InformantsEnabled, true, 'the master switch ships on')
+            eq(Config.Intel.Enabled, true, 'the master switch ships on')
         end
     end)
 
     --- Every feature off for every target class, then the given switches
     --- on: a feature is sold where its own switch and its class's are both
-    --- on (Config.TargetClasses, Util.informantOn).
+    --- on (Config.TargetClasses, Intel.on).
     local function only(s, switches)
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
-            Config[section].Enabled = false
+            Config.Intel[section].Enabled = false
             Config.TargetClasses.default[section] = false
             Config.TargetClasses.whitelisted[section] = false
         end
@@ -1080,7 +1080,7 @@ describe('the informant features, per target', function()
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
             for _, officer in ipairs({ false, true }) do
                 local s = newStack()
-                only(s, { section .. '.Enabled', 'TargetClasses.default.' .. section })
+                only(s, { 'Intel.' .. section .. '.Enabled', 'TargetClasses.default.' .. section })
                 local f, c = on(officer, s)
                 local money = total(s)
                 local err = tried(s, f, c)[section]
@@ -1100,7 +1100,7 @@ describe('the informant features, per target', function()
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
             for _, officer in ipairs({ false, true }) do
                 local s = newStack()
-                only(s, { section .. '.Enabled', 'TargetClasses.whitelisted.' .. section })
+                only(s, { 'Intel.' .. section .. '.Enabled', 'TargetClasses.whitelisted.' .. section })
                 local f, c = on(officer, s)
                 local money = total(s)
                 local err = tried(s, f, c)[section]
@@ -1118,7 +1118,7 @@ describe('the informant features, per target', function()
     it('sells nothing on a civilian while the default class switch is off, the feature on', function()
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
             local s = newStack()
-            only(s, { section .. '.Enabled' })
+            only(s, { 'Intel.' .. section .. '.Enabled' })
             local f, c = on(false, s)
             local money = total(s)
             eq(tried(s, f, c)[section], CH.ERR.FEATURE_OFF, section .. ': refused (TargetClasses.default)')
@@ -1143,7 +1143,7 @@ describe('the informant features, per target', function()
 
     it('offers an officer target the informant on On me only while theirs is on', function()
         local s = newStack()
-        only(s, { 'Informant.Enabled', 'TargetClasses.default.Informant' })
+        only(s, { 'Intel.Informant.Enabled', 'TargetClasses.default.Informant' })
         local _, c = on(true, s)
         eq(view(s, c, 'TARGET01').informantPicks, nil, 'the general switch is not theirs')
         truthy(s.settings.set('TargetClasses.whitelisted.Informant', true, 'ADMIN001'))
@@ -1152,19 +1152,19 @@ describe('the informant features, per target', function()
         force(s, HIT)
         local ok, err = s.informant.buy(s.identity.resolve(2), c.id, targetShown(), targetPick(s, c))
         truthy(ok, tostring(err))
-        eq(before - bank(2), Config.Informant.Cost, 'charged as any target is')
+        eq(before - bank(2), Config.Intel.Informant.Cost, 'charged as any target is')
     end)
 
     it('the master switch off beats both', function()
         for _, officer in ipairs({ false, true }) do
             local s = newStack()
-            only(s, { 'Informant.Enabled', 'PlacerInformant.Enabled', 'LocationTip.Enabled',
+            only(s, { 'Intel.Informant.Enabled', 'Intel.PlacerInformant.Enabled', 'Intel.LocationTip.Enabled',
                 'TargetClasses.default.Informant', 'TargetClasses.default.PlacerInformant',
                 'TargetClasses.default.LocationTip',
                 'TargetClasses.whitelisted.Informant',
                 'TargetClasses.whitelisted.PlacerInformant',
                 'TargetClasses.whitelisted.LocationTip' })
-            truthy(s.settings.set('InformantsEnabled', false, 'ADMIN001'))
+            truthy(s.settings.set('Intel.Enabled', false, 'ADMIN001'))
             local f, c = on(officer, s)
             local money = total(s)
             local errs = tried(s, f, c)
@@ -1175,7 +1175,7 @@ describe('the informant features, per target', function()
 
     it('draws no tip button on a contract its switch is off for, while others sell', function()
         local s = newStack()
-        only(s, { 'LocationTip.Enabled', 'TargetClasses.default.LocationTip' })
+        only(s, { 'Intel.LocationTip.Enabled', 'TargetClasses.default.LocationTip' })
         local _, c = on(true, s)
         eq(s.projection.listing('HITMAN01').settings.locationTip.enabled, true,
             'the server sells tips elsewhere')
@@ -1188,13 +1188,13 @@ describe('the informant features, per target', function()
         local s = newStack()
         local found = 0
         for _, entry in ipairs(s.settings.CATALOGUE) do
-            if entry.group == 'Informants (whitelisted-job targets)' then
+            if entry.group == 'Intel: Whitelisted-job targets' then
                 found = found + 1
                 eq(entry.section, 'features')
                 eq(entry.kind, 'switch')
                 -- Each needs its feature's own switch (which needs the master).
-                truthy(entry.needs == 'Informant.Enabled' or entry.needs == 'PlacerInformant.Enabled'
-                    or entry.needs == 'LocationTip.Enabled', entry.key)
+                truthy(entry.needs == 'Intel.Informant.Enabled' or entry.needs == 'Intel.PlacerInformant.Enabled'
+                    or entry.needs == 'Intel.LocationTip.Enabled', entry.key)
             end
         end
         eq(found, 3)

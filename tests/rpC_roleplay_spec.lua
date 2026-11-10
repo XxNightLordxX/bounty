@@ -689,7 +689,7 @@ describe('the hit on the hitman', function()
         end
         truthy(pick, 'an operative to ask about')
         local ok, err = s.informant.buy(s.identity.resolve(2), c.id,
-            { cost = Config.Informant.Cost, account = Config.Informant.Account }, pick)
+            { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account }, pick)
         truthy(ok, tostring(err))
     end
 
@@ -719,7 +719,7 @@ describe('the hit on the hitman', function()
     it('offers nobody found only by description', function()
         local s, f, c = setup()
         Config.Roleplay.HitOnHitman.Enabled = true
-        Config.Informant.RevealMode = 'description'
+        Config.Intel.Informant.RevealMode = 'description'
         reveal(s, c)
         falsy(card(s, c, 'TARGET01').counterTargets)
     end)

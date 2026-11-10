@@ -1828,7 +1828,7 @@ html.is-whitelisted-view main {
 /* The hit on the hitman names the operative, whose name may be long: a row
    of its own, wrapping rather than running off the card. */
 .more > button.counter-hit { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }
-/* Rumours and the broker (Config.Roleplay.Rumours): the reward band of a
+/* Rumours and the broker (Config.Intel.Rumours): the reward band of a
    rumour on a line of its own, and a broker player's panel. */
 .card.is-rumour { border-style: dashed; }
 .rumour-band { font-weight: 700; margin: 0.35rem 0; overflow-wrap: anywhere; }

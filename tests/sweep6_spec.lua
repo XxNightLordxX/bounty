@@ -37,14 +37,14 @@ end
 local function it(name, fn)
     IMP.it(name, function(...)
         local saved = {
-            tip = deepCopy(Config.LocationTip), anon = deepCopy(Config.Anonymity),
+            tip = deepCopy(Config.Intel.LocationTip), anon = deepCopy(Config.Anonymity),
             bailout = deepCopy(Config.Bailout), completion = deepCopy(Config.Completion),
-            informants = Config.InformantsEnabled, white = deepCopy(Config.TargetClasses.whitelisted),
+            informants = Config.Intel.Enabled, white = deepCopy(Config.TargetClasses.whitelisted),
             paused = Config.Holds.AppPaused,
         }
         local out = table.pack(pcall(fn, ...))
-        Config.LocationTip, Config.Anonymity, Config.Bailout = saved.tip, saved.anon, saved.bailout
-        Config.Completion, Config.InformantsEnabled = saved.completion, saved.informants
+        Config.Intel.LocationTip, Config.Anonymity, Config.Bailout = saved.tip, saved.anon, saved.bailout
+        Config.Completion, Config.Intel.Enabled = saved.completion, saved.informants
         Config.TargetClasses.whitelisted, Config.Holds.AppPaused = saved.white, saved.paused
         if not out[1] then error(out[2], 0) end
     end)
@@ -94,9 +94,9 @@ end
 --- And a tip bought on it, which the target was told of; go dark on sale.
 local function tipped()
     local s, f, c = taken()
-    Config.Improvements.GoDark.Enabled = true
-    Config.Improvements.GoDark.Cost = 50000
-    Config.Improvements.GoDark.Minutes = 30
+    Config.Intel.GoDark.Enabled = true
+    Config.Intel.GoDark.Cost = 50000
+    Config.Intel.GoDark.Minutes = 30
     local r = call('locationTip', 3, { id = c.id, shown = TIP })
     truthy(r and r.ok, 'tipped: ' .. tostring(r and r.err))
     return s, f, c
@@ -114,7 +114,7 @@ describe('sweep 6 FE-1: go dark is sold only while tips are', function()
     it('is not offered, nor charged, once the master switch turns tips off', function()
         local s, _, c = tipped()
         truthy(targetCard(s, c).goDark, 'offered while tips are on')
-        truthy(s.settings.set('InformantsEnabled', false, 'ADMIN001', 'ADMIN001'))
+        truthy(s.settings.set('Intel.Enabled', false, 'ADMIN001', 'ADMIN001'))
         falsy(targetCard(s, c).goDark, 'offered with tips switched off')
         local before = bank(2)
         local r = call('goDark', 2, { id = c.id, shown = DARK })
@@ -125,7 +125,7 @@ describe('sweep 6 FE-1: go dark is sold only while tips are', function()
 
     it('nor once the tip itself is switched off', function()
         local s, _, c = tipped()
-        Config.LocationTip.Enabled = false
+        Config.Intel.LocationTip.Enabled = false
         local before = bank(2)
         local r = call('goDark', 2, { id = c.id, shown = DARK })
         eq(r and r.err, CH.ERR.FEATURE_OFF)
@@ -149,7 +149,7 @@ describe('sweep 6 FE-1: go dark is sold only while tips are', function()
     it('still shows a window already paid for to its end, with go dark itself switched off', function()
         local s, _, c = tipped()
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
-        Config.Improvements.GoDark.Enabled = false
+        Config.Intel.GoDark.Enabled = false
         local card = targetCard(s, c)
         truthy(card.goDark and card.goDark.untilAt, 'the paid window dropped off the card')
         eq(card.goDark.cost, nil, 'and no purchase offered')
@@ -235,25 +235,25 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
     it('go dark: a 40-minute freeze gives back the whole 40 minutes', function()
         local s, _, c = tipped()
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
-        local untilAt = s.impTips.darkUntil('TARGET01')
+        local untilAt = s.intelRules.darkUntil('TARGET01')
         truthy(untilAt)
         truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
         Env.advance(35 * 60)
-        truthy(s.impTips.targetDark('TARGET01'), 'the window ran out while on hold by staff')
+        truthy(s.intelRules.targetDark('TARGET01'), 'the window ran out while on hold by staff')
         Env.advance(5 * 60)
         truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'done'))
-        eq(s.impTips.darkUntil('TARGET01'), untilAt + 40 * 60, 'the hold not given back')
+        eq(s.intelRules.darkUntil('TARGET01'), untilAt + 40 * 60, 'the hold not given back')
         -- And pruned only once it really has run out.
         Env.advance(29 * 60)
-        eq(s.impTips.prune(), 0)
-        truthy(s.impTips.targetDark('TARGET01'))
+        eq(s.intelRules.prune(), 0)
+        truthy(s.intelRules.targetDark('TARGET01'))
     end)
 
     it('the tip: its showing and its wait are given back after the hitman is frozen', function()
         local s, _, c = taken()
-        Config.LocationTip.CooldownMinutes = 30
-        Config.LocationTip.ShowMinutes = 10
-        Config.LocationTip.MaxPurchasesPerContract = 5
+        Config.Intel.LocationTip.CooldownMinutes = 30
+        Config.Intel.LocationTip.ShowMinutes = 10
+        Config.Intel.LocationTip.MaxPurchasesPerContract = 5
         truthy(call('locationTip', 3, { id = c.id, shown = TIP }).ok, 'tipped')
         Env.advance(5 * 60)
         truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'probe'))
@@ -269,8 +269,8 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
 
     it('the tip\'s wait stands still through the restart hold', function()
         local s, _, c = taken()
-        Config.LocationTip.CooldownMinutes = 30
-        Config.LocationTip.MaxPurchasesPerContract = 5
+        Config.Intel.LocationTip.CooldownMinutes = 30
+        Config.Intel.LocationTip.MaxPurchasesPerContract = 5
         truthy(call('locationTip', 3, { id = c.id, shown = TIP }).ok, 'tipped')
         Env.advance(10 * 60)
         truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
@@ -286,14 +286,14 @@ describe('sweep 6 FE-3: a paid window stands still while its contract is held', 
     it('go dark: the restart hold and the restart itself are given back at the start', function()
         local s, _, c = tipped()
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
-        local untilAt = s.impTips.darkUntil('TARGET01')
+        local untilAt = s.intelRules.darkUntil('TARGET01')
         Env.advance(10 * 60)
         truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(45 * 60)                                  -- the hold, the restart, the boot
-        -- The start, in main.lua's order: imp_tips loaded, not started, when
+        -- The start, in main.lua's order: the intel rules loaded, not started, when
         -- the freeze module gives the restart's time back.
-        package.loaded['server.imp_tips'] = nil
-        local fresh = CrimsonBoot.require('server.imp_tips')
+        package.loaded['server.intel.rules'] = nil
+        local fresh = CrimsonBoot.require('server.intel.rules')
         s.locationTip.init({ storage = s.storage, identity = s.identity, audit = s.audit,
             notify = s.notify, contracts = s.contracts, review = s.review })
         s.holds.init({ storage = s.storage, audit = s.audit, notify = s.notify, kidnap = s.kidnap,

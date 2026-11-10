@@ -75,8 +75,8 @@ describe('final verify: the broker list leaves out invisible and masked players'
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 40000 } } })
         truthy(c)
         local function turn(k, v) local ok, e, w = s.settings.set(k, v, 'ADMIN001', 'ADMIN001'); truthy(ok, tostring(e)..tostring(w)) end
-        turn('Roleplay.Rumours.Enabled', true)
-        turn('Roleplay.Rumours.BrokerJobs', { 'broker' })
+        turn('Intel.Rumours.Enabled', true)
+        turn('Intel.Rumours.BrokerJobs', { 'broker' })
         Env.addPlayer({ source = 4, citizenid = 'BROKER01', license = 'license:ddd',
             firstname = 'Bo', lastname = 'Ker', job = { name = 'broker', type = 'none' } })
         local AT = { x = 500.0, y = 500.0, z = 30.0 }

@@ -474,7 +474,7 @@ describe('informant data across a crash', function()
         Env.players[1].PlayerData.money.bank = 400000
         Env.players[2].PlayerData.money.bank = 100000
         Env.players[3].PlayerData.money.bank = 400000
-        Config.Informant.MaxPurchasesPerContract = 2
+        Config.Intel.Informant.MaxPurchasesPerContract = 2
 
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
@@ -519,9 +519,9 @@ describe('informant data across a crash', function()
     it('does not reset how many times one contract can be asked about', function()
         local s, f, c, pick = informed()
         -- Spend the second and last purchase outside the lock.
-        Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
+        Env.advance(Config.Intel.Informant.RerollLockMinutes * 60 + 10)
         truthy(s.informant.buy(f.target, c.id, nil, pick), 'the second purchase')
-        Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
+        Env.advance(Config.Intel.Informant.RerollLockMinutes * 60 + 10)
         eq(select(2, s.informant.buy(f.target, c.id, nil, pick)), CH.ERR.LIMIT_REACHED)
 
         local target = relog(s, f)

@@ -487,9 +487,9 @@ describe('the same races at every await on mysql', function()
                 -- With the price quoted, as the page sends it, and the
                 -- operative the card offered.
                 first = function(_, x) return tap('informant', 2, 905, { id = x.c.id, pick = x.pick,
-                    shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }) end,
+                    shown = { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account } }) end,
                 second = function(_, x) return tap('informant', 2, 906, { id = x.c.id, pick = x.pick,
-                    shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }) end,
+                    shown = { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account } }) end,
             },
             {
                 -- The placer's double tap on one operative: one look-up,
@@ -507,11 +507,11 @@ describe('the same races at every await on mysql', function()
                     return main, m, x
                 end,
                 first = function(_, x) return tap('placerInformant', 1, 907, { id = x.c.id,
-                    pick = x.pick, shown = { cost = Config.PlacerInformant.Cost,
-                        account = Config.PlacerInformant.Account } }) end,
+                    pick = x.pick, shown = { cost = Config.Intel.PlacerInformant.Cost,
+                        account = Config.Intel.PlacerInformant.Account } }) end,
                 second = function(_, x) return tap('placerInformant', 1, 908, { id = x.c.id,
-                    pick = x.pick, shown = { cost = Config.PlacerInformant.Cost,
-                        account = Config.PlacerInformant.Account } }) end,
+                    pick = x.pick, shown = { cost = Config.Intel.PlacerInformant.Cost,
+                        account = Config.Intel.PlacerInformant.Account } }) end,
             },
             {
                 -- The target already carries one of the two it may.

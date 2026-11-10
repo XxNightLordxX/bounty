@@ -1,4 +1,4 @@
---- The roleplay NPCs (Config.Roleplay.Rumours, Config.Roleplay.InformantNpc):
+--- The roleplay NPCs (Config.Intel.Rumours, Config.Intel.InPerson):
 --- the broker and the informant, drawn by this game where the server says
 --- each stands now (server/rp_places.lua). Off as shipped, and then nothing
 --- here runs but one question to the server at start.

@@ -2054,7 +2054,7 @@ function JsonStore.clearReveals(contractId)
     return true
 end
 
---- Informant tips (server/locationtip.lua), one row per tip bought; see the
+--- Informant tips (server/intel/tip.lua), one row per tip bought; see the
 --- memory backend. In records.json. Financial: the row is what says a tip
 --- was paid for, and what holds the cooldown and the most per contract.
 local function tipCopy(row)

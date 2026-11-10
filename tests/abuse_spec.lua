@@ -511,7 +511,7 @@ describe('informant data bought by the creator', function()
         Config.TargetClasses.default.ShowOperativeNames = false
         local c = place(s, f.creator)
         truthy(s.contracts.accept(f.hitman, c.id, false))
-        Env.players[2].PlayerData.money.bank = Config.Informant.Cost
+        Env.players[2].PlayerData.money.bank = Config.Intel.Informant.Cost
         s.informant.setRandom(function() return 1 end)
         local pick = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
             .informantPicks[1].pick

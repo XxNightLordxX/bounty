@@ -1,7 +1,7 @@
---- Informant tip (Config.LocationTip): a hitman pays to learn the rough area
+--- Informant tip (Config.Intel.LocationTip): a hitman pays to learn the rough area
 --- the target of their contract was in.
 ---
---- Not Config.Informant, which sells a target the name of a hitman. This one
+--- Not Config.Intel.Informant, which sells a target the name of a hitman. This one
 --- is the other way round, and reuses its rules: the price the page showed
 --- is the price charged (TERMS_CHANGED otherwise), one purchase at a time
 --- per contract (Contracts.serialized), the charge last, after
@@ -16,13 +16,18 @@
 --- is a snapshot and does not follow them. Nobody else is ever sent the
 --- area: not the board, the placer, another hitman, the advisory, the
 --- target, or staff. The target is told someone knows their rough area
---- (Config.LocationTip.NotifyTarget), and nothing of who or where.
+--- (Config.Intel.LocationTip.NotifyTarget), and nothing of who or where.
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Markers = CrimsonBoot.require('server.lib.markers')
+-- The one purchase engine (server/intel/engine.lua): the check, the charge,
+-- the refund and the notices; this module keeps the tips and their area.
+local Intel = CrimsonBoot.require('server.intel.engine')
+--- This module's products (Intel.define), set below.
+local TIP
 
 local LocationTip = {}
 
@@ -48,19 +53,19 @@ local clearTimers = {}
 --- Uniform [0, 1), replaceable by a test that needs a known draw.
 LocationTip.random = math.random
 
---- The informant fairness rules (server/imp_tips.lua, Config.Improvements),
+--- The informant fairness rules (server/intel/rules.lua, Config.Intel),
 --- each off as shipped. Set by init, so it is the module a test stack wired.
-local ImpTips
+local IntelRules
 
 function LocationTip.init(deps)
     Storage, Identity, Audit = deps.storage, deps.identity, deps.audit
     Notify, Contracts, Review = deps.notify, deps.contracts, deps.review
     byContract, clearTimers = {}, {}
-    ImpTips = CrimsonBoot.require('server.imp_tips')
+    IntelRules = CrimsonBoot.require('server.intel.rules')
 end
 
---- Whether new tips are sold (Config.LocationTip.Enabled, and the master
---- switch Config.InformantsEnabled), read at every use so the admin panel's
+--- Whether new tips are sold (Config.Intel.LocationTip.Enabled, and the master
+--- switch Config.Intel.Enabled), read at every use so the admin panel's
 --- switches apply at once. With a contract, on that contract: one whose
 --- target is on a whitelisted job reads
 --- Config.TargetClasses.whitelisted.LocationTip instead. Without one,
@@ -68,12 +73,12 @@ end
 ---@param contract table|nil
 ---@return boolean
 function LocationTip.enabled(contract)
-    if contract == nil then return Util.informantAnyOn('LocationTip') end
-    return Util.informantOn('LocationTip', contract.target_protected == true)
+    if contract == nil then return Intel.anyOn('LocationTip') end
+    return Intel.on('LocationTip', contract.target_protected == true)
 end
 
 local function setting(key, fallback)
-    local value = type(Config.LocationTip) == 'table' and tonumber(Config.LocationTip[key]) or nil
+    local value = type(Config.Intel.LocationTip) == 'table' and tonumber(Config.Intel.LocationTip[key]) or nil
     return value and math.floor(value) or fallback
 end
 
@@ -153,7 +158,7 @@ end
 
 --- Every tip on the contract, whoever bought it: how many, and the newest.
 --- The most per contract and the wait between two are the contract's, not
---- each hitman's (Config.LocationTip.MaxPurchasesPerContract,
+--- each hitman's (Config.Intel.LocationTip.MaxPurchasesPerContract,
 --- CooldownMinutes): five hitmen on one contract share the three.
 ---@return integer count
 ---@return table|nil newest
@@ -243,26 +248,11 @@ end
 -- Buying one
 --------------------------------------------------------------------------
 
---- Give a tip's price back. One that cannot be credited is left for staff.
-local function refund(actor, account, cost, contractId, why)
-    if cost <= 0 then return true end
-    local credited, raised = Util.credit(actor.player, account, cost)
-    if credited then
-        Audit.financial('location_tip_refunded', actor.cid, contractId,
-            { amount = cost, account = account, reason = why })
-        return true
-    end
-    Audit.financial('location_tip_refund_failed', actor.cid, contractId,
-        { amount = cost, account = account, reason = why, error = raised })
-    if Review then
-        pcall(Review.open, { kind = 'location_tip_refund_failed', contract_id = contractId,
-            cids = { payer = actor.cid }, amount = cost, account = account,
-            known = { reason = why, error = raised } })
-    end
-    return false
+--- The services a purchase runs with (server/intel/engine.lua, Intel.buy):
+--- this module's. A refund that cannot be credited is left for staff.
+local function services()
+    return { storage = Storage, audit = Audit, contracts = Contracts, review = Review }
 end
-
-local buyUnlocked
 
 --- Buy an informant tip on a contract, one purchase at a time per contract,
 --- whichever hitman buys it (the limit and the wait are the contract's): a
@@ -279,160 +269,147 @@ function LocationTip.buy(actor, contractId, shown)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if not LocationTip.enabled() then return false, CH.ERR.FEATURE_OFF end
-    if not Contracts then return buyUnlocked(actor, contractId, shown) end
-    return Contracts.serialized({ 'locationTip:' .. contractId },
-        buyUnlocked, actor, contractId, shown)
+    return Intel.buy(TIP, services(), actor, contractId, shown)
 end
 
-buyUnlocked = function(actor, contractId, shown)
+TIP = Intel.define('locationTip', {
     -- Read once: the figure checked against the quote is the figure charged.
-    local cost = math.max(0, setting('Cost', 0))
-    local account = Config.LocationTip.Account
-    local radius = math.max(1, setting('RadiusMeters', 350))
-    local most = setting('MaxPurchasesPerContract', 0)
-    local wait = math.max(0, setting('CooldownMinutes', 0)) * 60
-    local show = math.max(1, setting('ShowMinutes', 10)) * 60
-
-    -- Who may: a hitman holding the contract, and nobody else. Not found and
-    -- not theirs are the same answer (not_participant), so an id cannot be
-    -- tried for whether it exists.
-    local contract = Storage.readContract(contractId)
-    if not contract then return false, CH.ERR.NOT_PARTICIPANT end
-    local mine = Storage.readHitman(contractId, actor.cid)
-    if not mine or mine.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
-    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
-        return false, CH.ERR.ALREADY_SETTLED
-    end
-    -- Off for this contract (a target on a whitelisted job reads its own
-    -- switch): refused before anything is charged.
-    if not LocationTip.enabled(contract) then return false, CH.ERR.FEATURE_OFF end
-    -- On hold by staff (server/holds.lua): nothing is charged.
-    if Holds.on(contract, nil, 'staff') then
-        return false, CH.ERR.CONTRACT_FROZEN
-    end
-
-    local now = os.time()
-    -- Held long enough (Config.Improvements.TipHoldFirst; off as shipped).
-    local hold = ImpTips.holdLeft(mine, now)
-    if hold > 0 then
-        return false, CH.ERR.TIP_HOLD, { untilAt = now + hold, retryAfter = hold }
-    end
-    local count, newest = boughtOn(contractId)
-    if count >= most then return false, CH.ERR.LIMIT_REACHED, { most = most } end
-    -- One each (Config.Improvements.TipLimits.OnePerHitman; off as shipped).
-    if ImpTips.usedOwn((boughtBy(contractId, actor.cid, now))) then
-        return false, CH.ERR.LIMIT_REACHED, { most = 1, perHitman = true }
-    end
-    local untilAt = newest and ((tonumber(newest.bought_at) or 0) + wait) or 0
-    -- The wait stands still while the contract is held (the restart hold,
-    -- the app pause): its end gives the time back (LocationTip.heldBack),
-    -- and a tip bought meanwhile, on the wall clock's word, came before it.
-    if newest and untilAt > 0 then
-        local since = Holds.since(contract)
-        local start = since and math.max(since, tonumber(newest.bought_at) or since)
-        if start and start < untilAt and now > start then untilAt = untilAt + (now - start) end
-    end
-    if untilAt > now then
-        return false, CH.ERR.TIP_COOLDOWN, { untilAt = untilAt, retryAfter = untilAt - now }
-    end
-    -- Each further tip dearer (TipLimits.PriceDoubling; off as shipped): the
-    -- price checked against the quote below, and charged.
-    cost = ImpTips.tipPrice(cost, count)
-
-    -- The price the page quoted, as the informant's is: one raised from the
-    -- admin panel while the button was armed is refused, with the price now.
-    if shown ~= nil and cost > 0 then
-        local quoted = type(shown) == 'table' and shown or {}
-        if tonumber(quoted.cost) ~= cost or quoted.account ~= account then
-            return false, CH.ERR.TERMS_CHANGED, { cost = cost, account = account }
+    terms = function(ctx)
+        ctx.cost = math.max(0, setting('Cost', 0))
+        ctx.account = Config.Intel.LocationTip.Account
+        ctx.radius = math.max(1, setting('RadiusMeters', 350))
+        ctx.most = setting('MaxPurchasesPerContract', 0)
+        ctx.wait = math.max(0, setting('CooldownMinutes', 0)) * 60
+        ctx.show = math.max(1, setting('ShowMinutes', 10)) * 60
+    end,
+    steps = {
+        -- Who may: a hitman holding the contract, and nobody else. Off for
+        -- this contract (a target on a whitelisted job reads its own
+        -- switch), or on hold by staff: refused before anything is charged.
+        'party', 'live', 'class', 'holds',
+        function(ctx)
+            local now = os.time()
+            ctx.now = now
+            -- Held long enough (Config.Intel.HoldFirst; off as shipped).
+            local hold = IntelRules.holdLeft(ctx.mine, now)
+            if hold > 0 then
+                return CH.ERR.TIP_HOLD, { untilAt = now + hold, retryAfter = hold }
+            end
+            local count, newest = boughtOn(ctx.contractId)
+            ctx.count = count
+            if count >= ctx.most then return CH.ERR.LIMIT_REACHED, { most = ctx.most } end
+            -- One each (Config.Intel.TipLimits.OnePerHitman; off as shipped).
+            if IntelRules.usedOwn((boughtBy(ctx.contractId, ctx.actor.cid, now))) then
+                return CH.ERR.LIMIT_REACHED, { most = 1, perHitman = true }
+            end
+            local untilAt = newest and ((tonumber(newest.bought_at) or 0) + ctx.wait) or 0
+            -- The wait stands still while the contract is held (the restart
+            -- hold, the app pause): its end gives the time back
+            -- (LocationTip.heldBack), and a tip bought meanwhile, on the wall
+            -- clock's word, came before it.
+            if newest and untilAt > 0 then
+                local since = Holds.since(ctx.contract)
+                local start = since and math.max(since, tonumber(newest.bought_at) or since)
+                if start and start < untilAt and now > start then untilAt = untilAt + (now - start) end
+            end
+            if untilAt > now then
+                return CH.ERR.TIP_COOLDOWN, { untilAt = untilAt, retryAfter = untilAt - now }
+            end
+            -- Each further tip dearer (TipLimits.PriceDoubling; off as
+            -- shipped): the price checked against the quote, and charged.
+            ctx.cost = IntelRules.tipPrice(ctx.cost, count)
+            return nil
+        end,
+    },
+    ready = function(ctx)
+        -- The target in the city, where the server sees them now.
+        local target = Identity.byCitizenId(ctx.contract.target_cid)
+        local x, y
+        if target then x, y = positionOf(target.source) end
+        if not x then return CH.ERR.TIP_TARGET_AWAY end
+        -- In a safe zone (Config.Intel.SafeZones; off as shipped): refused,
+        -- nothing charged, never saying why or where.
+        if IntelRules.inSafeZone(x, y) then
+            Audit.rejected('location_tip_safe_zone', ctx.actor.cid, ctx.contractId, {})
+            return CH.ERR.TIP_CANT_PLACE
         end
-    end
+        ctx.x, ctx.y = x, y
+        -- And the contract and this hitman read again, with nothing between
+        -- this and the charge: every read above is an await on mysql.
+        local open, err = stillBuyable(ctx.contractId, ctx.actor.cid)
+        if not open then return err end
+        return nil
+    end,
+    confirm = function(ctx)
+        local contractId, actor, now = ctx.contractId, ctx.actor, ctx.now
+        -- The target went dark (Config.Intel.GoDark): the informant finds
+        -- nothing, and the price comes back in full. Nothing is kept or
+        -- counted.
+        if IntelRules.targetDark(ctx.contract.target_cid) then
+            return false, CH.ERR.TIP_NOT_FOUND, {}, 'gone_dark', true
+        end
 
-    -- The target in the city, where the server sees them now.
-    local target = Identity.byCitizenId(contract.target_cid)
-    local x, y
-    if target then x, y = positionOf(target.source) end
-    if not x then return false, CH.ERR.TIP_TARGET_AWAY end
-    -- In a safe zone (Config.Improvements.TipSafeZones; off as shipped):
-    -- refused, nothing charged, never saying why or where.
-    if ImpTips.inSafeZone(x, y) then
-        Audit.rejected('location_tip_safe_zone', actor.cid, contractId, {})
-        return false, CH.ERR.TIP_CANT_PLACE
-    end
+        local cx, cy = LocationTip.areaAround(ctx.x, ctx.y, ctx.radius)
+        local row = {
+            id = ('%s:%s:%03d'):format(contractId, actor.cid, ctx.count + 1),
+            contract_id = contractId, buyer_cid = actor.cid,
+            bought_at = now, expires_at = now + ctx.show,
+            centre_x = cx, centre_y = cy, radius = ctx.radius,
+            target_told = Config.Intel.LocationTip.NotifyTarget ~= false,
+        }
 
-    -- And the contract and this hitman read again, with nothing between this
-    -- and the charge: every read above is an await on mysql.
-    local open, err = stillBuyable(contractId, actor.cid)
-    if not open then return false, err end
-
-    if not Util.charge(actor.player, account, cost) then
-        return false, CH.ERR.INSUFFICIENT, { cost = cost, account = account }
-    end
-
-    -- The target went dark (Config.Improvements.GoDark): the informant finds
-    -- nothing, and the price comes back in full. Nothing is kept or counted.
-    if ImpTips.targetDark(contract.target_cid) then
-        local back = refund(actor, account, cost, contractId, 'gone_dark')
-        return false, CH.ERR.TIP_NOT_FOUND, { refunded = back }
-    end
-
-    local cx, cy = LocationTip.areaAround(x, y, radius)
-    local row = {
-        id = ('%s:%s:%03d'):format(contractId, actor.cid, count + 1),
-        contract_id = contractId, buyer_cid = actor.cid,
-        bought_at = now, expires_at = now + show,
-        centre_x = cx, centre_y = cy, radius = radius,
-        target_told = Config.LocationTip.NotifyTarget ~= false,
-    }
-
-    -- Kept, then the contract read once more: one that ended while the row
-    -- was written, or a hitman taken off it, is refunded, as is a write that
-    -- raised. Nothing is delivered until all of it stands.
-    local kept, why = pcall(function()
-        Storage.writeLocationTip(row)
-        local rows = rowsFor(contractId)
-        rows[#rows + 1] = row
-        return true
-    end)
-    local stands, refusal = false, CH.ERR.SERVER_ERROR
-    if kept then
-        local read, ok, err2 = pcall(stillBuyable, contractId, actor.cid)
-        stands = read and ok == true
-        refusal = read and err2 or CH.ERR.SERVER_ERROR
-    else
-        Log.debug(('informant tip on %s: the store would not keep it: %s')
-            :format(contractId, tostring(why)))
-    end
-    if not stands then
-        forget(row)
-        pcall(Storage.deleteLocationTip, row.id)
-        refund(actor, account, cost, contractId, kept and 'contract_ended' or 'not_kept')
-        return false, refusal
-    end
-
-    -- Audited with what was paid and by whom; never the area or the position.
-    Audit.financial('location_tip_bought', actor.cid, contractId,
-        { amount = cost, account = account })
-
-    deliver(actor.source, row, now)
-    armClear(row)
-
-    if row.target_told and Notify.locationTipped then
-        -- At once, or a random while later (TipWarningDelay; off as shipped).
-        ImpTips.warnTarget(contract, row, function()
-            pcall(Notify.locationTipped, contract, LocationTip.TARGET_TITLE, LocationTip.TARGET_TEXT)
+        -- Kept, then the contract read once more: one that ended while the
+        -- row was written, or a hitman taken off it, is refunded, as is a
+        -- write that raised. Nothing is delivered until all of it stands.
+        local kept, why = pcall(function()
+            Storage.writeLocationTip(row)
+            local rows = rowsFor(contractId)
+            rows[#rows + 1] = row
+            return true
         end)
-    end
-    -- A member of a whitelisted job: law enforcement is told a hitman is
-    -- closing in (Config.Advisory.OnLocationTip). Never who, never where.
-    if Notify.tipAdvisory then pcall(Notify.tipAdvisory, contract) end
+        local stands, refusal = false, CH.ERR.SERVER_ERROR
+        if kept then
+            local read, ok, err2 = pcall(stillBuyable, contractId, actor.cid)
+            stands = read and ok == true
+            refusal = read and err2 or CH.ERR.SERVER_ERROR
+        else
+            Log.debug(('informant tip on %s: the store would not keep it: %s')
+                :format(contractId, tostring(why)))
+        end
+        if not stands then
+            forget(row)
+            pcall(Storage.deleteLocationTip, row.id)
+            return false, refusal, nil, kept and 'contract_ended' or 'not_kept'
+        end
+        ctx.row = row
+        return true
+    end,
+    deliver = function(ctx)
+        local row, contract, now, actor = ctx.row, ctx.contract, ctx.now, ctx.actor
+        -- Audited with what was paid and by whom; never the area or the position.
+        Audit.financial('location_tip_bought', actor.cid, ctx.contractId,
+            { amount = ctx.cost, account = ctx.account })
 
-    return {
-        secondsLeft = show, expiresAt = row.expires_at,
-        left = math.max(0, most - (count + 1)),
-        cooldownUntil = wait > 0 and (now + wait) or nil,
-    }
-end
+        deliver(actor.source, row, now)
+        armClear(row)
+
+        if row.target_told and Notify.locationTipped then
+            -- At once, or a random while later (WarningDelay; off as shipped).
+            IntelRules.warnTarget(contract, row, function()
+                Intel.tell('tipped', Notify, contract, LocationTip.TARGET_TITLE, LocationTip.TARGET_TEXT)
+            end)
+        end
+        -- A member of a whitelisted job: law enforcement is told a hitman is
+        -- closing in (Config.Advisory.OnLocationTip). Never who, never where.
+        Intel.tell('advisory', Notify, contract)
+
+        return {
+            secondsLeft = ctx.show, expiresAt = row.expires_at,
+            left = math.max(0, ctx.most - (ctx.count + 1)),
+            cooldownUntil = ctx.wait > 0 and (now + ctx.wait) or nil,
+        }
+    end,
+})
 
 --------------------------------------------------------------------------
 -- After a restart, and on the card
@@ -484,8 +461,8 @@ function LocationTip.cardFor(contract, cid)
     end
     local out = { off = (not on) or nil }
     if on then
-        local mine = Feature.on('Improvements.TipHoldFirst') and Storage.readHitman(contract.id, cid) or nil
-        ImpTips.tipCard(out, contract, mine, count, (boughtBy(contract.id, cid, now)), now)
+        local mine = Feature.on('Intel.HoldFirst') and Storage.readHitman(contract.id, cid) or nil
+        IntelRules.tipCard(out, contract, mine, count, (boughtBy(contract.id, cid, now)), now)
     end
     if showing then
         out.secondsLeft = (tonumber(showing.expires_at) or 0) - now
@@ -512,10 +489,10 @@ end
 function LocationTip.toldAt(contractId)
     local at
     for _, row in ipairs(rowsFor(contractId)) do
-        -- A warning still waiting (TipWarningDelay) is not told yet.
-        if (row.target_told == true or row.target_told == 1) and not ImpTips.waiting(row.id) then
+        -- A warning still waiting (WarningDelay) is not told yet.
+        if (row.target_told == true or row.target_told == 1) and not IntelRules.waiting(row.id) then
             local bought = tonumber(row.bought_at)
-            bought = bought and ImpTips.shownTime(bought)
+            bought = bought and IntelRules.shownTime(bought)
             if bought and (not at or bought > at) then at = bought end
         end
     end
@@ -541,7 +518,7 @@ end
 --------------------------------------------------------------------------
 
 --- A hold on the contract has ended (server/holds.lua's give-back, through
---- ImpTips.heldBack): every tip on it is given the time it stood still,
+--- IntelRules.heldBack): every tip on it is given the time it stood still,
 --- from `from` (or when it was bought, if later) to `to`. Its showing, if
 --- it was still showing when the hold began, ends that much later, and is
 --- put back on its buyer's map; its wait, if it was still running, does

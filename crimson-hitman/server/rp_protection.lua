@@ -44,7 +44,7 @@
 --- the contract is paid no share of the job.
 ---
 --- The hit on the hitman. A target whose informant found out who an
---- operative is (server/informant.lua) is offered, on that card, to place a
+--- operative is (server/intel/informants.lua) is offered, on that card, to place a
 --- contract on them: the Place form opens with them chosen, through the
 --- same target handle the form's own list mints (App.mintTargetHandle), and
 --- everything after is the normal place flow and its rules.

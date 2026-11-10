@@ -306,13 +306,13 @@ describe('changing a setting from the admin panel', function()
 
     it('resets one, and refuses one that is not changed', function()
         local s = stack()
-        truthy(s.settings.set('Informant.Cost', 100, 'A'))
-        local ok, err = s.settings.reset('Informant.Cost', 'A')
+        truthy(s.settings.set('Intel.Informant.Cost', 100, 'A'))
+        local ok, err = s.settings.reset('Intel.Informant.Cost', 'A')
         truthy(ok, tostring(err))
-        eq(Config.Informant.Cost, 25000)
+        eq(Config.Intel.Informant.Cost, 25000)
         eq(next(s.storage.readSettings()), nil)
         eq(#s.storage.auditByAction('admin_setting_reset', 5), 1)
-        eq(select(2, s.settings.reset('Informant.Cost', 'A')), 'not_overridden')
+        eq(select(2, s.settings.reset('Intel.Informant.Cost', 'A')), 'not_overridden')
     end)
 
     it('will not reset one back under another change it would break', function()
@@ -360,7 +360,7 @@ describe('changing a setting from the admin panel', function()
         truthy(s.settings.set('Relay.Enabled', false, 'A'))
         local realCheck = s.settings.check
         s.settings.check = function() error('check raised', 0) end
-        local raised = pcall(s.settings.set, 'Informant.Cost', 100, 'A')
+        local raised = pcall(s.settings.set, 'Intel.Informant.Cost', 100, 'A')
         s.settings.check = realCheck
         falsy(raised, 'the raise reaches the caller')
         truthy(s.settings.set('Relay.Enabled', true, 'A'), 'and nothing is left holding the lock')
@@ -398,7 +398,7 @@ describe('changing a setting from the admin panel', function()
         local s = stack()
         eq(s.settings.clientValues(), nil, 'nothing to tell while config.lua stands')
         Env.clientEvents = {}
-        truthy(s.settings.set('Informant.Cost', 100, 'A'))
+        truthy(s.settings.set('Intel.Informant.Cost', 100, 'A'))
         for _, event in ipairs(Env.clientEvents) do
             falsy(event.name == 'crimson-hitman:settings', 'not for a setting no game reads')
         end
@@ -410,7 +410,7 @@ describe('changing a setting from the admin panel', function()
         truthy(told, 'every game is told')
         eq(told.target, -1)
         eq(told.args[1]['Targeting.AllowNearby'], true)
-        eq(told.args[1]['Informant.Cost'], nil, 'and nothing else is in it')
+        eq(told.args[1]['Intel.Informant.Cost'], nil, 'and nothing else is in it')
     end)
 
     it('tells a player who joins after the change', function()
@@ -546,13 +546,13 @@ describe('settings changed from the panel, across a restart', function()
                 local store = freshStore(name)
                 local settings = settingsOn(s, store)
                 truthy(settings.set('Relay.Enabled', false, 'A'))
-                truthy(settings.set('Informant.Cost', 10, 'A'))
+                truthy(settings.set('Intel.Informant.Cost', 10, 'A'))
                 truthy(settings.reset('Relay.Enabled', 'A'))
                 resetConfig()
                 settings = settingsOn(s, reopened(name, store))
                 eq(settings.boot(), 1)
                 eq(Config.Relay.Enabled, true, 'the reset one is config.lua\'s')
-                eq(Config.Informant.Cost, 10)
+                eq(Config.Intel.Informant.Cost, 10)
                 truthy(settings.resetAll('A'))
                 resetConfig()
                 settings = settingsOn(s, reopened(name, store))
@@ -676,7 +676,7 @@ describe('settings changed from the panel, across a restart', function()
         Natives.files = {}
         local s = require('server.main').start()
         truthy(s.settings.set('Bailout.Enabled', false, 'ADMIN001'))
-        truthy(s.settings.set('Informant.Enabled', false, 'ADMIN001'))
+        truthy(s.settings.set('Intel.Informant.Enabled', false, 'ADMIN001'))
 
         -- The process dies; the disk stays, and config.lua is as it was.
         forget()
@@ -746,18 +746,18 @@ describe('a change from the admin panel, written and said', function()
         local write, readBack = s.storage.writeSetting, s.storage.readSettings
         s.storage.writeSetting = function() error('Connection lost', 0) end
         s.storage.readSettings = function() error('Connection lost', 0) end
-        local ok, err = s.settings.set('Informant.Cost', 100, 'A', 'A')
+        local ok, err = s.settings.set('Intel.Informant.Cost', 100, 'A', 'A')
         s.storage.writeSetting, s.storage.readSettings = write, readBack
         falsy(ok)
         eq(err, 'store_unknown')
-        eq(Config.Informant.Cost, 25000, 'not in force')
+        eq(Config.Intel.Informant.Cost, 25000, 'not in force')
         local listed
         for _, row in ipairs(s.settings.active()) do
-            if row.key == 'Informant.Cost' then listed = row end
+            if row.key == 'Intel.Informant.Cost' then listed = row end
         end
         truthy(listed and listed.unknown, 'listed for the diagnosis')
         truthy(table.concat(s.admin.diagnose(0), '\n'):find('STORE UNKNOWN', 1, true))
-        truthy(s.settings.set('Informant.Cost', 100, 'A', 'A'), 'set again, it settles')
+        truthy(s.settings.set('Intel.Informant.Cost', 100, 'A', 'A'), 'set again, it settles')
         for _, row in ipairs(s.settings.active()) do falsy(row.unknown, row.key) end
     end)
 

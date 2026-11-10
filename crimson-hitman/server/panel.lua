@@ -687,7 +687,7 @@ local IDENTITY_ONLY = {
 local IDENTITY_ONLY_SHOWN = '(identity only)'
 
 --- Rows whose actor staff without IdentityAce are shown only as what they
---- were, not as which party: an informant tip (server/locationtip.lua) says
+--- were, not as which party: an informant tip (server/intel/tip.lua) says
 --- a hitman bought one, never which operative, since an anonymous hitman's
 --- alias is the one thing that tells two of them apart.
 local ACTOR_SHOWN_AS = {

@@ -424,8 +424,8 @@ describe('S11: rumours and the burner phone say where and what', function()
         local f = fixture(s)
         Env.addPlayer({ source = 4, citizenid = 'BYSTAND1', license = 'license:ddd',
             firstname = 'Bo', lastname = 'Stander' })
-        Config.Roleplay.Rumours.Enabled = true
-        Config.Roleplay.Rumours.Blip = false
+        Config.Intel.Rumours.Enabled = true
+        Config.Intel.Rumours.Blip = false
         place(s, f)
         local reply = call('list', 4, {})
         truthy(reply and reply.ok, 'the board: ' .. tostring(reply and reply.err))
@@ -434,7 +434,7 @@ describe('S11: rumours and the burner phone say where and what', function()
         local spot = s.rpPlaces.current('broker')
         falsy(tostring(reply.data.rumours.brokerArea):find(tostring(math.floor(spot.x)), 1, true),
             'never the spot')
-        Config.Roleplay.Rumours.Blip = true
+        Config.Intel.Rumours.Blip = true
         local marked = call('list', 4, {})
         eq(marked.data.rumours.brokerArea, nil, 'marked on the map, the map says it')
         eq(marked.data.rumours.blip, true)

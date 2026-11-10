@@ -124,8 +124,8 @@ describe('a quiet console, with Config.Debug off as shipped', function()
                 truthy(reply and reply.ok, op .. ': ' .. tostring(reply and reply.message))
             end
             truthy(panel(6, 'contract', { id = c.id }).ok)
-            truthy(panel(6, 'setSetting', { key = 'Informant.Enabled', value = false }).ok)
-            truthy(panel(6, 'resetSetting', { key = 'Informant.Enabled' }).ok)
+            truthy(panel(6, 'setSetting', { key = 'Intel.Informant.Enabled', value = false }).ok)
+            truthy(panel(6, 'resetSetting', { key = 'Intel.Informant.Enabled' }).ok)
             truthy(panel(6, 'flush', {}).ok)
 
             eq(console(), '', 'a quiet console printed')

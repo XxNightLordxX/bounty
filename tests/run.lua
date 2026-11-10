@@ -160,8 +160,8 @@ CONFIG_DEFAULTS.TargetClasses.whitelisted.AllowAnonymousPlacer = true
 CONFIG_DEFAULTS.TargetClasses.whitelisted.AllowAnonymousHitman = true
 
 --- And with the three informant features on for civilian targets, though
---- the resource ships them off (Config.Informant, Config.PlacerInformant
---- and Config.LocationTip .Enabled = false, the owner's request).
+--- the resource ships them off (Config.Intel.Informant, Config.Intel.PlacerInformant
+--- and Config.Intel.LocationTip .Enabled = false, the owner's request).
 ---
 --- The informant, placer's informant and tip specs are about what each
 --- sells, charges and tells, and every one of them was written with the
@@ -171,9 +171,9 @@ CONFIG_DEFAULTS.TargetClasses.whitelisted.AllowAnonymousHitman = true
 --- is today's rule for them (informant_protected). What the shipped off does
 --- is the business of the specs that set it (informant_spec "as shipped"),
 --- and the shipped values are held to config.lua by Shipped.VALUES.
-CONFIG_DEFAULTS.Informant.Enabled = true
-CONFIG_DEFAULTS.PlacerInformant.Enabled = true
-CONFIG_DEFAULTS.LocationTip.Enabled = true
+CONFIG_DEFAULTS.Intel.Informant.Enabled = true
+CONFIG_DEFAULTS.Intel.PlacerInformant.Enabled = true
+CONFIG_DEFAULTS.Intel.LocationTip.Enabled = true
 --- And the placer's informant and the tip on for whitelisted-job targets
 --- too, as both were for every target before the per-target switches: the
 --- specs that tip off on an officer, and tell law enforcement so, were
@@ -399,7 +399,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.app'] = nil
     package.loaded['crimson-hitman.server.admin'] = nil
     package.loaded['crimson-hitman.server.amendments'] = nil
-    package.loaded['crimson-hitman.server.informant'] = nil
+    package.loaded['crimson-hitman.server.intel.informants'] = nil
     package.loaded['crimson-hitman.server.bailout'] = nil
     package.loaded['crimson-hitman.server.settings'] = nil
     package.loaded['crimson-hitman.server.panel'] = nil
@@ -407,7 +407,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.alerts'] = nil
     package.loaded['crimson-hitman.server.meeting'] = nil
     package.loaded['crimson-hitman.server.playtime'] = nil
-    package.loaded['crimson-hitman.server.locationtip'] = nil
+    package.loaded['crimson-hitman.server.intel.tip'] = nil
     package.loaded['crimson-hitman.server.staffcontract'] = nil
     package.loaded['crimson-hitman.server.sanctions'] = nil
     package.loaded['crimson-hitman.server.targetlimits'] = nil
@@ -423,17 +423,17 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.rp_reputation'] = nil
     package.loaded['crimson-hitman.server.rp_protection'] = nil
     package.loaded['crimson-hitman.server.rp_places'] = nil
-    package.loaded['crimson-hitman.server.rp_rumours'] = nil
+    package.loaded['crimson-hitman.server.intel.rumours'] = nil
     package.loaded['crimson-hitman.server.rp_burner'] = nil
-    package.loaded['crimson-hitman.server.rp_informant'] = nil
+    package.loaded['crimson-hitman.server.intel.engine'] = nil
     package.loaded['crimson-hitman.server.rp_reason'] = nil
     package.loaded['server.rp_places'] = nil
-    package.loaded['server.rp_rumours'] = nil
+    package.loaded['server.intel.rumours'] = nil
     package.loaded['server.rp_burner'] = nil
-    package.loaded['server.rp_informant'] = nil
+    package.loaded['server.intel.engine'] = nil
     package.loaded['server.rp_reason'] = nil
-    package.loaded['crimson-hitman.server.imp_tips'] = nil
-    package.loaded['server.imp_tips'] = nil
+    package.loaded['crimson-hitman.server.intel.rules'] = nil
+    package.loaded['server.intel.rules'] = nil
     for _, name in ipairs({ 'imp_board', 'imp_placer_record', 'imp_heat', 'imp_tiers', 'imp_decay' }) do
         package.loaded['server.' .. name] = nil
     end
@@ -464,7 +464,7 @@ function _G.newStack()
     local photo     = require('crimson-hitman.server.completion.photo')
     local kidnap    = require('crimson-hitman.server.completion.kidnap')
     local bailout    = require('crimson-hitman.server.bailout')
-    local informant  = require('crimson-hitman.server.informant')
+    local informant  = require('crimson-hitman.server.intel.informants')
     local amendments = require('crimson-hitman.server.amendments')
     local comms      = require('crimson-hitman.server.comms')
     local projection = require('crimson-hitman.server.projection')
@@ -479,7 +479,7 @@ function _G.newStack()
     local alerts     = require('crimson-hitman.server.alerts')
     local meeting    = require('crimson-hitman.server.meeting')
     local playtime   = require('crimson-hitman.server.playtime')
-    local locationTip = require('crimson-hitman.server.locationtip')
+    local locationTip = require('crimson-hitman.server.intel.tip')
     local holds      = require('server.holds')
     local staffContract = require('crimson-hitman.server.staffcontract')
     local sanctions  = require('crimson-hitman.server.sanctions')
@@ -495,11 +495,11 @@ function _G.newStack()
     local rpReputation = require('crimson-hitman.server.rp_reputation')
     local rpProtection = require('crimson-hitman.server.rp_protection')
     local rpPlaces    = require('server.rp_places')
-    local rpRumours   = require('server.rp_rumours')
     local rpBurner    = require('server.rp_burner')
-    local rpInformant = require('server.rp_informant')
     local rpReason    = require('server.rp_reason')
-    local impTips     = require('server.imp_tips')
+    local intel        = require('server.intel.engine')
+    local intelRules   = require('server.intel.rules')
+    local intelRumours = require('server.intel.rumours')
     local impBoard    = require('server.imp_board')
     local impProof  = require('server.imp_proof')
     local impScrub  = require('server.imp_scrub')
@@ -584,14 +584,15 @@ function _G.newStack()
                    projection = projection })
     playtime.init({ storage = storage, identity = identity })
     rpPlaces.init({ settings = settings, storage = storage, audit = audit })
-    rpRumours.init({ storage = storage, identity = identity, audit = audit, notify = notify,
-                     projection = projection, app = app })
     rpBurner.init({ audit = audit })
-    rpInformant.init({ audit = audit })
     rpReason.init({ storage = storage, review = review, contracts = contracts })
-    impTips.init({ storage = storage, audit = audit, notify = notify, contracts = contracts,
-                   locationTip = locationTip, informant = informant, projection = projection,
-                   bailout = bailout })
+    -- Intel, as main.lua wires it.
+    intel.init({ audit = audit, notify = notify })
+    intelRumours.init({ storage = storage, identity = identity, audit = audit, notify = notify,
+                        projection = projection, app = app })
+    intelRules.init({ storage = storage, audit = audit, notify = notify, contracts = contracts,
+                      locationTip = locationTip, informant = informant, projection = projection,
+                      bailout = bailout })
     impBoard.init({ storage = storage, identity = identity, notify = notify, audit = audit,
                     escrow = escrow, contracts = contracts, amendments = amendments,
                     projection = projection, progression = progression,
@@ -650,10 +651,9 @@ function _G.newStack()
         -- Roleplay.
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
         -- The roleplay features.
-        rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
-        rpInformant = rpInformant, rpReason = rpReason,
-        -- The improvements.
-        impTips = impTips,
+        rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason,
+        -- Intel.
+        intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         -- The board and progression improvements.
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
@@ -687,9 +687,8 @@ function _G.newStack()
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         rpConsequences = rpConsequences,
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
-        rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
-        rpInformant = rpInformant, rpReason = rpReason,
-        impTips = impTips,
+        rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason,
+        intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
         org = org,
@@ -731,7 +730,7 @@ end
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
     'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec', 'admin_panel_spec', 'settings_spec', 'features_spec', 'console_spec', 'staff_output_spec', 'whitelisted_view_spec', 'alerts_spec', 'admin_console_spec', 'meeting_spec', 'speed_spec', 'handover_spec', 'config_layout_spec',
-    'location_tip_spec', 'informant_spec', 'freeze_spec', 'holds_spec', 'target_classes_spec', 'clock_rule_spec', 'untaken_terms_spec',
+    'location_tip_spec', 'informant_spec', 'intel_engine_spec', 'freeze_spec', 'holds_spec', 'target_classes_spec', 'clock_rule_spec', 'untaken_terms_spec',
     'panel_sections_spec', 'staff_deadline_spec', 'staff_contract_spec', 'staff_player_spec',
     'staff_tools_spec', 'rp_consequences_spec',
     'rpC_roleplay_spec', 'roleplay_access_spec', 'rp_together_spec',

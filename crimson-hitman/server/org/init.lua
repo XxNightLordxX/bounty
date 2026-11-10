@@ -2314,10 +2314,10 @@ function Org.positionOf(src)
     return Places.positionOf(src)
 end
 
---- Inside one of the staff safe zones (Config.Improvements.TipSafeZones.Zones,
+--- Inside one of the staff safe zones (Config.Intel.SafeZones.Zones,
 --- 'x, y, radius, name'), where no organisation spot is placed by a boss.
 local function inSafeZone(x, y)
-    local zones = Feature.block('Improvements.TipSafeZones').Zones
+    local zones = Feature.block('Intel.SafeZones').Zones
     for _, text in ipairs(type(zones) == 'table' and zones or {}) do
         local zx, zy, r = tostring(text):match('^%s*(%-?[%d.]+)%s*,%s*(%-?[%d.]+)%s*,%s*([%d.]+)')
         zx, zy, r = tonumber(zx), tonumber(zy), tonumber(r)

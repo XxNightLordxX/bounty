@@ -1,5 +1,5 @@
---- Rumours and the broker (Config.Roleplay.Rumours, README, Optional
---- features). Off as shipped, and off it changes nothing.
+--- Rumours and the broker (Config.Intel.Rumours, README, Intel). Off as
+--- shipped, and off it changes nothing.
 ---
 --- On, the board shows a contract to a hitman who is not party to it only
 --- as a rumour: a rough area (the district the target was in when the
@@ -20,9 +20,12 @@ local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Places = CrimsonBoot.require('server.rp_places')
 local Feature = CrimsonBoot.require('server.lib.feature')
+-- The Intel engine's delivery (server/intel/engine.lua): a briefing is
+-- intel given, not sold, so it uses the engine's notices alone.
+local Intel = CrimsonBoot.require('server.intel.engine')
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
-local BLOCK = 'Roleplay.Rumours'
+local BLOCK = 'Intel.Rumours'
 
 local Rumours = {}
 
@@ -308,9 +311,7 @@ function Rumours.brokerBrief(actor, contractId, who)
     if picked.cid == contract.target_cid then return { briefed = true } end
     record(contract.id, picked.cid)
     deps.audit.action('rumour_briefed', picked.cid, contract.id, { via = 'broker', broker = actor.cid })
-    pcall(deps.notify.toCitizen, picked.cid, 'Crimson-Hitman',
-        'A broker filled you in on a contract. Check the board.')
-    pcall(deps.notify.push, picked.cid, 'briefed', contract.id)
+    Intel.tell('briefed', deps.notify, picked.cid, contract.id)
     return { briefed = true }
 end
 

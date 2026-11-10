@@ -434,8 +434,8 @@ function placesView(opts) {
     org('meeting', 'Meeting and handover spots', 'meeting spot', 'handshake', []),
     org('npc', 'NPC spots', 'NPC spot', 'user-tie', []),
     org('place', 'Other organisation places', 'place', 'location-dot', []),
-    rp('broker', 'Broker NPC', npc.rows || [], [{ x: -1212.4, y: -1500.2, z: 4.4, h: 90 }], 'Roleplay.Rumours.Locations'),
-    rp('informant', 'Informant NPC', [], [], 'Roleplay.InformantNpc.Locations'),
+    rp('broker', 'Broker NPC', npc.rows || [], [{ x: -1212.4, y: -1500.2, z: 4.4, h: 90 }], 'Intel.Rumours.Locations'),
+    rp('informant', 'Informant NPC', [], [], 'Intel.InPerson.Locations'),
     disposal('disposal_vehicle', 'Disposal vehicle spawn', 'the vehicle spawn', 'truck', dp.vehicle || []),
     disposal('disposal_drop', 'Body drop-off', 'the drop-off', 'flag-checkered', dp.drop || [])
   ] } };
@@ -4751,8 +4751,8 @@ async function main() {
 
   /* ---- the roleplay features (Config.Roleplay) ---- */
   await (async function () {
-    const places = { key: 'Roleplay.Rumours.Locations', place: 'point', category: 'rules-limits',
-      group: 'Roleplay: Rumours and broker',
+    const places = { key: 'Intel.Rumours.Locations', place: 'point', category: 'rules-limits',
+      group: 'Intel: Rumours and broker',
       label: 'Broker NPC places', kind: 'list', whole: true, live: true, inflight: 'Every game is told at once.',
       value: ['-1171.0, -1572.5, 4.66, 125.0'], default: [], source: 'config' };
     const lazy = { id: 'rv00000010', kind: 'low_effort_reason', about: 'a contract was placed or edited with a low-effort reason',
@@ -4768,18 +4768,18 @@ async function main() {
     app.nav('locations');
     await settled();
     it('a place list is edited in Locations, not Game rules', function () {
-      truthy(app.byId('st-row-Roleplay.Rumours.Locations'));
+      truthy(app.byId('st-row-Intel.Rumours.Locations'));
       truthy(app.button('Use my position for a new line'), 'with Use my position');
     });
-    const row = function () { return app.byId('st-row-Roleplay.Rumours.Locations'); };
+    const row = function () { return app.byId('st-row-Intel.Rumours.Locations'); };
     app.type(row().querySelector('input'), '1240.6, -3179.2, 7.1, 270.0');
     app.click(app.button('Add', row()));
     await settled();
-    app.click(app.byId('st-save-Roleplay.Rumours.Locations'));
-    app.click(app.byId('st-save-Roleplay.Rumours.Locations'));
+    app.click(app.byId('st-save-Intel.Rumours.Locations'));
+    app.click(app.byId('st-save-Intel.Rumours.Locations'));
     await settled();
     it('a place is added whole, commas and spaces kept', function () {
-      eq(app.last('setSetting').data, { key: 'Roleplay.Rumours.Locations',
+      eq(app.last('setSetting').data, { key: 'Intel.Rumours.Locations',
         value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'] });
     });
     app.nav('reviews');
@@ -4885,8 +4885,8 @@ async function main() {
 
   /* ---- informant fairness (Config.Improvements) ---- */
   await (async function () {
-    const zones = { key: 'Improvements.TipSafeZones.Zones', place: 'zone', category: 'rules-targeting',
-      group: 'Improvements: Tip safe zones', label: 'Safe zones (x, y, radius, name)', kind: 'list',
+    const zones = { key: 'Intel.SafeZones.Zones', place: 'zone', category: 'rules-targeting',
+      group: 'Intel: Tip safe zones', label: 'Safe zones (x, y, radius, name)', kind: 'list',
       whole: true, live: true, inflight: 'Read each time it is used.', value: [], default: [],
       source: 'config' };
     const server = standardServer({ settings: settingsView({ limits: [zones] }) });
@@ -4895,15 +4895,15 @@ async function main() {
     await settled();
     app.nav('locations');
     await settled();
-    const row = function () { return app.byId('st-row-Improvements.TipSafeZones.Zones'); };
+    const row = function () { return app.byId('st-row-Intel.SafeZones.Zones'); };
     app.type(row().querySelector('input'), '300, -590, 80, Pillbox Hill');
     app.click(app.button('Add', row()));
     await settled();
-    app.click(app.byId('st-save-Improvements.TipSafeZones.Zones'));
-    app.click(app.byId('st-save-Improvements.TipSafeZones.Zones'));
+    app.click(app.byId('st-save-Intel.SafeZones.Zones'));
+    app.click(app.byId('st-save-Intel.SafeZones.Zones'));
     await settled();
     it('a safe zone is added whole, commas and spaces kept', function () {
-      eq(app.last('setSetting').data, { key: 'Improvements.TipSafeZones.Zones',
+      eq(app.last('setSetting').data, { key: 'Intel.SafeZones.Zones',
         value: ['300, -590, 80, Pillbox Hill'] });
     });
     app.nav('help');
@@ -5195,13 +5195,13 @@ async function main() {
       return { key: key, category: 'features', group: group, label: key.split('.').slice(-2).join(' '),
         kind: 'switch', live: true, value: false, default: false, shipped: false, hasShipped: true, source: 'config' };
     }
-    view.data.features.push(sw('Improvements.GoDark.Enabled', 'Improvements: Go dark'));
+    view.data.features.push(sw('Intel.GoDark.Enabled', 'Intel: Go dark'));
     view.data.features.push(sw('Roleplay.CityNews.Enabled', 'Roleplay: City news'));
     view.data.features.push(sw('Holds.AppPaused', 'Staff tools'));
     view.data.features.push(sw('Advisory.Enabled', 'Law enforcement advisory'));
-    view.data.features.push(sw('InformantsEnabled', 'Informant'));
+    view.data.features.push(sw('Intel.Enabled', 'Intel: Informants'));
     view.data.features.push(sw('Anonymity.AllowAnonymousCreate', 'Anonymity'));
-    view.data.limits.push({ key: 'Informant.Cost', category: 'rules-rewards', group: 'Informant', money: 'Informant prices',
+    view.data.limits.push({ key: 'Intel.Informant.Cost', category: 'rules-rewards', group: 'Intel: Informants', money: 'Intel prices',
       label: 'Price of a look-up', kind: 'number', integer: true, min: 0, max: 1000000, live: true,
       value: 25000, default: 25000, source: 'config' });
     view.data.limits.push({ key: 'Roleplay.WitnessHeat.WitnessRadius', category: 'rules-limits',
@@ -5213,10 +5213,11 @@ async function main() {
     app.nav('features');
     await settled();
     const rank = app.window.CH_ADMIN_FEATURE_RANK;
-    it('Features lists the core first, then Anonymity, Informants, Advisory, Staff tools, Roleplay, Improvements', function () {
+    it('Features lists the core first, then Anonymity, Intel, Advisory, Staff tools, Roleplay, Improvements', function () {
       const groups = app.$$('.st-group').map(function (g) { return g.getAttribute('data-group'); });
-      const order = ['anonymity', 'informant', 'law enforcement advisory', 'staff tools', 'roleplay: city news',
-        'improvements: go dark'];
+      // Every Intel group together, its other groups after the area's four.
+      const order = ['anonymity', 'intel: informants', 'intel: go dark', 'law enforcement advisory', 'staff tools',
+        'roleplay: city news'];
       let last = -1;
       order.forEach(function (g) {
         const at = groups.indexOf(g);
@@ -5226,9 +5227,11 @@ async function main() {
       truthy(groups.indexOf('buyouts') !== -1 && groups.indexOf('buyouts') < groups.indexOf('anonymity'),
         'a core group (Buyouts) before Anonymity');
       eq(rank('Access'), 0);
-      truthy(rank('Anonymity') < rank('Informant tip') && rank('Informant tip') < rank('Law enforcement advisory')
+      truthy(rank('Anonymity') < rank('Intel: Informant tip') && rank('Intel: Informant tip') < rank('Law enforcement advisory')
         && rank('Law enforcement advisory') < rank('Staff tools') && rank('Staff tools') < rank('Roleplay: X')
         && rank('Roleplay: X') < rank('Improvements: Y'), 'the areas in order');
+      truthy(rank('Intel: Whitelisted-job targets') < rank('Intel: Go dark')
+        && rank('Intel: Go dark') < rank('Law enforcement advisory'), 'every Intel group inside its area');
     });
     it('every group drawn says in one line what it does', function () {
       app.$$('.st-group').forEach(function (g) {
@@ -5244,9 +5247,9 @@ async function main() {
       });
     });
     it('every number shows its unit: dollars, seconds, metres, percent', function () {
-      has(app.text(app.byId('st-row-Informant.Cost')), 'Now: $25,000');
+      has(app.text(app.byId('st-row-Intel.Informant.Cost')), 'Now: $25,000');
       const unit = app.window.CH_ADMIN_UNIT_OF;
-      eq(unit({ key: 'Informant.Cost' }), '$');
+      eq(unit({ key: 'Intel.Informant.Cost' }), '$');
       eq(unit({ key: 'Sources.cash.max' }), '$');
       eq(unit({ key: 'Limits.SlotCooldownSeconds' }), ' s');
       eq(unit({ key: 'PendingEscrow.LoginRetryDelayMs' }), ' ms');
@@ -5267,15 +5270,21 @@ async function main() {
       const titles = ordered.map(function (c) { return c.title; });
       const rp = titles.filter(function (t) { return /^Roleplay: /.test(t); });
       const imp = titles.filter(function (t) { return /^Improvements: /.test(t); });
-      eq(rp.length, 13, 'thirteen roleplay cards (with the NPC places set from the panel): ' + rp.join(', '));
-      eq(imp.length, 14, 'thirteen improvements and the completion cooldown: ' + imp.join(', '));
+      const intel = titles.filter(function (t) { return /^Intel: /.test(t); });
+      eq(rp.length, 11, 'eleven roleplay cards (with the NPC places set from the panel): ' + rp.join(', '));
+      eq(imp.length, 8, 'seven improvements and the completion cooldown: ' + imp.join(', '));
+      eq(intel.length, 8, 'eight Intel cards (in person, rumours, the five rules, going dark): ' + intel.join(', '));
+      truthy(titles.indexOf(intel[0]) > titles.indexOf('The informants')
+        && titles.indexOf(intel[intel.length - 1]) < titles.indexOf('Police advisories'),
+        'every Intel card right after The informants');
       truthy(titles.indexOf(rp[0]) > titles.indexOf('Moderators'), 'Roleplay after the staff tools');
       truthy(titles.indexOf(imp[0]) > titles.indexOf(rp[rp.length - 1]), 'Improvements after Roleplay');
       truthy(titles.indexOf('Anonymity') < titles.indexOf('The informants')
         && titles.indexOf('The informants') < titles.indexOf('Police advisories')
         && titles.indexOf('Police advisories') < titles.indexOf('The staff freeze'), 'the core areas in order');
       eq(rp[0], 'Roleplay: Witness heat', 'config.lua\'s first roleplay block first');
-      eq(imp[0], 'Improvements: Tip warning delay', 'and its first improvement');
+      eq(imp[0], 'Improvements: Placer record', 'and its first improvement');
+      eq(intel[0], 'Intel: The informant in person', 'Intel in the order of config.lua');
     });
     app.nav('actions');
     await settled();
@@ -5741,8 +5750,8 @@ async function main() {
     view.data.limits.push({ key: 'Organisation.Limits.MaxMembers', category: 'organisation',
       group: 'Organisation: Boss limits', area: 'organisation', label: 'Members at most', kind: 'number',
       integer: true, min: 1, max: 500, live: true, value: 30, default: 30, source: 'config' });
-    view.data.limits.push({ key: 'Roleplay.Rumours.Locations', place: 'point', category: 'rules-limits',
-      group: 'Roleplay: Rumours and broker', area: 'extras', label: 'Broker NPC places', kind: 'list', whole: true,
+    view.data.limits.push({ key: 'Intel.Rumours.Locations', place: 'point', category: 'rules-limits',
+      group: 'Intel: Rumours and broker', area: 'intel', label: 'Broker NPC places', kind: 'list', whole: true,
       live: true, value: [], default: [], source: 'config' });
     view.data.limits.push({ key: 'Limits.JailZone.x', place: 'jail', category: 'rules-limits', group: 'Contract limits',
       area: 'placing', label: 'Prison grounds centre, x', kind: 'number', min: -10000, max: 10000, live: true,
@@ -6476,7 +6485,7 @@ async function main() {
       has(app.main(), '10.5, -20.2, 30, 90');
       has(app.main(), 'Sign-up spots');
       has(app.main(), 'None set here.');
-      truthy(app.byId('st-row-Roleplay.Rumours.Locations'), 'the broker\\\'s places');
+      truthy(app.byId('st-row-Intel.Rumours.Locations'), 'the broker\\\'s places');
       truthy(app.byId('st-row-Limits.JailZone.x'), 'and the prison zone');
     });
     const kind = function (act, k) {
@@ -6524,7 +6533,7 @@ async function main() {
     app.click(app.button('Use my position for a new line'));
     await settled();
     it('a list of places gets a line from where you stand, to add and save as any line', function () {
-      eq(bind('stl.Roleplay.Rumours.Locations').value, '123.5, -654.3, 30, 183');
+      eq(bind('stl.Intel.Rumours.Locations').value, '123.5, -654.3, 30, 183');
     });
     app.click(app.button('Use my position for the centre'));
     await settled();

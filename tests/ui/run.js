@@ -11246,7 +11246,7 @@ async function main() {
     });
   })();
 
-  /* The informant tip (server/locationtip.lua). A hitman's card offers Buy
+  /* The informant tip (server/intel/tip.lua). A hitman's card offers Buy
      informant tip at the server's price, tapped twice within three seconds;
      says what is bought and that the target is told; once bought says until
      when it is on the map and offers Set GPS, whose answer the game gives

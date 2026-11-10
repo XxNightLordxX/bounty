@@ -52,8 +52,15 @@ end
 function RP.guard(fn)
     return function(...)
         local original, saved = Config.Roleplay, RP.snapshot()
+        -- And Config.Intel, where the rumours and the informant in person
+        -- live (server/intel/), the same way.
+        local intel = Config.Intel
+        local intelSaved = deepCopy(type(intel) == 'table' and intel or {})
         local out = table.pack(pcall(fn, ...))
         RP.restore(saved, original)
+        if type(intel) == 'table' then Config.Intel = intel end
+        if type(Config.Intel) ~= 'table' then Config.Intel = {} end
+        restoreInto(Config.Intel, intelSaved)
         if not out[1] then error(out[2], 0) end
         return table.unpack(out, 2, out.n)
     end

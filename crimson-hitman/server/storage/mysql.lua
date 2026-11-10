@@ -522,7 +522,7 @@ local SCHEMA = {
         INDEX idx_reveal_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- The look-ups a contract's placer bought from their informant
-    -- (Config.PlacerInformant), one row each: which operative, when, whether
+    -- (Config.Intel.PlacerInformant), one row each: which operative, when, whether
     -- it found out who they are and whether the operative was told. Kept
     -- here rather than only in memory, because a restart that forgot them
     -- counted the cap from zero and hid a name already paid for. `seq` is
@@ -660,7 +660,7 @@ local SCHEMA = {
         first_seen INT NOT NULL,
         updated_at INT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
-    -- Informant tips (server/locationtip.lua), one row per tip a hitman
+    -- Informant tips (server/intel/tip.lua), one row per tip a hitman
     -- bought: the area they were shown (its centre and radius, never where
     -- the target stood), when it was bought and when it stops showing, and
     -- whether the target was told. Read only for the buyer's own map and
@@ -2964,7 +2964,7 @@ function MySQLStore.clearReveals(contractId)
     return true
 end
 
---- Informant tips (server/locationtip.lua), one row per tip bought; see the
+--- Informant tips (server/intel/tip.lua), one row per tip bought; see the
 --- memory backend. target_told comes back as a boolean (TINYINT(1)).
 function MySQLStore.writeLocationTip(row)
     db.query([[

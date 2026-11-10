@@ -284,6 +284,14 @@ local function auditActions(add)
             end
         end
     end
+    -- The Intel engine's refunds (server/intel/engine.lua, Intel.refund):
+    -- each product's own action names, kept as data in its refund table.
+    local engine = luaSrc(ROOT .. 'server/intel/engine.lua')
+    for body in engine:gmatch('refund%s*=%s*(%b{})') do
+        for s in body:gmatch("'([a-z][a-z0-9_]*)'") do
+            if s:find('_') then add(s) end
+        end
+    end
 end
 
 --- Refusal codes: CH.ERR (shared/constants.lua) and Org.ERR, by name.

@@ -41,7 +41,7 @@ describe('one rules table per target class', function()
         for _, section in ipairs({ 'Informant', 'PlacerInformant', 'LocationTip' }) do
             eq(tc.default[section], true, 'default ' .. section .. ': as its own switch says')
             eq(tc.whitelisted[section], false, 'whitelisted ' .. section)
-            eq(env.Config[section].Enabled, false, section .. ' ships off')
+            eq(env.Config.Intel[section].Enabled, false, section .. ' ships off')
         end
         eq(env.Config.Anonymity.AllowAnonymousPlacer, nil)
         eq(env.Config.Anonymity.WhitelistedTargets, nil)

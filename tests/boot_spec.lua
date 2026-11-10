@@ -1592,7 +1592,7 @@ describe('settings held to what mysql mode\'s columns hold', function()
         local ok, fatal, warn = main.validateConfig(true)
         local after = {
             maxValue = Config.MaxContractValue, cash = Config.Sources.cash.max,
-            informant = Config.Informant.Cost, reason = Config.Reason.MaxLength,
+            informant = Config.Intel.Informant.Cost, reason = Config.Reason.MaxLength,
             relay = Config.Relay.MaxLength,
         }
         resetConfig()
@@ -1603,7 +1603,7 @@ describe('settings held to what mysql mode\'s columns hold', function()
         local function huge()
             Config.MaxContractValue = 5e9
             Config.Sources.cash.max = 3e9
-            Config.Informant.Cost = 2147483648
+            Config.Intel.Informant.Cost = 2147483648
         end
         local ok, after, warned, fatal = checked('mysql', huge)
         truthy(ok, fatal)
@@ -1613,7 +1613,7 @@ describe('settings held to what mysql mode\'s columns hold', function()
         truthy(warned:find('Config.MaxContractValue is 5000000000; mysql mode keeps money in INT '
             .. 'columns, which hold at most 2147483647. Using 2147483647.', 1, true), warned)
         truthy(warned:find('Config.Sources.cash.max is 3000000000', 1, true), warned)
-        truthy(warned:find('Config.Informant.Cost is 2147483648', 1, true), warned)
+        truthy(warned:find('Config.Intel.Informant.Cost is 2147483648', 1, true), warned)
 
         ok, after, warned = checked('json', huge)
         truthy(ok)

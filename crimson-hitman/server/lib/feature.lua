@@ -1,11 +1,11 @@
 --- One way to read and check an optional feature's block of config
---- (Config.Roleplay.Rumours, Config.Improvements.ProofItems,
+--- (Config.Intel.Rumours, Config.Improvements.ProofItems,
 --- Config.Organisation, ...): whether it is on, the block itself, and the
 --- start-up check that holds every field to its rule.
 ---
 --- Every read goes to the live Config at the moment of the call, so a
 --- switch changed from the admin panel applies at once. A path is the key
---- path under Config, dot separated ('Roleplay.Rumours'); a path to a plain
+--- path under Config, dot separated ('Intel.Rumours'); a path to a plain
 --- switch ('Kidnap.MeetingPoint') is on when that switch is true.
 ---
 --- The check (Feature.check) is the one validator every feature block uses:
@@ -22,7 +22,7 @@ local Util = CrimsonBoot.requireShared('util')
 
 local Feature = {}
 
---- Every rule checked so far: ['Roleplay.Rumours.Radius'] = rule.
+--- Every rule checked so far: ['Intel.Rumours.Radius'] = rule.
 Feature.RULES = {}
 
 --- Each path split once: these are read on every request, and a split per
@@ -49,7 +49,7 @@ local function walk(root, path)
 end
 
 --- The block at a path of Config, or an empty table when there is none.
----@param path string e.g. 'Roleplay.Rumours'
+---@param path string e.g. 'Intel.Rumours'
 ---@return table
 function Feature.block(path)
     local node = walk(Config, path)
@@ -170,7 +170,7 @@ end
 --- `filled`, when given), one that does not fit is put back to what ships
 --- (and said in `warn`). A feature that cannot work is never refused a
 --- start: it is off.
----@param path string the block's key path under Config, e.g. 'Roleplay.Rumours'
+---@param path string the block's key path under Config, e.g. 'Intel.Rumours'
 ---@param rules table [field] = rule
 ---@param warn string[] where each correction is said
 ---@param filled string[]|nil where each setting filled in is named

@@ -410,7 +410,7 @@ end
 ---
 --- And the paid windows on it the same span (`from` to `from + back`): a
 --- target's go-dark and the informant tips' show and wait
---- (server/imp_tips.lua, ImpTips.heldBack). Each ran on the wall clock
+--- (server/intel/rules.lua, IntelRules.heldBack). Each ran on the wall clock
 --- through the hold, and a window bought for 30 minutes was gone after a
 --- 40-minute freeze.
 ---@param contractId string
@@ -431,7 +431,7 @@ local function giveBack(contractId, back, from)
             :format(contractId, Util.dbError(err)))
     end
     if live and from then
-        local tips = CrimsonBoot.require('server.imp_tips')
+        local tips = CrimsonBoot.require('server.intel.rules')
         if tips and tips.heldBack then
             local gave, why = pcall(tips.heldBack, contractId, from, from + back)
             if not gave then

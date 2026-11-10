@@ -745,7 +745,7 @@ function Death.startSampler()
 end
 
 --- When the server last saw a hitman close to their target, within
---- Config.Informant.ProximityRadius.
+--- Config.Intel.Informant.ProximityRadius.
 ---
 --- [contractId] = { [hitmanCid] = os.time() }
 ---
@@ -850,7 +850,7 @@ end
 ---   once for the pass (Storage.liveHitmen); read per contract without it
 function Death.watchTargets(contracts, rosters)
     local watched = 0
-    local radius = (Config.Informant.ProximityRadius or 120.0)
+    local radius = (Config.Intel.Informant.ProximityRadius or 120.0)
     local radius2 = radius * radius
     local now = os.time()
     -- Who is a target now. Swapped in whole at the end, so a pass that

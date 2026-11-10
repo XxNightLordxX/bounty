@@ -760,7 +760,7 @@ function Notify.shownToTarget(contract)
 end
 
 --- Tell the target of a contract that a hitman on it bought an informant tip
---- (server/locationtip.lua): through the notice budget, as any news, kept
+--- (server/intel/tip.lua): through the notice budget, as any news, kept
 --- past it rather than dropped, and their open app moved on (a push that
 --- names no contract, as every push to a target). Never who bought it, nor
 --- the area.
@@ -1718,7 +1718,7 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     return recipients
 end
 
---- A hitman has bought an informant tip (server/locationtip.lua) on a
+--- A hitman has bought an informant tip (server/intel/tip.lua) on a
 --- member of a whitelisted job: law enforcement is told somebody is closing
 --- in, on their phones and over sc-dispatch. Never which hitman, never the
 --- area or any position, and nothing for a civilian target. The targeted

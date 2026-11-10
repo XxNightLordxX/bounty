@@ -301,15 +301,15 @@ describe('sweep 5 X: the roleplay handlers without their modules', function()
             if name == 'deps' then deps = value end
         end
         truthy(type(deps) == 'table', 'the app\'s wiring')
-        local rumours, places = deps.rpRumours, deps.rpPlaces
-        deps.rpRumours, deps.rpPlaces = nil, nil
+        local rumours, places = deps.intelRumours, deps.rpPlaces
+        deps.intelRumours, deps.rpPlaces = nil, nil
         local answers = {
             call('rumourBrief', 3, { id = 'r1' }),
             call('brokerNearby', 3, {}),
             call('brokerBrief', 3, { id = 'r1', who = 1 }),
             call('rpPlaces', 3, {}),
         }
-        deps.rpRumours, deps.rpPlaces = rumours, places
+        deps.intelRumours, deps.rpPlaces = rumours, places
         for i, r in ipairs(answers) do
             truthy(r, 'answered ' .. i)
             eq(r.err, CH.ERR.FEATURE_OFF, 'handler ' .. i)
@@ -779,12 +779,12 @@ describe('sweep 5 M5: a go-dark refund whose credit raises', function()
         Env.players[2]._coords = { x = 1200.0, y = -800.0, z = 30.0 }
         Env.advance(1)
         Config.Improvements.LocationTip = Config.Improvements.LocationTip
-        Config.LocationTip.Enabled = true
-        Config.Improvements.GoDark.Enabled = true
-        Config.Improvements.GoDark.Cost = 50000
-        Config.Improvements.GoDark.Minutes = 30
-        local tip = call('locationTip', 3, { id = c.id, shown = { cost = Config.LocationTip.Cost or 25000,
-            account = Config.LocationTip.Account or 'bank' } })
+        Config.Intel.LocationTip.Enabled = true
+        Config.Intel.GoDark.Enabled = true
+        Config.Intel.GoDark.Cost = 50000
+        Config.Intel.GoDark.Minutes = 30
+        local tip = call('locationTip', 3, { id = c.id, shown = { cost = Config.Intel.LocationTip.Cost or 25000,
+            account = Config.Intel.LocationTip.Account or 'bank' } })
         truthy(tip and tip.ok, 'tipped: ' .. tostring(tip and tip.err))
         -- The confirm write raises: the price is given back.
         local write, n = s.storage.writeRpRow, 0

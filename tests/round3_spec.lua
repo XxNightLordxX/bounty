@@ -654,7 +654,7 @@ describe('round 3 L4: an informant purchase the store would not take is written 
         local real = s.storage.writePlacerInformant
         s.storage.writePlacerInformant = function() error('the connection dropped', 0) end
         local ok, err = s.informant.placerBuy(f.creator, c.id,
-            { cost = Config.PlacerInformant.Cost, account = Config.PlacerInformant.Account }, pick)
+            { cost = Config.Intel.PlacerInformant.Cost, account = Config.Intel.PlacerInformant.Account }, pick)
         truthy(ok, tostring(err))
         eq(#(s.storage.readPlacerInformants(c.id, 'CREATOR1') or {}), 0, 'not in the store yet')
         eq(s.informant.retryUnsaved(), 0, 'still refused')

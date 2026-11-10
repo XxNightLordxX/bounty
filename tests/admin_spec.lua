@@ -779,7 +779,7 @@ describe('refreshing every timer for testing', function()
 
     it('leaves the counts that are limits rather than waits alone', function()
         local s, f, c = seeded({ accept = true })
-        Config.Informant.MaxPurchasesPerContract = 1
+        Config.Intel.Informant.MaxPurchasesPerContract = 1
         -- The operative an alias to the target, as the informant sells them
         -- (named operatives shown to the target are not sold).
         Config.TargetClasses.default.ShowOperativeNames = false

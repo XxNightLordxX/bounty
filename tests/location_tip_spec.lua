@@ -1,4 +1,4 @@
---- The informant tip (server/locationtip.lua, Config.LocationTip): a hitman
+--- The informant tip (server/intel/tip.lua, Config.Intel.LocationTip): a hitman
 --- holding a live contract buys the rough area its target was in. Who may
 --- buy, what it costs and when nothing is charged, the area itself, who is
 --- told what, who is never sent the area, the clears, the store in all three
@@ -230,7 +230,7 @@ describe('an informant tip refused, nothing charged', function()
 
     it('while the server sells none', function()
         local s, _, c = taken()
-        Config.LocationTip.Enabled = false
+        Config.Intel.LocationTip.Enabled = false
         local before = bank(3)
         refused(s, c, 3, buy(3, c), CH.ERR.FEATURE_OFF)
         eq(bank(3), before)
@@ -541,7 +541,7 @@ describe('the target of an informant tip', function()
 
     it('is told nothing with NotifyTarget off', function()
         local s, _, c = taken()
-        Config.LocationTip.NotifyTarget = false
+        Config.Intel.LocationTip.NotifyTarget = false
         truthy(buy(3, c).ok)
         eq(#noticesTo(2), 0)
         eq(s.projection.onMe('TARGET01')[1].tippedAt, nil)
@@ -669,7 +669,7 @@ describe('an informant tip coming off the map', function()
     -- until its time runs out and is then cleared as any other; nothing more
     -- is offered or sold meanwhile, and nobody is told anything.
     it('switched off while one is on the map: kept until it runs out, then cleared', function()
-        for _, key in ipairs({ 'LocationTip.Enabled', 'InformantsEnabled' }) do
+        for _, key in ipairs({ 'Intel.LocationTip.Enabled', 'Intel.Enabled' }) do
             local s, _, c = taken({ bridges = true })
             -- Off for whitelisted-job targets too, so the server sells none
             -- anywhere and the app is told so.
@@ -911,28 +911,28 @@ describe('informant tips in the admin panel', function()
         local features, limits = {}, {}
         for _, row in ipairs(view.features) do features[row.key] = row end
         for _, row in ipairs(view.limits) do limits[row.key] = row end
-        for _, key in ipairs({ 'LocationTip.Enabled', 'LocationTip.NotifyTarget' }) do
+        for _, key in ipairs({ 'Intel.LocationTip.Enabled', 'Intel.LocationTip.NotifyTarget' }) do
             truthy(features[key], key .. ' is a switch under Features')
-            eq(features[key].group, 'Informant tip')
+            eq(features[key].group, 'Intel: Informant tip')
         end
-        for _, key in ipairs({ 'LocationTip.Cost', 'LocationTip.RadiusMeters', 'LocationTip.ShowMinutes',
-            'LocationTip.CooldownMinutes', 'LocationTip.MaxPurchasesPerContract',
+        for _, key in ipairs({ 'Intel.LocationTip.Cost', 'Intel.LocationTip.RadiusMeters', 'Intel.LocationTip.ShowMinutes',
+            'Intel.LocationTip.CooldownMinutes', 'Intel.LocationTip.MaxPurchasesPerContract',
             'Cooldowns.locationTip.per', 'Cooldowns.locationTip.burst' }) do
             truthy(limits[key], key .. ' is under Limits')
         end
 
-        truthy(s.settings.set('LocationTip.Cost', 30000, 'ADMIN001', 'ADMIN001'))
-        eq(Config.LocationTip.Cost, 30000, 'in force at once')
-        eq(s.storage.readSettings()['LocationTip.Cost'].value, 30000, 'and kept')
+        truthy(s.settings.set('Intel.LocationTip.Cost', 30000, 'ADMIN001', 'ADMIN001'))
+        eq(Config.Intel.LocationTip.Cost, 30000, 'in force at once')
+        eq(s.storage.readSettings()['Intel.LocationTip.Cost'].value, 30000, 'and kept')
         eq(s.projection.listing('HITMAN01', 1).settings.locationTip.cost, 30000,
             'and quoted by the button')
         local r = buy(3, c)
         eq(r.err, CH.ERR.TERMS_CHANGED, 'a page still quoting the old price is refused')
 
-        falsy(s.settings.set('LocationTip.RadiusMeters', 20, 'ADMIN001'),
+        falsy(s.settings.set('Intel.LocationTip.RadiusMeters', 20, 'ADMIN001'),
             'an area too small to search is refused')
-        eq(Config.LocationTip.RadiusMeters, 350)
-        truthy(s.settings.set('LocationTip.Enabled', false, 'ADMIN001'))
+        eq(Config.Intel.LocationTip.RadiusMeters, 350)
+        truthy(s.settings.set('Intel.LocationTip.Enabled', false, 'ADMIN001'))
         eq(buy(3, c).err, CH.ERR.FEATURE_OFF, 'switched off at once')
     end)
 end)

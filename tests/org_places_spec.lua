@@ -92,7 +92,7 @@ describe('a boss\'s spots', function()
         W.allow(s, 3, 'L2')
         W.allow(s, 3, 'L3')
         truthy(s.org.setLimits(W.STAFF, { MaxSignupSpots = 1, LocationCooldownMinutes = 0 }))
-        Config.Improvements.TipSafeZones.Zones = { '300, -590, 80, Pillbox' }
+        Config.Intel.SafeZones.Zones = { '300, -590, 80, Pillbox' }
         W.at(11, 310.0, -580.0)
         eq(select(2, s.org.placeSpot(BOSS, { kind = 'meeting' })), 'org_rule', 'inside Pillbox')
         W.at(11, 1000.0, 1000.0)
@@ -365,8 +365,8 @@ end)
 
 describe('one Places registry: every staff-set map spot (server/places.lua)', function()
     local function on(s)
-        Config.Roleplay.Rumours.Enabled = true
-        Config.Roleplay.InformantNpc.Enabled = true
+        Config.Intel.Rumours.Enabled = true
+        Config.Intel.InPerson.Enabled = true
         Config.Roleplay.NpcPlaces.Enabled = true
         local _ = s
     end

@@ -117,7 +117,7 @@ describe('the catalogue, by who uses it', function()
 
     it('has every reward and money setting in Rewards & money exactly once, in its money group', function()
         local s = stack()
-        local GROUPS = { Rewards = true, Payouts = true, Buyouts = true, ['Informant prices'] = true,
+        local GROUPS = { Rewards = true, Payouts = true, Buyouts = true, ['Intel prices'] = true,
             ['Anonymity fees'] = true, Escrow = true }
         local count = {}
         for _, entry in ipairs(s.settings.CATALOGUE) do
@@ -132,7 +132,7 @@ describe('the catalogue, by who uses it', function()
             truthy(GROUPS[group], key)
         end
         for _, key in ipairs({ 'MaxContractValue', 'Sources.cash.max', 'Limits.MinContractReward',
-            'Limits.MaxPayoutSlots', 'Bailout.AbsoluteMax', 'Informant.Cost', 'LocationTip.Cost',
+            'Limits.MaxPayoutSlots', 'Bailout.AbsoluteMax', 'Intel.Informant.Cost', 'Intel.LocationTip.Cost',
             'Anonymity.CreatorFee', 'EscrowBlacklist', 'Penalty.MaxAmount' }) do
             eq(s.settings.entry(key).category, 'rules-rewards', key)
         end

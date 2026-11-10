@@ -38,12 +38,12 @@ end
 --- app pause put back, whichever way the test ends.
 local function it(name, fn)
     IMP.it(name, function(...)
-        local tip = deepCopy(Config.LocationTip)
+        local tip = deepCopy(Config.Intel.LocationTip)
         local amendments = deepCopy(Config.Amendments)
         local paused = Config.Holds.AppPaused
         local panel = Config.Admin.Commands.panel
         local out = table.pack(pcall(fn, ...))
-        Config.LocationTip = tip
+        Config.Intel.LocationTip = tip
         Config.Amendments = amendments
         Config.Holds.AppPaused = paused
         Config.Admin.Commands.panel = panel
@@ -93,7 +93,7 @@ local function taken()
 end
 
 local function restartTips(s)
-    s.impTips.init({ storage = s.storage, audit = s.audit, notify = s.notify,
+    s.intelRules.init({ storage = s.storage, audit = s.audit, notify = s.notify,
         contracts = s.contracts, locationTip = s.locationTip, informant = s.informant,
         projection = s.projection, bailout = s.bailout })
 end
@@ -274,9 +274,9 @@ end)
 describe('sweep 5 K4: go dark and the tip warning in the right order', function()
     local function tipped()
         local s, f, c = taken()
-        Config.Improvements.GoDark.Enabled = true
-        Config.Improvements.GoDark.Cost = 50000
-        Config.Improvements.GoDark.Minutes = 30
+        Config.Intel.GoDark.Enabled = true
+        Config.Intel.GoDark.Cost = 50000
+        Config.Intel.GoDark.Minutes = 30
         local r = call('locationTip', 3, { id = c.id, shown = TIP })
         truthy(r and r.ok, 'tipped: ' .. tostring(r and r.err))
         return s, f, c
@@ -306,7 +306,7 @@ describe('sweep 5 K4: go dark and the tip warning in the right order', function(
         falsy(r and r.ok, 'refused')
         eq(bank(2), before, 'nothing charged')
         restartTips(s)
-        falsy(s.impTips.targetDark('TARGET01'), 'not dark for nothing after the restart')
+        falsy(s.intelRules.targetDark('TARGET01'), 'not dark for nothing after the restart')
     end)
 
     it('a write after the charge that raises gives the price back, and leaves nobody dark', function()
@@ -317,9 +317,9 @@ describe('sweep 5 K4: go dark and the tip warning in the right order', function(
         undo()
         falsy(r and r.ok, 'refused: ' .. tostring(r and r.err))
         eq(bank(2), before, 'the price given back')
-        falsy(s.impTips.targetDark('TARGET01'))
+        falsy(s.intelRules.targetDark('TARGET01'))
         restartTips(s)
-        falsy(s.impTips.targetDark('TARGET01'), 'nor after a restart')
+        falsy(s.intelRules.targetDark('TARGET01'), 'nor after a restart')
     end)
 
     it('a purchase that stands is still kept across a restart', function()
@@ -328,14 +328,14 @@ describe('sweep 5 K4: go dark and the tip warning in the right order', function(
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
         eq(bank(2), before - 50000)
         restartTips(s)
-        truthy(s.impTips.targetDark('TARGET01'), 'still dark after the restart')
+        truthy(s.intelRules.targetDark('TARGET01'), 'still dark after the restart')
     end)
 
     it('tells the target before the waiting warning leaves the store', function()
         local s, _, c = taken()
-        Config.Improvements.TipWarningDelay.Enabled = true
-        Config.Improvements.TipWarningDelay.MinSeconds = 60
-        Config.Improvements.TipWarningDelay.MaxSeconds = 60
+        Config.Intel.WarningDelay.Enabled = true
+        Config.Intel.WarningDelay.MinSeconds = 60
+        Config.Intel.WarningDelay.MaxSeconds = 60
         truthy(call('locationTip', 3, { id = c.id, shown = TIP }).ok)
         local order = {}
         local delete, tell = s.storage.deleteRpRow, s.notify.locationTipped
@@ -403,9 +403,9 @@ describe('sweep 5 K5: go-dark and decay rows are pruned', function()
 
     it('prunes rows from before a start whose first read raised', function()
         local s, _, c = taken()
-        Config.Improvements.GoDark.Enabled = true
-        Config.Improvements.GoDark.Cost = 50000
-        Config.Improvements.GoDark.Minutes = 30
+        Config.Intel.GoDark.Enabled = true
+        Config.Intel.GoDark.Cost = 50000
+        Config.Intel.GoDark.Minutes = 30
         truthy(call('locationTip', 3, { id = c.id, shown = TIP }).ok)
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
         truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled_by_creator'))
@@ -413,27 +413,27 @@ describe('sweep 5 K5: go-dark and decay rows are pruned', function()
         local read = s.storage.readRpRows
         s.storage.readRpRows = function() error('lost connection') end
         restartTips(s)
-        s.impTips.resume()
+        s.intelRules.resume()
         s.storage.readRpRows = read
         Env.advance(31 * 60)
-        eq(s.impTips.prune(), 1, 'read now, and the passed window pruned')
+        eq(s.intelRules.prune(), 1, 'read now, and the passed window pruned')
         eq(#s.storage.readRpRows('imp_dark'), 0)
     end)
 
     it('drops a go-dark row once its window has passed, though nobody asks again', function()
         local s, _, c = taken()
-        Config.Improvements.GoDark.Enabled = true
-        Config.Improvements.GoDark.Cost = 50000
-        Config.Improvements.GoDark.Minutes = 30
+        Config.Intel.GoDark.Enabled = true
+        Config.Intel.GoDark.Cost = 50000
+        Config.Intel.GoDark.Minutes = 30
         truthy(call('locationTip', 3, { id = c.id, shown = TIP }).ok)
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
         truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled_by_creator'))
         eq(#s.storage.readRpRows('imp_dark'), 1)
         Env.advance(600)
-        s.impTips.prune()
+        s.intelRules.prune()
         eq(#s.storage.readRpRows('imp_dark'), 1, 'kept while the window it was paid for runs')
         Env.advance(30 * 60)
-        s.impTips.prune()
+        s.intelRules.prune()
         eq(#s.storage.readRpRows('imp_dark'), 0, 'gone once it has passed')
     end)
 end)

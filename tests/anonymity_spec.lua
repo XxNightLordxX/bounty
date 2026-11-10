@@ -910,7 +910,7 @@ describe('informant data the target pays for', function()
         truthy(ran, 'the purchase raised: ' .. tostring(ok))
         truthy(ok, tostring(err))
         eq(data.name, 'Rook Ash')
-        eq(spent(), Config.Informant.Cost, 'charged once')
+        eq(spent(), Config.Intel.Informant.Cost, 'charged once')
         s.audit.flush()
         local kept = false
         for _, row in ipairs(s.storage.readAudit()) do
@@ -938,7 +938,7 @@ describe('informant data the target pays for', function()
         s.storage.readHitman = real
         truthy(ok, tostring(err))
         eq(data.name, 'Rook Ash')
-        eq(spent(), Config.Informant.Cost, 'one fee for one answer')
+        eq(spent(), Config.Intel.Informant.Cost, 'one fee for one answer')
     end)
 
     --- Checked once, before an await, and only for closed: a contract being
@@ -971,8 +971,8 @@ describe('informant data the target pays for', function()
         -- the free repeat below.
         s.informant.setRandom(function() return 100 end)
         local which = pick(s, c)
-        local quoted, account = Config.Informant.Cost, Config.Informant.Account
-        Config.Informant.Cost = quoted * 2
+        local quoted, account = Config.Intel.Informant.Cost, Config.Intel.Informant.Account
+        Config.Intel.Informant.Cost = quoted * 2
         local reply = call('informant', 2, { id = c.id, pick = which,
             shown = { cost = quoted, account = account } })
         eq(reply and reply.err, CH.ERR.TERMS_CHANGED)
@@ -987,7 +987,7 @@ describe('informant data the target pays for', function()
 
         -- Asked again inside the reroll lock: the same answer, free, whatever
         -- the price is now, so nothing is refused for it.
-        Config.Informant.Cost = quoted * 3
+        Config.Intel.Informant.Cost = quoted * 3
         Env.advance(Config.Cooldowns.informant.per + 1)
         local again = call('informant', 2, { id = c.id, pick = which,
             shown = { cost = quoted * 2, account = account } })
@@ -997,7 +997,7 @@ describe('informant data the target pays for', function()
 
     it('needs no quote where nothing is charged', function()
         local s, f, c = tracked()
-        Config.Informant.Cost = 0
+        Config.Intel.Informant.Cost = 0
         local reply = call('informant', 2, { id = c.id, pick = pick(s, c) })
         truthy(reply and reply.ok, tostring(reply and reply.err))
         eq(spent(), 0)
@@ -1213,8 +1213,8 @@ describe('every channel a player not entitled to it can read', function()
         end
         call('sendMessage', 7, { id = c.id, body = 'Me too' })
         call('requestCall', 7, { id = c.id })
-        call('locationTip', 3, { id = c.id, shown = { cost = Config.LocationTip.Cost,
-            account = Config.LocationTip.Account } })
+        call('locationTip', 3, { id = c.id, shown = { cost = Config.Intel.LocationTip.Cost,
+            account = Config.Intel.LocationTip.Account } })
         for _, src in ipairs({ 1, 2, 3, 4, 5 }) do
             call('list', src, { page = 1 })
             call('mine', src, {})
@@ -1305,8 +1305,9 @@ describe('every channel a player not entitled to it can read', function()
         -- refusing, and a low-effort reason on an anonymous contract in the
         -- staff queue. Off again after, for what follows.
         local rp = Config.Roleplay
-        rp.Rumours.Enabled, rp.Rumours.BrokerJobs = true, { broker = true }
-        rp.BurnerPhone.Enabled, rp.InformantNpc.Enabled = true, true
+        local intel = Config.Intel
+        intel.Rumours.Enabled, intel.Rumours.BrokerJobs = true, { broker = true }
+        rp.BurnerPhone.Enabled, intel.InPerson.Enabled = true, true
         rp.ReasonQuality.Enabled, rp.ReasonQuality.LowEffortAction = true, 'review'
         Env.players[4].PlayerData.job = { name = 'broker', type = 'none', onduty = true }
         local brokerAt = s.rpPlaces.current('broker')
@@ -1337,31 +1338,32 @@ describe('every channel a player not entitled to it can read', function()
         truthy(queued, 'the low-effort reason is in the staff queue')
         admin(6, 'reviews', {})
         admin(8, 'reviews', {})
-        rp.Rumours.Enabled, rp.BurnerPhone.Enabled, rp.InformantNpc.Enabled = false, false, false
+        intel.Rumours.Enabled, rp.BurnerPhone.Enabled, intel.InPerson.Enabled = false, false, false
         rp.ReasonQuality.Enabled = false
-        -- Informant fairness (server/imp_tips.lua), all on: a tip whose
+        -- Informant fairness (server/intel/rules.lua), all on: a tip whose
         -- warning waits, a tip's limits and hold quoted on the card, a tip
         -- refused in a safe zone, going dark, a tip that then finds nothing
         -- and is given back, and the delayed warning sent. Off again after.
         local imp = Config.Improvements
-        imp.TipWarningDelay.Enabled, imp.TipLimits.Enabled, imp.TipHoldFirst.Enabled = true, true, true
-        imp.TipLimits.PriceDoubling, imp.TipHoldFirst.MinHeldMinutes = true, 0
-        imp.InformantSecondTry.Enabled, imp.GoDark.Enabled = true, true
-        imp.TipSafeZones.Enabled = true
-        imp.TipSafeZones.Zones = { '1200, -800, 40, the safe house' }
+        local intelRules = Config.Intel
+        intelRules.WarningDelay.Enabled, intelRules.TipLimits.Enabled, intelRules.HoldFirst.Enabled = true, true, true
+        intelRules.TipLimits.PriceDoubling, intelRules.HoldFirst.MinHeldMinutes = true, 0
+        intelRules.SecondTry.Enabled, intelRules.GoDark.Enabled = true, true
+        intelRules.SafeZones.Enabled = true
+        intelRules.SafeZones.Zones = { '1200, -800, 40, the safe house' }
         call('locationTip', 3, { id = c.id, shown = {} })
-        imp.TipSafeZones.Enabled = false
+        intelRules.SafeZones.Enabled = false
         Env.players[3].PlayerData.money.bank = 1000000
         call('locationTip', 3, { id = c.id, shown = {} })
         for _, src in ipairs({ 1, 2, 3, 4, 5 }) do call('mine', src, {}) end
-        Env.advance(imp.TipWarningDelay.MaxSeconds + 1)
+        Env.advance(intelRules.WarningDelay.MaxSeconds + 1)
         call('goDark', 2, { id = c.id, shown = {} })
-        Env.advance(Config.LocationTip.CooldownMinutes * 60 + 1)
+        Env.advance(Config.Intel.LocationTip.CooldownMinutes * 60 + 1)
         call('locationTip', 3, { id = c.id, shown = {} })
         call('goDark', 3, { id = c.id, shown = {} })
         for _, src in ipairs({ 1, 2, 3, 4, 5 }) do call('mine', src, {}) end
-        imp.TipWarningDelay.Enabled, imp.TipLimits.Enabled, imp.TipHoldFirst.Enabled = false, false, false
-        imp.InformantSecondTry.Enabled, imp.GoDark.Enabled = false, false
+        intelRules.WarningDelay.Enabled, intelRules.TipLimits.Enabled, intelRules.HoldFirst.Enabled = false, false, false
+        intelRules.SecondTry.Enabled, intelRules.GoDark.Enabled = false, false
         -- The board improvements' channels (server/imp_*.lua), all on: the
         -- placer's record (an anonymous placer's in bands) and the tier lock
         -- on every board, contract decay on the anonymous placer's untaken
@@ -1734,13 +1736,13 @@ describe('anonymity as shipped, and names shown to the target', function()
         Env.players[2].PlayerData.money.bank = 100000
         local before = wealth(2)
         local ok, err = s.informant.buy(f.target, c.id,
-            { cost = Config.Informant.Cost, account = Config.Informant.Account }, named)
+            { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account }, named)
         falsy(ok)
         eq(err, CH.ERR.OPERATIVE_KNOWN)
         eq(wealth(2), before, 'nothing charged')
         turn(s, 'TargetClasses.default.ShowOperativeNames', false)
         local _, offErr = s.informant.buy(f.target, c.id,
-            { cost = Config.Informant.Cost, account = Config.Informant.Account }, named)
+            { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account }, named)
         truthy(offErr ~= CH.ERR.OPERATIVE_KNOWN, 'an alias to them again, so sold')
     end)
 

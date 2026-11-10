@@ -318,14 +318,18 @@ ConfigDefaults.TargetClasses = { -- by target: default, or whitelisted (on a whi
 }
 
 -- ============================================================================
---                           FEATURES: INFORMANTS
+--                              FEATURES: INTEL
 -- ============================================================================
--- Three paid look-ups: the target's (who is after me), the placer's (who
--- took it) and the hitman's tip (the target's rough area). Each ships off.
+-- Everything a player can learn for money, in one place (README, Intel):
+-- three paid look-ups, the target's (who is after me), the placer's (who
+-- took it) and the hitman's tip (the target's rough area), the rules over
+-- them, going dark, the informant in person and the rumours. Each ships off.
 
-ConfigDefaults.InformantsEnabled = true  -- master switch; on, each feature's own switch decides
+ConfigDefaults.Intel = {
+    Enabled = true,  -- master switch over the three look-ups; on, each one's own switch decides
+}
 
-ConfigDefaults.Informant = {
+ConfigDefaults.Intel.Informant = {
     Enabled                 = false,   -- a target may pay to find out who is after them
     Cost                    = 25000,   -- price of one look-up, paid win or lose; 0 = free
     Account                 = 'bank',  -- 'cash' | 'bank'
@@ -336,7 +340,7 @@ ConfigDefaults.Informant = {
     MaxPurchasesPerContract = 2,       -- look-ups per target per contract, both kinds
 }
 
-ConfigDefaults.PlacerInformant = {
+ConfigDefaults.Intel.PlacerInformant = {
     Enabled                 = false,   -- the placer may pay to find out who took it
     Cost                    = 25000,   -- price of one look-up, paid win or lose; 0 = free
     Account                 = 'bank',  -- 'cash' | 'bank'
@@ -347,7 +351,7 @@ ConfigDefaults.PlacerInformant = {
     CooldownMinutes         = 10,      -- wait between two look-ups
 }
 
-ConfigDefaults.LocationTip = {
+ConfigDefaults.Intel.LocationTip = {
     Enabled                 = false,   -- a hitman on a contract may buy the target's rough area
     Cost                    = 25000,   -- price; 0 = free
     Account                 = 'bank',  -- 'cash' | 'bank'
@@ -356,6 +360,80 @@ ConfigDefaults.LocationTip = {
     CooldownMinutes         = 10,      -- minutes between two tips on one contract, by anybody
     MaxPurchasesPerContract = 3,       -- tips per contract, all its hitmen together
     NotifyTarget            = true,    -- tell the target someone knows their rough area
+}
+
+ConfigDefaults.Intel.WarningDelay = {
+    Enabled    = false,  -- the target's tip notice waits a random while
+    MinSeconds = 60,     -- shortest wait (s)
+    MaxSeconds = 300,    -- longest wait (s)
+}
+
+ConfigDefaults.Intel.TipLimits = {
+    Enabled       = false,   -- the extra tip limits below apply
+    OnePerHitman  = true,    -- each hitman buys one tip per contract
+    PriceDoubling = false,   -- each further tip on a contract costs twice the last
+    MaxCost       = 200000,  -- the most a doubled tip costs ($)
+}
+
+ConfigDefaults.Intel.HoldFirst = {
+    Enabled        = false,  -- a tip only once the contract was held a while
+    MinHeldMinutes = 10,     -- minutes the hitman must have held it
+}
+
+ConfigDefaults.Intel.SecondTry = {
+    Enabled              = false,  -- the target's later look-ups cost differently
+    SecondTryCostPercent = 50,     -- % of Intel.Informant.Cost after the first
+}
+
+ConfigDefaults.Intel.SafeZones = {
+    Enabled = false,  -- no tip while the target is inside one of Zones
+    Zones   = {},     -- 'x, y, radius, name', e.g. '300, -590, 80, Pillbox'
+}
+
+ConfigDefaults.Intel.GoDark = {
+    Enabled = false,   -- a tipped-off target may pay to go dark
+    Cost    = 50000,   -- price; 0 = free
+    Account = 'bank',  -- 'cash' | 'bank'
+    Minutes = 30,      -- tips bought on them this long find nothing
+}
+
+ConfigDefaults.Intel.InPerson = {
+    Enabled     = false,  -- informant purchases only beside the informant NPC
+    Radius      = 5.0,    -- metres from the informant that count
+    Locations   = { -- where the informant stands, one at a time
+        '374.2, -827.4, 29.3, 180.0', '-1394.0, -592.0, 30.3, 120.0',
+        '1984.0, 3054.0, 47.2, 240.0',
+    },
+    RotateHours = 3,                      -- the NPC moves to the next place this often
+    Model       = 'a_m_y_hipster_01',     -- the informant NPC's ped model
+    Scenario    = 'WORLD_HUMAN_LEANING',  -- what the NPC does while standing
+    Blip        = false,                  -- show the informant on the map
+}
+
+ConfigDefaults.Intel.Rumours = {
+    Enabled           = false,       -- the board shows new contracts as rumours only
+    AreaMode          = 'district',  -- 'district' (target's area) | 'zones' (from Zones)
+    Zones             = { -- area names when AreaMode = 'zones'
+        'the city', 'the south side', 'the docks', 'the hills', 'the county',
+    },
+    Districts         = { -- 'x, y, name': the nearest names the target's area
+        '200, -900, Legion Square', '-1300, -1400, Vespucci', '-1500, -450, Del Perro',
+        '-800, -150, Rockford Hills', '1100, -600, Mirror Park', '100, -1750, Davis',
+        '800, -1200, La Mesa', '1000, -3000, the port', '0, 800, Vinewood Hills',
+        '1850, 3700, Sandy Shores', '2000, 4900, Grapeseed', '-150, 6350, Paleto Bay',
+    },
+    BandPercent       = 25,          -- reward shown as a band this many % either side
+    Radius            = 5.0,         -- metres from the broker (NPC or player) that count
+    BriefValidMinutes = 30,          -- a briefing unlocks a contract for this long
+    Locations         = { -- where the broker NPC stands, one at a time
+        '-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0',
+        '-56.5, -1752.4, 29.4, 50.0',
+    },
+    RotateHours       = 4,           -- the NPC moves to the next place this often
+    Model             = 'g_m_m_armboss_01',     -- the broker NPC's ped model
+    Scenario          = 'WORLD_HUMAN_SMOKING',  -- what the NPC does while standing
+    Blip              = false,       -- show the broker on the map
+    BrokerJobs        = {},          -- jobs whose players brief from the app: { broker = true }
 }
 
 -- ============================================================================
@@ -522,51 +600,12 @@ ConfigDefaults.Roleplay.HitOnHitman = {
     Enabled = false, -- a target may place a contract on an operative revealed
 }
 
-ConfigDefaults.Roleplay.Rumours = {
-    Enabled           = false,       -- the board shows new contracts as rumours only
-    AreaMode          = 'district',  -- 'district' (target's area) | 'zones' (from Zones)
-    Zones             = { -- area names when AreaMode = 'zones'
-        'the city', 'the south side', 'the docks', 'the hills', 'the county',
-    },
-    Districts         = { -- 'x, y, name': the nearest names the target's area
-        '200, -900, Legion Square', '-1300, -1400, Vespucci', '-1500, -450, Del Perro',
-        '-800, -150, Rockford Hills', '1100, -600, Mirror Park', '100, -1750, Davis',
-        '800, -1200, La Mesa', '1000, -3000, the port', '0, 800, Vinewood Hills',
-        '1850, 3700, Sandy Shores', '2000, 4900, Grapeseed', '-150, 6350, Paleto Bay',
-    },
-    BandPercent       = 25,          -- reward shown as a band this many % either side
-    Radius            = 5.0,         -- metres from the broker (NPC or player) that count
-    BriefValidMinutes = 30,          -- a briefing unlocks a contract for this long
-    Locations         = { -- where the broker NPC stands, one at a time
-        '-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0',
-        '-56.5, -1752.4, 29.4, 50.0',
-    },
-    RotateHours       = 4,           -- the NPC moves to the next place this often
-    Model             = 'g_m_m_armboss_01',     -- the broker NPC's ped model
-    Scenario          = 'WORLD_HUMAN_SMOKING',  -- what the NPC does while standing
-    Blip              = false,       -- show the broker on the map
-    BrokerJobs        = {},          -- jobs whose players brief from the app: { broker = true }
-}
-
 ConfigDefaults.Roleplay.BurnerPhone = {
     Enabled         = false,           -- placing and accepting need the item
     Item            = 'burner_phone',  -- the ox_inventory item
     ConsumeOnPlace  = false,           -- use one up when a contract is placed
     ConsumeOnAccept = false,           -- use one up when a contract is accepted
     RequireToOpen   = true,            -- no item, no contract tabs at all
-}
-
-ConfigDefaults.Roleplay.InformantNpc = {
-    Enabled     = false,  -- informant purchases only beside the informant NPC
-    Radius      = 5.0,    -- metres from the informant that count
-    Locations   = { -- where the informant stands, one at a time
-        '374.2, -827.4, 29.3, 180.0', '-1394.0, -592.0, 30.3, 120.0',
-        '1984.0, 3054.0, 47.2, 240.0',
-    },
-    RotateHours = 3,                      -- the NPC moves to the next place this often
-    Model       = 'a_m_y_hipster_01',     -- the informant NPC's ped model
-    Scenario    = 'WORLD_HUMAN_LEANING',  -- what the NPC does while standing
-    Blip        = false,                  -- show the informant on the map
 }
 
 ConfigDefaults.Roleplay.NpcPlaces = {
@@ -587,41 +626,6 @@ ConfigDefaults.Roleplay.ReasonQuality = {
 -- shipped (README, Optional features). All are changed from the panel.
 
 ConfigDefaults.Improvements = ConfigDefaults.Improvements or {}  -- the improvements, one block each
-
-ConfigDefaults.Improvements.TipWarningDelay = {
-    Enabled    = false,  -- the target's tip notice waits a random while
-    MinSeconds = 60,     -- shortest wait (s)
-    MaxSeconds = 300,    -- longest wait (s)
-}
-
-ConfigDefaults.Improvements.TipLimits = {
-    Enabled       = false,   -- the extra tip limits below apply
-    OnePerHitman  = true,    -- each hitman buys one tip per contract
-    PriceDoubling = false,   -- each further tip on a contract costs twice the last
-    MaxCost       = 200000,  -- the most a doubled tip costs ($)
-}
-
-ConfigDefaults.Improvements.TipHoldFirst = {
-    Enabled        = false,  -- a tip only once the contract was held a while
-    MinHeldMinutes = 10,     -- minutes the hitman must have held it
-}
-
-ConfigDefaults.Improvements.InformantSecondTry = {
-    Enabled              = false,  -- the target's later look-ups cost differently
-    SecondTryCostPercent = 50,     -- % of Informant.Cost after the first
-}
-
-ConfigDefaults.Improvements.TipSafeZones = {
-    Enabled = false,  -- no tip while the target is inside one of Zones
-    Zones   = {},     -- 'x, y, radius, name', e.g. '300, -590, 80, Pillbox'
-}
-
-ConfigDefaults.Improvements.GoDark = {
-    Enabled = false,   -- a tipped-off target may pay to go dark
-    Cost    = 50000,   -- price; 0 = free
-    Account = 'bank',  -- 'cash' | 'bank'
-    Minutes = 30,      -- tips bought on them this long find nothing
-}
 
 ConfigDefaults.Improvements.PlacerRecord = {
     Enabled          = false,  -- hitmen see the placer's record on a board card

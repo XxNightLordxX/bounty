@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS crimson_reveals (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- The look-ups a contract's placer bought from their informant
--- (Config.PlacerInformant), one row each.
+-- (Config.Intel.PlacerInformant), one row each.
 CREATE TABLE IF NOT EXISTS crimson_placer_informants (
     id VARCHAR(120) PRIMARY KEY,
     contract_id VARCHAR(32) NOT NULL,

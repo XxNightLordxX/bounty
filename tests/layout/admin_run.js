@@ -116,10 +116,10 @@ function serverStub() {
   settings.limits.push({ key: 'Bailout.Command', category: 'rules-limits', group: 'Buyouts', label: 'Buyout command',
     kind: 'text', live: false, value: 'cleanse', default: 'cleanse', source: 'config',
     inflight: 'Read once at start: kept now, and in force after the next restart.' });
-  ['MaxContractValue', 'Sources.cash.max', 'Informant.Cost', 'Anonymity.CreatorFee', 'Limits.MaxEscrowLines',
+  ['MaxContractValue', 'Sources.cash.max', 'Intel.Informant.Cost', 'Anonymity.CreatorFee', 'Limits.MaxEscrowLines',
     'Bailout.AbsoluteMax'].forEach(function (key, i) {
     settings.limits.push({ key: key, category: 'rules-rewards',
-      money: ['Rewards', 'Rewards', 'Informant prices', 'Anonymity fees', 'Escrow', 'Buyouts'][i], group: 'Money',
+      money: ['Rewards', 'Rewards', 'Intel prices', 'Anonymity fees', 'Escrow', 'Buyouts'][i], group: 'Money',
       label: 'A money setting with a label long enough to wrap ' + i, kind: 'number', integer: true, min: 0,
       max: 100000000, live: true, value: 250000, default: 250000, shipped: 500000, hasShipped: true, source: 'config',
       about: 'What it does, in a sentence long enough to wrap across the row.', inflight: 'Read each time it is used.' });
@@ -469,7 +469,7 @@ function serverStub() {
       return { id: id, group: 'npc', label: label, one: id + ' place', icon: 'user-secret',
         fields: { label: true, enabled: true }, labelMax: 40, labelOptional: true, reset: true, max: 20,
         switch: 'Roleplay.NpcPlaces.Enabled', rows: rows, on: true, using: rows.length ? 'panel' : 'config',
-        defaults: [{ x: -1171.0, y: -1572.5, z: 4.66, h: 125 }], key: 'Roleplay.Rumours.Locations' };
+        defaults: [{ x: -1171.0, y: -1572.5, z: 4.66, h: 125 }], key: 'Intel.Rumours.Locations' };
     }
     function dp(id, label, one, rows) {
       return { id: id, group: 'disposal', label: label, one: one, icon: 'truck', fields: {}, single: true, max: 1,
@@ -525,11 +525,11 @@ function serverStub() {
   settings.limits.push({ key: 'Organisation.Limits.WithdrawMax', category: 'organisation',
     group: 'Organisation: Boss limits', area: 'organisation', label: 'Largest withdrawal ($)', kind: 'number',
     integer: true, min: 0, max: 10000000, live: true, value: 5000, default: 5000, source: 'config' });
-  settings.limits.push({ key: 'Roleplay.Rumours.Locations', place: 'point', category: 'rules-limits', group: 'Roleplay: Rumours and broker',
+  settings.limits.push({ key: 'Intel.Rumours.Locations', place: 'point', category: 'rules-limits', group: 'Intel: Rumours and broker',
     area: 'extras', label: 'Broker NPC places', kind: 'list', whole: true, live: true,
     value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'], default: [], source: 'config' });
-  settings.limits.push({ key: 'Improvements.TipSafeZones.Zones', place: 'zone', category: 'rules-targeting',
-    group: 'Improvements: Tip safe zones', area: 'informants', label: 'Safe zones (x, y, radius, name)', kind: 'list',
+  settings.limits.push({ key: 'Intel.SafeZones.Zones', place: 'zone', category: 'rules-targeting',
+    group: 'Intel: Tip safe zones', area: 'intel', label: 'Safe zones (x, y, radius, name)', kind: 'list',
     whole: true, live: true, value: ['300, -590, 80, Pillbox Hill Medical Center and the car park'], default: [],
     source: 'config' });
   settings.limits.push({ key: 'Limits.JailZone.x', place: 'jail', category: 'rules-limits', group: 'Contract limits', area: 'placing',

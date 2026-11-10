@@ -319,35 +319,40 @@ local DEFAULTS = {
             LocationTip = false,
         },
     },
-    --- Read inside the purchase. A missing price is not a free informant;
-    --- it is one nobody can buy. A missing chance is the shipped one, not a
-    --- look-up that can never find anybody. Absent switches are off, as
-    --- shipped.
-    Informant = {
-        Enabled = false,
-        Cost = 25000,
-        MaxPurchasesPerContract = 2,
-        RevealChancePercent = 10,
-    },
-    PlacerInformant = {
-        Enabled = false,
-        Cost = 25000,
-        MaxPurchasesPerContract = 2,
-        RevealChancePercent = 20,
-        AlertChancePercent = 20,
-        CooldownMinutes = 10,
-    },
-    --- Read inside the purchase and on every hitman's card, as the
-    --- informant's are: a missing price is not a free tip.
-    LocationTip = {
-        Enabled = false,
-        Cost = 25000,
-        Account = 'bank',
-        RadiusMeters = 350,
-        ShowMinutes = 10,
-        CooldownMinutes = 10,
-        MaxPurchasesPerContract = 3,
-        NotifyTarget = true,
+    --- The three paid look-ups (Config.Intel), the master switch on as
+    --- shipped and each look-up off by its own.
+    Intel = {
+        Enabled = true,
+        --- Read inside the purchase. A missing price is not a free informant;
+        --- it is one nobody can buy. A missing chance is the shipped one, not a
+        --- look-up that can never find anybody. Absent switches are off, as
+        --- shipped.
+        Informant = {
+            Enabled = false,
+            Cost = 25000,
+            MaxPurchasesPerContract = 2,
+            RevealChancePercent = 10,
+        },
+        PlacerInformant = {
+            Enabled = false,
+            Cost = 25000,
+            MaxPurchasesPerContract = 2,
+            RevealChancePercent = 20,
+            AlertChancePercent = 20,
+            CooldownMinutes = 10,
+        },
+        --- Read inside the purchase and on every hitman's card, as the
+        --- informant's are: a missing price is not a free tip.
+        LocationTip = {
+            Enabled = false,
+            Cost = 25000,
+            Account = 'bank',
+            RadiusMeters = 350,
+            ShowMinutes = 10,
+            CooldownMinutes = 10,
+            MaxPurchasesPerContract = 3,
+            NotifyTarget = true,
+        },
     },
     --- Compared against a count in Kidnap.arm, so a missing one is not a
     --- disabled cap but a comparison against nil: every attempt to start a
@@ -648,14 +653,14 @@ local function validateConfig(quiet)
         { 'Penalty', 'MinWindowMinutes' },
         { 'Ledger', 'Depth' },
         { 'Ledger', 'MaxDepthHardCap' },
-        { 'Informant', 'RerollLockMinutes' },
+        { 'Intel.Informant', 'RerollLockMinutes' },
         -- The informant tip's price and the area it shows, read inside the
         -- purchase and on every hitman's card.
-        { 'LocationTip', 'Cost' },
-        { 'LocationTip', 'RadiusMeters' },
-        { 'LocationTip', 'ShowMinutes' },
-        { 'LocationTip', 'CooldownMinutes' },
-        { 'LocationTip', 'MaxPurchasesPerContract' },
+        { 'Intel.LocationTip', 'Cost' },
+        { 'Intel.LocationTip', 'RadiusMeters' },
+        { 'Intel.LocationTip', 'ShowMinutes' },
+        { 'Intel.LocationTip', 'CooldownMinutes' },
+        { 'Intel.LocationTip', 'MaxPurchasesPerContract' },
         { 'Amendments', 'ProposalExpirySeconds' },
         { 'Amendments', 'MaxOpenPerContract' },
         { 'Relay', 'MaxLength' },
@@ -663,7 +668,9 @@ local function validateConfig(quiet)
 
     for _, entry in ipairs(REQUIRED_NUMBERS) do
         local section, key = entry[1], entry[2]
-        local block = Config[section]
+        -- A section may be a block inside one ('Intel.LocationTip').
+        local block = Config
+        for part in section:gmatch('[^%.]+') do block = type(block) == 'table' and block[part] or nil end
         if type(block) ~= 'table' then
             fatal[#fatal + 1] = ('Config.%s is missing entirely'):format(section)
         elseif type(block[key]) ~= 'number' then
@@ -687,7 +694,7 @@ local function validateConfig(quiet)
         error('[crimson-hitman] refusing to start on an invalid configuration')
     end
 
-    -- The informants' chances (server/informant.lua), in whole percent: a
+    -- The informants' chances (server/intel/informants.lua), in whole percent: a
     -- roll draws a whole number from 1 to 100, so a fraction or a figure
     -- outside 0 to 100 is a chance it cannot mean. Corrected to the shipped
     -- figure, and said.
@@ -696,11 +703,11 @@ local function validateConfig(quiet)
         { 'PlacerInformant', 'RevealChancePercent', 20 },
         { 'PlacerInformant', 'AlertChancePercent', 20 },
     }) do
-        local block = Config[chance[1]]
+        local block = type(Config.Intel) == 'table' and Config.Intel[chance[1]] or nil
         local value = type(block) == 'table' and block[chance[2]] or nil
         if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
             or math.floor(value) ~= value or value < 0 or value > 100) then
-            warn[#warn + 1] = ('Config.%s.%s is %s; it has to be a whole number from 0 to 100. '
+            warn[#warn + 1] = ('Config.Intel.%s.%s is %s; it has to be a whole number from 0 to 100. '
                 .. 'Using %d.'):format(chance[1], chance[2], tostring(value), chance[3])
             block[chance[2]] = chance[3]
         end
@@ -796,9 +803,9 @@ local function validateConfig(quiet)
         for _, path in ipairs({
             { 'MaxContractValue' }, { 'Sources', 'cash', 'max' }, { 'Sources', 'bank', 'max' },
             { 'Sources', 'dirty', 'max' }, { 'Bailout', 'AbsoluteMax' }, { 'Penalty', 'MaxAmount' },
-            { 'Anonymity', 'CreatorFee' }, { 'Anonymity', 'HitmanFee' }, { 'Informant', 'Cost' },
-            { 'LocationTip', 'Cost' },
-            { 'PlacerInformant', 'Cost' },
+            { 'Anonymity', 'CreatorFee' }, { 'Anonymity', 'HitmanFee' },
+            { 'Intel', 'Informant', 'Cost' }, { 'Intel', 'LocationTip', 'Cost' },
+            { 'Intel', 'PlacerInformant', 'Cost' },
         }) do
             local holder = Config
             for i = 1, #path - 1 do holder = type(holder) == 'table' and holder[path[i]] or nil end
@@ -945,13 +952,13 @@ local function validateConfig(quiet)
         { section = 'Kidnap', key = 'MeetingPoint',
           off = 'nobody can set a meeting point for a handover, and none is shown' },
         -- Off is the side that sells nobody a target's rough area.
-        { section = 'LocationTip', key = 'Enabled',
+        { section = 'Intel', sub = 'LocationTip', key = 'Enabled',
           off = 'no informant tip is sold; one already bought stays on its buyer\'s map' },
         -- The two informants, read as plain truths the same way: a string
         -- 'false' was a look-up the server sold while the page hid it.
-        { section = 'Informant', key = 'Enabled',
+        { section = 'Intel', sub = 'Informant', key = 'Enabled',
           off = 'no target may buy a look-up on who is after them; names found stay shown' },
-        { section = 'PlacerInformant', key = 'Enabled',
+        { section = 'Intel', sub = 'PlacerInformant', key = 'Enabled',
           off = 'no placer may buy a look-up on who took it; names found stay shown' },
         -- The rules per target class (Config.TargetClasses, Util.targetRule),
         -- each class's the same way. Off is the side that offers nobody
@@ -1004,24 +1011,24 @@ local function validateConfig(quiet)
         end
     end
 
-    -- The master switch over the three informant features (Util.informantOn).
+    -- The master switch over the three informant features (Intel.on).
     -- Off is the side that sells nothing, as each of theirs is.
-    if type(Config.InformantsEnabled) ~= 'boolean' then
-        warn[#warn + 1] = ('InformantsEnabled is %s, not true or false; it is read as false: '
+    if type(Config.Intel.Enabled) ~= 'boolean' then
+        warn[#warn + 1] = ('Intel.Enabled is %s, not true or false; it is read as false: '
             .. 'no informant feature is offered (the target\'s, the placer\'s or the tip).')
-            :format(type(Config.InformantsEnabled) == 'string'
-                and ('"' .. Config.InformantsEnabled .. '"') or tostring(Config.InformantsEnabled))
-        Config.InformantsEnabled = false
+            :format(type(Config.Intel.Enabled) == 'string'
+                and ('"' .. Config.Intel.Enabled .. '"') or tostring(Config.Intel.Enabled))
+        Config.Intel.Enabled = false
     end
 
-    -- The informant tip (server/locationtip.lua). Telling the target is the
+    -- The informant tip (server/intel/tip.lua). Telling the target is the
     -- side that keeps them informed, so anything but true or false is read as
     -- on. The figures are whole numbers in a range that keeps it a search: an
     -- area too small is a position, one too wide is no help, a tip shown for
     -- no time is nothing, and a most of none sells nothing.
-    local tip = Config.LocationTip
+    local tip = Config.Intel.LocationTip
     if type(tip.NotifyTarget) ~= 'boolean' then
-        warn[#warn + 1] = ('LocationTip.NotifyTarget is %s, not true or false; it is read as '
+        warn[#warn + 1] = ('Intel.LocationTip.NotifyTarget is %s, not true or false; it is read as '
             .. 'true: the target is told someone knows their rough area.')
             :format(type(tip.NotifyTarget) == 'string' and ('"' .. tip.NotifyTarget .. '"')
                 or tostring(tip.NotifyTarget))
@@ -1036,7 +1043,7 @@ local function validateConfig(quiet)
     }) do
         local value = tonumber(tip[rule.key])
         if not value or value ~= value or value < rule.floor or value > rule.ceiling then
-            warn[#warn + 1] = ('LocationTip.%s is %s; it has to be a number from %d to %d. '
+            warn[#warn + 1] = ('Intel.LocationTip.%s is %s; it has to be a number from %d to %d. '
                 .. 'Using %d.'):format(rule.key, tostring(tip[rule.key]), rule.floor,
                     rule.ceiling, rule.default)
             value = rule.default
@@ -1197,9 +1204,9 @@ local function validateConfig(quiet)
     -- told exactly which setting and what it was changed to.
     for _, named in ipairs({
         { table = Config.Anonymity, key = 'FeeAccount', label = 'Anonymity.FeeAccount' },
-        { table = Config.Informant, key = 'Account', label = 'Informant.Account' },
-        { table = Config.LocationTip, key = 'Account', label = 'LocationTip.Account' },
-        { table = Config.PlacerInformant, key = 'Account', label = 'PlacerInformant.Account' },
+        { table = Config.Intel.Informant, key = 'Account', label = 'Intel.Informant.Account' },
+        { table = Config.Intel.LocationTip, key = 'Account', label = 'Intel.LocationTip.Account' },
+        { table = Config.Intel.PlacerInformant, key = 'Account', label = 'Intel.PlacerInformant.Account' },
     }) do
         local holder = named.table
         local value = holder and holder[named.key]
@@ -1410,13 +1417,13 @@ local function validateConfig(quiet)
 
     -- The roleplay features (server/rp_*.lua, Config.Roleplay): each fills
     -- its block where config.lua has none, and holds every field to its rule.
-    CrimsonBoot.require('server.rp_rumours').validate(warn)
     CrimsonBoot.require('server.rp_burner').validate(warn)
-    CrimsonBoot.require('server.rp_informant').validate(warn)
     CrimsonBoot.require('server.rp_reason').validate(warn)
+    -- Intel (server/intel/, Config.Intel): the informant in person, the
+    -- tip rules, going dark and the rumours, the same way.
+    CrimsonBoot.require('server.intel.engine').validate(warn)
     -- The improvements (server/imp_*.lua, Config.Improvements), the same way
     -- (the board's are checked above, with the defaults they fill).
-    CrimsonBoot.require('server.imp_tips').validate(warn)
     CrimsonBoot.require('server.imp_proof').validate(warn)
     CrimsonBoot.require('server.imp_scrub').validate(warn)
     CrimsonBoot.require('server.imp_weekly').validate(warn)
@@ -1908,7 +1915,7 @@ function StartCrimsonHitman()
     local photo      = CrimsonBoot.require('server.completion.photo')
     local kidnap     = CrimsonBoot.require('server.completion.kidnap')
     local bailout    = CrimsonBoot.require('server.bailout')
-    local informant  = CrimsonBoot.require('server.informant')
+    local informant  = CrimsonBoot.require('server.intel.informants')
     local amendments = CrimsonBoot.require('server.amendments')
     local comms      = CrimsonBoot.require('server.comms')
     local mugshot    = CrimsonBoot.require('server.mugshot')
@@ -1921,7 +1928,7 @@ function StartCrimsonHitman()
     local alerts     = CrimsonBoot.require('server.alerts')
     local meeting    = CrimsonBoot.require('server.meeting')
     local playtime   = CrimsonBoot.require('server.playtime')
-    local locationTip = CrimsonBoot.require('server.locationtip')
+    local locationTip = CrimsonBoot.require('server.intel.tip')
     local holds      = CrimsonBoot.require('server.holds')
     local staffContract = CrimsonBoot.require('server.staffcontract')
     local sanctions  = CrimsonBoot.require('server.sanctions')
@@ -1946,12 +1953,14 @@ function StartCrimsonHitman()
     local rpProtection = CrimsonBoot.require('server.rp_protection')
     -- The roleplay features (README, Optional features), each off as shipped.
     local rpPlaces    = CrimsonBoot.require('server.rp_places')
-    local rpRumours   = CrimsonBoot.require('server.rp_rumours')
     local rpBurner    = CrimsonBoot.require('server.rp_burner')
-    local rpInformant = CrimsonBoot.require('server.rp_informant')
     local rpReason    = CrimsonBoot.require('server.rp_reason')
-    -- The improvements (README, Optional features), each off as shipped.
-    local impTips     = CrimsonBoot.require('server.imp_tips')
+    -- Intel (README, Intel; server/intel/): the one purchase engine, the
+    -- rules over the tip and the informant with going dark, and the rumours.
+    -- The informants and the tip are required above, with the core.
+    local intel        = CrimsonBoot.require('server.intel.engine')
+    local intelRules   = CrimsonBoot.require('server.intel.rules')
+    local intelRumours = CrimsonBoot.require('server.intel.rumours')
     -- The board and progression improvements (README, Optional
     -- features), each off as shipped: the placer's record, hitman heat,
     -- tiers and contract decay.
@@ -2001,7 +2010,7 @@ function StartCrimsonHitman()
     comms.init({ storage = Storage, identity = identity, audit = audit,
                  notify = notify, ratelimit = ratelimit })
     mugshot.init({ identity = identity, audit = audit })
-    -- The informant tip a hitman can buy (server/locationtip.lua).
+    -- The informant tip a hitman can buy (server/intel/tip.lua).
     locationTip.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
                        contracts = contracts, review = review })
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
@@ -2060,16 +2069,17 @@ function StartCrimsonHitman()
     -- rumours and briefings, the burner phone, the informant in person and
     -- the reason rules (server/rp_*.lua).
     rpPlaces.init({ settings = settings, storage = Storage, audit = audit })
-    rpRumours.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
-                     projection = projection, app = app })
     rpBurner.init({ audit = audit })
-    rpInformant.init({ audit = audit })
     rpReason.init({ storage = Storage, review = review, contracts = contracts })
-    -- Informant fairness: the tip's and the target's informant's extra rules
-    -- (server/imp_tips.lua).
-    impTips.init({ storage = Storage, audit = audit, notify = notify, contracts = contracts,
-                   locationTip = locationTip, informant = informant, projection = projection,
-                   bailout = bailout })
+    -- Intel: the engine (the in-person gate's audit and the notices), the
+    -- rumours and briefings, and the tip's and the target's informant's
+    -- extra rules with going dark (server/intel/).
+    intel.init({ audit = audit, notify = notify })
+    intelRumours.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
+                        projection = projection, app = app })
+    intelRules.init({ storage = Storage, audit = audit, notify = notify, contracts = contracts,
+                      locationTip = locationTip, informant = informant, projection = projection,
+                      bailout = bailout })
     -- After projection, contracts and the roleplay consequences: it adds to
     -- the cards, hooks the claim and the witness report, and steps on the tick.
     impBoard.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
@@ -2140,10 +2150,10 @@ function StartCrimsonHitman()
         -- Roleplay: proof of intent, reputation and bodyguards.
         rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
         -- The roleplay features, for the app's gate and its requests.
-        rpPlaces = rpPlaces, rpRumours = rpRumours, rpBurner = rpBurner,
-        rpInformant = rpInformant, rpReason = rpReason,
-        -- The improvements, for the app's requests.
-        impTips = impTips,
+        rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason,
+        -- Intel: the engine (the in-person gate), the rules with going dark
+        -- (the app's requests and the tick), the rumours and briefings.
+        intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         -- The board and progression improvements: the app's gate, its
         -- after-steps and decayOff, and the tick.
         impBoard = impBoard,
@@ -2224,8 +2234,8 @@ function StartCrimsonHitman()
         -- the restart (Death.noteStarted).
         death.noteStarted()
         death.startSampler()
-        -- Tip warnings still waiting from before the restart (imp_tips).
-        impTips.resume()
+        -- Tip warnings still waiting from before the restart (server/intel/rules.lua).
+        intelRules.resume()
         -- Where the roleplay NPCs stand moves on the clock: looked at by the
         -- maintenance tick once a minute (rp_places.announce).
     end)
@@ -2879,7 +2889,7 @@ local SCHEDULE = {
     ['thresholds.sweep'] = { every = 60, phase = 10 },
     -- The improvements' minute (server/imp_board.lua): heat cooled and the
     -- police bulletin, the placer records forgotten, and the go-dark windows
-    -- that have passed taken out of the store (server/imp_tips.lua). Nothing
+    -- that have passed taken out of the store (server/intel/rules.lua). Nothing
     -- while all are off; in memory only while on, but for those deletes.
     ['imp_board.tick'] = { every = 60, phase = 50 },
     -- Contract decay's steps (server/imp_decay.lua), the one of them that
@@ -2938,11 +2948,11 @@ end
 
 --- The improvements' minute (imp_board.tick): the board's own (heat, the
 --- placer records), and the go-dark windows that have passed taken out of
---- the store (ImpTips.prune). Each reads and writes nothing while it has
+--- the store (IntelRules.prune). Each reads and writes nothing while it has
 --- nothing to do.
 local function BoardMinute()
     modules.impBoard.tickBoard()
-    if modules.impTips and modules.impTips.prune then modules.impTips.prune() end
+    if modules.intelRules and modules.intelRules.prune then modules.intelRules.prune() end
 end
 
 function Tick()

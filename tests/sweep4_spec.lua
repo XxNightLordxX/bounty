@@ -28,15 +28,15 @@ local function deepCopy(value)
     return out
 end
 
---- Config.Improvements, Config.Roleplay and Config.LocationTip put back.
+--- Config.Improvements, Config.Roleplay and Config.Intel.LocationTip put back.
 local function it(name, fn)
     IMP.it(name, function(...)
-        local tip = deepCopy(Config.LocationTip)
-        local informant = deepCopy(Config.Informant)
+        local tip = deepCopy(Config.Intel.LocationTip)
+        local informant = deepCopy(Config.Intel.Informant)
         local paused = Config.Holds.AppPaused
         local out = table.pack(pcall(fn, ...))
-        Config.LocationTip = tip
-        Config.Informant = informant
+        Config.Intel.LocationTip = tip
+        Config.Intel.Informant = informant
         Config.Holds.AppPaused = paused
         if not out[1] then error(out[2], 0) end
     end)
@@ -235,9 +235,9 @@ end
 describe('sweep 4: no money moves on a contract staff hold', function()
     it('B1 go dark refuses a frozen contract, charging nothing', function()
         local s, _, c = taken()
-        Config.Improvements.GoDark.Enabled = true
-        Config.Improvements.GoDark.Cost = 50000
-        Config.Improvements.GoDark.Minutes = 30
+        Config.Intel.GoDark.Enabled = true
+        Config.Intel.GoDark.Cost = 50000
+        Config.Intel.GoDark.Minutes = 30
         local t = call('locationTip', 3, { id = c.id, shown = PRICE })
         truthy(t and t.ok, 'tip bought: ' .. tostring(t and t.err))
         truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'probe'))
@@ -249,9 +249,9 @@ describe('sweep 4: no money moves on a contract staff hold', function()
 
     it('B1 go dark refuses a freeze landing before the charge', function()
         local s, _, c = taken()
-        Config.Improvements.GoDark.Enabled = true
-        Config.Improvements.GoDark.Cost = 50000
-        Config.Improvements.GoDark.Minutes = 30
+        Config.Intel.GoDark.Enabled = true
+        Config.Intel.GoDark.Cost = 50000
+        Config.Intel.GoDark.Minutes = 30
         truthy(call('locationTip', 3, { id = c.id, shown = PRICE }).ok, 'tip bought')
         local before = bank(2)
         -- The second read of the contract is the one right before the charge.
@@ -309,13 +309,13 @@ describe('sweep 4: no money moves on a contract staff hold', function()
                 end
                 truthy(pick, 'a target pick')
                 return s.informant.buy(f.target, c.id,
-                    { cost = Config.Informant.Cost, account = Config.Informant.Account }, pick)
+                    { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account }, pick)
             end,
             placer = function()
                 local pick = ((view('CREATOR1').placerInformantPicks or {})[1] or {}).pick
                 truthy(pick, 'a placer pick')
                 return s.informant.placerBuy(f.creator, c.id,
-                    { cost = Config.PlacerInformant.Cost, account = Config.PlacerInformant.Account }, pick)
+                    { cost = Config.Intel.PlacerInformant.Cost, account = Config.Intel.PlacerInformant.Account }, pick)
             end,
         }
         return s, f, c, buys
@@ -693,9 +693,9 @@ end)
 describe('sweep 4 review: go dark on a hold landing in its awaits', function()
     it('refunds a charge when a freeze lands in the go-dark row\'s write', function()
         local s, _, c = taken()
-        Config.Improvements.GoDark.Enabled = true
-        Config.Improvements.GoDark.Cost = 50000
-        Config.Improvements.GoDark.Minutes = 30
+        Config.Intel.GoDark.Enabled = true
+        Config.Intel.GoDark.Cost = 50000
+        Config.Intel.GoDark.Minutes = 30
         truthy(call('locationTip', 3, { id = c.id, shown = PRICE }).ok, 'tip bought')
         local before = bank(2)
         local undo = freezeOnCall(s, 'writeRpRow', 1)
@@ -703,8 +703,8 @@ describe('sweep 4 review: go dark on a hold landing in its awaits', function()
         truthy(undo(), 'the freeze landed')
         eq(r and r.err, CH.ERR.CONTRACT_FROZEN)
         eq(bank(2), before, 'the price given back')
-        eq(s.impTips.darkUntil('TARGET01'), nil, 'and not dark')
-        for _, row in ipairs(s.storage.readRpRows(s.impTips.KIND_DARK) or {}) do
+        eq(s.intelRules.darkUntil('TARGET01'), nil, 'and not dark')
+        for _, row in ipairs(s.storage.readRpRows(s.intelRules.KIND_DARK) or {}) do
             truthy(row.cid ~= 'TARGET01', 'the window\'s row dropped')
         end
         s.audit.flush()

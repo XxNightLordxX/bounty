@@ -3412,13 +3412,14 @@
   };
 
   /** Rewards & money, in these groups (the catalogue's `money`). */
-  var MONEY_ORDER = ['Rewards', 'Payouts', 'Buyouts', 'Informant prices', 'Anonymity fees', 'Escrow'];
+  var MONEY_ORDER = ['Rewards', 'Payouts', 'Buyouts', 'Intel prices', 'Anonymity fees', 'Escrow'];
   /** Features, in the README's and config.lua's order: the core switches
-      first (in the catalogue's order), then Anonymity, the Informants, the
-      Advisory, Staff tools, Roleplay and Improvements. */
+      first (in the catalogue's order), then Anonymity, Intel (its other
+      groups after these four), the Advisory, Staff tools, Roleplay and
+      Improvements. */
   var FEATURE_AREAS = [
     ['Anonymity', 'Anonymity (whitelisted-job targets)'],
-    ['Informant', 'Informant tip', 'Informants (every other target)', 'Informants (whitelisted-job targets)'],
+    ['Intel: Informants', 'Intel: Informant tip', 'Intel: Every other target', 'Intel: Whitelisted-job targets'],
     ['Law enforcement advisory'],
     ['Staff tools']
   ];
@@ -3430,6 +3431,8 @@
       var at = FEATURE_AREAS[i].indexOf(g);
       if (at !== -1) return i + 1 + at / 10;
     }
+    // Every other Intel group (server/intel/): after the area's four.
+    if (g.indexOf('Intel: ') === 0) return 2.5;
     if (g.indexOf('Roleplay: ') === 0) return FEATURE_AREAS.length + 1;
     if (g.indexOf('Improvements: ') === 0) return FEATURE_AREAS.length + 2;
     return 0;
@@ -3440,11 +3443,11 @@
     'Anonymity': 'Whether a contract may be placed or accepted anonymously, and whether a target sees an '
       + 'operative\'s name.',
     'Anonymity (whitelisted-job targets)': 'The same, for the other target class: where the target is on a whitelisted job.',
-    'Informant': 'The paid look-ups: the target\'s (who is after me) and the placer\'s (who took it), and their '
+    'Intel: Informants': 'The paid look-ups: the target\'s (who is after me) and the placer\'s (who took it), and their '
       + 'master switch.',
-    'Informant tip': 'The hitman\'s paid tip on the target\'s rough area, and whether the target is told.',
-    'Informants (every other target)': 'Whether each informant feature is offered on a target not on a whitelisted job.',
-    'Informants (whitelisted-job targets)': 'Whether each informant feature is offered on a whitelisted-job target.',
+    'Intel: Informant tip': 'The hitman\'s paid tip on the target\'s rough area, and whether the target is told.',
+    'Intel: Every other target': 'Whether each informant feature is offered on a target not on a whitelisted job.',
+    'Intel: Whitelisted-job targets': 'Whether each informant feature is offered on a whitelisted-job target.',
     'Law enforcement advisory': 'What officers are told when one of them, or another whitelisted-job member, is '
       + 'targeted, and when.',
     'Access': 'Who may open the app: barred jobs off duty, and the whitelisted-job view.',
@@ -3470,7 +3473,7 @@
     'Ledger': 'What a player\'s Ledger keeps, and for how long.',
     'Immunity': 'Who cannot be a target yet: new characters and players just online.',
     'Payouts': 'How many times a contract pays, and how owed payouts are retried.',
-    'Informant prices': 'What each informant look-up and tip costs, and which account pays.',
+    'Intel prices': 'What each informant look-up and tip costs, and which account pays.',
     'Anonymity fees': 'What staying anonymous costs the placer and the hitman.',
     'Escrow': 'What a reward may never hold, and the stake a hitman may be asked for.',
     'Buyout pricing': 'What a target pays to buy a contract out.',
@@ -3505,7 +3508,7 @@
     { id: 'rewards', label: 'Rewards & payouts', icon: 'sack-dollar' },
     { id: 'completing', label: 'Completing a contract', icon: 'flag-checkered' },
     { id: 'buyouts', label: 'Buyouts', icon: 'hand-holding-dollar' },
-    { id: 'informants', label: 'Informants & tips', icon: 'user-secret' },
+    { id: 'intel', label: 'Intel', icon: 'user-secret' },
     { id: 'police', label: 'Police & city news', icon: 'shield-halved' },
     { id: 'messages', label: 'Phone messages & notifications', icon: 'comment' },
     { id: 'extras', label: 'Roleplay extras', icon: 'masks-theater' },
@@ -4111,11 +4114,11 @@
         + 'is after them, with a chance of an answer. The placer\'s informant lets the placer find out which '
         + 'operative took the contract. The informant tip lets a hitman buy the target\'s rough area on the map. '
         + 'One master switch turns all three off at once, and each has its own switch for whitelisted-job targets.',
-      links: [{ key: 'InformantsEnabled', view: 'features', label: 'Master switch' },
-        { key: 'Informant.Enabled', view: 'features', label: 'Target\'s informant' },
-        { key: 'PlacerInformant.Enabled', view: 'features', label: 'Placer\'s informant' },
-        { key: 'LocationTip.Enabled', view: 'features', label: 'Informant tip' },
-        { key: 'Informant.Cost', view: 'money', label: 'Prices' }] },
+      links: [{ key: 'Intel.Enabled', view: 'features', label: 'Master switch' },
+        { key: 'Intel.Informant.Enabled', view: 'features', label: 'Target\'s informant' },
+        { key: 'Intel.PlacerInformant.Enabled', view: 'features', label: 'Placer\'s informant' },
+        { key: 'Intel.LocationTip.Enabled', view: 'features', label: 'Informant tip' },
+        { key: 'Intel.Informant.Cost', view: 'money', label: 'Prices' }] },
     { title: 'Buyouts', icon: 'hand-holding-dollar',
       text: 'A target can pay to buy out a contract on them, from the app or with the buyout command. The price '
         + 'is the reward times a multiplier, between a least and a most, and never above a cap. A contract a '
@@ -4152,15 +4155,17 @@
   window.CH_ADMIN_HELP = HELP;
 
   /** The help cards in the order the README, config.lua and Features use:
-      the core, Anonymity, the informants, the advisory, the staff tools,
+      the core, Anonymity, the informants and the rest of Intel, the
+      advisory, the staff tools,
       Roleplay and Improvements, each feature in config.lua's order. */
   var HELP_AREA = { 'Anonymity': 1, 'The informants': 2, 'Police advisories': 3, 'The staff freeze': 4,
     'Suspensions and protections': 4, 'Moderators': 4 };
   var HELP_BLOCKS = ['Roleplay.WitnessHeat', 'Roleplay.EmsRelisting', 'Roleplay.CityNews', 'Roleplay.DirtyPayouts',
     'Roleplay.ProofOfIntent', 'Roleplay.Reputation', 'Roleplay.Protection', 'Roleplay.HitOnHitman',
-    'Roleplay.Rumours', 'Roleplay.BurnerPhone', 'Roleplay.InformantNpc', 'Roleplay.NpcPlaces', 'Roleplay.ReasonQuality',
-    'Improvements.TipWarningDelay', 'Improvements.TipLimits', 'Improvements.TipHoldFirst',
-    'Improvements.InformantSecondTry', 'Improvements.TipSafeZones', 'Improvements.GoDark',
+    'Roleplay.BurnerPhone', 'Roleplay.NpcPlaces', 'Roleplay.ReasonQuality',
+    // Intel (server/intel/), right after The informants.
+    'Intel.InPerson', 'Intel.Rumours', 'Intel.WarningDelay', 'Intel.TipLimits', 'Intel.HoldFirst',
+    'Intel.SecondTry', 'Intel.SafeZones', 'Intel.GoDark',
     'Improvements.PlacerRecord', 'Improvements.HitmanHeat', 'Improvements.Tiers', 'Improvements.ContractDecay',
     'Improvements.ProofItems', 'Improvements.SerialScrub', 'Improvements.WeeklyStats',
     'Limits.TargetCooldownAfterCompletionSeconds'];
@@ -4168,6 +4173,7 @@
     var key = String((c.links[0] && c.links[0].key) || '');
     for (var i = 0; i < HELP_BLOCKS.length; i++) {
       if (key === HELP_BLOCKS[i] || key.indexOf(HELP_BLOCKS[i] + '.') === 0) {
+        if (HELP_BLOCKS[i].indexOf('Intel.') === 0) return 2 + (i + 1) / 100;
         return (HELP_BLOCKS[i].indexOf('Roleplay.') === 0 ? 5 : 6) + i / 100;
       }
     }
@@ -6366,7 +6372,7 @@
         + 'card to place a contract on them: the Place form opens with them chosen, and every rule of placing '
         + 'a contract applies. Nothing is offered for an operative found only by description.',
       links: [{ key: 'Roleplay.HitOnHitman.Enabled', view: 'features', label: 'Hit on the hitman' },
-        { key: 'Informant.Enabled', view: 'features', label: 'The target\'s informant' }] });
+        { key: 'Intel.Informant.Enabled', view: 'features', label: 'The target\'s informant' }] });
 
   window.addEventListener('message', function (event) {
     var message = (event && event.data) || {};
@@ -6407,16 +6413,16 @@
   GROUP_INTRO['Roleplay: Reputation'] = 'Trust for a completion scaled by how it was done.';
   GROUP_INTRO['Roleplay: Bodyguards'] = 'A target may hire a bodyguard from On me.';
   GROUP_INTRO['Roleplay: Hit on the hitman'] = 'A target may place a contract on an operative revealed to them.';
-  GROUP_INTRO['Roleplay: Rumours and broker'] = 'New contracts show as rumours until a broker briefs the hitman.';
+  GROUP_INTRO['Intel: Rumours and broker'] = 'New contracts show as rumours until a broker briefs the hitman.';
   GROUP_INTRO['Roleplay: Burner phone'] = 'Placing and accepting need a burner phone item.';
-  GROUP_INTRO['Roleplay: Informant in person'] = 'Informant purchases only beside the informant NPC.';
+  GROUP_INTRO['Intel: Informant in person'] = 'Informant purchases only beside the informant NPC.';
   GROUP_INTRO['Roleplay: Reason quality'] = 'Free-text reasons held to a length and a low-effort word list.';
-  GROUP_INTRO['Improvements: Tip warning delay'] = 'The target hears of an informant tip a random while later.';
-  GROUP_INTRO['Improvements: Tip limits'] = 'One tip per hitman per contract, and doubling prices.';
-  GROUP_INTRO['Improvements: Hold before a tip'] = 'A tip only once the hitman has held the contract a while.';
-  GROUP_INTRO['Improvements: Informant second try'] = 'What the target\'s later look-ups cost.';
-  GROUP_INTRO['Improvements: Tip safe zones'] = 'No tip while the target is inside a safe zone.';
-  GROUP_INTRO['Improvements: Go dark'] = 'A tipped-off target may pay so tips on them find nothing for a while.';
+  GROUP_INTRO['Intel: Tip warning delay'] = 'The target hears of an informant tip a random while later.';
+  GROUP_INTRO['Intel: Tip limits'] = 'One tip per hitman per contract, and doubling prices.';
+  GROUP_INTRO['Intel: Hold before a tip'] = 'A tip only once the hitman has held the contract a while.';
+  GROUP_INTRO['Intel: Informant second try'] = 'What the target\'s later look-ups cost.';
+  GROUP_INTRO['Intel: Tip safe zones'] = 'No tip while the target is inside a safe zone.';
+  GROUP_INTRO['Intel: Go dark'] = 'A tipped-off target may pay so tips on them find nothing for a while.';
   GROUP_INTRO['Improvements: Proof items'] = 'A hitman may finish with an item taken from the target.';
   GROUP_INTRO['Improvements: Serial scrubbing'] = 'An anonymous placer\'s weapon reaches the hitman with a new serial.';
   GROUP_INTRO['Improvements: Weekly stats'] = 'The week\'s totals posted to Discord, counts only.';
@@ -6462,15 +6468,15 @@
   /* ---------- the roleplay features (Config.Roleplay) ---------- */
 
   HELP.push(
-    { title: 'Roleplay: Rumours and the broker', icon: 'user-secret',
+    { title: 'Intel: Rumours and the broker', icon: 'user-secret',
       text: 'Off as shipped. On, a hitman sees a new contract only as a rumour: a rough area and a reward '
         + 'band, with no name, face or Accept. Asking the broker NPC about it, standing beside it, or '
         + 'being briefed by a player on a broker job, shows the whole card and Accept for a while. The '
         + 'NPC moves between its places on a timer. Distances are checked on the server.',
-      links: [{ key: 'Roleplay.Rumours.Enabled', view: 'features', label: 'Rumours on or off' },
-        { key: 'Roleplay.Rumours.Locations', view: 'limits', label: 'Broker places' },
-        { key: 'Roleplay.Rumours.BriefValidMinutes', view: 'timers', label: 'How long a briefing lasts' },
-        { key: 'Roleplay.Rumours.BrokerJobs', view: 'targeting', label: 'Broker jobs' }] },
+      links: [{ key: 'Intel.Rumours.Enabled', view: 'features', label: 'Rumours on or off' },
+        { key: 'Intel.Rumours.Locations', view: 'limits', label: 'Broker places' },
+        { key: 'Intel.Rumours.BriefValidMinutes', view: 'timers', label: 'How long a briefing lasts' },
+        { key: 'Intel.Rumours.BrokerJobs', view: 'targeting', label: 'Broker jobs' }] },
     { title: 'Roleplay: Burner phone', icon: 'mobile-screen',
       text: 'Off as shipped. On, placing, accepting and every contract action need the burner phone item '
         + 'in the inventory, counted on the server. Without one a player is told "You need a burner '
@@ -6478,19 +6484,19 @@
         + 'up on placing or accepting. Sell it through sc-blackmarket (README).',
       links: [{ key: 'Roleplay.BurnerPhone.Enabled', view: 'features', label: 'Burner phone on or off' },
         { key: 'Roleplay.BurnerPhone.Item', view: 'limits', label: 'The item' }] },
-    { title: 'Roleplay: The informant in person', icon: 'user-secret',
+    { title: 'Intel: The informant in person', icon: 'user-secret',
       text: 'Off as shipped. On, every informant purchase (the target\'s, the placer\'s and the tip) is '
         + 'sold only to a buyer standing beside the informant NPC, which moves between its own places. '
         + 'Anywhere else it is refused with "Find the informant first." and nothing is charged.',
-      links: [{ key: 'Roleplay.InformantNpc.Enabled', view: 'features', label: 'Informant in person' },
-        { key: 'Roleplay.InformantNpc.Locations', view: 'limits', label: 'Informant places' }] },
+      links: [{ key: 'Intel.InPerson.Enabled', view: 'features', label: 'Informant in person' },
+        { key: 'Intel.InPerson.Locations', view: 'limits', label: 'Informant places' }] },
     { title: 'Roleplay: Broker and informant placed from the panel', icon: 'location-dot',
       text: 'Off as shipped. On, the broker and the informant NPC stand where staff placed them in Locations, '
         + 'Broker and informant places (stand there in game and press Use my position), rotating among '
         + 'those as their RotateHours say. Their Locations lists in the settings stay the defaults: they '
         + 'are used while no place is set, and again after Reset to config or with this off.',
       links: [{ key: 'Roleplay.NpcPlaces.Enabled', view: 'features', label: 'Placed from the panel on or off' },
-        { key: 'Roleplay.Rumours.Locations', view: 'limits', label: 'Broker defaults' }] },
+        { key: 'Intel.Rumours.Locations', view: 'limits', label: 'Broker defaults' }] },
     { title: 'Roleplay: Reason quality', icon: 'pen',
       text: 'Off as shipped. On, a typed reason needs a least length and number of words, on top of the '
         + 'other reason rules. A reason with a low-effort phrase (rdm, idk, test) is refused, or placed '
@@ -6502,47 +6508,47 @@
   /* ---------- the improvements (Config.Improvements) ---------- */
 
   HELP.push(
-    { title: 'Improvements: Tip warning delay', icon: 'clock',
+    { title: 'Intel: Tip warning delay', icon: 'clock',
       text: 'Off as shipped. On, the target of an informant tip is told someone knows their rough area '
         + 'a random while after the tip, between the shortest and longest delay, instead of at once. '
         + 'A warning still waiting survives a restart and is sent late rather than lost. The time on '
         + 'the target\'s card is rounded to 5 minutes, so it does not give the delay away.',
-      links: [{ key: 'Improvements.TipWarningDelay.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Improvements.TipWarningDelay.MinSeconds', view: 'timers', label: 'Shortest delay' },
-        { key: 'Improvements.TipWarningDelay.MaxSeconds', view: 'timers', label: 'Longest delay' }] },
-    { title: 'Improvements: Tip limits', icon: 'scale-balanced',
+      links: [{ key: 'Intel.WarningDelay.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Intel.WarningDelay.MinSeconds', view: 'timers', label: 'Shortest delay' },
+        { key: 'Intel.WarningDelay.MaxSeconds', view: 'timers', label: 'Longest delay' }] },
+    { title: 'Intel: Tip limits', icon: 'scale-balanced',
       text: 'Off as shipped. On, on top of the tips per contract and the wait between them: each hitman '
         + 'may buy one tip per contract, and/or each further tip on a contract costs twice the one '
         + 'before, up to the most a tip costs. The card quotes the real next price, and a price that '
         + 'moved is refused, never charged.',
-      links: [{ key: 'Improvements.TipLimits.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Improvements.TipLimits.OnePerHitman', view: 'features', label: 'One per hitman' },
-        { key: 'Improvements.TipLimits.PriceDoubling', view: 'features', label: 'Price doubling' },
-        { key: 'Improvements.TipLimits.MaxCost', view: 'money', label: 'Most a tip costs' }] },
-    { title: 'Improvements: Hold before a tip', icon: 'hourglass',
+      links: [{ key: 'Intel.TipLimits.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Intel.TipLimits.OnePerHitman', view: 'features', label: 'One per hitman' },
+        { key: 'Intel.TipLimits.PriceDoubling', view: 'features', label: 'Price doubling' },
+        { key: 'Intel.TipLimits.MaxCost', view: 'money', label: 'Most a tip costs' }] },
+    { title: 'Intel: Hold before a tip', icon: 'hourglass',
       text: 'Off as shipped. On, a hitman can buy a tip only once they have held the contract for the '
         + 'minutes set. Before that the card and the refusal say how long is left; nothing is charged.',
-      links: [{ key: 'Improvements.TipHoldFirst.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Improvements.TipHoldFirst.MinHeldMinutes', view: 'timers', label: 'Minutes held' }] },
-    { title: 'Improvements: Informant second try', icon: 'user-secret',
+      links: [{ key: 'Intel.HoldFirst.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Intel.HoldFirst.MinHeldMinutes', view: 'timers', label: 'Minutes held' }] },
+    { title: 'Intel: Informant second try', icon: 'user-secret',
       text: 'Off as shipped. On, the target\'s look-ups after the first on a contract cost this share of '
         + 'the informant\'s price (100 is the same price). The chance stays the informant\'s own.',
-      links: [{ key: 'Improvements.InformantSecondTry.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Improvements.InformantSecondTry.SecondTryCostPercent', view: 'money', label: 'Later price' },
-        { key: 'Informant.RevealChancePercent', view: 'limits', label: 'The chance' }] },
-    { title: 'Improvements: Tip safe zones', icon: 'shield',
+      links: [{ key: 'Intel.SecondTry.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Intel.SecondTry.SecondTryCostPercent', view: 'money', label: 'Later price' },
+        { key: 'Intel.Informant.RevealChancePercent', view: 'limits', label: 'The chance' }] },
+    { title: 'Intel: Tip safe zones', icon: 'shield',
       text: 'Off as shipped. On, no tip is sold while the target stands inside one of the zones '
         + '(x, y, radius, name). The hitman is told only "Your informant can\'t place them right now.", '
         + 'never why or where, and nothing is charged.',
-      links: [{ key: 'Improvements.TipSafeZones.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Improvements.TipSafeZones.Zones', view: 'targeting', label: 'The zones' }] },
-    { title: 'Improvements: Go dark', icon: 'eye-slash',
+      links: [{ key: 'Intel.SafeZones.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Intel.SafeZones.Zones', view: 'targeting', label: 'The zones' }] },
+    { title: 'Intel: Go dark', icon: 'eye-slash',
       text: 'Off as shipped. On, a target who was told of a tip can pay from On me to go dark. For the '
         + 'minutes set, every tip bought on them finds nothing: the hitman is told the informant could '
         + 'not find them and gets the price back in full. Nothing names anybody.',
-      links: [{ key: 'Improvements.GoDark.Enabled', view: 'features', label: 'On or off' },
-        { key: 'Improvements.GoDark.Cost', view: 'money', label: 'The price' },
-        { key: 'Improvements.GoDark.Minutes', view: 'timers', label: 'How long' }] });
+      links: [{ key: 'Intel.GoDark.Enabled', view: 'features', label: 'On or off' },
+        { key: 'Intel.GoDark.Cost', view: 'money', label: 'The price' },
+        { key: 'Intel.GoDark.Minutes', view: 'timers', label: 'How long' }] });
 
   /* ---------- board and progression improvements (server/imp_*.lua) ---------- */
 

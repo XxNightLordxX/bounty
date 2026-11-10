@@ -23,7 +23,7 @@
 ---             pin, until the job ends (moved with the pin);
 ---   * disposal the hitman disposing of a body (server/disposal.lua): the
 ---             body, the vehicle's spawn spot and the drop-off.
---- The informant tip (server/locationtip.lua) and the meeting point
+--- The informant tip (server/intel/tip.lua) and the meeting point
 --- (server/meeting.lua) keep their own events, which the client draws with
 --- the same system. Every marker is a fixed point the server recorded, never
 --- anybody's live position, and none is ever sent to the target or to a

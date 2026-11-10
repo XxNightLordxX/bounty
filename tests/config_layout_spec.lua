@@ -259,6 +259,34 @@ local function run(text, global, name)
     return rawget(env, global)
 end
 
+--- The config as it stood before step 3g (one Intel section, server/intel/):
+--- every block Config.Intel took in put back where it was, with the values
+--- it has now, so the history comparisons below hold every value to the one
+--- it had. The new names are the business of intel_engine_spec.
+local INTEL_FROM = {
+    { 'Enabled', nil, 'InformantsEnabled' },
+    { 'Informant', nil, 'Informant' }, { 'PlacerInformant', nil, 'PlacerInformant' },
+    { 'LocationTip', nil, 'LocationTip' },
+    { 'WarningDelay', 'Improvements', 'TipWarningDelay' }, { 'TipLimits', 'Improvements', 'TipLimits' },
+    { 'HoldFirst', 'Improvements', 'TipHoldFirst' }, { 'SecondTry', 'Improvements', 'InformantSecondTry' },
+    { 'SafeZones', 'Improvements', 'TipSafeZones' }, { 'GoDark', 'Improvements', 'GoDark' },
+    { 'InPerson', 'Roleplay', 'InformantNpc' }, { 'Rumours', 'Roleplay', 'Rumours' },
+}
+local function beforeIntel(config)
+    local intel = config.Intel
+    if type(intel) ~= 'table' then return config end
+    for _, move in ipairs(INTEL_FROM) do
+        local home = move[2] and config[move[2]] or config
+        if move[2] and type(home) ~= 'table' then
+            home = {}
+            config[move[2]] = home
+        end
+        home[move[3]] = intel[move[1]]
+    end
+    config.Intel = nil
+    return config
+end
+
 local function file(path)
     local handle = assert(io.open(path, 'r'))
     local text = handle:read('a')
@@ -317,7 +345,7 @@ describe('the configuration as one short file', function()
     it('keeps every setting with the value it had, but the three meant to change', function()
         if #old == 0 then error('no history to compare with', 0) end
         local was = run(old, 'Config', 'config.lua@' .. BEFORE:sub(1, 7))
-        local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
+        local now = beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua'))
         local seen = {}
         for path, pair in pairs(differences(was, now)) do
             if ADDED[path] ~= nil then
@@ -355,7 +383,7 @@ describe('the configuration as one short file', function()
         if pipe then pipe:close() end
         truthy(#text > 10000, 'git show ' .. REORDERED_FROM .. ' needs the repository history')
         local was = run(text, 'Config', 'config.lua@' .. REORDERED_FROM)
-        local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
+        local now = beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua'))
         local off = {}
         for path, pair in pairs(differences(was, now)) do
             -- And settings added since, each new and shipped as ADDED says.
@@ -475,14 +503,17 @@ describe('the configuration as one short file', function()
         -- And the payroll's PaySuspended switch and PayrollPerDayMax bound.
         -- And one table per target class (step 3f): the anonymity and
         -- informant switches of both classes, three new for every target.
-        truthy(lines < 874, 'config.lua is ' .. lines .. ' lines')
+        -- And one Intel section (step 3g): its header and the master
+        -- switch's own three-line table, every block it took in moved, not
+        -- added.
+        truthy(lines < 880, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and
         -- Improvements (ui/admin.js featureRank).
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: CORE', 'FEATURES: ANONYMITY',
-            'FEATURES: INFORMANTS', 'FEATURES: ADVISORY', 'STAFF AND PERMISSIONS',
+            'FEATURES: INTEL', 'FEATURES: ADVISORY', 'STAFF AND PERMISSIONS',
             'ROLEPLAY', 'IMPROVEMENTS', 'ORGANISATION', 'ADVANCED AND DEVELOPER' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')

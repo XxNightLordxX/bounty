@@ -473,7 +473,7 @@
     // The tiered board (Config.Improvements.Tiers). Nothing was taken.
     tier_locked: 'This contract is in a tier above your level. Nothing was taken. '
       + 'Complete more contracts to reach it.',
-    // The informant tip (server/locationtip.lua). Nothing was charged for any.
+    // The informant tip (server/intel/tip.lua). Nothing was charged for any.
     tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
       + 'Nothing was taken.',
     tip_cooldown: 'You bought a tip on this contract a moment ago. Try again later. '
@@ -2531,7 +2531,7 @@
     return box;
   }
 
-  /* ---------- the informant tip (server/locationtip.lua) ----------
+  /* ---------- the informant tip (server/intel/tip.lua) ----------
      A hitman holding a contract buys the rough area its target was in when
      they bought it: a red circle on their map, never the place itself. The
      button is tapped twice within three seconds, as staff's money buttons
@@ -2620,7 +2620,7 @@
     if (!rules) { return null; }
     var own = contract.locationTip || null;
     // The next tip's own price on this contract, where it differs from the
-    // board's (Config.Improvements.TipLimits): quoted, and echoed back.
+    // board's (Config.Intel.TipLimits): quoted, and echoed back.
     if (own && typeof own.cost === 'number') {
       rules = Object.assign({}, rules, { cost: own.cost });
     }
@@ -2649,8 +2649,8 @@
       box.appendChild(gps);
     }
 
-    // Turned off by the server (Config.LocationTip.Enabled, or every
-    // informant feature with Config.InformantsEnabled): no button at all. A
+    // Turned off by the server (Config.Intel.LocationTip.Enabled, or every
+    // informant feature with Config.Intel.Enabled): no button at all. A
     // tip already bought stays on the map until it runs out, and says so.
     // Off for this contract alone (a target on a whitelisted job reads its
     // own switch, Config.TargetClasses.whitelisted.LocationTip): the same.
@@ -2762,7 +2762,7 @@
     return box;
   }
 
-  /* Going dark (Config.Improvements.GoDark): a target told of a tip pays so
+  /* Going dark (Config.Intel.GoDark): a target told of a tip pays so
      that tips on them find nothing for a while. Two taps, the price echoed;
      or until when they are dark. */
   var darkArmed = null;   // the contract id whose Go dark waits for its second tap
@@ -3131,7 +3131,7 @@
       };
       row.appendChild(top);
 
-      // The placer's informant (Config.PlacerInformant): only where the
+      // The placer's informant (Config.Intel.PlacerInformant): only where the
       // server sells it and somebody is on the contract, and drawn disabled,
       // with why, once it cannot be pressed.
       var lookUp = placerInformantRow(contract);
@@ -3192,7 +3192,7 @@
     if (contract.role === 'target') {
       // Somebody tipped off about where they were: first, it is about them now.
       if (contract.tippedAt) { row.appendChild(tipToldNotice(contract.tippedAt)); }
-      // Going dark, where the server sells it (Config.Improvements.GoDark).
+      // Going dark, where the server sells it (Config.Intel.GoDark).
       if (contract.goDark) { row.appendChild(goDarkBox(contract)); }
       appendBuyout(row, contract);
       // Their bodyguard job and the hit on a revealed operative, where the
@@ -6487,7 +6487,7 @@
   function buyInformant(contract) {
     var rules = settings().informant;
     if (!rules) { return say('This server does not run informants.'); }
-    // A later look-up's own price (Config.Improvements.InformantSecondTry).
+    // A later look-up's own price (Config.Intel.SecondTry).
     if (typeof contract.informantCost === 'number') {
       rules = Object.assign({}, rules, { cost: contract.informantCost });
     }
@@ -8365,7 +8365,7 @@
       view.appendChild(el('div', 'empty is-refusal', burnerText(data.burnerItem)));
       return;
     }
-    // A broker player's tools (Config.Roleplay.Rumours), above the board.
+    // A broker player's tools (Config.Intel.Rumours), above the board.
     if (data && data.rumours && data.rumours.broker) { view.appendChild(brokerPanel()); }
     var contracts = asList(data && data.contracts);
     if (!data || contracts.length === 0) {
@@ -8395,7 +8395,7 @@
     }
   }
 
-  /* ---------- rumours and the broker (Config.Roleplay.Rumours) ----------
+  /* ---------- rumours and the broker (Config.Intel.Rumours) ----------
 
      A contract this player is not briefed on comes as a rumour: a rough
      area and a reward band, no name, no face, no Accept. Ask the broker

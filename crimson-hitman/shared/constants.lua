@@ -253,11 +253,11 @@ CH.ERR = {
     --- (Config.TargetClasses.default.AllowAnonymousPlacer / AllowAnonymousHitman). Refused
     --- before anything is taken: no fee, no escrow, no stake, no row.
     ANONYMITY_OFF        = 'anonymity_off',
-    --- An informant tip (Config.LocationTip) asked for while the target is
+    --- An informant tip (Config.Intel.LocationTip) asked for while the target is
     --- not in the city: there is nobody to place on the map. Nothing was
     --- charged.
     TIP_TARGET_AWAY      = 'tip_target_away',
-    --- An informant tip asked for inside Config.LocationTip.CooldownMinutes
+    --- An informant tip asked for inside Config.Intel.LocationTip.CooldownMinutes
     --- of this hitman's last one on the contract. Sent with { untilAt =
     --- os.time() it is sold again, retryAfter = seconds }. Nothing was charged.
     TIP_COOLDOWN         = 'tip_cooldown',
@@ -283,7 +283,7 @@ CH.ERR = {
     --- whitelisted job: by the flag the contract recorded, or a barred job
     --- they hold now. Not sold to them at all; their buyout stays.
     INFORMANT_PROTECTED  = 'informant_protected',
-    --- The placer's informant inside Config.PlacerInformant.CooldownMinutes
+    --- The placer's informant inside Config.Intel.PlacerInformant.CooldownMinutes
     --- of their last look-up on the contract, with { minutes } to wait.
     INFORMANT_COOLDOWN   = 'informant_cooldown',
     --- A call would show a number an anonymous party paid to keep hidden,
@@ -520,7 +520,7 @@ CH.ERR = {
     --- Config.Roleplay.BurnerPhone: a contract action without the burner
     --- phone item in the inventory. Nothing was taken or changed.
     NEED_BURNER      = 'need_burner',
-    --- Config.Roleplay.Rumours: Accept on a contract this hitman has not
+    --- Config.Intel.Rumours: Accept on a contract this hitman has not
     --- been briefed on by the broker (or the briefing ran out).
     NOT_BRIEFED      = 'not_briefed',
     --- Asked the broker about a rumour away from the broker NPC.
@@ -529,16 +529,16 @@ CH.ERR = {
     NOT_BROKER       = 'not_broker',
     --- The person a broker player picked is no longer within the radius.
     BROKER_TOO_FAR   = 'broker_too_far',
-    --- Config.Roleplay.InformantNpc: an informant purchase away from the
+    --- Config.Intel.InPerson: an informant purchase away from the
     --- informant NPC. Nothing was charged.
     FIND_INFORMANT   = 'find_informant',
 
-    -- Informant fairness (server/imp_tips.lua, Config.Improvements), each
+    -- Informant fairness (server/intel/rules.lua, Config.Intel), each
     -- off as shipped. Nothing was charged for any but TIP_NOT_FOUND, whose
     -- price was given back.
-    --- TipHoldFirst: the hitman has not held the contract long enough.
+    --- HoldFirst: the hitman has not held the contract long enough.
     TIP_HOLD         = 'tip_hold',
-    --- TipSafeZones: the target cannot be placed now (never why or where).
+    --- SafeZones: the target cannot be placed now (never why or where).
     TIP_CANT_PLACE   = 'tip_cant_place',
     --- GoDark: the target went dark; the tip's price was given back.
     TIP_NOT_FOUND    = 'tip_not_found',

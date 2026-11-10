@@ -49,7 +49,7 @@ panel's **Features** section (live, kept across restarts) and in
 | Feature | Switch | Shipped |
 |---|---|---|
 | Anonymity | `Config.TargetClasses.default.AllowAnonymousPlacer`, `AllowAnonymousHitman` (and `Config.TargetClasses.whitelisted`) | off |
-| Informants (target's, placer's, the tip) | `Config.InformantsEnabled`, then `Config.Informant.Enabled`, `Config.PlacerInformant.Enabled`, `Config.LocationTip.Enabled`, per target class (`Config.TargetClasses`) | off |
+| Informants (target's, placer's, the tip) | `Config.Intel.Enabled`, then `Config.Intel.Informant.Enabled`, `Config.Intel.PlacerInformant.Enabled`, `Config.Intel.LocationTip.Enabled`, per target class (`Config.TargetClasses`) | off |
 | Law enforcement advisory | `Config.Advisory.Enabled` | on |
 | Staff tools (app pause, daily summary, alerts) | `Config.Holds.AppPaused`, `Config.Staff.DailySummary`, `Config.Staff.Alert*`, `Config.Alerts.ToDiscord` | pause and summary off, alerts on |
 | Roleplay (12 features) | `Config.Roleplay.<Feature>.Enabled` | all off |
@@ -492,16 +492,39 @@ by who the target is lives in one table per target class,
 on a whitelisted job (read by one resolver, `Util.targetRule`). An anonymous party is
 *Anonymous* to every player; staff need `crimson.identity` to see who it is.
 
-### Informants
+### Intel
 
-Three paid look-ups, each off as shipped, all behind `Config.InformantsEnabled`:
-the **target's** (`Config.Informant`: who is after me, with a chance of an
-answer), the **placer's** (`Config.PlacerInformant`: which operative took it)
-and the hitman's **tip** (`Config.LocationTip`: the target's rough area on the
-map, and the target is told). Each is sold where its own `Enabled` is on and
-its switch for the target's class is (`Config.TargetClasses.default` /
-`.whitelisted` `.Informant`, `.PlacerInformant`, `.LocationTip`). The informant improvements below refine
-them.
+Everything a player can learn for money lives under `Config.Intel` and one
+admin screen group, **Intel**. Three paid look-ups, each off as shipped, all
+behind `Config.Intel.Enabled`: the **target's** (`Config.Intel.Informant`:
+who is after me, with a chance of an answer), the **placer's**
+(`Config.Intel.PlacerInformant`: which operative took it) and the hitman's
+**tip** (`Config.Intel.LocationTip`: the target's rough area on the map, and
+the target is told). Each is sold where its own `Enabled` is on and its
+switch for the target's class is (`Config.TargetClasses.default` /
+`.whitelisted` `.Informant`, `.PlacerInformant`, `.LocationTip`).
+
+Every purchase runs through one engine (`server/intel/engine.lua`): one check
+(who may buy it, the switches and the target's class, a staff hold, the
+contract still open, the product's limits, waits and price), the price the
+page quoted held to the price now, the charge last, and the price given back
+in full, under the product's own audit action, if anything stops the purchase
+after the charge (the contract ending, a staff hold, an operative leaving, a
+read that failed). A refund that cannot be paid at once is owed (the
+informants, going dark) or left for staff (the tip), as before.
+
+All off as shipped, each `Config.Intel.<Feature>.Enabled`:
+
+| Feature | What it does |
+|---|---|
+| **Tip warning delay** (`WarningDelay`) | A tipped target is told a random while later (`MinSeconds`..`MaxSeconds`); the time on their card is rounded to 5 minutes; survives a restart |
+| **Tip limits** (`TipLimits`) | One tip per hitman per contract, and/or each further tip costs twice the last, up to `MaxCost` |
+| **Hold before a tip** (`HoldFirst`) | A tip only once the hitman has held the contract `MinHeldMinutes` |
+| **Informant second try** (`SecondTry`) | The target's later look-ups cost `SecondTryCostPercent` of the price |
+| **Tip safe zones** (`SafeZones`) | No tip while the target is inside a zone (`'x, y, radius, name'`); the hitman is told only that the informant can't place them |
+| **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back. Sold only while tips on that contract are (`Config.Intel.Enabled`, `Config.Intel.LocationTip.Enabled`, and `Config.TargetClasses.whitelisted.LocationTip` for a whitelisted-job target); a window already paid for holds, and stays on the card, to its end. The window stands still while its contract is on hold (a staff freeze, the restart hold and the restart, the app pause), as an informant tip's showing and wait do. Kept across a restart only once paid: a purchase the store could not keep is refunded, and a window that has passed is cleared from the store on the minute |
+| **The informant in person** (`InPerson`) | Every informant purchase only beside the informant NPC, which moves between its places |
+| **Rumours and a broker** (`Rumours`) | New contracts show only as rumours (area, reward band) until the broker NPC, or a player on a broker job, briefs the hitman for `BriefValidMinutes` |
 
 ### Advisory
 
@@ -538,24 +561,16 @@ All off as shipped, each `Config.Roleplay.<Feature>.Enabled`.
 | **Reputation earned in character** (`Reputation`) | Progression trust for a completion is scaled by how it was done (thread, meeting, handover, no witnesses), up to `MaxFactor` |
 | **Bodyguards** (`Protection`) | A target hires protection from On me (reward held, pin where they stand); a guard takes it from the board. Ended without a completion: the guard is paid; completed anyway: their share (`PayOnCompletionPercent`), the rest back. Switched off mid-job, a live job carries on: the target can still move its pin or cancel it, and its guard keeps the Protection tab with Set GPS |
 | **Hit on the hitman** (`HitOnHitman`) | A target whose informant named an operative may place a contract on them, under every placing rule |
-| **Rumours and a broker** (`Rumours`) | New contracts show only as rumours (area, reward band) until the broker NPC, or a player on a broker job, briefs the hitman for `BriefValidMinutes` |
 | **Burner phone** (`BurnerPhone`) | Placing, accepting and every contract action (turning contract decay off included) need the item; it may be used up on placing or accepting. Sell it through sc-blackmarket |
-| **The informant in person** (`InformantNpc`) | Every informant purchase only beside the informant NPC, which moves between its places |
 | **Broker and informant placed from the panel** (`NpcPlaces`) | Staff place the broker and the informant in the admin panel's Locations by standing there (Use my position, read by the server); each rotates among the places set as its `RotateHours` says. Kept by the store with the other spots staff set, on every backend. The `Locations` lists stay the defaults: used while none is set, after Reset to config, and with this off |
 | **Reason quality** (`ReasonQuality`) | A typed reason needs a least length and number of words; low-effort phrases are refused or placed and sent to Needs review |
 
 ### Improvements
 
-All off as shipped, each `Config.Improvements.<Feature>.Enabled`.
+All off as shipped, each `Config.Improvements.<Feature>.Enabled`. The informant and tip rules are Intel's (above).
 
 | Feature | What it does |
 |---|---|
-| **Tip warning delay** (`TipWarningDelay`) | A tipped target is told a random while later (`MinSeconds`..`MaxSeconds`); the time on their card is rounded to 5 minutes; survives a restart |
-| **Tip limits** (`TipLimits`) | One tip per hitman per contract, and/or each further tip costs twice the last, up to `MaxCost` |
-| **Hold before a tip** (`TipHoldFirst`) | A tip only once the hitman has held the contract `MinHeldMinutes` |
-| **Informant second try** (`InformantSecondTry`) | The target's later look-ups cost `SecondTryCostPercent` of the price |
-| **Tip safe zones** (`TipSafeZones`) | No tip while the target is inside a zone (`'x, y, radius, name'`); the hitman is told only that the informant can't place them |
-| **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back. Sold only while tips on that contract are (`Config.InformantsEnabled`, `Config.LocationTip.Enabled`, and `Config.TargetClasses.whitelisted.LocationTip` for a whitelisted-job target); a window already paid for holds, and stays on the card, to its end. The window stands still while its contract is on hold (a staff freeze, the restart hold and the restart, the app pause), as an informant tip's showing and wait do. Kept across a restart only once paid: a purchase the store could not keep is refunded, and a window that has passed is cleared from the store on the minute |
 | **Placer record** (`PlacerRecord`) | A board card shows its placer's placed / paid out / cancelled counts over `LookbackDays`, never who; anonymous placers in bands with `ShowForAnonymous` |
 | **Hitman heat** (`HitmanHeat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` (every officer alike, a known hitman who holds a police job too) |
 | **Tiered board** (`Tiers`) | Bigger rewards locked to a progression level (needs `Config.Progression.Enabled`) |
@@ -1095,37 +1110,74 @@ What placing or accepting anonymously costs, and the rules that differ by the ta
 | `Config.TargetClasses.whitelisted.ShowOperativeNames` | `true` | such a target sees a named operative's name |
 | `Config.TargetClasses.whitelisted.ShowPlacerOnBoard` | `false` | the same, on such a contract |
 
-### Features: Informants
+### Features: Intel
 
-Three paid look-ups: the target's (who is after me), the placer's (who took it) and the hitman's tip (the target's rough area). Each ships off.
+Everything a player can learn for money, in one place (README, Intel): three paid look-ups, the target's (who is after me), the placer's (who took it) and the hitman's tip (the target's rough area), the rules over them, going dark, the informant in person and the rumours. Each ships off.
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.InformantsEnabled` | `true` | master switch; on, each feature's own switch decides |
-| `Config.Informant.Enabled` | `false` | a target may pay to find out who is after them |
-| `Config.Informant.Cost` | `25000` | price of one look-up, paid win or lose; 0 = free |
-| `Config.Informant.Account` | `'bank'` | 'cash' \| 'bank' |
-| `Config.Informant.RevealMode` | `'name'` | 'name' \| 'description' |
-| `Config.Informant.RevealChancePercent` | `10` | chance one look-up finds out who it is, 0-100 |
-| `Config.Informant.ProximityRadius` | `120.0` | metres that count as near (an idle hold's clock) |
-| `Config.Informant.RerollLockMinutes` | `30` | the same pick again this soon repeats the answer, free |
-| `Config.Informant.MaxPurchasesPerContract` | `2` | look-ups per target per contract, both kinds |
-| `Config.PlacerInformant.Enabled` | `false` | the placer may pay to find out who took it |
-| `Config.PlacerInformant.Cost` | `25000` | price of one look-up, paid win or lose; 0 = free |
-| `Config.PlacerInformant.Account` | `'bank'` | 'cash' \| 'bank' |
-| `Config.PlacerInformant.RevealChancePercent` | `20` | chance one look-up names the operative, 0-100 |
-| `Config.PlacerInformant.AlertChancePercent` | `20` | chance a named operative is told, 0-100 |
-| `Config.PlacerInformant.RevealMode` | `'name'` | 'name' \| 'description' |
-| `Config.PlacerInformant.MaxPurchasesPerContract` | `2` | look-ups per placer per contract |
-| `Config.PlacerInformant.CooldownMinutes` | `10` | wait between two look-ups |
-| `Config.LocationTip.Enabled` | `false` | a hitman on a contract may buy the target's rough area |
-| `Config.LocationTip.Cost` | `25000` | price; 0 = free |
-| `Config.LocationTip.Account` | `'bank'` | 'cash' \| 'bank' |
-| `Config.LocationTip.RadiusMeters` | `350` | metres; the area shown is twice this across |
-| `Config.LocationTip.ShowMinutes` | `10` | minutes the area stays on the hitman's map |
-| `Config.LocationTip.CooldownMinutes` | `10` | minutes between two tips on one contract, by anybody |
-| `Config.LocationTip.MaxPurchasesPerContract` | `3` | tips per contract, all its hitmen together |
-| `Config.LocationTip.NotifyTarget` | `true` | tell the target someone knows their rough area |
+| `Config.Intel.Enabled` | `true` | master switch over the three look-ups; on, each one's own switch decides |
+| `Config.Intel.Informant.Enabled` | `false` | a target may pay to find out who is after them |
+| `Config.Intel.Informant.Cost` | `25000` | price of one look-up, paid win or lose; 0 = free |
+| `Config.Intel.Informant.Account` | `'bank'` | 'cash' \| 'bank' |
+| `Config.Intel.Informant.RevealMode` | `'name'` | 'name' \| 'description' |
+| `Config.Intel.Informant.RevealChancePercent` | `10` | chance one look-up finds out who it is, 0-100 |
+| `Config.Intel.Informant.ProximityRadius` | `120.0` | metres that count as near (an idle hold's clock) |
+| `Config.Intel.Informant.RerollLockMinutes` | `30` | the same pick again this soon repeats the answer, free |
+| `Config.Intel.Informant.MaxPurchasesPerContract` | `2` | look-ups per target per contract, both kinds |
+| `Config.Intel.PlacerInformant.Enabled` | `false` | the placer may pay to find out who took it |
+| `Config.Intel.PlacerInformant.Cost` | `25000` | price of one look-up, paid win or lose; 0 = free |
+| `Config.Intel.PlacerInformant.Account` | `'bank'` | 'cash' \| 'bank' |
+| `Config.Intel.PlacerInformant.RevealChancePercent` | `20` | chance one look-up names the operative, 0-100 |
+| `Config.Intel.PlacerInformant.AlertChancePercent` | `20` | chance a named operative is told, 0-100 |
+| `Config.Intel.PlacerInformant.RevealMode` | `'name'` | 'name' \| 'description' |
+| `Config.Intel.PlacerInformant.MaxPurchasesPerContract` | `2` | look-ups per placer per contract |
+| `Config.Intel.PlacerInformant.CooldownMinutes` | `10` | wait between two look-ups |
+| `Config.Intel.LocationTip.Enabled` | `false` | a hitman on a contract may buy the target's rough area |
+| `Config.Intel.LocationTip.Cost` | `25000` | price; 0 = free |
+| `Config.Intel.LocationTip.Account` | `'bank'` | 'cash' \| 'bank' |
+| `Config.Intel.LocationTip.RadiusMeters` | `350` | metres; the area shown is twice this across |
+| `Config.Intel.LocationTip.ShowMinutes` | `10` | minutes the area stays on the hitman's map |
+| `Config.Intel.LocationTip.CooldownMinutes` | `10` | minutes between two tips on one contract, by anybody |
+| `Config.Intel.LocationTip.MaxPurchasesPerContract` | `3` | tips per contract, all its hitmen together |
+| `Config.Intel.LocationTip.NotifyTarget` | `true` | tell the target someone knows their rough area |
+| `Config.Intel.WarningDelay.Enabled` | `false` | the target's tip notice waits a random while |
+| `Config.Intel.WarningDelay.MinSeconds` | `60` | shortest wait (s) |
+| `Config.Intel.WarningDelay.MaxSeconds` | `300` | longest wait (s) |
+| `Config.Intel.TipLimits.Enabled` | `false` | the extra tip limits below apply |
+| `Config.Intel.TipLimits.OnePerHitman` | `true` | each hitman buys one tip per contract |
+| `Config.Intel.TipLimits.PriceDoubling` | `false` | each further tip on a contract costs twice the last |
+| `Config.Intel.TipLimits.MaxCost` | `200000` | the most a doubled tip costs ($) |
+| `Config.Intel.HoldFirst.Enabled` | `false` | a tip only once the contract was held a while |
+| `Config.Intel.HoldFirst.MinHeldMinutes` | `10` | minutes the hitman must have held it |
+| `Config.Intel.SecondTry.Enabled` | `false` | the target's later look-ups cost differently |
+| `Config.Intel.SecondTry.SecondTryCostPercent` | `50` | % of Intel.Informant.Cost after the first |
+| `Config.Intel.SafeZones.Enabled` | `false` | no tip while the target is inside one of Zones |
+| `Config.Intel.SafeZones.Zones` | `{}` | 'x, y, radius, name', e.g. '300, -590, 80, Pillbox' |
+| `Config.Intel.GoDark.Enabled` | `false` | a tipped-off target may pay to go dark |
+| `Config.Intel.GoDark.Cost` | `50000` | price; 0 = free |
+| `Config.Intel.GoDark.Account` | `'bank'` | 'cash' \| 'bank' |
+| `Config.Intel.GoDark.Minutes` | `30` | tips bought on them this long find nothing |
+| `Config.Intel.InPerson.Enabled` | `false` | informant purchases only beside the informant NPC |
+| `Config.Intel.InPerson.Radius` | `5.0` | metres from the informant that count |
+| `Config.Intel.InPerson.Locations` | `{ '374.2, -827.4, 29.3, 180.0', '-1394.0, -592.0, 30.3, 120.0', '1984.0, 3054.0, 47.2, 240.0' }` | where the informant stands, one at a time |
+| `Config.Intel.InPerson.RotateHours` | `3` | the NPC moves to the next place this often |
+| `Config.Intel.InPerson.Model` | `'a_m_y_hipster_01'` | the informant NPC's ped model |
+| `Config.Intel.InPerson.Scenario` | `'WORLD_HUMAN_LEANING'` | what the NPC does while standing |
+| `Config.Intel.InPerson.Blip` | `false` | show the informant on the map |
+| `Config.Intel.Rumours.Enabled` | `false` | the board shows new contracts as rumours only |
+| `Config.Intel.Rumours.AreaMode` | `'district'` | 'district' (target's area) \| 'zones' (from Zones) |
+| `Config.Intel.Rumours.Zones` | `{ 'the city', 'the south side', 'the docks', … 5 in all }` | area names when AreaMode = 'zones' |
+| `Config.Intel.Rumours.Districts` | `{ '200, -900, Legion Square', '-1300, -1400, Vespucci', '-1500, -450, Del Perro', … 12 in all }` | 'x, y, name': the nearest names the target's area |
+| `Config.Intel.Rumours.BandPercent` | `25` | reward shown as a band this many % either side |
+| `Config.Intel.Rumours.Radius` | `5.0` | metres from the broker (NPC or player) that count |
+| `Config.Intel.Rumours.BriefValidMinutes` | `30` | a briefing unlocks a contract for this long |
+| `Config.Intel.Rumours.Locations` | `{ '-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0', '-56.5, -1752.4, 29.4, 50.0' }` | where the broker NPC stands, one at a time |
+| `Config.Intel.Rumours.RotateHours` | `4` | the NPC moves to the next place this often |
+| `Config.Intel.Rumours.Model` | `'g_m_m_armboss_01'` | the broker NPC's ped model |
+| `Config.Intel.Rumours.Scenario` | `'WORLD_HUMAN_SMOKING'` | what the NPC does while standing |
+| `Config.Intel.Rumours.Blip` | `false` | show the broker on the map |
+| `Config.Intel.Rumours.BrokerJobs` | `{}` | jobs whose players brief from the app: { broker = true } |
 | `Config.TargetClasses.whitelisted.Informant` | `false` | such a target may buy the target's informant |
 | `Config.TargetClasses.whitelisted.PlacerInformant` | `false` | the placer of such a contract may buy the placer's informant |
 | `Config.TargetClasses.whitelisted.LocationTip` | `false` | a hitman on such a contract may buy an informant tip |
@@ -1228,31 +1280,11 @@ Optional roleplay features, each its own block and each off as shipped (README, 
 | `Config.Roleplay.Protection.PayOnCompletionPercent` | `25` | the guard's share if the hit completes anyway |
 | `Config.Roleplay.Protection.MaxJobsPerGuard` | `2` | protection jobs one guard holds at once |
 | `Config.Roleplay.HitOnHitman.Enabled` | `false` | a target may place a contract on an operative revealed |
-| `Config.Roleplay.Rumours.Enabled` | `false` | the board shows new contracts as rumours only |
-| `Config.Roleplay.Rumours.AreaMode` | `'district'` | 'district' (target's area) \| 'zones' (from Zones) |
-| `Config.Roleplay.Rumours.Zones` | `{ 'the city', 'the south side', 'the docks', … 5 in all }` | area names when AreaMode = 'zones' |
-| `Config.Roleplay.Rumours.Districts` | `{ '200, -900, Legion Square', '-1300, -1400, Vespucci', '-1500, -450, Del Perro', … 12 in all }` | 'x, y, name': the nearest names the target's area |
-| `Config.Roleplay.Rumours.BandPercent` | `25` | reward shown as a band this many % either side |
-| `Config.Roleplay.Rumours.Radius` | `5.0` | metres from the broker (NPC or player) that count |
-| `Config.Roleplay.Rumours.BriefValidMinutes` | `30` | a briefing unlocks a contract for this long |
-| `Config.Roleplay.Rumours.Locations` | `{ '-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0', '-56.5, -1752.4, 29.4, 50.0' }` | where the broker NPC stands, one at a time |
-| `Config.Roleplay.Rumours.RotateHours` | `4` | the NPC moves to the next place this often |
-| `Config.Roleplay.Rumours.Model` | `'g_m_m_armboss_01'` | the broker NPC's ped model |
-| `Config.Roleplay.Rumours.Scenario` | `'WORLD_HUMAN_SMOKING'` | what the NPC does while standing |
-| `Config.Roleplay.Rumours.Blip` | `false` | show the broker on the map |
-| `Config.Roleplay.Rumours.BrokerJobs` | `{}` | jobs whose players brief from the app: { broker = true } |
 | `Config.Roleplay.BurnerPhone.Enabled` | `false` | placing and accepting need the item |
 | `Config.Roleplay.BurnerPhone.Item` | `'burner_phone'` | the ox_inventory item |
 | `Config.Roleplay.BurnerPhone.ConsumeOnPlace` | `false` | use one up when a contract is placed |
 | `Config.Roleplay.BurnerPhone.ConsumeOnAccept` | `false` | use one up when a contract is accepted |
 | `Config.Roleplay.BurnerPhone.RequireToOpen` | `true` | no item, no contract tabs at all |
-| `Config.Roleplay.InformantNpc.Enabled` | `false` | informant purchases only beside the informant NPC |
-| `Config.Roleplay.InformantNpc.Radius` | `5.0` | metres from the informant that count |
-| `Config.Roleplay.InformantNpc.Locations` | `{ '374.2, -827.4, 29.3, 180.0', '-1394.0, -592.0, 30.3, 120.0', '1984.0, 3054.0, 47.2, 240.0' }` | where the informant stands, one at a time |
-| `Config.Roleplay.InformantNpc.RotateHours` | `3` | the NPC moves to the next place this often |
-| `Config.Roleplay.InformantNpc.Model` | `'a_m_y_hipster_01'` | the informant NPC's ped model |
-| `Config.Roleplay.InformantNpc.Scenario` | `'WORLD_HUMAN_LEANING'` | what the NPC does while standing |
-| `Config.Roleplay.InformantNpc.Blip` | `false` | show the informant on the map |
 | `Config.Roleplay.NpcPlaces.Enabled` | `false` | the broker and informant stand where staff placed them in the panel's Locations (Use my position); their `Locations` lists stay the defaults while none is set |
 | `Config.Roleplay.ReasonQuality.Enabled` | `false` | hold free-text reasons to the rules below |
 | `Config.Roleplay.ReasonQuality.MinLength` | `15` | least characters in a reason |
@@ -1266,23 +1298,6 @@ Optional changes to existing features, each its own block and each off as shippe
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Improvements.TipWarningDelay.Enabled` | `false` | the target's tip notice waits a random while |
-| `Config.Improvements.TipWarningDelay.MinSeconds` | `60` | shortest wait (s) |
-| `Config.Improvements.TipWarningDelay.MaxSeconds` | `300` | longest wait (s) |
-| `Config.Improvements.TipLimits.Enabled` | `false` | the extra tip limits below apply |
-| `Config.Improvements.TipLimits.OnePerHitman` | `true` | each hitman buys one tip per contract |
-| `Config.Improvements.TipLimits.PriceDoubling` | `false` | each further tip on a contract costs twice the last |
-| `Config.Improvements.TipLimits.MaxCost` | `200000` | the most a doubled tip costs ($) |
-| `Config.Improvements.TipHoldFirst.Enabled` | `false` | a tip only once the contract was held a while |
-| `Config.Improvements.TipHoldFirst.MinHeldMinutes` | `10` | minutes the hitman must have held it |
-| `Config.Improvements.InformantSecondTry.Enabled` | `false` | the target's later look-ups cost differently |
-| `Config.Improvements.InformantSecondTry.SecondTryCostPercent` | `50` | % of Informant.Cost after the first |
-| `Config.Improvements.TipSafeZones.Enabled` | `false` | no tip while the target is inside one of Zones |
-| `Config.Improvements.TipSafeZones.Zones` | `{}` | 'x, y, radius, name', e.g. '300, -590, 80, Pillbox' |
-| `Config.Improvements.GoDark.Enabled` | `false` | a tipped-off target may pay to go dark |
-| `Config.Improvements.GoDark.Cost` | `50000` | price; 0 = free |
-| `Config.Improvements.GoDark.Account` | `'bank'` | 'cash' \| 'bank' |
-| `Config.Improvements.GoDark.Minutes` | `30` | tips bought on them this long find nothing |
 | `Config.Improvements.PlacerRecord.Enabled` | `false` | hitmen see the placer's record on a board card |
 | `Config.Improvements.PlacerRecord.LookbackDays` | `30` | days of contracts the record counts |
 | `Config.Improvements.PlacerRecord.ShowForAnonymous` | `false` | an anonymous placer's record too, in rough bands |
@@ -1524,7 +1539,7 @@ statement either (`tests/loops_spec.lua`, *the optional features' jobs*). A
 whole tick with every job due stays under 100 ms with the features off and
 under 300 / 450 ms (`json` / `mysql`, harness) with them on, the worst being
 the hour an untaken board's decay steps fall due. Informant tip warnings
-(`Config.Improvements.TipWarningDelay`) are one timer per waiting warning, not
+(`Config.Intel.WarningDelay`) are one timer per waiting warning, not
 a loop; going dark ends when it is next looked at.
 
 The scheduled jobs never share a tick with the playtime pass or the `json`
@@ -1568,8 +1583,8 @@ It goes up, and comes back down, with:
 - **the app open**: its requests and redraws, a few hundredths of a ms
   while you tap, more for a moment as a board opens; once a second a
   handover's poll while one runs;
-- **a roleplay NPC near** (`Config.Roleplay.Rumours`,
-  `Config.Roleplay.InformantNpc`): the ped is made within 80 m, a spike as
+- **a roleplay NPC near** (`Config.Intel.Rumours`,
+  `Config.Intel.InPerson`): the ped is made within 80 m, a spike as
   its model loads, then a distance check a second; nothing with both off;
 - **the admin panel open** (staff only): every frame for its Escape guard,
   and the overview every ten seconds; nothing once it is closed.

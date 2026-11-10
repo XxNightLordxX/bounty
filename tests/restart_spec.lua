@@ -990,7 +990,7 @@ describe('the informants across a restart', function()
             eq(card.placerInformantFound[1].text, 'Rook Ash')
             eq(card.placerInformantLeft, 1, 'one of two spent')
             eq(#card.placerInformantPicks, 0, 'and the operative is not offered again')
-            eq(card.placerInformantWait, Config.PlacerInformant.CooldownMinutes * 60 - 60,
+            eq(card.placerInformantWait, Config.Intel.PlacerInformant.CooldownMinutes * 60 - 60,
                 'the wait between look-ups is remembered too')
         end)
 
@@ -1014,7 +1014,7 @@ describe('the informants across a restart', function()
             eq(card.informantFound[1].text, 'Rook Ash')
             eq(#card.informantFound, 1, 'the miss found nothing')
             eq(card.informantLeft, 0)
-            Env.advance(Config.Informant.RerollLockMinutes * 60 + 1)
+            Env.advance(Config.Intel.Informant.RerollLockMinutes * 60 + 1)
             local ok, err = s2.informant.buy(s2.identity.resolve(2), c.id, nil, 'placer')
             falsy(ok, 'a restart reset the cap')
             eq(err, CH.ERR.LIMIT_REACHED)

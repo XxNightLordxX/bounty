@@ -1,10 +1,11 @@
---- Informant fairness (README, Optional features), six rules over the
---- informant tip (server/locationtip.lua) and the target's informant
---- (server/informant.lua). Each is its own block in Config.Improvements and
---- each ships off; off, it changes nothing and those modules behave as they
---- did before it.
+--- The Intel rules (Config.Intel, README "Intel"): five rules over the
+--- informant tip (server/intel/tip.lua) and the target's informant
+--- (server/intel/informants.lua), and going dark, the counter-product sold
+--- through the engine (server/intel/engine.lua). Each is its own block in
+--- Config.Intel and each ships off; off, it changes nothing and those
+--- products behave as they did before it.
 ---
----   TipWarningDelay     the target's "someone knows your rough area" notice
+---   WarningDelay        the target's "someone knows your rough area" notice
 ---                       waits a random MinSeconds..MaxSeconds. The wait is
 ---                       kept in the store (crimson_rp_rows, kind
 ---                       'imp_tipwarn'), so a restart sends it late, never
@@ -12,11 +13,11 @@
 ---   TipLimits           each hitman one tip per contract, and/or each tip
 ---                       on a contract twice the last one's price, capped at
 ---                       MaxCost. On top of the tip's own limits.
----   TipHoldFirst        a tip only once the hitman has held the contract
+---   HoldFirst           a tip only once the hitman has held the contract
 ---                       MinHeldMinutes.
----   InformantSecondTry  the target's look-ups after the first cost
----                       SecondTryCostPercent of Config.Informant.Cost.
----   TipSafeZones        no tip while the target stands in one of the zones:
+---   SecondTry           the target's look-ups after the first cost
+---                       SecondTryCostPercent of Config.Intel.Informant.Cost.
+---   SafeZones           no tip while the target stands in one of the zones:
 ---                       refused before any charge, in words that say
 ---                       neither why nor where.
 ---   GoDark              a target told of a tip pays to go dark for Minutes:
@@ -33,22 +34,27 @@ local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
 local Feature = CrimsonBoot.require('server.lib.feature')
+-- The one purchase engine (server/intel/engine.lua): going dark is bought
+-- through it, and every notice here sent through it.
+local Intel = CrimsonBoot.require('server.intel.engine')
+--- This module's products (Intel.define), set below.
+local DARK
 
-local ImpTips = {}
+local IntelRules = {}
 
 local Storage, Audit, Notify, Contracts, LocationTip, Informant, Bailout
 
-ImpTips.KIND_WARN = 'imp_tipwarn'
-ImpTips.KIND_DARK = 'imp_dark'
+IntelRules.KIND_WARN = 'imp_tipwarn'
+IntelRules.KIND_DARK = 'imp_dark'
 
 --- The step a target's "tipped off at" is rounded down to while the warning
 --- is delayed: the minute it was bought would give the delay away.
-ImpTips.ROUND_SECONDS = 300
+IntelRules.ROUND_SECONDS = 300
 
 --- What a hitman is told: the target in a safe zone (never which, nor that
 --- it is one), and the target gone dark.
-ImpTips.CANT_PLACE = "Your informant can't place them right now."
-ImpTips.NOT_FOUND = "Your informant couldn't find them."
+IntelRules.CANT_PLACE = "Your informant can't place them right now."
+IntelRules.NOT_FOUND = "Your informant couldn't find them."
 
 --- The pending warnings, [tip id] = row { id, kind, contract_id, tip_id,
 --- due_at }, and the timers sending them.
@@ -58,15 +64,15 @@ local pending, timers = {}, {}
 local dark = {}
 local loaded = false
 --- The time holds took, given back before this module was started
---- (ImpTips.heldBack from the restart hold's give-back at the start, which
---- runs before ImpTips.init): { contractId, from, to }, applied by init.
+--- (IntelRules.heldBack from the restart hold's give-back at the start, which
+--- runs before IntelRules.init): { contractId, from, to }, applied by init.
 local heldQueue = {}
 local heldOver
 
 --- Uniform [0, 1), replaceable by a test that needs a known draw.
-ImpTips.random = math.random
+IntelRules.random = math.random
 
-function ImpTips.init(deps)
+function IntelRules.init(deps)
     Storage, Audit = deps.storage, deps.audit
     Notify, Contracts = deps.notify, deps.contracts
     LocationTip, Informant = deps.locationTip, deps.informant
@@ -76,15 +82,15 @@ function ImpTips.init(deps)
     end
     pending, timers, dark, loaded = {}, {}, {}, false
     if deps.projection and deps.projection.extenders then
-        deps.projection.extenders.impTips = function(out, contract, viewerCid, role)
-            if role == 'target' then ImpTips.targetCard(out, contract, viewerCid) end
+        deps.projection.extenders.intelRules = function(out, contract, viewerCid, role)
+            if role == 'target' then IntelRules.targetCard(out, contract, viewerCid) end
         end
     end
     -- What the start's give-back asked for before this was started.
     local waiting = heldQueue
     heldQueue = {}
     for i = 1, #waiting do
-        local gave, err = pcall(ImpTips.heldBack, waiting[i][1], waiting[i][2], waiting[i][3])
+        local gave, err = pcall(IntelRules.heldBack, waiting[i][1], waiting[i][2], waiting[i][3])
         if not gave then
             Log.always(('contract %s: the paid windows the restart hold took could not be given back (%s)')
                 :format(tostring(waiting[i][1]), Util.dbError(err)))
@@ -99,7 +105,7 @@ end
 --- One safe zone, 'x, y, radius, name': its centre, radius and name, or nil.
 ---@param text any
 ---@return table|nil { x, y, radius, name }
-function ImpTips.parseZone(text)
+function IntelRules.parseZone(text)
     if type(text) ~= 'string' or #text > 80 or text:find('[%c<>]') then return nil end
     local x, y, r, name = text:match('^%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*,%s*(.-)%s*$')
     x, y, r = tonumber(x), tonumber(y), tonumber(r)
@@ -108,8 +114,8 @@ function ImpTips.parseZone(text)
 end
 
 --- Every block and its fields, as the start and the admin panel check them.
-ImpTips.RULES = {
-    TipWarningDelay = {
+IntelRules.RULES = {
+    WarningDelay = {
         Enabled = { kind = 'switch' },
         MinSeconds = { kind = 'number', min = 0, max = 3600, integer = true },
         MaxSeconds = { kind = 'number', min = 0, max = 3600, integer = true },
@@ -120,17 +126,17 @@ ImpTips.RULES = {
         PriceDoubling = { kind = 'switch' },
         MaxCost = { kind = 'number', min = 0, max = 10000000, integer = true },
     },
-    TipHoldFirst = {
+    HoldFirst = {
         Enabled = { kind = 'switch' },
         MinHeldMinutes = { kind = 'number', min = 0, max = 1440, integer = true },
     },
-    InformantSecondTry = {
+    SecondTry = {
         Enabled = { kind = 'switch' },
         SecondTryCostPercent = { kind = 'number', min = 0, max = 1000, integer = true },
     },
-    TipSafeZones = {
+    SafeZones = {
         Enabled = { kind = 'switch' },
-        Zones = { kind = 'list', each = ImpTips.parseZone, says = "a list of 'x, y, radius, name'" },
+        Zones = { kind = 'list', each = IntelRules.parseZone, says = "a list of 'x, y, radius, name'" },
     },
     GoDark = {
         Enabled = { kind = 'switch' },
@@ -145,16 +151,16 @@ ImpTips.RULES = {
 --- a warning naming it. Run at the start and on the admin panel's quiet
 --- check of a change, as main.lua runs every other check.
 ---@param warn string[]
-function ImpTips.validate(warn)
+function IntelRules.validate(warn)
     local names = {}
-    for name in pairs(ImpTips.RULES) do names[#names + 1] = name end
+    for name in pairs(IntelRules.RULES) do names[#names + 1] = name end
     table.sort(names)
     for _, name in ipairs(names) do
-        Feature.check('Improvements.' .. name, ImpTips.RULES[name], warn)
+        Feature.check('Intel.' .. name, IntelRules.RULES[name], warn)
     end
-    local delay = Config.Improvements.TipWarningDelay
+    local delay = Config.Intel.WarningDelay
     if delay.MinSeconds > delay.MaxSeconds then
-        warn[#warn + 1] = 'Improvements.TipWarningDelay.MinSeconds is above MaxSeconds. Using MaxSeconds for both.'
+        warn[#warn + 1] = 'Intel.WarningDelay.MinSeconds is above MaxSeconds. Using MaxSeconds for both.'
         delay.MinSeconds = delay.MaxSeconds
     end
 end
@@ -173,8 +179,8 @@ end
 --- the first use; a read that raises is tried again at the next use.
 local function load()
     if loaded or not Storage or not Storage.readRpRows then return end
-    local okW, warns = pcall(Storage.readRpRows, ImpTips.KIND_WARN)
-    local okD, darks = pcall(Storage.readRpRows, ImpTips.KIND_DARK)
+    local okW, warns = pcall(Storage.readRpRows, IntelRules.KIND_WARN)
+    local okD, darks = pcall(Storage.readRpRows, IntelRules.KIND_DARK)
     if not okW or not okD or type(warns) ~= 'table' or type(darks) ~= 'table' then return end
     loaded = true
     for _, row in ipairs(warns) do
@@ -182,7 +188,7 @@ local function load()
     end
     for _, row in ipairs(darks) do
         -- A row still pending was written for a purchase that never
-        -- finished (ImpTips.goDark): its charge was refused or never made,
+        -- finished (IntelRules.goDark): its charge was refused or never made,
         -- or the write that confirms it did not go through and the price
         -- was given back. Nobody paid for it, so nobody is dark by it.
         if row.pending then
@@ -209,7 +215,7 @@ local function send(row)
     -- start, as a warning is never lost.
     if not ok then return end
     if contract and not CH.TERMINAL[contract.state] and Notify and Notify.locationTipped and LocationTip then
-        pcall(Notify.locationTipped, contract, LocationTip.TARGET_TITLE, LocationTip.TARGET_TEXT)
+        Intel.tell('tipped', Notify, contract, LocationTip.TARGET_TITLE, LocationTip.TARGET_TEXT)
     end
     pcall(Storage.deleteRpRow, row.id)
 end
@@ -225,8 +231,8 @@ end
 
 --- Whether the warning is delayed now.
 ---@return boolean
-function ImpTips.delayOn()
-    return Feature.on('Improvements.TipWarningDelay') and int(Feature.block('Improvements.TipWarningDelay').MaxSeconds, 0) > 0
+function IntelRules.delayOn()
+    return Feature.on('Intel.WarningDelay') and int(Feature.block('Intel.WarningDelay').MaxSeconds, 0) > 0
 end
 
 --- A tip was bought and the target is to be told. Off: `now` runs at once,
@@ -234,16 +240,16 @@ end
 ---@param contract table
 ---@param tip table the tip's row
 ---@param now function sends the warning at once
-function ImpTips.warnTarget(contract, tip, now)
-    if not ImpTips.delayOn() then return now() end
+function IntelRules.warnTarget(contract, tip, now)
+    if not IntelRules.delayOn() then return now() end
     load()
-    local block = Feature.block('Improvements.TipWarningDelay')
+    local block = Feature.block('Intel.WarningDelay')
     local low = math.max(0, int(block.MinSeconds, 0))
     local high = math.max(low, int(block.MaxSeconds, 0))
-    local wait = low + math.floor(ImpTips.random() * (high - low + 1))
+    local wait = low + math.floor(IntelRules.random() * (high - low + 1))
     if wait > high then wait = high end
     local row = { id = ('iw:%s:%s'):format(contract.id, tostring(tip.id):match('(%d+)$') or '0'),
-                  kind = ImpTips.KIND_WARN, contract_id = contract.id, tip_id = tip.id,
+                  kind = IntelRules.KIND_WARN, contract_id = contract.id, tip_id = tip.id,
                   due_at = os.time() + wait }
     local kept = pcall(Storage.writeRpRow, row)
     if not kept then
@@ -255,7 +261,7 @@ function ImpTips.warnTarget(contract, tip, now)
 end
 
 --- Whether a tip's warning is still waiting to be sent.
-function ImpTips.waiting(tipId)
+function IntelRules.waiting(tipId)
     load()
     return pending[tipId] ~= nil
 end
@@ -264,14 +270,14 @@ end
 --- while the warning is delayed.
 ---@param at integer
 ---@return integer
-function ImpTips.shownTime(at)
-    if not ImpTips.delayOn() then return at end
-    return at - (at % ImpTips.ROUND_SECONDS)
+function IntelRules.shownTime(at)
+    if not IntelRules.delayOn() then return at end
+    return at - (at % IntelRules.ROUND_SECONDS)
 end
 
 --- After a restart: every warning still waiting is sent when it falls due,
 --- and one already past due at once.
-function ImpTips.resume()
+function IntelRules.resume()
     load()
     for _, row in pairs(pending) do arm(row) end
 end
@@ -281,11 +287,11 @@ end
 --------------------------------------------------------------------------
 
 --- The price of the next tip on a contract that has `count` already.
----@param base integer Config.LocationTip.Cost
+---@param base integer Config.Intel.LocationTip.Cost
 ---@param count integer
 ---@return integer
-function ImpTips.tipPrice(base, count)
-    local block = Feature.block('Improvements.TipLimits')
+function IntelRules.tipPrice(base, count)
+    local block = Feature.block('Intel.TipLimits')
     if block.Enabled ~= true or block.PriceDoubling ~= true or base <= 0 then return base end
     local cap = math.max(base, int(block.MaxCost, base))
     local price = base
@@ -299,8 +305,8 @@ end
 --- Whether this hitman has had their one tip on the contract.
 ---@param ownCount integer their tips on it
 ---@return boolean
-function ImpTips.usedOwn(ownCount)
-    local block = Feature.block('Improvements.TipLimits')
+function IntelRules.usedOwn(ownCount)
+    local block = Feature.block('Intel.TipLimits')
     return block.Enabled == true and block.OnePerHitman == true and ownCount >= 1
 end
 
@@ -309,9 +315,9 @@ end
 ---@param mine table their hitman row
 ---@param now integer
 ---@return integer
-function ImpTips.holdLeft(mine, now)
-    if not Feature.on('Improvements.TipHoldFirst') then return 0 end
-    local need = math.max(0, int(Feature.block('Improvements.TipHoldFirst').MinHeldMinutes, 0)) * 60
+function IntelRules.holdLeft(mine, now)
+    if not Feature.on('Intel.HoldFirst') then return 0 end
+    local need = math.max(0, int(Feature.block('Intel.HoldFirst').MinHeldMinutes, 0)) * 60
     local since = tonumber(mine and mine.accepted_at)
     if need <= 0 or not since then return 0 end
     return math.max(0, since + need - now)
@@ -319,10 +325,10 @@ end
 
 --- Whether a target standing at (x, y) is inside a safe zone.
 ---@return boolean
-function ImpTips.inSafeZone(x, y)
-    if not Feature.on('Improvements.TipSafeZones') then return false end
-    for _, text in ipairs(Feature.block('Improvements.TipSafeZones').Zones or {}) do
-        local zone = ImpTips.parseZone(text)
+function IntelRules.inSafeZone(x, y)
+    if not Feature.on('Intel.SafeZones') then return false end
+    for _, text in ipairs(Feature.block('Intel.SafeZones').Zones or {}) do
+        local zone = IntelRules.parseZone(text)
         if zone and (x - zone.x) ^ 2 + (y - zone.y) ^ 2 <= zone.radius ^ 2 then return true end
     end
     return false
@@ -337,16 +343,16 @@ end
 ---@param count integer tips on the contract
 ---@param ownCount integer theirs
 ---@param now integer
-function ImpTips.tipCard(out, contract, mine, count, ownCount, now)
-    local base = math.max(0, int(Config.LocationTip.Cost, 0))
-    local price = ImpTips.tipPrice(base, count)
+function IntelRules.tipCard(out, contract, mine, count, ownCount, now)
+    local base = math.max(0, int(Config.Intel.LocationTip.Cost, 0))
+    local price = IntelRules.tipPrice(base, count)
     if price ~= base then out.cost = price end
-    local hold = ImpTips.holdLeft(mine, now)
+    local hold = IntelRules.holdLeft(mine, now)
     if hold > 0 then
         out.holdSeconds = hold
         out.holdUntil = now + hold
     end
-    if ImpTips.usedOwn(ownCount) then out.mineUsed = true end
+    if IntelRules.usedOwn(ownCount) then out.mineUsed = true end
 end
 
 --------------------------------------------------------------------------
@@ -354,12 +360,12 @@ end
 --------------------------------------------------------------------------
 
 --- The price of a target's look-up after `purchases` already made.
----@param base integer Config.Informant.Cost
+---@param base integer Config.Intel.Informant.Cost
 ---@param purchases integer
 ---@return integer
-function ImpTips.informantPrice(base, purchases)
-    if not Feature.on('Improvements.InformantSecondTry') or purchases < 1 or base <= 0 then return base end
-    local percent = math.max(0, int(Feature.block('Improvements.InformantSecondTry').SecondTryCostPercent, 100))
+function IntelRules.informantPrice(base, purchases)
+    if not Feature.on('Intel.SecondTry') or purchases < 1 or base <= 0 then return base end
+    local percent = math.max(0, int(Feature.block('Intel.SecondTry').SecondTryCostPercent, 100))
     -- Whole dollars, integer arithmetic (no binary fraction of money).
     return (base * percent) // 100
 end
@@ -392,7 +398,7 @@ end
 --- Whether a target has gone dark now, and until when.
 ---@param cid string
 ---@return integer|nil untilAt
-function ImpTips.darkUntil(cid)
+function IntelRules.darkUntil(cid)
     load()
     local row = dark[cid]
     if not row then return nil end
@@ -401,7 +407,7 @@ function ImpTips.darkUntil(cid)
     if untilAt > now then return untilAt end
     -- Run out on the wall clock while the contract it was bought on is on
     -- hold: it stands still with the hold, whose end gives the time back
-    -- (ImpTips.heldBack). Dark until then, and kept.
+    -- (IntelRules.heldBack). Dark until then, and kept.
     local held = heldOver(row, now)
     if held then return held end
     dark[cid] = nil
@@ -418,7 +424,7 @@ end
 ---@param contractId string
 ---@param from integer os.time()
 ---@param to integer os.time()
-function ImpTips.heldBack(contractId, from, to)
+function IntelRules.heldBack(contractId, from, to)
     from, to = tonumber(from), tonumber(to)
     if not (contractId and from and to) or to <= from then return end
     if not Storage then
@@ -426,7 +432,7 @@ function ImpTips.heldBack(contractId, from, to)
         return
     end
     load()
-    local minutes = math.max(1, int(Feature.block('Improvements.GoDark').Minutes, 30))
+    local minutes = math.max(1, int(Feature.block('Intel.GoDark').Minutes, 30))
     for _, row in pairs(dark) do
         if row.contract_id == contractId then
             local untilAt = tonumber(row.until_at) or 0
@@ -441,7 +447,7 @@ function ImpTips.heldBack(contractId, from, to)
 end
 
 local function goDarkTerms()
-    local block = Feature.block('Improvements.GoDark')
+    local block = Feature.block('Intel.GoDark')
     return math.max(0, int(block.Cost, 0)), block.Account == 'cash' and 'cash' or 'bank',
         math.max(1, int(block.Minutes, 30))
 end
@@ -452,46 +458,32 @@ end
 ---@param out table
 ---@param contract table
 ---@param cid string the target
-function ImpTips.targetCard(out, contract, cid)
+function IntelRules.targetCard(out, contract, cid)
     if contract.target_cid ~= cid or CH.TERMINAL[contract.state] then return end
     -- Sold only while tips on this contract are (LocationTip.enabled: the
     -- master switch, its own, and a whitelisted-job target's): with tips
     -- switched off it hid the target from nobody, and was charged all the
     -- same. A window already paid for is still shown to its end, whichever
     -- switch is off now: it holds whatever the switches say (targetDark).
-    local untilAt = ImpTips.darkUntil(cid)
-    if Feature.on('Improvements.GoDark') and out.tippedAt and LocationTip and LocationTip.enabled(contract) then
+    local untilAt = IntelRules.darkUntil(cid)
+    if Feature.on('Intel.GoDark') and out.tippedAt and LocationTip and LocationTip.enabled(contract) then
         local cost, account, minutes = goDarkTerms()
         out.goDark = { cost = cost, account = account, minutes = minutes, untilAt = untilAt }
     elseif untilAt then
         out.goDark = { untilAt = untilAt }
     end
-    if Feature.on('Improvements.InformantSecondTry') and Informant and Informant.purchasesBy and out.informantPicks then
-        local base = math.max(0, int(Config.Informant.Cost, 0))
-        local price = ImpTips.informantPrice(base, Informant.purchasesBy(contract.id, cid))
+    if Feature.on('Intel.SecondTry') and Informant and Informant.purchasesBy and out.informantPicks then
+        local base = math.max(0, int(Config.Intel.Informant.Cost, 0))
+        local price = IntelRules.informantPrice(base, Informant.purchasesBy(contract.id, cid))
         if price ~= base then out.informantCost = price end
     end
 end
 
-local buyDark
-
---- Give back a go-dark price taken on a contract that was held or ended
---- before the window stood. Owed (and handed over at the next login) where
---- it cannot be paid now.
-local function refundDark(actor, contractId, cost, account, why)
-    if cost <= 0 then return end
-    -- With what a credit that raised says arrived (Util.credit), as
-    -- Bailout.deliver passes it, so a refund that partly or perhaps arrived
-    -- goes to staff rather than being owed blind.
-    local credited, raised, arrived, before = Util.credit(actor.player, account, cost)
-    if not credited and Bailout and Bailout.owe then
-        local raise = raised and { error = raised, arrived = arrived, before = before } or nil
-        local owed, oweErr = pcall(Bailout.owe, actor.cid, contractId, cost, account, 'go_dark_refunded',
-            raise)
-        credited = owed and oweErr ~= nil
-    end
-    Audit.financial('go_dark_refunded', actor.cid, contractId, { amount = cost, account = account,
-        reason = why, owed = not credited or nil, error = raised })
+--- The services a purchase runs with (server/intel/engine.lua, Intel.buy):
+--- this module's. A refund that cannot be credited is owed (and handed
+--- over at the next login).
+local function services()
+    return { storage = Storage, audit = Audit, contracts = Contracts, bailout = Bailout }
 end
 
 --- A target told of a tip on a contract on them pays to go dark: every tip
@@ -503,100 +495,107 @@ end
 ---@return table|false result { untilAt, minutes }
 ---@return string|nil err
 ---@return table|nil data
-function ImpTips.goDark(actor, contractId, shown)
-    if not Feature.on('Improvements.GoDark') then return false, CH.ERR.FEATURE_OFF end
+function IntelRules.goDark(actor, contractId, shown)
+    if not Feature.on('Intel.GoDark') then return false, CH.ERR.FEATURE_OFF end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
-    if not Contracts then return buyDark(actor, contractId, shown) end
-    return Contracts.serialized({ 'goDark:' .. tostring(actor.cid) }, buyDark, actor, contractId, shown)
+    return Intel.buy(DARK, services(), actor, contractId, shown)
 end
 
-buyDark = function(actor, contractId, shown)
-    local cost, account, minutes = goDarkTerms()
-    -- Not found and not theirs are the same answer.
-    local contract = Storage.readContract(contractId)
-    if not contract or contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
-    if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
-    -- On hold by staff (server/holds.lua): no money moves on it.
-    if Holds.on(contract, nil, 'staff') then
-        return false, CH.ERR.CONTRACT_FROZEN
-    end
-    -- Tips switched off on this contract (the master switch, their own, or
-    -- a whitelisted-job target's): nobody can buy one, so going dark hides
-    -- them from nothing. Refused before anything is charged.
-    if not (LocationTip and LocationTip.enabled(contract)) then return false, CH.ERR.FEATURE_OFF end
-    if not LocationTip.toldAt(contractId) then return false, CH.ERR.NOT_TIPPED end
-    local already = ImpTips.darkUntil(actor.cid)
-    if already then return false, CH.ERR.ALREADY_DARK, { untilAt = already } end
-    if shown ~= nil and cost > 0 then
-        local quoted = type(shown) == 'table' and shown or {}
-        if tonumber(quoted.cost) ~= cost or quoted.account ~= account then
-            return false, CH.ERR.TERMS_CHANGED, { cost = cost, account = account }
-        end
-    end
-    -- Read again with nothing between this and the charge.
-    local now = Storage.readContract(contractId)
-    if not now or CH.TERMINAL[now.state] then return false, CH.ERR.ALREADY_SETTLED end
-    if not LocationTip.enabled(now) then return false, CH.ERR.FEATURE_OFF end
-    if Holds.on(now, nil, 'staff') then
-        return false, CH.ERR.CONTRACT_FROZEN
-    end
+--- Tips switched off on this contract (the master switch, their own, or a
+--- whitelisted-job target's): nobody can buy one, so going dark hides them
+--- from nothing.
+local function tipsSold(contract)
+    if not (LocationTip and LocationTip.enabled(contract)) then return CH.ERR.FEATURE_OFF end
+    return nil
+end
 
-    -- Kept first as pending, so a charge never stands without a row; then
-    -- charged; then confirmed. A pending row darkens nobody, here or after
-    -- a restart (load drops it): written as the purchase itself, a write
-    -- that raised but landed late left the target dark for nothing once
-    -- the server restarted. Counted as dark only once paid and confirmed.
-    local untilAt = os.time() + minutes * 60
-    local row = { id = 'dk:' .. actor.cid, kind = ImpTips.KIND_DARK, cid = actor.cid, until_at = untilAt,
-                  bought_at = os.time(), contract_id = contractId, pending = true }
-    local kept = pcall(Storage.writeRpRow, row)
-    if not kept then
-        pcall(Storage.deleteRpRow, row.id)
-        return false, CH.ERR.SERVER_ERROR
-    end
-    if not Util.charge(actor.player, account, cost) then
-        pcall(Storage.deleteRpRow, row.id)
-        return false, CH.ERR.INSUFFICIENT, { cost = cost, account = account }
-    end
-    -- And read once more: the row's write and the charge are awaits on
-    -- mysql, and a staff hold or an ending that landed in them moves no
-    -- money. The window is dropped and the price given back, once.
-    local read, after = pcall(Storage.readContract, contractId)
-    local refusal
-    if not read then
-        refusal = CH.ERR.SERVER_ERROR
-    elseif not after or CH.TERMINAL[after.state] then
-        refusal = CH.ERR.ALREADY_SETTLED
-    elseif Holds.on(after, nil, 'staff') then
-        refusal = CH.ERR.CONTRACT_FROZEN
-    end
-    if not refusal then
-        -- Confirmed: the purchase stands from here. A confirm that raised
-        -- may still land, so the row is taken away as well as the price
-        -- given back; one landing after the delete is the store's own
-        -- ordering, and leaves at most the window it was written for.
-        row.pending = nil
-        if not Db.try('go dark: the purchase could not be kept by the store (%s); the price is given back',
-            Storage.writeRpRow, row) then
+DARK = Intel.define('goDark', {
+    terms = function(ctx)
+        ctx.cost, ctx.account, ctx.minutes = goDarkTerms()
+    end,
+    steps = {
+        -- Theirs, still open, and not on hold by staff (server/holds.lua):
+        -- no money moves on it. Refused before anything is charged.
+        'party', 'open', 'holds',
+        function(ctx) return tipsSold(ctx.contract) end,
+        function(ctx)
+            if not LocationTip.toldAt(ctx.contractId) then return CH.ERR.NOT_TIPPED end
+            local already = IntelRules.darkUntil(ctx.actor.cid)
+            if already then return CH.ERR.ALREADY_DARK, { untilAt = already } end
+            return nil
+        end,
+    },
+    ready = function(ctx)
+        local contractId, actor = ctx.contractId, ctx.actor
+        -- Read again with nothing between this and the charge.
+        local now = Storage.readContract(contractId)
+        if not now or CH.TERMINAL[now.state] then return CH.ERR.ALREADY_SETTLED end
+        local off = tipsSold(now)
+        if off then return off end
+        if Holds.on(now, nil, 'staff') then return CH.ERR.CONTRACT_FROZEN end
+
+        -- Kept first as pending, so a charge never stands without a row;
+        -- then charged; then confirmed. A pending row darkens nobody, here
+        -- or after a restart (load drops it): written as the purchase
+        -- itself, a write that raised but landed late left the target dark
+        -- for nothing once the server restarted. Counted as dark only once
+        -- paid and confirmed.
+        local untilAt = os.time() + ctx.minutes * 60
+        local row = { id = 'dk:' .. actor.cid, kind = IntelRules.KIND_DARK, cid = actor.cid, until_at = untilAt,
+                      bought_at = os.time(), contract_id = contractId, pending = true }
+        local kept = pcall(Storage.writeRpRow, row)
+        if not kept then
+            pcall(Storage.deleteRpRow, row.id)
+            return CH.ERR.SERVER_ERROR
+        end
+        ctx.row, ctx.untilAt = row, untilAt
+        return nil
+    end,
+    uncharged = function(ctx) pcall(Storage.deleteRpRow, ctx.row.id) end,
+    confirm = function(ctx)
+        local row = ctx.row
+        -- And read once more: the row's write and the charge are awaits on
+        -- mysql, and a staff hold or an ending that landed in them moves no
+        -- money. The window is dropped and the price given back, once.
+        local read, after = pcall(Storage.readContract, ctx.contractId)
+        local refusal
+        if not read then
             refusal = CH.ERR.SERVER_ERROR
+        elseif not after or CH.TERMINAL[after.state] then
+            refusal = CH.ERR.ALREADY_SETTLED
+        elseif Holds.on(after, nil, 'staff') then
+            refusal = CH.ERR.CONTRACT_FROZEN
         end
-    end
-    if refusal then
-        pcall(Storage.deleteRpRow, row.id)
-        refundDark(actor, contractId, cost, account, refusal)
-        return false, refusal
-    end
-    load()
-    dark[actor.cid] = row
-    Audit.financial('go_dark_bought', actor.cid, contractId, { amount = cost, account = account,
-        minutes = minutes })
-    if Notify and Notify.push then pcall(Notify.push, actor.cid, 'tip', contractId) end
-    return { untilAt = untilAt, minutes = minutes }
-end
-
+        if not refusal then
+            -- Confirmed: the purchase stands from here. A confirm that
+            -- raised may still land, so the row is taken away as well as the
+            -- price given back; one landing after the delete is the store's
+            -- own ordering, and leaves at most the window it was written for.
+            row.pending = nil
+            if not Db.try('go dark: the purchase could not be kept by the store (%s); the price is given back',
+                Storage.writeRpRow, row) then
+                refusal = CH.ERR.SERVER_ERROR
+            end
+        end
+        if refusal then
+            pcall(Storage.deleteRpRow, row.id)
+            return false, refusal, nil, refusal
+        end
+        return true
+    end,
+    deliver = function(ctx)
+        local row, actor = ctx.row, ctx.actor
+        load()
+        dark[actor.cid] = row
+        Audit.financial('go_dark_bought', actor.cid, ctx.contractId, { amount = ctx.cost, account = ctx.account,
+            minutes = ctx.minutes })
+        if Notify then Intel.tell('push', Notify, actor.cid, 'tip', ctx.contractId) end
+        return { untilAt = ctx.untilAt, minutes = ctx.minutes }
+    end,
+})
 --- The most go-dark rows one prune takes out of the store.
-ImpTips.PRUNES_PER_PASS = 25
+IntelRules.PRUNES_PER_PASS = 25
 
 --- Take out of the store the go-dark windows that have passed (the board's
 --- minute, imp_board.tick). darkUntil drops one only when somebody asks
@@ -606,8 +605,8 @@ ImpTips.PRUNES_PER_PASS = 25
 --- a pass with nothing past its time reads and writes nothing, and at most
 --- PRUNES_PER_PASS deletes a pass. Runs with the switch off too.
 ---@return integer pruned
-function ImpTips.prune()
-    -- Loaded at the start (ImpTips.resume); a start whose read raised is
+function IntelRules.prune()
+    -- Loaded at the start (IntelRules.resume); a start whose read raised is
     -- tried again here, or the windows from before it were never pruned.
     if not loaded then load() end
     if not loaded or next(dark) == nil then return 0 end
@@ -616,7 +615,7 @@ function ImpTips.prune()
         -- Not one standing still with a hold on its contract (heldOver).
         if (tonumber(row.until_at) or 0) <= now and not heldOver(row, now) then
             gone[#gone + 1] = cid
-            if #gone >= ImpTips.PRUNES_PER_PASS then break end
+            if #gone >= IntelRules.PRUNES_PER_PASS then break end
         end
     end
     for i = 1, #gone do
@@ -631,8 +630,8 @@ end
 --- A window paid for holds to its end even if the switch is turned off.
 ---@param targetCid string
 ---@return boolean
-function ImpTips.targetDark(targetCid)
-    return ImpTips.darkUntil(targetCid) ~= nil
+function IntelRules.targetDark(targetCid)
+    return IntelRules.darkUntil(targetCid) ~= nil
 end
 
-return ImpTips
+return IntelRules

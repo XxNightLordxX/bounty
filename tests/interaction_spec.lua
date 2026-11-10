@@ -118,10 +118,10 @@ describe('informant data', function()
         s.informant.setRandom(function() return 100 end)
         Env.players[2].PlayerData.money.bank = 100000
         truthy(s.informant.buy(f.target, c.id, nil, pickOf(s, c)))
-        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Informant.Cost)
+        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Intel.Informant.Cost)
     end)
 
-    --- Config.Informant.RevealMode takes 'name' or 'description'. The stack
+    --- Config.Intel.Informant.RevealMode takes 'name' or 'description'. The stack
     --- is opened before withConfig on purpose: newStack() resets the whole
     --- config.
     describe('in each mode an operator can choose', function()
@@ -130,7 +130,7 @@ describe('informant data', function()
             s.informant.setRandom(function() return 1 end)
             Env.players[2].PlayerData.money.bank = 100000
             local data
-            withConfig({ { Config.Informant, 'RevealMode', 'name' } }, function()
+            withConfig({ { Config.Intel.Informant, 'RevealMode', 'name' } }, function()
                 local _, _, got = s.informant.buy(f.target, c.id, nil, pickOf(s, c))
                 data = got
             end)
@@ -143,7 +143,7 @@ describe('informant data', function()
             s.informant.setRandom(function() return 1 end)
             Env.players[2].PlayerData.money.bank = 100000
             local data
-            withConfig({ { Config.Informant, 'RevealMode', 'description' } }, function()
+            withConfig({ { Config.Intel.Informant, 'RevealMode', 'description' } }, function()
                 local _, _, got = s.informant.buy(f.target, c.id, nil, pickOf(s, c))
                 data = got
             end)
@@ -156,7 +156,7 @@ describe('informant data', function()
                 local s, f, c = seeded()
                 s.informant.setRandom(function() return 1 end)
                 Env.players[2].PlayerData.money.bank = 100000
-                withConfig({ { Config.Informant, 'RevealMode', mode } }, function()
+                withConfig({ { Config.Intel.Informant, 'RevealMode', mode } }, function()
                     local _, _, data = s.informant.buy(f.target, c.id, nil, pickOf(s, c))
                     falsy(json.encode(data):find('HITMAN01', 1, true), mode .. ' mode leaked a citizen id')
                 end)

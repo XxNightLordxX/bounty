@@ -1,4 +1,4 @@
---- Informant fairness (server/imp_tips.lua, Config.Improvements), six rules
+--- Informant fairness (server/intel/rules.lua, Config.Intel), six rules
 --- over the informant tip and the target's informant, each off as shipped:
 --- off, nothing changes; on, each does what it says; a refusal charges
 --- nothing; the money balances; nobody is named; the panel's settings apply.
@@ -93,10 +93,10 @@ local function view(s, c, cid)
     return s.projection.contract(s.storage.readContract(c.id), cid)
 end
 
-local IMP = Config.Improvements
+local IMP = Config.Intel
 
---- Every test here turns rules on live: Config.Improvements and the tip's
---- own block are put back in place after each, whichever way it ends, so
+--- Every test here turns rules on live: Config.Intel (the rules and the
+--- tip's own block) is put back in place after each, whichever way it ends, so
 --- nothing that runs next sees them on.
 local function copy(value)
     if type(value) ~= 'table' then return value end
@@ -117,10 +117,9 @@ end
 local baseIt = it
 local function it(name, fn)
     baseIt(name, function()
-        local saved, tip = copy(Config.Improvements), copy(Config.LocationTip)
+        local saved = copy(Config.Intel)
         local ok, err = pcall(fn)
-        restoreInto(Config.Improvements, saved)
-        restoreInto(Config.LocationTip, tip)
+        restoreInto(Config.Intel, saved)
         if not ok then error(err, 0) end
     end)
 end
@@ -128,13 +127,13 @@ end
 describe('informant fairness, as shipped', function()
     it('ships every rule off in config.lua', function()
         local s = newStack()
-        for _, name in ipairs({ 'TipWarningDelay', 'TipLimits', 'TipHoldFirst', 'InformantSecondTry',
-            'TipSafeZones', 'GoDark' }) do
-            eq(ConfigDefaults.Improvements[name].Enabled, false, name .. ' ships off')
-            eq(Config.Improvements[name].Enabled, false, name .. ' is off')
+        for _, name in ipairs({ 'WarningDelay', 'TipLimits', 'HoldFirst', 'SecondTry',
+            'SafeZones', 'GoDark' }) do
+            eq(ConfigDefaults.Intel[name].Enabled, false, name .. ' ships off')
+            eq(Config.Intel[name].Enabled, false, name .. ' is off')
         end
-        eq(#ConfigDefaults.Improvements.TipSafeZones.Zones, 0, 'no safe zone ships')
-        truthy(s.impTips, 'wired')
+        eq(#ConfigDefaults.Intel.SafeZones.Zones, 0, 'no safe zone ships')
+        truthy(s.intelRules, 'wired')
     end)
 
     it('off, a tip behaves as before: the same price, the warning at once, nothing new on the cards', function()
@@ -151,7 +150,7 @@ describe('informant fairness, as shipped', function()
         eq(onMe.goDark, nil, 'no go dark')
         eq(onMe.informantCost, nil, 'no second-try price')
         -- A second tip on it by the same hitman, after the wait: still sold.
-        Env.advance(Config.LocationTip.CooldownMinutes * 60 + 1)
+        Env.advance(Config.Intel.LocationTip.CooldownMinutes * 60 + 1)
         truthy(buy(3, c).ok, 'a second tip by the same hitman')
     end)
 
@@ -162,15 +161,15 @@ describe('informant fairness, as shipped', function()
         local r = call('goDark', 2, { id = c.id, shown = { cost = 50000, account = 'bank' } })
         eq(r.err, 'feature_off')
         eq(bank(2), before)
-        falsy(s.impTips.targetDark('TARGET01'))
+        falsy(s.intelRules.targetDark('TARGET01'))
     end)
 end)
 
-describe('the target\'s tip warning, delayed (TipWarningDelay)', function()
+describe('the target\'s tip warning, delayed (WarningDelay)', function()
     it('waits a random while in the range, then tells them; the card waits and rounds', function()
         local s, _, c = taken()
-        IMP.TipWarningDelay.Enabled = true
-        IMP.TipWarningDelay.MinSeconds, IMP.TipWarningDelay.MaxSeconds = 120, 120
+        IMP.WarningDelay.Enabled = true
+        IMP.WarningDelay.MinSeconds, IMP.WarningDelay.MaxSeconds = 120, 120
         local r = buy(3, c)
         truthy(r and r.ok, tostring(r and r.err))
         eq(tipNoticesToTarget(), 0, 'not told at once')
@@ -187,18 +186,18 @@ describe('the target\'s tip warning, delayed (TipWarningDelay)', function()
 
     it('survives a restart: the warning is sent late, never lost, and once', function()
         local s, _, c = taken()
-        IMP.TipWarningDelay.Enabled = true
-        IMP.TipWarningDelay.MinSeconds, IMP.TipWarningDelay.MaxSeconds = 300, 300
+        IMP.WarningDelay.Enabled = true
+        IMP.WarningDelay.MinSeconds, IMP.WarningDelay.MaxSeconds = 300, 300
         truthy(buy(3, c).ok)
         eq(#s.storage.readRpRows('imp_tipwarn'), 1, 'kept in the store')
         -- The process goes; the store stays. Its timers went with it.
         Env.timers = {}
-        s.impTips.init({ storage = s.storage, audit = s.audit, notify = s.notify,
+        s.intelRules.init({ storage = s.storage, audit = s.audit, notify = s.notify,
             contracts = s.contracts, locationTip = s.locationTip, informant = s.informant,
             projection = s.projection })
         Env.time = Env.time + 600
         Env.clientEvents = {}
-        s.impTips.resume()
+        s.intelRules.resume()
         Env.advance(1)
         eq(tipNoticesToTarget(), 1, 'sent late')
         eq(#s.storage.readRpRows('imp_tipwarn'), 0, 'and gone from the store')
@@ -209,8 +208,8 @@ describe('the target\'s tip warning, delayed (TipWarningDelay)', function()
 
     it('drops the warning for a contract that ended while it waited', function()
         local s, _, c = taken()
-        IMP.TipWarningDelay.Enabled = true
-        IMP.TipWarningDelay.MinSeconds, IMP.TipWarningDelay.MaxSeconds = 60, 60
+        IMP.WarningDelay.Enabled = true
+        IMP.WarningDelay.MinSeconds, IMP.WarningDelay.MaxSeconds = 60, 60
         truthy(buy(3, c).ok)
         local now = s.storage.readContract(c.id)
         truthy(s.storage.compareSetContractState(c.id, now.state, CH.STATE.CANCELLED), 'ended')
@@ -229,7 +228,7 @@ describe('tip limits (TipLimits)', function()
         local s, _, c = taken()
         IMP.TipLimits.Enabled, IMP.TipLimits.OnePerHitman = true, true
         truthy(buy(3, c).ok)
-        Env.advance(Config.LocationTip.CooldownMinutes * 60 + 1)
+        Env.advance(Config.Intel.LocationTip.CooldownMinutes * 60 + 1)
         truthy(view(s, c, 'HITMAN01').locationTip.mineUsed, 'the card says so')
         local before = bank(3)
         local r = buy(3, c)
@@ -244,7 +243,7 @@ describe('tip limits (TipLimits)', function()
         local s, _, c = taken()
         IMP.TipLimits.Enabled, IMP.TipLimits.OnePerHitman = true, false
         IMP.TipLimits.PriceDoubling, IMP.TipLimits.MaxCost = true, 80000
-        Config.LocationTip.CooldownMinutes = 0
+        Config.Intel.LocationTip.CooldownMinutes = 0
         eq(view(s, c, 'HITMAN01').locationTip.cost, nil, 'the first at the board\'s price')
         local city = moneyInTheCity()
         truthy(buy(3, c).ok)
@@ -261,10 +260,10 @@ describe('tip limits (TipLimits)', function()
     end)
 end)
 
-describe('holding a contract before a tip (TipHoldFirst)', function()
+describe('holding a contract before a tip (HoldFirst)', function()
     it('refuses until held long enough, saying how long, charging nothing', function()
         local s, _, c = taken()
-        IMP.TipHoldFirst.Enabled, IMP.TipHoldFirst.MinHeldMinutes = true, 10
+        IMP.HoldFirst.Enabled, IMP.HoldFirst.MinHeldMinutes = true, 10
         local card = view(s, c, 'HITMAN01').locationTip
         truthy(card.holdSeconds and card.holdSeconds > 0, 'the card says how long')
         local before = bank(3)
@@ -277,10 +276,10 @@ describe('holding a contract before a tip (TipHoldFirst)', function()
     end)
 end)
 
-describe('the target\'s informant, a second try (InformantSecondTry)', function()
+describe('the target\'s informant, a second try (SecondTry)', function()
     it('prices the look-ups after the first at the percentage, quoted on the card', function()
         local s, _, c = taken({ anon = true, anonHitman = true })
-        IMP.InformantSecondTry.Enabled, IMP.InformantSecondTry.SecondTryCostPercent = true, 50
+        IMP.SecondTry.Enabled, IMP.SecondTry.SecondTryCostPercent = true, 50
         local picks = view(s, c, 'TARGET01').informantPicks
         truthy(picks and #picks >= 2, 'picks offered')
         eq(view(s, c, 'TARGET01').informantCost, nil, 'the first at the informant\'s price')
@@ -303,11 +302,11 @@ describe('the target\'s informant, a second try (InformantSecondTry)', function(
     end)
 end)
 
-describe('safe zones (TipSafeZones)', function()
+describe('safe zones (SafeZones)', function()
     it('refuses a tip while the target is in one, charging nothing, saying neither why nor where', function()
         local s, _, c = taken()
-        IMP.TipSafeZones.Enabled = true
-        IMP.TipSafeZones.Zones = { '1210, -790, 50, Pillbox Hill Medical' }
+        IMP.SafeZones.Enabled = true
+        IMP.SafeZones.Zones = { '1210, -790, 50, Pillbox Hill Medical' }
         local before, city = bank(3), moneyInTheCity()
         local r = buy(3, c)
         eq(r.err, 'tip_cant_place')
@@ -351,7 +350,7 @@ describe('going dark (GoDark)', function()
     it('charges the quote; tips meanwhile find nothing and are given back in full', function()
         local s, _, c = taken()
         on()
-        Config.LocationTip.CooldownMinutes = 0
+        Config.Intel.LocationTip.CooldownMinutes = 0
         truthy(buy(3, c).ok)
         local city = moneyInTheCity()
         local stale = call('goDark', 2, { id = c.id, shown = { cost = 1, account = 'bank' } })
@@ -396,13 +395,13 @@ describe('going dark (GoDark)', function()
         eq(#s.storage.readRpRows('imp_dark'), 0, 'nothing kept')
         Env.players[2].PlayerData.money.bank = 100000
         truthy(call('goDark', 2, { id = c.id, shown = DARK }).ok)
-        s.impTips.init({ storage = s.storage, audit = s.audit, notify = s.notify,
+        s.intelRules.init({ storage = s.storage, audit = s.audit, notify = s.notify,
             contracts = s.contracts, locationTip = s.locationTip, informant = s.informant,
             projection = s.projection })
-        truthy(s.impTips.targetDark('TARGET01'), 'still dark after the restart')
+        truthy(s.intelRules.targetDark('TARGET01'), 'still dark after the restart')
         -- And still dark with the switch turned off: it was paid for.
         IMP.GoDark.Enabled = false
-        Env.advance(Config.LocationTip.CooldownMinutes * 60 + 1)
+        Env.advance(Config.Intel.LocationTip.CooldownMinutes * 60 + 1)
         eq(buy(3, c).err, 'tip_not_found')
     end)
 end)
@@ -412,13 +411,13 @@ describe('informant fairness in the admin panel', function()
         local s = newStack()
         local keys = {}
         for _, entry in ipairs(s.settings.CATALOGUE) do keys[entry.key] = entry end
-        for name, fields in pairs(s.impTips.RULES) do
+        for name, fields in pairs(s.intelRules.RULES) do
             for field in pairs(fields) do
-                local key = 'Improvements.' .. name .. '.' .. field
+                local key = 'Intel.' .. name .. '.' .. field
                 truthy(keys[key], key .. ' is in the panel')
                 if field == 'Enabled' then
                     eq(keys[key].category, 'features', key)
-                    eq(keys[key].group, keys[key].group:match('^Improvements: .+') and keys[key].group, key)
+                    eq(keys[key].group, keys[key].group:match('^Intel: .+') and keys[key].group, key)
                 end
             end
         end
@@ -426,27 +425,27 @@ describe('informant fairness in the admin panel', function()
 
     it('holds config.lua to its rules at the start, putting back what ships', function()
         newStack()
-        IMP.GoDark.Cost, IMP.TipSafeZones.Zones = -1, { 'not a zone' }
-        IMP.TipWarningDelay.MinSeconds, IMP.TipWarningDelay.MaxSeconds = 200, 100
-        Config.Improvements.InformantSecondTry = nil
+        IMP.GoDark.Cost, IMP.SafeZones.Zones = -1, { 'not a zone' }
+        IMP.WarningDelay.MinSeconds, IMP.WarningDelay.MaxSeconds = 200, 100
+        Config.Intel.SecondTry = nil
         local warn = {}
-        require('server.imp_tips').validate(warn)
+        require('server.intel.rules').validate(warn)
         eq(IMP.GoDark.Cost, 50000, 'the shipped price')
-        eq(#IMP.TipSafeZones.Zones, 0, 'the shipped zones')
-        eq(IMP.TipWarningDelay.MinSeconds, 100, 'never above the longest')
-        eq(Config.Improvements.InformantSecondTry.Enabled, false, 'a missing block filled, off')
+        eq(#IMP.SafeZones.Zones, 0, 'the shipped zones')
+        eq(IMP.WarningDelay.MinSeconds, 100, 'never above the longest')
+        eq(Config.Intel.SecondTry.Enabled, false, 'a missing block filled, off')
         truthy(#warn >= 3, 'each said: ' .. table.concat(warn, ' | '))
     end)
 
     it('applies live, and refuses a zone that does not read', function()
         local s, _, c = taken()
-        truthy(s.settings.set('Improvements.TipHoldFirst.Enabled', true, 'ADMIN001'))
-        truthy(s.settings.set('Improvements.TipHoldFirst.MinHeldMinutes', 30, 'ADMIN001'))
+        truthy(s.settings.set('Intel.HoldFirst.Enabled', true, 'ADMIN001'))
+        truthy(s.settings.set('Intel.HoldFirst.MinHeldMinutes', 30, 'ADMIN001'))
         eq(buy(3, c).err, 'tip_hold', 'in force at once')
-        falsy(s.settings.set('Improvements.TipSafeZones.Zones', { 'nowhere' }, 'ADMIN001'),
+        falsy(s.settings.set('Intel.SafeZones.Zones', { 'nowhere' }, 'ADMIN001'),
             'a zone that does not read')
-        truthy(s.settings.set('Improvements.TipSafeZones.Zones', { '1, 2, 30, Somewhere' }, 'ADMIN001'))
-        eq(Config.Improvements.TipSafeZones.Zones[1], '1, 2, 30, Somewhere')
-        falsy(s.settings.set('Improvements.GoDark.Cost', -5, 'ADMIN001'), 'a negative price')
+        truthy(s.settings.set('Intel.SafeZones.Zones', { '1, 2, 30, Somewhere' }, 'ADMIN001'))
+        eq(Config.Intel.SafeZones.Zones[1], '1, 2, 30, Somewhere')
+        falsy(s.settings.set('Intel.GoDark.Cost', -5, 'ADMIN001'), 'a negative price')
     end)
 end)

@@ -1784,7 +1784,7 @@ async function main() {
       unique.length + ' fault(s): ' + unique.slice(0, 6).join(' | '));
   });
 
-  /* ---- rumours and the broker (Config.Roleplay.Rumours) ----
+  /* ---- rumours and the broker (Config.Intel.Rumours) ----
    *
    * A rumour card and a broker player's panel at 390px: everything inside
    * its card, no sideways scroll, every button thumb-sized. */

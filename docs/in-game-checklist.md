@@ -295,7 +295,7 @@ uploads, and with neither. Restart the resource between them.
 
 ## 8. Counter-play
 
-- [ ] With `Config.InformantsEnabled` on and `Config.Informant.Enabled`, `Config.PlacerInformant.Enabled` and `Config.LocationTip.Enabled` switched on in the panel, each informant appears where described below; with the master switch off, none does, whatever the three say
+- [ ] With `Config.Intel.Enabled` on and `Config.Intel.Informant.Enabled`, `Config.Intel.PlacerInformant.Enabled` and `Config.Intel.LocationTip.Enabled` switched on in the panel, each informant appears where described below; with the master switch off, none does, whatever the three say
 - [ ] A target sees the contract in **On Me** with the buyout price, but only once their "eyes on you" alert has arrived (one to ten minutes after it was placed); before that On Me and `/cleanse` show nothing, and the board shows no face for them unless one was already rendered. Restart the resource inside that wait: On Me still shows nothing, and one to ten minutes after the restart the alert arrives with it. Withdraw one inside the wait: the target never gets the alert for it
 - [ ] The target logs off before the alert is due and back after it: the "eyes on you" alert is in their notifications once they have spawned
 - [ ] Place one, switch **Tell the target** off in the admin panel inside the wait: no alert comes. Let a contract run out inside the wait (a short deadline): the target is never told it lapsed
@@ -535,7 +535,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `Config.Roleplay.Reputation` on (with `Config.Progression.Enabled`): complete a contract: the receipt ends with *Reputation x...* and its parts, and the trust given matches
 - [ ] `Config.Roleplay.Protection` on: as a target, **Hire protection** on On me (the reward leaves the account); as a third player take it on the board's **Protection** tab: you see the target's name and **Set GPS to the pin** works, and nothing names the placer or an operative; let the contract expire: the guard is paid. Cancel an untaken job (it asks first, saying the reward comes back): the target is refunded. **Move the pin here** asks first too, and the guard's **Set GPS to the pin** then marks the new spot. Switch `Config.Roleplay.Protection` off with a guard on the job: the target can still move the pin, and the guard still has the **Protection** tab and Set GPS
 - [ ] `Config.Roleplay.HitOnHitman` on: have the target's informant find an operative's name: **Place a contract on <name>** opens Place with them chosen, and placing follows every rule
-- [ ] `Config.Roleplay.Rumours` on: a second character sees a new contract as *A rumour* with an area and a band, no name or face, and no Accept.
+- [ ] `Config.Intel.Rumours` on: a second character sees a new contract as *A rumour* with an area and a band, no name or face, and no Accept.
 - [ ] Walk to the broker NPC (set `Rumours.Blip` on to find it): the ped stands there doing its scenario; **Ask the broker** from 20 m says *Find the broker first.*, from beside it shows the full card and Accept.
 - [ ] After `BriefValidMinutes` the card is a rumour again.
 - [ ] Give a character a job in `Rumours.BrokerJobs`: **Who is near me?** lists the hitman beside them by distance only; **Brief them** unlocks the card on the hitman's board, and the hitman gets a notice.
@@ -544,7 +544,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Give `burner_phone` (ox_inventory): everything works again; with `ConsumeOnPlace` one is used up per contract placed.
 - [ ] Take the item off a hitman holding a contract: the contract stays, Abandon says *You need a burner phone.*
 - [ ] Buy the item from sc-blackmarket after adding it there.
-- [ ] `Config.Roleplay.InformantNpc` on, with the tip on: buying a tip away from the informant says *Find the informant first.* and the bank is unchanged; beside it the tip is sold.
+- [ ] `Config.Intel.InPerson` on, with the tip on: buying a tip away from the informant says *Find the informant first.* and the bank is unchanged; beside it the tip is sold.
 - [ ] `Config.Roleplay.ReasonQuality` on: *idk* is refused, *Debt owed* is refused as too short; with `LowEffortAction = 'review'` an *rdm* reason is placed and shows in **Needs review** as a low-effort reason, dismissed with a note.
 
 ## 15. Optional improvements (each off as shipped)
@@ -552,16 +552,16 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 ### Informant fairness
 
 - [ ] With every `Config.Improvements` switch off, a tip and the target's informant cost, limit and warn as before.
-- [ ] `Config.Improvements.TipWarningDelay` on (60..300 s): buy a tip; the target gets no notice at once, then one within 5 minutes; On me's *Tipped off* time is a round 5 minutes.
+- [ ] `Config.Intel.WarningDelay` on (60..300 s): buy a tip; the target gets no notice at once, then one within 5 minutes; On me's *Tipped off* time is a round 5 minutes.
 - [ ] Buy a tip with the delay on, restart the resource before it is sent: the target still gets the notice, once.
-- [ ] `Config.Improvements.TipLimits`, one per hitman: a second tip by the same hitman is refused, a second hitman may still buy one.
-- [ ] `Config.Improvements.TipLimits`, price doubling: the second tip's button quotes twice the price and charges it; the third stops at `MaxCost`.
-- [ ] `Config.Improvements.TipHoldFirst` (10 min): the button says from when; buying earlier is refused with the time and the bank is unchanged.
-- [ ] `Config.Improvements.InformantSecondTry` at 50%: the target's second look-up quotes and charges half.
-- [ ] `Config.Improvements.TipSafeZones` around the hospital: with the target inside, a tip says *Your informant can't place them right now.* and nothing is taken; outside it is sold.
-- [ ] `Config.Improvements.GoDark`: the tipped-off target taps **Go dark** twice and pays; a tip bought on them then says the informant couldn't find them and the hitman's bank is back where it was; after `Minutes` tips work again.
+- [ ] `Config.Intel.TipLimits`, one per hitman: a second tip by the same hitman is refused, a second hitman may still buy one.
+- [ ] `Config.Intel.TipLimits`, price doubling: the second tip's button quotes twice the price and charges it; the third stops at `MaxCost`.
+- [ ] `Config.Intel.HoldFirst` (10 min): the button says from when; buying earlier is refused with the time and the bank is unchanged.
+- [ ] `Config.Intel.SecondTry` at 50%: the target's second look-up quotes and charges half.
+- [ ] `Config.Intel.SafeZones` around the hospital: with the target inside, a tip says *Your informant can't place them right now.* and nothing is taken; outside it is sold.
+- [ ] `Config.Intel.GoDark`: the tipped-off target taps **Go dark** twice and pays; a tip bought on them then says the informant couldn't find them and the hitman's bank is back where it was; after `Minutes` tips work again.
 - [ ] Go dark, then restart the resource: the target is still dark until `Minutes` is up; after it, the `crimson_rp_rows` row of kind `imp_dark` is gone within a minute even though nobody bought another tip.
-- [ ] Buy a tip, then switch `Config.LocationTip.Enabled` off in the panel: the target's card offers no **Go dark** and nothing can be charged for it; a window already paid for still shows until when.
+- [ ] Buy a tip, then switch `Config.Intel.LocationTip.Enabled` off in the panel: the target's card offers no **Go dark** and nothing can be charged for it; a window already paid for still shows until when.
 - [ ] Go dark for 30 minutes, freeze the target for 40, unfreeze: they are still dark for the 30 minutes; a hitman frozen with a tip's wait running comes back to the same wait.
 
 ### Board and progression
@@ -605,7 +605,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Boss **Places**: stand somewhere and press Place here for a meeting spot (two taps): the spot is where the server sees you, not where the phone says; a spot inside a tip safe zone is refused in words.
 - [ ] `Config.Organisation.Codenames` on: a member sets a codename in the tab (two taps); a blocked word, one another member uses, or a second change inside `Config.Organisation.Limits.CodenameCooldownMinutes` is refused in words. A boss holding Assign codenames gives one to a member below; the member then cannot change it. A codename that reads as any character's name (another member's, or a player online, with look-alikes such as `P 11`, `Po1ice` folded) is refused. A placer of a contract the member took under their name sees the codename marked *(codename)*, never the real name, and still sees it after the member is fired or the codename is cleared; taken anonymously, still *Operative #n*.
 - [ ] `Config.Organisation.Payroll` on: a boss holding Set salaries sets a role's salary within `Config.Organisation.Limits.SalaryMax`; after `Config.Organisation.PayrollDays` (or with the pay day moved for a test) every member of that role is paid to their bank and the funds fall by the same total; with the funds short, the unpaid member is told and the rest are paid; `restart crimson-hitman` straight after a pay day pays nobody again. A boss's salary change shows as from the pay day after next and is not paid at the next one; a suspended member is not paid (unless `Config.Organisation.PaySuspended`); with `Config.Organisation.Limits.PayrollPerDayMax` set, members past it are skipped and told.
-- [ ] `Config.Roleplay.NpcPlaces` on: in Locations, Broker and informant places, press Use my position (two clicks) beside the broker: within a minute the broker stands there for every player (rotating as `Config.Roleplay.Rumours.RotateHours` says among the places set); Reset to config puts it back on the `Locations` list; with the switch off the list is used whatever was placed.
+- [ ] `Config.Roleplay.NpcPlaces` on: in Locations, Broker and informant places, press Use my position (two clicks) beside the broker: within a minute the broker stands there for every player (rotating as `Config.Intel.Rumours.RotateHours` says among the places set); Reset to config puts it back on the `Locations` list; with the switch off the list is used whatever was placed.
 
 ## 17. Mission steps
 
@@ -653,7 +653,17 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 
 - [ ] As shipped (`Config.TargetClasses`): placing or accepting anonymously is offered to nobody, on a civilian or on an officer; the target sees a named operative's name; the board names no placer.
 - [ ] Settings, Features, Anonymity (whitelisted-job targets): turn **Placing anonymously** on: a contract on an SAST officer can be placed anonymously, one on a civilian cannot; turn it off again.
-- [ ] Turn **Target's informant** on (`Config.Informant.Enabled`): a civilian target can buy it; an officer target cannot until Informants (whitelisted-job targets), **Target's informant** is on too; with Informants (every other target), **Target's informant** off, a civilian target cannot.
+- [ ] Turn **Target's informant** on (`Config.Intel.Informant.Enabled`): a civilian target can buy it; an officer target cannot until Informants (whitelisted-job targets), **Target's informant** is on too; with Informants (every other target), **Target's informant** off, a civilian target cannot.
+
+## Intel: one engine for every paid look-up (step 3g)
+
+- [ ] Settings, Game rules: one area **Intel** holds every informant, tip, go-dark, informant-in-person and rumours setting; Rewards & money shows their prices under **Intel prices**; Features lists every Intel group after Anonymity and before the advisory.
+- [ ] Turn the target's informant, the placer's informant and the tip on (Intel): each is sold, priced and refused as before; a price changed in the panel while the dialog is open is refused, not charged.
+- [ ] Freeze the target (Players) while a look-up or tip is being bought, or end the contract: the buyer gets the full price back (owed at next login if away; a tip that cannot be credited goes to Needs review).
+- [ ] Turn **Go dark** on: a tipped-off target goes dark from On me; a hitman's tip meanwhile says the informant could not find them and gives the money back.
+- [ ] Turn **Informant in person** on: every look-up and tip only beside the informant NPC ("Find the informant first."), nothing charged elsewhere.
+- [ ] Turn **Rumours** on: the board shows rumours until the broker (NPC or player) briefs the hitman; the briefed player gets the notice.
+- [ ] Nothing names the placer or the target, or shows the target's position, beyond what each look-up showed before; resmon idle unchanged.
 
 ## If something fails
 

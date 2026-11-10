@@ -4,7 +4,7 @@
 ---
 --- Every marker the server decides on goes through here: each step of a
 --- contract (server/missionsteps.lua), the handover's meeting point
---- (server/meeting.lua) and an informant tip's area (server/locationtip.lua).
+--- (server/meeting.lua) and an informant tip's area (server/intel/tip.lua).
 --- Who is sent which, and when it comes off, stays each module's rule; this
 --- is only the sending. A key names the marker on that game ('tip:<contract>',
 --- 'meeting:<contract>', 'kill:<contract>', ...): a second send under the

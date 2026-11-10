@@ -426,30 +426,6 @@ function Util.targetRule(name, protected)
     return type(rules) == 'table' and rules[name] == true
 end
 
---- Whether one of the three informant features is sold on a contract: the
---- master switch over all three (Config.InformantsEnabled), the feature's
---- own switch (Config.Informant, Config.PlacerInformant or
---- Config.LocationTip .Enabled, by section name), and its switch for the
---- target's class (Config.TargetClasses, Util.targetRule).
----@param section string 'Informant' | 'PlacerInformant' | 'LocationTip'
----@param protected boolean|nil the target is on a whitelisted job
----@return boolean
-function Util.informantOn(section, protected)
-    if not Config or Config.InformantsEnabled ~= true then return false end
-    local block = Config[section]
-    if not (type(block) == 'table' and block.Enabled == true) then return false end
-    return Util.targetRule(section, protected)
-end
-
---- Whether one of the three informant features is on for any target at
---- all, civilian or on a whitelisted job: what the page is told of its
---- price and rules, and the first refusal, before a contract is read.
----@param section string 'Informant' | 'PlacerInformant' | 'LocationTip'
----@return boolean
-function Util.informantAnyOn(section)
-    return Util.informantOn(section, false) or Util.informantOn(section, true)
-end
-
 --- The name shown for a hitman where their name is shown at all: the one
 --- the contract keeps. The hitman organisation (server/org/init.lua,
 --- Config.Organisation.Codenames) puts its own in place on the server, a

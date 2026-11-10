@@ -43,9 +43,9 @@ end
 --- what turns "the field is missing" into "the field is absent when it should
 --- be".
 local CONDITIONAL = {
-    -- A rumour (Config.Roleplay.Rumours, off as shipped): only on a board
+    -- A rumour (Config.Intel.Rumours, off as shipped): only on a board
     -- row the viewer is no party to and not briefed on, in place of the card.
-    rumour = 'only on a rumour, with Config.Roleplay.Rumours on',
+    rumour = 'only on a rumour, with Config.Intel.Rumours on',
     -- Written by the page from its own kidnapProgress polling.
     kidnapProgress = 'the page fills this in, not the projection',
     -- A handover running on it, on the placer's card alone, roughly how
@@ -91,13 +91,13 @@ local CONDITIONAL = {
     bailoutSecondsLeft = 'target-only, and only while a paid buyout waits out its delay',
     -- The same delay on the hitman's own card: the warning the delay is for.
     buyoutClosesIn = 'hitman-only, and only while a paid buyout waits out its delay',
-    -- The target's informant (Config.Informant): what it found, once a
+    -- The target's informant (Config.Intel.Informant): what it found, once a
     -- look-up found something; what they may pick, and how many are left,
     -- where the server sells look-ups and never to a whitelisted-job target.
     informantFound   = 'target-only, and only once a look-up found somebody',
     informantPicks   = 'target-only, where informants run and the target may buy',
     informantLeft    = 'target-only, and only where informants run',
-    -- The placer's (Config.PlacerInformant), the same way on their own card.
+    -- The placer's (Config.Intel.PlacerInformant), the same way on their own card.
     placerInformantFound = 'creator-only, and only once a look-up found somebody',
     placerInformantPicks = 'creator-only, where it runs on a live contract',
     placerInformantLeft  = 'creator-only, where it runs on a live contract',
@@ -125,7 +125,7 @@ local CONDITIONAL = {
     -- board (meeting_spec, "who is shown it" and "the switch").
     meetingSet       = 'creator and active hitmen only, on an alive-only contract a hitman holds',
     meetingSteps     = 'creator and active hitmen only, while a meeting point is set (Meeting.steps)',
-    -- The informant tip (server/locationtip.lua): an active hitman's own,
+    -- The informant tip (server/intel/tip.lua): an active hitman's own,
     -- on their card under Mine alone, never on the board; and on the
     -- target's, when they were told one was bought (location_tip_spec).
     locationTip      = 'hitman-only, on their own card, where tips are sold or one is showing',
@@ -141,7 +141,7 @@ local CONDITIONAL = {
     protection       = 'target-only, while bodyguards are on and a job is posted',
     protectionOffer  = 'target-only, while bodyguards are on and none is posted',
     counterTargets   = 'target-only, while the hit on the hitman is on and an operative was named',
-    -- Informant fairness (server/imp_tips.lua), off as shipped: going dark,
+    -- Informant fairness (server/intel/rules.lua), off as shipped: going dark,
     -- and the price of the target's next look-up (imp_tips_spec).
     goDark           = 'target-only, while going dark is on and they were told of a tip',
     informantCost    = 'target-only, while the second-try price is on and differs',
@@ -348,8 +348,8 @@ describe('the fields whose presence is a rule', function()
         Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
-        local most = Config.Informant.MaxPurchasesPerContract
-        local placerMost = Config.PlacerInformant.MaxPurchasesPerContract
+        local most = Config.Intel.Informant.MaxPurchasesPerContract
+        local placerMost = Config.Intel.PlacerInformant.MaxPurchasesPerContract
         eq((s.projection.mine(f.creator.cid) or {})[1].placerInformantLeft, placerMost,
             'the creator, none spent')
         falsy((s.projection.mine(f.creator.cid) or {})[1].informantLeft,
@@ -366,7 +366,7 @@ describe('the fields whose presence is a rule', function()
         eq((s.projection.mine(f.creator.cid) or {})[1].placerInformantLeft, placerMost,
             'and nobody else\'s count moves')
 
-        Config.Informant.Enabled = false
+        Config.Intel.Informant.Enabled = false
         falsy((s.projection.onMe(f.target.cid) or {})[1].informantLeft, 'none where none are sold')
     end)
 

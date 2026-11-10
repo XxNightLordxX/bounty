@@ -822,12 +822,12 @@ describe('a config that names an account the framework does not have', function(
     end)
 
     it('corrects the informants account the same way', function()
-        local was = Config.Informant.Account
-        Config.Informant.Account = 'dirty'
+        local was = Config.Intel.Informant.Account
+        Config.Intel.Informant.Account = 'dirty'
         local main = reboot()
         main.validateConfig()
-        local after = Config.Informant.Account
-        Config.Informant.Account = was
+        local after = Config.Intel.Informant.Account
+        Config.Intel.Informant.Account = was
         eq(after, 'bank')
     end)
 

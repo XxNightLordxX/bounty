@@ -196,8 +196,8 @@ end)
 describe('the broker and informant placed from Locations (Config.Roleplay.NpcPlaces)', function()
     local function stack(on)
         local s = W.world({ configure = function()
-            Config.Roleplay.Rumours.Enabled = true
-            Config.Roleplay.InformantNpc.Enabled = true
+            Config.Intel.Rumours.Enabled = true
+            Config.Intel.InPerson.Enabled = true
             if on then Config.Roleplay.NpcPlaces.Enabled = true end
         end })
         return s

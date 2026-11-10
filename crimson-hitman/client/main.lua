@@ -806,7 +806,7 @@ end)
 --- logout and at the stop. The page is never sent where either is.
 
 --------------------------------------------------------------------------
--- Informant tips (server/locationtip.lua)
+-- Informant tips (server/intel/tip.lua)
 --------------------------------------------------------------------------
 
 --- Ask for the tips still showing, once the app is this player's: the

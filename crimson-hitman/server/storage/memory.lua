@@ -1481,7 +1481,7 @@ function Memory.clearReveals(contractId)
 end
 
 --- The look-ups a contract's placer bought from their informant
---- (Config.PlacerInformant), one row each: which operative, when, whether it
+--- (Config.Intel.PlacerInformant), one row each: which operative, when, whether it
 --- found out who they are and whether they were told. Kept in the store, not
 --- only in the informant's memory: a restart that forgot them counted the cap
 --- from zero and hid a name already paid for.
@@ -1514,7 +1514,7 @@ function Memory.clearPlacerInformants(contractId)
 end
 
 --------------------------------------------------------------------------
--- Informant tips (server/locationtip.lua)
+-- Informant tips (server/intel/tip.lua)
 --------------------------------------------------------------------------
 
 --- One row per tip bought: { id, contract_id, buyer_cid, bought_at,

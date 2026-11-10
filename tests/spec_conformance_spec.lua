@@ -101,7 +101,7 @@ end)
 
 --------------------------------------------------------------------------
 -- §14.29 — "total purchases per contract are capped by
--- Config.Informant.MaxPurchasesPerContract, and is refused before payment".
+-- Config.Intel.Informant.MaxPurchasesPerContract, and is refused before payment".
 --
 -- The sticky reveal and the seeded selection are both tested. The ceiling
 -- on how many times one buyer may go back to the well is not, and the
@@ -126,17 +126,17 @@ describe('the informant purchase ceiling (§14.29)', function()
     --- Past the reroll lock, so each call is a fresh purchase rather than
     --- the cached reveal handed back for free.
     local function pastTheLock()
-        Env.time = Env.time + (Config.Informant.RerollLockMinutes * 60) + 1
+        Env.time = Env.time + (Config.Intel.Informant.RerollLockMinutes * 60) + 1
     end
 
     it('refuses the purchase past the cap, and charges nothing for the refusal', function()
         local s, f, c = contested()
-        local cost = Config.Informant.Cost
+        local cost = Config.Intel.Informant.Cost
         Env.players[2].PlayerData.money.bank = 400000
         s.informant.setRandom(function() return 100 end)
         local picks = s.projection.contract(s.storage.readContract(c.id), 'TARGET01').informantPicks
 
-        for i = 1, Config.Informant.MaxPurchasesPerContract do
+        for i = 1, Config.Intel.Informant.MaxPurchasesPerContract do
             local bank = Env.players[2].PlayerData.money.bank
             local ok = s.informant.buy(f.target, c.id, nil, picks[i].pick)
             truthy(ok, 'purchase ' .. i .. ' is inside the ceiling')

@@ -300,7 +300,7 @@ describe('what a player doing ordinary things spends', function()
         -- test is about. That refund is why the assertion below cannot be
         -- written as "if it happened to be refused".
         -- With the price quoted, as the page sends it.
-        local quoted = { cost = Config.Informant.Cost, account = Config.Informant.Account }
+        local quoted = { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account }
         local first = call('informant', 2, { id = c.id, shown = quoted, pick = pick })
         truthy(first, 'the handler must answer')
         truthy(first.ok, 'the first purchase has to succeed for the bucket to '

@@ -22,8 +22,8 @@ local deps
 --- The two NPCs: which block each reads, and an offset so the two lists do
 --- not move in step.
 Places.NPCS = {
-    broker = { block = 'Roleplay.Rumours', salt = 0 },
-    informant = { block = 'Roleplay.InformantNpc', salt = 1 },
+    broker = { block = 'Intel.Rumours', salt = 0 },
+    informant = { block = 'Intel.InPerson', salt = 1 },
 }
 
 local function numbers(text, want)
@@ -255,11 +255,11 @@ end
 --- The settings that move or change an NPC, watched so a change from the
 --- admin panel reaches every game at once.
 Places.WATCHED = {
-    'Roleplay.Rumours.Enabled', 'Roleplay.Rumours.Locations', 'Roleplay.Rumours.RotateHours',
-    'Roleplay.Rumours.Model', 'Roleplay.Rumours.Scenario', 'Roleplay.Rumours.Blip',
-    'Roleplay.InformantNpc.Enabled', 'Roleplay.InformantNpc.Locations',
-    'Roleplay.InformantNpc.RotateHours', 'Roleplay.InformantNpc.Model',
-    'Roleplay.InformantNpc.Scenario', 'Roleplay.InformantNpc.Blip',
+    'Intel.Rumours.Enabled', 'Intel.Rumours.Locations', 'Intel.Rumours.RotateHours',
+    'Intel.Rumours.Model', 'Intel.Rumours.Scenario', 'Intel.Rumours.Blip',
+    'Intel.InPerson.Enabled', 'Intel.InPerson.Locations',
+    'Intel.InPerson.RotateHours', 'Intel.InPerson.Model',
+    'Intel.InPerson.Scenario', 'Intel.InPerson.Blip',
     'Roleplay.NpcPlaces.Enabled',
 }
 

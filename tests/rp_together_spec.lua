@@ -341,7 +341,7 @@ describe('the area lists of witness heat and the rumours', function()
             truthy(ok, ('%s: %s %s'):format(key, tostring(err), tostring(why)))
         end
         turn('Roleplay.WitnessHeat.Areas', { 'Pier@-1600,-1000', '300, 200, Vinewood' })
-        turn('Roleplay.Rumours.Districts', { '0, 0, Downtown Core', 'Sandy Shores@1850,3700' })
+        turn('Intel.Rumours.Districts', { '0, 0, Downtown Core', 'Sandy Shores@1850,3700' })
         local Places = require('server.rp_places')
         for _, text in ipairs({ 'Pier@-1600,-1000', '300, 200, Vinewood', 'Sandy Shores@1850,3700' }) do
             truthy(Places.parseArea(text), text .. ' reads')
@@ -350,7 +350,7 @@ describe('the area lists of witness heat and the rumours', function()
         eq(s.rpConsequences.areaOf({ x = -1590.0, y = -990.0 }), 'Pier', 'and Name@x,y')
         for _, bad in ipairs({ 'nowhere', '1, 2', '@1,2', 'Somewhere@x,y', '1, 2, <b>' }) do
             falsy(s.settings.set('Roleplay.WitnessHeat.Areas', { bad }, 'ADMIN001', 'ADMIN001'), bad)
-            falsy(s.settings.set('Roleplay.Rumours.Districts', { bad }, 'ADMIN001', 'ADMIN001'), bad)
+            falsy(s.settings.set('Intel.Rumours.Districts', { bad }, 'ADMIN001', 'ADMIN001'), bad)
         end
     end)
 end)

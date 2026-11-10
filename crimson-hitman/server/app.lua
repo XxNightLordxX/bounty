@@ -280,7 +280,7 @@ local function nearbyNameable(src, ped, bucket)
     return masks[tonumber(src) or src] == false
 end
 
---- For the broker's nearby list (server/rp_rumours.lua): whether a player
+--- For the broker's nearby list (server/intel/rumours.lua): whether a player
 --- may be offered at all. Invisible (noclip, spectating staff) never; one
 --- whose client said they are masked never. Unlike the nearby list, a
 --- player whose mask state was never reported is offered, because the
@@ -406,12 +406,13 @@ local function roleplayCall(what, fn, ...)
 end
 
 --- A refusal from the first roleplay rule that stands in front of this
---- request, or nil: the burner phone, the briefing, the informant in person.
+--- request, or nil: the burner phone, the briefing, intel in person.
 local function roleplayGate(name, actor, payload)
     local gates = {
         { 'burner', deps.rpBurner and deps.rpBurner.gate },
-        { 'rumours', deps.rpRumours and deps.rpRumours.gate },
-        { 'informant', deps.rpInformant and deps.rpInformant.gate },
+        { 'rumours', deps.intelRumours and deps.intelRumours.gate },
+        -- Intel bought in person (Config.Intel.InPerson): beside the informant.
+        { 'intel', deps.intel and deps.intel.gate },
         -- The tiered board (server/imp_tiers.lua): Accept below the level.
         { 'tiers', deps.impBoard and deps.impBoard.tiers.gate },
     }
@@ -427,7 +428,7 @@ end
 local function roleplayShape(name, actor, result)
     local shapes = {
         { 'burner', deps.rpBurner and deps.rpBurner.shape },
-        { 'rumours', deps.rpRumours and deps.rpRumours.shape },
+        { 'rumours', deps.intelRumours and deps.intelRumours.shape },
     }
     for _, shape in ipairs(shapes) do
         local ok, shaped = roleplayCall(shape[1], shape[2], name, actor, result)
@@ -1541,6 +1542,10 @@ function App.register()
         return { queued = third == true }
     end, 'target')
 
+    -- Intel (server/intel/, Config.Intel): every paid look-up runs through
+    -- the one purchase engine (server/intel/engine.lua, Intel.buy), each in
+    -- its own rate-limit bucket; rumours and briefings beside them.
+
     -- The target's informant: one look-up on an operative (by the handle
     -- their On me card was given) or on the person who placed it ('placer').
     -- On a refusal the third says more than the code: how long a busy key
@@ -1556,7 +1561,7 @@ function App.register()
         return data
     end)
 
-    -- The placer's informant (Config.PlacerInformant): one look-up on an
+    -- The placer's informant (Config.Intel.PlacerInformant): one look-up on an
     -- operative who took their contract, by the handle their Mine card was
     -- given. Its own bucket, so it never spends the target's.
     handler('placerInformant', 'placerInformant', function(actor, payload)
@@ -1567,7 +1572,7 @@ function App.register()
         return data
     end)
 
-    -- The informant tip (server/locationtip.lua, Config.LocationTip): a
+    -- The informant tip (server/intel/tip.lua, Config.Intel.LocationTip): a
     -- hitman holding a live contract buys the rough area its target was in.
     -- Its own bucket. `shown` is the price the button quoted, and a price
     -- that moved since is refused rather than charged. The area goes to the
@@ -1575,6 +1580,31 @@ function App.register()
     handler('locationTip', 'locationTip', function(actor, payload)
         return deps.locationTip.buy(actor, payload.id,
             type(payload.shown) == 'table' and payload.shown or {})
+    end)
+
+    -- Going dark (Config.Intel.GoDark): a target told of a tip on a
+    -- contract on them pays to have every tip bought on them meanwhile find
+    -- nothing. The tip's bucket. `shown` is the price the card quoted.
+    handler('goDark', 'locationTip', function(actor, payload)
+        if not deps.intelRules then return false, CH.ERR.FEATURE_OFF end
+        return deps.intelRules.goDark(actor, payload.id,
+            type(payload.shown) == 'table' and payload.shown or {})
+    end)
+
+    -- Rumours and the broker: asking the broker NPC about one rumour, from
+    -- beside it; and a broker player's two, who is near them and briefing
+    -- one of them. Every distance is read on the server.
+    handler('rumourBrief', 'accept', function(actor, payload)
+        if not deps.intelRumours then return false, CH.ERR.FEATURE_OFF end
+        return deps.intelRumours.askBroker(actor, payload.id)
+    end)
+    handler('brokerNearby', 'load', function(actor)
+        if not deps.intelRumours then return false, CH.ERR.FEATURE_OFF end
+        return deps.intelRumours.brokerNearby(actor)
+    end)
+    handler('brokerBrief', 'accept', function(actor, payload)
+        if not deps.intelRumours then return false, CH.ERR.FEATURE_OFF end
+        return deps.intelRumours.brokerBrief(actor, payload.id, payload.who)
     end)
 
     -- The buyer's tips still showing, back on their map: asked by their game
@@ -1987,21 +2017,6 @@ function App.register()
 
     -- Roleplay (server/rp_*.lua, Config.Roleplay), each off as shipped --
 
-    -- Rumours and the broker: asking the broker NPC about one rumour, from
-    -- beside it; and a broker player's two, who is near them and briefing
-    -- one of them. Every distance is read on the server.
-    handler('rumourBrief', 'accept', function(actor, payload)
-        if not deps.rpRumours then return false, CH.ERR.FEATURE_OFF end
-        return deps.rpRumours.askBroker(actor, payload.id)
-    end)
-    handler('brokerNearby', 'load', function(actor)
-        if not deps.rpRumours then return false, CH.ERR.FEATURE_OFF end
-        return deps.rpRumours.brokerNearby(actor)
-    end)
-    handler('brokerBrief', 'accept', function(actor, payload)
-        if not deps.rpRumours then return false, CH.ERR.FEATURE_OFF end
-        return deps.rpRumours.brokerBrief(actor, payload.id, payload.who)
-    end)
     -- Where the broker and the informant NPC stand now, for this player's
     -- game to draw (server/rp_places.lua). Asked at start and whenever the
     -- server says one moved.
@@ -2011,15 +2026,6 @@ function App.register()
     end)
 
     -- Improvements (server/imp_*.lua, Config.Improvements), each off as shipped.
-
-    -- Going dark (Config.Improvements.GoDark): a target told of a tip on a
-    -- contract on them pays to have every tip bought on them meanwhile find
-    -- nothing. The tip's bucket. `shown` is the price the card quoted.
-    handler('goDark', 'locationTip', function(actor, payload)
-        if not deps.impTips then return false, CH.ERR.FEATURE_OFF end
-        return deps.impTips.goDark(actor, payload.id,
-            type(payload.shown) == 'table' and payload.shown or {})
-    end)
 
     -- The placer turns contract decay off for one untaken contract of
     -- theirs (Config.Improvements.ContractDecay). Theirs only; nothing moves.

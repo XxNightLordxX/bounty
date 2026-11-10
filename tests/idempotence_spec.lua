@@ -626,7 +626,7 @@ describe('buying informant data twice', function()
         truthy(second[1], 'the replay is answered, not refused')
         eq(second[3].message, first[3].message, 'with the same answer')
         truthy(third[1])
-        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Informant.Cost,
+        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Intel.Informant.Cost,
             'and one look-up was paid for')
     end)
 
@@ -643,7 +643,7 @@ describe('buying informant data twice', function()
         truthy(first[1], tostring(first[2]))
         falsy(second[1])
         eq(second[2], CH.ERR.ALREADY_REVEALED)
-        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.PlacerInformant.Cost,
+        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Intel.PlacerInformant.Cost,
             'one look-up was paid for')
     end)
 
@@ -671,7 +671,7 @@ describe('buying informant data twice', function()
         truthy(ok, tostring(err))
         truthy(fired, 'the second tap landed inside the first')
         eq(inner[2], CH.ERR.BUSY, 'refused as busy, before anything was charged')
-        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Informant.Cost,
+        eq(Env.players[2].PlayerData.money.bank, 100000 - Config.Intel.Informant.Cost,
             'one purchase was paid for')
         eq(s.storage.readReveal(c.id, 'TARGET01').purchases, 1, 'and one is counted')
     end)

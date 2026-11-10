@@ -92,10 +92,15 @@ end
 describe('the roleplay features of getting to a contract, as shipped', function()
     it('ship off', function()
         -- Read from the file: another spec may have turned one on live.
-        local shipped = require('tests.harness.shipped').fromFile().Roleplay
-        for _, name in ipairs({ 'Rumours', 'BurnerPhone', 'InformantNpc', 'ReasonQuality' }) do
-            eq(shipped[name].Enabled, false, name)
+        local file = require('tests.harness.shipped').fromFile()
+        for _, name in ipairs({ 'BurnerPhone', 'ReasonQuality' }) do
+            eq(file.Roleplay[name].Enabled, false, name)
             eq(ConfigDefaults.Roleplay[name].Enabled, false, name .. ' in defaults.lua')
+        end
+        -- The rumours and the informant in person are Intel's (Config.Intel).
+        for _, name in ipairs({ 'Rumours', 'InPerson' }) do
+            eq(file.Intel[name].Enabled, false, name)
+            eq(ConfigDefaults.Intel[name].Enabled, false, name .. ' in defaults.lua')
         end
     end)
 
@@ -125,7 +130,7 @@ end)
 
 describe('rumours and the broker', function()
     local function on(s)
-        turn(s, 'Roleplay.Rumours.Enabled', true)
+        turn(s, 'Intel.Rumours.Enabled', true)
     end
 
     it('shows a hitman a rumour: an area and a band, no name, face, reason or exact figure', function()
@@ -151,10 +156,10 @@ describe('rumours and the broker', function()
     it('names a zone in zones mode, the same one every time', function()
         local s, _, c = placed()
         on(s)
-        turn(s, 'Roleplay.Rumours.AreaMode', 'zones')
+        turn(s, 'Intel.Rumours.AreaMode', 'zones')
         local area = row(call('list', 3, { page = 1 }), c.id).rumour.area
         local found = false
-        for _, z in ipairs(Config.Roleplay.Rumours.Zones) do if z == area then found = true end end
+        for _, z in ipairs(Config.Intel.Rumours.Zones) do if z == area then found = true end end
         truthy(found, area .. ' is one of the zones')
         eq(row(call('list', 3, { page = 1 }), c.id).rumour.area, area)
     end)
@@ -189,7 +194,7 @@ describe('rumours and the broker', function()
     it('lets a briefing run out after BriefValidMinutes', function()
         local s, _, c = placed()
         on(s)
-        turn(s, 'Roleplay.Rumours.BriefValidMinutes', 5)
+        turn(s, 'Intel.Rumours.BriefValidMinutes', 5)
         Env.players[3]._coords = brokerAt(s)
         truthy(call('rumourBrief', 3, { id = c.id }).ok)
         Env.time = Env.time + 5 * 60 + 1
@@ -231,7 +236,7 @@ describe('rumours and the broker', function()
     it('lets a broker player brief somebody standing with them, by a handle that names nobody', function()
         local s, _, c = placed()
         on(s)
-        turn(s, 'Roleplay.Rumours.BrokerJobs', { 'broker' })
+        turn(s, 'Intel.Rumours.BrokerJobs', { 'broker' })
         Env.addPlayer({ source = 4, citizenid = 'BROKER01', license = 'license:ddd',
             firstname = 'Bo', lastname = 'Ker', job = { name = 'broker', type = 'none' } })
         Env.players[4]._coords = ELSEWHERE
@@ -262,7 +267,7 @@ describe('rumours and the broker', function()
     it('never briefs the person the contract is on, and tells the broker nothing of it', function()
         local s, _, c = placed()
         on(s)
-        turn(s, 'Roleplay.Rumours.BrokerJobs', { 'broker' })
+        turn(s, 'Intel.Rumours.BrokerJobs', { 'broker' })
         Env.addPlayer({ source = 4, citizenid = 'BROKER01', license = 'license:ddd',
             firstname = 'Bo', lastname = 'Ker', job = { name = 'broker', type = 'none' } })
         Env.players[4]._coords = ELSEWHERE
@@ -273,7 +278,7 @@ describe('rumours and the broker', function()
         eq(#near.data.people, 1, 'the target stands with them')
         local briefed = call('brokerBrief', 4, { id = c.id, who = near.data.people[1].handle })
         truthy(briefed.ok, 'answered as any briefing')
-        falsy(s.rpRumours.isBriefed(c.id, 'TARGET01'), 'the target was not briefed')
+        falsy(s.intelRumours.isBriefed(c.id, 'TARGET01'), 'the target was not briefed')
     end)
 
     it('never names an anonymous placer, and staff see the briefings without names', function()
@@ -368,14 +373,14 @@ describe('the informant in person', function()
     it('sells a tip only beside the informant NPC, and charges nothing elsewhere', function()
         local s, f, c = placed()
         truthy(s.contracts.accept(f.hitman, c.id, false))
-        turn(s, 'LocationTip.Enabled', true)
-        turn(s, 'Roleplay.InformantNpc.Enabled', true)
+        turn(s, 'Intel.LocationTip.Enabled', true)
+        turn(s, 'Intel.InPerson.Enabled', true)
         Env.time = 3 * 3600 * 2 -- the informant at its first place (offset one)
         local at = s.rpPlaces.current('informant')
         Env.players[3].PlayerData.money.bank = 100000
         Env.players[3]._coords = ELSEWHERE
         local all = total(s)
-        local shown = { cost = Config.LocationTip.Cost, account = Config.LocationTip.Account }
+        local shown = { cost = Config.Intel.LocationTip.Cost, account = Config.Intel.LocationTip.Account }
         local far = call('locationTip', 3, { id = c.id, shown = shown })
         eq(far.err, CH.ERR.FIND_INFORMANT)
         eq(Env.players[3].PlayerData.money.bank, 100000, 'nothing charged')
@@ -383,20 +388,20 @@ describe('the informant in person', function()
         Env.players[3]._coords = { x = at.x, y = at.y, z = at.z }
         local near = call('locationTip', 3, { id = c.id, shown = shown })
         truthy(near.ok, tostring(near.err))
-        eq(Env.players[3].PlayerData.money.bank, 100000 - Config.LocationTip.Cost)
+        eq(Env.players[3].PlayerData.money.bank, 100000 - Config.Intel.LocationTip.Cost)
         truthy(INFORMANT_AT)
     end)
 
     it('stands in front of the target\'s and the placer\'s look-ups too, and not while they are off', function()
         local s, f, c = placed()
         truthy(s.contracts.accept(f.hitman, c.id, false))
-        turn(s, 'Roleplay.InformantNpc.Enabled', true)
+        turn(s, 'Intel.InPerson.Enabled', true)
         Env.players[1]._coords, Env.players[2]._coords = ELSEWHERE, ELSEWHERE
         -- The informant features themselves off: refused by their own rule.
-        Config.Informant.Enabled, Config.TargetClasses.whitelisted.Informant = false, false
+        Config.Intel.Informant.Enabled, Config.TargetClasses.whitelisted.Informant = false, false
         eq(call('informant', 2, { id = c.id, shown = {} }).err, CH.ERR.FEATURE_OFF)
-        turn(s, 'Informant.Enabled', true)
-        turn(s, 'PlacerInformant.Enabled', true)
+        turn(s, 'Intel.Informant.Enabled', true)
+        turn(s, 'Intel.PlacerInformant.Enabled', true)
         local all = total(s)
         eq(call('informant', 2, { id = c.id, shown = {} }).err, CH.ERR.FIND_INFORMANT)
         eq(call('placerInformant', 1, { id = c.id, shown = {} }).err, CH.ERR.FIND_INFORMANT)
@@ -487,7 +492,8 @@ describe('the roleplay settings in the admin panel', function()
         local s = newStack()
         local groups = {}
         for _, entry in ipairs(s.settings.CATALOGUE) do
-            if entry.key:find('^Roleplay%.') then
+            if entry.key:find('^Roleplay%.') or entry.key:find('^Intel%.Rumours%.')
+                or entry.key:find('^Intel%.InPerson%.') then
                 groups[entry.group] = true
                 if entry.key:find('%.Enabled$') then
                     eq(entry.category, 'features', entry.key)
@@ -495,42 +501,42 @@ describe('the roleplay settings in the admin panel', function()
                 end
             end
         end
-        for _, g in ipairs({ 'Roleplay: Rumours and broker', 'Roleplay: Burner phone',
-            'Roleplay: Informant in person', 'Roleplay: Reason quality' }) do
+        for _, g in ipairs({ 'Intel: Rumours and broker', 'Roleplay: Burner phone',
+            'Intel: Informant in person', 'Roleplay: Reason quality' }) do
             truthy(groups[g], g)
         end
     end)
 
     it('takes a place, a phrase and a job list, and refuses one that does not read', function()
         local s = newStack()
-        turn(s, 'Roleplay.Rumours.Locations', { '10.5, 20.5, 30.0, 90' })
-        eq(Config.Roleplay.Rumours.Locations[1], '10.5, 20.5, 30.0, 90')
-        local ok, err = s.settings.set('Roleplay.Rumours.Locations', { '10, 20' }, 'ADMIN001', 'ADMIN001')
+        turn(s, 'Intel.Rumours.Locations', { '10.5, 20.5, 30.0, 90' })
+        eq(Config.Intel.Rumours.Locations[1], '10.5, 20.5, 30.0, 90')
+        local ok, err = s.settings.set('Intel.Rumours.Locations', { '10, 20' }, 'ADMIN001', 'ADMIN001')
         falsy(ok, 'a place needs x, y and z')
         eq(err, 'invalid_value')
-        ok = s.settings.set('Roleplay.InformantNpc.Locations', { '1, 2, 99999' }, 'ADMIN001', 'ADMIN001')
+        ok = s.settings.set('Intel.InPerson.Locations', { '1, 2, 99999' }, 'ADMIN001', 'ADMIN001')
         falsy(ok, 'off the map')
         turn(s, 'Roleplay.ReasonQuality.LowEffort', { 'no reason', 'lol' })
         eq(#Config.Roleplay.ReasonQuality.LowEffort, 2)
-        turn(s, 'Roleplay.Rumours.BrokerJobs', { 'Broker', 'fixer' })
-        eq(Config.Roleplay.Rumours.BrokerJobs.broker, true)
-        eq(Config.Roleplay.Rumours.BrokerJobs.fixer, true)
-        turn(s, 'Roleplay.Rumours.Districts', { '0, 0, Downtown Core' })
+        turn(s, 'Intel.Rumours.BrokerJobs', { 'Broker', 'fixer' })
+        eq(Config.Intel.Rumours.BrokerJobs.broker, true)
+        eq(Config.Intel.Rumours.BrokerJobs.fixer, true)
+        turn(s, 'Intel.Rumours.Districts', { '0, 0, Downtown Core' })
         turn(s, 'Roleplay.BurnerPhone.Item', 'trap_phone')
         eq(Config.Roleplay.BurnerPhone.Item, 'trap_phone')
         local view = s.settings.view()
         local whole
         for _, row in ipairs(view.limits) do
-            if row.key == 'Roleplay.Rumours.Locations' then whole = row.whole end
+            if row.key == 'Intel.Rumours.Locations' then whole = row.whole end
         end
         eq(whole, true, 'the panel adds a place whole')
     end)
 
     it('tells every game at once when an NPC is moved from the panel', function()
         local s = newStack()
-        turn(s, 'Roleplay.InformantNpc.Enabled', true)
+        turn(s, 'Intel.InPerson.Enabled', true)
         Env.clientEvents = {}
-        turn(s, 'Roleplay.InformantNpc.Locations', { '1, 2, 3, 0' })
+        turn(s, 'Intel.InPerson.Locations', { '1, 2, 3, 0' })
         local told = 0
         for _, e in ipairs(Env.clientEvents) do
             if e.name == 'crimson-hitman:rpPlacesChanged' then told = told + 1 end
@@ -540,15 +546,16 @@ describe('the roleplay settings in the admin panel', function()
     end)
 
     it('fills a block config.lua does not have, and puts back a value that does not fit', function()
-        local live = Config.Roleplay
-        Config.Roleplay = { Rumours = { Enabled = 'yes' } }
+        local live, intel = Config.Roleplay, Config.Intel
+        Config.Roleplay = {}
+        Config.Intel = { Rumours = { Enabled = 'yes' } }
         local warn = {}
-        require('server.rp_rumours').validate(warn)
+        require('server.intel.rumours').validate(warn)
         require('server.rp_burner').validate(warn)
-        eq(Config.Roleplay.Rumours.Enabled, false)
+        eq(Config.Intel.Rumours.Enabled, false)
         eq(Config.Roleplay.BurnerPhone.Item, 'burner_phone', 'the whole block, filled')
         eq(#warn, 1, 'only the value that was wrong is said')
-        truthy(warn[1]:find('Roleplay.Rumours.Enabled', 1, true))
-        Config.Roleplay = live
+        truthy(warn[1]:find('Intel.Rumours.Enabled', 1, true))
+        Config.Roleplay, Config.Intel = live, intel
     end)
 end)

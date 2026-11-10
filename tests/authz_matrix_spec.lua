@@ -626,7 +626,7 @@ MATRIX.informant = {
     payload = function(w, role, contract)
         local card = w.s.projection.contract(w.s.storage.readContract(contract.id), CAST.target.cid)
         return { id = contract.id, pick = card.informantPicks[1].pick,
-                 shown = { cost = Config.Informant.Cost, account = Config.Informant.Account } }
+                 shown = { cost = Config.Intel.Informant.Cost, account = Config.Intel.Informant.Account } }
     end,
     -- The target's alone: the placer has an informant of their own
     -- (placerInformant), and nobody else may buy either.
@@ -649,8 +649,8 @@ MATRIX.placerInformant = {
     payload = function(w, role, contract)
         local card = w.s.projection.contract(w.s.storage.readContract(contract.id), CAST.creator.cid)
         return { id = contract.id, pick = card.placerInformantPicks[1].pick,
-                 shown = { cost = Config.PlacerInformant.Cost,
-                           account = Config.PlacerInformant.Account } }
+                 shown = { cost = Config.Intel.PlacerInformant.Cost,
+                           account = Config.Intel.PlacerInformant.Account } }
     end,
     -- The person who placed it, named or anonymous, and nobody else: not
     -- the operative, not the target.
@@ -658,7 +658,7 @@ MATRIX.placerInformant = {
     why = 'the placer\'s look-up on who took their contract is sold to the placer alone',
 }
 
--- The informant tip a hitman buys (server/locationtip.lua). The target
+-- The informant tip a hitman buys (server/intel/tip.lua). The target
 -- has to be standing somewhere for there to be anything to sell.
 MATRIX.locationTip = {
     arrange = function()
@@ -666,7 +666,7 @@ MATRIX.locationTip = {
     end,
     payload = function(w, role, contract)
         return { id = contract.id,
-                 shown = { cost = Config.LocationTip.Cost, account = Config.LocationTip.Account } }
+                 shown = { cost = Config.Intel.LocationTip.Cost, account = Config.Intel.LocationTip.Account } }
     end,
     -- One answer for the target, a stranger and an id that is no contract:
     -- whether an id exists is not told.
@@ -896,9 +896,9 @@ MATRIX.meetingWaypoint = {
 
 local function rumoursOn()
     allAtScene()
-    Config.Roleplay.Rumours.Enabled = true
-    Config.Roleplay.Rumours.Locations = { ('%.1f, %.1f, %.1f, 0'):format(SCENE.x, SCENE.y, SCENE.z) }
-    Config.Roleplay.Rumours.BrokerJobs = { broker = true }
+    Config.Intel.Rumours.Enabled = true
+    Config.Intel.Rumours.Locations = { ('%.1f, %.1f, %.1f, 0'):format(SCENE.x, SCENE.y, SCENE.z) }
+    Config.Intel.Rumours.BrokerJobs = { broker = true }
     Env.players[CAST.stranger.source].PlayerData.job = { name = 'broker', type = 'none', onduty = true }
 end
 
@@ -923,7 +923,7 @@ MATRIX.brokerNearby = {
 MATRIX.brokerBrief = {
     arrange = rumoursOn,
     payload = function(w, role, contract)
-        local near = w.s.rpRumours.brokerNearby(w.s.identity.resolve(CAST.stranger.source))
+        local near = w.s.intelRumours.brokerNearby(w.s.identity.resolve(CAST.stranger.source))
         local first = type(near) == 'table' and near.people and near.people[1]
         return { id = contract.id, who = first and first.handle or 'bp-none' }
     end,
@@ -944,11 +944,11 @@ MATRIX.decayOff = {
 MATRIX.rpPlaces = { payload = {}, expect = ANYONE,
     why = 'where the NPCs stand is the same for every player and names nobody' }
 
--- Informant fairness (server/imp_tips.lua, imp_tips_spec): going dark, on
+-- Informant fairness (server/intel/rules.lua, imp_tips_spec): going dark, on
 -- for this row (off as shipped), once the target was told of a tip on it.
 MATRIX.goDark = {
     arrange = function(w)
-        Config.Improvements.GoDark.Enabled = true
+        Config.Intel.GoDark.Enabled = true
         Config.Notifications.ParanoidAlertJitter = { min = 0, max = 0 }
         Env.players[CAST.hitman.source].PlayerData.money.bank = 100000
         Env.players[CAST.target.source].PlayerData.money.bank = 100000
@@ -957,8 +957,8 @@ MATRIX.goDark = {
         truthy(w.s.locationTip.buy(w.who.hitman, w.held.id), 'the arrangement needs a tip told')
     end,
     payload = function(w, role, contract)
-        return { id = contract.id, shown = { cost = Config.Improvements.GoDark.Cost,
-            account = Config.Improvements.GoDark.Account } }
+        return { id = contract.id, shown = { cost = Config.Intel.GoDark.Cost,
+            account = Config.Intel.GoDark.Account } }
     end,
     expect = only('target', NOT_PARTY),
     why = 'only the target of a contract, told of a tip on it, may pay to go dark',

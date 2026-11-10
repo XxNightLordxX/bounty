@@ -346,7 +346,7 @@ describe('the in-game checklist, against the code', function()
             end
         end
         for k, v in pairs(Config) do look(k, v) end
-        truthy(checklist:find('Config.InformantsEnabled', 1, true), 'the informants\' master switch')
+        truthy(checklist:find('Config.Intel.Enabled', 1, true), 'the informants\' master switch')
         table.sort(missing)
         eq(#missing, 0, 'features with no checklist line: ' .. table.concat(missing, ', '))
     end)

@@ -22,11 +22,13 @@ end
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
+-- Whether each paid look-up is sold (server/intel/engine.lua, Intel.on).
+local Intel = CrimsonBoot.require('server.intel.engine')
 -- Proof items (Config.Improvements.ProofItems), for the page's settings.
 local ImpProof = CrimsonBoot.require('server.imp_proof')
 
 local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify
---- Informant tips (server/locationtip.lua): a hitman's own, on their card,
+--- Informant tips (server/intel/tip.lua): a hitman's own, on their card,
 --- and when the target was told, on theirs.
 local LocationTip
 --- Staff records on a contract (server/staffcontract.lua): whether staff
@@ -492,12 +494,12 @@ end
 --- contract, what they may still pick, and how many look-ups they have left.
 --- Only ever their own: the record is keyed by buyer.
 ---
---- What was found stays shown whatever Config.Informant.Enabled says: it was
+--- What was found stays shown whatever Config.Intel.Informant.Enabled says: it was
 --- paid for under the rules of the moment it was bought. The picks and the
 --- count only while the server sells look-ups to this target: a member of a
 --- whitelisted job (by the flag the contract recorded, or `protected`) only
 --- while Config.TargetClasses.whitelisted.Informant is on, anybody else
---- while Config.Informant.Enabled is. Otherwise their card does not offer
+--- while Config.Intel.Informant.Enabled is. Otherwise their card does not offer
 --- it at all.
 ---@return table[]|nil found { label, text }
 ---@return integer|nil left
@@ -507,7 +509,7 @@ local function informantFor(contract, viewerCid, hitmen, protected)
     if protected == nil then protected = contract.target_protected == true end
     local found, left = Informant.answerFor(contract.id, viewerCid)
     local picks = Informant.targetPicks(contract, viewerCid, hitmen, protected)
-    if not Util.informantOn('Informant', protected) then
+    if not Intel.on('Informant', protected) then
         left, picks = nil, nil
     end
     return (#found > 0) and found or nil, left, picks
@@ -705,7 +707,7 @@ function Projection.contract(contract, viewerCid, opts)
         -- contract may be worth: the add-to-reward box offered amounts the
         -- server could only refuse, as a reward that did not add up.
         out.valueHeld = Escrow.moneyValue(contract.id)
-        -- The placer's informant (Config.PlacerInformant): the operatives
+        -- The placer's informant (Config.Intel.PlacerInformant): the operatives
         -- they may ask about, by a handle the server minted and the alias
         -- the roster below already shows; what earlier look-ups found, kept
         -- whatever the switch says; how many they have left, and how long
@@ -798,7 +800,7 @@ function Projection.contract(contract, viewerCid, opts)
             out.buyoutClosesIn = math.max(0, contract.bailout_queued_at
                 + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
         end
-        -- Their own informant tips on it (server/locationtip.lua): how many
+        -- Their own informant tips on it (server/intel/tip.lua): how many
         -- are left, when the next may be bought, how long the one bought is
         -- still on their map. Never the area, which only their game holds.
         out.locationTip = LocationTip and LocationTip.cardFor(contract, viewerCid) or nil
@@ -842,7 +844,7 @@ function Projection.contract(contract, viewerCid, opts)
         -- absent.
         out.operatives = namedOperatives(contract, hitmen)
         -- When they were last told somebody was tipped off about their rough
-        -- area (server/locationtip.lua). Never who, never where.
+        -- area (server/intel/tip.lua). Never who, never where.
         out.tippedAt = LocationTip and LocationTip.toldAt(contract.id) or nil
     end
 
@@ -1052,41 +1054,41 @@ local function buildListing(viewerCid, page)
             -- And the least a shortening may leave on it: the server refuses
             -- a cut that leaves less, so the box stops short of it.
             deadlineMinLeftMinutes = math.floor(Util.CLOCK_STEP / 60),
-            informant = Util.informantAnyOn('Informant') and {
-                cost = Config.Informant.Cost,
-                account = Config.Informant.Account,
-                maxPerContract = Config.Informant.MaxPurchasesPerContract,
+            informant = Intel.anyOn('Informant') and {
+                cost = Config.Intel.Informant.Cost,
+                account = Config.Intel.Informant.Account,
+                maxPerContract = Config.Intel.Informant.MaxPurchasesPerContract,
                 -- The chance one look-up finds out, said in the dialog: the
                 -- price is paid either way.
-                chance = Config.Informant.RevealChancePercent,
+                chance = Config.Intel.Informant.RevealChancePercent,
                 -- When asking about the same one again is free: inside the
                 -- reroll lock, which repeats the answer already given.
-                repeatFreeMinutes = Config.Informant.RerollLockMinutes,
+                repeatFreeMinutes = Config.Intel.Informant.RerollLockMinutes,
                 askEverySeconds = Config.Cooldowns.informant
                     and Config.Cooldowns.informant.per or nil,
             } or nil,
-            -- What an informant tip costs and shows (Config.LocationTip), so
+            -- What an informant tip costs and shows (Config.Intel.LocationTip), so
             -- the button can quote the price and the size of the area, and
             -- say why it cannot be bought while the server sells none.
-            locationTip = type(Config.LocationTip) == 'table' and {
-                enabled = Util.informantAnyOn('LocationTip'),
-                cost = Config.LocationTip.Cost,
-                account = Config.LocationTip.Account,
-                radius = Config.LocationTip.RadiusMeters,
-                showMinutes = Config.LocationTip.ShowMinutes,
-                cooldownMinutes = Config.LocationTip.CooldownMinutes,
-                maxPerContract = Config.LocationTip.MaxPurchasesPerContract,
-                tellsTarget = Config.LocationTip.NotifyTarget ~= false,
+            locationTip = type(Config.Intel.LocationTip) == 'table' and {
+                enabled = Intel.anyOn('LocationTip'),
+                cost = Config.Intel.LocationTip.Cost,
+                account = Config.Intel.LocationTip.Account,
+                radius = Config.Intel.LocationTip.RadiusMeters,
+                showMinutes = Config.Intel.LocationTip.ShowMinutes,
+                cooldownMinutes = Config.Intel.LocationTip.CooldownMinutes,
+                maxPerContract = Config.Intel.LocationTip.MaxPurchasesPerContract,
+                tellsTarget = Config.Intel.LocationTip.NotifyTarget ~= false,
             } or nil,
             -- The placer's informant, the same way: its price, its two
             -- chances (found out, and then noticed), its cap and its wait.
-            placerInformant = Util.informantAnyOn('PlacerInformant') and {
-                cost = Config.PlacerInformant.Cost,
-                account = Config.PlacerInformant.Account,
-                chance = Config.PlacerInformant.RevealChancePercent,
-                alertChance = Config.PlacerInformant.AlertChancePercent,
-                maxPerContract = Config.PlacerInformant.MaxPurchasesPerContract,
-                cooldownMinutes = Config.PlacerInformant.CooldownMinutes,
+            placerInformant = Intel.anyOn('PlacerInformant') and {
+                cost = Config.Intel.PlacerInformant.Cost,
+                account = Config.Intel.PlacerInformant.Account,
+                chance = Config.Intel.PlacerInformant.RevealChancePercent,
+                alertChance = Config.Intel.PlacerInformant.AlertChancePercent,
+                maxPerContract = Config.Intel.PlacerInformant.MaxPurchasesPerContract,
+                cooldownMinutes = Config.Intel.PlacerInformant.CooldownMinutes,
             } or nil,
         },
     }
@@ -1502,12 +1504,12 @@ local function buildWhitelistedView(viewerCid, viewerJob, heldJob)
             buyoutDelaySeconds = Config.Bailout.ProcessingDelaySeconds or 0,
             -- What the informant dialog reads, where it is sold to a member
             -- of a whitelisted job at all.
-            informant = Util.informantOn('Informant', true) and {
-                cost = Config.Informant.Cost,
-                account = Config.Informant.Account,
-                maxPerContract = Config.Informant.MaxPurchasesPerContract,
-                chance = Config.Informant.RevealChancePercent,
-                repeatFreeMinutes = Config.Informant.RerollLockMinutes,
+            informant = Intel.on('Informant', true) and {
+                cost = Config.Intel.Informant.Cost,
+                account = Config.Intel.Informant.Account,
+                maxPerContract = Config.Intel.Informant.MaxPurchasesPerContract,
+                chance = Config.Intel.Informant.RevealChancePercent,
+                repeatFreeMinutes = Config.Intel.Informant.RerollLockMinutes,
                 askEverySeconds = Config.Cooldowns.informant
                     and Config.Cooldowns.informant.per or nil,
             } or nil,

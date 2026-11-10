@@ -8,14 +8,14 @@ local Feature = require('server.lib.feature')
 describe('Feature: reading a block', function()
     it('is on only while its Enabled is true, read live', function()
         newStack()
-        Config.Roleplay.Rumours.Enabled = false
-        eq(Feature.on('Roleplay.Rumours'), false)
-        eq(Feature.active('Roleplay.Rumours'), nil, 'no block while off')
-        Config.Roleplay.Rumours.Enabled = true
-        eq(Feature.on('Roleplay.Rumours'), true, 'a switch from the panel applies at once')
-        eq(Feature.active('Roleplay.Rumours'), Config.Roleplay.Rumours, 'the block itself, not a copy')
-        Config.Roleplay.Rumours.Enabled = 'true'
-        eq(Feature.on('Roleplay.Rumours'), false, 'a string is not a switch turned on')
+        Config.Intel.Rumours.Enabled = false
+        eq(Feature.on('Intel.Rumours'), false)
+        eq(Feature.active('Intel.Rumours'), nil, 'no block while off')
+        Config.Intel.Rumours.Enabled = true
+        eq(Feature.on('Intel.Rumours'), true, 'a switch from the panel applies at once')
+        eq(Feature.active('Intel.Rumours'), Config.Intel.Rumours, 'the block itself, not a copy')
+        Config.Intel.Rumours.Enabled = 'true'
+        eq(Feature.on('Intel.Rumours'), false, 'a string is not a switch turned on')
     end)
 
     it('reads a path to a plain switch as that switch', function()
@@ -106,9 +106,9 @@ describe('Feature: the start-up check', function()
         eq(type(block.Lines), 'table')
         Config.Improvements.TestBlock = nil
         newStack()
-        Config.Roleplay.Rumours = nil
-        Feature.check('Roleplay.Rumours', { Enabled = { kind = 'switch' } }, {})
-        truthy(Config.Roleplay.Rumours ~= ConfigDefaults.Roleplay.Rumours, 'a copy')
+        Config.Intel.Rumours = nil
+        Feature.check('Intel.Rumours', { Enabled = { kind = 'switch' } }, {})
+        truthy(Config.Intel.Rumours ~= ConfigDefaults.Intel.Rumours, 'a copy')
     end)
 end)
 
