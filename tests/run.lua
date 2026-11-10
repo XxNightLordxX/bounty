@@ -310,10 +310,10 @@ function _G.newCopyingStack()
     stack.audit.init(copying)
     stack.review.init({ storage = copying, escrow = stack.escrow, audit = stack.audit })
     stack.escrow.init(copying, stack.audit, stack.review)
-    stack.progression.init({ storage = copying, identity = stack.identity, audit = stack.audit })
+    stack.record.init({ storage = copying, identity = stack.identity, audit = stack.audit })
     stack.contracts.init({ storage = copying, escrow = stack.escrow, identity = stack.identity,
                            audit = stack.audit, notify = stack.notify,
-                           progression = stack.progression, death = stack.death,
+                           record = stack.record, death = stack.death,
                            review = stack.review })
     stack.photos.init({ storage = copying, audit = stack.audit })
     stack.ledger.init({ storage = copying, photos = stack.photos, notify = stack.notify })
@@ -340,7 +340,7 @@ function _G.newCopyingStack()
                              review = stack.review })
     stack.projection.init({ storage = copying, identity = stack.identity,
                             escrow = stack.escrow, kidnap = stack.kidnap,
-                            mugshot = stack.mugshot, progression = stack.progression,
+                            mugshot = stack.mugshot, record = stack.record,
                             informant = stack.informant, notify = stack.notify,
                             locationTip = stack.locationTip })
 
@@ -395,7 +395,6 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.projection'] = nil
     package.loaded['crimson-hitman.server.bridges'] = nil
     package.loaded['crimson-hitman.server.mugshot'] = nil
-    package.loaded['crimson-hitman.server.progression'] = nil
     package.loaded['crimson-hitman.server.app'] = nil
     package.loaded['crimson-hitman.server.admin'] = nil
     package.loaded['crimson-hitman.server.amendments'] = nil
@@ -420,7 +419,6 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.reports'] = nil
     package.loaded['crimson-hitman.server.rp_consequences'] = nil
     package.loaded['crimson-hitman.server.rp_intent'] = nil
-    package.loaded['crimson-hitman.server.rp_reputation'] = nil
     package.loaded['crimson-hitman.server.rp_protection'] = nil
     package.loaded['crimson-hitman.server.rp_places'] = nil
     package.loaded['crimson-hitman.server.intel.rumours'] = nil
@@ -434,7 +432,7 @@ function _G.newStack()
     package.loaded['server.rp_reason'] = nil
     package.loaded['crimson-hitman.server.intel.rules'] = nil
     package.loaded['server.intel.rules'] = nil
-    for _, name in ipairs({ 'imp_board', 'imp_placer_record', 'imp_heat', 'imp_tiers', 'imp_decay' }) do
+    for _, name in ipairs({ 'imp_board', 'imp_decay', 'record.init', 'record.heat', 'record.placer' }) do
         package.loaded['server.' .. name] = nil
     end
     package.loaded['server.imp_proof'] = nil
@@ -472,7 +470,7 @@ function _G.newStack()
     local projection = require('crimson-hitman.server.projection')
     local bridges    = require('crimson-hitman.server.bridges')
     local mugshot    = require('crimson-hitman.server.mugshot')
-    local progression = require('crimson-hitman.server.progression')
+    local record     = require('server.record.init')
     local app        = require('crimson-hitman.server.app')
     local admin      = require('crimson-hitman.server.admin')
     local settings   = require('crimson-hitman.server.settings')
@@ -494,7 +492,6 @@ function _G.newStack()
     local reports    = require('crimson-hitman.server.reports')
     local rpConsequences = require('crimson-hitman.server.rp_consequences')
     local rpIntent     = require('crimson-hitman.server.rp_intent')
-    local rpReputation = require('crimson-hitman.server.rp_reputation')
     local rpProtection = require('crimson-hitman.server.rp_protection')
     local rpPlaces    = require('server.rp_places')
     local rpBurner    = require('server.rp_burner')
@@ -519,10 +516,9 @@ function _G.newStack()
     notify.init({ identity = identity, storage = storage, projection = projection })
     review.init({ storage = storage, escrow = escrow, audit = audit })
     escrow.init(storage, audit, review)
-    progression.init({ storage = storage, identity = identity, audit = audit })
     contracts.init({
         storage = storage, escrow = escrow, identity = identity,
-        audit = audit, notify = notify, progression = progression, death = death,
+        audit = audit, notify = notify, record = record, death = death,
         -- With the ledger, as main.lua wires it: an ending without a payout
         -- writes its rows there (Ledger.ended), and a recovered claim its.
         review = review, ledger = ledger, sanctions = sanctions,
@@ -555,7 +551,7 @@ function _G.newStack()
     locationTip.init({ storage = storage, identity = identity, audit = audit, notify = notify,
                        contracts = contracts, review = review })
     projection.init({ storage = storage, identity = identity, escrow = escrow,
-                      kidnap = kidnap, mugshot = mugshot, progression = progression,
+                      kidnap = kidnap, mugshot = mugshot, record = record,
                       comms = comms, informant = informant, notify = notify,
                       locationTip = locationTip, staffContract = staffContract })
     holds.init({ storage = storage, audit = audit, notify = notify, kidnap = kidnap,
@@ -578,7 +574,6 @@ function _G.newStack()
     -- Roleplay, as main.lua wires it.
     rpIntent.init({ storage = storage, audit = audit, notify = notify, escrow = escrow,
                     contracts = contracts, projection = projection })
-    rpReputation.init({ storage = storage, identity = identity, contracts = contracts })
     rpProtection.init({ storage = storage, identity = identity, audit = audit, notify = notify,
                         app = app, informant = informant, projection = projection,
                         review = review, contracts = contracts })
@@ -595,10 +590,12 @@ function _G.newStack()
     intelRules.init({ storage = storage, audit = audit, notify = notify, contracts = contracts,
                       locationTip = locationTip, informant = informant, projection = projection,
                       bailout = bailout })
+    record.init({ storage = storage, identity = identity, notify = notify, audit = audit,
+                  escrow = escrow, contracts = contracts, projection = projection,
+                  rpConsequences = rpConsequences })
     impBoard.init({ storage = storage, identity = identity, notify = notify, audit = audit,
                     escrow = escrow, contracts = contracts, amendments = amendments,
-                    projection = projection, progression = progression,
-                    rpConsequences = rpConsequences })
+                    projection = projection })
     impProof.init({ storage = storage, identity = identity, contracts = contracts, audit = audit,
                     notify = notify, ledger = ledger })
     impScrub.init({ storage = storage, audit = audit })
@@ -621,7 +618,7 @@ function _G.newStack()
         notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
-        projection = projection, mugshot = mugshot, progression = progression,
+        projection = projection, mugshot = mugshot, record = record,
         photos = photos, review = review,
         -- The app module itself: admin reads its handler table to run the
         -- real handlers in a diagnosis, and requiring it there instead
@@ -651,12 +648,12 @@ function _G.newStack()
         -- The roleplay consequences.
         rpConsequences = rpConsequences,
         -- Roleplay.
-        rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
+        rpIntent = rpIntent, rpProtection = rpProtection,
         -- The roleplay features.
         rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason,
         -- Intel.
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,
-        -- The board and progression improvements.
+        -- Contract decay.
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
         -- The hitman organisation.
@@ -680,7 +677,7 @@ function _G.newStack()
         bailout = bailout, informant = informant, amendments = amendments, comms = comms, identity = identity, notify = notify,
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
-        mugshot = mugshot, progression = progression, app = app, admin = admin,
+        mugshot = mugshot, record = record, app = app, admin = admin,
         photos = photos, review = review, settings = settings, panel = panel, timing = timing,
         alerts = alerts, meeting = meeting, playtime = playtime, locationTip = locationTip,
         holds = holds, staffContract = staffContract,
@@ -688,7 +685,7 @@ function _G.newStack()
         targetLimits = targetLimits,
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         rpConsequences = rpConsequences,
-        rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
+        rpIntent = rpIntent, rpProtection = rpProtection,
         rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason,
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         impBoard = impBoard,
@@ -755,7 +752,7 @@ local suites = {
     'org_phone_review_spec',
     'capability_inventory_spec',
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
-    'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'lib_players_spec',
+    'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'lib_players_spec',
     'lib_feature_spec',
     'docs_spec',
 }

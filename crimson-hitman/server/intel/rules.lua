@@ -598,7 +598,7 @@ DARK = Intel.define('goDark', {
 IntelRules.PRUNES_PER_PASS = 25
 
 --- Take out of the store the go-dark windows that have passed (the board's
---- minute, imp_board.tick). darkUntil drops one only when somebody asks
+--- minute, record.tick). darkUntil drops one only when somebody asks
 --- about that target again, and once the contract it was bought on had
 --- ended nobody did: the row was kept for good. A window still running is
 --- kept, whatever became of the contract: it was paid for. From memory, so

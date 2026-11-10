@@ -1046,7 +1046,7 @@ describe('integration report', function()
 
     it('follows a renamed resource rather than a hard-coded name', function()
         local s = newStack()
-        withConfig({ { Config.Progression, 'Resource', 'my-own-blackmarket' } }, function()
+        withConfig({ { Config.Record.Progression, 'Resource', 'my-own-blackmarket' } }, function()
             local found = named(report().integrations())
             truthy(found['my-own-blackmarket'], 'the report reads the config')
             falsy(found['sc-blackmarket'], 'and not a name baked into it')
@@ -1056,7 +1056,7 @@ describe('integration report', function()
     it('names nothing when the features that need it are switched off', function()
         local s = newStack()
         withConfig({
-            { Config.Progression, 'Enabled', false },
+            { Config.Record.Progression, 'Enabled', false },
             { Config.Advisory, 'UseDispatch', false },
         }, function()
             local found = named(report().integrations())

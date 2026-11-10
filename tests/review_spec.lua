@@ -665,7 +665,7 @@ describe('payments the store did not confirm, settled by the server', function()
         local store = freshStore('mysql')
         wire(s, store)
         s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity, audit = s.audit,
-            notify = s.notify, progression = s.progression, death = s.death, review = s.review })
+            notify = s.notify, record = s.record, death = s.death, review = s.review })
         local before = bankOf(1)
         local realInsert, realRead = store.insertEscrow, store.readEscrow
         local held = false

@@ -254,4 +254,74 @@ return {
     ['screen:admin.view:history'] = { to = 'screen:admin.view:logs', note = "chip Setting changes; Game rules' link 'logs:settings'" },
     ['screen:admin.view:orgaudit'] = { to = 'screen:admin.view:logs', note = "chip Org audit; Hitman organisation's link 'logs:org'" },
     ['screen:admin.view:bphistory'] = { to = 'screen:admin.view:logs', note = "chip Grant history; Boss permissions' link 'logs:grants'" },
+    -- Step 3j: one Record (server/record/). A character's standing is kept and
+    -- read in one module: the counters, standing and level (Record.of, the
+    -- one read the app's Ledger, a card's operatives and the panel's player
+    -- card use), trust and how it is scaled, the tiered board, heat and the
+    -- placer's record, under one config section (Config.Record) and one
+    -- admin area (Record & standing, groups 'Record: ...'). Every value as it
+    -- was; the audit names (progression_awarded / _failed, imp_heat_*) and
+    -- heat's stored row kind ('imp_heat') are unchanged. Not items of the
+    -- inventory, recorded here as well: server/progression.lua,
+    -- rp_reputation.lua, imp_tiers.lua -> server/record/init.lua;
+    -- imp_heat.lua -> record/heat.lua; imp_placer_record.lua ->
+    -- record/placer.lua; the claim's Contracts.reputationFor hook ->
+    -- Record.factorFor; wiring keys progression / rpReputation /
+    -- impBoard.heat / .tiers / .record -> record.
+    ['tick:imp_board.tick'] = { to = 'tick:record.tick', note = 'heat, the bulletin and the placer records (Record.tick), and Intel\'s go-dark prune' },
+    ['config:Progression.Enabled'] = 'config:Record.Progression.Enabled',
+    ['config:Progression.Resource'] = 'config:Record.Progression.Resource',
+    ['config:Progression.TrustPerElimination'] = 'config:Record.Progression.TrustPerElimination',
+    ['config:Progression.TrustPerKidnapping'] = 'config:Record.Progression.TrustPerKidnapping',
+    ['config:Roleplay.Reputation.BaseFactor'] = 'config:Record.Reputation.BaseFactor',
+    ['config:Roleplay.Reputation.Enabled'] = 'config:Record.Reputation.Enabled',
+    ['config:Roleplay.Reputation.HandoverBonus'] = 'config:Record.Reputation.HandoverBonus',
+    ['config:Roleplay.Reputation.MaxFactor'] = 'config:Record.Reputation.MaxFactor',
+    ['config:Roleplay.Reputation.MeetingBonus'] = 'config:Record.Reputation.MeetingBonus',
+    ['config:Roleplay.Reputation.ThreadBonus'] = 'config:Record.Reputation.ThreadBonus',
+    ['config:Roleplay.Reputation.WitnessFreeBonus'] = 'config:Record.Reputation.WitnessFreeBonus',
+    ['config:Roleplay.Reputation.WitnessRadius'] = 'config:Record.Reputation.WitnessRadius',
+    ['config:Improvements.Tiers.CompletionsPerLevel'] = 'config:Record.Tiers.CompletionsPerLevel',
+    ['config:Improvements.Tiers.Enabled'] = 'config:Record.Tiers.Enabled',
+    ['config:Improvements.Tiers.Tiers'] = 'config:Record.Tiers.Tiers',
+    ['config:Improvements.HitmanHeat.AdvisoryHeat'] = 'config:Record.Heat.AdvisoryHeat',
+    ['config:Improvements.HitmanHeat.BulletinEveryMinutes'] = 'config:Record.Heat.BulletinEveryMinutes',
+    ['config:Improvements.HitmanHeat.BulletinText'] = 'config:Record.Heat.BulletinText',
+    ['config:Improvements.HitmanHeat.BulletinTitle'] = 'config:Record.Heat.BulletinTitle',
+    ['config:Improvements.HitmanHeat.DecayHours'] = 'config:Record.Heat.DecayHours',
+    ['config:Improvements.HitmanHeat.Enabled'] = 'config:Record.Heat.Enabled',
+    ['config:Improvements.HitmanHeat.ProtectedCompletionHeat'] = 'config:Record.Heat.ProtectedCompletionHeat',
+    ['config:Improvements.HitmanHeat.Threshold'] = 'config:Record.Heat.Threshold',
+    ['config:Improvements.HitmanHeat.WarnTargetChancePercent'] = 'config:Record.Heat.WarnTargetChancePercent',
+    ['config:Improvements.HitmanHeat.WitnessHeat'] = 'config:Record.Heat.WitnessHeat',
+    ['config:Improvements.PlacerRecord.Enabled'] = 'config:Record.PlacerRecord.Enabled',
+    ['config:Improvements.PlacerRecord.LookbackDays'] = 'config:Record.PlacerRecord.LookbackDays',
+    ['config:Improvements.PlacerRecord.ShowForAnonymous'] = 'config:Record.PlacerRecord.ShowForAnonymous',
+    ['setting:Progression.Enabled'] = 'setting:Record.Progression.Enabled',
+    ['setting:Progression.TrustPerElimination'] = 'setting:Record.Progression.TrustPerElimination',
+    ['setting:Progression.TrustPerKidnapping'] = 'setting:Record.Progression.TrustPerKidnapping',
+    ['setting:Roleplay.Reputation.BaseFactor'] = 'setting:Record.Reputation.BaseFactor',
+    ['setting:Roleplay.Reputation.Enabled'] = 'setting:Record.Reputation.Enabled',
+    ['setting:Roleplay.Reputation.HandoverBonus'] = 'setting:Record.Reputation.HandoverBonus',
+    ['setting:Roleplay.Reputation.MaxFactor'] = 'setting:Record.Reputation.MaxFactor',
+    ['setting:Roleplay.Reputation.MeetingBonus'] = 'setting:Record.Reputation.MeetingBonus',
+    ['setting:Roleplay.Reputation.ThreadBonus'] = 'setting:Record.Reputation.ThreadBonus',
+    ['setting:Roleplay.Reputation.WitnessFreeBonus'] = 'setting:Record.Reputation.WitnessFreeBonus',
+    ['setting:Roleplay.Reputation.WitnessRadius'] = 'setting:Record.Reputation.WitnessRadius',
+    ['setting:Improvements.Tiers.CompletionsPerLevel'] = 'setting:Record.Tiers.CompletionsPerLevel',
+    ['setting:Improvements.Tiers.Enabled'] = 'setting:Record.Tiers.Enabled',
+    ['setting:Improvements.Tiers.Tiers'] = 'setting:Record.Tiers.Tiers',
+    ['setting:Improvements.HitmanHeat.AdvisoryHeat'] = 'setting:Record.Heat.AdvisoryHeat',
+    ['setting:Improvements.HitmanHeat.BulletinEveryMinutes'] = 'setting:Record.Heat.BulletinEveryMinutes',
+    ['setting:Improvements.HitmanHeat.BulletinText'] = 'setting:Record.Heat.BulletinText',
+    ['setting:Improvements.HitmanHeat.BulletinTitle'] = 'setting:Record.Heat.BulletinTitle',
+    ['setting:Improvements.HitmanHeat.DecayHours'] = 'setting:Record.Heat.DecayHours',
+    ['setting:Improvements.HitmanHeat.Enabled'] = 'setting:Record.Heat.Enabled',
+    ['setting:Improvements.HitmanHeat.ProtectedCompletionHeat'] = 'setting:Record.Heat.ProtectedCompletionHeat',
+    ['setting:Improvements.HitmanHeat.Threshold'] = 'setting:Record.Heat.Threshold',
+    ['setting:Improvements.HitmanHeat.WarnTargetChancePercent'] = 'setting:Record.Heat.WarnTargetChancePercent',
+    ['setting:Improvements.HitmanHeat.WitnessHeat'] = 'setting:Record.Heat.WitnessHeat',
+    ['setting:Improvements.PlacerRecord.Enabled'] = 'setting:Record.PlacerRecord.Enabled',
+    ['setting:Improvements.PlacerRecord.LookbackDays'] = 'setting:Record.PlacerRecord.LookbackDays',
+    ['setting:Improvements.PlacerRecord.ShowForAnonymous'] = 'setting:Record.PlacerRecord.ShowForAnonymous',
 }

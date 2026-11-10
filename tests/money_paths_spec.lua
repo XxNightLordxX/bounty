@@ -49,10 +49,10 @@ local function newMysqlStack()
 
     stack.audit.init(store)
     stack.escrow.init(store, stack.audit)
-    stack.progression.init({ storage = store, identity = stack.identity, audit = stack.audit })
+    stack.record.init({ storage = store, identity = stack.identity, audit = stack.audit })
     stack.contracts.init({ storage = store, escrow = stack.escrow, identity = stack.identity,
                            audit = stack.audit, notify = stack.notify,
-                           progression = stack.progression, death = stack.death })
+                           record = stack.record, death = stack.death })
     stack.photos.init({ storage = store, audit = stack.audit })
     stack.ledger.init({ storage = store, photos = stack.photos, notify = stack.notify })
     stack.bailout.init({ storage = store, identity = stack.identity,

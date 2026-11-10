@@ -56,11 +56,18 @@ function RP.guard(fn)
         -- live (server/intel/), the same way.
         local intel = Config.Intel
         local intelSaved = deepCopy(type(intel) == 'table' and intel or {})
+        -- And Config.Record, where reputation, the tiered board, heat and
+        -- the placer's record live (server/record/), the same way.
+        local record = Config.Record
+        local recordSaved = deepCopy(type(record) == 'table' and record or {})
         local out = table.pack(pcall(fn, ...))
         RP.restore(saved, original)
         if type(intel) == 'table' then Config.Intel = intel end
         if type(Config.Intel) ~= 'table' then Config.Intel = {} end
         restoreInto(Config.Intel, intelSaved)
+        if type(record) == 'table' then Config.Record = record end
+        if type(Config.Record) ~= 'table' then Config.Record = {} end
+        restoreInto(Config.Record, recordSaved)
         if not out[1] then error(out[2], 0) end
         return table.unpack(out, 2, out.n)
     end

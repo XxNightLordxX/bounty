@@ -196,8 +196,8 @@ describe('reputation with witness heat', function()
     --- be told, and a bystander `at` metres east of the hitman (none if nil).
     local function scene(at)
         local s, f = stack()
-        Config.Roleplay.Reputation.Enabled = true
-        Config.Roleplay.Reputation.WitnessRadius = 50.0
+        Config.Record.Reputation.Enabled = true
+        Config.Record.Reputation.WitnessRadius = 50.0
         Config.Roleplay.WitnessHeat.Enabled = true
         Config.Roleplay.WitnessHeat.WitnessRadius = 60.0
         Config.Roleplay.WitnessHeat.MinWitnesses = 1

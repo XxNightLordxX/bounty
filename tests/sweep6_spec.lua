@@ -219,7 +219,7 @@ describe('sweep 6 FE-2: decay off and on again counts only waiting time', functi
         Env.advance(4 * 3600)
         s.impBoard.init({ storage = s.storage, identity = s.identity, notify = s.notify, audit = s.audit,
             escrow = s.escrow, contracts = s.contracts, amendments = s.amendments,
-            projection = s.projection, progression = s.progression, rpConsequences = s.rpConsequences })
+            projection = s.projection, record = s.record, rpConsequences = s.rpConsequences })
         Config.Improvements.ContractDecay.Enabled = true
         s.impBoard.tick()
         eq(before - bank(1), 0, 'four hours switched off charged at once after a restart')

@@ -396,10 +396,10 @@ describe('the board on a busy server', function()
     --- own record) and contract decay (the placer's own card). What one
     --- viewer is shown is never another's, and a change shows at once.
     local function improvementsOn()
-        local imp = Config.Improvements
-        imp.PlacerRecord.Enabled, imp.PlacerRecord.ShowForAnonymous = true, true
-        imp.Tiers.Enabled, imp.Tiers.Tiers = true, { 'Mid, 2150, 2', 'Top, 2190, 3' }
-        imp.ContractDecay.Enabled, imp.HitmanHeat.Enabled = true, true
+        local imp, rec = Config.Improvements, Config.Record
+        rec.PlacerRecord.Enabled, rec.PlacerRecord.ShowForAnonymous = true, true
+        rec.Tiers.Enabled, rec.Tiers.Tiers = true, { 'Mid, 2150, 2', 'Top, 2190, 3' }
+        imp.ContractDecay.Enabled, rec.Heat.Enabled = true, true
     end
 
     for _, mode in ipairs({ 'json', 'mysql' }) do

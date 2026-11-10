@@ -1238,7 +1238,7 @@ describe('every channel a player not entitled to it can read', function()
         -- offered nothing; and the payout hold on every card.
         Config.Roleplay.Protection.Enabled = true
         Config.Roleplay.ProofOfIntent.Enabled = true
-        Config.Roleplay.Reputation.Enabled = true
+        Config.Record.Reputation.Enabled = true
         Config.Roleplay.HitOnHitman.Enabled = true
         Env.players[2].PlayerData.money.bank = 200000
         local posted = s.rpProtection.post(s.identity.resolve(2), { id = c.id, amount = 2000,
@@ -1344,7 +1344,7 @@ describe('every channel a player not entitled to it can read', function()
         -- warning waits, a tip's limits and hold quoted on the card, a tip
         -- refused in a safe zone, going dark, a tip that then finds nothing
         -- and is given back, and the delayed warning sent. Off again after.
-        local imp = Config.Improvements
+        local imp, rec = Config.Improvements, Config.Record
         local intelRules = Config.Intel
         intelRules.WarningDelay.Enabled, intelRules.TipLimits.Enabled, intelRules.HoldFirst.Enabled = true, true, true
         intelRules.TipLimits.PriceDoubling, intelRules.HoldFirst.MinHeldMinutes = true, 0
@@ -1364,19 +1364,20 @@ describe('every channel a player not entitled to it can read', function()
         for _, src in ipairs({ 1, 2, 3, 4, 5 }) do call('mine', src, {}) end
         intelRules.WarningDelay.Enabled, intelRules.TipLimits.Enabled, intelRules.HoldFirst.Enabled = false, false, false
         intelRules.SecondTry.Enabled, intelRules.GoDark.Enabled = false, false
-        -- The board improvements' channels (server/imp_*.lua), all on: the
+        -- The record's and contract decay's channels (server/record/,
+        -- server/imp_decay.lua), all on: the
         -- placer's record (an anonymous placer's in bands) and the tier lock
         -- on every board, contract decay on the anonymous placer's untaken
         -- contract (no step, its card, turning it off), and
         -- heat's warning and police bulletin. Off again after.
-        imp.PlacerRecord.Enabled, imp.PlacerRecord.ShowForAnonymous = true, true
-        imp.HitmanHeat.Enabled, imp.HitmanHeat.WarnTargetChancePercent = true, 100
-        imp.Tiers.Enabled, imp.Tiers.Tiers = true, { 'Low, 1000, 2' }
+        rec.PlacerRecord.Enabled, rec.PlacerRecord.ShowForAnonymous = true, true
+        rec.Heat.Enabled, rec.Heat.WarnTargetChancePercent = true, 100
+        rec.Tiers.Enabled, rec.Tiers.Tiers = true, { 'Low, 1000, 2' }
         imp.ContractDecay.Enabled = true
-        s.impBoard.heat.add('HITMAN01', 50, 'scan')
-        s.impBoard.tick()
+        s.record.heat.add('HITMAN01', 50, 'scan')
+        s.record.tick() s.impBoard.tick()
         Env.advance(3601)
-        s.impBoard.tick()
+        s.record.tick() s.impBoard.tick()
         local bulletin = false
         for _, sent in ipairs(Natives.calls.dispatch or {}) do
             if tostring(sent.unique_id):find('^ch%-heat%-') then bulletin = true end
@@ -1393,8 +1394,8 @@ describe('every channel a player not entitled to it can read', function()
         call('mine', 1, {})
         truthy(call('decayOff', 1, { id = lazy and lazy.id }).ok, 'turned off by its placer')
         call('mine', 1, {})
-        imp.PlacerRecord.Enabled, imp.HitmanHeat.Enabled = false, false
-        imp.Tiers.Enabled, imp.ContractDecay.Enabled = false, false
+        rec.PlacerRecord.Enabled, rec.Heat.Enabled = false, false
+        rec.Tiers.Enabled, imp.ContractDecay.Enabled = false, false
         -- The improvements' channels (server/imp_*.lua), all on: a proof
         -- handover by each operative (refused on this alive-only contract),
         -- and the weekly stats post to Discord. Off again after.

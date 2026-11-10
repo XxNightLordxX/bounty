@@ -103,18 +103,23 @@ end
 describe('rpC as shipped', function()
     it('ships every switch off', function()
         -- Read from the files: another spec may have turned one on live.
-        local shipped = require('tests.harness.shipped').fromFile().Roleplay
-        for _, name in ipairs({ 'ProofOfIntent', 'Reputation', 'Protection', 'HitOnHitman' }) do
+        local file = require('tests.harness.shipped').fromFile()
+        local shipped = file.Roleplay
+        for _, name in ipairs({ 'ProofOfIntent', 'Protection', 'HitOnHitman' }) do
             eq(shipped[name].Enabled, false, name .. ' ships off')
             eq(ConfigDefaults.Roleplay[name].Enabled, false, name .. ' ships off in defaults.lua')
         end
+        -- Reputation is part of a character's record (server/record/).
+        eq(file.Record.Reputation.Enabled, false, 'Reputation ships off')
+        eq(ConfigDefaults.Record.Reputation.Enabled, false, 'Reputation ships off in defaults.lua')
     end)
 
     it('changes nothing with every switch off: a payout arrives at once, no card key, no tab', function()
         local s, f, c = setup()
-        for _, name in ipairs({ 'ProofOfIntent', 'Reputation', 'Protection', 'HitOnHitman' }) do
+        for _, name in ipairs({ 'ProofOfIntent', 'Protection', 'HitOnHitman' }) do
             Config.Roleplay[name].Enabled = false
         end
+        Config.Record.Reputation.Enabled = false
         local before = total(s)
         local ok, err, result = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         truthy(ok, tostring(err))
@@ -292,12 +297,12 @@ describe('reputation earned in character', function()
         local awarded = awarding(function()
             s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         end)
-        eq(awarded[1], Config.Progression.TrustPerElimination)
+        eq(awarded[1], Config.Record.Progression.TrustPerElimination)
     end)
 
     it('on: a plain completion earns the base factor, and the breakdown says so', function()
         local s, f, c = setup()
-        Config.Roleplay.Reputation.Enabled = true
+        Config.Record.Reputation.Enabled = true
         -- A bystander beside everybody (all stand at the origin): not witness-free.
         Env.addPlayer({ source = 4, citizenid = 'BYSTAND1', license = 'license:ddd',
             firstname = 'Bea', lastname = 'Stander' })
@@ -313,7 +318,7 @@ describe('reputation earned in character', function()
 
     it('adds a bonus for the thread, a meeting point, a handover and no witnesses, to the cap', function()
         local s, f, c = setup()
-        Config.Roleplay.Reputation.Enabled = true
+        Config.Record.Reputation.Enabled = true
         s.comms.send(f.hitman, c.id, nil, 'On my way')
         s.storage.setMeeting(c.id, 10.0, 20.0, os.time(), os.time())
         Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
@@ -327,8 +332,8 @@ describe('reputation earned in character', function()
         truthy(result.reputation.text:find('no witnesses +0.2', 1, true), result.reputation.text)
 
         local s2, f2, c2 = setup()
-        Config.Roleplay.Reputation.Enabled = true
-        Config.Roleplay.Reputation.MaxFactor = 0.6
+        Config.Record.Reputation.Enabled = true
+        Config.Record.Reputation.MaxFactor = 0.6
         s2.comms.send(f2.hitman, c2.id, nil, 'On my way')
         local capped = select(3, s2.contracts.claimSlot(c2.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         eq(capped.reputation.factor, 0.6, 'capped')
@@ -336,7 +341,7 @@ describe('reputation earned in character', function()
 
     it('a witness close by takes the bonus away', function()
         local s, f, c = setup()
-        Config.Roleplay.Reputation.Enabled = true
+        Config.Record.Reputation.Enabled = true
         Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
         Env.addPlayer({ source = 4, citizenid = 'BYSTAND1', license = 'license:ddd',
             firstname = 'Bea', lastname = 'Stander', coords = { x = 5010.0, y = 5000.0, z = 0.0 } })
@@ -662,16 +667,16 @@ describe('bodyguard contracts', function()
         truthy(s.settings.set('Roleplay.Protection.Account', 'cash', 'ADMIN001', 'ADMIN001'))
         truthy(s.settings.set('Roleplay.ProofOfIntent.HoldMaxMinutes', 5, 'ADMIN001', 'ADMIN001'))
         eq(Config.Roleplay.ProofOfIntent.HoldMaxMinutes, 5)
-        falsy(s.settings.set('Roleplay.Reputation.BaseFactor', 3, 'ADMIN001', 'ADMIN001'),
+        falsy(s.settings.set('Record.Reputation.BaseFactor', 3, 'ADMIN001', 'ADMIN001'),
             'base above the cap is refused')
-        truthy(s.settings.set('Roleplay.Reputation.MaxFactor', 3, 'ADMIN001', 'ADMIN001'))
+        truthy(s.settings.set('Record.Reputation.MaxFactor', 3, 'ADMIN001', 'ADMIN001'))
         truthy(s.settings.set('Roleplay.HitOnHitman.Enabled', true, 'ADMIN001', 'ADMIN001'))
-        for _, key in ipairs({ 'Roleplay.ProofOfIntent.Enabled', 'Roleplay.Reputation.Enabled',
+        for _, key in ipairs({ 'Roleplay.ProofOfIntent.Enabled', 'Record.Reputation.Enabled',
                                'Roleplay.Protection.Enabled', 'Roleplay.HitOnHitman.Enabled' }) do
             local entry = s.settings.entry(key)
             truthy(entry, key .. ' is in the catalogue')
             eq(entry.category, 'features')
-            truthy(tostring(entry.group):find('^Roleplay: '), entry.group)
+            truthy(tostring(entry.group):find(key:find('^Record%.') and '^Record: ' or '^Roleplay: '), entry.group)
         end
     end)
 end)

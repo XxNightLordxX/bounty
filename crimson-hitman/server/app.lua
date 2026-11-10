@@ -413,8 +413,9 @@ local function roleplayGate(name, actor, payload)
         { 'rumours', deps.intelRumours and deps.intelRumours.gate },
         -- Intel bought in person (Config.Intel.InPerson): beside the informant.
         { 'intel', deps.intel and deps.intel.gate },
-        -- The tiered board (server/imp_tiers.lua): Accept below the level.
-        { 'tiers', deps.impBoard and deps.impBoard.tiers.gate },
+        -- The tiered board (Record.tierGate, server/record/): Accept below
+        -- the level.
+        { 'tiers', deps.record and deps.record.tierGate },
     }
     for _, gate in ipairs(gates) do
         local ok, err, data = roleplayCall(gate[1], gate[2], name, actor, payload)
@@ -450,8 +451,8 @@ local function roleplayAfter(name, actor, payload, result)
     roleplayCall('burner', deps.rpBurner and deps.rpBurner.after, name, actor, payload, result)
     roleplayCall('reason', deps.rpReason and deps.rpReason.after, name, actor, payload, result)
     -- A police bulletin about an acceptance or a tip is heat, and a known
-    -- hitman's acceptance may warn the target (server/imp_heat.lua).
-    roleplayCall('heat', deps.impBoard and deps.impBoard.heat.after, name, actor, payload, result)
+    -- hitman's acceptance may warn the target (server/record/heat.lua).
+    roleplayCall('heat', deps.record and deps.record.heat.after, name, actor, payload, result)
 end
 
 ---@param access string|nil who the gate lets through: nil for everyone the
@@ -886,7 +887,7 @@ function App.register()
         return {
             entries = entries,
             kept    = kept,
-            record  = deps.progression.record(actor.cid),
+            record  = deps.record.of(actor.cid),
             -- Payments of theirs waiting for room (Projection.waitingForRoom):
             -- a receipt missed was the only word of them anywhere.
             waiting = deps.projection.waitingForRoom

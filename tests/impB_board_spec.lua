@@ -22,7 +22,8 @@
 ---   * every setting is in the panel, applied live, held to its rule;
 ---   * nothing on any new channel names a hidden party.
 
---- Config.Improvements put back as it was found, whatever the test did.
+--- Config.Improvements and Config.Record (the placer's record, heat and the
+--- tiers, server/record/) put back as they were found, whatever the test did.
 local function deepCopy(value)
     if type(value) ~= 'table' then return value end
     local out = {}
@@ -33,9 +34,9 @@ end
 local plainIt = it
 local function it(name, fn)
     plainIt(name, function(...)
-        local saved = deepCopy(Config.Improvements)
+        local saved, record = deepCopy(Config.Improvements), deepCopy(Config.Record)
         local out = table.pack(pcall(fn, ...))
-        Config.Improvements = saved
+        Config.Improvements, Config.Record = saved, record
         if not out[1] then error(out[2], 0) end
     end)
 end
@@ -160,7 +161,10 @@ local function heatBulletins()
     return out
 end
 
-local IMP = { 'PlacerRecord', 'HitmanHeat', 'Tiers', 'ContractDecay' }
+--- Where each lives: the record's three parts in Config.Record
+--- (server/record/), contract decay in Config.Improvements.
+local IMP = { { 'Record', 'PlacerRecord' }, { 'Record', 'Heat' }, { 'Record', 'Tiers' },
+    { 'Improvements', 'ContractDecay' } }
 
 --------------------------------------------------------------------------
 -- As shipped
@@ -169,9 +173,10 @@ local IMP = { 'PlacerRecord', 'HitmanHeat', 'Tiers', 'ContractDecay' }
 describe('the board improvements as shipped', function()
     it('ships every one off, in config.lua and defaults.lua', function()
         local shipped = require('tests.harness.shipped').fromFile()
-        for _, name in ipairs(IMP) do
-            eq(shipped.Improvements[name].Enabled, false, name)
-            eq(ConfigDefaults.Improvements[name].Enabled, false, name .. ' in defaults.lua')
+        for _, at in ipairs(IMP) do
+            local name = at[1] .. '.' .. at[2]
+            eq(shipped[at[1]][at[2]].Enabled, false, name)
+            eq(ConfigDefaults[at[1]][at[2]].Enabled, false, name .. ' in defaults.lua')
         end
     end)
 
@@ -184,7 +189,7 @@ describe('the board improvements as shipped', function()
         local bank = Env.players[1].PlayerData.money.bank
         Env.advance(2 * 3600)
         Env.clientEvents = {}
-        for _ = 1, 3 do s.impBoard.tick() end
+        for _ = 1, 3 do s.record.tick() s.impBoard.tick() end
         for _, id in ipairs({ big.id, small.id }) do
             local card = boardCard(3, id)
             truthy(card, 'listed')
@@ -231,7 +236,7 @@ describe('the placer\'s record on a board card', function()
 
     it('shows a named placer\'s named contracts, exact, never who they are', function()
         local s, _, named, anon = history()
-        Config.Improvements.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.Enabled = true
         local card = boardCard(3, named.id)
         truthy(card.placerRecord, 'a record')
         eq(card.placerRecord.placed, 2, 'the completed and the cancelled one, not this one, not the anonymous')
@@ -249,8 +254,8 @@ describe('the placer\'s record on a board card', function()
 
     it('shows an anonymous placer\'s anonymous contracts only, in bands, with ShowForAnonymous', function()
         local _, _, _, anon = history()
-        Config.Improvements.PlacerRecord.Enabled = true
-        Config.Improvements.PlacerRecord.ShowForAnonymous = true
+        Config.Record.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.ShowForAnonymous = true
         local record = boardCard(3, anon.id).placerRecord
         truthy(record and record.banded, 'banded')
         eq(record.placed, '1-4')
@@ -260,8 +265,8 @@ describe('the placer\'s record on a board card', function()
 
     it('never moves an anonymous band when another of their contracts ends', function()
         local s, f, named, anon = history()
-        Config.Improvements.PlacerRecord.Enabled = true
-        Config.Improvements.PlacerRecord.ShowForAnonymous = true
+        Config.Record.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.ShowForAnonymous = true
         local first = boardCard(3, anon.id).placerRecord
         -- Four more anonymous ones placed and cancelled would take the
         -- placed band to 5-9 if it were worked out again.
@@ -280,7 +285,7 @@ describe('the placer\'s record on a board card', function()
 
     it('is the same for every viewer, and current after every change, read from the kept board', function()
         local s, f, named = history()
-        Config.Improvements.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.Enabled = true
         local a = boardCard(3, named.id).placerRecord
         local b = boardCard(4, named.id) and boardCard(4, named.id).placerRecord
         eq(a.placed, 2)
@@ -297,7 +302,7 @@ describe('the placer\'s record on a board card', function()
     -- prune does move, and for a minute at most as the days roll on.
     it('is current at once when a contract it counts finishes', function()
         local s, f, named = history()
-        Config.Improvements.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.Enabled = true
         local more = place(s, f)
         eq(boardCard(3, named.id).placerRecord.paidOut, 1, 'kept before')
         truthy(s.contracts.accept(f.hitman, more.id, false))
@@ -309,7 +314,7 @@ describe('the placer\'s record on a board card', function()
 
     it('is current at once when a contract it counts is pruned, with nothing else written', function()
         local s, _, named = history()
-        Config.Improvements.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.Enabled = true
         Env.advance(2 * 86400)
         local before = boardCard(3, named.id).placerRecord
         eq(before.placed, 2, 'both finished ones counted and kept')
@@ -328,8 +333,8 @@ describe('the placer\'s record on a board card', function()
 
     it('lets a counted contract age out of LookbackDays with nothing written', function()
         local _, _, named = history()
-        Config.Improvements.PlacerRecord.Enabled = true
-        Config.Improvements.PlacerRecord.LookbackDays = 1
+        Config.Record.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.LookbackDays = 1
         eq(boardCard(3, named.id).placerRecord.placed, 2, 'kept')
         Env.advance(2 * 86400)
         local card = boardCard(3, named.id)
@@ -338,8 +343,8 @@ describe('the placer\'s record on a board card', function()
 
     it('counts only the last LookbackDays', function()
         local _, _, named = history()
-        Config.Improvements.PlacerRecord.Enabled = true
-        Config.Improvements.PlacerRecord.LookbackDays = 1
+        Config.Record.PlacerRecord.Enabled = true
+        Config.Record.PlacerRecord.LookbackDays = 1
         Env.advance(2 * 86400)
         local card = boardCard(3, named.id)
         if card then eq(card.placerRecord.placed, 0, 'older than a day') end
@@ -353,10 +358,10 @@ end)
 describe('hitman heat', function()
     local function scene()
         local s, f = stack({ targetJob = { name = 'police', type = 'leo', onduty = true } })
-        Config.Improvements.HitmanHeat.Enabled = true
+        Config.Record.Heat.Enabled = true
         Env.addPlayer({ source = 5, citizenid = 'OFFICER1', firstname = 'Otto', lastname = 'Beat',
             job = { name = 'police', type = 'leo', onduty = true } })
-        s.impBoard.heat.random = function() return 1 end
+        s.record.heat.random = function() return 1 end
         return s, f
     end
 
@@ -364,55 +369,55 @@ describe('hitman heat', function()
         local s, f = scene()
         local c = place(s, f, { target = 'TARGET01' })
         truthy(call('accept', 3, { id = c.id, penaltyAmount = 0 }).ok)
-        eq(s.impBoard.heat.of('HITMAN01'), Config.Improvements.HitmanHeat.AdvisoryHeat, 'the bulletin on accepting')
+        eq(s.record.heat.of('HITMAN01'), Config.Record.Heat.AdvisoryHeat, 'the bulletin on accepting')
         truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
-        eq(s.impBoard.heat.of('HITMAN01'), 1 + 3, 'and the completion')
+        eq(s.record.heat.of('HITMAN01'), 1 + 3, 'and the completion')
         -- A civilian target gives none.
         local s2, f2 = stack()
-        Config.Improvements.HitmanHeat.Enabled = true
+        Config.Record.Heat.Enabled = true
         local c2 = place(s2, f2)
         truthy(call('accept', 3, { id = c2.id, penaltyAmount = 0 }).ok)
         truthy(s2.contracts.claimSlot(c2.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
-        eq(s2.impBoard.heat.of('HITMAN01'), 0)
+        eq(s2.record.heat.of('HITMAN01'), 0)
     end)
 
     it('gives heat for a witness report on their completion', function()
         local s, f = stack()
-        Config.Improvements.HitmanHeat.Enabled = true
+        Config.Record.Heat.Enabled = true
         Config.Roleplay.WitnessHeat.Enabled = true
         Config.Roleplay.WitnessHeat.AlwaysAlert = true
         Env.players[3]._coords = { x = 195.0, y = -934.0, z = 30.0 }
         local c = place(s, f)
         truthy(s.contracts.accept(f.hitman, c.id, false))
         truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
-        eq(s.impBoard.heat.of('HITMAN01'), Config.Improvements.HitmanHeat.WitnessHeat)
+        eq(s.record.heat.of('HITMAN01'), Config.Record.Heat.WitnessHeat)
         Config.Roleplay.WitnessHeat.Enabled = false
         Config.Roleplay.WitnessHeat.AlwaysAlert = false
     end)
 
     it('cools after DecayHours, and survives a restart until then', function()
         local s = scene()
-        s.impBoard.heat.add('HITMAN01', 4, 'test')
+        s.record.heat.add('HITMAN01', 4, 'test')
         Env.advance(3600)
         -- A restart: the module reads its rows back.
-        s.impBoard.init({ storage = s.storage, identity = s.identity, notify = s.notify, audit = s.audit,
-            escrow = s.escrow, contracts = s.contracts, amendments = s.amendments,
-            projection = s.projection, progression = s.progression, rpConsequences = s.rpConsequences })
-        eq(s.impBoard.heat.of('HITMAN01'), 4, 'kept')
+        s.record.init({ storage = s.storage, identity = s.identity, notify = s.notify, audit = s.audit,
+            escrow = s.escrow, contracts = s.contracts, projection = s.projection,
+            rpConsequences = s.rpConsequences })
+        eq(s.record.heat.of('HITMAN01'), 4, 'kept')
         Env.advance(24 * 3600)
-        eq(s.impBoard.heat.of('HITMAN01'), 0, 'cooled')
-        s.impBoard.tick()
+        eq(s.record.heat.of('HITMAN01'), 0, 'cooled')
+        s.record.tick()
         eq(#s.storage.readRpRows('imp_heat'), 0, 'its row gone once cold')
     end)
 
     it('warns a known hitman\'s target with the paranoid alert, and says nothing of who', function()
         local s, f = stack()
-        Config.Improvements.HitmanHeat.Enabled = true
-        Config.Improvements.HitmanHeat.WarnTargetChancePercent = 100
+        Config.Record.Heat.Enabled = true
+        Config.Record.Heat.WarnTargetChancePercent = 100
         -- The warning is the paranoid alert, which needs its own switch (on
         -- as shipped); the one at placing goes first, and its cooldown runs.
         Config.Notifications.ParanoidAlert = true
-        s.impBoard.heat.add('HITMAN01', 10, 'test')
+        s.record.heat.add('HITMAN01', 10, 'test')
         local c = place(s, f, { target = 'TARGET01' })
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         Env.runTimers()
@@ -433,10 +438,10 @@ describe('hitman heat', function()
 
     it('does not warn a target below the threshold, or with the chance at 0', function()
         local s, f = stack()
-        Config.Improvements.HitmanHeat.Enabled = true
-        Config.Improvements.HitmanHeat.WarnTargetChancePercent = 100
+        Config.Record.Heat.Enabled = true
+        Config.Record.Heat.WarnTargetChancePercent = 100
         Config.Notifications.ParanoidAlert = true
-        s.impBoard.heat.add('HITMAN01', 4, 'test')
+        s.record.heat.add('HITMAN01', 4, 'test')
         local c = place(s, f, { target = 'TARGET01' })
         Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         Env.runTimers()
@@ -453,11 +458,11 @@ describe('hitman heat', function()
         Env.players[2].PlayerData.job = { name = 'unemployed', type = 'none' }
         local c = place(s, f, { target = 'TARGET01' })
         truthy(s.contracts.accept(f.hitman, c.id, true))
-        s.impBoard.tick()
+        s.record.tick()
         eq(#heatBulletins(), 0, 'not known yet')
-        s.impBoard.heat.add('HITMAN01', 5, 'test')
+        s.record.heat.add('HITMAN01', 5, 'test')
         Env.clientEvents = {}
-        s.impBoard.tick()
+        s.record.tick()
         local sent = heatBulletins()
         eq(#sent, 1, 'one bulletin')
         eq(sent[1].coords, nil, 'no position')
@@ -467,21 +472,21 @@ describe('hitman heat', function()
             falsy(tostring(sent[1].message):find(needle, 1, true), needle)
         end
         Env.advance(60)
-        s.impBoard.tick()
+        s.record.tick()
         eq(#heatBulletins(), 1, 'not again inside the hour')
         Env.advance(3600)
-        s.impBoard.tick()
+        s.record.tick()
         eq(#heatBulletins(), 2, 'again after it')
-        Config.Improvements.HitmanHeat.BulletinEveryMinutes = 0
+        Config.Record.Heat.BulletinEveryMinutes = 0
         Env.advance(7200)
-        s.impBoard.tick()
+        s.record.tick()
         eq(#heatBulletins(), 2, '0 sends none')
     end)
 
     it('sends no bulletin while no known hitman holds a contract', function()
         local s = scene()
-        s.impBoard.heat.add('HITMAN01', 50, 'test')
-        s.impBoard.tick()
+        s.record.heat.add('HITMAN01', 50, 'test')
+        s.record.tick()
         eq(#heatBulletins(), 0)
     end)
 end)
@@ -493,7 +498,7 @@ end)
 describe('the tiered board', function()
     local function scene()
         local s, f = stack()
-        Config.Improvements.Tiers.Enabled = true
+        Config.Record.Tiers.Enabled = true
         local big = place(s, f, { reward = { baseline = { cash = 200000 } } })
         local mid = place(s, f, { reward = { baseline = { cash = 60000 } } })
         local small = place(s, f, { reward = { baseline = { cash = 10000 } } })
@@ -536,7 +541,7 @@ describe('the tiered board', function()
 
     it('locks nothing with Criminal progression off', function()
         local _, _, big = scene()
-        Config.Progression.Enabled = false
+        Config.Record.Progression.Enabled = false
         eq(boardCard(3, big.id).tierLocked, nil)
         truthy(call('accept', 3, { id = big.id, penaltyAmount = 0 }).ok)
     end)
@@ -643,7 +648,7 @@ describe('contract decay', function()
         -- After a restart too.
         s.impBoard.init({ storage = s.storage, identity = s.identity, notify = s.notify, audit = s.audit,
             escrow = s.escrow, contracts = s.contracts, amendments = s.amendments,
-            projection = s.projection, progression = s.progression, rpConsequences = s.rpConsequences })
+            projection = s.projection })
         Env.advance(3600)
         s.impBoard.tick()
         eq(s.escrow.moneyValue(c.id), 10000, 'the opt-out is kept')
@@ -703,36 +708,36 @@ end)
 
 describe('the improvements in the admin panel', function()
     local KEYS = {
-        'Improvements.PlacerRecord.Enabled', 'Improvements.PlacerRecord.LookbackDays',
-        'Improvements.PlacerRecord.ShowForAnonymous', 'Improvements.HitmanHeat.Enabled',
-        'Improvements.HitmanHeat.ProtectedCompletionHeat', 'Improvements.HitmanHeat.WitnessHeat',
-        'Improvements.HitmanHeat.AdvisoryHeat', 'Improvements.HitmanHeat.DecayHours',
-        'Improvements.HitmanHeat.Threshold', 'Improvements.HitmanHeat.WarnTargetChancePercent',
-        'Improvements.HitmanHeat.BulletinEveryMinutes', 'Improvements.HitmanHeat.BulletinTitle',
-        'Improvements.HitmanHeat.BulletinText', 'Improvements.Tiers.Enabled',
-        'Improvements.Tiers.CompletionsPerLevel', 'Improvements.Tiers.Tiers',
+        'Record.PlacerRecord.Enabled', 'Record.PlacerRecord.LookbackDays',
+        'Record.PlacerRecord.ShowForAnonymous', 'Record.Heat.Enabled',
+        'Record.Heat.ProtectedCompletionHeat', 'Record.Heat.WitnessHeat',
+        'Record.Heat.AdvisoryHeat', 'Record.Heat.DecayHours',
+        'Record.Heat.Threshold', 'Record.Heat.WarnTargetChancePercent',
+        'Record.Heat.BulletinEveryMinutes', 'Record.Heat.BulletinTitle',
+        'Record.Heat.BulletinText', 'Record.Tiers.Enabled',
+        'Record.Tiers.CompletionsPerLevel', 'Record.Tiers.Tiers',
         'Improvements.ContractDecay.Enabled', 'Improvements.ContractDecay.Mode',
         'Improvements.ContractDecay.Percent', 'Improvements.ContractDecay.Hours',
         'Improvements.ContractDecay.MaxIncreasePercent', 'Improvements.ContractDecay.Account',
     }
 
-    it('lists every setting, each switch under Features in its Improvements group', function()
+    it('lists every setting, each switch under Features in its Record or Improvements group', function()
         local s = stack()
         for _, key in ipairs(KEYS) do
             local entry = s.settings.entry(key)
             truthy(entry, key)
             if entry.kind == 'switch' then eq(entry.category, 'features', key) end
-            truthy(entry.group:find('^Improvements: '), key)
+            truthy(entry.group:find(key:find('^Record%.') and '^Record: ' or '^Improvements: '), key)
         end
     end)
 
     it('applies a change at once, and the feature follows it', function()
         local s, f = stack()
-        truthy(s.settings.set('Improvements.Tiers.Enabled', true, 'ADMIN001', 'ADMIN001'))
-        truthy(s.settings.set('Improvements.Tiers.Tiers', { 'Starter, 5000, 3' }, 'ADMIN001', 'ADMIN001'))
+        truthy(s.settings.set('Record.Tiers.Enabled', true, 'ADMIN001', 'ADMIN001'))
+        truthy(s.settings.set('Record.Tiers.Tiers', { 'Starter, 5000, 3' }, 'ADMIN001', 'ADMIN001'))
         local c = place(s, f)
         eq(boardCard(3, c.id).tierLocked.tier, 'Starter')
-        truthy(s.settings.set('Improvements.PlacerRecord.Enabled', true, 'ADMIN001', 'ADMIN001'))
+        truthy(s.settings.set('Record.PlacerRecord.Enabled', true, 'ADMIN001', 'ADMIN001'))
         truthy(boardCard(3, c.id).placerRecord)
         truthy(s.settings.set('Improvements.ContractDecay.Enabled', true, 'ADMIN001', 'ADMIN001'))
         truthy(s.settings.set('Improvements.ContractDecay.Percent', 20, 'ADMIN001', 'ADMIN001'))
@@ -746,20 +751,20 @@ describe('the improvements in the admin panel', function()
         local s = stack()
         falsy(s.settings.set('Improvements.ContractDecay.Percent', 0, 'ADMIN001', 'ADMIN001'))
         falsy(s.settings.set('Improvements.ContractDecay.Mode', 'explode', 'ADMIN001', 'ADMIN001'))
-        falsy(s.settings.set('Improvements.Tiers.Tiers', { 'Elite' }, 'ADMIN001', 'ADMIN001'))
-        falsy(s.settings.set('Improvements.Tiers.Tiers', { 'Elite, 100, 0' }, 'ADMIN001', 'ADMIN001'))
-        falsy(s.settings.set('Improvements.HitmanHeat.BulletinText', '<b>x</b>', 'ADMIN001', 'ADMIN001'))
+        falsy(s.settings.set('Record.Tiers.Tiers', { 'Elite' }, 'ADMIN001', 'ADMIN001'))
+        falsy(s.settings.set('Record.Tiers.Tiers', { 'Elite, 100, 0' }, 'ADMIN001', 'ADMIN001'))
+        falsy(s.settings.set('Record.Heat.BulletinText', '<b>x</b>', 'ADMIN001', 'ADMIN001'))
         eq(Config.Improvements.ContractDecay.Percent, 10)
         eq(Config.Improvements.ContractDecay.Mode, 'rise')
-        eq(#Config.Improvements.Tiers.Tiers, 2)
+        eq(#Config.Record.Tiers.Tiers, 2)
     end)
 
     it('puts a broken config.lua value back at the start, and fills a block it lacks', function()
         resetConfig()
         local main = require('crimson-hitman.server.main')
         Config.Improvements.ContractDecay.Hours = -4
-        Config.Improvements.Tiers.Tiers = { 'nonsense' }
-        Config.Improvements.HitmanHeat = nil
+        Config.Record.Tiers.Tiers = { 'nonsense' }
+        Config.Record.Heat = nil
         local ok, fatal, warn = main.checkCandidate(Config)
         truthy(ok, table.concat(fatal or {}, '; '))
         local said, tiers = false, false
@@ -820,7 +825,7 @@ describe('the number reading heat and decay share', function()
         end
     end)
     it('is the one both modules read', function()
-        for _, file in ipairs({ 'imp_decay', 'imp_heat' }) do
+        for _, file in ipairs({ 'imp_decay', 'record/heat' }) do
             local src = read_file('crimson-hitman/server/' .. file .. '.lua')
             truthy(src:find('local num = Util.num', 1, true), file .. ' reads Util.num')
             falsy(src:find('local function num', 1, true), file .. ' keeps no copy of its own')

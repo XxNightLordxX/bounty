@@ -16,7 +16,7 @@ describe('reputation', function()
     it('starts everyone at nothing', function()
         local s = newStack()
         fixture(s)
-        local record = s.progression.record('HITMAN01')
+        local record = s.record.of('HITMAN01')
         eq(record.completed, 0)
         eq(record.standing, 'Unproven')
         falsy(record.rate, 'a rate with no history would be meaningless')
@@ -25,18 +25,18 @@ describe('reputation', function()
     it('counts a completed contract', function()
         local s, f, c = seeded()
         s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
-        eq(s.progression.record('HITMAN01').completed, 1)
+        eq(s.record.of('HITMAN01').completed, 1)
     end)
 
     it('counts a contract placed', function()
         local s, f, c = seeded()
-        eq(s.progression.record('CREATOR1').placed, 1)
+        eq(s.record.of('CREATOR1').placed, 1)
     end)
 
     it('counts abandoning as a failure', function()
         local s, f, c = seeded()
         s.contracts.abandon(f.hitman, c.id)
-        eq(s.progression.record('HITMAN01').failed, 1)
+        eq(s.record.of('HITMAN01').failed, 1)
     end)
 
     it('credits a target who buys their way out', function()
@@ -45,26 +45,26 @@ describe('reputation', function()
         s.bailout.buy(f.target, c.id)
         Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
         s.bailout.processQueue()
-        eq(s.progression.record('TARGET01').survived, 1)
+        eq(s.record.of('TARGET01').survived, 1)
     end)
 
     it('withholds a success rate until there is enough history', function()
         local s = newStack()
         fixture(s)
         s.storage.bumpStat('HITMAN01', 'completed', 2)
-        falsy(s.progression.record('HITMAN01').rate, 'two contracts is not a record')
+        falsy(s.record.of('HITMAN01').rate, 'two contracts is not a record')
 
         s.storage.bumpStat('HITMAN01', 'failed', 1)
-        eq(s.progression.record('HITMAN01').rate, 66)
+        eq(s.record.of('HITMAN01').rate, 66)
     end)
 
     it('moves through standings as the record grows', function()
         local s = newStack()
         fixture(s)
-        eq(s.progression.standing(0, 0), 'Unproven')
-        eq(s.progression.standing(5, 0), 'Known')
-        eq(s.progression.standing(20, 0), 'Established')
-        eq(s.progression.standing(50, 0), 'Notorious')
+        eq(s.record.standing(0, 0), 'Unproven')
+        eq(s.record.standing(5, 0), 'Known')
+        eq(s.record.standing(20, 0), 'Established')
+        eq(s.record.standing(50, 0), 'Notorious')
     end)
 
     it('shows the creator a record without an identity', function()
@@ -95,7 +95,7 @@ describe('criminal progression hook', function()
 
         eq(#awarded, 1)
         eq(awarded[1].cid, 'HITMAN01')
-        eq(awarded[1].amount, Config.Progression.TrustPerKidnapping,
+        eq(awarded[1].amount, Config.Record.Progression.TrustPerKidnapping,
             'a live delivery is worth more than a kill')
     end)
 
@@ -118,7 +118,7 @@ describe('criminal progression hook', function()
 
     it('does nothing when progression is disabled', function()
         local s, f, c = seeded()
-        Config.Progression.Enabled = false
+        Config.Record.Progression.Enabled = false
         local touched = false
         local realExports = _G.exports
         _G.exports = setmetatable({}, {
@@ -130,7 +130,7 @@ describe('criminal progression hook', function()
 
         s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         _G.exports = realExports
-        Config.Progression.Enabled = true
+        Config.Record.Progression.Enabled = true
 
         falsy(touched)
     end)

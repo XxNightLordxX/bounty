@@ -402,7 +402,7 @@ describe('notifications and progression, switched from the panel', function()
                 return { AddTrust = function() touched = true end }
             end,
         })
-        turn(s, 'Progression.Enabled', false)
+        turn(s, 'Record.Progression.Enabled', false)
         local ok = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         _G.exports = realExports
         truthy(ok)

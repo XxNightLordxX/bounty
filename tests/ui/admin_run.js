@@ -4780,8 +4780,12 @@ async function main() {
     app.click(app.button('Open all'));
     const help = app.window.CH_ADMIN_HELP;
     it('How it works has a card for each rpC roleplay feature, linking to its settings', function () {
-      ['proof of intent', 'reputation', 'bodyguards', 'hit on the hitman'].forEach(function (w) {
-        const found = help.filter(function (c) { return c.title.toLowerCase().indexOf('roleplay: ' + w) === 0; });
+      // Reputation is part of a character's record (server/record/): its
+      // card is titled Record.
+      ['proof of intent', 'record: reputation', 'bodyguards', 'hit on the hitman'].forEach(function (w) {
+        const found = help.filter(function (c) {
+          return c.title.toLowerCase().indexOf(w.indexOf('record: ') === 0 ? w : 'roleplay: ' + w) === 0;
+        });
         eq(found.length, 1, 'a card on ' + w);
         truthy(found[0].links.length >= 1, w + ' links to its settings');
         truthy(/off as shipped/i.test(found[0].text), w + ' says it ships off');
@@ -4981,7 +4985,7 @@ async function main() {
       about: 'An untaken contract\'s reward rises each step, charged to its placer.',
       kind: 'switch', live: true, inflight: 'At the next tick, with no restart.', value: false,
       default: false, shipped: false, hasShipped: true, source: 'config' });
-    const tiers = { key: 'Improvements.Tiers.Tiers', category: 'rules-limits', group: 'Improvements: Tiered board',
+    const tiers = { key: 'Record.Tiers.Tiers', category: 'rules-limits', group: 'Record: Tiered board',
       label: 'Tiers, as name, least reward, level', kind: 'list', whole: true, live: true,
       inflight: 'Read each time it is used.', value: ['Professional, 50000, 2'], default: [], source: 'config' };
     view.data.limits.push(tiers);
@@ -4996,15 +5000,15 @@ async function main() {
     });
     app.nav('limits');
     await settled();
-    const row = function () { return app.byId('st-row-Improvements.Tiers.Tiers'); };
+    const row = function () { return app.byId('st-row-Record.Tiers.Tiers'); };
     app.type(row().querySelector('input'), 'Elite, 150000, 4');
     app.click(app.button('Add', row()));
     await settled();
-    app.click(app.byId('st-save-Improvements.Tiers.Tiers'));
-    app.click(app.byId('st-save-Improvements.Tiers.Tiers'));
+    app.click(app.byId('st-save-Record.Tiers.Tiers'));
+    app.click(app.byId('st-save-Record.Tiers.Tiers'));
     await settled();
     it('a tier is added whole, its commas and spaces kept', function () {
-      eq(app.last('setSetting').data, { key: 'Improvements.Tiers.Tiers',
+      eq(app.last('setSetting').data, { key: 'Record.Tiers.Tiers',
         value: ['Professional, 50000, 2', 'Elite, 150000, 4'] });
     });
     app.nav('help');
@@ -5012,8 +5016,9 @@ async function main() {
     app.click(app.button('Open all'));
     const help = app.window.CH_ADMIN_HELP;
     it('How it works has a card for each board improvement, linking to its settings', function () {
-      ['placer record', 'hitman heat', 'tiered board', 'contract decay'].forEach(function (w) {
-        const found = help.filter(function (c) { return c.title.toLowerCase() === 'improvements: ' + w; });
+      // The first three are part of a character's record (server/record/).
+      ['record: placer record', 'record: hitman heat', 'record: tiered board', 'improvements: contract decay'].forEach(function (w) {
+        const found = help.filter(function (c) { return c.title.toLowerCase() === w; });
         eq(found.length, 1, 'a card on ' + w);
         truthy(found[0].links.length >= 2, w + ' links to its settings');
         truthy(/off as shipped/i.test(found[0].text), w + ' says it ships off');
@@ -5311,7 +5316,7 @@ async function main() {
       eq(unit({ key: 'Limits.SlotCooldownSeconds' }), ' s');
       eq(unit({ key: 'PendingEscrow.LoginRetryDelayMs' }), ' ms');
       eq(unit({ key: 'Holds.RestartMaxHoldMinutes' }), ' min');
-      eq(unit({ key: 'Improvements.HitmanHeat.DecayHours' }), ' h');
+      eq(unit({ key: 'Record.Heat.DecayHours' }), ' h');
       eq(unit({ key: 'Audit.ContractRetentionDays' }), ' d');
       eq(unit({ key: 'Roleplay.WitnessHeat.WitnessRadius' }), ' m');
       eq(unit({ key: 'Improvements.ContractDecay.Percent' }), '%');
@@ -5328,8 +5333,13 @@ async function main() {
       const rp = titles.filter(function (t) { return /^Roleplay: /.test(t); });
       const imp = titles.filter(function (t) { return /^Improvements: /.test(t); });
       const intel = titles.filter(function (t) { return /^Intel: /.test(t); });
-      eq(rp.length, 11, 'eleven roleplay cards (with the NPC places set from the panel): ' + rp.join(', '));
-      eq(imp.length, 8, 'seven improvements and the completion cooldown: ' + imp.join(', '));
+      const rec = titles.filter(function (t) { return /^Record: /.test(t); });
+      eq(rp.length, 10, 'ten roleplay cards (with the NPC places set from the panel): ' + rp.join(', '));
+      eq(imp.length, 5, 'four improvements and the completion cooldown: ' + imp.join(', '));
+      eq(rec.length, 4, 'four Record cards (reputation, tiers, heat, placer record): ' + rec.join(', '));
+      truthy(titles.indexOf(rec[0]) > titles.indexOf(intel[intel.length - 1])
+        && titles.indexOf(rec[rec.length - 1]) < titles.indexOf('Police advisories'),
+        'every Record card right after Intel');
       eq(intel.length, 8, 'eight Intel cards (in person, rumours, the five rules, going dark): ' + intel.join(', '));
       truthy(titles.indexOf(intel[0]) > titles.indexOf('The informants')
         && titles.indexOf(intel[intel.length - 1]) < titles.indexOf('Police advisories'),
@@ -5340,7 +5350,8 @@ async function main() {
         && titles.indexOf('The informants') < titles.indexOf('Police advisories')
         && titles.indexOf('Police advisories') < titles.indexOf('The staff freeze'), 'the core areas in order');
       eq(rp[0], 'Roleplay: Witness heat', 'config.lua\'s first roleplay block first');
-      eq(imp[0], 'Improvements: Placer record', 'and its first improvement');
+      eq(imp[0], 'Improvements: Contract decay', 'and its first improvement');
+      eq(rec[0], 'Record: Reputation earned in character', 'Record in the order of config.lua');
       eq(intel[0], 'Intel: The informant in person', 'Intel in the order of config.lua');
     });
     app.nav('actions');

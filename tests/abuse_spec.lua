@@ -780,7 +780,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         package.loaded['crimson-hitman.server.contracts'] = nil
         local fresh = require('crimson-hitman.server.contracts')
         fresh.init({ storage = s.storage, escrow = s.escrow, identity = s.identity,
-                     audit = s.audit, notify = s.notify, progression = s.progression,
+                     audit = s.audit, notify = s.notify, record = s.record,
                      death = s.death })
         s.contracts = fresh
         eq(fresh.reindexHolds(), 1)
@@ -797,7 +797,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         package.loaded['crimson-hitman.server.contracts'] = nil
         local fresh = require('crimson-hitman.server.contracts')
         fresh.init({ storage = s.storage, escrow = s.escrow, identity = s.identity,
-                     audit = s.audit, notify = s.notify, progression = s.progression,
+                     audit = s.audit, notify = s.notify, record = s.record,
                      death = s.death })
         s.contracts = fresh
         fresh.reindexHolds()

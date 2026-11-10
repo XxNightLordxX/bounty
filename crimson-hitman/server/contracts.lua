@@ -14,7 +14,7 @@ local TargetLimits = CrimsonBoot.require('server.targetlimits')
 
 local Contracts = {}
 
-local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review, Ledger
+local Storage, Escrow, Identity, Audit, Notify, Record, Death, Review, Ledger
 --- Every hold on a contract (server/holds.lua): staff freezes, the restart
 --- hold, the app pause. Every path that would accept, complete, pay, refund,
 --- amend or end a contract asks, after it has checked who is asking, so a
@@ -35,7 +35,7 @@ function Contracts.init(deps)
     Identity    = deps.identity
     Audit       = deps.audit
     Notify      = deps.notify
-    Progression = deps.progression
+    Record = deps.record
     Death       = deps.death
     -- The rows a collection recovery found paid is credited with
     -- (creditRecovered); without it, none are written.
@@ -1367,7 +1367,7 @@ local function createUnlocked(actor, req, targetActor)
         reason = Config.Audit.LogReasonText and reason or nil,
     })
 
-    if Progression then Progression.onContractPlaced(actor.cid) end
+    if Record then Record.onContractPlaced(actor.cid) end
 
     Notify.contractCreated(contract, targetActor)
 
@@ -2402,7 +2402,7 @@ local function placeLate(item, copy)
             target = found.target_cid, mode = found.mode, anonymous = found.anon_creator,
             late = true, review = item.id,
         })
-        if Progression then Progression.onContractPlaced(copy.creator_cid) end
+        if Record then Record.onContractPlaced(copy.creator_cid) end
         Notify.contractCreated(found, Identity.byCitizenId(found.target_cid))
         if Contracts.onChanged then Contracts.onChanged() end
         Notify.toCitizen(copy.creator_cid, 'Contract placed',
@@ -2555,7 +2555,7 @@ local function walkAway(actor, contractId, opts)
     if active == 0 then dropMeeting(contractId) end
 
     -- Not a failure of theirs when staff took them off it.
-    if Progression and not opts.staff then Progression.onFailed(actor.cid) end
+    if Record and not opts.staff then Record.onFailed(actor.cid) end
 
     -- Anything holding state for this hitman on this contract is told.
     -- A handover they had armed is the one that matters: it does not pay
@@ -3475,7 +3475,8 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- asked while the contract still carries its meeting point: whether this
     -- payout waits for proof of intent (server/rp_intent.lua, which gates
     -- the escrow's give, so nothing below changes), and how the trust it
-    -- earns is scaled (server/rp_reputation.lua). Neither may stop a claim.
+    -- earns is scaled (Record.factorFor, server/record/). Neither may stop a
+    -- claim.
     local intentHold, reputation
     if Contracts.intentOnClaim then
         -- With the claim's options, so a step that waits on the payout (the
@@ -3483,8 +3484,8 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
         local asked, hold = pcall(Contracts.intentOnClaim, contract, hitmanCid, fulfilment, opts)
         if asked then intentHold = hold end
     end
-    if Contracts.reputationFor then
-        local asked, earned = pcall(Contracts.reputationFor, contract, hitmanCid, fulfilment)
+    if Record then
+        local asked, earned = pcall(Record.factorFor, contract, hitmanCid, fulfilment)
         if asked then reputation = earned end
     end
 
@@ -3568,8 +3569,8 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- penalty and walk away at no cost. Stakes settle when the contract
     -- ends, in finalise() and resolve().
 
-    if Progression then
-        Progression.onCompleted(hitmanCid, fulfilment, reputation and reputation.factor or nil)
+    if Record then
+        Record.onCompleted(hitmanCid, fulfilment, reputation and reputation.factor or nil)
     end
     creditedClaims[contractId .. ':' .. slot] = true
 
@@ -4465,8 +4466,8 @@ local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
     local heldMoney = Ledger and Ledger.ended and Escrow.moneyValue(contractId) or 0
 
     -- A target who outlived the contract has something to show for it.
-    if Progression and (terminal == CH.STATE.BAILED_OUT or terminal == CH.STATE.EXPIRED) then
-        Progression.onSurvived(contract.target_cid)
+    if Record and (terminal == CH.STATE.BAILED_OUT or terminal == CH.STATE.EXPIRED) then
+        Record.onSurvived(contract.target_cid)
     end
 
     -- Pay whoever this resolution names, before anything sweeps the rest
@@ -4735,7 +4736,7 @@ local function creditRecovered(contract, slot, stakes)
 
     -- Not where the claim itself counted it before it raised (this process).
     local key = contract.id .. ':' .. slot
-    if Progression and not creditedClaims[key] then Progression.onCompleted(payee, fulfilment) end
+    if Record and not creditedClaims[key] then Record.onCompleted(payee, fulfilment) end
     creditedClaims[key] = nil
     Audit.financial('claim_recovered', payee, contract.id, { slot = slot, fulfilment = fulfilment })
     local result = {

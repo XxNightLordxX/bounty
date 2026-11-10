@@ -488,7 +488,7 @@ function RpConsequences.onClaimed(contractId, hitmanCid, fulfilment, result)
         keep(contract.target_cid)
     end
     local _, alerted = pcall(witnessAlert, contract, hitmanCid, result and result.slot)
-    -- A report went: the hitman's heat (server/imp_heat.lua), when on.
+    -- A report went: the hitman's heat (server/record/heat.lua), when on.
     if alerted == true and RpConsequences.afterWitness then
         pcall(RpConsequences.afterWitness, contract, hitmanCid)
     end

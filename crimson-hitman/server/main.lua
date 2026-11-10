@@ -765,10 +765,9 @@ local function validateConfig(quiet)
     -- from defaults.lua, and one that breaks its rule is put back, and said.
     local rpFilled = {}
     CrimsonBoot.require('server.rp_consequences').checkConfig(warn, rpFilled)
-    -- Proof of intent, earned reputation, bodyguards and the hit on the
-    -- hitman (group rpC), the same way.
+    -- Proof of intent, bodyguards and the hit on the hitman (group rpC),
+    -- the same way.
     CrimsonBoot.require('server.rp_intent').validate(warn, rpFilled)
-    CrimsonBoot.require('server.rp_reputation').validate(warn, rpFilled)
     CrimsonBoot.require('server.rp_protection').validate(warn, rpFilled)
     if #rpFilled > 0 and not quiet then
         table.sort(rpFilled)
@@ -776,8 +775,18 @@ local function validateConfig(quiet)
             .. 'are being used for them: %s.'):format(#rpFilled, table.concat(rpFilled, ', ')), #rpFilled)
     end
 
-    -- The board and progression improvements (server/imp_board.lua, README
-    -- Optional features), checked the same way: filled, put back, said.
+    -- A character's record (server/record/, Config.Record): reputation,
+    -- the tiered board, heat and the placer's record, checked the same way.
+    local recordFilled = {}
+    CrimsonBoot.require('server.record.init').validate(warn, recordFilled)
+    if #recordFilled > 0 and not quiet then
+        table.sort(recordFilled)
+        Log.problem(('your config.lua does not set %d record setting(s); the shipped defaults '
+            .. 'are being used for them: %s.'):format(#recordFilled, table.concat(recordFilled, ', ')), #recordFilled)
+    end
+
+    -- Contract decay (server/imp_board.lua, README Optional features),
+    -- checked the same way.
     local impFilled = {}
     CrimsonBoot.require('server.imp_board').checkConfig(warn, impFilled)
     if #impFilled > 0 and not quiet then
@@ -1771,8 +1780,10 @@ local function optionalIntegrations()
     add(Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource,
         'playtime for the new-player immunity rule')
 
-    if Config.Progression.Enabled then
-        add(Config.Progression.Resource, 'reputation credit for finished contracts')
+    local trust = type(Config.Record) == 'table' and type(Config.Record.Progression) == 'table'
+        and Config.Record.Progression or {}
+    if trust.Enabled then
+        add(trust.Resource, 'reputation credit for finished contracts')
     end
     if Config.Advisory.UseDispatch then
         add('sc-dispatch', 'threat advisories in the MDT')
@@ -1919,7 +1930,9 @@ function StartCrimsonHitman()
     local amendments = CrimsonBoot.require('server.amendments')
     local comms      = CrimsonBoot.require('server.comms')
     local mugshot    = CrimsonBoot.require('server.mugshot')
-    local progression = CrimsonBoot.require('server.progression')
+    -- A character's record (server/record/): counters, standing, trust and
+    -- reputation, the tiered board, heat and the placer's record.
+    local record     = CrimsonBoot.require('server.record.init')
     local admin      = CrimsonBoot.require('server.admin')
     local projection = CrimsonBoot.require('server.projection')
     local app        = CrimsonBoot.require('server.app')
@@ -1947,9 +1960,8 @@ function StartCrimsonHitman()
     -- money payouts, each off as shipped.
     local rpConsequences = CrimsonBoot.require('server.rp_consequences')
     -- Roleplay (README, Optional features, each off as shipped): proof of
-    -- intent, earned reputation, bodyguards and the hit on the hitman.
+    -- intent, bodyguards and the hit on the hitman.
     local rpIntent     = CrimsonBoot.require('server.rp_intent')
-    local rpReputation = CrimsonBoot.require('server.rp_reputation')
     local rpProtection = CrimsonBoot.require('server.rp_protection')
     -- The roleplay features (README, Optional features), each off as shipped.
     local rpPlaces    = CrimsonBoot.require('server.rp_places')
@@ -1961,9 +1973,7 @@ function StartCrimsonHitman()
     local intel        = CrimsonBoot.require('server.intel.engine')
     local intelRules   = CrimsonBoot.require('server.intel.rules')
     local intelRumours = CrimsonBoot.require('server.intel.rumours')
-    -- The board and progression improvements (README, Optional
-    -- features), each off as shipped: the placer's record, hitman heat,
-    -- tiers and contract decay.
+    -- Contract decay (README, Optional features), off as shipped.
     local impBoard    = CrimsonBoot.require('server.imp_board')
     -- Proof items, serial scrubbing and the weekly stats, each off as shipped.
     local impProof    = CrimsonBoot.require('server.imp_proof')
@@ -1987,9 +1997,8 @@ function StartCrimsonHitman()
     -- settles alike.
     review.init({ storage = Storage, escrow = escrow, audit = audit })
     escrow.init(Storage, audit, review)
-    progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
-                     audit = audit, notify = notify, progression = progression,
+                     audit = audit, notify = notify, record = record,
                      death = death, review = review, ledger = ledger,
                      sanctions = sanctions, projection = projection })
     photos.init({ storage = Storage, audit = audit })
@@ -2014,7 +2023,7 @@ function StartCrimsonHitman()
     locationTip.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
                        contracts = contracts, review = review })
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
-                      kidnap = kidnap, mugshot = mugshot, progression = progression,
+                      kidnap = kidnap, mugshot = mugshot, record = record,
                       comms = comms, informant = informant, notify = notify,
                       locationTip = locationTip, staffContract = staffContract })
     -- Every hold on a contract (server/holds.lua): staff freezes read from
@@ -2049,11 +2058,10 @@ function StartCrimsonHitman()
     rpConsequences.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
                           ledger = ledger, contracts = contracts, escrow = escrow })
     -- Roleplay: a payout held for proof of intent gates the escrow's give
-    -- and is asked by the claim; reputation scales the claim's trust; a
-    -- bodyguard job's money is its own (server/rp_*.lua).
+    -- and is asked by the claim; a bodyguard job's money is its own
+    -- (server/rp_*.lua).
     rpIntent.init({ storage = Storage, audit = audit, notify = notify, escrow = escrow,
                     contracts = contracts, projection = projection })
-    rpReputation.init({ storage = Storage, identity = identity, contracts = contracts })
     rpProtection.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
                         app = app, informant = informant, projection = projection,
                         review = review, contracts = contracts })
@@ -2080,12 +2088,16 @@ function StartCrimsonHitman()
     intelRules.init({ storage = Storage, audit = audit, notify = notify, contracts = contracts,
                       locationTip = locationTip, informant = informant, projection = projection,
                       bailout = bailout })
-    -- After projection, contracts and the roleplay consequences: it adds to
-    -- the cards, hooks the claim and the witness report, and steps on the tick.
+    -- A character's record, after projection, contracts and the roleplay
+    -- consequences: it adds to the cards, hooks the claim and the witness
+    -- report, and steps on the tick.
+    record.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
+                  escrow = escrow, contracts = contracts, projection = projection,
+                  rpConsequences = rpConsequences })
+    -- Contract decay: it steps on the tick and adds to its placer's card.
     impBoard.init({ storage = Storage, identity = identity, notify = notify, audit = audit,
                     escrow = escrow, contracts = contracts, amendments = amendments,
-                    projection = projection, progression = progression,
-                    rpConsequences = rpConsequences })
+                    projection = projection })
     -- The improvements: proof items, serial scrubbing (asked by the escrow
     -- for every weapon it gives) and the weekly stats (server/imp_*.lua).
     impProof.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
@@ -2111,7 +2123,7 @@ function StartCrimsonHitman()
         notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
-        projection = projection, mugshot = mugshot, progression = progression,
+        projection = projection, mugshot = mugshot, record = record,
         app = app, admin = admin, photos = photos, review = review,
         -- How long each tick job and sampler pass takes, for the console
         -- warning and /ch-diag.
@@ -2147,15 +2159,14 @@ function StartCrimsonHitman()
         -- The roleplay consequences: the tick's look at recovering targets,
         -- and the medic's revive the bridge hears.
         rpConsequences = rpConsequences,
-        -- Roleplay: proof of intent, reputation and bodyguards.
-        rpIntent = rpIntent, rpReputation = rpReputation, rpProtection = rpProtection,
+        -- Roleplay: proof of intent and bodyguards.
+        rpIntent = rpIntent, rpProtection = rpProtection,
         -- The roleplay features, for the app's gate and its requests.
         rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason,
         -- Intel: the engine (the in-person gate), the rules with going dark
         -- (the app's requests and the tick), the rumours and briefings.
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,
-        -- The board and progression improvements: the app's gate, its
-        -- after-steps and decayOff, and the tick.
+        -- Contract decay: the app's decayOff, and the tick.
         impBoard = impBoard,
         -- The improvements, for the app's requests and the tick.
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
@@ -2887,11 +2898,11 @@ local SCHEDULE = {
     ['holds.syncAppPause'] = { every = 60, phase = 40 },
     -- The alert thresholds' books aged out: windows of an hour and more.
     ['thresholds.sweep'] = { every = 60, phase = 10 },
-    -- The improvements' minute (server/imp_board.lua): heat cooled and the
-    -- police bulletin, the placer records forgotten, and the go-dark windows
-    -- that have passed taken out of the store (server/intel/rules.lua). Nothing
+    -- The record's minute (server/record/): heat cooled and the police
+    -- bulletin, the placer records forgotten; and the go-dark windows that
+    -- have passed taken out of the store (server/intel/rules.lua). Nothing
     -- while all are off; in memory only while on, but for those deletes.
-    ['imp_board.tick'] = { every = 60, phase = 50 },
+    ['record.tick'] = { every = 60, phase = 50 },
     -- Contract decay's steps (server/imp_decay.lua), the one of them that
     -- charges and writes, on a tick of its own. It sleeps until its soonest
     -- step is due, and takes at most Decay.STEPS_PER_PASS a pass.
@@ -2946,12 +2957,12 @@ jobInterval = function(name)
     return gated or math.floor((tonumber(Config.Audit.FlushIntervalMs) or 10000) / 1000)
 end
 
---- The improvements' minute (imp_board.tick): the board's own (heat, the
---- placer records), and the go-dark windows that have passed taken out of
---- the store (IntelRules.prune). Each reads and writes nothing while it has
+--- The record's minute (record.tick): heat and the placer records
+--- (Record.tick), and the go-dark windows that have passed taken out of the
+--- store (IntelRules.prune). Each reads and writes nothing while it has
 --- nothing to do.
-local function BoardMinute()
-    modules.impBoard.tickBoard()
+local function RecordMinute()
+    modules.record.tick()
     if modules.intelRules and modules.intelRules.prune then modules.intelRules.prune() end
 end
 
@@ -3038,11 +3049,9 @@ function Tick()
     -- Where the roleplay NPCs stand moves on the clock (server/rp_places.lua):
     -- here rather than on a thread of its own.
     if modules.rpPlaces then every('rp_places.announce', modules.rpPlaces.announce, now) end
-    -- The improvements' minute (server/imp_board.lua), and contract decay.
-    if modules.impBoard then
-        every('imp_board.tick', BoardMinute, now)
-        every('imp_decay.tick', modules.impBoard.tickDecay, now)
-    end
+    -- The record's minute (server/record/), and contract decay.
+    if modules.record then every('record.tick', RecordMinute, now) end
+    if modules.impBoard then every('imp_decay.tick', modules.impBoard.tick, now) end
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
     -- An exclusive contract held by somebody who is not working it goes

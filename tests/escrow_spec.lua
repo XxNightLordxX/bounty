@@ -1694,9 +1694,9 @@ local function onMysql()
     s.audit.init(store)
     s.review.init({ storage = store, escrow = s.escrow, audit = s.audit })
     s.escrow.init(store, s.audit, s.review)
-    s.progression.init({ storage = store, identity = s.identity, audit = s.audit })
+    s.record.init({ storage = store, identity = s.identity, audit = s.audit })
     s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
-                       audit = s.audit, notify = s.notify, progression = s.progression,
+                       audit = s.audit, notify = s.notify, record = s.record,
                        death = s.death, review = s.review })
     s.amendments.init({ storage = store, identity = s.identity, contracts = s.contracts,
                         escrow = s.escrow, audit = s.audit, notify = s.notify })
@@ -1714,7 +1714,7 @@ local function onJson()
     s.review.init({ storage = store, escrow = s.escrow, audit = s.audit })
     s.escrow.init(store, s.audit, s.review)
     s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
-                       audit = s.audit, notify = s.notify, progression = s.progression,
+                       audit = s.audit, notify = s.notify, record = s.record,
                        death = s.death, review = s.review })
     s.amendments.init({ storage = store, identity = s.identity, contracts = s.contracts,
                         escrow = s.escrow, audit = s.audit, notify = s.notify })

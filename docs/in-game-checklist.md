@@ -153,7 +153,7 @@ in your database before the first start of this version.
 - [ ] After the third claim the contract closes and the fourth hitman gets nothing
 - [ ] With a 3-payout Place form open, set the setting back to 1 in the panel: within a moment the form shows one reward and says *This server now takes one payout per contract; payouts 2 and 3 were removed.*
 - [ ] Place a 3-payout contract, then set the setting back to 1 in the panel: the contract still shows "Payout 1 of 3", pays all three collections, and its placer can still give the last one back (**Propose change → Give back the last payout**); a new contract offers one collection only
-- [ ] With `Config.Progression.Enabled` (as shipped) and sc-blackmarket started, a completed contract gives the hitman criminal trust; switched off, nothing is sent
+- [ ] With `Config.Record.Progression.Enabled` (as shipped) and sc-blackmarket started, a completed contract gives the hitman criminal trust; switched off, nothing is sent
 
 ## 4a. Live transfer only (as shipped)
 
@@ -532,7 +532,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `Config.Roleplay.CityNews` on (create the Birdy account `LSNews` first): complete a contract on an on-duty officer: one anonymous post appears on Birdy with the job, the area and the time
 - [ ] `Config.Roleplay.DirtyPayouts` on: complete a cash contract: the hitman receives `black_money` for the figure, not cash; with full pockets it arrives once they make room
 - [ ] `Config.Roleplay.ProofOfIntent` on: verify a kill on a contract with no thread messages and no meeting point: the answer says the payout is held and what is missing, the card and **Mine** say it too; send the messages and it arrives within half a minute (or after the hold time without them)
-- [ ] `Config.Roleplay.Reputation` on (with `Config.Progression.Enabled`): complete a contract: the receipt ends with *Reputation x...* and its parts, and the trust given matches
+- [ ] `Config.Record.Reputation` on (with `Config.Record.Progression.Enabled`): complete a contract: the receipt ends with *Reputation x...* and its parts, and the trust given matches
 - [ ] `Config.Roleplay.Protection` on: as a target, **Hire protection** on On me (the reward leaves the account); as a third player take it on the board's **Protection** tab: you see the target's name and **Set GPS to the pin** works, and nothing names the placer or an operative; let the contract expire: the guard is paid. Cancel an untaken job (it asks first, saying the reward comes back): the target is refunded. **Move the pin here** asks first too, and the guard's **Set GPS to the pin** then marks the new spot. Switch `Config.Roleplay.Protection` off with a guard on the job: the target can still move the pin, and the guard still has the **Protection** tab and Set GPS
 - [ ] `Config.Roleplay.HitOnHitman` on: have the target's informant find an operative's name: **Place a contract on <name>** opens Place with them chosen, and placing follows every rule
 - [ ] `Config.Intel.Rumours` on: a second character sees a new contract as *A rumour* with an area and a band, no name or face, and no Accept.
@@ -567,9 +567,9 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 ### Board and progression
 
 - [ ] With every `Config.Improvements` switch of this group off (placer record, hitman heat, tiered board, contract decay), the board, Accept and Mine look and behave as before, and nobody is charged on the minute.
-- [ ] `Config.Improvements.PlacerRecord` on: a second character's board card reads *Placer: placed N, paid out N, cancelled N (30 days)* and never a name; place and withdraw another named contract: the count moves at once. An anonymous contract shows no record; with **anonymous placers too** on it shows bands (*1-4*), which do not move when another of that placer's anonymous contracts ends.
-- [ ] `Config.Improvements.HitmanHeat` on (and the paranoid alert on, as shipped): complete a contract on an on-duty officer; with the threshold at its value or lower, take another contract: its target gets *You feel eyes on you* after the usual wait. While that hitman holds a contract, an officer gets the *Intelligence bulletin* on the phone and sc-dispatch an entry with no position, at most once in the set minutes; nothing names anybody.
-- [ ] `Config.Improvements.Tiers` on (with **Criminal progression** on): a hitman with few completions sees the big contract with *Elite tier: you need level 4 (you are level 1).* and no Accept; their money is unchanged. Raise their completions (or the level setting down) and Accept appears.
+- [ ] `Config.Record.PlacerRecord` on: a second character's board card reads *Placer: placed N, paid out N, cancelled N (30 days)* and never a name; place and withdraw another named contract: the count moves at once. An anonymous contract shows no record; with **anonymous placers too** on it shows bands (*1-4*), which do not move when another of that placer's anonymous contracts ends.
+- [ ] `Config.Record.Heat` on (and the paranoid alert on, as shipped): complete a contract on an on-duty officer; with the threshold at its value or lower, take another contract: its target gets *You feel eyes on you* after the usual wait. While that hitman holds a contract, an officer gets the *Intelligence bulletin* on the phone and sc-dispatch an entry with no position, at most once in the set minutes; nothing names anybody.
+- [ ] `Config.Record.Tiers` on (with **Criminal progression** on): a hitman with few completions sees the big contract with *Elite tier: you need level 4 (you are level 1).* and no Accept; their money is unchanged. Raise their completions (or the level setting down) and Accept appears.
 - [ ] `Config.Improvements.ContractDecay` on (`rise`, Hours 1): leave a contract untaken an hour: the placer's bank drops by 10% of the reward, they get a *Contract reward* notice, the board shows the higher reward, and Mine says *Added so far*. **Stop the rise** (two taps) stops it; withdraw the contract: every dollar comes back. With an empty bank the next step is refused, nothing is taken, and the placer is told it stopped. With `shorten`, the time band on the card drops instead and nothing is charged. An anonymous contract never rises: its card says *Its reward does not rise while it waits: you placed it anonymously.*, and logging the placer out and in moves nothing on the board. Freeze the target for two hours, then unfreeze: no step comes at once. Switch decay off for two hours (the contract taken and walked away from meanwhile) and on again: no step comes at once.
 
 ### Staff and economy
@@ -678,6 +678,13 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Records › Logs shows four chips: **Audit log** (as before: search, pages, Flush), **Setting changes** (each change, Undo on two clicks, Older / Newer), **Org audit** (every action, the action filter) and **Grant history** (every grant, Undo on a role's).
 - [ ] From Game rules, Hitman organisation, Boss permissions and Target limits, the last tab (**Change history ▸**, **Org audit ▸**, **Grant history ▸**, **History ▸**) opens Logs with its chip picked; Target limits' opens the audit log filtered to `staff_target_`.
 - [ ] Without `crimson.identity`: every chip shows *a staff member* / *a member*, never a citizen id, as each list did; a reader account sees every chip and no Undo.
+
+## Record & standing: one record (step 3j)
+
+- [ ] Game rules shows one area, **Record & standing**, holding Criminal progression (switch, trust per kill and per handover), Reputation, Tiered board, Hitman heat and Placer record; Features lists the five groups together after Intel; the old Progression, Roleplay: Reputation and Improvements: Placer record / Hitman heat / Tiered board groups are gone.
+- [ ] Complete a contract (sc-blackmarket started): trust is given as before (10 a kill, 20 a handover); the hitman's Ledger shows the same record (completed, failed, rate, standing) and the panel's player card the same counters.
+- [ ] Turn each of Reputation, Tiered board, Hitman heat and Placer record on from the panel in turn: each behaves as its own checks above say, with no restart; turned off, each stops at once.
+- [ ] Restart with heat given: it is still there until it cools, and the minute job (`record.tick` in /ch-diag) clears it after.
 
 ## If something fails
 

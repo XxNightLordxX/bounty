@@ -1,5 +1,6 @@
---- The placer's record on a board card (Config.Improvements.PlacerRecord,
---- README, Optional features). Off as shipped.
+--- The placer's record on a board card (Config.Record.PlacerRecord, README,
+--- A hitman's record), the part of a character's record (server/record/
+--- init.lua) a hitman sees of the one who placed a contract. Off as shipped.
 ---
 --- With it on, a board card (to anybody who is not its placer or target)
 --- carries how many contracts its placer placed, had paid out (completed)
@@ -27,10 +28,12 @@
 
 local Feature = CrimsonBoot.require('server.lib.feature')
 
---- This feature's block of config (server/lib/feature.lua reads it).
-local BLOCK = 'Improvements.PlacerRecord'
+--- This part's block of config (server/lib/feature.lua reads it; the
+--- record's start-up check, Record.validate, holds it to
+--- Record.RULES.PlacerRecord).
+local BLOCK = 'Record.PlacerRecord'
 
-local Record = {}
+local Placer = {}
 
 local Storage, Projection
 
@@ -47,7 +50,7 @@ local anon = {}
 --- The bands an anonymous placer's counts are shown in.
 ---@param n integer
 ---@return string
-function Record.band(n)
+function Placer.band(n)
     n = math.floor(tonumber(n) or 0)
     if n <= 0 then return '0' end
     if n < 5 then return '1-4' end
@@ -58,7 +61,7 @@ end
 --- A placer's counts over the last `days`, of their contracts placed the
 --- same way (anonymously, or not) as `anonymous`, leaving out `exceptId`.
 ---@return table { placed, paidOut, cancelled }
-function Record.count(creatorCid, anonymous, exceptId, days, now)
+function Placer.count(creatorCid, anonymous, exceptId, days, now)
     local since = (now or os.time()) - days * 86400
     local out = { placed = 0, paidOut = 0, cancelled = 0 }
     for _, c in ipairs(Storage.contractsBy(creatorCid) or {}) do
@@ -79,7 +82,7 @@ end
 --- anonymous placer with ShowForAnonymous off).
 ---@param contract table
 ---@return table|nil { placed, paidOut, cancelled, days, banded }
-function Record.forCard(contract)
+function Placer.forCard(contract)
     local cfg = Feature.active(BLOCK)
     if not cfg or type(contract) ~= 'table' or type(contract.creator_cid) ~= 'string' then return nil end
     local days = math.floor(tonumber(cfg.LookbackDays) or 30)
@@ -88,9 +91,9 @@ function Record.forCard(contract)
         local key = tostring(contract.id) .. '|' .. days
         local kept = anon[key]
         if not kept then
-            local counts = Record.count(contract.creator_cid, true, contract.id, days)
-            kept = { placed = Record.band(counts.placed), paidOut = Record.band(counts.paidOut),
-                     cancelled = Record.band(counts.cancelled), days = days, banded = true }
+            local counts = Placer.count(contract.creator_cid, true, contract.id, days)
+            kept = { placed = Placer.band(counts.placed), paidOut = Placer.band(counts.paidOut),
+                     cancelled = Placer.band(counts.cancelled), days = days, banded = true }
             anon[key] = kept
         end
         return { placed = kept.placed, paidOut = kept.paidOut, cancelled = kept.cancelled,
@@ -106,7 +109,7 @@ function Record.forCard(contract)
     local key = contract.creator_cid .. '|' .. days
     local hit = named.by[key]
     if not hit then
-        hit = Record.count(contract.creator_cid, false, nil, days, now)
+        hit = Placer.count(contract.creator_cid, false, nil, days, now)
         -- Kept only if nothing was written while it was read.
         if Projection.keptVersion() == gen and named.gen == gen then named.by[key] = hit end
     end
@@ -121,7 +124,7 @@ end
 
 --- Forget the anonymous records of contracts that are no longer live (the
 --- tick, once a minute, only while anything is kept).
-function Record.sweep()
+function Placer.sweep()
     if next(anon) == nil then return end
     local live = {}
     -- The snapshot the other loops share (Projection.liveSnapshot).
@@ -134,21 +137,21 @@ function Record.sweep()
 end
 
 --- Test seam: forget everything kept.
-function Record.reset()
+function Placer.reset()
     named, anon = { gen = nil, at = 0, by = {} }, {}
 end
 
-function Record.init(deps)
+function Placer.init(deps)
     Storage, Projection = deps.storage, deps.projection
-    Record.reset()
+    Placer.reset()
     if Projection and Projection.extenders then
         -- On a card the viewer may take, or holds: never the placer's own
         -- (they know it) or the target's.
-        Projection.extenders.impRecord = function(out, contract, _, role)
+        Projection.extenders.recordPlacer = function(out, contract, _, role)
             if role ~= 'public' and role ~= 'hitman' then return end
-            out.placerRecord = Record.forCard(contract)
+            out.placerRecord = Placer.forCard(contract)
         end
     end
 end
 
-return Record
+return Placer

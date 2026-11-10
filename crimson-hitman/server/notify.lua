@@ -1340,10 +1340,10 @@ function Notify.hitmanReceipt(contract, delivered, result)
     elseif type(result.stake) == 'table' then
         body = body .. stakeSentence(result.stake)
     end
-    -- How the trust it earned was scaled (Config.Roleplay.Reputation), where
+    -- How the trust it earned was scaled (Config.Record.Reputation), where
     -- trust is given at all.
     if type(result.reputation) == 'table' and type(result.reputation.text) == 'string'
-        and Config.Progression.Enabled == true then
+        and Config.Record.Progression.Enabled == true then
         body = body .. ' ' .. result.reputation.text
     end
     return title, body

@@ -184,19 +184,19 @@ end)
 describe('sweep 5 F6: Progression.Resource is read-only, as every export called by name is', function()
     it('the panel refuses to change it and says why', function()
         local s = stack()
-        local value, err, why = s.settings.check('Progression.Resource', 'my-blackmarket')
+        local value, err, why = s.settings.check('Record.Progression.Resource', 'my-blackmarket')
         eq(value, nil)
         eq(err, 'read_only')
         truthy(tostring(why):find('called by name', 1, true), tostring(why))
-        falsy(s.settings.set('Progression.Resource', 'my-blackmarket', 'ADMIN001'))
-        eq(Config.Progression.Resource, 'sc-blackmarket')
+        falsy(s.settings.set('Record.Progression.Resource', 'my-blackmarket', 'ADMIN001'))
+        eq(Config.Record.Progression.Resource, 'sc-blackmarket')
     end)
 
     it('it is listed among the keys edited in config.lua', function()
         local s = stack()
         local found
         for _, row in ipairs(s.settings.view().readonly) do
-            if row.key == 'Progression.Resource' then found = row end
+            if row.key == 'Record.Progression.Resource' then found = row end
         end
         truthy(found, 'not on the read-only list')
         truthy(found.denied, 'as one changed only in config.lua')
@@ -205,11 +205,11 @@ describe('sweep 5 F6: Progression.Resource is read-only, as every export called 
 
     it('a row stored before is not applied at the start', function()
         local s = stack()
-        s.storage.writeSetting('Progression.Resource', 'my-blackmarket', 'ADMIN001', os.time())
+        s.storage.writeSetting('Record.Progression.Resource', 'my-blackmarket', 'ADMIN001', os.time())
         resetConfig()
         s.settings.init({ storage = s.storage, audit = s.audit, check = CHECK })
         eq(s.settings.boot(), 0)
-        eq(Config.Progression.Resource, 'sc-blackmarket')
+        eq(Config.Record.Progression.Resource, 'sc-blackmarket')
         resetConfig()
     end)
 end)

@@ -470,7 +470,7 @@
     app_paused: 'Contracts are paused by staff. Try again once they switch them back on.',
     // Killed on a contract and not yet treated (Config.Roleplay.EmsRelisting).
     target_recovering: 'They are still recovering. Try again once they have been treated.',
-    // The tiered board (Config.Improvements.Tiers). Nothing was taken.
+    // The tiered board (Config.Record.Tiers). Nothing was taken.
     tier_locked: 'This contract is in a tier above your level. Nothing was taken. '
       + 'Complete more contracts to reach it.',
     // The informant tip (server/intel/tip.lua). Nothing was charged for any.
@@ -2346,7 +2346,7 @@
     if (flagged) {
       meta.appendChild(chip(protectedWords(contract.targetProtectedAs).chip, 'warn', 'i-shield'));
     }
-    // The placer's record (Config.Improvements.PlacerRecord): counts, never who.
+    // The placer's record (Config.Record.PlacerRecord): counts, never who.
     if (contract.placerRecord) {
       meta.appendChild(chip(placerRecordText(contract.placerRecord), null, 'i-briefcase'));
     }
@@ -2870,7 +2870,7 @@
     if (contract.barred === 'same_account') {
       return 'This one involves another of your own characters.';
     }
-    // Above this player's level (Config.Improvements.Tiers).
+    // Above this player's level (Config.Record.Tiers).
     if (contract.tierLocked) {
       return tierLockedText(contract.tierLocked);
     }

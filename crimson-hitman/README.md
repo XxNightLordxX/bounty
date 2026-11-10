@@ -477,7 +477,7 @@ started with, and new actions are refused with *turned off by the server*.
 On as shipped unless marked: buyouts (`Config.Bailout.Enabled`), proposals
 (`Config.Amendments.Enabled`), messages and calls (`Config.Relay.Enabled`),
 headshots (`Config.Mugshot.Enabled`), criminal progression
-(`Config.Progression.Enabled`), the whitelisted-job view and its Notify me
+(`Config.Record.Progression.Enabled`, under A hitman's record), the whitelisted-job view and its Notify me
 (`Config.WhitelistedView`), kill photos (`Config.Completion.KillPhotos`, off),
 the nearby target list (`Config.Targeting.AllowNearby`, off).
 
@@ -525,6 +525,25 @@ All off as shipped, each `Config.Intel.<Feature>.Enabled`:
 | **The informant in person** (`InPerson`) | Every informant purchase only beside the informant NPC, which moves between its places |
 | **Rumours and a broker** (`Rumours`) | New contracts show only as rumours (area, reward band) until the broker NPC, or a player on a broker job, briefs the hitman for `BriefValidMinutes` |
 
+### A hitman's record
+
+Where a player stands lives under `Config.Record` and one admin screen
+group, **Record & standing**, read and kept by one module
+(`server/record/`): the counters every character has (contracts placed,
+completed, failed and survived, shown on the app's Ledger, on a card's
+operatives and on the panel's player card), the standing they give
+(*Unproven*, *Known*, *Established*, *Notorious*) and the level the tiered
+board asks for. Criminal progression is on as shipped; the rest is off,
+each `Config.Record.<Part>.Enabled`.
+
+| Part | What it does |
+|---|---|
+| **Criminal progression** (`Progression`) | A completion gives `TrustPerElimination` / `TrustPerKidnapping` trust through the `Resource`'s `AddTrust` export; a resource missing or failing never touches the payout |
+| **Reputation earned in character** (`Reputation`) | Progression trust for a completion is scaled by how it was done (thread, meeting, handover, no witnesses), up to `MaxFactor` |
+| **Tiered board** (`Tiers`) | Bigger rewards locked to a progression level, 1 plus one for each `CompletionsPerLevel` completed (needs `Config.Record.Progression.Enabled`) |
+| **Hitman heat** (`Heat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` (every officer alike, a known hitman who holds a police job too) |
+| **Placer record** (`PlacerRecord`) | A board card shows its placer's placed / paid out / cancelled counts over `LookbackDays`, never who; anonymous placers in bands with `ShowForAnonymous` |
+
 ### Advisory
 
 On as shipped (`Config.Advisory.Enabled`). A contract on an officer or another
@@ -557,7 +576,6 @@ All off as shipped, each `Config.Roleplay.<Feature>.Enabled`.
 | **City news** (`CityNews`) | A completed contract on a whitelisted-job target (or any, with `AllTargets`) posts an anonymous news item on Birdy or as a server event |
 | **Dirty money payouts** (`DirtyPayouts`) | A hitman's cash and bank payout is handed over as a dirty money item (by count or by worth); refunds go back as taken |
 | **Proof of intent** (`ProofOfIntent`) | A payout is held, never refused, until the hitman has worked the contract in character (`MinMessages` to the placer, a live handover or a meeting point), at most `HoldMaxMinutes` |
-| **Reputation earned in character** (`Reputation`) | Progression trust for a completion is scaled by how it was done (thread, meeting, handover, no witnesses), up to `MaxFactor` |
 | **Bodyguards** (`Protection`) | A target hires protection from On me (reward held, pin where they stand); a guard takes it from the board. Ended without a completion: the guard is paid; completed anyway: their share (`PayOnCompletionPercent`), the rest back. Switched off mid-job, a live job carries on: the target can still move its pin or cancel it, and its guard keeps the Protection tab with Set GPS |
 | **Hit on the hitman** (`HitOnHitman`) | A target whose informant named an operative may place a contract on them, under every placing rule |
 | **Burner phone** (`BurnerPhone`) | Placing, accepting and every contract action (turning contract decay off included) need the item; it may be used up on placing or accepting. Sell it through sc-blackmarket |
@@ -570,9 +588,6 @@ All off as shipped, each `Config.Improvements.<Feature>.Enabled`. The informant 
 
 | Feature | What it does |
 |---|---|
-| **Placer record** (`PlacerRecord`) | A board card shows its placer's placed / paid out / cancelled counts over `LookbackDays`, never who; anonymous placers in bands with `ShowForAnonymous` |
-| **Hitman heat** (`HitmanHeat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` (every officer alike, a known hitman who holds a police job too) |
-| **Tiered board** (`Tiers`) | Bigger rewards locked to a progression level (needs `Config.Progression.Enabled`) |
 | **Contract decay** (`ContractDecay`) | An untaken contract's reward rises (charged to its placer, up to `MaxIncreasePercent`) or its deadline comes in, every `Hours` of waiting; time on a staff freeze, the restart hold, the app pause, held by an operative, or with decay itself switched off does not count. `rise` applies only to contracts placed under the placer's own name: a step charged when an anonymous placer logs in would show on the board when they did, so an anonymous contract never rises (its card says so). The placer can stop it on their card |
 | **Proof items** (`ProofItems`) | On a contract a kill completes, the hitman may hand the placer an item taken from the target (an id card as shipped) instead of a photo. The item is checked before where anybody stands, so a hitman without it is only ever told it is missing; refused, taking nothing, under a freeze, the restart hold or the app pause. Paid as a kill would be, but recorded as what it was: the Ledger says *Proof handed over*, and there is no EMS re-listing, witness report or city news, since nobody saw a kill |
 | **Weapon serial scrubbing** (`SerialScrub`) | A weapon an anonymous placer put up reaches the hitman with a new serial (as does one whose contract cannot be read). One weapon always gets the same new serial, after a restart too: it is worked out from the escrow line and a secret the store keeps (`imp_serial_secret_1` to `_5`, 140 random bits made at the first scrub), never from anything a player can see |
@@ -1080,10 +1095,6 @@ The app itself, proposals, notices, messages and calls, progression and the aler
 | `Config.Relay.MaxMessagesPerThread` | `100` | newest messages a thread keeps |
 | `Config.Relay.AllowMaskedCalls` | `true` | calls with the caller's alias shown |
 | `Config.Relay.RequireMaskingForAnonymous` | `true` | no call for an anonymous party the phone cannot mask |
-| `Config.Progression.Enabled` | `true` | feed completions into the criminal progression |
-| `Config.Progression.Resource` | `'sc-blackmarket'` | the resource that keeps it |
-| `Config.Progression.TrustPerElimination` | `10` | trust per kill |
-| `Config.Progression.TrustPerKidnapping` | `20` | trust per live handover |
 | `Config.AntiCollusion.BlockSameAccount` | `true` | one account may not be two parties to a contract |
 | `Config.Alerts.ToDiscord` | `true` | post each alert to the alert webhook (server.cfg) |
 
@@ -1180,6 +1191,41 @@ Everything a player can learn for money, in one place (README, Intel): three pai
 | `Config.TargetClasses.whitelisted.PlacerInformant` | `false` | the placer of such a contract may buy the placer's informant |
 | `Config.TargetClasses.whitelisted.LocationTip` | `false` | a hitman on such a contract may buy an informant tip |
 
+### Features: Record
+
+A character's record (README, A hitman's record): the trust a completion earns and how it is scaled, the tiered board, heat and the placer's record.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.Record.Progression.Enabled` | `true` | feed completions into the criminal progression |
+| `Config.Record.Progression.Resource` | `'sc-blackmarket'` | the resource that keeps it |
+| `Config.Record.Progression.TrustPerElimination` | `10` | trust per kill |
+| `Config.Record.Progression.TrustPerKidnapping` | `20` | trust per live handover |
+| `Config.Record.Reputation.Enabled` | `false` | trust for a completion scaled by how it was done |
+| `Config.Record.Reputation.BaseFactor` | `0.5` | a plain completion |
+| `Config.Record.Reputation.ThreadBonus` | `0.2` | the hitman wrote to the placer in the thread |
+| `Config.Record.Reputation.MeetingBonus` | `0.2` | a meeting point was set |
+| `Config.Record.Reputation.HandoverBonus` | `0.3` | a live handover |
+| `Config.Record.Reputation.WitnessFreeBonus` | `0.2` | nobody else within WitnessRadius |
+| `Config.Record.Reputation.WitnessRadius` | `50.0` | metres around the hitman |
+| `Config.Record.Reputation.MaxFactor` | `1.5` | the most it may reach |
+| `Config.Record.Tiers.Enabled` | `false` | big rewards need a progression level |
+| `Config.Record.Tiers.CompletionsPerLevel` | `5` | completed contracts per level above 1 |
+| `Config.Record.Tiers.Tiers` | `{ 'Professional, 50000, 2', 'Elite, 150000, 4' }` | 'name, least reward, least level' |
+| `Config.Record.Heat.Enabled` | `false` | hitmen gather heat the city can feel |
+| `Config.Record.Heat.ProtectedCompletionHeat` | `3` | heat for a completion on a whitelisted-job target |
+| `Config.Record.Heat.WitnessHeat` | `2` | heat for a witness report on their completion |
+| `Config.Record.Heat.AdvisoryHeat` | `1` | heat for a police bulletin on their acceptance |
+| `Config.Record.Heat.DecayHours` | `24` | hours each heat stays |
+| `Config.Record.Heat.Threshold` | `5` | heat at which a hitman counts as known |
+| `Config.Record.Heat.WarnTargetChancePercent` | `50` | chance their next target is warned, 0-100 |
+| `Config.Record.Heat.BulletinEveryMinutes` | `60` | least minutes between police bulletins; 0 = none |
+| `Config.Record.Heat.BulletinTitle` | `'Intelligence bulletin'` | the bulletin's title |
+| `Config.Record.Heat.BulletinText` | `'A known contract killer is believed active in the city.'` | its words |
+| `Config.Record.PlacerRecord.Enabled` | `false` | hitmen see the placer's record on a board card |
+| `Config.Record.PlacerRecord.LookbackDays` | `30` | days of contracts the record counts |
+| `Config.Record.PlacerRecord.ShowForAnonymous` | `false` | an anonymous placer's record too, in rough bands |
+
 ### Features: Advisory
 
 The law enforcement advisory: officers are told when one of them, or another whitelisted-job member, is targeted.
@@ -1263,14 +1309,6 @@ Optional roleplay features, each its own block and each off as shipped (README, 
 | `Config.Roleplay.ProofOfIntent.Enabled` | `false` | hold a payout until the hitman shows intent |
 | `Config.Roleplay.ProofOfIntent.MinMessages` | `3` | messages to the placer in the thread that count |
 | `Config.Roleplay.ProofOfIntent.HoldMaxMinutes` | `60` | released anyway after this long (min) |
-| `Config.Roleplay.Reputation.Enabled` | `false` | trust for a completion scaled by how it was done |
-| `Config.Roleplay.Reputation.BaseFactor` | `0.5` | a plain completion |
-| `Config.Roleplay.Reputation.ThreadBonus` | `0.2` | the hitman wrote to the placer in the thread |
-| `Config.Roleplay.Reputation.MeetingBonus` | `0.2` | a meeting point was set |
-| `Config.Roleplay.Reputation.HandoverBonus` | `0.3` | a live handover |
-| `Config.Roleplay.Reputation.WitnessFreeBonus` | `0.2` | nobody else within WitnessRadius |
-| `Config.Roleplay.Reputation.WitnessRadius` | `50.0` | metres around the hitman |
-| `Config.Roleplay.Reputation.MaxFactor` | `1.5` | the most it may reach |
 | `Config.Roleplay.Protection.Enabled` | `false` | targets may hire a bodyguard from On me |
 | `Config.Roleplay.Protection.Account` | `'bank'` | the reward is paid from: 'cash' \| 'bank' |
 | `Config.Roleplay.Protection.MinReward` | `1000` | least reward ($) |
@@ -1296,22 +1334,6 @@ Optional changes to existing features, each its own block and each off as shippe
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Improvements.PlacerRecord.Enabled` | `false` | hitmen see the placer's record on a board card |
-| `Config.Improvements.PlacerRecord.LookbackDays` | `30` | days of contracts the record counts |
-| `Config.Improvements.PlacerRecord.ShowForAnonymous` | `false` | an anonymous placer's record too, in rough bands |
-| `Config.Improvements.HitmanHeat.Enabled` | `false` | hitmen gather heat the city can feel |
-| `Config.Improvements.HitmanHeat.ProtectedCompletionHeat` | `3` | heat for a completion on a whitelisted-job target |
-| `Config.Improvements.HitmanHeat.WitnessHeat` | `2` | heat for a witness report on their completion |
-| `Config.Improvements.HitmanHeat.AdvisoryHeat` | `1` | heat for a police bulletin on their acceptance |
-| `Config.Improvements.HitmanHeat.DecayHours` | `24` | hours each heat stays |
-| `Config.Improvements.HitmanHeat.Threshold` | `5` | heat at which a hitman counts as known |
-| `Config.Improvements.HitmanHeat.WarnTargetChancePercent` | `50` | chance their next target is warned, 0-100 |
-| `Config.Improvements.HitmanHeat.BulletinEveryMinutes` | `60` | least minutes between police bulletins; 0 = none |
-| `Config.Improvements.HitmanHeat.BulletinTitle` | `'Intelligence bulletin'` | the bulletin's title |
-| `Config.Improvements.HitmanHeat.BulletinText` | `'A known contract killer is believed active in the city.'` | its words |
-| `Config.Improvements.Tiers.Enabled` | `false` | big rewards need a progression level |
-| `Config.Improvements.Tiers.CompletionsPerLevel` | `5` | completed contracts per level above 1 |
-| `Config.Improvements.Tiers.Tiers` | `{ 'Professional, 50000, 2', 'Elite, 150000, 4' }` | 'name, least reward, least level' |
 | `Config.Improvements.ContractDecay.Enabled` | `false` | an untaken contract changes as it waits |
 | `Config.Improvements.ContractDecay.Mode` | `'rise'` | 'rise': its reward goes up; 'shorten': it ends sooner |
 | `Config.Improvements.ContractDecay.Percent` | `10` | how much each step changes it |
@@ -1520,7 +1542,7 @@ a trade-off is left on purpose, it says which and why.
 | `holds.syncAppPause`, `thresholds.sweep` | 60 s | 0.00 ms | Each is a comparison or two; the pause follows its switch at once anyway |
 | `holds.tick`, `sanctions.tick`, `summary.tick` | 10 s | 0.00 ms | One comparison each; the end they guard happens on the tick it falls due |
 | `contracts.finishEndings`, `ledger.forgetOldPhotos`, `photo.loadAllowedHosts`, `escrow.retryWaiting` | 30 s, 600 s, `PhotoHostRefreshSeconds`, 30 s per player | under 0.15 ms | Gated inside; each runs when what it guards can have changed |
-| `imp_board.tick` (heat and the police bulletin, placer records) | 60 s | 0.01 ms, 0 statements, off **and** on | Off: one switch read. On: heat is kept in memory and pruned only once the oldest heat has cooled; the bulletin waits its own `BulletinEveryMinutes`, and finds a working hitman in the shared snapshot (was two reads per known hitman) |
+| `record.tick` (heat and the police bulletin, placer records) | 60 s | 0.01 ms, 0 statements, off **and** on | Off: one switch read. On: heat is kept in memory and pruned only once the oldest heat has cooled; the bulletin waits its own `BulletinEveryMinutes`, and finds a working hitman in the shared snapshot (was two reads per known hitman) |
 | `imp_decay.tick` (contract decay) | 60 s, on a tick of its own | off 0.01 ms; on, nothing due 0.08 ms and 0 statements; due, 91 / 136 ms and about 300 statements for its cap of **25 steps** | Sleeps until its soonest step is due and reads the snapshot. Trade-off: each `rise` step is a charge that re-reads its contract and goes through the placer's own add-to-reward path, kept because it moves money; 100 contracts due together take four passes (was all in one: 1,951 statements, 0.7 to 1.1 s) |
 | `imp_weekly.tick` (weekly stats) | 10 s, asleep until the post is due | 0.01 ms off and on | Works out the calendar once, then one comparison a tick; the week's totals are read only when it posts |
 | `rp.tick` (EMS before re-listing) | 10 s | 0.01 ms off, 0.01 ms on with nobody recovering | Looks only at targets killed on a contract, in memory; nothing while nobody is |

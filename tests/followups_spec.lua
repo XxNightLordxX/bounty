@@ -14,9 +14,9 @@ local function mysqlStack()
     store.open()
     s.audit.init(store)
     s.escrow.init(store, s.audit)
-    s.progression.init({ storage = store, identity = s.identity, audit = s.audit })
+    s.record.init({ storage = store, identity = s.identity, audit = s.audit })
     s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
-        audit = s.audit, notify = s.notify, progression = s.progression, death = s.death })
+        audit = s.audit, notify = s.notify, record = s.record, death = s.death })
     s.photos.init({ storage = store, audit = s.audit })
     s.ledger.init({ storage = store, photos = s.photos, notify = s.notify })
     s.bailout.init({ storage = store, identity = s.identity,
@@ -27,7 +27,7 @@ local function mysqlStack()
     s.amendments.init({ storage = store, identity = s.identity, contracts = s.contracts,
         escrow = s.escrow, audit = s.audit, notify = s.notify })
     s.projection.init({ storage = store, identity = s.identity, escrow = s.escrow,
-        kidnap = s.kidnap, mugshot = s.mugshot, progression = s.progression,
+        kidnap = s.kidnap, mugshot = s.mugshot, record = s.record,
         notify = s.notify })
     s.storage = store
     return s

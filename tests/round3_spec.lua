@@ -283,9 +283,9 @@ describe('round 3 F1: another routing bucket is somewhere else', function()
         Env.addPlayer({ source = 8, citizenid = 'WITNESS1', license = 'license:w',
             coords = { x = 11.0, y = 10.0, z = 30.0 } })
         Env.players[8]._coords = { x = 11.0, y = 10.0, z = 30.0 }
-        falsy(s.rpReputation.witnessFree(c, 'HITMAN01'), 'a bystander beside them is a witness')
+        falsy(s.record.witnessFree(c, 'HITMAN01'), 'a bystander beside them is a witness')
         Env.players[8]._bucket = 3
-        truthy(s.rpReputation.witnessFree(c, 'HITMAN01'), 'one in an apartment shell is not')
+        truthy(s.record.witnessFree(c, 'HITMAN01'), 'one in an apartment shell is not')
     end)
 end)
 

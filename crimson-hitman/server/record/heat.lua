@@ -1,5 +1,6 @@
---- Hitman heat (Config.Improvements.HitmanHeat, README, Optional
---- features). Off as shipped.
+--- Hitman heat (Config.Record.Heat, README, A hitman's record), the part
+--- of a character's record (server/record/init.lua) the police can feel.
+--- Off as shipped.
 ---
 --- A hitman gathers heat from what the police hear of their work, each
 --- piece kept for DecayHours and then gone:
@@ -27,8 +28,9 @@ local Util = CrimsonBoot.requireShared('util')
 local Police = CrimsonBoot.require('server.police')
 local Feature = CrimsonBoot.require('server.lib.feature')
 
---- This feature's block of config (server/lib/feature.lua reads it).
-local BLOCK = 'Improvements.HitmanHeat'
+--- This part's block of config (server/lib/feature.lua reads it; the
+--- record's start-up check, Record.validate, holds it to Record.RULES.Heat).
+local BLOCK = 'Record.Heat'
 
 local Heat = {}
 
@@ -260,7 +262,7 @@ function Heat.init(deps)
         end
     end
     if deps.contracts and deps.contracts.afterClaim then
-        deps.contracts.afterClaim.impHeat = Heat.onClaimed
+        deps.contracts.afterClaim.recordHeat = Heat.onClaimed
     end
     if deps.rpConsequences then deps.rpConsequences.afterWitness = Heat.onWitness end
 end

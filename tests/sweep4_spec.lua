@@ -152,7 +152,7 @@ describe('sweep 4: the heat bulletin and the serial scrub', function()
         local s = newStack()
         local f = fixture(s)
         Config.Notifications.ParanoidAlert = false
-        Config.Improvements.HitmanHeat.Enabled = true
+        Config.Record.Heat.Enabled = true
         Env.addPlayer({ source = 5, citizenid = 'OFFICER1', firstname = 'Otto', lastname = 'Beat',
             job = { name = 'police', type = 'leo', onduty = true } })
         -- The hitman holds a police job too.
@@ -160,9 +160,9 @@ describe('sweep 4: the heat bulletin and the serial scrub', function()
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 10000 } } })
         truthy(c and s.contracts.accept(f.hitman, c.id, true))
-        s.impBoard.heat.add('HITMAN01', 50, 'test')
+        s.record.heat.add('HITMAN01', 50, 'test')
         Env.clientEvents = {}
-        s.impBoard.tick()
+        s.record.tick()
         local function told(src)
             local n = 0
             for _, event in ipairs(Env.clientEvents) do

@@ -269,13 +269,6 @@ Config.Relay = {
     RequireMaskingForAnonymous = true,  -- no call for an anonymous party the phone cannot mask
 }
 
-Config.Progression = {
-    Enabled             = true,              -- feed completions into the criminal progression
-    Resource            = 'sc-blackmarket',  -- the resource that keeps it
-    TrustPerElimination = 10,                -- trust per kill
-    TrustPerKidnapping  = 20,                -- trust per live handover
-}
-
 Config.AntiCollusion = {
     BlockSameAccount = true,  -- one account may not be two parties to a contract
 }
@@ -438,6 +431,60 @@ Config.Intel.Rumours = {
 }
 
 -- ============================================================================
+--                              FEATURES: RECORD
+-- ============================================================================
+-- A character's record (README, A hitman's record): the trust a completion
+-- earns and how it is scaled, the tiered board, heat and the placer's record.
+
+Config.Record = {}  -- one block each below
+
+Config.Record.Progression = {
+    Enabled             = true,              -- feed completions into the criminal progression
+    Resource            = 'sc-blackmarket',  -- the resource that keeps it
+    TrustPerElimination = 10,                -- trust per kill
+    TrustPerKidnapping  = 20,                -- trust per live handover
+}
+
+Config.Record.Reputation = {
+    Enabled          = false, -- trust for a completion scaled by how it was done
+    BaseFactor       = 0.5,   -- a plain completion
+    ThreadBonus      = 0.2,   -- the hitman wrote to the placer in the thread
+    MeetingBonus     = 0.2,   -- a meeting point was set
+    HandoverBonus    = 0.3,   -- a live handover
+    WitnessFreeBonus = 0.2,   -- nobody else within WitnessRadius
+    WitnessRadius    = 50.0,  -- metres around the hitman
+    MaxFactor        = 1.5,   -- the most it may reach
+}
+
+Config.Record.Tiers = {
+    Enabled             = false,  -- big rewards need a progression level
+    CompletionsPerLevel = 5,      -- completed contracts per level above 1
+    Tiers               = { -- 'name, least reward, least level'
+        'Professional, 50000, 2',
+        'Elite, 150000, 4',
+    },
+}
+
+Config.Record.Heat = {
+    Enabled                 = false,  -- hitmen gather heat the city can feel
+    ProtectedCompletionHeat = 3,      -- heat for a completion on a whitelisted-job target
+    WitnessHeat             = 2,      -- heat for a witness report on their completion
+    AdvisoryHeat            = 1,      -- heat for a police bulletin on their acceptance
+    DecayHours              = 24,     -- hours each heat stays
+    Threshold               = 5,      -- heat at which a hitman counts as known
+    WarnTargetChancePercent = 50,     -- chance their next target is warned, 0-100
+    BulletinEveryMinutes    = 60,     -- least minutes between police bulletins; 0 = none
+    BulletinTitle           = 'Intelligence bulletin',  -- the bulletin's title
+    BulletinText            = 'A known contract killer is believed active in the city.',  -- its words
+}
+
+Config.Record.PlacerRecord = {
+    Enabled          = false,  -- hitmen see the placer's record on a board card
+    LookbackDays     = 30,     -- days of contracts the record counts
+    ShowForAnonymous = false,  -- an anonymous placer's record too, in rough bands
+}
+
+-- ============================================================================
 --                            FEATURES: ADVISORY
 -- ============================================================================
 -- The law enforcement advisory: officers are told when one of them, or
@@ -577,17 +624,6 @@ Config.Roleplay.ProofOfIntent = {
     HoldMaxMinutes = 60,    -- released anyway after this long (min)
 }
 
-Config.Roleplay.Reputation = {
-    Enabled          = false, -- trust for a completion scaled by how it was done
-    BaseFactor       = 0.5,   -- a plain completion
-    ThreadBonus      = 0.2,   -- the hitman wrote to the placer in the thread
-    MeetingBonus     = 0.2,   -- a meeting point was set
-    HandoverBonus    = 0.3,   -- a live handover
-    WitnessFreeBonus = 0.2,   -- nobody else within WitnessRadius
-    WitnessRadius    = 50.0,  -- metres around the hitman
-    MaxFactor        = 1.5,   -- the most it may reach
-}
-
 Config.Roleplay.Protection = {
     Enabled                = false,  -- targets may hire a bodyguard from On me
     Account                = 'bank', -- the reward is paid from: 'cash' | 'bank'
@@ -627,34 +663,6 @@ Config.Roleplay.ReasonQuality = {
 -- shipped (README, Optional features). All are changed from the panel.
 
 Config.Improvements = Config.Improvements or {}  -- the improvements, one block each
-
-Config.Improvements.PlacerRecord = {
-    Enabled          = false,  -- hitmen see the placer's record on a board card
-    LookbackDays     = 30,     -- days of contracts the record counts
-    ShowForAnonymous = false,  -- an anonymous placer's record too, in rough bands
-}
-
-Config.Improvements.HitmanHeat = {
-    Enabled                 = false,  -- hitmen gather heat the city can feel
-    ProtectedCompletionHeat = 3,      -- heat for a completion on a whitelisted-job target
-    WitnessHeat             = 2,      -- heat for a witness report on their completion
-    AdvisoryHeat            = 1,      -- heat for a police bulletin on their acceptance
-    DecayHours              = 24,     -- hours each heat stays
-    Threshold               = 5,      -- heat at which a hitman counts as known
-    WarnTargetChancePercent = 50,     -- chance their next target is warned, 0-100
-    BulletinEveryMinutes    = 60,     -- least minutes between police bulletins; 0 = none
-    BulletinTitle           = 'Intelligence bulletin',  -- the bulletin's title
-    BulletinText            = 'A known contract killer is believed active in the city.',  -- its words
-}
-
-Config.Improvements.Tiers = {
-    Enabled             = false,  -- big rewards need a progression level
-    CompletionsPerLevel = 5,      -- completed contracts per level above 1
-    Tiers               = { -- 'name, least reward, least level'
-        'Professional, 50000, 2',
-        'Elite, 150000, 4',
-    },
-}
 
 Config.Improvements.ContractDecay = {
     Enabled            = false,   -- an untaken contract changes as it waits

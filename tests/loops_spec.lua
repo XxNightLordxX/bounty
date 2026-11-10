@@ -139,7 +139,7 @@ end
 local SCHEDULED = {
     ['bridges.refreshAccess'] = 3, ['rp_places.announce'] = 6,
     ['holds.syncAppPause'] = 6, ['thresholds.sweep'] = 6,
-    ['imp_board.tick'] = 6, ['imp_decay.tick'] = 6,
+    ['record.tick'] = 6, ['imp_decay.tick'] = 6,
 }
 
 --- And jobs that stay on every tick: money, expiry, the holds, the flush.
@@ -560,7 +560,7 @@ local function untaken(s, n)
 end
 
 --- The jobs that exist for an optional feature, each on the tick.
-local OPTIONAL_JOBS = { 'imp_board.tick', 'imp_decay.tick', 'imp_weekly.tick', 'rp.tick',
+local OPTIONAL_JOBS = { 'record.tick', 'imp_decay.tick', 'imp_weekly.tick', 'rp.tick',
     'rp_intent.sweep', 'rp_protection.sweep', 'informant.retryUnsaved', 'rp_places.announce' }
 
 --- What each of `jobs` cost over `count` ticks of `step` seconds:
@@ -631,7 +631,7 @@ describe('the optional features\' jobs', function()
         -- Contract decay and the board's minute read what is running from
         -- the snapshot the other loops share, never on their own.
         eq(by['imp_decay.tick'].reads, 0, 'contract decay read the store itself')
-        eq(by['imp_board.tick'].reads, 0, 'the board\'s minute read the store itself')
+        eq(by['record.tick'].reads, 0, 'the board\'s minute read the store itself')
     end)
 
     it('takes at most its share of decay steps a pass, then sleeps until the next is due', function()
@@ -694,8 +694,8 @@ describe('the optional features\' jobs', function()
     it('keeps heat in memory: the board\'s minute prunes nothing before the oldest heat cools', function()
         local _, s = boot('memory')
         local f = fixture(s)
-        Config.Improvements.HitmanHeat.Enabled = true
-        local Heat = require('server.imp_heat')
+        Config.Record.Heat.Enabled = true
+        local Heat = require('server.record.heat')
         local writes = 0
         local real = s.storage.writeRpRow
         s.storage.writeRpRow = function(...)

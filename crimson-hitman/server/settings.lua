@@ -126,9 +126,9 @@ local DENY = {
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['Relay.CallExport'] = { label = 'Phone call export',
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
-    -- progression.lua calls exports[<this>]:AddTrust(cid, amount): renamed
+    -- Record.onCompleted calls exports[<this>]:AddTrust(cid, amount): renamed
     -- from here, every finished contract called another resource's export.
-    ['Progression.Resource'] = { label = 'Progression resource',
+    ['Record.Progression.Resource'] = { label = 'Progression resource',
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['convar:crimson_hitman_webhook'] = { secret = true, convar = 'crimson_hitman_webhook',
         why = 'The Discord webhook for the log: a secret, set in server.cfg with set (never setr).' },
@@ -614,10 +614,6 @@ local CATALOGUE = {
       kind = 'switch', label = 'Refuse your own account',
       about = 'No contract between characters of one account.',
       inflight = 'Contracts already placed run on; new ones and acceptances are checked.' },
-
-    { key = 'Progression.Enabled', section = 'features', category = 'features', group = 'Progression', kind = 'switch',
-      label = 'Criminal progression', about = 'Completed contracts earn sc-blackmarket trust.',
-      inflight = 'Trust already given stands; completions while it is off earn none.' },
 
     { key = 'Audit.LogAllActions', section = 'features', group = 'Audit and debug', kind = 'switch',
       category = 'features',
@@ -1134,12 +1130,6 @@ local CATALOGUE = {
     { key = 'Ledger.MaxDepthHardCap', section = 'limits', category = 'rules-limits', group = 'Ledger',
       kind = 'number', integer = true, min = 1, max = 100, label = 'Ledger rows hard cap',
       about = 'The ceiling on Ledger rows per player.', inflight = AT_USE },
-    { key = 'Progression.TrustPerElimination', section = 'limits', category = 'rules-limits',
-      group = 'Progression', kind = 'number', integer = true, min = 0, max = 10000,
-      label = 'Trust per kill', about = 'sc-blackmarket trust a completed kill earns.', inflight = AT_USE },
-    { key = 'Progression.TrustPerKidnapping', section = 'limits', category = 'rules-limits',
-      group = 'Progression', kind = 'number', integer = true, min = 0, max = 10000,
-      label = 'Trust per live handover', about = 'sc-blackmarket trust a handover earns.', inflight = AT_USE },
     { key = 'Listing.PageSize', section = 'limits', category = 'rules-limits', group = 'The app',
       kind = 'number', integer = true, min = 5, max = 100, label = 'Contracts per board page',
       about = 'On the app\'s board.', inflight = AT_USE },
@@ -1502,10 +1492,10 @@ for _, key in ipairs({ 'Roleplay.DirtyPayouts.Item', 'Roleplay.DirtyPayouts.Mode
     MONEY[key] = 'Payouts'
 end
 
---- Roleplay (group rpC, README, Optional features): proof of intent, earned
---- reputation, bodyguards and the hit on the hitman. Each switch under
+--- Roleplay (group rpC, README, Optional features): proof of intent,
+--- bodyguards and the hit on the hitman. Each switch under
 --- Features, each figure under Rules; all read at use, with no restart.
-local RP_INTENT, RP_REPUTATION = 'Roleplay: Proof of intent', 'Roleplay: Reputation'
+local RP_INTENT = 'Roleplay: Proof of intent'
 local RP_PROTECTION, RP_HIT = 'Roleplay: Bodyguards', 'Roleplay: Hit on the hitman'
 for _, entry in ipairs({
     { key = 'Roleplay.ProofOfIntent.Enabled', section = 'features', category = 'features', group = RP_INTENT,
@@ -1520,28 +1510,6 @@ for _, entry in ipairs({
       kind = 'number', integer = true, min = 1, max = 10080,
       label = 'Longest a payout is held for proof of intent (min)',
       inflight = 'Read at every give: a hold already on ends at the new length.' },
-
-    { key = 'Roleplay.Reputation.Enabled', section = 'features', category = 'features', group = RP_REPUTATION,
-      kind = 'switch', label = 'Reputation earned in character',
-      about = 'The progression trust a completion earns is scaled: a base factor, plus bonuses for the '
-          .. 'thread used, a meeting point, a live handover and no witnesses, up to a cap. The hitman '
-          .. 'sees the breakdown on their completion notice.',
-      inflight = 'Read at each completion; trust already given stands.' },
-    { key = 'Roleplay.Reputation.BaseFactor', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Trust factor for a plain completion', inflight = AT_USE },
-    { key = 'Roleplay.Reputation.ThreadBonus', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Bonus: the hitman wrote in the thread', inflight = AT_USE },
-    { key = 'Roleplay.Reputation.MeetingBonus', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Bonus: a meeting point was set', inflight = AT_USE },
-    { key = 'Roleplay.Reputation.HandoverBonus', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Bonus: a live handover', inflight = AT_USE },
-    { key = 'Roleplay.Reputation.WitnessFreeBonus', section = 'limits', category = 'rules-limits',
-      group = RP_REPUTATION, kind = 'number', min = 0, max = 10, label = 'Bonus: no witnesses',
-      inflight = AT_USE },
-    { key = 'Roleplay.Reputation.WitnessRadius', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
-      kind = 'number', min = 1, max = 500, label = 'Witness radius around the hitman (m)', inflight = AT_USE },
-    { key = 'Roleplay.Reputation.MaxFactor', section = 'limits', category = 'rules-limits', group = RP_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Most the trust factor may reach', inflight = AT_USE },
 
     { key = 'Roleplay.Protection.Enabled', section = 'features', category = 'features', group = RP_PROTECTION,
       kind = 'switch', label = 'Bodyguard contracts',
@@ -1789,76 +1757,119 @@ for _, entry in ipairs({
 }) do
     CATALOGUE[#CATALOGUE + 1] = entry
 end
---- The board and progression improvements (server/imp_board.lua, README
---- Optional features), each off as shipped. Each switch under Features
---- in its own group, the rest under the Rules view it belongs to; all read
---- at use, with no restart.
-local IMP_RECORD, IMP_HEAT = 'Improvements: Placer record', 'Improvements: Hitman heat'
-local IMP_TIERS, IMP_DECAY = 'Improvements: Tiered board', 'Improvements: Contract decay'
+--- A character's record (server/record/, Config.Record, README A hitman's
+--- record): the trust a completion earns and how it is scaled, the tiered
+--- board, heat and the placer's record. One screen group, Record, each
+--- part its own group in it; every switch under Features, the rest under
+--- the Rules view it belongs to; all read at use, with no restart.
+local REC_TRUST, REC_REPUTATION = 'Record: Progression', 'Record: Reputation'
+local REC_TIERS, REC_HEAT, REC_PLACER = 'Record: Tiered board', 'Record: Hitman heat', 'Record: Placer record'
 for _, entry in ipairs({
-    { key = 'Improvements.PlacerRecord.Enabled', category = 'features', group = IMP_RECORD,
+    { key = 'Record.Progression.Enabled', section = 'features', category = 'features', group = REC_TRUST,
+      kind = 'switch', label = 'Criminal progression', about = 'Completed contracts earn sc-blackmarket trust.',
+      inflight = 'Trust already given stands; completions while it is off earn none.' },
+    { key = 'Record.Progression.TrustPerElimination', section = 'limits', category = 'rules-limits',
+      group = REC_TRUST, kind = 'number', integer = true, min = 0, max = 10000,
+      label = 'Trust per kill', about = 'sc-blackmarket trust a completed kill earns.', inflight = AT_USE },
+    { key = 'Record.Progression.TrustPerKidnapping', section = 'limits', category = 'rules-limits',
+      group = REC_TRUST, kind = 'number', integer = true, min = 0, max = 10000,
+      label = 'Trust per live handover', about = 'sc-blackmarket trust a handover earns.', inflight = AT_USE },
+
+    { key = 'Record.Reputation.Enabled', section = 'features', category = 'features', group = REC_REPUTATION,
+      kind = 'switch', label = 'Reputation earned in character',
+      about = 'The progression trust a completion earns is scaled: a base factor, plus bonuses for the '
+          .. 'thread used, a meeting point, a live handover and no witnesses, up to a cap. The hitman '
+          .. 'sees the breakdown on their completion notice.',
+      inflight = 'Read at each completion; trust already given stands.' },
+    { key = 'Record.Reputation.BaseFactor', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Trust factor for a plain completion', inflight = AT_USE },
+    { key = 'Record.Reputation.ThreadBonus', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Bonus: the hitman wrote in the thread', inflight = AT_USE },
+    { key = 'Record.Reputation.MeetingBonus', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Bonus: a meeting point was set', inflight = AT_USE },
+    { key = 'Record.Reputation.HandoverBonus', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Bonus: a live handover', inflight = AT_USE },
+    { key = 'Record.Reputation.WitnessFreeBonus', section = 'limits', category = 'rules-limits',
+      group = REC_REPUTATION, kind = 'number', min = 0, max = 10, label = 'Bonus: no witnesses',
+      inflight = AT_USE },
+    { key = 'Record.Reputation.WitnessRadius', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
+      kind = 'number', min = 1, max = 500, label = 'Witness radius around the hitman (m)', inflight = AT_USE },
+    { key = 'Record.Reputation.MaxFactor', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
+      kind = 'number', min = 0, max = 10, label = 'Most the trust factor may reach', inflight = AT_USE },
+
+    { key = 'Record.PlacerRecord.Enabled', category = 'features', group = REC_PLACER,
       kind = 'switch', label = 'Placer record on the board',
       about = 'A board card shows how many contracts its placer placed, had paid out and cancelled lately. '
           .. 'Never who they are.',
       inflight = 'At the next board read, with no restart.' },
-    { key = 'Improvements.PlacerRecord.ShowForAnonymous', category = 'features', group = IMP_RECORD,
+    { key = 'Record.PlacerRecord.ShowForAnonymous', category = 'features', group = REC_PLACER,
       kind = 'switch', label = 'Placer record: anonymous placers too',
       about = 'Off: no record on an anonymous contract. On: their anonymous contracts only, in rough '
           .. 'bands (0, 1-4, 5-9, 10+), fixed when the card is first drawn, so two anonymous contracts '
           .. 'cannot be tied together.', inflight = AT_USE },
-    { key = 'Improvements.PlacerRecord.LookbackDays', category = 'rules-limits', group = IMP_RECORD,
+    { key = 'Record.PlacerRecord.LookbackDays', category = 'rules-limits', group = REC_PLACER,
       kind = 'number', integer = true, min = 1, max = 365, label = 'Days the placer record counts',
       inflight = AT_USE },
 
-    { key = 'Improvements.HitmanHeat.Enabled', category = 'features', group = IMP_HEAT,
+    { key = 'Record.Heat.Enabled', category = 'features', group = REC_HEAT,
       kind = 'switch', label = 'Hitman heat',
       about = 'Completions on whitelisted-job targets and police alerts about a hitman\'s work give them '
           .. 'heat for a while. At the threshold their targets are warned more often and police get a '
           .. 'vague bulletin. Never a name.',
       inflight = 'At the next completion, acceptance or tick, with no restart.' },
-    { key = 'Improvements.HitmanHeat.ProtectedCompletionHeat', category = 'rules-limits', group = IMP_HEAT,
+    { key = 'Record.Heat.ProtectedCompletionHeat', category = 'rules-limits', group = REC_HEAT,
       kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a whitelisted-job completion',
       inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.WitnessHeat', category = 'rules-limits', group = IMP_HEAT,
+    { key = 'Record.Heat.WitnessHeat', category = 'rules-limits', group = REC_HEAT,
       kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a witness report',
       about = 'Needs Witness heat (Roleplay) on to send reports.', inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.AdvisoryHeat', category = 'rules-limits', group = IMP_HEAT,
+    { key = 'Record.Heat.AdvisoryHeat', category = 'rules-limits', group = REC_HEAT,
       kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a police bulletin on them',
       about = 'An acceptance or an informant tip on a whitelisted-job target, while those bulletins go.',
       inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.Threshold', category = 'rules-limits', group = IMP_HEAT,
+    { key = 'Record.Heat.Threshold', category = 'rules-limits', group = REC_HEAT,
       kind = 'number', integer = true, min = 1, max = 1000, label = 'Heat at which a hitman is known',
       inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.WarnTargetChancePercent', category = 'rules-limits', group = IMP_HEAT,
+    { key = 'Record.Heat.WarnTargetChancePercent', category = 'rules-limits', group = REC_HEAT,
       kind = 'number', integer = true, min = 0, max = 100, label = 'Chance a known hitman\'s target is warned (%)',
       about = '100: the paranoid alert always goes when a known hitman takes a contract. Needs the '
           .. 'paranoid alert on.', inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.DecayHours', category = 'rules-timers', group = IMP_HEAT,
+    { key = 'Record.Heat.DecayHours', category = 'rules-timers', group = REC_HEAT,
       kind = 'number', integer = true, min = 1, max = 720, label = 'Hours heat stays',
       inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.BulletinEveryMinutes', category = 'rules-timers', group = IMP_HEAT,
+    { key = 'Record.Heat.BulletinEveryMinutes', category = 'rules-timers', group = REC_HEAT,
       kind = 'number', integer = true, min = 0, max = 1440, label = 'Least minutes between police bulletins',
       about = '0: no bulletin.', inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.BulletinTitle', category = 'rules-limits', group = IMP_HEAT,
+    { key = 'Record.Heat.BulletinTitle', category = 'rules-limits', group = REC_HEAT,
       kind = 'text', pattern = '^[^%c<>]+$', maxLength = 60, says = RP_TEXT,
       label = 'Title of the police bulletin', inflight = AT_USE },
-    { key = 'Improvements.HitmanHeat.BulletinText', category = 'rules-limits', group = IMP_HEAT,
+    { key = 'Record.Heat.BulletinText', category = 'rules-limits', group = REC_HEAT,
       kind = 'text', pattern = '^[^%c<>]+$', maxLength = 160, says = RP_TEXT,
       label = 'What the police bulletin says', about = 'Keep it vague: it must name nobody.',
       inflight = AT_USE },
 
-    { key = 'Improvements.Tiers.Enabled', category = 'features', group = IMP_TIERS,
+    { key = 'Record.Tiers.Enabled', category = 'features', group = REC_TIERS,
       kind = 'switch', label = 'Tiered board',
       about = 'Contracts paying more are locked to hitmen below the tier\'s progression level. Needs '
           .. 'Criminal progression on.', inflight = 'At the next board read and acceptance, with no restart.' },
-    { key = 'Improvements.Tiers.CompletionsPerLevel', category = 'rules-limits', group = IMP_TIERS,
+    { key = 'Record.Tiers.CompletionsPerLevel', category = 'rules-limits', group = REC_TIERS,
       kind = 'number', integer = true, min = 1, max = 1000, label = 'Completed contracts per level',
       about = 'A hitman is level 1, plus one for each this many contracts they completed.',
       inflight = AT_USE },
-    { key = 'Improvements.Tiers.Tiers', category = 'rules-limits', group = IMP_TIERS,
+    { key = 'Record.Tiers.Tiers', category = 'rules-limits', group = REC_TIERS,
       kind = 'list', array = true, whole = true, names = 'tier', label = 'Tiers, as name, least reward, level',
       about = 'Such as Elite, 150000, 4. The highest tier a payout reaches decides.', inflight = AT_USE },
 
+}) do
+    entry.section = entry.section or (entry.category == 'features' and 'features' or 'limits')
+    CATALOGUE[#CATALOGUE + 1] = entry
+end
+
+--- Contract decay (server/imp_board.lua, README Optional features), off as
+--- shipped: the switch under Features, the rest under the Rules view it
+--- belongs to; all read at use, with no restart.
+local IMP_DECAY = 'Improvements: Contract decay'
+for _, entry in ipairs({
     { key = 'Improvements.ContractDecay.Enabled', category = 'features', group = IMP_DECAY,
       kind = 'switch', label = 'Contract decay',
       about = 'An untaken contract\'s reward rises each step, charged to its placer, or it ends sooner. '
@@ -2095,7 +2106,7 @@ local NAMES = {
     area = { patterns = { '^[^%c<>@]+@%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*$',
                           '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,[^%c<>@]+$' }, max = 60,
              says = 'areas as Name@x,y or x, y, name (such as Legion Square@195,-934), up to 60 characters' },
-    -- The tiered board (server/imp_tiers.lua): 'name, least reward, level'.
+    -- The tiered board (Record.parseTier, server/record/): 'name, least reward, level'.
     tier = { pattern = '^[^%c<>,]+,%s*%d+%s*,%s*%d+$', max = 60,
              says = 'tiers as name, least reward, level (such as Elite, 150000, 4), up to 60 characters' },
     -- A tip safe zone (server/intel/rules.lua, IntelRules.parseZone): 'x, y, radius, name'.
@@ -2784,10 +2795,10 @@ end
 --- here is 'other'; the Developer section's own groups are 'engine'.
 local AREA_OF_GROUP = {
     ['Access'] = 'access', ['The app'] = 'access', ['Barred jobs'] = 'access',
-    ['Anti-collusion'] = 'access', ['Progression'] = 'access',
+    ['Anti-collusion'] = 'access',
     ['Contract limits'] = 'placing', ['Contract reasons'] = 'placing', ['Roleplay: Reason quality'] = 'placing',
     ['Proposals'] = 'placing', ['Stakes'] = 'placing', ['Targeting'] = 'placing', ['Immunity'] = 'placing',
-    ['Improvements: Contract decay'] = 'placing', ['Improvements: Placer record'] = 'placing',
+    ['Improvements: Contract decay'] = 'placing',
     ['Anonymity'] = 'anonymity', ['Anonymity (whitelisted-job targets)'] = 'anonymity',
     ['Improvements: Serial scrubbing'] = 'anonymity',
     ['Rewards'] = 'rewards', ['Payouts'] = 'rewards', ['Roleplay: Dirty money payouts'] = 'rewards',
@@ -2806,10 +2817,12 @@ local AREA_OF_GROUP = {
     ['Intel: Tip safe zones'] = 'intel', ['Intel: Go dark'] = 'intel',
     ['Law enforcement advisory'] = 'police', ['Advisory job lists'] = 'police',
     ['Roleplay: Witness heat'] = 'police', ['Roleplay: City news'] = 'police',
-    ['Improvements: Hitman heat'] = 'police',
     ['Messages and calls'] = 'messages', ['Notifications'] = 'messages', ['Roleplay: Burner phone'] = 'messages',
-    ['Roleplay: Reputation'] = 'extras', ['Roleplay: Bodyguards'] = 'extras', ['Roleplay: Hit on the hitman'] = 'extras',
-    ['Improvements: Tiered board'] = 'extras',
+    ['Roleplay: Bodyguards'] = 'extras', ['Roleplay: Hit on the hitman'] = 'extras',
+    -- A character's record (server/record/): trust, reputation, the tiered
+    -- board, heat and the placer's record, one screen group.
+    ['Record: Progression'] = 'record', ['Record: Reputation'] = 'record', ['Record: Tiered board'] = 'record',
+    ['Record: Hitman heat'] = 'record', ['Record: Placer record'] = 'record',
     ['Staff tools'] = 'staff', ['Staff alerts'] = 'staff', ['Audit and debug'] = 'staff', ['Staff'] = 'staff',
     ['Improvements: Weekly stats'] = 'staff',
     ['Storage'] = 'engine', ['Rate limits'] = 'engine', ['Diagnostics'] = 'engine', ['Staff commands'] = 'engine',

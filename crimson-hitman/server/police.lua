@@ -2,7 +2,7 @@
 ---
 --- The threat advisories (posted, accepted, tip, cancelled: Notify.advisory,
 --- tipAdvisory, cancelAdvisory), the hitman heat bulletin
---- (server/imp_heat.lua), the witness report (server/rp_consequences.lua)
+--- (server/record/heat.lua), the witness report (server/rp_consequences.lua)
 --- and the city news post (Config.Roleplay.CityNews) each say what they say
 --- here, through one path each:
 ---   Police.tell      the phones of every officer online (who counts as one:

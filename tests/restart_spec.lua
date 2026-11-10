@@ -539,7 +539,7 @@ describe('a crash between paying the last collection and closing', function()
             truthy(s.contracts.accept(f.hitman, c.id))
             local before = money(3)
 
-            s.progression.onCompleted = function() error('process killed') end
+            s.record.onCompleted = function() error('process killed') end
             falsy(pcall(s.contracts.claimSlot, c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}))
             eq(money(3) - before, 10000, 'the collection was paid before the crash')
 
@@ -4843,7 +4843,7 @@ describe('a payment\'s recording write that never went out, then a restart', fun
             local f = fixture(s)
             Config.Anonymity.CreatorFee = 500
             local before = money(1)
-            s.progression.onContractPlaced = function() error('process killed', 0) end
+            s.record.onContractPlaced = function() error('process killed', 0) end
             falsy(pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
                 anonymous = true, reward = { baseline = { bank = 7000 } } }))
             local main2, s2 = restart(mode, s)

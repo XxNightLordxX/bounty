@@ -3503,6 +3503,9 @@
   var FEATURE_AREAS = [
     ['Anonymity', 'Anonymity (whitelisted-job targets)'],
     ['Intel: Informants', 'Intel: Informant tip', 'Intel: Every other target', 'Intel: Whitelisted-job targets'],
+    // A character's record (server/record/), one screen group.
+    ['Record: Progression', 'Record: Reputation', 'Record: Tiered board', 'Record: Hitman heat',
+      'Record: Placer record'],
     ['Law enforcement advisory'],
     ['Staff tools']
   ];
@@ -3546,7 +3549,7 @@
     'Notifications': 'Phone notices players get.',
     'The clock': 'When a contract\'s deadline stops.',
     'Anti-collusion': 'One account as two parties to a contract.',
-    'Progression': 'Criminal trust for completed contracts.',
+    'Record: Progression': 'Criminal trust for completed contracts.',
     'Audit and debug': 'What the log keeps, and alerts to Discord.',
     'Staff tools': 'Pausing the whole app for an event, and the daily summary to the staff Discord.',
     'Staff alerts': 'When one player or one target goes past a threshold, one staff alert, and on Discord too.',
@@ -3592,6 +3595,7 @@
     { id: 'completing', label: 'Completing a contract', icon: 'flag-checkered' },
     { id: 'buyouts', label: 'Buyouts', icon: 'hand-holding-dollar' },
     { id: 'intel', label: 'Intel', icon: 'user-secret' },
+    { id: 'record', label: 'Record & standing', icon: 'star' },
     { id: 'police', label: 'Police & city news', icon: 'shield-halved' },
     { id: 'messages', label: 'Phone messages & notifications', icon: 'comment' },
     { id: 'extras', label: 'Roleplay extras', icon: 'masks-theater' },
@@ -4247,12 +4251,14 @@
   var HELP_AREA = { 'Anonymity': 1, 'The informants': 2, 'Police advisories': 3, 'The staff freeze': 4,
     'Suspensions and protections': 4, 'Moderators': 4 };
   var HELP_BLOCKS = ['Roleplay.WitnessHeat', 'Roleplay.EmsRelisting', 'Roleplay.CityNews', 'Roleplay.DirtyPayouts',
-    'Roleplay.ProofOfIntent', 'Roleplay.Reputation', 'Roleplay.Protection', 'Roleplay.HitOnHitman',
+    'Roleplay.ProofOfIntent', 'Roleplay.Protection', 'Roleplay.HitOnHitman',
     'Roleplay.BurnerPhone', 'Roleplay.NpcPlaces', 'Roleplay.ReasonQuality',
     // Intel (server/intel/), right after The informants.
     'Intel.InPerson', 'Intel.Rumours', 'Intel.WarningDelay', 'Intel.TipLimits', 'Intel.HoldFirst',
     'Intel.SecondTry', 'Intel.SafeZones', 'Intel.GoDark',
-    'Improvements.PlacerRecord', 'Improvements.HitmanHeat', 'Improvements.Tiers', 'Improvements.ContractDecay',
+    // A character's record (server/record/), after Intel.
+    'Record.Reputation', 'Record.Tiers', 'Record.Heat', 'Record.PlacerRecord',
+    'Improvements.ContractDecay',
     'Improvements.ProofItems', 'Improvements.SerialScrub', 'Improvements.WeeklyStats',
     'Limits.TargetCooldownAfterCompletionSeconds'];
   function helpRank(c) {
@@ -4260,6 +4266,7 @@
     for (var i = 0; i < HELP_BLOCKS.length; i++) {
       if (key === HELP_BLOCKS[i] || key.indexOf(HELP_BLOCKS[i] + '.') === 0) {
         if (HELP_BLOCKS[i].indexOf('Intel.') === 0) return 2 + (i + 1) / 100;
+        if (HELP_BLOCKS[i].indexOf('Record.') === 0) return 2.5 + (i + 1) / 100;
         return (HELP_BLOCKS[i].indexOf('Roleplay.') === 0 ? 5 : 6) + i / 100;
       }
     }
@@ -6443,14 +6450,6 @@
       links: [{ key: 'Roleplay.ProofOfIntent.Enabled', view: 'features', label: 'Proof of intent' },
         { key: 'Roleplay.ProofOfIntent.MinMessages', view: 'limits', label: 'Messages that count' },
         { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', view: 'timers', label: 'Longest hold' }] },
-    { title: 'Roleplay: Reputation earned in character', icon: 'star',
-      text: 'Off as shipped. On, the progression trust a completion earns is multiplied: a base factor for a '
-        + 'plain completion, plus a bonus each for the thread used, a meeting point, a live handover and no '
-        + 'witnesses near the hitman, up to a cap. The hitman sees the breakdown on their completion notice. '
-        + 'It needs Criminal progression on to give any trust.',
-      links: [{ key: 'Roleplay.Reputation.Enabled', view: 'features', label: 'Reputation' },
-        { key: 'Roleplay.Reputation.BaseFactor', view: 'limits', label: 'Factors and cap' },
-        { key: 'Roleplay.Reputation.WitnessRadius', view: 'limits', label: 'Witness radius' }] },
     { title: 'Roleplay: Bodyguards', icon: 'shield-halved',
       text: 'Off as shipped. On, a target can hire protection from their On me card: a reward taken from them '
         + 'at once and held, and a meeting pin where they stand. Other players see the job on the board\'s '
@@ -6505,7 +6504,6 @@
   GROUP_INTRO['Roleplay: City news'] = 'An anonymous news post after a completed contract.';
   GROUP_INTRO['Roleplay: Dirty money payouts'] = 'A hitman\'s cash or bank payout handed over as a dirty money item.';
   GROUP_INTRO['Roleplay: Proof of intent'] = 'A payout waits until the hitman has worked the contract in character.';
-  GROUP_INTRO['Roleplay: Reputation'] = 'Trust for a completion scaled by how it was done.';
   GROUP_INTRO['Roleplay: Bodyguards'] = 'A target may hire a bodyguard from On me.';
   GROUP_INTRO['Roleplay: Hit on the hitman'] = 'A target may place a contract on an operative revealed to them.';
   GROUP_INTRO['Intel: Rumours and broker'] = 'New contracts show as rumours until a broker briefs the hitman.';
@@ -6645,42 +6643,56 @@
         { key: 'Intel.GoDark.Cost', view: 'money', label: 'The price' },
         { key: 'Intel.GoDark.Minutes', view: 'timers', label: 'How long' }] });
 
-  /* ---------- board and progression improvements (server/imp_*.lua) ---------- */
+  /* ---------- a character's record (server/record/) ---------- */
 
-  GROUP_INTRO['Improvements: Placer record'] = 'A placer\'s record on the board, never who they are.';
-  GROUP_INTRO['Improvements: Hitman heat'] = 'Police attention a hitman\'s work builds up, naming nobody.';
-  GROUP_INTRO['Improvements: Tiered board'] = 'Bigger rewards locked to higher progression levels.';
-  GROUP_INTRO['Improvements: Contract decay'] = 'An untaken contract\'s reward rises, or it ends sooner.';
+  GROUP_INTRO['Record: Reputation'] = 'Trust for a completion scaled by how it was done.';
+  GROUP_INTRO['Record: Placer record'] = 'A placer\'s record on the board, never who they are.';
+  GROUP_INTRO['Record: Hitman heat'] = 'Police attention a hitman\'s work builds up, naming nobody.';
+  GROUP_INTRO['Record: Tiered board'] = 'Bigger rewards locked to higher progression levels.';
 
   HELP.push(
-    { title: 'Improvements: Placer record', icon: 'briefcase',
+    { title: 'Record: Reputation earned in character', icon: 'star',
+      text: 'Off as shipped. On, the progression trust a completion earns is multiplied: a base factor for a '
+        + 'plain completion, plus a bonus each for the thread used, a meeting point, a live handover and no '
+        + 'witnesses near the hitman, up to a cap. The hitman sees the breakdown on their completion notice. '
+        + 'It needs Criminal progression on to give any trust.',
+      links: [{ key: 'Record.Reputation.Enabled', view: 'features', label: 'Reputation' },
+        { key: 'Record.Reputation.BaseFactor', view: 'limits', label: 'Factors and cap' },
+        { key: 'Record.Reputation.WitnessRadius', view: 'limits', label: 'Witness radius' }] },
+    { title: 'Record: Placer record', icon: 'briefcase',
       text: 'Off as shipped. On, a board card shows how many contracts its placer placed, had paid out and '
         + 'cancelled over the last days set, not counting this one, and never who they are. A named placer\'s '
         + 'counts are exact. An anonymous placer shows nothing unless "anonymous placers too" is on, and then '
         + 'only their anonymous contracts, in bands (0, 1-4, 5-9, 10+), fixed when the card is first drawn, so '
         + 'two anonymous contracts cannot be tied to one person by their numbers.',
-      links: [{ key: 'Improvements.PlacerRecord.Enabled', view: 'features', label: 'Placer record' },
-        { key: 'Improvements.PlacerRecord.ShowForAnonymous', view: 'features', label: 'Anonymous placers' },
-        { key: 'Improvements.PlacerRecord.LookbackDays', view: 'limits', label: 'Days counted' }] },
-    { title: 'Improvements: Hitman heat', icon: 'fire',
+      links: [{ key: 'Record.PlacerRecord.Enabled', view: 'features', label: 'Placer record' },
+        { key: 'Record.PlacerRecord.ShowForAnonymous', view: 'features', label: 'Anonymous placers' },
+        { key: 'Record.PlacerRecord.LookbackDays', view: 'limits', label: 'Days counted' }] },
+    { title: 'Record: Hitman heat', icon: 'fire',
       text: 'Off as shipped. On, a hitman gets heat for a completion on a whitelisted-job target, a witness '
         + 'report on a completion, and a police bulletin about their acceptance or tip on a whitelisted-job '
         + 'target. Heat fades after the hours set. At the threshold they are known: a contract they take warns '
         + 'its target (the paranoid alert) at the chance set, and while they hold one, officers get a vague '
         + 'bulletin at most every so many minutes. Nothing names the hitman, and players never see heat.',
-      links: [{ key: 'Improvements.HitmanHeat.Enabled', view: 'features', label: 'Hitman heat' },
-        { key: 'Improvements.HitmanHeat.Threshold', view: 'limits', label: 'Heat and threshold' },
-        { key: 'Improvements.HitmanHeat.DecayHours', view: 'timers', label: 'How long heat stays' },
-        { key: 'Improvements.HitmanHeat.BulletinText', view: 'limits', label: 'The bulletin' }] },
-    { title: 'Improvements: Tiered board', icon: 'layer-group',
+      links: [{ key: 'Record.Heat.Enabled', view: 'features', label: 'Hitman heat' },
+        { key: 'Record.Heat.Threshold', view: 'limits', label: 'Heat and threshold' },
+        { key: 'Record.Heat.DecayHours', view: 'timers', label: 'How long heat stays' },
+        { key: 'Record.Heat.BulletinText', view: 'limits', label: 'The bulletin' }] },
+    { title: 'Record: Tiered board', icon: 'layer-group',
       text: 'Off as shipped, and only with Criminal progression on. Each tier is a name, the least reward and '
         + 'the least level. A hitman\'s level is 1, plus one for each so many contracts they completed. A card '
         + 'in a tier above their level shows locked, with the level needed, and the server refuses Accept on '
         + 'it before taking anything.',
-      links: [{ key: 'Improvements.Tiers.Enabled', view: 'features', label: 'Tiered board' },
-        { key: 'Improvements.Tiers.Tiers', view: 'limits', label: 'Tiers' },
-        { key: 'Improvements.Tiers.CompletionsPerLevel', view: 'limits', label: 'Completions per level' },
-        { key: 'Progression.Enabled', view: 'features', label: 'Criminal progression' }] },
+      links: [{ key: 'Record.Tiers.Enabled', view: 'features', label: 'Tiered board' },
+        { key: 'Record.Tiers.Tiers', view: 'limits', label: 'Tiers' },
+        { key: 'Record.Tiers.CompletionsPerLevel', view: 'limits', label: 'Completions per level' },
+        { key: 'Record.Progression.Enabled', view: 'features', label: 'Criminal progression' }] });
+
+  /* ---------- contract decay (server/imp_board.lua) ---------- */
+
+  GROUP_INTRO['Improvements: Contract decay'] = 'An untaken contract\'s reward rises, or it ends sooner.';
+
+  HELP.push(
     { title: 'Improvements: Contract decay', icon: 'hourglass-half',
       text: 'Off as shipped. On, a contract nobody has taken changes every so many hours. "rise": its reward '
         + 'goes up by the percent set, charged to its placer through their own add-to-reward path, up to the '

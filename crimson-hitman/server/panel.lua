@@ -1864,7 +1864,7 @@ freezeView = function(cid, canIdentify) return Measures.view('freeze', cid, canI
 --- contracts out. A line owed, a delivery pending and a notice kept are each
 --- left out when they are on a contract the player was an anonymous party
 --- to. The record is counters kept for the life of the character
---- (Progression.record), anonymous contracts in them and nothing to say
+--- (Record.of), anonymous contracts in them and nothing to say
 --- which: one placed more than the list shows was one placed anonymously,
 --- and with one anonymous contract on the board that named its client. It
 --- is shown only with IdentityAce.
@@ -1918,7 +1918,7 @@ H.player = function(src, data)
     if deps.notify and deps.notify.waitingFor then
         notices, titles = deps.notify.waitingFor(cid, hiddenOn)
     end
-    local stats = canIdentify and deps.progression.record(cid) or nil
+    local stats = canIdentify and deps.record.of(cid) or nil
 
     -- Which of the contracts shown are on hold, by the same rule the list
     -- of contracts follows.

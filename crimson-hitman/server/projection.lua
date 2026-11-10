@@ -27,7 +27,7 @@ local Intel = CrimsonBoot.require('server.intel.engine')
 -- Proof items (Config.Improvements.ProofItems), for the page's settings.
 local ImpProof = CrimsonBoot.require('server.imp_proof')
 
-local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify
+local Storage, Identity, Escrow, Kidnap, Mugshot, Record, Comms, Informant, Notify
 --- Informant tips (server/intel/tip.lua): a hitman's own, on their card,
 --- and when the target was told, on theirs.
 local LocationTip
@@ -40,8 +40,8 @@ local StaffContract
 Projection.meetingSteps = nil
 
 function Projection.init(deps)
-    Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify =
-        deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
+    Storage, Identity, Escrow, Kidnap, Mugshot, Record, Comms, Informant, Notify =
+        deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.record,
         deps.comms, deps.informant, deps.notify
     LocationTip = deps.locationTip
     StaffContract = deps.staffContract
@@ -105,7 +105,7 @@ local MOVES_IF = {
 
 --- Writes that remove finished contracts (the retention prune). The board
 --- is never built from those (above), but a cache of every contract kept is
---- (the admin panel's list, a placer's record: server/imp_placer_record.lua),
+--- (the admin panel's list, a placer's record: server/record/placer.lua),
 --- so each counts as a prune for Projection.keptVersion, however it was
 --- called.
 local PRUNES = { prune = true, pruneContracts = true }
@@ -401,19 +401,19 @@ local function actorOf(cid)
     return hit or nil
 end
 
---- An operative's record (Progression.record), once per request.
+--- An operative's record (Record.of, server/record/), once per request.
 local function recordOf(cid)
     local memo = scope()
-    if not memo then return Progression.record(cid) end
+    if not memo then return Record.of(cid) end
     local hit = memo.records[cid]
     if hit == nil then
-        hit = Progression.record(cid)
+        hit = Record.of(cid)
         memo.records[cid] = hit
     end
     return hit
 end
 
---- A viewer's own record (Progression.record), read once per request.
+--- A viewer's own record (Record.of), read once per request.
 ---@param cid string
 ---@return table
 function Projection.recordFor(cid)
@@ -733,7 +733,7 @@ function Projection.contract(contract, viewerCid, opts)
                     -- only the coarse standing crosses: exact counters are a
                     -- stable fingerprint that links the same person across
                     -- contracts, which is the thing anonymity is for.
-                    record = Progression and (h.anon
+                    record = Record and (h.anon
                         and { standing = recordOf(h.hitman_cid).standing }
                         or recordOf(h.hitman_cid)) or nil,
                     -- The newest message from them in their thread, for the
@@ -1616,7 +1616,7 @@ Projection.ALLOWED_KEYS = {
                 meetingSteps = true, locationTip = true,
                 -- A payout of theirs held for proof of intent (server/rp_intent.lua).
                 intentHold = true,
-                -- The placer's record, never who (server/imp_placer_record.lua).
+                -- The placer's record, never who (server/record/placer.lua).
                 placerRecord = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true, bailoutSecondsLeft = true, informantFound = true,
@@ -1626,8 +1626,8 @@ Projection.ALLOWED_KEYS = {
                 -- operatives they may place a contract on (server/rp_protection.lua).
                 protection = true, protectionOffer = true, counterTargets = true },
     public  = { barred = true,
-                -- The placer's record (server/imp_placer_record.lua), and the
-                -- tier this viewer is below (server/imp_tiers.lua).
+                -- The placer's record (server/record/placer.lua), and the
+                -- tier this viewer is below (Record.tierLock).
                 placerRecord = true, tierLocked = true },
 }
 

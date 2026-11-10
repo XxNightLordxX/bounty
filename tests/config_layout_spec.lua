@@ -287,6 +287,30 @@ local function beforeIntel(config)
     return config
 end
 
+--- And as it stood before step 3j (one Record section, server/record/):
+--- trust, reputation, the tiers, heat and the placer's record put back
+--- where each was, with the values they have now. The new names are the
+--- business of record_spec.
+local RECORD_FROM = {
+    { 'Progression', nil, 'Progression' }, { 'Reputation', 'Roleplay', 'Reputation' },
+    { 'Tiers', 'Improvements', 'Tiers' }, { 'Heat', 'Improvements', 'HitmanHeat' },
+    { 'PlacerRecord', 'Improvements', 'PlacerRecord' },
+}
+local function beforeRecord(config)
+    local record = config.Record
+    if type(record) ~= 'table' then return config end
+    for _, move in ipairs(RECORD_FROM) do
+        local home = move[2] and config[move[2]] or config
+        if move[2] and type(home) ~= 'table' then
+            home = {}
+            config[move[2]] = home
+        end
+        home[move[3]] = record[move[1]]
+    end
+    config.Record = nil
+    return config
+end
+
 local function file(path)
     local handle = assert(io.open(path, 'r'))
     local text = handle:read('a')
@@ -345,7 +369,7 @@ describe('the configuration as one short file', function()
     it('keeps every setting with the value it had, but the three meant to change', function()
         if #old == 0 then error('no history to compare with', 0) end
         local was = run(old, 'Config', 'config.lua@' .. BEFORE:sub(1, 7))
-        local now = beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua'))
+        local now = beforeRecord(beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')))
         local seen = {}
         for path, pair in pairs(differences(was, now)) do
             if ADDED[path] ~= nil then
@@ -383,7 +407,7 @@ describe('the configuration as one short file', function()
         if pipe then pipe:close() end
         truthy(#text > 10000, 'git show ' .. REORDERED_FROM .. ' needs the repository history')
         local was = run(text, 'Config', 'config.lua@' .. REORDERED_FROM)
-        local now = beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua'))
+        local now = beforeRecord(beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')))
         local off = {}
         for path, pair in pairs(differences(was, now)) do
             -- And settings added since, each new and shipped as ADDED says.
@@ -506,14 +530,16 @@ describe('the configuration as one short file', function()
         -- And one Intel section (step 3g): its header and the master
         -- switch's own three-line table, every block it took in moved, not
         -- added.
-        truthy(lines < 880, 'config.lua is ' .. lines .. ' lines')
+        -- And one Record section (step 3j): its header and its own
+        -- one-line table, every block it took in moved, not added.
+        truthy(lines < 888, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and
         -- Improvements (ui/admin.js featureRank).
         for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: CORE', 'FEATURES: ANONYMITY',
-            'FEATURES: INTEL', 'FEATURES: ADVISORY', 'STAFF AND PERMISSIONS',
+            'FEATURES: INTEL', 'FEATURES: RECORD', 'FEATURES: ADVISORY', 'STAFF AND PERMISSIONS',
             'ROLEPLAY', 'IMPROVEMENTS', 'ORGANISATION', 'ADVANCED AND DEVELOPER' }) do
             local found = text:find('\n%-%-%s+' .. title:gsub(' ', '%%s') .. '%s*\n', at + 1)
             truthy(found, title .. ' after the section before it')

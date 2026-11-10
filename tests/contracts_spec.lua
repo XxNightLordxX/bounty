@@ -1166,7 +1166,7 @@ describe('a reason past what mysql mode\'s column holds', function()
         s.review.init({ storage = store, escrow = s.escrow, audit = s.audit })
         s.escrow.init(store, s.audit, s.review)
         s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
-                           audit = s.audit, notify = s.notify, progression = s.progression,
+                           audit = s.audit, notify = s.notify, record = s.record,
                            death = s.death, review = s.review })
         s.storage = store
         return s

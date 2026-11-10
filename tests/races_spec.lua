@@ -306,10 +306,10 @@ function _G.mysqlStack()
 
     stack.audit.init(store)
     stack.escrow.init(store, stack.audit)
-    stack.progression.init({ storage = store, identity = stack.identity, audit = stack.audit })
+    stack.record.init({ storage = store, identity = stack.identity, audit = stack.audit })
     stack.contracts.init({ storage = store, escrow = stack.escrow, identity = stack.identity,
                            audit = stack.audit, notify = stack.notify,
-                           progression = stack.progression, death = stack.death })
+                           record = stack.record, death = stack.death })
     stack.photos.init({ storage = store, audit = stack.audit })
     stack.ledger.init({ storage = store, photos = stack.photos, notify = stack.notify })
     stack.bailout.init({ storage = store, identity = stack.identity,
@@ -325,7 +325,7 @@ function _G.mysqlStack()
                            audit = stack.audit, death = stack.death })
     stack.projection.init({ storage = store, identity = stack.identity,
                             escrow = stack.escrow, kidnap = stack.kidnap,
-                            mugshot = stack.mugshot, progression = stack.progression,
+                            mugshot = stack.mugshot, record = stack.record,
                             notify = stack.notify })
     stack.kidnap.init({ storage = store, identity = stack.identity, contracts = stack.contracts,
                         audit = stack.audit, notify = stack.notify, ledger = stack.ledger })
