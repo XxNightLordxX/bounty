@@ -282,7 +282,7 @@
       views: ['tldefaults', 'tljobs', 'tlplayer'], logs: ['logs:targets', 'History'],
       // The live contracts on each target: the one list of contracts, grouped.
       list: ['contracts:bytarget', 'Live contracts by target'] },
-    { id: 'rules', head: 'Setup', label: 'Game rules', icon: 'scale-balanced', views: ['rules', 'changed'],
+    { id: 'rules', head: 'Setup', label: 'Game rules', icon: 'scale-balanced', views: ['rules', 'presets', 'changed'],
       logs: ['logs:settings', 'Change history'] },
     // The hitman organisation (server/org/), off as shipped.
     { id: 'org', head: 'Setup', label: 'Hitman organisation', icon: 'people-group',
@@ -305,7 +305,7 @@
     measures: ['All measures', 'list-check'],
     contracts: ['Contracts', 'file-contract'],
     tldefaults: ['Defaults', 'sliders'], tljobs: ['Per job', 'briefcase'], tlplayer: ['Per player', 'user-clock'],
-    rules: ['Areas', 'layer-group'], changed: ['Changed from the panel', 'pen'],
+    rules: ['Areas', 'layer-group'], presets: ['Presets', 'box-archive'], changed: ['Changed from the panel', 'pen'],
     orgsetup: ['Setup', 'gear'], orgroles: ['Roles & pay', 'id-badge'], orgmembers: ['Members', 'users'],
     orgapps: ['Applications', 'envelope-open-text'], orgfunds: ['Funds & cuts', 'vault'],
     orgaccess: ['Contract access', 'door-open'], orgnotices: ['Notices', 'thumbtack'],
@@ -334,6 +334,7 @@
     tlplayer: 'One target\'s cooldown and counts, exactly, with Reset, Extend and Exempt.',
     rules: 'Every game rule by the area it is about; pick an area or a type of setting.',
     changed: 'The settings changed from this panel, each with Reset to config.lua.',
+    presets: 'Named bundles of settings: see every change one makes, then apply it with two clicks.',
     orgsetup: 'The hitman organisation\'s switch, its job and how it runs.',
     orgroles: 'The organisation\'s roles, their rank and their pay.',
     orgmembers: 'Who is in the organisation, their role and duty.',
@@ -385,7 +386,7 @@
                    logs: true, player: true, settings: true, diag: true, whois: true, stuck: true,
                    alerts: true, console: true, measures: true, exportContract: true, playerView: true,
                    history: true,
-                   targetLimits: true, targetStatus: true, targetJobCount: true,
+                   targetLimits: true, targetStatus: true, targetJobCount: true, presets: true,
                    orgGet: true, bossPermsGet: true, orgFunds: true, placeMyPosition: true,
                    rewardPreview: true, reassignPreview: true, disposalList: true, placeList: true };
 
@@ -414,6 +415,7 @@
     drawer: { id: null, data: null, answer: null, whois: null },
     stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
+    presets: { data: null, error: null, answer: null },
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { area: 'audit', kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
@@ -4408,6 +4410,62 @@
   LOAD.help = function () {};
 
 
+  /* ---------- Game rules > Presets (server/presets.lua) -----------------
+
+     Named bundles of settings: Strict, Relaxed, Roleplay-heavy, and
+     Current (the server's own values, saved by hand or before any other
+     preset is applied). Each card lists every change it would make, from
+     what to what, and what the server would refuse, read now: nothing
+     changes until Apply, which takes two clicks naming how many changes.
+     Each change is then a setting change of its own, in Change history
+     with its Undo. */
+  function loadPresets() {
+    return ask('presets', {}, 'presets').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) { S.presets.error = words(reply); S.presets.data = null; }
+      else { S.presets.error = null; S.presets.data = reply.data || {}; }
+      drawPresets();
+    });
+  }
+
+  function drawPresets() {
+    if (S.section === 'presets') setHtml(byId('ps-list'), presetsBody());
+  }
+
+  function presetsBody() {
+    if (S.presets.error) return empty(S.presets.error);
+    if (!S.presets.data) return loading('Reading the presets…');
+    var list = asList(S.presets.data.presets);
+    return frag(answerBox(S.presets.answer),
+      h('div.btn-row', writeBtn('.ghost.is-small', 'ps-save', {}, 'Save the settings now as Current',
+        'Click again: save as Current', 'floppy-disk')),
+      h('div.cards-grid', list.map(function (p) {
+        var changes = asList(p.changes), refused = asList(p.refused);
+        var n = changes.length;
+        return card(String(p.name), frag(
+          p.about ? h('p.about', String(p.about)) : null,
+          n ? h('ul.plain.ps-changes', changes.map(function (c) {
+            return h('li', h('span.name', String(c.label)), ': ', h('span.mono', String(c.from)), ' \u2192 ',
+              h('span.mono', String(c.to)));
+          })) : h('p.note', 'Nothing to change: the settings are this already.'),
+          refused.length ? h('ul.warnings', refused.map(function (r) {
+            return h('li', String(r.label) + ': left as it is. ' + String(r.why));
+          })) : null,
+          Number(p.same) > 0 ? h('p.sub', num(p.same) + ' more already as this preset says.') : null,
+          h('div.btn-row', writeBtn('.primary.is-small', 'ps-apply', { 'data-value': String(p.name), disabled: !n || null },
+            'Apply ' + String(p.name), 'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's'), 'check'))),
+          '.ps-card', h('span.chip' + (p.builtIn ? '' : '.is-panel'), p.builtIn ? 'shipped' : 'saved'));
+      })));
+  }
+
+  SHELL.presets = function () {
+    return h('section.view',
+      h('p.hint', 'A preset changes nothing until you apply it. Applying one saves the settings it names as Current '
+        + 'first, so going back is applying Current; every change is also in Change history with its own Undo.'),
+      h('div.stack', { id: 'ps-list' }, presetsBody()));
+  };
+  LOAD.presets = function () { loadPresets(); };
+
   /* ---------- a screen's own settings, in place (the gear) -------------
 
      Every screen that has settings of its own carries a gear beside its
@@ -4481,6 +4539,27 @@
     drawGear();
     if (S.gearOpen && !S.settings.data) loadSettings();
   };
+  ACTIONS['ps-apply'] = function (node) {
+    if (!confirmed(node)) return;
+    var name = node.getAttribute('data-value');
+    write('presetApply', { name: name }, 'preset', node).then(function (reply) {
+      if (!reply) return;
+      S.presets.answer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) loadSettings();
+      loadPresets();
+    });
+  };
+  ACTIONS['ps-save'] = function (node) {
+    if (!confirmed(node)) return;
+    write('presetSave', {}, 'preset', node).then(function (reply) {
+      if (!reply) return;
+      S.presets.answer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      loadPresets();
+    });
+  };
+
   ACTIONS.section = function (node) { show(node.getAttribute('data-section')); };
   /** Look up / Freeze in the contract view: Players, on that party. */
   ACTIONS['party-lookup'] = function (node) {

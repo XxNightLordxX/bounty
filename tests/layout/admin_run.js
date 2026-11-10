@@ -410,6 +410,12 @@ function serverStub() {
     rows: rows.slice(0, 20).map(function (r, i) {
       return Object.assign({}, r, { role: ['target', 'client', 'hitman'][i % 3], roleAnonymous: i % 3 === 1 });
     }) } };
+  answers.presets = { ok: true, data: { presets: ['Strict', 'Relaxed', 'Roleplay-heavy', 'Current'].map(function (n, i) {
+    return { name: n, builtIn: i < 3, about: REASON, same: i, refused: i === 0 ? [{ key: 'K', label: LONG, why: REASON }] : [],
+      changes: i === 3 ? [] : [0, 1, 2, 3, 4, 5].map(function (j) {
+        return { key: 'Limits.Key' + j, label: 'A setting with a long label number ' + j + ' ' + LONG,
+          from: String(1000000 + j), to: String(2000000 + j) }; }) };
+  }) } };
   answers.contracts = function (data) {
     if (data.byTarget) return byTarget;
     if (data.ref || data.person) return theirs;
@@ -718,7 +724,7 @@ async function main() {
   // a selected player's tabs once one is looked up.
   const sections = ['inbox', 'overview', 'announce', 'players', 'pmeasures', 'pmoney', 'pplaytime',
     'phistory', 'pdiag', 'their-contracts', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
-    'contracts:bytarget', 'gear:contracts', 'gear:tljobs', 'rules', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
+    'contracts:bytarget', 'gear:contracts', 'gear:tljobs', 'rules', 'presets', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
     'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'logs:org',
     'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'logs:audit', 'alerts', 'health', 'devsettings',
     'console', 'tools', 'help', 'howto', 'permissions'];

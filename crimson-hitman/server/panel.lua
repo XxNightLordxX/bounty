@@ -80,6 +80,8 @@ local OPS = {
     -- the page) and an undo of one change through the normal set path (the
     -- settings history is the logs op's 'settings' area).
     announce = WRITE, undoSetting = WRITE,
+    -- Presets: named bundles of settings, previewed, then applied (server/presets.lua).
+    presets = READ, presetApply = WRITE, presetSave = WRITE,
     -- Target limits (server/targetlimits.lua): the lists and one player's
     -- standing are reads; a job's own limits are settings, the staff ACE's;
     -- a player's cooldown, counts and override, and a job's players at
@@ -159,7 +161,7 @@ local WAITS_FOR_RECOVERY = {
     resetSettings = true, refresh = true, freeze = true, unfreeze = true, adjustDeadline = true,
     removeHitman = true, editText = true,
     suspend = true, unsuspend = true, protect = true, unprotect = true, manualPay = true,
-    undoSetting = true,
+    undoSetting = true, presetApply = true, presetSave = true,
     targetJobSet = true, targetJobRemove = true, targetReset = true, targetExtend = true,
     targetCounts = true, targetOverride = true, targetOverrideClear = true, targetJobAction = true,
 }
@@ -2378,6 +2380,39 @@ H.resetSetting = function(src, data)
     end
     return true, nil, ('%s is back to what config.lua says (%s).')
         :format(key, deps.settings.describe(detail.value)), detail
+end
+
+--- Every preset, each with the changes it would make now and what the
+--- server would refuse: nothing changes by reading them.
+H.presets = function()
+    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    return true, nil, nil, { presets = deps.presets.list() }
+end
+
+--- Apply one preset by name (two clicks on the page, naming how many
+--- changes). Each change is a setting change of its own: audited, in
+--- Change history with its Undo; Current is saved first.
+H.presetApply = function(src, data)
+    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    local name = shortText(data.name, 32)
+    if not name then return false, CH.ERR.INVALID_INPUT, 'Name a preset.' end
+    local cid, who = staffOf(src)
+    local ok, err, detail = deps.presets.apply(name, who, cid)
+    if not ok then return false, err, detail end
+    local refused = #detail.refused
+    return true, nil, ('%s applied: %d setting%s changed%s. Each is in Change history with Undo; '
+        .. 'Current holds what they were.'):format(name, #detail.applied, #detail.applied == 1 and '' or 's',
+        refused > 0 and (', %d left as they were (the preview says why)'):format(refused) or ''), detail
+end
+
+--- Keep the settings presets name, as they are now, as Current.
+H.presetSave = function(src)
+    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    local cid, who = staffOf(src)
+    local ok, err = deps.presets.saveCurrent(who)
+    if not ok then return false, err, 'The store did not take it; nothing was saved. Try again.' end
+    deps.audit.staff('admin_preset_saved', cid, nil, { preset = 'Current', by = who })
+    return true, nil, 'Saved: Current holds the settings the presets name, as they are now.'
 end
 
 H.resetSettings = function(src)

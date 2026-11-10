@@ -1151,7 +1151,8 @@ describe('the admin panel requests', function()
                   'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois', 'adjustDeadline',
                   'addNote', 'removeHitman', 'editText', 'exportContract', 'playerView',
                   'measures', 'freeze', 'unfreeze', 'history', 'suspend', 'unsuspend', 'protect',
-                  'unprotect', 'manualPay', 'announce', 'undoSetting' }
+                  'unprotect', 'manualPay', 'announce', 'undoSetting', 'presets', 'presetApply',
+                  'presetSave' }
 
     local function ask(src, op, data)
         Env.clientEvents = {}

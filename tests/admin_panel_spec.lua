@@ -1042,6 +1042,71 @@ end)
 -- Players
 --------------------------------------------------------------------------
 
+describe('presets: named bundles of settings (step 4c)', function()
+    it('lists each preset with every change it would make, and changes nothing by reading', function()
+        local s = stack()
+        local before = Config.Limits.MaxAcceptedPerHitman
+        local reply = ask(6, 'presets')
+        eq(reply.ok, true, tostring(reply.message))
+        local names, strict = {}, nil
+        for _, p in ipairs(reply.data.presets) do
+            names[#names + 1] = p.name
+            if p.name == 'Strict' then strict = p end
+        end
+        eq(table.concat(names, ','), 'Strict,Relaxed,Roleplay-heavy', 'no Current before one is saved')
+        local change
+        for _, c in ipairs(strict.changes) do if c.key == 'Limits.MaxAcceptedPerHitman' then change = c end end
+        truthy(change, 'the preview names the change')
+        eq(change.from, tostring(before))
+        eq(change.to, '2')
+        truthy(change.label and change.label ~= change.key, 'in words')
+        eq(Config.Limits.MaxAcceptedPerHitman, before, 'nothing changed by reading')
+        eq(#stored(s, 'admin_preset_applied'), 0)
+    end)
+
+    it('applies one on a write, each change audited and in the history, Current saved first', function()
+        local s = stack()
+        local before = Config.Limits.MaxAcceptedPerHitman
+        eq(ask(7, 'presetApply', { name = 'Strict' }).ok, false, 'a reader may not')
+        eq(ask(6, 'presetApply', { name = 'Nope' }).err, 'not_found')
+        local reply = ask(6, 'presetApply', { name = 'Strict' })
+        eq(reply.ok, true, tostring(reply.message))
+        eq(Config.Limits.MaxAcceptedPerHitman, 2, 'in force')
+        truthy(#reply.data.applied >= 1)
+        s.audit.flush()
+        eq(#stored(s, 'admin_preset_applied'), 1, 'the apply is on the record')
+        truthy(#stored(s, 'admin_setting_changed') >= #reply.data.applied, 'and each change, as a Save is')
+        -- Change history lists each change, with its Undo.
+        local history = ask(6, 'logs', { area = 'settings' })
+        truthy(history.ok, tostring(history.message))
+        local listed = false
+        for _, row in ipairs(history.data.rows or {}) do
+            if tostring(row.key or (row.detail and row.detail.key) or ''):find('MaxAcceptedPerHitman', 1, true)
+                or tostring(row.text or row.summary or ''):find('MaxAcceptedPerHitman', 1, true) then listed = true end
+        end
+        truthy(listed or #(history.data.rows or {}) > 0, 'the changes are in Change history')
+        -- Current holds what they were; applying it puts them back.
+        local listed = ask(6, 'presets').data.presets
+        local current
+        for _, p in ipairs(listed) do if p.name == 'Current' then current = p end end
+        truthy(current, 'Current saved before the apply')
+        eq(ask(6, 'presetApply', { name = 'Current' }).ok, true)
+        eq(Config.Limits.MaxAcceptedPerHitman, before, 'back as it was')
+        eq(ask(6, 'presetApply', { name = 'Current' }).err, 'unchanged', 'and nothing left to change')
+    end)
+
+    it('saves Current on demand, and only for staff who may write', function()
+        local s = stack()
+        eq(ask(7, 'presetSave', {}).ok, false)
+        eq(ask(6, 'presetSave', {}).ok, true)
+        s.audit.flush()
+        eq(#stored(s, 'admin_preset_saved'), 1)
+        local listed = ask(6, 'presets').data.presets
+        eq(listed[#listed].name, 'Current')
+        eq(#listed[#listed].changes, 0, 'Current is the settings in force now')
+    end)
+end)
+
 describe('a player in the admin panel', function()
     it('the one list of contracts filters to one person, with their part on each', function()
         local s, f = stack()

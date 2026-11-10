@@ -2575,7 +2575,7 @@ async function main() {
     const views = { inbox: 'Inbox', overview: 'Dashboard', announce: 'Announce', players: 'Find & summary',
       measures: 'All measures', contracts: 'Contracts',
       tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player',
-      rules: 'Areas', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
+      rules: 'Areas', presets: 'Presets', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
       orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
       orgaccess: 'Contract access', orgnotices: 'Notices', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
       bplimits: 'Limits', bpoffice: 'Delegation & office', 'logs:grants': 'Grant history', locations: 'Map points',
@@ -5702,6 +5702,57 @@ async function main() {
     await settled();
     it('a screen that is settings already has no gear', function () { eq(app.$('[data-act="gear"]'), null); });
     clean(app, 'the settings gear');
+  })();
+
+  /* Step 4c: presets, each change previewed before a two-click apply. */
+  await (async function presetsView() {
+    const PRESETS = { ok: true, data: { presets: [
+      { name: 'Strict', builtIn: true, about: 'Fewer contracts at once.', same: 1,
+        changes: [{ key: 'Limits.MaxAcceptedPerHitman', label: 'Contracts a hitman may hold', from: '3', to: '2' },
+          { key: 'Limits.MinContractReward', label: 'Least reward ' + XSS, from: '1000', to: '5000' }],
+        refused: [{ key: 'Roleplay.ReasonQuality.Enabled', label: 'Reason quality', why: 'Needs its word list first.' }] },
+      { name: 'Relaxed', builtIn: true, about: 'A busy board.', changes: [], refused: [], same: 6 },
+      { name: 'Current', builtIn: false, about: 'As they were.', changes: [], refused: [], same: 7 }] } };
+    const app = boot(standardServer({ presets: PRESETS,
+      presetApply: { ok: true, message: 'Strict applied: 2 settings changed.', data: { applied: ['a', 'b'], refused: [] } },
+      presetSave: { ok: true, message: 'Saved: Current holds the settings the presets name, as they are now.' } }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('presets');
+    await settled();
+    it('Game rules > Presets lists each preset with every change it would make, escaped', function () {
+      eq(app.byId('nav-presets').getAttribute('aria-current'), 'page');
+      const text = app.main();
+      has(text, 'Strict');
+      has(text, 'Contracts a hitman may hold: 3 \u2192 2');
+      has(text, 'Reason quality: left as it is. Needs its word list first.');
+      has(text, 'Nothing to change: the settings are this already.');
+      eq(app.body.querySelectorAll('img').length, 0, 'escaped');
+      eq(app.requests('presetApply').length, 0, 'nothing applied by reading');
+    });
+    it('a preset with nothing to change cannot be applied', function () {
+      truthy(app.button('Apply Relaxed').disabled);
+    });
+    const apply = app.button('Apply Strict');
+    app.click(apply);
+    await settled();
+    it('Apply takes two clicks, the first naming how many changes', function () {
+      eq(app.requests('presetApply').length, 0, 'sent on one click');
+      has(app.text(apply), 'Click again: apply 2 changes');
+    });
+    app.click(apply);
+    await settled();
+    it('the second applies it by name and reads the settings again', function () {
+      eq(app.last('presetApply').data, { name: 'Strict' });
+      has(app.main(), 'Strict applied: 2 settings changed.');
+      truthy(app.requests('settings').length >= 1, 'the settings read again');
+    });
+    const save = app.button('Save the settings now as Current');
+    app.click(save);
+    app.click(save);
+    await settled();
+    it('Save as Current takes two clicks too', function () { eq(app.requests('presetSave').length, 1); });
+    clean(app, 'presets');
   })();
 
   await (async function targetLimitsSection() {

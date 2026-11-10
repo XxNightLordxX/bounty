@@ -2962,6 +2962,16 @@ function Settings.entry(key)
     return byKey[key]
 end
 
+--- The value in force for a key, as the panel shows it (presets compare
+--- against it); nil for a key the catalogue does not list.
+---@param key string
+---@return any
+function Settings.valueOf(key)
+    local entry = type(key) == 'string' and byKey[key] or nil
+    if not entry then return nil end
+    return current(entry)
+end
+
 --------------------------------------------------------------------------
 -- History (Developer > Settings history)
 --------------------------------------------------------------------------

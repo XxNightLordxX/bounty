@@ -748,6 +748,10 @@ ul, ol { list-style: none; }
 .gear-btn { font-size: var(--t-sm); }
 .gear { margin-bottom: 1rem; }
 .gear-card { border-color: var(--line-strong); }
+/* Game rules > Presets: each preset's every change, before Apply. */
+.ps-card .card-head h3 { font-family: var(--f-display); font-size: var(--t-lg); text-transform: none; letter-spacing: 0; color: var(--ink); }
+.ps-changes { margin: 0.6rem 0; }
+.ps-changes li { overflow-wrap: anywhere; }
 .crumb.is-here { color: var(--ink-dim); font-weight: 600; }
 .crumb-sep { color: var(--ink-faint); }
 .sub-btn.is-person { border-style: dashed; border-color: var(--line); }
