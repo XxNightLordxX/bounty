@@ -31,14 +31,14 @@
 local Util = CrimsonBoot.requireShared('util')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Geo = CrimsonBoot.requireShared('geo')
-local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
 --- The named-area parser both roleplay area lists share.
 local Places = CrimsonBoot.require('server.rp_places')
+local Police = CrimsonBoot.require('server.police')
 
 local RpConsequences = {}
 
-local Storage, Identity, Notify, Audit, Ledger
+local Storage, Identity, Audit, Ledger
 
 --- The target's last kill on a contract, seen in this process: [cid] = os.time().
 local killedAt = {}
@@ -59,8 +59,6 @@ local EMS_KIND = 'ems'
 --- When this process started, os.time(): a kill from before it has lost what
 --- was seen of the target since (a medic's revive), so the timer decides.
 local startedAt = 0
---- When a failed lb-phone post was last said, so it is said once a minute.
-local saidPostFailAt = -math.huge
 
 --------------------------------------------------------------------------
 -- Settings
@@ -254,13 +252,7 @@ local function witnessAlert(contract, hitmanCid, slot)
     local title = clean(cfg.Title or 'Witness report', 60)
 
     local parties = partiesOf(contract)
-    local told = 0
-    for _, actor in ipairs(Identity.online()) do
-        if not parties[actor.cid] and Identity.isAdvisoryRecipient(actor.job) then
-            Notify.toCitizen(actor.cid, title, said, { bypassBudget = true })
-            told = told + 1
-        end
-    end
+    local told = Police.tell(title, said, function(actor) return parties[actor.cid] end)
 
     local dispatched = false
     if Bridge.started('sc-dispatch') then
@@ -272,11 +264,10 @@ local function witnessAlert(contract, hitmanCid, slot)
             local y = math.floor((at.y + math.sin(angle) * dist) * 10 + 0.5) / 10
             coords = vector3 and vector3(x, y, at.z) or { x = x, y = y, z = at.z }
         end
-        dispatched = Bridge.call('sc-dispatch', 'AddNotification', {
+        dispatched = Police.dispatch({
             title = title, message = said, coords = coords, street = clean(area, 100),
             caller = 'Witness', priority = math.floor(tonumber(cfg.DispatchPriority) or 2),
-            job_table = Notify.policeJobs(),
-            unique_id = ('ch-wit-%s-%s'):format(tostring(contract.id), tostring(slot or 1)):sub(1, 60),
+            unique_id = ('ch-wit-%s-%s'):format(tostring(contract.id), tostring(slot or 1)),
         })
     end
     Audit.action('rp_witness_alert', nil, contract.id, { witnesses = seen, told = told,
@@ -443,30 +434,13 @@ function RpConsequences.newsText(contract, hitmanCid)
     return clean(text, 280)
 end
 
---- Post it: lb-phone's PostBirdy (docs.lbscripts.com, server exports:
---- PostBirdy(username, content, attachments, replyTo, hashtags, source),
---- answering success and the post's id), or a local server event another
---- resource posts it from, for a News app with no server export.
+--- Post it, through Police & press (Police.press, server/police.lua).
 local function postNews(contract, hitmanCid)
     local cfg = Feature.active('Roleplay.CityNews')
     if not cfg then return false end
     local text = RpConsequences.newsText(contract, hitmanCid)
     if not text then return false end
-    local posted, why = false, nil
-    if cfg.App == 'event' then
-        posted = pcall(TriggerEvent, cfg.Event, { account = cfg.Account, text = text })
-    elseif GetResourceState('lb-phone') == 'started' then
-        local ran, ok = Bridge.call('lb-phone', 'PostBirdy', cfg.Account, text, nil, nil, nil, nil)
-        posted = ran and ok ~= false
-        if not ran then why = tostring(ok) end
-    else
-        why = 'lb-phone is not started'
-    end
-    if not posted and os.time() - saidPostFailAt >= 60 then
-        saidPostFailAt = os.time()
-        Log.always(('city news: the post was not made (%s). Check Config.Roleplay.CityNews: the '
-            .. 'Birdy account must exist in lb-phone.'):format(why or 'refused'))
-    end
+    local posted = Police.press(cfg, text)
     Audit.action('rp_city_news', nil, contract.id, { app = cfg.App, posted = posted })
     return posted
 end
@@ -523,7 +497,7 @@ end
 
 ---@param deps table { storage, identity, notify, audit, ledger, contracts, escrow }
 function RpConsequences.init(deps)
-    Storage, Identity, Notify = deps.storage, deps.identity, deps.notify
+    Storage, Identity = deps.storage, deps.identity
     Audit, Ledger = deps.audit, deps.ledger
     killedAt, upSince, medicAt, carried, tracked = {}, {}, {}, {}, {}
     startedAt = os.time()

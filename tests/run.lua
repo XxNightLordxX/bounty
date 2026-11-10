@@ -449,6 +449,8 @@ function _G.newStack()
     package.loaded['server.missionsteps'] = nil
     package.loaded['server.disposal'] = nil
     package.loaded['server.places'] = nil
+    package.loaded['server.police'] = nil
+    package.loaded['server.discord'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -565,7 +567,7 @@ function _G.newStack()
     payments.init({ storage = storage, audit = audit, notify = notify, bailout = bailout,
                     sanctions = sanctions })
     settings.watch('Holds.AppPaused', holds.syncAppPause)
-    summary.init({ storage = storage, review = review, holds = holds, audit = audit, alerts = alerts,
+    summary.init({ storage = storage, review = review, holds = holds, audit = audit,
                    sanctions = sanctions })
     thresholds.init({ audit = audit })
     announce.init({ storage = storage, notify = notify, audit = audit, identity = identity })
@@ -601,7 +603,7 @@ function _G.newStack()
                     notify = notify, ledger = ledger })
     impScrub.init({ storage = storage, audit = audit })
     escrow.scrubSerial = impScrub.scrub
-    impWeekly.init({ storage = storage, audit = audit, alerts = alerts })
+    impWeekly.init({ storage = storage, audit = audit })
     org.init({ storage = storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
                contracts = contracts, settings = settings, review = review })
     -- The step markers and body disposal, as main.lua wires them.
@@ -693,6 +695,8 @@ function _G.newStack()
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
         org = org,
         missionSteps = missionSteps, disposal = disposal,
+        -- Police & press, and the one Discord sender.
+        police = require('server.police'), discord = require('server.discord'),
     }
 end
 
@@ -751,7 +755,7 @@ local suites = {
     'org_phone_review_spec',
     'capability_inventory_spec',
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
-    'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'lib_players_spec',
+    'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'lib_players_spec',
     'lib_feature_spec',
     'docs_spec',
 }

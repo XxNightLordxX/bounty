@@ -11,6 +11,7 @@ local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
+local Police = CrimsonBoot.require('server.police')
 
 local Identity
 local Storage
@@ -108,6 +109,8 @@ function Notify.init(deps)
     revealAt = {}
     pendingAlert = {}
     viewOptIn, viewTold, viewWaiting = {}, {}, {}
+    -- Police & press (server/police.lua) tells officers through this.
+    Police.init({ identity = Identity, notify = Notify })
 end
 
 ---@param book table|nil budgets (contract notices) or relayBudgets
@@ -651,15 +654,9 @@ end
 ---@return table|nil { viewers = actor[], prior = table, listed = { [cid] = true } }
 local function viewBefore(contract)
     if not Notify.viewAlertsAllowed() or not Projection then return nil end
-    local viewers = {}
-    local online = Identity.online()
-    for i = 1, #online do
-        local actor = online[i]
-        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job)
-            and viewViewer(actor) then
-            viewers[#viewers + 1] = actor
-        end
-    end
+    local viewers = Police.recipients(function(actor)
+        return actor.cid == contract.target_cid or not viewViewer(actor)
+    end)
     if #viewers == 0 then return nil end
     local okRead, row = pcall(Storage.readContract, contract.id)
     local prior = Util.copy((okRead and type(row) == 'table') and row or contract)
@@ -1545,22 +1542,6 @@ end
 -- Law enforcement threat advisory (§7.5)
 --------------------------------------------------------------------------
 
---- The departments the dispatch entry is for: the job names configured to
---- receive advisories, so the MDT and the phones are told the same people.
---- It was a list of its own, and a department added to one was missing
---- from the other. The one list every dispatch entry is sent to: the
---- advisories, the witness heat and the heat bulletin.
----@return string[]
-function Notify.policeJobs()
-    local jobs = {}
-    for name, on in pairs(Config.Advisory and Config.Advisory.RecipientJobNames or {}) do
-        if on == true and type(name) == 'string' then jobs[#jobs + 1] = name end
-    end
-    table.sort(jobs)
-    if #jobs == 0 then jobs = { 'police' } end
-    return jobs
-end
-
 --- Advise every online law enforcement player, and the officer themselves,
 --- that a contract exists or has gone live.
 ---
@@ -1598,6 +1579,12 @@ function Notify.forgetAcceptances(contracts)
         end
     end
     return marked
+end
+
+--- Police.tell's skip for a bulletin about a contract: its target, told
+--- on their own.
+local function notTarget(contract)
+    return function(actor) return actor.cid == contract.target_cid end
 end
 
 ---@param operative string|nil the hitman whose acceptance this is
@@ -1664,18 +1651,10 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
             :format(rank, contract.target_name, n, n == 1 and ' is' or 's are')
     end
 
-    local recipients = 0
-    local online = Identity.online()
-    for i = 1, #online do
-        local actor = online[i]
-        -- The targeted officer is skipped here: they are law enforcement and
-        -- would otherwise match the recipient filter, receiving both this
-        -- broadcast and their own direct alert below.
-        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job) then
-            Notify.toCitizen(actor.cid, title, content, { bypassBudget = true })
-            recipients = recipients + 1
-        end
-    end
+    -- The targeted officer is skipped here: they are law enforcement and
+    -- would otherwise match the recipient filter, receiving both this
+    -- broadcast and their own direct alert below.
+    local recipients = Police.tell(title, content, notTarget(contract))
 
     -- With it: Notify me, to each of them whose whitelisted-job view lists
     -- the contract from this bulletin on, and not before it.
@@ -1705,12 +1684,11 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     -- The same advisory goes to dispatch so it lands in the MDT alongside
     -- other calls, not just on phones.
     if Config.Advisory.UseDispatch then
-        Bridge.call('sc-dispatch', 'AddNotification', {
+        Police.dispatch({
             title = title,
             message = content,
             priority = Config.Advisory.DispatchPriority,
             caller = 'Criminal Intelligence',
-            job_table = Notify.policeJobs(),
             unique_id = 'ch-' .. contract.id .. '-' .. stage,
         })
     end
@@ -1733,23 +1711,14 @@ function Notify.tipAdvisory(contract)
     local content = ("A hitman has been tipped off about %s%s's location and is closing in.")
         :format(rank, tostring(contract.target_name))
 
-    local recipients = 0
-    local online = Identity.online()
-    for i = 1, #online do
-        local actor = online[i]
-        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job) then
-            Notify.toCitizen(actor.cid, title, content, { bypassBudget = true })
-            recipients = recipients + 1
-        end
-    end
+    local recipients = Police.tell(title, content, notTarget(contract))
 
     if Config.Advisory.UseDispatch then
-        Bridge.call('sc-dispatch', 'AddNotification', {
+        Police.dispatch({
             title = title,
             message = content,
             priority = Config.Advisory.DispatchPriority,
             caller = 'Criminal Intelligence',
-            job_table = Notify.policeJobs(),
             unique_id = 'ch-' .. contract.id .. '-tip',
         })
     end
@@ -1776,15 +1745,7 @@ function Notify.cancelAdvisory(contract, targetShown)
     local content = ('The contract on %s%s has been called off.')
         :format(rank, tostring(contract.target_name))
 
-    local recipients = 0
-    local online = Identity.online()
-    for i = 1, #online do
-        local actor = online[i]
-        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job) then
-            Notify.toCitizen(actor.cid, title, content, { bypassBudget = true })
-            recipients = recipients + 1
-        end
-    end
+    local recipients = Police.tell(title, content, notTarget(contract))
 
     -- The officer it was on, kept for one who is away, as the advisory's
     -- own word to them is.
@@ -1794,12 +1755,11 @@ function Notify.cancelAdvisory(contract, targetShown)
     end
 
     if Config.Advisory.UseDispatch then
-        Bridge.call('sc-dispatch', 'AddNotification', {
+        Police.dispatch({
             title = title,
             message = content,
             priority = Config.Advisory.DispatchPriority,
             caller = 'Criminal Intelligence',
-            job_table = Notify.policeJobs(),
             unique_id = 'ch-' .. contract.id .. '-cancelled',
         })
     end
@@ -1877,12 +1837,9 @@ function Notify.clearContract(contractId, contract)
     -- an id never filed does nothing. In a thread of its own: the export
     -- waits on the database, and this is the end of a settlement.
     if contract and contract.target_protected and Bridge.started('sc-dispatch') then
-        local jobs = Notify.policeJobs()
         for _, stage in ipairs({ 'posted', 'accepted', 'tip' }) do
             local uid = 'ch-' .. contractId .. '-' .. stage
-            CreateThread(function()
-                Bridge.call('sc-dispatch', 'ClearNotification', uid, jobs)
-            end)
+            CreateThread(function() Police.clear(uid) end)
         end
     end
 end

@@ -57,7 +57,7 @@ describe('sweep 4 D3: no totals read for a post that goes nowhere', function()
             'friday', 'saturday' })[t.wday]
         Config.Improvements.WeeklyStats.Hour = t.hour
         Config.Improvements.WeeklyStats.Enabled = true
-        s.impWeekly.init({ storage = s.storage, audit = s.audit, alerts = s.alerts })
+        s.impWeekly.init({ storage = s.storage, audit = s.audit })
     end
 
     it('weekly: no webhook reads no contract, tick after tick, and posts once one is set', function()
@@ -132,8 +132,8 @@ describe('sweep 4 D3: no totals read for a post that goes nowhere', function()
         Config.Staff.DailySummary = true
         Config.Staff.DailySummaryHour = 0
         Natives.convars['crimson_hitman_webhook'] = HOOK
-        local post = s.alerts.post
-        s.alerts.post = function() return false, 'unavailable' end
+        local post = s.discord.post
+        s.discord.post = function() return false, 'unavailable' end
         local n, undo = counting(s)
         for _ = 1, 30 do
             falsy(s.summary.tick())
@@ -141,7 +141,7 @@ describe('sweep 4 D3: no totals read for a post that goes nowhere', function()
         end
         eq(n.reads, 1, 'counted once, then backed off')
         Env.advance(s.summary.BACKOFF_SECONDS)
-        s.alerts.post = post
+        s.discord.post = post
         truthy(s.summary.tick(), 'posted after the back-off')
         eq(n.reads, 2)
         undo()

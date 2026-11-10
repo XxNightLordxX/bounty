@@ -1,7 +1,8 @@
 --- The daily summary to the staff Discord (Config.Staff.DailySummary).
 ---
 --- One post a day, at Config.Staff.DailySummaryHour (server time), through
---- the alerts' Discord poster and its webhook convars (Alerts.post): the
+--- the one Discord sender, on the alerts' webhook convars (Discord.post
+--- 'alerts', server/discord.lua): the
 --- contracts placed, completed and refunded in the last day, the money in
 --- escrow, the review items open, and how many players are frozen and
 --- suspended. Counts only: no name, citizen id, contract id or amount that
@@ -15,6 +16,7 @@
 
 local Words = CrimsonBoot.requireShared('words')
 local Db = CrimsonBoot.require('server.lib.db')
+local Discord = CrimsonBoot.require('server.discord')
 
 local Summary = {}
 
@@ -24,8 +26,8 @@ local DAY_META = 'staff_summary_day'
 --- A post refused after the counts were read: they are not read again
 --- until this (os.time()), or every tick past the hour read every contract
 --- and every unsettled escrow line for a post that went nowhere.
---- { untilAt, why }; nil: try on the next tick. With no webhook set (or
---- the alerts not wired) the tick answers before any count is read.
+--- { untilAt, why }; nil: try on the next tick. With no webhook set the
+--- tick answers before any count is read.
 local backoff = nil
 --- How long a refused post waits before the counts are read again.
 Summary.BACKOFF_SECONDS = 600
@@ -34,7 +36,7 @@ Summary.BACKOFF_SECONDS = 600
 --- back to the placer.
 local REFUNDED = { [CH.STATE.CANCELLED] = true, [CH.STATE.EXPIRED] = true, [CH.STATE.VOIDED] = true }
 
----@param d table { storage, review, freeze, audit, alerts?, sanctions? (Sanctions.count) }
+---@param d table { storage, review, freeze, audit, sanctions? (Sanctions.count) }
 function Summary.init(d)
     deps = d
     lastDay, backoff = nil, nil
@@ -132,21 +134,11 @@ function Summary.tick()
     if lastDay == day then return false, 'done' end
     if backoff and now < backoff.untilAt then return false, backoff.why end
     backoff = nil
-    local alerts = deps.alerts
-    local why
-    if not (alerts and alerts.post) then
-        why = 'unavailable'
-    elseif type(alerts.discordState) == 'function' then
-        -- Asked before the counts are read: whether a webhook is set (it
-        -- names which convar set one, never the url).
-        local ok, state = pcall(alerts.discordState)
-        if ok and type(state) == 'table' and state.webhook == nil then why = 'no_webhook' end
-    end
     -- A convar read, not a store read: a webhook set later posts on the
     -- next tick, and a tick with none reads no contract.
-    if why then return false, why end
+    if not Discord.url('alerts') then return false, 'no_webhook' end
     local text = Summary.text(Summary.counts(now), day)
-    local queued, err = alerts.post(text)
+    local queued, err = Discord.post('alerts', text)
     if not queued then
         backoff = { untilAt = now + Summary.BACKOFF_SECONDS, why = err }
         return false, err

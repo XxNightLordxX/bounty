@@ -665,6 +665,14 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Turn **Rumours** on: the board shows rumours until the broker (NPC or player) briefs the hitman; the briefed player gets the notice.
 - [ ] Nothing names the placer or the target, or shows the target's position, beyond what each look-up showed before; resmon idle unchanged.
 
+## Police & press and the one Discord sender (step 3h)
+
+- [ ] Place a contract on an on-duty officer (Advisory on, UseDispatch on): every other officer's phone and sc-dispatch get THREAT ADVISORY with the same words and departments as before; accept it, buy a tip on it, cancel it: ACTIVE, TIP and CANCELLED arrive the same way, and the earlier dispatch entries leave the MDT when it ends.
+- [ ] Turn **Hitman heat** and **Witness heat** on: the heat bulletin and the witness report reach officers' phones and sc-dispatch as before; turn **City news** on: the Birdy post (or your event) is made, and with lb-phone stopped one console line a minute says why not.
+- [ ] Stop sc-dispatch: phones are still told, nothing errors.
+- [ ] Set `crimson_hitman_alert_webhook`, `crimson_hitman_webhook` and `crimson_hitman_stats_webhook` (set, never setr): Tools, Send a test alert posts to the alert channel; a refused money attempt (audit mirror) to the staff channel; the daily summary and weekly stats (when due) to their channels, with no mention pinging anybody and no link.
+- [ ] Unset the alert webhook: alerts and the daily summary go to the staff webhook, and the panel says staff.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

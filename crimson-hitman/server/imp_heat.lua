@@ -24,7 +24,7 @@
 --- (crimson_rp_rows, kind 'imp_heat'), so a restart does not cool anybody.
 
 local Util = CrimsonBoot.requireShared('util')
-local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Police = CrimsonBoot.require('server.police')
 local Feature = CrimsonBoot.require('server.lib.feature')
 
 --- This feature's block of config (server/lib/feature.lua reads it).
@@ -32,7 +32,7 @@ local BLOCK = 'Improvements.HitmanHeat'
 
 local Heat = {}
 
-local Storage, Identity, Notify, Audit, Projection
+local Storage, Notify, Audit, Projection
 
 local KIND = 'imp_heat'
 
@@ -203,23 +203,16 @@ function Heat.bulletin(now)
     lastBulletin = now
     local title = Util.sanitizeText(tostring(cfg.BulletinTitle or 'Intelligence bulletin'), 60)
     local text = Util.sanitizeText(tostring(cfg.BulletinText or ''), 160)
-    local told = 0
     -- To every officer alike, a known hitman who holds a police job too:
     -- sc-dispatch shows it them anyway, and leaving them out of the phone
     -- bulletin told whoever compared notes which officer was the hitman.
-    for _, actor in ipairs(Identity.online() or {}) do
-        if Identity.isAdvisoryRecipient(actor.job) then
-            Notify.toCitizen(actor.cid, title, text, { bypassBudget = true })
-            told = told + 1
-        end
-    end
+    local told = Police.tell(title, text)
     local dispatched = false
     if Config.Advisory and Config.Advisory.UseDispatch ~= false then
-        dispatched = Bridge.call('sc-dispatch', 'AddNotification', {
+        dispatched = Police.dispatch({
             title = title, message = text, caller = 'Criminal Intelligence',
             priority = math.floor(num(Config.Advisory.DispatchPriority, 2)),
-            job_table = Notify.policeJobs(),
-            unique_id = ('ch-heat-%d'):format(now):sub(1, 60),
+            unique_id = ('ch-heat-%d'):format(now),
         })
     end
     Audit.action('imp_heat_bulletin', nil, nil, { told = told, dispatched = dispatched or nil })
@@ -248,7 +241,7 @@ function Heat.reset()
 end
 
 function Heat.init(deps)
-    Storage, Identity, Notify, Audit = deps.storage, deps.identity, deps.notify, deps.audit
+    Storage, Notify, Audit = deps.storage, deps.notify, deps.audit
     Projection = deps.projection
     Heat.reset()
     if Storage and Storage.readRpRows then

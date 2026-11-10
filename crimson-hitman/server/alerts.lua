@@ -30,7 +30,8 @@
 --- write that fails leaves the alert in memory, written by the next try; the
 --- line was printed either way.
 ---
---- Discord: posted to the webhook in the server convar
+--- Discord: posted through the one sender (server/discord.lua, the
+--- 'alerts' channel) to the webhook in the server convar
 --- crimson_hitman_alert_webhook, or the staff one (crimson_hitman_webhook)
 --- where that is not set, while Config.Alerts.ToDiscord is on. Set in
 --- server.cfg with `set`, never `setr` (setr sends it to every player), and
@@ -46,6 +47,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
+local Discord = CrimsonBoot.require('server.discord')
 
 local Alerts = {}
 
@@ -294,18 +296,6 @@ end
 -- Discord
 --------------------------------------------------------------------------
 
---- Which webhook alerts go to, and which convar named it; never shown.
----@return string|nil url
----@return string|nil which 'alert' | 'staff'
-local function webhook()
-    if type(GetConvar) ~= 'function' then return nil, nil end
-    local url = GetConvar('crimson_hitman_alert_webhook', '')
-    if type(url) == 'string' and url ~= '' then return url, 'alert' end
-    url = GetConvar('crimson_hitman_webhook', '')
-    if type(url) == 'string' and url ~= '' then return url, 'staff' end
-    return nil, nil
-end
-
 local function postsOn()
     return type(Config.Alerts) == 'table' and Config.Alerts.ToDiscord == true
 end
@@ -331,8 +321,8 @@ local function bodyOf(batch, more)
     for _, entry in ipairs(batch) do
         local text = cut((outsideText(entry):gsub('%s+', ' ')), LINE_MAX)
         -- No mention pings anybody: an @ is followed by a zero-width space.
-        local line = ('- %s: %s%s'):format(LEVEL_WORDS[entry.level] or 'Alert', text,
-            entry.count > 1 and (' (x%d)'):format(entry.count) or ''):gsub('@', '@\226\128\139')
+        local line = Discord.text(('- %s: %s%s'):format(LEVEL_WORDS[entry.level] or 'Alert', text,
+            entry.count > 1 and (' (x%d)'):format(entry.count) or ''))
         if length + 1 + #line > CONTENT_MAX then
             more = more + 1
         else
@@ -343,58 +333,48 @@ local function bodyOf(batch, more)
     if more > 0 then
         lines[#lines + 1] = ('...and %d more; the admin panel\'s Alerts lists every one'):format(more)
     end
-    return json.encode({ content = table.concat(lines, '\n') })
+    return table.concat(lines, '\n')
 end
 
 local schedulePost
 
---- Try a post, and again after a wait each time it is refused, up to
---- Alerts.TRIES tries. `carried` is what it carries: { alerts, test }, the
---- alerts it names or counts, and whether a test is among them.
-local function attempt(body, carried, try)
-    local url = webhook()
-    if not url or not postsOn() then
-        -- Unset or switched off meanwhile: nothing is waiting for it.
-        posting = false
-        return
-    end
+--- Post one batch through the one sender (server/discord.lua), tried again
+--- after a wait each time it is refused, up to Alerts.TRIES tries, and
+--- dropped when posting is switched off or the webhook unset meanwhile.
+--- `carried` is what it carries: { alerts, test }, the alerts it names or
+--- counts, and whether a test is among them.
+local function attempt(content, carried)
     posting = true
     lastPostMs = Util.monotonicMs()
-    local function answered(status, _, headers)
-        local code = tonumber(status) or 0
-        if code >= 200 and code < 300 then
+    local queued = Discord.post('alerts', content, {
+        tries = Alerts.TRIES, every = Alerts.POST_EVERY_MS, still = postsOn,
+        done = function(ok, code, tries)
             posting = false
-            sent.posted = sent.posted + carried.alerts
-            sent.lastOkAt = os.time()
+            lastPostMs = Util.monotonicMs()
+            if ok then
+                sent.posted = sent.posted + carried.alerts
+                sent.lastOkAt = os.time()
+            elseif code == nil then
+                -- Unset or switched off meanwhile: nothing is waiting for it.
+                return
+            else
+                sent.lastFail = { at = os.time(), tries = tries, status = code, alerts = carried.alerts,
+                                  test = carried.test or nil }
+                -- Not Log.always: that would be an alert, and a post, of its own.
+                Log.debug(('alerts could not be posted to Discord: %d alert(s)%s given up after %d '
+                    .. 'tries (HTTP %d)'):format(carried.alerts, carried.test and ' and a test' or '',
+                        tries, code))
+            end
             schedulePost()
-            return
-        end
-        if try >= Alerts.TRIES then
-            posting = false
-            sent.lastFail = { at = os.time(), tries = try, status = code, alerts = carried.alerts,
-                              test = carried.test or nil }
-            -- Not Log.always: that would be an alert, and a post, of its own.
-            Log.debug(('alerts could not be posted to Discord: %d alert(s)%s given up after %d '
-                .. 'tries (HTTP %d)'):format(carried.alerts, carried.test and ' and a test' or '',
-                    try, code))
-            schedulePost()
-            return
-        end
-        local wait = Alerts.POST_EVERY_MS * 2 ^ (try - 1)
-        local after = type(headers) == 'table'
-            and tonumber(headers['Retry-After'] or headers['retry-after']) or nil
-        if after then wait = math.max(wait, after * 1000) end
-        SetTimeout(math.floor(wait), function() attempt(body, carried, try + 1) end)
-    end
-    local ok = pcall(PerformHttpRequest, url, answered, 'POST', body,
-        { ['Content-Type'] = 'application/json' })
-    if not ok then answered(0, nil, nil) end
+        end,
+    })
+    if not queued then posting = false end
 end
 
 --- Post what is waiting: at most Alerts.PER_POST, and how many more.
 local function send()
     if #outbox == 0 or posting then return end
-    if not postsOn() or not webhook() then
+    if not postsOn() or not Discord.url('alerts') then
         outbox, outKey = {}, {}
         return
     end
@@ -410,7 +390,7 @@ local function send()
     end
     -- A test is always first (Alerts.sendTest), and never among the more.
     local test = batch[1] ~= nil and batch[1].level == 'test'
-    attempt(body, { alerts = #batch + more - (test and 1 or 0), test = test }, 1)
+    attempt(body, { alerts = #batch + more - (test and 1 or 0), test = test })
 end
 
 --- The next post, no sooner than Alerts.POST_EVERY_MS after the last one.
@@ -427,7 +407,7 @@ end
 --- Put an alert in the next post, or count it again on the line it has
 --- there. `continued` is an indented line added to its text: not said again.
 local function queuePost(a, continued)
-    if not postsOn() or not webhook() then return end
+    if not postsOn() or not Discord.url('alerts') then return end
     local entry = outKey[a.key]
     if entry then
         if not continued then entry.count = entry.count + 1 end
@@ -567,7 +547,7 @@ end
 --- and which convar set it, never what it is.
 ---@return table
 function Alerts.discordState()
-    local _, which = webhook()
+    local _, which = Discord.url('alerts')
     local fail = sent.lastFail
     return {
         on = postsOn(), webhook = which, waiting = #outbox, posting = posting,
@@ -583,7 +563,7 @@ end
 ---@return integer|nil seconds about how long until it is posted
 function Alerts.sendTest()
     if not postsOn() then return false, 'discord_off' end
-    if not webhook() then return false, 'no_webhook' end
+    if not Discord.url('alerts') then return false, 'no_webhook' end
     local entry = outKey.test
     if entry then
         entry.count = entry.count + 1
@@ -596,43 +576,6 @@ function Alerts.sendTest()
     local wait = 0
     if lastPostMs then wait = math.max(0, lastPostMs + Alerts.POST_EVERY_MS - Util.monotonicMs()) end
     return true, nil, math.ceil(wait / 1000)
-end
-
---- One post of its own to the alerts' webhook (the same convars: the
---- alert webhook, or else the staff one), outside the alerts' own batches:
---- the daily summary (server/summary.lua). Never a mention that pings
---- anybody. Tried again after a wait when Discord refuses it, up to
---- Alerts.TRIES tries, as an alerts post is. The caller says what it may
---- contain: this sends it as it is.
----@param content string
----@return boolean queued
----@return string|nil err 'no_webhook'
-function Alerts.post(content)
-    local url = webhook()
-    if not url then return false, 'no_webhook' end
-    local text = cut(tostring(content or ''), CONTENT_MAX):gsub('@', '@\226\128\139')
-    local body = json.encode({ content = text })
-    local function try(n)
-        local function answered(status, _, headers)
-            local code = tonumber(status) or 0
-            if code >= 200 and code < 300 then return end
-            if n >= Alerts.TRIES then
-                Log.debug(('a staff post could not be sent to Discord: given up after %d tries (HTTP %d)')
-                    :format(n, code))
-                return
-            end
-            local wait = Alerts.POST_EVERY_MS * 2 ^ (n - 1)
-            local after = type(headers) == 'table'
-                and tonumber(headers['Retry-After'] or headers['retry-after']) or nil
-            if after then wait = math.max(wait, after * 1000) end
-            SetTimeout(math.floor(wait), function() try(n + 1) end)
-        end
-        local ok = pcall(PerformHttpRequest, url, answered, 'POST', body,
-            { ['Content-Type'] = 'application/json' })
-        if not ok then answered(0, nil, nil) end
-    end
-    try(1)
-    return true
 end
 
 --------------------------------------------------------------------------

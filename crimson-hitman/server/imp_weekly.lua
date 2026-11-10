@@ -13,7 +13,7 @@
 ---
 --- Posted to the convar crimson_hitman_stats_webhook where it is set (a
 --- public channel, say), else to the alerts' webhook as the daily summary
---- is (Alerts.post). At most once a week, a restart included: the date of
+--- is, both through the one sender (Discord.post 'stats', server/discord.lua). At most once a week, a restart included: the date of
 --- the post it last made is kept by the store (Storage.writeStaffMeta
 --- 'imp_weekly_day', yyyymmdd), in every backend. A start inside the day
 --- after the hour, with that week's post not made, posts it then; a week
@@ -23,6 +23,7 @@ local Log = CrimsonBoot.requireShared('log')
 local Words = CrimsonBoot.requireShared('words')
 local Db = CrimsonBoot.require('server.lib.db')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Discord = CrimsonBoot.require('server.discord')
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Improvements.WeeklyStats'
@@ -34,16 +35,17 @@ local lastDay = nil
 --- Asleep until the next post falls due: { untilAt, why, key }, key being
 --- the Day and Hour it was worked out for (a change wakes it). nil: awake.
 local asleep = nil
---- A send refused after the totals were read (canSend said yes): they are
+--- A send refused after the totals were read (a webhook was set): they are
 --- not read again until this (os.time()), or every tick of a due day read
 --- every contract for a post that went nowhere. { untilAt, why }; nil: try
---- on the next tick. With no webhook at all canSend answers first and
+--- on the next tick. With no webhook at all the tick answers first and
 --- nothing is read.
 local backoff = nil
 --- How long a refused send waits before the totals are read again.
 Weekly.BACKOFF_SECONDS = 600
 Weekly.META = 'imp_weekly_day'
-Weekly.CONVAR = 'crimson_hitman_stats_webhook'
+--- The stats webhook's own convar (Discord.CHANNELS.stats, first).
+Weekly.CONVAR = Discord.CHANNELS.stats[1][1]
 local WEEK = 7 * 86400
 
 --- The days of the week, as os.date's wday counts them (1 = Sunday).
@@ -60,7 +62,7 @@ function Weekly.validate(warn)
     Feature.check(BLOCK, Weekly.RULES, warn)
 end
 
----@param d table { storage, audit, alerts }
+---@param d table { storage, audit }
 function Weekly.init(d)
     deps = d
     lastDay, asleep, backoff = nil, nil, nil
@@ -151,49 +153,19 @@ function Weekly.text(totals, day)
     }, '\n')
 end
 
---- The stats webhook, where its convar is set.
----@return string|nil
-local function statsUrl()
-    local url = type(GetConvar) == 'function' and GetConvar(Weekly.CONVAR, '') or ''
-    if type(url) == 'string' and url ~= '' then return url end
-    return nil
-end
-
---- Whether a post would go anywhere, asked before the totals are read: the
---- stats webhook, or else the alerts' webhook (Alerts.discordState names
---- which convar set one, never the url).
----@return boolean
----@return string|nil why 'no_webhook' | 'unavailable'
-local function canSend()
-    if statsUrl() then return true end
-    local alerts = deps.alerts
-    if not (alerts and alerts.post) then return false, 'unavailable' end
-    if type(alerts.discordState) == 'function' then
-        local ok, state = pcall(alerts.discordState)
-        if ok and type(state) == 'table' and state.webhook == nil then return false, 'no_webhook' end
-    end
-    return true
-end
-
---- Send the text: to the stats webhook where one is set, else the alerts'.
+--- Send the text through the one sender (server/discord.lua), on the
+--- 'stats' channel: the stats webhook where its convar is set, tried once,
+--- as it always was; else the alerts' webhook, tried as the daily summary is.
 ---@return boolean queued
----@return string|nil err
+---@return string|nil err 'no_webhook' | 'held' | 'unavailable'
 local function send(text)
-    local url = statsUrl()
-    if url then
-        local body = json.encode({ content = (text:gsub('@', '@\226\128\139')) })
-        local ok = pcall(PerformHttpRequest, url, function(status)
-            local code = tonumber(status) or 0
-            if code < 200 or code >= 300 then
-                Log.debug(('the weekly stats could not be posted to Discord (HTTP %d)'):format(code))
-            end
-        end, 'POST', body, { ['Content-Type'] = 'application/json' })
-        if not ok then return false, 'unavailable' end
-        return true
-    end
-    local alerts = deps.alerts
-    if not (alerts and alerts.post) then return false, 'unavailable' end
-    return alerts.post(text)
+    local _, which = Discord.url('stats')
+    if which ~= 'stats' then return Discord.post('stats', text) end
+    return Discord.post('stats', text, { tries = 1, done = function(ok, code)
+        if not ok and code then
+            Log.debug(('the weekly stats could not be posted to Discord (HTTP %d)'):format(code))
+        end
+    end })
 end
 
 --- Post this week's totals if due: switched on, inside the day after Day at
@@ -226,8 +198,7 @@ function Weekly.tick()
     backoff = nil
     -- A convar read, not a store read: a webhook set later posts on the
     -- next tick, and a tick with none reads no contract.
-    local can, why = canSend()
-    if not can then return false, why end
+    if not Discord.url('stats') then return false, 'no_webhook' end
     local queued, err = send(Weekly.text(Weekly.totals(now), day))
     if not queued then
         backoff = { untilAt = now + Weekly.BACKOFF_SECONDS, why = err }

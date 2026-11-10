@@ -1,7 +1,7 @@
 --- The notify helpers every module shares (server/notify.lua): telling the
 --- parties of a contract (Notify.parties, used by staff freezes and staff
 --- deadline moves) and the one police job list every dispatch entry goes
---- to (Notify.policeJobs).
+--- to (Police.jobs, server/police.lua).
 
 local function noticesTo(src, title)
     local n = 0
@@ -53,16 +53,16 @@ describe('Notify.parties: the same words to every party of a contract', function
     end)
 end)
 
-describe('Notify.policeJobs: who dispatch entries are for', function()
+describe('Police.jobs: who dispatch entries are for', function()
     it('lists the advisory job names switched on, sorted, and police when none is', function()
         local s = newStack()
         Config.Advisory.RecipientJobNames = { sast = true, fib = true, ems = false, [1] = true }
-        local jobs = s.notify.policeJobs()
+        local jobs = s.police.jobs()
         eq(table.concat(jobs, ','), 'fib,sast')
         Config.Advisory.RecipientJobNames = {}
-        eq(table.concat(s.notify.policeJobs(), ','), 'police')
+        eq(table.concat(s.police.jobs(), ','), 'police')
         Config.Advisory = nil
-        local ok, none = pcall(s.notify.policeJobs)
+        local ok, none = pcall(s.police.jobs)
         truthy(ok, 'no advisory section at all never raises')
         eq(table.concat(none, ','), 'police')
         resetConfig()

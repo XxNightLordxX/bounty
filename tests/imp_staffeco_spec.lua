@@ -514,7 +514,7 @@ describe('the weekly stats', function()
             local kept = s.storage.readStaffMeta()[s.impWeekly.META]
             truthy(kept and kept > 20000000, mode .. ': the day is kept')
             -- A start reads it back, and does not post again.
-            s.impWeekly.init({ storage = s.storage, audit = s.audit, alerts = s.alerts })
+            s.impWeekly.init({ storage = s.storage, audit = s.audit })
             eq(select(2, s.impWeekly.tick()), 'done', mode)
         end
         local mysql = read_file('crimson-hitman/server/storage/mysql.lua')

@@ -2039,7 +2039,7 @@ function StartCrimsonHitman()
     settings.watch('Holds.AppPaused', holds.syncAppPause)
     -- The daily summary counts the suspended players through sanctions.
     summary.init({ storage = Storage, review = review, holds = holds, audit = audit,
-                   alerts = alerts, sanctions = sanctions })
+                   sanctions = sanctions })
     thresholds.init({ audit = audit })
     announce.init({ storage = Storage, notify = notify, audit = audit, identity = identity })
     reports.init({ storage = Storage, identity = identity, audit = audit, review = review,
@@ -2092,7 +2092,7 @@ function StartCrimsonHitman()
                     notify = notify, ledger = ledger })
     impScrub.init({ storage = Storage, audit = audit })
     escrow.scrubSerial = impScrub.scrub
-    impWeekly.init({ storage = Storage, audit = audit, alerts = alerts })
+    impWeekly.init({ storage = Storage, audit = audit })
     -- After escrow, contracts and settings: it hooks the payout
     -- (Escrow.orgCut), the accept (Contracts.acceptGate) and its switch.
     org.init({ storage = Storage, identity = identity, audit = audit, notify = notify, escrow = escrow,

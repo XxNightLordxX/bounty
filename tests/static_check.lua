@@ -2787,7 +2787,7 @@ do
         dollars = 'Words.dollars (shared/words.lua)', metres = 'Words.metres (shared/words.lua)',
         Finite = 'Geo.finite (shared/geo.lua)', finite = 'Geo.finite (shared/geo.lua)',
         phoneRefuses = 'Bridge.phoneRefuses (server/lib/bridge.lua)',
-        policeJobs = 'Notify.policeJobs (server/notify.lua)', dispatchJobs = 'Notify.policeJobs (server/notify.lua)',
+        policeJobs = 'Police.jobs (server/police.lua)', dispatchJobs = 'Police.jobs (server/police.lua)',
         str = 'Text.field (shared/text.lua)', within = 'Window.new (server/lib/window.lua)',
         targetUp = 'CrimsonNpc.targetUp (client/npc.lua)', TargetUp = 'CrimsonNpc.targetUp (client/npc.lua)',
     }

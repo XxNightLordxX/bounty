@@ -7,6 +7,7 @@ local Audit = {}
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Discord = CrimsonBoot.require('server.discord')
 
 local Storage
 local queue = {}
@@ -210,11 +211,12 @@ local function mirrored(entry)
     return true
 end
 
--- Held back after Discord answers 429, until this moment.
-local backoffUntil = 0
-local MAX_LINES, MAX_CHARS = 15, 1900
+local MAX_LINES = 15
 
---- One POST per flush, however many rows it drained.
+--- One POST per flush, however many rows it drained, through the one sender
+--- (server/discord.lua, the 'staff' channel: the crimson_hitman_webhook
+--- convar, never config.lua, which every player's game downloads), tried
+--- once, and not while Discord holds the webhook after a 429.
 ---
 --- It sent one per row. Discord takes about five requests every two seconds
 --- per webhook and answers the rest with 429; enough of those and its edge
@@ -222,15 +224,7 @@ local MAX_LINES, MAX_CHARS = 15, 1900
 --- this one. A single message carries the flush: up to fifteen lines, then
 --- how many more, with the refusal noise as a count.
 local function mirrorBatch(rows)
-    -- A server convar, never config.lua. That file is a shared script, so
-    -- every player's game downloads it, and a URL written there let anyone
-    -- post forged lines into the staff channel or delete the hook. `set`
-    -- keeps a convar on the server; `setr` would send it to every player
-    -- too, so the README says set. Read on every flush, so it can be
-    -- changed from the console without a restart.
-    local url = GetConvar('crimson_hitman_webhook', '')
-    if type(url) ~= 'string' or url == '' then return false end
-    if Util.monotonicMs() < backoffUntil then return false end
+    if not Discord.url('staff') then return false end
 
     local lines, more, noise, hits = {}, 0, 0, 0
     for i = 1, #rows do
@@ -254,17 +248,7 @@ local function mirrorBatch(rows)
     if hits > 0 then lines[#lines + 1] = ('%d hit(s) on targets not confirmed'):format(hits) end
     if #lines == 0 then return false end
 
-    local content = table.concat(lines, '\n')
-    if #content > MAX_CHARS then content = Util.toValidUtf8(content:sub(1, MAX_CHARS)) end
-
-    PerformHttpRequest(url, function(status, _, headers)
-        if tonumber(status) == 429 then
-            local wait = headers and tonumber(headers['Retry-After'] or headers['retry-after']) or 5
-            backoffUntil = Util.monotonicMs() + math.max(1, wait) * 1000
-        end
-    end, 'POST', json.encode({ content = content }),
-        { ['Content-Type'] = 'application/json' })
-    return true
+    return (Discord.post('staff', table.concat(lines, '\n'), { tries = 1, done = function() end }))
 end
 
 --- Drain the queue.
