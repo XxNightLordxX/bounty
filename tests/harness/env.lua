@@ -32,6 +32,7 @@ Env.clientEvents = {}     -- captured TriggerClientEvent calls
 Env.commands = {}         -- [name] = handler, as RegisterCommand saw it
 Env.chat = {}             -- lines a command printed back to a player
 Env.aces = {}             -- [source] = { ['crimson.admin'] = true }
+Env.principalAces = {}    -- [principal] = { [ace] = true } (IsPrincipalAceAllowed)
 Env.consoleOut = {}       -- lines a command printed to the console
 Env.notifications = {}
 Env.threads = {}
@@ -192,6 +193,7 @@ function Env.reset()
     Env.characters = {}
     Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
     Env.commands, Env.chat, Env.aces, Env.consoleOut = {}, {}, {}, {}
+    Env.principalAces = {}
     Env.handlers = {}
     Env.threads, Env.timers, Env.console = {}, {}, {}
     Env.clearedTimers, Env.parked = {}, {}

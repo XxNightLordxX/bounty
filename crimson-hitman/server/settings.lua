@@ -2371,6 +2371,18 @@ local function fits(changes)
     return true, nil, warn
 end
 
+--- What the start-up checks say of the settings in force now, for the
+--- config check (server/configcheck.lua): their refusals and their
+--- warnings, run on a copy, changing nothing.
+---@return string[] fatal
+---@return string[] warn
+function Settings.configWarnings()
+    if not Check then return {}, {} end
+    local called, okOrErr, fatal, warn = pcall(Check, copyOf(Config))
+    if not called then return { 'the start-up checks raised: ' .. tostring(okOrErr) }, {} end
+    return fatal or {}, warn or {}
+end
+
 --- A value for a key, checked as the start-up checks would check it.
 ---@param key string
 ---@param raw any

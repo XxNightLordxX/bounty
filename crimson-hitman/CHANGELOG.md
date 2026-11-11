@@ -5,6 +5,13 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Config check**
+- `/ch-diag config`, and **Check the config** under Developer, Health: every
+  value out of range or invalid, every script a switched-on feature needs
+  and lacks, every staff ACE `group.admin` does not hold and the commands it
+  may not run, and the risky combinations, each in plain words with the fix.
+  Reads only.
+
 **Version check** (`Config.VersionCheck`, off as shipped)
 - `Enabled = false` and `Url = ''` as shipped: nothing is ever asked. On,
   with an https address, one plain GET at start (no body, no headers of its

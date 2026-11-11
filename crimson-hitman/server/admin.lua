@@ -20,6 +20,8 @@ local Admin = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death, Photo
 local Informant, Kidnap, Mugshot, Photos, Timing, Review, Settings, Playtime
+--- The config check (server/configcheck.lua): /ch-diag config.
+local ConfigCheck
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -54,6 +56,7 @@ function Admin.init(deps)
     if Review and Review.useResolver then Review.useResolver(Admin.knownCitizenId) end
     -- What staff changed from the admin panel, which the diagnosis lists.
     Settings = deps.settings
+    ConfigCheck = deps.configcheck
     -- The built-in playtime tracker, which the diagnosis reports.
     Playtime = deps.playtime
 end
@@ -2252,6 +2255,12 @@ end
 
 function Admin.diagnose(source, subjectId, later, opts)
     local panel = type(opts) == 'table' and opts.panel == true
+    -- /ch-diag config: the config check alone (server/configcheck.lua), every
+    -- value out of range, script missing, ACE not held and risky
+    -- combination, each with its fix. Reads only.
+    if type(subjectId) == 'string' and subjectId:lower() == 'config' and ConfigCheck then
+        return ConfigCheck.lines()
+    end
     local out = {}
     -- In the panel, a line kept from the console that names a command
     -- (a review left for staff: "see /ch-stuck") names the panel's place

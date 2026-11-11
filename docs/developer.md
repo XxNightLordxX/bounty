@@ -263,6 +263,17 @@ is over 512 characters; the request is `PerformHttpRequest(url, cb, 'GET',
 '', {})`. The answer is read for its first `n.n[.n]` and compared with the
 manifest's `version` by number. `tests/versioncheck_spec.lua`.
 
+### Config check
+
+`server/configcheck.lua` builds the findings for `/ch-diag config`
+(`Admin.diagnose` with `config`) and the panel's `diag` op with
+`config = true`: `Log.view().problems` (what this start said),
+`Settings.configWarnings()` (the start-up checks run quietly on a copy of
+the config in force), `Integrations.offLine` for each needed kind with no
+adapter, `IsPrincipalAceAllowed('group.admin', …)` for each staff ACE and
+`command.<name>`, and `ConfigCheck.RISKS` (a `when(Config)` and a fix
+each). Add a risk there with its own test in `tests/configcheck_spec.lua`.
+
 ### The event and handler order
 
 Every net event and callback handler, in `app.lua` and `panel.lua`, runs in

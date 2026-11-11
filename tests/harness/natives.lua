@@ -127,6 +127,13 @@ function Natives.install()
         return (granted and granted[ace] == true) and 1 or false
     end
 
+    -- A principal's ACE (group.admin's, for the config check), from
+    -- Env.principalAces[principal][ace]; as IsPlayerAceAllowed, 1 or false.
+    _G.IsPrincipalAceAllowed = function(principal, ace)
+        local granted = Env.principalAces and Env.principalAces[principal]
+        return (granted and granted[ace] == true) and 1 or false
+    end
+
     _G.GetPlayerIdentifiers = function(src)
         local p = Env.players[tonumber(src)]
         if not p then return {} end

@@ -1511,7 +1511,8 @@
           + 'it from a player\'s card in Players.'),
         h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
           'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
-          btn('.primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
+          btn('.primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope'),
+          btn('', 'tl-config', {}, 'Check the config', 'list-check')),
         t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
         t.diag ? linesBox(t.diag.lines, t.diag.later) : null)),
       h('p.foot', icon('rotate'), h('span', { id: 'ov-at' }, overviewStamp()),
@@ -5509,6 +5510,19 @@
       if (!reply) return;
       toast(words(reply), reply.ok ? 'ok' : 'error');
       S.tools.flush = { ok: reply.ok === true, text: words(reply) };
+      drawTools();
+    });
+  };
+  /* Check the config (server/configcheck.lua, /ch-diag config): every value
+     out of range, script missing, ACE not held and risky combination, each
+     with its fix, drawn where the diagnosis is. */
+  ACTIONS['tl-config'] = function () {
+    S.tools.diag = { lines: ['Checking…'], later: [] };
+    drawTools();
+    ask('diag', { config: true }, 'diag').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) S.tools.diag = { error: words(reply) };
+      else S.tools.diag = { lines: asList((reply.data || {}).lines), later: [] };
       drawTools();
     });
   };

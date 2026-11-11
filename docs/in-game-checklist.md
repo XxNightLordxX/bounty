@@ -761,6 +761,13 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] As shipped (`Config.VersionCheck.Enabled = false`, `Url = ''`) the start asks nothing: no outbound request in the server's network log
 - [ ] With `Config.VersionCheck.Enabled = true` and `Url` an https address serving `9.9.9`, a restart prints one line naming 9.9.9; serving `1.0.0` (older) prints nothing; an address with `?` in it is not asked and the console says why once
 
+## Config check (X3)
+
+- [ ] `ch-diag config` in the server console prints `--- crimson-hitman config check ---`, one line per finding with `-> fix:` under it, and a count; on the shipped config it names `Config.Debug` on
+- [ ] Remove `add_ace group.admin crimson.admin allow` from server.cfg and restart: the check names it with the `add_ace` line to put back
+- [ ] Set `Config.Integrations.Dispatch = 'nonesuch'` with the advisory on: the check names the dispatch script and says to set `'auto'`
+- [ ] In the panel, Developer, Health, **Check the config** draws the same lines
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

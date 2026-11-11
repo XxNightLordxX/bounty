@@ -2486,6 +2486,13 @@ H.refresh = function(src)
 end
 
 H.diag = function(src, data)
+    -- Health's Check the config (server/configcheck.lua): every value out of
+    -- range, script missing, ACE not held and risky combination, with the
+    -- fix. Names nobody, so nothing to scrub.
+    if data.config == true then
+        if not deps.configcheck then return false, 'unavailable', 'The config check is not running.' end
+        return true, nil, nil, { lines = deps.configcheck.lines(), config = true }
+    end
     local subject = data.subject ~= nil and wholeNumber(data.subject, 1, 65535) or nil
     if data.subject ~= nil and not subject then
         return false, CH.ERR.INVALID_INPUT, 'Give a player id, or nothing to run it as yourself.'

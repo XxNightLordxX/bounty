@@ -3383,6 +3383,11 @@ async function main() {
     it('and a line that had to wait is added when it comes', function () {
       has(app.main(), 'photo links: yes');
     });
+    app.click(app.button('Check the config'));
+    await settled();
+    it('Health: Check the config asks for the config check and draws it where the diagnosis is', function () {
+      eq(app.last('diag').data, { config: true });
+    });
     app.nav('tools');
     await settled();
     const flush = app.button('Flush the audit log');

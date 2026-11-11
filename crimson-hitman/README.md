@@ -472,7 +472,7 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `history` | Read | One player's history card |
 | `measures` | Read | Every measure on a player in force, newest first (`server/measures.lua`): frozen, suspended, protected and their own target limits, each row with its `kind` and a handle (`ref`) Unfreeze or Lift takes; `kind` filters to one. The citizen id and who set it only with `crimson.identity` |
 | `settings` | Read | Every setting, its value and where it comes from |
-| `diag` | Read | The diagnosis, as yourself, a player id or the player looked up (`ref`); scrubbed of citizen ids and accounts for staff without `crimson.identity`, and the lines that come later name the `ref` they were run for, so the page draws them under that player only |
+| `diag` | Read | The diagnosis, as yourself, a player id or the player looked up (`ref`); with `config = true`, the config check (`/ch-diag config`); scrubbed of citizen ids and accounts for staff without `crimson.identity`, and the lines that come later name the `ref` they were run for, so the page draws them under that player only |
 | `console` | Developer | What this resource printed in the server console |
 | `whois` | Identity | Who is behind an anonymous party |
 | `void` | Moderate | Void a contract and refund it |
@@ -1980,6 +1980,17 @@ boot recovery runs or failed, whether the database answers, how long ago each
 loop ran, every setting that needs attention, and, for a player, what each of
 the app's reads answers for them and why the app is or is not showing.
 
+**`/ch-diag config`** (or **Developer → Health → Check the config** in the
+panel) is the config check alone: every value out of range or invalid (what
+the start-up checks said at this start, and what they say of the settings in
+force now), every other script a switched-on feature needs and does not have
+(`Config.Integrations`), every staff ACE `group.admin` does not hold and the
+staff commands it may not run, and the risky combinations (debug output on,
+`memory` storage, `AllowModeSwitch` left on, the identity ACE the same as the
+staff one, the staff tools off, alerts to Discord with no webhook, the version
+check on with no address). Each is one plain line with the fix under it; it
+reads only and changes nothing.
+
 | Issue | Solution |
 |---|---|
 | A player cannot find the app | It is in the phone's App Store; each player downloads it. `Config.App.DefaultInstalled = true` puts it on every eligible phone. Barred jobs see only the whitelisted-job view. `/ch-diag <player>` says why it is not showing |
@@ -1989,6 +2000,7 @@ the app's reads answers for them and why the app is or is not showing.
 | A staff command typed in chat answers nothing | It answers in your F8 console |
 | *Not authorised* | Grant the ACE ([Permissions](#permissions)); the server checks on every request |
 | The console prints `N setting(s) need attention` | `/ch-diag` lists each in full, or set `Config.Debug = true` |
+| Not sure the config is right | `/ch-diag config` lists every value out of range, missing script, missing ACE and risky combination, each with its fix |
 | The console says nothing at all | `Config.Debug = false`: a sound start says nothing |
 | `BOOT RECOVERY FAILED` | Recovery raised (the text says why); the app and money writes stay closed until a restart that recovers. Fix the cause and restart |
 | *The server's records did not answer in time* | `mysql` was unreachable or held past `Config.Database.QueryTimeoutSeconds`; payments caught are settled once it answers. Wait for `/ch-diag` to say `database: answering` |
@@ -2016,6 +2028,7 @@ The audit log records every money movement and every refused attempt:
 
 **1.2.0, other scripts optional, first-start setup (newest)**
 
+- **Config check**: `/ch-diag config` (and Developer, Health, **Check the config**) lists every value out of range, missing script, missing ACE and risky combination, each with its fix. See Troubleshooting and /ch-diag.
 - **Version check** (`Config.VersionCheck`, off as shipped, no address): one HTTPS GET at start, sending nothing of this server's, and one console line when a newer version is out. See Updating.
 - **Translations**: the notices players get, police advisories, staff alerts and their Discord posts, everything the game shows, and every refusal on the phone and in the panel are read from language files (`locales/en.lua`, `locales/en.json`) in the language `Config.Locale` names; a missing key reads in English. See Updating, Escrow, and where the words live.
 
