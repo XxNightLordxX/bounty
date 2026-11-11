@@ -44,6 +44,11 @@ local appReady = false
 ---@param fn fun():any
 ---@return boolean ok
 ---@return any result
+--- The phone adapter answering now (client/adapters/phone/,
+--- Config.Integrations.Phone), or nil: indexed inside `phone`'s pcall, so
+--- none answering is a call that did not go through.
+local function Phone() return CrimsonIntegrations.get('phone') end
+
 local function phone(what, fn)
     local ok, result = pcall(fn)
     if ok then return true, result end
@@ -114,7 +119,7 @@ local function unregisterApp()
 
     for _, name in ipairs({ 'RemoveCustomApp', 'DeleteCustomApp', 'UninstallApp' }) do
         local called, ok = phone(name, function()
-            return exports['lb-phone'][name](exports['lb-phone'], 'crimson-hitman')
+            return Phone()[name]('crimson-hitman')
         end)
         if called and ok ~= false then
             appReady = false
@@ -138,7 +143,7 @@ local function registerApp()
     if accessAllowed ~= true then return true end
 
     local called, ok = phone('AddCustomApp', function()
-        return exports['lb-phone']:AddCustomApp({
+        return Phone().AddCustomApp({
             identifier  = 'crimson-hitman',
             -- What the player reads on their home screen. The identifier
             -- above is the key everything else is registered under and does
@@ -211,7 +216,10 @@ local registering = false
 
 local function attemptRegistration()
 
-    while GetResourceState('lb-phone') ~= 'started' do Wait(500) end
+    -- No phone at all (Config.Integrations.Phone = 'none'): there is no app
+    -- to register; the server said so in its one console line.
+    if CrimsonIntegrations.choice('phone') == 'none' then return end
+    while not CrimsonIntegrations.has('phone') do Wait(500) end
     Wait(1000)
 
     for attempt = 1, 10 do
@@ -359,6 +367,13 @@ local CLIENT_SETTINGS = {
     -- gave up on a photo the server would still take, or stayed open after
     -- the token had died.
     ['Completion.PhotoTokenLifetimeSeconds'] = 'number',
+    -- Which of the other scripts this game uses, for the kinds it calls
+    -- itself (client/adapters/, Config.Integrations).
+    ['Integrations.Target'] = 'string',
+    ['Integrations.Ambulance'] = 'string',
+    ['Integrations.Phone'] = 'string',
+    ['Integrations.Mugshot'] = 'string',
+    ['Integrations.Clothing'] = 'string',
 }
 
 RegisterNetEvent('crimson-hitman:settings', function(values)
@@ -487,7 +502,7 @@ RegisterNetEvent('crimson-hitman:result', function(result)
         -- itself goes no further. Once: a second copy finds nothing here.
         late[result.rid] = nil
         phone('SendCustomAppMessage', function()
-            exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
+            Phone().SendCustomAppMessage('crimson-hitman', {
                 type = 'push', reason = 'late',
             })
         end)
@@ -513,7 +528,7 @@ end)
 ---@param shown boolean
 function App.tellShown(shown)
     phone('SendCustomAppMessage', function()
-        exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
+        Phone().SendCustomAppMessage('crimson-hitman', {
             type = 'shown', shown = shown == true,
         })
     end)
@@ -535,7 +550,7 @@ RegisterNetEvent('crimson-hitman:push', function(data)
         if #ids == 0 then ids = nil end
     end
     phone('SendCustomAppMessage', function()
-        exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
+        Phone().SendCustomAppMessage('crimson-hitman', {
             type = 'push',
             reason = type(data) == 'table' and tostring(data.reason or '') or '',
             ids = ids,
@@ -557,7 +572,7 @@ end)
 --- no page to ask.
 RegisterNetEvent('crimson-hitman:askDiagnostics', function()
     phone('SendCustomAppMessage', function()
-        exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
+        Phone().SendCustomAppMessage('crimson-hitman', {
             type = 'diagnostics',
         })
     end)
@@ -567,13 +582,24 @@ end)
 --- player's phone through lb-phone's server export (Notify's raise: lb-phone
 --- not started, no number for them, an export that said no). Raised here as
 --- a popup, which lb-phone does not keep in the phone's list.
+---
+--- With no phone adapter answering (Config.Integrations.Phone), the game's
+--- own feed ticker shows it instead.
 RegisterNetEvent('crimson-hitman:notify', function(data)
     if type(data) ~= 'table' then return end
+    local title = tostring(data.title or 'Crimson-Hitman')
+    local content = tostring(data.content or '')
+    if not CrimsonIntegrations.has('phone') then
+        BeginTextCommandThefeedPost('STRING')
+        AddTextComponentSubstringPlayerName(('%s: %s'):format(title, content):sub(1, 99))
+        EndTextCommandThefeedPostTicker(false, true)
+        return
+    end
     phone('SendNotification', function()
-        exports['lb-phone']:SendNotification({
+        Phone().SendNotification({
             app = 'crimson-hitman',
-            title = tostring(data.title or 'Crimson-Hitman'),
-            content = tostring(data.content or ''),
+            title = title,
+            content = content,
         })
     end)
 end)
@@ -836,7 +862,7 @@ RegisterNUICallback('crimson:saveToPhotos', function(data, cb)
     end
     local url = shownPhoto.url
     local saved = phone('SaveToGallery', function()
-        exports['lb-phone']:SaveToGallery(url)
+        Phone().SaveToGallery(url)
     end)
     cb({ ok = saved, err = (not saved) and 'save_unavailable' or nil })
 end)
@@ -883,22 +909,11 @@ local function medical(state)
     return dead == true, lastStand == true, meta ~= nil
 end
 
---- The medical resources this build knows, for an operator config that
---- replaced the Completion section without naming them.
-local DEFAULT_PROVIDERS = { { resource = 'sc-ambulance' }, { resource = 'qbx_medical' } }
-
---- Whether a medical resource decides when this player is dead: one of the
---- configured death-state providers is running.
+--- Whether a medical resource decides when this player is dead: an
+--- ambulance adapter (client/adapters/ambulance/,
+--- Config.Integrations.Ambulance) is running.
 local function medicalRunning()
-    local providers = Config and Config.Completion and Config.Completion.DeathStateProviders
-    if type(providers) ~= 'table' or #providers == 0 then providers = DEFAULT_PROVIDERS end
-    for _, provider in ipairs(providers) do
-        if type(provider) == 'table' and provider.resource
-            and GetResourceState(provider.resource) == 'started' then
-            return true
-        end
-    end
-    return false
+    return CrimsonIntegrations.has('ambulance')
 end
 
 -- Two questions, kept apart. Dead: reported as a death, once. Down (dead or
@@ -1215,9 +1230,9 @@ function App.walkableCam(on)
     if on == walkable then return true end
     local called = phone(on and 'EnableWalkableCam' or 'DisableWalkableCam', function()
         if on then
-            exports['lb-phone']:EnableWalkableCam(false)
+            Phone().EnableWalkableCam(false)
         else
-            exports['lb-phone']:DisableWalkableCam()
+            Phone().DisableWalkableCam()
         end
     end)
     if called then walkable = on end
@@ -1411,7 +1426,7 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
         -- a build that reads it there, and a URL handed back as the return
         -- value is used too; `delivered` makes the first of them the only one.
         local opened, returned = phone('SetCameraComponent', function()
-            return exports['lb-phone']:SetCameraComponent({
+            return Phone().SetCameraComponent({
                 default = { type = 'Photo', flash = false, camera = 'rear' },
                 -- No flip to the selfie camera. The photo goes to the client,
                 -- and lb-phone's flip is one key (UP) away from its shutter

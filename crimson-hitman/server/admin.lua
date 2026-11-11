@@ -14,6 +14,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Admin = {}
 
@@ -2234,6 +2235,12 @@ function Admin.diagnose(source, subjectId, later, opts)
     say('--- crimson-hitman diagnosis ---')
     say(('storage: %s%s'):format(tostring(Config.Database.Mode), Config.Database.Mode == 'memory'
         and ' (testing only: contracts and escrow do not survive a restart)' or ''))
+    -- The other scripts, one line: what answers each kind (Config.Integrations).
+    local scripts = {}
+    for _, st in ipairs(Integrations.statusAll()) do
+        scripts[#scripts + 1] = ('%s=%s'):format(st.kind, st.active or ('off (' .. st.choice .. ')'))
+    end
+    say('other scripts: ' .. table.concat(scripts, ', '))
 
     -- Whether the app is open at all, first (W122): while boot recovery runs,
     -- or after it failed, every request is refused at a gate the handler
@@ -2670,12 +2677,11 @@ function Admin.diagnose(source, subjectId, later, opts)
                 .. 'refused too, for the same reason.')
         end
         local providers = {}
-        for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
-            providers[#providers + 1] = ('%s(%s)')
-                :format(provider.resource, tostring(GetResourceState(provider.resource)))
+        for _, seen in ipairs(Integrations.status('ambulance').detected) do
+            providers[#providers + 1] = ('%s(%s)'):format(seen.resource, tostring(GetResourceState(seen.resource)))
         end
-        say(('  providers tried: %s'):format(
-            #providers > 0 and table.concat(providers, ', ') or 'none configured'))
+        say(('  providers tried (Config.Integrations.Ambulance = %s): %s'):format(
+            Integrations.choice('ambulance'), #providers > 0 and table.concat(providers, ', ') or 'none'))
     end
 
     -- The gate ------------------------------------------------------------

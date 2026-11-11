@@ -34,6 +34,28 @@ ConfigDefaults.Database = {
 }
 
 -- ============================================================================
+--                               OTHER SCRIPTS
+-- ============================================================================
+-- Which of your other scripts this resource works with, one per kind
+-- (docs/dev/adapters.md). 'auto' uses the first one installed and started;
+-- a name uses that one only; 'none' turns off what needs it, said in one
+-- console line at start. Your own adapter goes in server/adapters/list.lua.
+
+ConfigDefaults.Integrations = {
+    Framework   = 'auto',  -- 'auto' | 'qbx_core' (required: no 'none')
+    Inventory   = 'auto',  -- 'auto' | 'ox_inventory' | 'none' (item rewards)
+    Target      = 'auto',  -- 'auto' | 'ox_target' | 'none' (third-eye options)
+    Dispatch    = 'auto',  -- 'auto' | 'sc-dispatch' | 'none' (police MDT)
+    Ambulance   = 'auto',  -- 'auto' | 'sc-ambulance' | 'qbx_medical' | 'none'
+    Banking     = 'auto',  -- 'auto' | 'Renewed-Banking' | 'none' (organisation funds)
+    Phone       = 'auto',  -- 'auto' | 'lb-phone' | 'none' (the phone app)
+    Keys        = 'auto',  -- 'auto' | 'qbx_vehiclekeys' | 'none' (disposal vehicle)
+    Mugshot     = 'auto',  -- 'auto' | 'MugShotBase64' | 'none' (target headshots)
+    Clothing    = 'auto',  -- 'auto' | a clothing adapter's name | 'none'
+    Progression = 'auto',  -- 'auto' | 'sc-blackmarket' | 'none' (trust per kill)
+}
+
+-- ============================================================================
 --                               RULES: TIMERS
 -- ============================================================================
 -- How long things last. The deadline runs only while the placer, the
@@ -439,7 +461,6 @@ ConfigDefaults.Record = {}  -- one block each below
 
 ConfigDefaults.Record.Progression = {
     Enabled             = true,              -- feed completions into the criminal progression
-    Resource            = 'sc-blackmarket',  -- the resource that keeps it
     TrustPerElimination = 10,                -- trust per kill
     TrustPerKidnapping  = 20,                -- trust per live handover
 }
@@ -709,7 +730,6 @@ ConfigDefaults.Organisation = {
     SetPrimaryOnHire   = true,                   -- an accepted invite or application makes it their primary job
     QbxBossFlag        = false,                  -- mark boss roles isboss in qbx_core too
     ExternalChanges    = 'adopt',                -- 'adopt' | 'revert' job changes made elsewhere
-    Funds              = 'auto',                 -- 'auto' (Renewed-Banking if installed) | 'internal', chosen once
     OfficeRadius       = 5.0,                    -- metres from the boss office that count
     DrawMetres         = 40.0,                   -- metres at which a spot is drawn
     ApplyAtSignupOnly  = true,                   -- applications only at a sign-up spot
@@ -867,10 +887,6 @@ ConfigDefaults.Completion.MaxWeaponRange        = 425.0                 -- metre
 ConfigDefaults.Completion.MedicJobs             = { ambulance = true }  -- as sc-ambulance's RequireEMS
 ConfigDefaults.Completion.DefibItem             = 'defibrillator'       -- as sc-ambulance's Defib.Item
 ConfigDefaults.Completion.DefibRange            = 3.0                   -- as sc-ambulance's Defib.Distance
-ConfigDefaults.Completion.DeathStateProviders   = { -- medical resources asked who is dead, in order
-    { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
-    { resource = 'qbx_medical' },  -- no server exports: read from the QBox metadata it writes
-}
 
 ConfigDefaults.Mugshot.MinRefreshMinutes = 5      -- least time between two headshots of one target
 ConfigDefaults.Mugshot.RenderTimeoutMs   = 8000   -- ms a headshot may take

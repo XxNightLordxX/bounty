@@ -860,6 +860,15 @@ do
     end
     table.sort(sources)
 
+    -- An adapter's functions (server/adapters/, client/adapters/) are
+    -- called by kind, not by module name: Integrations.call(kind, 'Name')
+    -- or Inventory().Name(...), outside the adapters themselves.
+    local outsideAdapters = {}
+    for _, path in ipairs(sources) do
+        if not path:find('/adapters/', 1, true) then outsideAdapters[#outsideAdapters + 1] = code(read(path) or '') end
+    end
+    outsideAdapters = table.concat(outsideAdapters, '\n')
+
     for _, path in ipairs(sources) do
         local src = code(read(path) or '')
         for module, name in src:gmatch('\nfunction%s+([%w_]+)%.([%w_]+)%s*%(') do
@@ -871,6 +880,10 @@ do
             local defs = countDefs(resource, module, name)
             -- Dispatched by name rather than called: App.handlers[name].
             local dynamic = resource:find("%['" .. name .. "'%]") ~= nil
+            if path:find('/adapters/', 1, true) and (outsideAdapters:find("'" .. name .. "'", 1, true)
+                or outsideAdapters:find('[%w_%)]%.' .. name .. '%f[^%w_]')) then
+                dynamic = true
+            end
             -- Or run from a cleanup list (Lifecycle.run, server/bridges.lua):
             -- { 'death', 'clearPlayer' } names Death.clearPlayer.
             if not dynamic then
@@ -1135,13 +1148,24 @@ do
         for _, path in ipairs(walk(dir)) do scanned[#scanned + 1] = path end
     end
 
+    -- The adapters themselves call the export bare: every caller of an
+    -- adapter guards the call instead (pcall, the client's `phone`, or
+    -- Integrations.call), and the callers are what this walks, as
+    -- Phone().<export> and renderer.<export> below.
+    local CALLERS = { 'Phone%(%)%.', 'renderer%.GetMugShotBase64' }
     for _, path in ipairs(scanned) do
         local src = read(path) or ''
         local line = 0
+        local adapter = path:find('/adapters/', 1, true) ~= nil
         for text in src:gmatch('[^\n]*') do
             line = line + 1
-            for _, resource in ipairs(OPTIONAL) do
-                if text:find("exports%['" .. resource .. "'%]") and not text:match('^%s*%-%-') then
+            local patterns = {}
+            if not adapter then
+                for _, resource in ipairs(OPTIONAL) do patterns[#patterns + 1] = "exports%['" .. resource .. "'%]" end
+                for _, caller in ipairs(CALLERS) do patterns[#patterns + 1] = caller end
+            end
+            for _, pattern in ipairs(patterns) do
+                if text:find(pattern) and not text:match('^%s*%-%-') then
                     -- Guarded either by the file-local helper on the line
                     -- above, or by a pcall in the same statement.
                     local before = src:sub(1, src:find(text, 1, true) or 1)

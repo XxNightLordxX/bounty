@@ -29,7 +29,8 @@ local function serverFiles()
 end
 
 local SHIPPED = {
-    Progression = { Enabled = true, Resource = 'sc-blackmarket', TrustPerElimination = 10, TrustPerKidnapping = 20 },
+    -- Resource left in step 5a for Config.Integrations.Progression (the adapter).
+    Progression = { Enabled = true, TrustPerElimination = 10, TrustPerKidnapping = 20 },
     Reputation = { Enabled = false, BaseFactor = 0.5, ThreadBonus = 0.2, MeetingBonus = 0.2, HandoverBonus = 0.3,
         WitnessFreeBonus = 0.2, WitnessRadius = 50.0, MaxFactor = 1.5 },
     Tiers = { Enabled = false, CompletionsPerLevel = 5, Tiers = { 'Professional, 50000, 2', 'Elite, 150000, 4' } },

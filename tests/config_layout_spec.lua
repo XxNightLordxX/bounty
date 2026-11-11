@@ -311,6 +311,30 @@ local function beforeRecord(config)
     return config
 end
 
+--- Step 5a merged three settings into Config.Integrations (the other
+--- scripts, one adapter per kind): Completion.DeathStateProviders became
+--- Integrations.Ambulance, Organisation.Funds Integrations.Banking and
+--- Record.Progression.Resource Integrations.Progression, every one still
+--- 'auto' and picking what it picked. Put back as they were, so the
+--- comparisons with older files still see every value; run after
+--- beforeRecord, which moves Record.Progression back to Progression.
+local function beforeIntegrations(config)
+    local into = config.Integrations
+    if type(into) ~= 'table' then return config end
+    if into.Ambulance == 'auto' and type(config.Completion) == 'table' then
+        config.Completion.DeathStateProviders = {
+            { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
+            { resource = 'qbx_medical' },
+        }
+    end
+    if into.Banking == 'auto' and type(config.Organisation) == 'table' then config.Organisation.Funds = 'auto' end
+    if into.Progression == 'auto' and type(config.Progression) == 'table' then
+        config.Progression.Resource = 'sc-blackmarket'
+    end
+    config.Integrations = nil
+    return config
+end
+
 local function file(path)
     local handle = assert(io.open(path, 'r'))
     local text = handle:read('a')
@@ -369,7 +393,7 @@ describe('the configuration as one short file', function()
     it('keeps every setting with the value it had, but the three meant to change', function()
         if #old == 0 then error('no history to compare with', 0) end
         local was = run(old, 'Config', 'config.lua@' .. BEFORE:sub(1, 7))
-        local now = beforeRecord(beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')))
+        local now = beforeIntegrations(beforeRecord(beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua'))))
         local seen = {}
         for path, pair in pairs(differences(was, now)) do
             if ADDED[path] ~= nil then
@@ -407,7 +431,7 @@ describe('the configuration as one short file', function()
         if pipe then pipe:close() end
         truthy(#text > 10000, 'git show ' .. REORDERED_FROM .. ' needs the repository history')
         local was = run(text, 'Config', 'config.lua@' .. REORDERED_FROM)
-        local now = beforeRecord(beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')))
+        local now = beforeIntegrations(beforeRecord(beforeIntel(run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua'))))
         local off = {}
         for path, pair in pairs(differences(was, now)) do
             -- And settings added since, each new and shipped as ADDED says.
@@ -532,12 +556,16 @@ describe('the configuration as one short file', function()
         -- added.
         -- And one Record section (step 3j): its header and its own
         -- one-line table, every block it took in moved, not added.
-        truthy(lines < 888, 'config.lua is ' .. lines .. ' lines')
+        -- And the Other scripts section (step 5a): its header, its prose
+        -- and its eleven-line table; the three settings it took in
+        -- (DeathStateProviders' four lines, Funds, Progression's Resource)
+        -- are gone.
+        truthy(lines < 904, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and
         -- Improvements (ui/admin.js featureRank).
-        for _, title in ipairs({ 'DEBUG AND STORAGE', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
+        for _, title in ipairs({ 'DEBUG AND STORAGE', 'OTHER SCRIPTS', 'RULES: TIMERS', 'RULES: REWARDS AND MONEY',
             'RULES: LIMITS', 'RULES: TARGETING', 'FEATURES: CORE', 'FEATURES: ANONYMITY',
             'FEATURES: INTEL', 'FEATURES: RECORD', 'FEATURES: ADVISORY', 'STAFF AND PERMISSIONS',
             'ROLEPLAY', 'IMPROVEMENTS', 'ORGANISATION', 'ADVANCED AND DEVELOPER' }) do

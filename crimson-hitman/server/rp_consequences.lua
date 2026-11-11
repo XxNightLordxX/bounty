@@ -29,12 +29,12 @@
 --- MaxHoldMinutes after the kill.
 
 local Util = CrimsonBoot.requireShared('util')
-local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
 --- The named-area parser both roleplay area lists share.
 local Places = CrimsonBoot.require('server.rp_places')
 local Police = CrimsonBoot.require('server.police')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local RpConsequences = {}
 
@@ -255,7 +255,7 @@ local function witnessAlert(contract, hitmanCid, slot)
     local told = Police.tell(title, said, function(actor) return parties[actor.cid] end)
 
     local dispatched = false
-    if Bridge.started('sc-dispatch') then
+    if Integrations.has('dispatch') then
         local coords
         if cfg.SendCoords == true then
             local fuzz = math.max(0, tonumber(cfg.FuzzMeters) or 0)

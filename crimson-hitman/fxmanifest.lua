@@ -30,6 +30,11 @@ client_scripts {
     -- The one way to the console (CrimsonLog): with Config.Debug off the
     -- client prints nothing to F8 but a staff command's own answer.
     'shared/log.lua',
+    -- The other scripts this resource works with (CrimsonIntegrations), and
+    -- the client's adapters for them, one file per kind and name
+    -- (docs/dev/adapters.md), before anything that calls one.
+    'shared/integrations.lua',
+    'client/adapters/*/*.lua',
     -- The map markers for each step of a contract (CrimsonMarkers), before
     -- client/main.lua, which draws the tip and the meeting point with them.
     'client/missionsteps.lua',
@@ -89,6 +94,10 @@ files {
     'ui/admin.js',
 }
 
+-- Only the framework. Every other script is optional, behind an adapter
+-- (server/adapters/, client/adapters/, Config.Integrations): one that is
+-- missing turns off what needs it, said in one console line at start.
+--
 -- Not lb-phone. FiveM stops every resource that depends on one being
 -- restarted and never starts them again, so `restart lb-phone` after a config
 -- edit took this app off every phone, and stopped the handover countdowns,
@@ -97,16 +106,11 @@ files {
 -- either: the client waits for lb-phone and adds the app again whenever it
 -- starts (client/main.lua), and every server call into it is guarded.
 --
--- qbx_core and ox_inventory stay: money and items cannot be escrowed or
--- paid without them. Restarting either (or oxmysql) still stops this
--- resource; `ensure crimson-hitman` afterwards (README, Updating).
+-- Not ox_inventory: without it, item, weapon and dirty-money rewards are
+-- off and cash and bank rewards work. qbx_core stays: players, jobs and
+-- money are read through it, and its playerdata module is loaded above.
+-- Restarting it (or oxmysql) still stops this resource; `ensure
+-- crimson-hitman` afterwards (README, Updating).
 dependencies {
     'qbx_core',
-    'ox_inventory',
 }
-
---- Optional integrations, all detected at runtime and skipped when absent:
----   sc-ambulance     server-side death and last-stand state
----   sc-dispatch      law enforcement threat advisories in the MDT
----   sc-blackmarket   criminal progression on a completed contract
----   MugShotBase64    live target headshots

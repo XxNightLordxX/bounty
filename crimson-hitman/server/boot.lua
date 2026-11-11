@@ -91,7 +91,9 @@ end
 -- Waiting for the resources this one is built on
 --------------------------------------------------------------------------
 
---- What this resource cannot start without, and what each is for.
+--- What this resource cannot start without, and what each is for. Only the
+--- framework: every other script is optional, behind an adapter
+--- (server/adapters/, Config.Integrations).
 ---
 --- The message matters as much as the wait: 'qbx_core' is a resource NAME,
 --- and a server running a fork or a rename has a framework that works
@@ -99,8 +101,6 @@ end
 local DEPENDENCIES = {
     { name = 'qbx_core',
       why = 'players, jobs and money are read through it' },
-    { name = 'ox_inventory',
-      why = 'items and weapons cannot be escrowed without it' },
 }
 
 --- Seconds of quiet before the first report. A server coming up has
@@ -195,7 +195,7 @@ function CrimsonBoot.awaitDependencies(limit)
 end
 
 CreateThread(function()
-    -- Wait for the framework and inventory before wiring anything up, so a
+    -- Wait for the framework before wiring anything up, so a
     -- slow start does not produce a half-initialised resource.
     if not CrimsonBoot.awaitDependencies() then return end
 

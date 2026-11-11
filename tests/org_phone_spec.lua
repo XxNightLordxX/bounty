@@ -167,7 +167,7 @@ describe('hostile payloads to every request', function()
 
     it('answers each from a boss holding every power, never raising, never moving money on junk', function()
         local s, _, org = world({ configure = function()
-            Config.Organisation.Funds = 'internal'
+            Config.Integrations.Banking = 'none'
             Config.Organisation.Codenames = true
             Config.Organisation.Payroll = true
         end })

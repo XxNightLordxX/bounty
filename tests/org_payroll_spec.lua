@@ -21,7 +21,7 @@ local DAY = 86400
 local function world(opts)
     opts = opts or {}
     local s, f = W.world({ configure = function(stack, fx)
-        Config.Organisation.Funds = 'internal'
+        Config.Integrations.Banking = 'none'
         if opts.on ~= false then Config.Organisation.Payroll = true end
         if opts.configure then opts.configure(stack, fx) end
     end })
@@ -280,7 +280,7 @@ describe('payroll across a restart', function()
             W.player(13, 'RECRUIT1')
             Config.Organisation.Enabled = true
             Config.Organisation.Payroll = true
-            Config.Organisation.Funds = 'internal'
+            Config.Integrations.Banking = 'none'
             local modules = require('server.main').start()
             local org = modules.org
             local STAFF = { staff = true, cid = 'ADMIN001' }

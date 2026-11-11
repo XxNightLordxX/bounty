@@ -52,6 +52,10 @@ local Text = CrimsonBoot.requireShared('text')
 local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Registry = CrimsonBoot.require('server.places')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Keys() return Integrations.get('keys') end
 
 local Disposal = {}
 
@@ -330,11 +334,13 @@ Disposal.world = {
         SetVehicleNumberPlateText(vehicle, plate)
         -- Marked, so another resource can tell it is not a player's.
         Entity(vehicle).state:set('crimsonDisposal', true, true)
-        -- Locked, the keys the hitman's alone. Without qbx_vehiclekeys it
-        -- cannot be opened by keys, so it is left unlocked (and said).
-        if GetResourceState('qbx_vehiclekeys') == 'started' then
+        -- Locked, the keys the hitman's alone. Without a keys adapter
+        -- (Config.Integrations.Keys) it cannot be opened by keys, so it is
+        -- left unlocked (and said).
+        local keys = Keys()
+        if keys then
             SetVehicleDoorsLocked(vehicle, 2)
-            exports.qbx_vehiclekeys:GiveKeys(hitmanSource, vehicle)
+            keys.GiveKeys(hitmanSource, vehicle)
         else
             SetVehicleDoorsLocked(vehicle, 1)
             return false

@@ -679,6 +679,9 @@ local DEFAULT_RESOURCE_STATES = {
     ['sc-dispatch'] = 'started',
     ['MugShotBase64'] = 'started',
     ['sc-blackmarket'] = 'started',
+    -- The client's target (client/adapters/target/): on the owner's server,
+    -- and so on every start here, or the start says it is missing.
+    ['ox_target'] = 'started',
 }
 
 --- lb-phone's configuration, as GetConfig returns it: the media allowlist

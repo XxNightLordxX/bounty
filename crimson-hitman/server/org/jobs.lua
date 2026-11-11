@@ -28,7 +28,10 @@
 --- and lb-phone's Services boss tab check little beyond it.
 
 local Log = CrimsonBoot.requireShared('log')
-local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Framework() return Integrations.get('framework') end
 
 local Jobs = {}
 
@@ -59,14 +62,17 @@ function Jobs.applying(cid)
     return (applying[cid] or 0) > 0
 end
 
---- Call a qbx_core export (Bridge.call: guarded, a raise said once a
---- minute), with the citizen id marked as ours while it runs.
+--- Call one of the framework adapter's job functions (Integrations.call:
+--- guarded, a raise said once a minute), only while its resource is
+--- started, with the citizen id marked as ours while it runs.
 ---@return boolean ran
 ---@return any ok
 ---@return any err
 local function core(cid, name, ...)
     if cid then applying[cid] = (applying[cid] or 0) + 1 end
-    local ran, ok, err = Bridge.call('qbx_core', name, ...)
+    local adapter = Framework()
+    local ran, ok, err = false, 'not started', nil
+    if adapter and Integrations.up(adapter) then ran, ok, err = Integrations.call('framework', name, ...) end
     if cid then
         applying[cid] = (applying[cid] or 1) - 1
         if applying[cid] <= 0 then applying[cid] = nil end
@@ -163,7 +169,7 @@ end
 ---@return integer|nil grade
 ---@return boolean primary
 function Jobs.heldBy(org, src)
-    local ok, player = pcall(function() return exports.qbx_core:GetPlayer(src) end)
+    local ok, player = pcall(function() return Framework().GetPlayer(src) end)
     local data = ok and type(player) == 'table' and player.PlayerData or nil
     if type(data) ~= 'table' then return nil, false end
     local jobs = type(data.jobs) == 'table' and data.jobs or {}
@@ -227,7 +233,8 @@ end
 --- this registered the organisation, its own bank screen raises for every
 --- member who opens it until it restarts.
 function Jobs.checkStartOrder(org)
-    if GetResourceState('Renewed-Banking') ~= 'started' then return end
+    local bank = Integrations.get('banking')
+    if not bank or bank.resource ~= 'Renewed-Banking' then return end
     sayOnce('rbOrder:' .. org.job, ('warning: Renewed-Banking started before the %s job was registered: '
         .. 'its bank screen does not know the job until it restarts. Ensure crimson-hitman before '
         .. 'Renewed-Banking in server.cfg, or restart Renewed-Banking once; the organisation\'s funds '

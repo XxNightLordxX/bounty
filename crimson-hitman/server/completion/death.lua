@@ -11,6 +11,11 @@ local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Framework() return Integrations.get('framework') end
+local function Inventory() return Integrations.get('inventory') end
 
 local Death = {}
 
@@ -831,7 +836,7 @@ local function inCity(cid)
     if not Death.sourceOf then return Identity.sourceOf(cid) end
     local src = Death.sourceOf(cid)
     if src then return src end
-    local ok, player = pcall(function() return exports.qbx_core:GetPlayerByCitizenId(cid) end)
+    local ok, player = pcall(function() return Framework().GetPlayerByCitizenId(cid) end)
     local record = ok and type(player) == 'table' and player.PlayerData or nil
     local found = record and record.citizenid == cid and tonumber(record.source) or nil
     return (found and found > 0) and found or nil
@@ -1085,7 +1090,7 @@ function Death.noteDefib(medicSource, targetSource)
 
     local device = (Config.Completion and Config.Completion.DefibItem) or 'defibrillator'
     local okItem, held = pcall(function()
-        return exports.ox_inventory:GetItem(medicSource, device, nil, true)
+        return Inventory().GetItem(medicSource, device, nil, true)
     end)
     if not okItem or (tonumber(held) or 0) < 1 then return false end
 

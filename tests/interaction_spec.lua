@@ -1034,46 +1034,48 @@ describe('integration report', function()
         return out
     end
 
-    it('covers every optional resource the config names', function()
-        local s = newStack()
-        local found = named(report().integrations())
+    local function kinds()
+        local out = {}
+        for _, st in ipairs(require('server.adapters.init').statusAll()) do out[st.kind] = st end
+        return out
+    end
 
-        truthy(found['sc-blackmarket'], 'the progression resource')
-        truthy(found['sc-dispatch'], 'the dispatch resource')
-        truthy(found['sc-ambulance'], 'a death-state provider')
-        truthy(found['MugShotBase64'], 'the headshot renderer')
+    it('covers every kind of other script, by the adapter that answers it', function()
+        newStack()
+        local found = kinds()
+        eq(found.progression.active, 'sc-blackmarket', 'the progression resource')
+        eq(found.dispatch.active, 'sc-dispatch', 'the dispatch resource')
+        eq(found.ambulance.active, 'sc-ambulance', 'a death-state provider')
+        eq(found.mugshot.active, 'MugShotBase64', 'the headshot renderer')
     end)
 
-    it('follows a renamed resource rather than a hard-coded name', function()
-        local s = newStack()
-        withConfig({ { Config.Record.Progression, 'Resource', 'my-own-blackmarket' } }, function()
+    it('follows a provider export the config names rather than a hard-coded name', function()
+        newStack()
+        withConfig({ { Config.Kidnap, 'RestraintProvider', 'my-own-ropes' } }, function()
             local found = named(report().integrations())
-            truthy(found['my-own-blackmarket'], 'the report reads the config')
-            falsy(found['sc-blackmarket'], 'and not a name baked into it')
+            truthy(found['my-own-ropes'], 'the report reads the config')
         end)
     end)
 
-    it('names nothing when the features that need it are switched off', function()
-        local s = newStack()
+    it('only needs what a feature that is switched on uses', function()
+        newStack()
         withConfig({
             { Config.Record.Progression, 'Enabled', false },
             { Config.Advisory, 'UseDispatch', false },
         }, function()
-            local found = named(report().integrations())
-            falsy(found['sc-blackmarket'], 'progression is off')
-            falsy(found['sc-dispatch'], 'dispatch advisories are off')
+            local found = kinds()
+            falsy(found.progression.needed, 'progression is off')
+            falsy(found.dispatch.needed, 'dispatch advisories are off')
         end)
+        local found = kinds()
+        truthy(found.progression.needed and found.dispatch.needed, 'and needed while on')
     end)
 
-    it('marks a resource the operator asked for as expected', function()
-        local s = newStack()
-        local found = named(report().integrations())
-        -- sc-blackmarket is named directly in the config, so its absence is
-        -- a misconfiguration worth warning about.
-        truthy(found['sc-blackmarket'].configured, 'a configured resource')
-        -- The death-state list offers alternatives; only one need be present,
-        -- so neither is individually expected.
-        falsy(found['sc-ambulance'].configured, 'one of several alternatives')
+    it('marks a provider export the operator asked for as expected', function()
+        newStack()
+        withConfig({ { Config.Kidnap, 'RestraintProvider', 'my-own-ropes' } }, function()
+            truthy(named(report().integrations())['my-own-ropes'].configured, 'a configured resource')
+        end)
     end)
 
     it('reports without throwing whether or not anything is installed', function()
@@ -1091,7 +1093,6 @@ describe('integration report', function()
         truthy(main.reportIntegrations(), 'everything installed')
     end)
 end)
-
 
 --- A queued buyout that loses a race. LOCKED means the contract is mid-claim,
 --- not that it resolved: refunding there made the target buy out again for a

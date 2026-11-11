@@ -294,17 +294,13 @@ end)
 --------------------------------------------------------------------------
 
 describe('round 3 F2: the shipped death providers ask no client export on the server', function()
-    it('ships qbx_medical listed for the client, with no server exports named', function()
-        local entry
-        for _, p in ipairs(Config.Completion.DeathStateProviders) do
-            if p.resource == 'qbx_medical' then entry = p end
-        end
-        truthy(entry, 'still listed: the client reads the list')
-        eq(entry.dead, nil, 'IsDead is a client export')
-        eq(entry.lastStand, nil, 'IsLaststand is a client export')
-        for _, p in ipairs(ConfigDefaults.Completion.DeathStateProviders) do
-            if p.resource == 'qbx_medical' then eq(p.dead, nil, 'the defaults agree') end
-        end
+    it('ships qbx_medical as an ambulance adapter with no server-side death state', function()
+        newStack()
+        local Integrations = require('server.adapters.init')
+        local adapter = Integrations.adapter('ambulance', 'qbx_medical')
+        truthy(adapter, 'still listed: the client reads it')
+        eq(adapter.deathState, nil, 'IsDead and IsLaststand are client exports')
+        truthy(Integrations.adapter('ambulance', 'sc-ambulance').deathState, 'sc-ambulance is asked')
     end)
 
     it('never looks an export up on qbx_medical, and answers from the metadata', function()

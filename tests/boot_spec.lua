@@ -1074,14 +1074,14 @@ describe('the loader and the wait in front of it', function()
         -- Everything is missing for a moment on any start, and saying so
         -- immediately is noise that teaches operators to ignore the log.
         local boot = loadBoot()
-        Natives.resourceStates['ox_inventory'] = 'missing'
+        Natives.resourceStates['qbx_core'] = 'missing'
         local told = said(function() boot.awaitDependencies(5) end)
         eq(told, '', 'the first few seconds are quiet: ' .. told)
     end)
 
     it('keeps saying it, for somebody who looks at the console late', function()
         local boot = loadBoot()
-        Natives.resourceStates['ox_inventory'] = 'stopped'
+        Natives.resourceStates['qbx_core'] = 'stopped'
         local told = said(function() boot.awaitDependencies(120) end)
 
         local reports = 0
@@ -1093,10 +1093,17 @@ describe('the loader and the wait in front of it', function()
 
     it('reports the state it actually found, not just the name', function()
         local boot = loadBoot()
-        Natives.resourceStates['ox_inventory'] = 'stopped'
+        Natives.resourceStates['qbx_core'] = 'stopped'
         local told = said(function() boot.awaitDependencies(30) end)
-        truthy(told:find('ox_inventory is stopped', 1, true),
+        truthy(told:find('qbx_core is stopped', 1, true),
             'stopped and missing are different problems: ' .. told)
+    end)
+
+    it('waits for the framework only: an inventory is optional (step 5a)', function()
+        local boot = loadBoot()
+        Natives.resourceStates['ox_inventory'] = 'missing'
+        truthy(boot.awaitDependencies(1), 'started without ox_inventory')
+        eq(#boot.missingDependencies(), 0)
     end)
 
     it('says so when a long wait finally ends', function()
@@ -1419,22 +1426,19 @@ describe('the photo retention on the tick', function()
 end)
 
 describe('a medical resource without the server exports asked for', function()
-    --- qbx_medical's IsDead and IsLaststand are client exports. Asked on the
-    --- server, FiveM raises "No such export" and leaves a callback behind,
-    --- every time. It ships listed without them now (round 3, F2), so this
-    --- is an operator's entry that still names them.
+    --- A build of sc-ambulance without IsDead and IsLaststand (or another
+    --- medical resource's adapter asking for exports that are not there):
+    --- FiveM raises "No such export" and leaves a callback behind, every
+    --- time. Asked once, then the metadata answers until it restarts.
     local function qbxMedical(modules)
-        Config.Completion.DeathStateProviders = {
-            { resource = 'qbx_medical', dead = 'IsDead', lastStand = 'IsLaststand' },
-        }
-        Natives.resourceStates['sc-ambulance'] = 'missing'
-        Natives.resourceStates['qbx_medical'] = 'started'
+        Config.Integrations.Ambulance = 'sc-ambulance'
+        Natives.resourceStates['sc-ambulance'] = 'started'
         local looked, real = 0, _G.exports
         _G.exports = setmetatable({}, { __index = function(_, resource)
-            if resource ~= 'qbx_medical' then return real[resource] end
+            if resource ~= 'sc-ambulance' then return real[resource] end
             return setmetatable({}, { __index = function(_, method)
                 looked = looked + 1
-                error('No such export ' .. method .. ' in resource qbx_medical', 2)
+                error('No such export ' .. method .. ' in resource sc-ambulance', 2)
             end })
         end })
         return function() return looked end, function() _G.exports = real end
@@ -1454,7 +1458,7 @@ describe('a medical resource without the server exports asked for', function()
             end
             truthy(looked() <= 2, ('one failed lookup, not one a read: %d'):format(looked()))
             local before = looked()
-            Env.handlers['onResourceStart']('qbx_medical')
+            Env.handlers['onResourceStart']('sc-ambulance')
             modules.identity.deathState(2)
             truthy(looked() > before, 'a restart may have brought the exports')
             local out = table.concat(modules.admin.diagnose(0, 2), '\n')

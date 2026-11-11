@@ -10,6 +10,10 @@ local Holds = CrimsonBoot.require('server.holds')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Inventory() return Integrations.get('inventory') end
 
 local App = {}
 
@@ -243,7 +247,11 @@ end
 ---@return boolean
 local function sourceEnabled(name)
     local source = Config.Sources and Config.Sources[name]
-    return (source and source.enabled) == true
+    if (source and source.enabled) ~= true then return false end
+    -- Items, weapons and dirty money are the inventory's: with no inventory
+    -- adapter answering (Config.Integrations.Inventory) they are off.
+    if name ~= 'cash' and name ~= 'bank' and not Integrations.has('inventory') then return false end
+    return true
 end
 
 --------------------------------------------------------------------------
@@ -1069,7 +1077,8 @@ function App.register()
     -- What the creator can actually put up, read server-side so the builder
     -- never displays something they do not hold.
     handler('rewardOptions', 'wallet', function(actor)
-        local dirty = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
+        local okDirty, dirty = Integrations.call('inventory', 'GetItem', actor.source, Config.Sources.dirty.item, nil, true)
+        dirty = okDirty and tonumber(dirty) or 0
 
         -- Read once and shared: items and weapons come out of the same
         -- inventory, and asking for it twice per request is one round trip
@@ -2082,10 +2091,10 @@ App.inventorySource = nil
 --- the suite, and one that is not does not belong.
 local INVENTORY_READS = {
     { name = 'GetInventoryItems', read = function(src)
-        return exports.ox_inventory:GetInventoryItems(src)
+        return Inventory().GetInventoryItems(src)
     end },
     { name = 'GetInventory.items', read = function(src)
-        local inv = exports.ox_inventory:GetInventory(src)
+        local inv = Inventory().GetInventory(src)
         return inv and inv.items or nil
     end },
 }

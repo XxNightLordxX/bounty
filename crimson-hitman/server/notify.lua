@@ -7,11 +7,11 @@
 local Notify = {}
 
 local Util = CrimsonBoot.requireShared('util')
-local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
 local Police = CrimsonBoot.require('server.police')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Identity
 local Storage
@@ -141,7 +141,7 @@ end
 --- a notice saved on it would tell whoever holds it what this player is
 --- part of.
 local function equippedNumber(src)
-    local ok, number = Bridge.call('lb-phone', 'GetEquippedPhoneNumber', src)
+    local ok, number = Integrations.call('phone', 'GetEquippedPhoneNumber', src)
     if not ok then return nil, false end
     if type(number) ~= 'string' and type(number) ~= 'number' then return nil, true end
     number = tostring(number)
@@ -178,7 +178,7 @@ local PHONE_WAIT_MS, PHONE_WAITS = 2000, 60
 local function raise(actor, cid, title, content)
     local src = actor.source
     Citizen.CreateThreadNow(function()
-        if Bridge.started('lb-phone') then
+        if Integrations.has('phone') then
             local number, asked = equippedNumber(src)
             for _ = 1, PHONE_WAITS do
                 if number or not asked then break end
@@ -190,7 +190,7 @@ local function raise(actor, cid, title, content)
                 number, asked = equippedNumber(src)
             end
             if number then
-                local ok, id = Bridge.call('lb-phone', 'SendNotification', number, {
+                local ok, id = Integrations.call('phone', 'SendNotification', number, {
                     app = 'crimson-hitman', title = title, content = content,
                 })
                 if ok and id ~= false then return end
@@ -1836,7 +1836,7 @@ function Notify.clearContract(contractId, contract)
     -- or UseDispatch off while one was up left it there for good. Clearing
     -- an id never filed does nothing. In a thread of its own: the export
     -- waits on the database, and this is the end of a settlement.
-    if contract and contract.target_protected and Bridge.started('sc-dispatch') then
+    if contract and contract.target_protected and Integrations.has('dispatch') then
         for _, stage in ipairs({ 'posted', 'accepted', 'tip' }) do
             local uid = 'ch-' .. contractId .. '-' .. stage
             CreateThread(function() Police.clear(uid) end)

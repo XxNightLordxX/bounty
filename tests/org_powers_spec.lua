@@ -378,7 +378,7 @@ end)
 describe('every phone request, through its net event', function()
     it('answers ok to a boss holding the power, at the office, for each one', function()
         local s, f, org = world({ configure = function()
-            Config.Organisation.Funds = 'internal'
+            Config.Integrations.Banking = 'none'
             Config.Organisation.Codenames = true
             Config.Organisation.Payroll = true
         end })

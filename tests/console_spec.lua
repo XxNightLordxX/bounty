@@ -157,7 +157,7 @@ describe('a quiet console, with Config.Debug off as shipped', function()
         truthy(report:find('settings that need attention: 1', 1, true), report)
         truthy(report:find('-> Targeting.AllowNearby is on', 1, true), report)
         -- And what the start said, which a quiet console left out.
-        truthy(report:find('· integration sc-dispatch', 1, true), report)
+        truthy(report:find('· integration dispatch: sc-dispatch', 1, true), report)
         truthy(report:find('· started in memory mode', 1, true), report)
         local panelOverview = s.panel.handle
         truthy(panelOverview, 'the panel')
@@ -518,7 +518,7 @@ end)
 describe('the console with Config.Debug on', function()
     it('says what a start says, as it did before', function()
         boot('memory', function() Config.Debug = true end)
-        for _, line in ipairs({ 'integration sc-dispatch', 'target browsing:', 'started in memory mode' }) do
+        for _, line in ipairs({ 'integration dispatch: sc-dispatch', 'target browsing:', 'started in memory mode' }) do
             truthy(console():find('[crimson-hitman] ' .. line, 1, true), line .. ': ' .. console())
         end
     end)

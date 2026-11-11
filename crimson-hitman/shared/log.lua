@@ -182,6 +182,16 @@ function Log.always(text)
     toAlerts('always', text)
 end
 
+--- Printed whatever Debug says and kept for the diagnosis, but neither a
+--- problem nor an alert: a feature that is off because another script is
+--- not there, said once (Integrations.report).
+---@param text string
+function Log.notice(text)
+    text = Log.plain(text)
+    emit(text)
+    keep(text, recent, Log.KEPT)
+end
+
 --- Say how many raises under `name` were held back since the last line
 --- printed for it, if any were.
 local function sayHeld(name)

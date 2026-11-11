@@ -38,7 +38,7 @@ local targetUp = Npc.targetUp
 local function removePed(id)
     local ped = Peds[id]
     if ped and DoesEntityExist(ped) and targetUp() then
-        pcall(function() exports.ox_target:removeLocalEntity(ped) end)
+        pcall(function() CrimsonNpc.target().removeLocalEntity(ped) end)
     end
     Npc.remove(ped)
     Peds[id] = nil
@@ -48,7 +48,7 @@ end
 local function clearAll()
     for id in pairs(Peds) do removePed(id) end
     for id, zone in pairs(Zones) do
-        if targetUp() then pcall(function() exports.ox_target:removeZone(zone, true) end) end
+        if targetUp() then pcall(function() CrimsonNpc.target().removeZone(zone, true) end) end
         Zones[id] = nil
     end
     CrimsonMarkers.removePrefix('org:')
@@ -67,7 +67,7 @@ end
 local function addZone(spot)
     if not targetUp() then return end
     local ok, zone = pcall(function()
-        return exports.ox_target:addSphereZone({
+        return CrimsonNpc.target().addSphereZone({
             coords = spot.at, radius = spot.radius, debug = false, options = { option(spot) },
         })
     end)
@@ -86,7 +86,7 @@ local function spawn(spot)
     if not ped then return end
     Peds[spot.id] = ped
     if targetUp() then
-        pcall(function() exports.ox_target:addLocalEntity(ped, { option(spot) }) end)
+        pcall(function() CrimsonNpc.target().addLocalEntity(ped, { option(spot) }) end)
     end
 end
 

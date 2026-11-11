@@ -19,7 +19,7 @@ local Feature = CrimsonBoot.require('server.lib.feature')
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Roleplay.BurnerPhone'
-local Bridge = CrimsonBoot.require('server.lib.bridge')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Burner = {}
 
@@ -50,14 +50,14 @@ Burner.ACTIONS = {
 }
 
 --- Whether this player carries a burner now: true, false, or nil where it
---- cannot be told (ox_inventory not started, or it raised), which counts as
+--- cannot be told (no inventory adapter answers, or it raised), which counts as
 --- carrying one: the feature then does nothing rather than lock anyone out.
 ---@param actor table
 ---@return boolean|nil
 function Burner.has(actor)
-    if not Bridge.started('ox_inventory') then return nil end
+    if not Integrations.has('inventory') then return nil end
     local item = tostring(Feature.block(BLOCK).Item or 'burner_phone')
-    local ok, count = Bridge.call('ox_inventory', 'GetItemCount', actor.source, item)
+    local ok, count = Integrations.call('inventory', 'GetItemCount', actor.source, item)
     if not ok then return nil end
     return (tonumber(count) or 0) >= 1
 end
@@ -102,9 +102,9 @@ function Burner.after(name, actor)
     if not Feature.on(BLOCK) then return end
     local spend = (name == 'create' and Feature.block(BLOCK).ConsumeOnPlace == true)
         or (name == 'accept' and Feature.block(BLOCK).ConsumeOnAccept == true)
-    if not spend or not Bridge.started('ox_inventory') then return end
+    if not spend or not Integrations.has('inventory') then return end
     local item = tostring(Feature.block(BLOCK).Item or 'burner_phone')
-    local ok, removed = Bridge.call('ox_inventory', 'RemoveItem', actor.source, item, 1)
+    local ok, removed = Integrations.call('inventory', 'RemoveItem', actor.source, item, 1)
     if ok and removed then
         deps.audit.action('burner_used', actor.cid, nil, { request = name, item = item })
     else

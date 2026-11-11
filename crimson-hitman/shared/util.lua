@@ -720,12 +720,22 @@ Util.MONEY_REASON = 'crimson-hitman'
 ---
 --- Only an online player: one qbx_core holds offline is saved by AddMoney
 --- itself. A Save that throws is not a payment that failed.
+--- The framework adapter (server/adapters/framework/), asked at use: this
+--- file loads before the adapters do, and on the client too, where nothing
+--- below runs.
+local function Framework()
+    -- The server's loader (server/boot.lua): this file is shared, and the
+    -- client has none.
+    local boot = rawget(_G, 'CrimsonBoot')
+    return boot.require('server.adapters.init').get('framework')
+end
+
 local function persist(player)
     -- The framework's own player object, never anything a client sent.
     local playerData = type(player) == 'table' and player.PlayerData
     local src = type(playerData) == 'table' and tonumber(playerData.source)
     if not src or player.Offline then return end
-    pcall(function() exports.qbx_core:Save(src) end)
+    pcall(function() Framework().Save(src) end)
 end
 
 --- The server id a character is loaded at, asked of qbx_core now: nil when
@@ -741,7 +751,7 @@ local function liveSource(player)
     local src = type(playerData) == 'table' and tonumber(playerData.source)
     local cid = type(playerData) == 'table' and playerData.citizenid
     if not src or not cid or player.Offline then return nil end
-    local ok, now = pcall(function() return exports.qbx_core:GetPlayerByCitizenId(cid) end)
+    local ok, now = pcall(function() return Framework().GetPlayerByCitizenId(cid) end)
     local nowData = ok and type(now) == 'table' and now.PlayerData
     if type(nowData) ~= 'table' or tonumber(nowData.source) ~= src then return nil end
     return src
@@ -752,7 +762,7 @@ end
 ---@param account string
 ---@return number|nil
 local function balance(src, account)
-    local ok, value = pcall(function() return exports.qbx_core:GetMoney(src, account) end)
+    local ok, value = pcall(function() return Framework().GetMoney(src, account) end)
     return ok and tonumber(value) or nil
 end
 
@@ -798,7 +808,7 @@ function Util.charge(player, account, amount)
     local before = balance(src, account)
     if not before or before < amount then return false end
     local ran, removed = pcall(function()
-        return exports.qbx_core:RemoveMoney(src, account, amount, Util.MONEY_REASON)
+        return Framework().RemoveMoney(src, account, amount, Util.MONEY_REASON)
     end)
     if not ran then
         local after = balance(src, account)
@@ -852,7 +862,7 @@ function Util.credit(player, account, amount)
     local before = balance(src, account)
     if not before then return false end
     local ok, gave = pcall(function()
-        return exports.qbx_core:AddMoney(src, account, amount, Util.MONEY_REASON)
+        return Framework().AddMoney(src, account, amount, Util.MONEY_REASON)
     end)
     if ok then
         if not gave then return false end

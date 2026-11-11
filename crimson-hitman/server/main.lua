@@ -5,6 +5,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Storage
 local modules = {}
@@ -198,11 +199,6 @@ local DEFAULTS = {
         -- PhotoPublicUrl and KeptPhotoDays are absent too, and nothing is
         -- filled for them: absent is their default (web_baseUrl; kept until
         -- deleted). Checked below.
-        --- A list, so filled whole or not at all: see isRecord.
-        DeathStateProviders = {
-            { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
-            { resource = 'qbx_medical' },
-        },
     },
     Penalty = {
         RequireDisclosureOnAccept = true,
@@ -597,6 +593,18 @@ local function validateConfig(quiet)
     -- Before anything is read: a setting this config never had is nil, and
     -- the checks below would report it as broken rather than as absent.
     applyConfigDefaults(quiet)
+
+    -- The other scripts (Config.Integrations, server/adapters/): the
+    -- framework has no 'none', and is put back to 'auto' on a value no
+    -- adapter answers to. Any other kind naming no adapter is off, said in
+    -- its one line by Integrations.report.
+    local framework = Integrations.choice('framework')
+    if framework == 'none' or not Integrations.valid('framework', framework) then
+        warn[#warn + 1] = ("Config.Integrations.Framework is '%s', but players, jobs and money are read "
+            .. "through it: there is no 'none'. Using 'auto'."):format(tostring(framework))
+        if type(Config.Integrations) ~= 'table' then Config.Integrations = {} end
+        Config.Integrations.Framework = 'auto'
+    end
 
     -- Every value the code puts straight into arithmetic or a comparison.
     -- A key an operator deleted or misspelled while editing their config is
@@ -1757,46 +1765,25 @@ end
 --- Every optional integration, where it is configured, and what stops
 --- working without it. Built from config rather than hard-coded names, so
 --- renaming a resource in the config is reflected here.
+--- The provider exports a server names in its config (their own scripts,
+--- called by name), each with what it is for. The other scripts this
+--- resource works with are adapters (Config.Integrations), said by
+--- Integrations.report.
 local function optionalIntegrations()
     local out = {}
 
-    local function add(resource, purpose, configured)
+    local function add(resource, purpose)
         if not resource then return end
-        out[#out + 1] = {
-            resource = resource, purpose = purpose,
-            -- `configured` distinguishes "the operator asked for this and it
-            -- is missing" from "this is simply not installed", which are
-            -- very different startup messages.
-            configured = configured ~= false,
-        }
-    end
-
-    for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
-        add(provider.resource, 'true-death checks for eliminations', false)
+        out[#out + 1] = { resource = resource, purpose = purpose, configured = true }
     end
 
     -- A resource name (validateConfig takes a table down to one).
     add(Config.Kidnap.RestraintProvider, 'custom restraint detection for handovers')
     add(Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource,
         'playtime for the new-player immunity rule')
-
-    local trust = type(Config.Record) == 'table' and type(Config.Record.Progression) == 'table'
-        and Config.Record.Progression or {}
-    if trust.Enabled then
-        add(trust.Resource, 'reputation credit for finished contracts')
-    end
-    if Config.Advisory.UseDispatch then
-        add('sc-dispatch', 'threat advisories in the MDT')
-    end
     if Config.Relay.Enabled and Config.Relay.AllowMaskedCalls
         and Config.Relay.CallExport and Config.Relay.CallExport.resource then
         add(Config.Relay.CallExport.resource, 'placing masked calls between parties')
-    end
-    -- Without a renderer the board simply shows no faces, which is a
-    -- degradation rather than a failure. With headshots switched off
-    -- (Config.Mugshot.Enabled) nothing asks it anything, so it is not one.
-    if Config.Mugshot.Enabled ~= false then
-        add('MugShotBase64', 'target headshots on the board', false)
     end
 
     return out
@@ -1806,36 +1793,22 @@ end
 --- absent is the worst case: progression simply stops crediting and nothing
 --- anywhere says why.
 local function reportIntegrations()
-    -- The list itself only with Config.Debug on (and kept for the
+    -- Each kind with no adapter answering: one line (Integrations.report),
+    -- printed whatever Debug says when a feature that needs it is on.
+    Integrations.report(true)
+
+    -- The provider exports, only with Config.Debug on (and kept for the
     -- diagnosis); one that is configured and missing is a configuration
     -- problem, counted in the start's one line (shared/log.lua).
     local integrations = optionalIntegrations()
-    if #integrations == 0 then
-        Log.debug('no optional integrations configured')
-        return integrations
-    end
-
-    -- One provider list can name several alternatives, only one of which
-    -- needs to be present, so the death-state group is summarised together.
-    local deathFound = false
     for _, entry in ipairs(integrations) do
         local found = GetResourceState(entry.resource) == 'started'
-        if found and entry.purpose:find('true%-death') then deathFound = true end
-
         Log.debug(('integration %-16s %s  (%s)'):format(
             entry.resource, found and 'found' or 'not found', entry.purpose))
-
-        -- Only a resource the operator actually named is worth a warning.
-        -- The alternatives in a provider list are not each expected.
-        if not found and entry.configured then
+        if not found then
             Log.problem(('warning: %s is configured but not started; %s will not work')
                 :format(entry.resource, entry.purpose))
         end
-    end
-
-    if not deathFound then
-        Log.problem('warning: no death-state provider is running; ' ..
-            'eliminations fall back to QBox metadata for the downed check')
     end
 
     -- Which ox_inventory read this build answers. An item picker that comes
@@ -1844,8 +1817,10 @@ local function reportIntegrations()
     -- that was never there.
     local app = CrimsonBoot.require('server.app')
     local online = modules.identity and modules.identity.online() or {}
-    local read = app.probeInventory(online[1])
-    if read == nil then
+    local read = Integrations.has('inventory') and app.probeInventory(online[1]) or nil
+    if not Integrations.has('inventory') then
+        Log.debug('inventory read: no inventory adapter answers (said above)')
+    elseif read == nil then
         Log.debug('inventory read: nobody online to probe with; '
             .. 'it is checked again the first time someone opens the app')
     elseif read == false then
@@ -3516,7 +3491,12 @@ end
 --------------------------------------------------------------------------
 
 AddEventHandler('onResourceStop', function(name)
-    if name ~= GetCurrentResourceName() then return end
+    -- Another script an adapter stands for stopping: the kind it leaves
+    -- with no adapter is said in one line (Integrations.report).
+    if name ~= GetCurrentResourceName() then
+        if Integrations.watches(name) then pcall(Integrations.report) end
+        return
+    end
     if not modules.audit then return end
 
     -- Without waiting on the database (Audit.flush): on mysql the first

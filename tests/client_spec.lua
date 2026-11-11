@@ -2471,8 +2471,8 @@ describe('reporting your own death', function()
     it('knows the medical resources when the config does not name them', function()
         watching()
         local meta = underMedical()
-        local saved = Config.Completion.DeathStateProviders
-        Config.Completion.DeathStateProviders = nil
+        local saved = Config.Integrations
+        Config.Integrations = nil
         local ok, err = pcall(function()
             Client.dead = true
             Client.ticks(1)
@@ -2481,7 +2481,7 @@ describe('reporting your own death', function()
             Client.ticks(2)
             eq(reported('iDied'), 0, 'still sc-ambulance rules: downed is not dead')
         end)
-        Config.Completion.DeathStateProviders = saved
+        Config.Integrations = saved
         if not ok then error(err, 0) end
     end)
 end)

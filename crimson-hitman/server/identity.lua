@@ -6,6 +6,11 @@
 --- a claim, and claims are discarded here rather than validated.
 
 local Util = CrimsonBoot.requireShared('util')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Framework() return Integrations.get('framework') end
 
 local Identity = {}
 
@@ -136,10 +141,10 @@ end
 ---@return boolean|nil grandfathered
 function Identity.playtimeHours(actor)
     local provider = Config.Immunity.PlaytimeProvider
-    if provider and provider.resource and GetResourceState(provider.resource) == 'started' then
-        local ok, minutes = pcall(function()
-            return exports[provider.resource][provider.export](nil, actor.cid)
-        end)
+    if provider and provider.resource and type(provider.export) == 'string' then
+        -- The server's own script, called by name (Bridge.call: only while
+        -- it is started; a raise said once a minute).
+        local ok, minutes = Bridge.call(provider.resource, provider.export, actor.cid)
         if ok and type(minutes) == 'number' then return minutes / 60, 'provider' end
     end
 
@@ -215,7 +220,7 @@ end
 function Identity.resolve(source)
     local src = tonumber(source)
     if not src or src <= 0 then return nil, CH.ERR.NO_PLAYER end
-    return actorOf(src, exports.qbx_core:GetPlayer(src))
+    return actorOf(src, Framework().GetPlayer(src))
 end
 
 --- The acting player's citizen id, job and record, without the account and
@@ -228,7 +233,7 @@ end
 function Identity.resolveJobs(source)
     local src = tonumber(source)
     if not src or src <= 0 then return nil end
-    local player = exports.qbx_core:GetPlayer(src)
+    local player = Framework().GetPlayer(src)
     local data = player and player.PlayerData
     if type(data) ~= 'table' then return nil end
     local cid = Util.toCitizenId(data.citizenid)
@@ -335,7 +340,7 @@ local function jobDefinition(name)
     local now = os.time()
     local cached = jobDefinitions[name]
     if cached and now - cached.at < JOB_CACHE_SECONDS then return cached.job end
-    local ok, job = pcall(function() return exports.qbx_core:GetJob(name) end)
+    local ok, job = pcall(function() return Framework().GetJob(name) end)
     job = ok and type(job) == 'table' and job or nil
     jobDefinitions[name] = { at = now, job = job }
     return job
@@ -616,7 +621,7 @@ function Identity.byCitizenId(cid)
     if not cid then return nil end
 
     local ok, player = pcall(function()
-        return exports.qbx_core:GetPlayerByCitizenId(cid)
+        return Framework().GetPlayerByCitizenId(cid)
     end)
 
     if ok and player and player.PlayerData and player.PlayerData.source then
@@ -637,7 +642,7 @@ function Identity.byCitizenId(cid)
 
     local players = GetPlayers() or {}
     for i = 1, #players do
-        local candidate = exports.qbx_core:GetPlayer(tonumber(players[i]))
+        local candidate = Framework().GetPlayer(tonumber(players[i]))
         if candidate and candidate.PlayerData and candidate.PlayerData.citizenid == cid then
             return Identity.resolve(candidate.PlayerData.source)
         end
@@ -681,7 +686,7 @@ function Identity.characterExists(cid)
         return seen.exists
     end
     local ok, player = pcall(function()
-        return exports.qbx_core:GetOfflinePlayer(cid)
+        return Framework().GetOfflinePlayer(cid)
     end)
     if not ok then return nil end
     local data = type(player) == 'table' and player.PlayerData or nil
@@ -751,20 +756,19 @@ end
 ---@param source number
 ---@return boolean dead, boolean lastStand, boolean resolved, string|nil answeredBy
 function Identity.deathState(source)
-    for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
-        local resource = provider.resource
-        -- A provider named without exports (qbx_medical as shipped: its
-        -- IsDead and IsLaststand are client exports, and its server's
-        -- GetPlayerStatus says nothing of death) is listed for the client
-        -- only, and never asked here: the metadata below is its answer.
-        local asks = type(provider.dead) == 'string' and type(provider.lastStand) == 'string'
-        if resource and asks and not noExport[resource] and GetResourceState(resource) == 'started' then
-            local ok, dead = pcall(function() return exports[resource][provider.dead](nil, source) end)
-            local ok2, last = pcall(function() return exports[resource][provider.lastStand](nil, source) end)
-            if ok and ok2 then
+    -- The medical resources Config.Integrations.Ambulance lets answer, in
+    -- order (server/adapters/ambulance/). One without a server-side answer
+    -- (qbx_medical: its IsDead and IsLaststand are client exports, and its
+    -- server says nothing of death) is never asked here: the metadata below
+    -- is its answer.
+    for _, adapter in ipairs(Integrations.candidates('ambulance')) do
+        local resource = adapter.resource
+        if type(adapter.deathState) == 'function' and not noExport[resource] then
+            local ok, dead, last = pcall(adapter.deathState, source)
+            if ok then
                 return dead == true, last == true, true, resource
             end
-            if (not ok and missingExport(dead)) or (not ok2 and missingExport(last)) then
+            if missingExport(dead) then
                 noExport[resource] = true
             end
         end
@@ -782,10 +786,10 @@ function Identity.deathState(source)
     -- before. A qbx_core without the export is asked whole from then on.
     if not noExport.qbx_core then
         local okDead, isDead = pcall(function()
-            return exports.qbx_core:GetMetadata(source, 'isdead')
+            return Framework().GetMetadata(source, 'isdead')
         end)
         local okLast, isLast = pcall(function()
-            return exports.qbx_core:GetMetadata(source, 'inlaststand')
+            return Framework().GetMetadata(source, 'inlaststand')
         end)
         if okDead and okLast and (isDead ~= nil or isLast ~= nil) then
             return isDead == true, isLast == true, true, 'metadata'
@@ -795,7 +799,7 @@ function Identity.deathState(source)
         end
     end
 
-    local player = exports.qbx_core:GetPlayer(source)
+    local player = Framework().GetPlayer(source)
     local meta = player and player.PlayerData and player.PlayerData.metadata
     if meta then
         return meta.isdead == true, meta.inlaststand == true, true, 'metadata'

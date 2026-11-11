@@ -11,6 +11,7 @@ local Holds = CrimsonBoot.require('server.holds')
 local Lifecycle = CrimsonBoot.require('server.lib.lifecycle')
 local Words = CrimsonBoot.requireShared('words')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Bridges = {}
 
@@ -386,14 +387,23 @@ function Bridges.install(modules)
     -- placed, are asked of it afresh rather than kept from before. Kept,
     -- an answer read while it was stopped refused every anonymous call, or
     -- hid the Call button, until this resource restarted.
+    --
+    -- Any script an adapter stands for starting: a kind it gives an adapter
+    -- again is said (Integrations.report, server/adapters/init.lua; its
+    -- stop is said by main.lua's onResourceStop).
     AddEventHandler('onResourceStart', function(name)
         if modules.identity and modules.identity.forgetProvider then
             modules.identity.forgetProvider(name)
         end
-        if name == 'lb-phone' and modules.comms then
+        local phone = false
+        for _, adapterName in ipairs(Integrations.names('phone')) do
+            if Integrations.adapter('phone', adapterName).resource == name then phone = true end
+        end
+        if phone and modules.comms then
             if modules.comms.resetMaskingCache then modules.comms.resetMaskingCache() end
             if modules.comms.resetCallCache then modules.comms.resetCallCache() end
         end
+        if name ~= GetCurrentResourceName() and Integrations.watches(name) then pcall(Integrations.report) end
     end)
 
     -- txAdmin's scheduled restart (its Events Broadcasted documentation):

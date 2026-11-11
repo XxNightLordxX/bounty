@@ -56,12 +56,6 @@ local list = {
       kind = 'choice', choices = { 'adopt', 'revert' }, label = 'Job changes made elsewhere',
       about = '"adopt": a /setjob or another resource\'s change is taken into the table. "revert": it is put back '
           .. 'as the table has it.', inflight = AT_USE },
-    { key = 'Organisation.Funds', section = 'limits', category = 'organisation', group = GROUP,
-      kind = 'choice', choices = { 'auto', 'internal' }, label = 'Where the funds are kept',
-      about = '"auto": Renewed-Banking\'s society account when it is installed, this resource\'s ledger otherwise. '
-          .. '"internal": always the ledger. Chosen once, the first time the organisation is read, and kept.',
-      inflight = 'Read only for that first choice. Staff move the funds between the two with the funds backend '
-          .. 'switch, which carries the balance across; while the bank is chosen and not started, nothing moves.' },
     { key = 'Organisation.OfficeRadius', section = 'limits', category = 'organisation', group = GROUP,
       kind = 'number', min = 1, max = 50, label = 'Boss office radius (m)',
       about = 'How near the office a boss must stand for powers that need it.', inflight = AT_USE },

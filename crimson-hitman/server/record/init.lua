@@ -22,11 +22,11 @@
 --- progression resource absent or shaped differently never breaks a
 --- payout that already happened.
 
-local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Util = CrimsonBoot.requireShared('util')
 local Heat = CrimsonBoot.require('server.record.heat')
 local Placer = CrimsonBoot.require('server.record.placer')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Record = {}
 
@@ -115,12 +115,11 @@ function Record.onCompleted(cid, fulfilment, factor)
 
     if not amount or amount <= 0 then return end
 
-    local resource = cfg.Resource
-    if not Bridge.started(resource) then return end
-
-    -- A progression resource being absent or shaped differently must never
-    -- break a payout that has already happened.
-    local ok, err = Bridge.call(resource, 'AddTrust', cid, amount)
+    -- The progression adapter (Config.Integrations.Progression): none
+    -- answering, nothing is given. One absent or shaped differently must
+    -- never break a payout that has already happened.
+    if not Integrations.has('progression') then return end
+    local ok, err = Integrations.call('progression', 'AddTrust', cid, amount)
 
     if ok then
         Audit.action('progression_awarded', cid, nil, { amount = amount, fulfilment = fulfilment,

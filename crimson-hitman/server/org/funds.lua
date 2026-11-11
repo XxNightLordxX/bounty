@@ -8,10 +8,11 @@
 --- Where the funds are kept is chosen once, the first time the
 --- organisation is read, and kept by the store (staff meta
 --- 'org_funds_backend': 1 this resource's ledger, 2 Renewed-Banking): with
---- Config.Organisation.Funds = 'auto' and Renewed-Banking installed, its
+--- Config.Integrations.Banking = 'auto' and Renewed-Banking installed, its
 --- society account for the job (createJobAccount once, then getAccountMoney
 --- / addAccountMoney / removeAccountMoney, and handleTransaction for its
---- history); otherwise, or with 'internal', this resource's own ledger
+--- history, through server/adapters/banking/); otherwise, or with 'none',
+--- this resource's own ledger
 --- (crimson_org_funds), whose balance is the sum of the rows written under
 --- it. Nothing moves the funds from one to the other but staff
 --- (orgFundsBackend, Funds.switch), which carries the balance across in two
@@ -37,6 +38,8 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Geo = CrimsonBoot.requireShared('geo')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
 
 local Funds = {}
 
@@ -72,7 +75,6 @@ local accountMade = false
 --- A backend switch running: every movement waits ('busy').
 local switching = false
 
-local RB = 'Renewed-Banking'
 local META = 'org_funds_backend'
 local CODE = { internal = 1, bank = 2 }
 
@@ -84,14 +86,52 @@ function Funds.init(deps)
     backend, accountMade, switching = nil, false, false
 end
 
---- Whether Renewed-Banking is installed at all (started, starting, or
---- stopped and waiting for its ensure line).
-local function bankInstalled()
-    local state = GetResourceState(RB)
-    return state ~= nil and state ~= 'missing' and state ~= 'unknown'
+--- Whether a banking adapter's resource is installed at all (started,
+--- starting, or stopped and waiting for its ensure line).
+local function installed(adapter)
+    if type(adapter.installed) == 'function' then
+        local ok, yes = pcall(adapter.installed)
+        return ok and yes == true
+    end
+    return Integrations.up(adapter)
 end
 
-local function bankStarted() return GetResourceState(RB) == 'started' end
+--- The banking adapter the funds use (server/adapters/banking/): the one
+--- Config.Integrations.Banking names, or on 'auto' the first installed.
+--- 'none' chooses the ledger (`choosing`); funds the store already keeps in
+--- the bank are still reached through the first one, so staff can move
+--- them back with the funds backend switch.
+---@param choosing boolean|nil the first choice of backend
+---@return table|nil
+local function bankAdapter(choosing)
+    local want = Integrations.choice('banking')
+    if want == 'none' and choosing then return nil end
+    if want ~= 'auto' and want ~= 'none' then return Integrations.adapter('banking', want) end
+    local names = Integrations.names('banking')
+    for i = 1, #names do
+        local adapter = Integrations.adapter('banking', names[i])
+        if installed(adapter) then return adapter end
+    end
+    return names[1] and Integrations.adapter('banking', names[1]) or nil
+end
+
+local function bankInstalled()
+    local adapter = bankAdapter(true)
+    return adapter ~= nil and installed(adapter)
+end
+
+local function bankStarted()
+    local adapter = bankAdapter()
+    return adapter ~= nil and Integrations.up(adapter)
+end
+
+--- The bank adapter while it is started; nil (and every call through it
+--- raising inside its pcall, as an export of a stopped resource does)
+--- otherwise.
+local function Bank()
+    local adapter = bankAdapter()
+    return adapter and Integrations.up(adapter) and adapter or nil
+end
 
 --- The backend kept by the store, if one is.
 local function keptBackend()
@@ -102,22 +142,21 @@ local function keptBackend()
 end
 
 --- Choose the backend once: the one the store keeps, or (the first time)
---- the one Config.Organisation.Funds names, kept from then on.
+--- the bank when Config.Integrations.Banking has one installed (the
+--- ledger on 'none'), kept from then on.
 ---@return string 'internal' | 'bank'
 function Funds.pick()
     local kept = keptBackend()
     if not kept then
-        local mode = type(Config.Organisation) == 'table' and Config.Organisation.Funds or 'auto'
-        local want = (mode ~= 'internal' and bankInstalled()) and 'bank' or 'internal'
+        local want = bankInstalled() and 'bank' or 'internal'
         local ok, code = false, nil
         if Storage and Storage.claimStaffMeta then ok, code = pcall(Storage.claimStaffMeta, META, CODE[want]) end
         kept = ok and (tonumber(code) == CODE.bank and 'bank' or tonumber(code) == CODE.internal and 'internal') or want
     end
     backend = kept
-    local mode = type(Config.Organisation) == 'table' and Config.Organisation.Funds or 'auto'
-    if kept == 'bank' and mode == 'internal' then
-        Log.problem('note: Config.Organisation.Funds is internal, but the organisation\'s funds are kept in '
-            .. 'Renewed-Banking: staff move them with the panel\'s funds backend switch (orgFundsBackend)')
+    if kept == 'bank' and Integrations.choice('banking') == 'none' then
+        Log.problem('note: Config.Integrations.Banking is none, but the organisation\'s funds are kept in '
+            .. 'the bank: staff move them with the panel\'s funds backend switch (orgFundsBackend)')
     end
     return kept
 end
@@ -186,7 +225,7 @@ end
 function Funds.ensureAccount(org)
     if not Funds.usesBank() or not bankStarted() then return true end
     local ok, err = pcall(function()
-        return exports[RB]:CreateJobAccount({ name = org.job, label = org.label or org.job }, 0)
+        return Bank().CreateJobAccount({ name = org.job, label = org.label or org.job }, 0)
     end)
     if not ok then
         Log.problem(('warning: Renewed-Banking would not make the %s account: %s; the funds are '
@@ -198,7 +237,7 @@ end
 
 --- The bank's balance, or nil while it cannot be read.
 local function bankBalance(org)
-    local ok, money = pcall(function() return exports[RB]:getAccountMoney(org.job) end)
+    local ok, money = pcall(function() return Bank().getAccountMoney(org.job) end)
     if not ok or type(money) ~= 'number' then return nil end
     return math.floor(money)
 end
@@ -274,7 +313,7 @@ end
 local function history(org, title, amount, actor, kind)
     if not Funds.usesBank() then return end
     pcall(function()
-        return exports[RB]:handleTransaction(org.job, title, amount, tostring(kind),
+        return Bank().handleTransaction(org.job, title, amount, tostring(kind),
             tostring(actor or 'crimson-hitman'), org.job, amount > 0 and 'deposit' or 'withdraw')
     end)
 end
@@ -316,7 +355,7 @@ function Funds.credit(org, amount, spec)
         return false, wrote and 'busy' or 'refused', wrote and true or nil
     end
     if bank then
-        local ok, added = pcall(function() return exports[RB]:addAccountMoney(org.job, amount) end)
+        local ok, added = pcall(function() return Bank().addAccountMoney(org.job, amount) end)
         if not ok or not added then
             pcall(Storage.deleteOrgRow, 'funds', ref)
             inFlight[ref] = nil
@@ -387,7 +426,7 @@ function Funds.debit(org, amount, spec)
     if bank then
         local balance = bankBalance(org)
         if not balance or balance < amount then return done(false, 'short') end
-        local ok, removed = pcall(function() return exports[RB]:removeAccountMoney(org.job, amount) end)
+        local ok, removed = pcall(function() return Bank().removeAccountMoney(org.job, amount) end)
         if not ok or not removed then return done(false, ok and 'short' or 'refused') end
         history(org, spec.title or 'Organisation', -amount, spec.actor, spec.kind)
     end
@@ -400,7 +439,7 @@ function Funds.debit(org, amount, spec)
         -- the money back rather than lose it (the ledger's reservation is
         -- given back by done).
         if bank then
-            pcall(function() return exports[RB]:addAccountMoney(org.job, amount) end)
+            pcall(function() return Bank().addAccountMoney(org.job, amount) end)
         end
         Audit.financial('org_funds_unrecorded', spec.actor, spec.contract, { ref = ref, amount = amount })
         return done(false, 'refused')
@@ -449,7 +488,7 @@ function Funds.switch(org, to, spec)
         if carried > 0 then
             local wrote, inserted = write('out', 'internal', -carried)
             if not wrote or not inserted then return finish(false, 'refused') end
-            local ok, added = pcall(function() return exports[RB]:addAccountMoney(org.job, carried) end)
+            local ok, added = pcall(function() return Bank().addAccountMoney(org.job, carried) end)
             if not ok or not added then
                 pcall(Storage.deleteOrgRow, 'funds', ('switch:%s:out'):format(stamp))
                 return finish(false, 'refused')
@@ -461,13 +500,13 @@ function Funds.switch(org, to, spec)
     elseif not abandoned then
         carried = math.max(0, bankBalance(org) or 0)
         if carried > 0 then
-            local ok, removed = pcall(function() return exports[RB]:removeAccountMoney(org.job, carried) end)
+            local ok, removed = pcall(function() return Bank().removeAccountMoney(org.job, carried) end)
             if not ok or not removed then return finish(false, 'refused') end
             history(org, 'Moved to the ledger', -carried, spec.actor, 'switch')
             write('out', 'bank', -carried)
             local wrote, inserted = write('in', 'internal', carried)
             if not wrote or not inserted then
-                pcall(function() return exports[RB]:addAccountMoney(org.job, carried) end)
+                pcall(function() return Bank().addAccountMoney(org.job, carried) end)
                 return finish(false, 'refused')
             end
             balances[org.id] = (balances[org.id] or 0) + carried

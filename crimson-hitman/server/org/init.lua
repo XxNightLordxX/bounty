@@ -27,6 +27,10 @@ local Jobs = CrimsonBoot.require('server.org.jobs')
 local Funds = CrimsonBoot.require('server.org.funds')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Places = CrimsonBoot.require('server.places')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Framework() return Integrations.get('framework') end
 
 local Org = {}
 
@@ -361,7 +365,6 @@ function Org.validate(warn)
     if cfg.ExternalChanges ~= 'adopt' and cfg.ExternalChanges ~= 'revert' then
         back('ExternalChanges', "is 'adopt' or 'revert'")
     end
-    if cfg.Funds ~= 'auto' and cfg.Funds ~= 'internal' then back('Funds', "is 'auto' or 'internal'") end
     for _, key in ipairs({ 'OfficeRadius', 'DrawMetres' }) do
         local n = tonumber(cfg[key])
         if not n or n <= 0 or n > 500 then back(key, 'must be a distance above 0 and at most 500') end
@@ -1932,7 +1935,7 @@ function Org.bonus(who, cid, amount, reason, nonce)
         title = 'Bonus', cap = cap })
     if not ok then return fail(fundsErr(ferr)) end
     local paidOk, paid = pcall(function()
-        return exports.qbx_core:AddMoney(cid, 'bank', amount, 'crimson-hitman organisation bonus')
+        return Framework().AddMoney(cid, 'bank', amount, 'crimson-hitman organisation bonus')
     end)
     if not paidOk or not paid then
         Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = who.cid,
@@ -2131,7 +2134,7 @@ local function payOne(org, member, amount, period)
         return ferr == 'short' and 'skipped' or 'failed', ferr
     end
     local paidOk, paid = pcall(function()
-        return exports.qbx_core:AddMoney(member.cid, 'bank', amount, 'crimson-hitman organisation salary')
+        return Framework().AddMoney(member.cid, 'bank', amount, 'crimson-hitman organisation salary')
     end)
     if not paidOk or not paid then
         local back, berr = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,

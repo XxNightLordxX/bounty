@@ -36,7 +36,7 @@ end
 
 describe('organisation review: the funds', function()
     it('H1 two withdrawals across the insert await never overdraw the ledger', function()
-        local s, _, org = world({ configure = function() Config.Organisation.Funds = 'internal' end })
+        local s, _, org = world({ configure = function() Config.Integrations.Banking = 'none' end })
         moneyBoss(s)
         truthy(s.org.staffDeposit(W.STAFF, 1000, 'seed', 's1'))
         local second
@@ -53,7 +53,7 @@ describe('organisation review: the funds', function()
     end)
 
     it('H1 a ledger debit whose row is not written gives its reservation back', function()
-        local s, _, org = world({ configure = function() Config.Organisation.Funds = 'internal' end })
+        local s, _, org = world({ configure = function() Config.Integrations.Banking = 'none' end })
         moneyBoss(s)
         truthy(s.org.staffDeposit(W.STAFF, 1000, 'seed', 's1'))
         local real = s.storage.insertOrgRowOnce
@@ -83,7 +83,7 @@ describe('organisation review: the funds', function()
     end)
 
     it('M4 two concurrent bonuses never pass BonusPerDay', function()
-        local s = world({ configure = function() Config.Organisation.Funds = 'internal' end })
+        local s = world({ configure = function() Config.Integrations.Banking = 'none' end })
         moneyBoss(s)
         truthy(s.org.staffDeposit(W.STAFF, 100000, 'seed', 's1'))
         truthy(s.org.setLimits(W.STAFF, { BonusMax = 1000, BonusPerDay = 1000 }))
@@ -126,7 +126,7 @@ describe('organisation review: the funds', function()
         moneyBoss(s)
         truthy(s.org.deposit(BOSS, 2500, 'bank', 'd'))
         eq(s.storage.readStaffMeta()[s.org.Funds.META], 2, 'kept by the store')
-        Config.Organisation.Funds = 'internal'
+        Config.Integrations.Banking = 'none'
         Natives.resourceStates['Renewed-Banking'] = 'missing'
         s.org.Funds.init({ storage = s.storage, audit = s.audit })
         s.org.Funds.load(org)
@@ -183,7 +183,7 @@ describe('organisation review: the funds', function()
     end)
 
     it('M6 a cut taken, then a restart with the organisation off: the line is not paid whole', function()
-        local s, f, org = world({ configure = function() Config.Organisation.Funds = 'internal' end })
+        local s, f, org = world({ configure = function() Config.Integrations.Banking = 'none' end })
         truthy(s.org.hire(W.STAFF, { cid = 'HITMAN01', name = 'Rook', source = 3 }, 0))
         local hitman = s.identity.resolve(3)
         truthy(s.org.setCut(W.STAFF, 'payout', nil, 20))
@@ -203,7 +203,7 @@ describe('organisation review: the funds', function()
     end)
 
     it('L1 a cut taken as cash, then paid as a dirty item: the item is the line less the cut', function()
-        local s, f, org = world({ configure = function() Config.Organisation.Funds = 'internal' end })
+        local s, f, org = world({ configure = function() Config.Integrations.Banking = 'none' end })
         truthy(s.org.hire(W.STAFF, { cid = 'HITMAN01', name = 'Rook', source = 3 }, 0))
         local hitman = s.identity.resolve(3)
         truthy(s.org.setCut(W.STAFF, 'payout', nil, 20))
@@ -230,7 +230,7 @@ describe('organisation review: the funds', function()
     end)
 
     it('L1 with dirty payouts on from the start, the cut is still taken', function()
-        local s, f, org = world({ configure = function() Config.Organisation.Funds = 'internal' end })
+        local s, f, org = world({ configure = function() Config.Integrations.Banking = 'none' end })
         truthy(s.org.hire(W.STAFF, { cid = 'HITMAN01', name = 'Rook', source = 3 }, 0))
         truthy(s.org.setCut(W.STAFF, 'payout', nil, 20))
         local c = W.place(s, f.creator)

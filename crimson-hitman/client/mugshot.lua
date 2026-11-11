@@ -27,7 +27,9 @@ local MUGSHOT_BPS = 100000
 
 --- Render this player's headshot and hand it to the server.
 local function renderSelf()
-    if GetResourceState('MugShotBase64') ~= 'started' then return false end
+    -- The headshot adapter (client/adapters/mugshot/, Config.Integrations.Mugshot).
+    local renderer = CrimsonIntegrations.get('mugshot')
+    if not renderer then return false end
     -- Headshots switched off (Config.Mugshot.Enabled): the server asks for
     -- none, and this game renders none if asked all the same.
     local rules = Config and Config.Mugshot
@@ -50,7 +52,7 @@ local function renderSelf()
     -- model in MugShotBase64's page for every render and never frees it.
     local cutOut = type(rules) == 'table' and rules.RemoveBackground == true
     local ok, image = pcall(function()
-        return exports['MugShotBase64']:GetMugShotBase64(ped, cutOut)
+        return renderer.GetMugShotBase64(ped, cutOut)
     end)
     if not ok or type(image) ~= 'string' then return false end
 
@@ -73,12 +75,12 @@ end
 --- only a handler registered as a net event: with AddEventHandler alone it
 --- was dropped as not safe for net. Only the server sends a client its net
 --- events, so registering them opens nothing. Our own stays local.
-for _, event in ipairs({
-    'qb-clothing:client:loadOutfit',
-    'illenium-appearance:client:reloadSkin',
-    'rcore_clothing:outfitChanged',
-}) do
-    RegisterNetEvent(event, announceAppearanceChange)
+--- Which events: those of the clothing adapters Config.Integrations.Clothing
+--- lets answer (client/adapters/clothing/), read as this file loads.
+for _, adapter in ipairs(CrimsonIntegrations.candidates('clothing')) do
+    for _, event in ipairs(adapter.events or {}) do
+        RegisterNetEvent(event, announceAppearanceChange)
+    end
 end
 AddEventHandler('crimson-hitman:appearanceChanged', announceAppearanceChange)
 

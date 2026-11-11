@@ -68,7 +68,7 @@ may use the app), `Config.Limits.MaxPayoutSlots` and
 `mysql` is the shipped mode (`Config.Database.Mode = 'mysql'`).
 
 1. Put `crimson-hitman` in your resources folder (another folder name works; use it in the `ensure` line).
-2. In `server.cfg`, after `oxmysql`, `qbx_core`, `ox_inventory` and `lb-phone`: `ensure crimson-hitman`.
+2. In `server.cfg`, after `oxmysql`, `qbx_core` and the other scripts you use (`ox_inventory`, `lb-phone`, ...): `ensure crimson-hitman`.
 3. Grant staff: `add_ace group.admin crimson.admin allow` (more in [Permissions](#permissions)).
 4. Optional Discord webhooks, in `server.cfg` with `set`, never `setr` (which sends the value to every player): `set crimson_hitman_webhook "..."` (the audit mirror), `set crimson_hitman_alert_webhook "..."` (alerts and the daily summary), `set crimson_hitman_stats_webhook "..."` (the weekly stats).
 5. Check the settings listed in [Start here](#start-here), then start the server. With `Config.Debug = true` (as shipped) the console prints `[crimson-hitman] started in mysql mode` and every warning in full; with it off, a sound start prints nothing and one with settings to look at prints one line pointing to `ch-diag`.
@@ -108,9 +108,12 @@ of live contracts. Kill photo files are in `data/photos/` in every mode.
 | Resource | Needed | Known to work |
 |---|---|---|
 | `qbx_core` | Required (manifest dependency) | 1.24.0 |
-| `ox_inventory` | Required (manifest dependency) | 2.48.0 |
 | `oxmysql` | Required in every mode (the playtime count reads `qbx_core`'s `players` table) | 2.14.3 |
-| `lb-phone` | Required for the app | 2.8.0 |
+| `lb-phone` | Optional, but the app is an lb-phone app: without it there is no app (notices fall back to the game's feed) | 2.8.0 |
+| `ox_inventory` | Optional: item, weapon and dirty-money rewards, burner phones, proof items | 2.48.0 |
+| `ox_target` | Optional: third-eye options on step markers and organisation spots | 1.18.1 |
+| `Renewed-Banking` | Optional: the organisation's funds in a society account | 2.1.4 |
+| `qbx_vehiclekeys` | Optional: keys for the disposal vehicle | |
 | MariaDB or MySQL | `mysql` mode | MariaDB 10.11, MySQL 8 |
 | `ox_lib` | Through `qbx_core` | 3.40.3 |
 | `sc-ambulance` / `qbx_medical` | Optional: death and last-stand state, the defibrillator | |
@@ -118,12 +121,18 @@ of live contracts. Kill photo files are in `data/photos/` in every mode.
 | `sc-blackmarket` | Optional: criminal progression, selling the burner phone | |
 | `MugShotBase64` | Optional: target headshots | |
 
+Every optional script is reached through an adapter, chosen by
+`Config.Integrations` (`'auto'` as shipped picks each one that is started).
+One that is missing, or set to `'none'`, turns off only what needs it and
+says so in one console line at start. To use another script (another
+dispatch, inventory or phone), add an adapter: `docs/dev/adapters.md`.
+
 ## Updating
 
 - **Keep `crimson-hitman/data/`** when you put a new version in place (copy the new files over the old folder, or move `data/` out and back). In `json` mode it is the store; in every mode it holds the kill photos. A `json` store that finds an empty `data/` after it has run refuses to start; put the old one back, or `set crimson_hitman_new_store 1` once to start empty on purpose.
 - Carry your `config/config.lua` across. Settings changed in the panel are kept in the store and survive the update.
 - Payouts an older version left owed appear once under **Money waiting** in the panel's inbox (`/ch-stuck`): check the player has it, then **Pay** or **Delivered**.
-- Restarting `qbx_core`, `ox_inventory` or `oxmysql` stops this resource with them: `ensure crimson-hitman` afterwards. Restarting `lb-phone` is safe.
+- Restarting `qbx_core` or `oxmysql` stops this resource with them: `ensure crimson-hitman` afterwards. Restarting `lb-phone`, `ox_inventory` or any other optional script is safe: what needs it is off while it is down, said in one console line.
 
 ### Changing storage mode
 
@@ -563,7 +572,7 @@ each `Config.Record.<Part>.Enabled`.
 
 | Part | What it does |
 |---|---|
-| **Criminal progression** (`Progression`) | A completion gives `TrustPerElimination` / `TrustPerKidnapping` trust through the `Resource`'s `AddTrust` export; a resource missing or failing never touches the payout |
+| **Criminal progression** (`Progression`) | A completion gives `TrustPerElimination` / `TrustPerKidnapping` trust through the progression adapter (`Config.Integrations.Progression`, sc-blackmarket's `AddTrust`); one missing or failing never touches the payout |
 | **Reputation earned in character** (`Reputation`) | Progression trust for a completion is scaled by how it was done (thread, meeting, handover, no witnesses), up to `MaxFactor` |
 | **Tiered board** (`Tiers`) | Bigger rewards locked to a progression level, 1 plus one for each `CompletionsPerLevel` completed (needs `Config.Record.Progression.Enabled`) |
 | **Hitman heat** (`Heat`) | Completions on whitelisted-job targets, witness reports and bulletins give a hitman heat for `DecayHours`; at `Threshold` their targets may be warned and officers get a vague bulletin at most every `BulletinEveryMinutes` (every officer alike, a known hitman who holds a police job too) |
@@ -676,9 +685,9 @@ character that loaded before the job was registered (a late start).
   Every bound is `Config.Organisation.Limits`, and staff may set an
   organisation's own.
 - **Funds.** Renewed-Banking's society account for the job when it is
-  installed (`Config.Organisation.Funds = 'auto'`), this resource's ledger
-  otherwise, **chosen once**, the first time the organisation is read, and kept
-  (changing `Funds` later does not move them). While the bank is chosen and
+  installed (`Config.Integrations.Banking = 'auto'`), this resource's ledger
+  otherwise (or with `'none'`), **chosen once**, the first time the organisation is read, and kept
+  (changing `Banking` later does not move them). While the bank is chosen and
   Renewed-Banking is not started, every deposit, withdrawal, bonus and cut is
   refused and the balance shows as unknown: nothing is paid from, or into, a
   ledger the bank does not see. Staff move the funds to the other side with
@@ -970,6 +979,24 @@ The console output, and where contracts and money are kept. Switching storage mo
 | `Config.Database.Json.Directory` | `'data'` | folder inside the resource |
 | `Config.Database.Json.SyncOnFinancialWrite` | `true` | write money changes to disk at once |
 
+### Other scripts
+
+Which of your other scripts this resource works with, one per kind (docs/dev/adapters.md). 'auto' uses the first one installed and started; a name uses that one only; 'none' turns off what needs it, said in one console line at start. Your own adapter goes in server/adapters/list.lua.
+
+| Setting | Shipped | What it does |
+|---|---|---|
+| `Config.Integrations.Framework` | `'auto'` | 'auto' \| 'qbx_core' (required: no 'none') |
+| `Config.Integrations.Inventory` | `'auto'` | 'auto' \| 'ox_inventory' \| 'none' (item rewards) |
+| `Config.Integrations.Target` | `'auto'` | 'auto' \| 'ox_target' \| 'none' (third-eye options) |
+| `Config.Integrations.Dispatch` | `'auto'` | 'auto' \| 'sc-dispatch' \| 'none' (police MDT) |
+| `Config.Integrations.Ambulance` | `'auto'` | 'auto' \| 'sc-ambulance' \| 'qbx_medical' \| 'none' |
+| `Config.Integrations.Banking` | `'auto'` | 'auto' \| 'Renewed-Banking' \| 'none' (organisation funds) |
+| `Config.Integrations.Phone` | `'auto'` | 'auto' \| 'lb-phone' \| 'none' (the phone app) |
+| `Config.Integrations.Keys` | `'auto'` | 'auto' \| 'qbx_vehiclekeys' \| 'none' (disposal vehicle) |
+| `Config.Integrations.Mugshot` | `'auto'` | 'auto' \| 'MugShotBase64' \| 'none' (target headshots) |
+| `Config.Integrations.Clothing` | `'auto'` | 'auto' \| a clothing adapter's name \| 'none' |
+| `Config.Integrations.Progression` | `'auto'` | 'auto' \| 'sc-blackmarket' \| 'none' (trust per kill) |
+
 ### Rules: Timers
 
 How long things last. The deadline runs only while the placer, the target and one operative are all in the city, and pauses before a restart.
@@ -1223,7 +1250,6 @@ A character's record (README, A hitman's record): the trust a completion earns a
 | Setting | Shipped | What it does |
 |---|---|---|
 | `Config.Record.Progression.Enabled` | `true` | feed completions into the criminal progression |
-| `Config.Record.Progression.Resource` | `'sc-blackmarket'` | the resource that keeps it |
 | `Config.Record.Progression.TrustPerElimination` | `10` | trust per kill |
 | `Config.Record.Progression.TrustPerKidnapping` | `20` | trust per live handover |
 | `Config.Record.Reputation.Enabled` | `false` | trust for a completion scaled by how it was done |
@@ -1392,7 +1418,6 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.SetPrimaryOnHire` | `true` | an accepted invite or application makes it their primary job |
 | `Config.Organisation.QbxBossFlag` | `false` | mark boss roles isboss in qbx_core too |
 | `Config.Organisation.ExternalChanges` | `'adopt'` | 'adopt' \| 'revert' job changes made elsewhere |
-| `Config.Organisation.Funds` | `'auto'` | 'auto' (Renewed-Banking if installed) \| 'internal', chosen once |
 | `Config.Organisation.OfficeRadius` | `5.0` | metres from the boss office that count |
 | `Config.Organisation.DrawMetres` | `40.0` | metres at which a spot is drawn |
 | `Config.Organisation.ApplyAtSignupOnly` | `true` | applications only at a sign-up spot |
@@ -1523,7 +1548,6 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 | `Config.Completion.MedicJobs` | `{ ambulance = true }` | as sc-ambulance's RequireEMS |
 | `Config.Completion.DefibItem` | `'defibrillator'` | as sc-ambulance's Defib.Item |
 | `Config.Completion.DefibRange` | `3.0` | as sc-ambulance's Defib.Distance |
-| `Config.Completion.DeathStateProviders` | `{ { dead = 'IsDead', lastStand = 'IsLaststand', resource = 'sc-ambulance' }, { resource = 'qbx_medical' } }` | medical resources asked who is dead, in order |
 | `Config.Mugshot.MinRefreshMinutes` | `5` | least time between two headshots of one target |
 | `Config.Mugshot.RenderTimeoutMs` | `8000` | ms a headshot may take |
 | `Config.Mugshot.MaxImageBytes` | `98304` | largest headshot accepted |
@@ -1685,8 +1709,9 @@ the app's reads answers for them and why the app is or is not showing.
 | The console says nothing at all | `Config.Debug = false`: a sound start says nothing |
 | `BOOT RECOVERY FAILED` | Recovery raised (the text says why); the app and money writes stay closed until a restart that recovers. Fix the cause and restart |
 | *The server's records did not answer in time* | `mysql` was unreachable or held past `Config.Database.QueryTimeoutSeconds`; payments caught are settled once it answers. Wait for `/ch-diag` to say `database: answering` |
-| `still waiting … for … resource(s) to start` | `qbx_core` or `ox_inventory` is not started, or runs under another name |
-| The app stopped after restarting `qbx_core`, `ox_inventory` or `oxmysql` | `ensure crimson-hitman` |
+| `still waiting … for … resource(s) to start` | `qbx_core` is not started, or runs under another name |
+| The app stopped after restarting `qbx_core` or `oxmysql` | `ensure crimson-hitman` |
+| `integration <kind> off (...)` in the console | That script is not started, or `Config.Integrations.<Kind>` is `'none'` or names no adapter: what the line says is off. Start the script, or add an adapter (`docs/dev/adapters.md`) |
 | `json` refuses to start on an empty `data/` | You lost `data/` in an update: put it back, or `set crimson_hitman_new_store 1` once |
 | It refuses to start after changing `Config.Database.Mode` | The old mode still holds money: see [Changing storage mode](#changing-storage-mode) |
 | `failed to start: mysql mode cannot start: the database is missing what it needs` | Your user may not create or alter tables: import `install/sql/crimson_hitman.sql` as a user that may, or run the printed `ALTER TABLE` |

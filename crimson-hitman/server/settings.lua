@@ -25,6 +25,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Settings = {}
 
@@ -107,9 +108,6 @@ local DENY = {
     ['Reason.PatternDenylist'] = { label = 'Patterns a reason may not contain',
         why = 'Lua patterns: a malformed one raises in every reason check.'
         .. EDIT_IN_CONFIG },
-    ['Completion.DeathStateProviders'] = { label = 'Death-state exports',
-        why = 'Exports of other resources, called by name.'
-        .. EDIT_IN_CONFIG },
     ['Completion.PhotoPublicUrl'] = { label = 'Address photos are served from',
         why = 'The address photos are served from.' .. EDIT_IN_CONFIG },
     ['Completion.KeptPhotoDays'] = { label = 'Days a saved photo is kept',
@@ -125,10 +123,6 @@ local DENY = {
     ['Immunity.PlaytimeProvider'] = { label = 'Playtime export',
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['Relay.CallExport'] = { label = 'Phone call export',
-        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
-    -- Record.onCompleted calls exports[<this>]:AddTrust(cid, amount): renamed
-    -- from here, every finished contract called another resource's export.
-    ['Record.Progression.Resource'] = { label = 'Progression resource',
         why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
     ['convar:crimson_hitman_webhook'] = { secret = true, convar = 'crimson_hitman_webhook',
         why = 'The Discord webhook for the log: a secret, set in server.cfg with set (never setr).' },
@@ -655,6 +649,7 @@ local CATALOGUE = {
       inflight = 'Read at every line printed, with no restart. The lines of a start before the '
           .. 'panel\'s settings are applied (the store opening, its migrations) follow config.lua; '
           .. 'the diagnosis lists them either way.' },
+
 
     -- Read only, with the reason -----------------------------------------
     { key = 'Admin.Enabled', section = 'readonly', category = 'developer', group = 'Staff', kind = 'switch',
@@ -1252,6 +1247,39 @@ local CATALOGUE = {
       about = '\'license\': per account. \'citizenid\': per character.',
       inflight = 'Read at each request: allowances start fresh under the new key.' },
 }
+
+--- The other scripts this resource works with (Config.Integrations,
+--- server/adapters/): one choice per kind, of the adapters this build has
+--- and 'auto' (and 'none', but for the framework). A resource name is never
+--- typed in here, so nothing can be made to call an export it was not
+--- written for.
+local INTEGRATION_ABOUT = {
+    Framework = 'Players, jobs and money. Required, so there is no \'none\'.',
+    Banking = 'Where the organisation\'s funds are kept. \'none\': this resource\'s own ledger.',
+}
+for _, spec in ipairs(Integrations.KINDS) do
+    local choices = { 'auto' }
+    for _, name in ipairs(Integrations.names(spec.kind)) do choices[#choices + 1] = name end
+    if not spec.required then choices[#choices + 1] = 'none' end
+    local client = spec.side ~= 'server'
+    local inflight = AT_USE
+    if spec.required then
+        inflight = RESTART
+    elseif spec.kind == 'banking' then
+        inflight = 'Read for the first choice of where the funds are kept, which is then kept: staff move '
+            .. 'them with the funds backend switch.'
+    elseif client then
+        inflight = 'Sent to every player\'s game at once; what is already drawn stays until it is drawn again.'
+    end
+    CATALOGUE[#CATALOGUE + 1] = {
+        key = 'Integrations.' .. spec.key, section = 'limits', category = 'developer', group = 'Other scripts',
+        kind = 'choice', choices = choices, client = client or nil, live = spec.required and false or nil,
+        label = 'Other scripts: ' .. spec.kind,
+        about = (INTEGRATION_ABOUT[spec.key] or '') .. (INTEGRATION_ABOUT[spec.key] and ' ' or '')
+            .. '\'auto\': the first installed and started. Without one: ' .. spec.without .. '.',
+        inflight = inflight,
+    }
+end
 
 --- Each staff command's name, read once at start (RegisterCommand): kept,
 --- and in force after a restart.
@@ -2825,7 +2853,7 @@ local AREA_OF_GROUP = {
     ['Record: Hitman heat'] = 'record', ['Record: Placer record'] = 'record',
     ['Staff tools'] = 'staff', ['Staff alerts'] = 'staff', ['Audit and debug'] = 'staff', ['Staff'] = 'staff',
     ['Improvements: Weekly stats'] = 'staff',
-    ['Storage'] = 'engine', ['Rate limits'] = 'engine', ['Diagnostics'] = 'engine', ['Staff commands'] = 'engine',
+    ['Storage'] = 'engine', ['Rate limits'] = 'engine', ['Diagnostics'] = 'engine', ['Staff commands'] = 'engine', ['Other scripts'] = 'engine',
     ['Edit in config.lua'] = 'engine', ['Kept in the store, not on this list'] = 'engine',
     ['Target limits'] = 'targets',
     ['Organisation'] = 'organisation', ['Organisation: Boss limits'] = 'organisation',

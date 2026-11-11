@@ -38,6 +38,7 @@ local function client(opts)
         GetResourceState = function(name) return name == 'ox_target' and (opts.target or 'started') or 'missing' end,
     }, { __index = _G })
     if opts.noLocalPlayer then rawset(env, 'LocalPlayer', false) end
+    require('tests.harness.client_adapters')(env)
     t.npc = assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
     t.env = env
     function t.called(name)

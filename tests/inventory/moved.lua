@@ -270,7 +270,8 @@ return {
     -- impBoard.heat / .tiers / .record -> record.
     ['tick:imp_board.tick'] = { to = 'tick:record.tick', note = 'heat, the bulletin and the placer records (Record.tick), and Intel\'s go-dark prune' },
     ['config:Progression.Enabled'] = 'config:Record.Progression.Enabled',
-    ['config:Progression.Resource'] = 'config:Record.Progression.Resource',
+    ['config:Progression.Resource'] = { to = 'config:Integrations.Progression',
+        note = 'Record.Progression.Resource in step 3j; a choice of the progression adapters since step 5a' },
     ['config:Progression.TrustPerElimination'] = 'config:Record.Progression.TrustPerElimination',
     ['config:Progression.TrustPerKidnapping'] = 'config:Record.Progression.TrustPerKidnapping',
     ['config:Roleplay.Reputation.BaseFactor'] = 'config:Record.Reputation.BaseFactor',
@@ -333,4 +334,10 @@ return {
     ['screen:admin.view:tlcontracts'] = { to = 'screen:admin.view:contracts',
         note = "'contracts:bytarget': byTarget = true, the live ones grouped by target" },
     ['op:targetContracts'] = { to = 'op:contracts', note = 'byTarget = true; audit admin_panel_target_contracts kept' },
+    -- Step 5a: the other scripts behind adapters (server/adapters/,
+    -- client/adapters/), one choice per kind under Config.Integrations.
+    ['config:Completion.DeathStateProviders'] = { to = 'config:Integrations.Ambulance',
+        note = "the medical resources, as adapters ('auto': sc-ambulance, then qbx_medical)" },
+    ['config:Organisation.Funds'] = { to = 'config:Integrations.Banking', note = "'internal' is 'none'" },
+    ['setting:Organisation.Funds'] = { to = 'setting:Integrations.Banking', note = "'internal' is 'none'" },
 }

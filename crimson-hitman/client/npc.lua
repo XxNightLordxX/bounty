@@ -25,7 +25,14 @@ end
 --- or removed (every call into it stays inside pcall).
 ---@return boolean
 function CrimsonNpc.targetUp()
-    return GetResourceState('ox_target') == 'started'
+    return CrimsonIntegrations.has('target')
+end
+
+--- The target adapter answering now (client/adapters/target/,
+--- Config.Integrations.Target), or nil. Its calls go inside pcall.
+---@return table|nil
+function CrimsonNpc.target()
+    return CrimsonIntegrations.get('target')
 end
 
 --- Load a model, waiting at most `waitMs`, or nil: not a string, not in

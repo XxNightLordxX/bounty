@@ -22,7 +22,7 @@ local DAY = 86400
 local function world(opts)
     opts = opts or {}
     local s, f = W.world({ configure = function()
-        Config.Organisation.Funds = 'internal'
+        Config.Integrations.Banking = 'none'
         Config.Organisation.Codenames = true
         Config.Organisation.Payroll = true
         if opts.configure then opts.configure() end

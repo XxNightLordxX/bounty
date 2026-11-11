@@ -12,7 +12,8 @@
 ---   F5  the clothing resources' appearance events raised from a server
 ---       were dropped by the client, registered with AddEventHandler alone.
 ---   F6  Progression.Resource, an export called by name, was editable from
----       the panel while every other one is read-only.
+---       the panel while every other one is read-only. Since step 5a it is
+---       Config.Integrations.Progression, a choice of adapters only.
 
 local Client = require('tests.harness.client')
 
@@ -178,38 +179,44 @@ describe('sweep 5 F5: a clothing resource\'s event from the server reaches the m
 end)
 
 --------------------------------------------------------------------------
--- F6: the progression export, read-only
+-- F6: the progression script, a choice of adapters
 --------------------------------------------------------------------------
 
-describe('sweep 5 F6: Progression.Resource is read-only, as every export called by name is', function()
-    it('the panel refuses to change it and says why', function()
+describe('sweep 5 F6: the progression script is chosen from the adapters, never typed in (step 5a)', function()
+    -- Record.Progression.Resource was an export called by name, read-only
+    -- here. It is Config.Integrations.Progression now: a choice of the
+    -- adapters this build has, so no value can make it call another
+    -- resource's export.
+    it('the panel refuses a resource name no adapter stands for', function()
         local s = stack()
-        local value, err, why = s.settings.check('Record.Progression.Resource', 'my-blackmarket')
+        local value, err = s.settings.check('Integrations.Progression', 'my-blackmarket')
         eq(value, nil)
-        eq(err, 'read_only')
-        truthy(tostring(why):find('called by name', 1, true), tostring(why))
-        falsy(s.settings.set('Record.Progression.Resource', 'my-blackmarket', 'ADMIN001'))
-        eq(Config.Record.Progression.Resource, 'sc-blackmarket')
+        truthy(err, 'refused')
+        falsy(s.settings.set('Integrations.Progression', 'my-blackmarket', 'ADMIN001'))
+        eq(Config.Integrations.Progression, 'auto')
     end)
 
-    it('it is listed among the keys edited in config.lua', function()
+    it('offers auto, each adapter and none', function()
         local s = stack()
         local found
-        for _, row in ipairs(s.settings.view().readonly) do
-            if row.key == 'Record.Progression.Resource' then found = row end
+        for _, section in pairs(s.settings.view()) do
+            if type(section) == 'table' then
+                for _, row in ipairs(section) do
+                    if type(row) == 'table' and row.key == 'Integrations.Progression' then found = row end
+                end
+            end
         end
-        truthy(found, 'not on the read-only list')
-        truthy(found.denied, 'as one changed only in config.lua')
-        eq(found.value, 'sc-blackmarket')
+        truthy(found, 'listed in the panel')
+        eq(table.concat(found.choices or {}, ','), 'auto,sc-blackmarket,none')
     end)
 
-    it('a row stored before is not applied at the start', function()
+    it('a row stored before naming no adapter is not applied at the start', function()
         local s = stack()
-        s.storage.writeSetting('Record.Progression.Resource', 'my-blackmarket', 'ADMIN001', os.time())
+        s.storage.writeSetting('Integrations.Progression', 'my-blackmarket', 'ADMIN001', os.time())
         resetConfig()
         s.settings.init({ storage = s.storage, audit = s.audit, check = CHECK })
         eq(s.settings.boot(), 0)
-        eq(Config.Record.Progression.Resource, 'sc-blackmarket')
+        eq(Config.Integrations.Progression, 'auto')
         resetConfig()
     end)
 end)

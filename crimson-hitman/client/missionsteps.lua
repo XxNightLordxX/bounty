@@ -62,7 +62,7 @@ local Gen = 0
 local MAX_KEY = 64
 
 local function RemoveZone(zone)
-    if zone and CrimsonNpc.targetUp() then pcall(function() exports.ox_target:removeZone(zone, true) end) end
+    if zone and CrimsonNpc.targetUp() then pcall(function() CrimsonNpc.target().removeZone(zone, true) end) end
 end
 
 --- Take one marker off the map.
@@ -124,7 +124,7 @@ local function AddZone(entry, spec)
     if not action or not entry.z or not CrimsonNpc.targetUp() or type(spec.ref) ~= 'string' then return end
     local ref, act = spec.ref, spec.act
     local ok, zone = pcall(function()
-        return exports.ox_target:addSphereZone({
+        return CrimsonNpc.target().addSphereZone({
             coords = vector3(entry.x, entry.y, entry.z), radius = 2.5, debug = false,
             options = { {
                 name = 'crimson_disposal_' .. act, label = action.label, icon = action.icon, distance = 3.0,

@@ -331,6 +331,13 @@ keys live in two places in the file.
 For the adapter step (rule 8). Every call into another resource. "guarded"
 means the call site checks `GetResourceState` and/or wraps in `pcall`.
 
+**Since step 5a** every one of these calls goes through an adapter
+(`server/adapters/<kind>/<name>.lua`, `client/adapters/<kind>/<name>.lua`),
+chosen by `Config.Integrations.<Kind>`; the line numbers below are from
+before it. See `docs/dev/adapters.md`. Left as direct calls: the three
+configurable provider exports (Restraint, Playtime, CallExport), the
+events listened for, oxmysql and Discord.
+
 | Resource | Kind | What | Where |
 |---|---|---|---|
 | **qbx_core** (framework) | exports | `GetPlayer` | `server/identity.lua:218`, `:231`, `:640`, `:789`; `server/completion/kidnap.lua:85`; `server/org/jobs.lua:171` |

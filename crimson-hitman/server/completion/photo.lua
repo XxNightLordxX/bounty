@@ -20,6 +20,10 @@
 local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Phone() return Integrations.get('phone') end
 
 local Photo = {}
 
@@ -133,7 +137,7 @@ function Photo.loadAllowedHosts()
     end
 
     local ok, phoneConfig = pcall(function()
-        return exports['lb-phone']:GetConfig()
+        return Phone().GetConfig()
     end)
     if ok and type(phoneConfig) == 'table' then
         if type(phoneConfig.UploadWhitelistedDomains) == 'table' then

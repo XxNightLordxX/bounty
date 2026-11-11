@@ -758,6 +758,7 @@ local suites = {
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
     'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'payout_checks_spec', 'lib_players_spec',
     'lib_feature_spec',
+    'adapters_spec',
     'docs_spec',
 }
 

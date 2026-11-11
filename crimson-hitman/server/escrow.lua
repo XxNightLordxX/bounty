@@ -7,8 +7,30 @@
 ---      exactly once, no matter which path reaches it.
 
 local Util = CrimsonBoot.requireShared('util')
-local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Framework() return Integrations.get('framework') end
+local function Inventory() return Integrations.get('inventory') end
+
+--- How many of an item a player carries, read through the inventory
+--- adapter: 0 with no inventory, or when the read raised (said once a
+--- minute), so a check refuses rather than raising inside a request.
+---@param src integer
+---@param name string
+---@return number
+local function carried(src, name)
+    local ok, held = Integrations.call('inventory', 'GetItem', src, name, nil, true)
+    return ok and tonumber(held) or 0
+end
+
+--- The slots holding an item, or none.
+---@return table[]
+local function slotsOf(src, name)
+    local ok, slots = Integrations.call('inventory', 'Search', src, 'slots', name)
+    return ok and type(slots) == 'table' and slots or {}
+end
 
 local Escrow = {}
 
@@ -235,7 +257,11 @@ end
 ---@return boolean
 local function sourceEnabled(name)
     local source = Config.Sources and Config.Sources[name]
-    return (source and source.enabled) == true
+    if (source and source.enabled) ~= true then return false end
+    -- Items, weapons and dirty money are the inventory's: with no inventory
+    -- adapter answering (Config.Integrations.Inventory) they are off.
+    if name ~= 'cash' and name ~= 'bank' and not Integrations.has('inventory') then return false end
+    return true
 end
 
 --- Which item a dirty-money line is denominated in.
@@ -273,10 +299,10 @@ end
 ---@return number|nil
 local function accountHeld(cid, account)
     local ok, value = pcall(function()
-        local player = exports.qbx_core:GetPlayerByCitizenId(cid)
+        local player = Framework().GetPlayerByCitizenId(cid)
         local src = player and player.PlayerData and player.PlayerData.source
         if not src then return nil end
-        return exports.qbx_core:GetMoney(src, account)
+        return Framework().GetMoney(src, account)
     end)
     return ok and tonumber(value) or nil
 end
@@ -386,7 +412,7 @@ function Escrow.namesOwner(actor, lines)
     -- carries that one under whatever key it likes.
     local src = actor and actor.source
     if src then
-        local ok, number = Bridge.call('lb-phone', 'GetEquippedPhoneNumber', src)
+        local ok, number = Integrations.call('phone', 'GetEquippedPhoneNumber', src)
         if ok then want(number) end
     end
 
@@ -452,7 +478,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         if source == 'cash' or source == 'bank' then
             held = actor.player.Functions.GetMoney(source) or 0
         else
-            held = exports.ox_inventory:GetItem(actor.source, rule.item, nil, true) or 0
+            held = carried(actor.source, rule.item)
         end
         if held < amount then return CH.ERR.INSUFFICIENT end
 
@@ -526,7 +552,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             -- which snapshots the metadata, or they do not go at all.
             if isWeaponName(name) then return CH.ERR.INVALID_REWARD end
 
-            local held = exports.ox_inventory:GetItem(actor.source, name, nil, true) or 0
+            local held = carried(actor.source, name)
             if held < count then return CH.ERR.INSUFFICIENT end
 
             -- Items are not interchangeable just because they share a name.
@@ -534,7 +560,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             -- holding goods is not an empty one. Escrow takes specific
             -- slots and remembers what was in them, so what comes back is
             -- what went in — the same rule §9.4 already applies to weapons.
-            local slots = exports.ox_inventory:Search(actor.source, 'slots', name) or {}
+            local slots = slotsOf(actor.source, name)
             local remaining = count
 
             for j = 1, #slots do
@@ -611,7 +637,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             -- Read the weapon's real metadata from the server-side inventory
             -- and snapshot it (§9.4). The client's copy is never stored.
             local found
-            local slots = exports.ox_inventory:Search(actor.source, 'slots', name) or {}
+            local slots = slotsOf(actor.source, name)
             for j = 1, #slots do
                 if slots[j].slot == invSlot then found = slots[j] end
             end
@@ -789,13 +815,13 @@ function Escrow.checkAggregate(actor, lines)
         if source == 'cash' or source == 'bank' then
             held = actor.player.Functions.GetMoney(source) or 0
         else
-            held = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
+            held = carried(actor.source, Config.Sources.dirty.item)
         end
         if held < total then return CH.ERR.INSUFFICIENT end
     end
 
     for name, total in pairs(items) do
-        local held = exports.ox_inventory:GetItem(actor.source, name, nil, true) or 0
+        local held = carried(actor.source, name)
         if held < total then return CH.ERR.INSUFFICIENT end
     end
 
@@ -877,15 +903,15 @@ takeUnlocked = function(actor, contractId, lines)
                 back, raised, arrived = Util.credit(actor.player, line.source, line.amount)
             elseif line.source == 'dirty' then
                 back = guarded(function()
-                    return exports.ox_inventory:AddItem(actor.source, dirtyItemOf(line), line.amount)
+                    return Inventory().AddItem(actor.source, dirtyItemOf(line), line.amount)
                 end)
             elseif line.source == CH.SOURCE.ITEM then
                 back = guarded(function()
-                    return exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
+                    return Inventory().AddItem(actor.source, line.item, line.quantity, line.metadata)
                 end)
             elseif line.source == CH.SOURCE.WEAPON then
                 back = guarded(function()
-                    return exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
+                    return Inventory().AddItem(actor.source, line.item, 1, line.metadata)
                 end)
             end
 
@@ -971,17 +997,17 @@ takeUnlocked = function(actor, contractId, lines)
             ok, raised = guarded(Util.charge, actor.player, line.source, line.amount)
         elseif line.source == 'dirty' then
             ok, raised = guarded(function()
-                return exports.ox_inventory:RemoveItem(actor.source, dirtyItemOf(line), line.amount)
+                return Inventory().RemoveItem(actor.source, dirtyItemOf(line), line.amount)
             end)
         elseif line.source == CH.SOURCE.ITEM then
             -- Names the metadata, so the slot that was staged is the slot
             -- that is taken rather than any stack of the same name.
             ok, raised = guarded(function()
-                return exports.ox_inventory:RemoveItem(actor.source, line.item, line.quantity, line.metadata)
+                return Inventory().RemoveItem(actor.source, line.item, line.quantity, line.metadata)
             end)
         elseif line.source == CH.SOURCE.WEAPON then
             ok, raised = guarded(function()
-                return exports.ox_inventory:RemoveItem(actor.source, line.item, 1, line.metadata)
+                return Inventory().RemoveItem(actor.source, line.item, 1, line.metadata)
             end)
         end
 
@@ -1927,10 +1953,10 @@ local function holding(src, name, metadata, weapon)
     local ok, count = pcall(function()
         local serial = weapon and type(metadata) == 'table' and metadata.serial
         if type(serial) == 'string' and serial ~= '' then
-            local slots = exports.ox_inventory:Search(src, 'slots', name, { serial = serial })
+            local slots = Inventory().Search(src, 'slots', name, { serial = serial })
             return type(slots) == 'table' and #slots or nil
         end
-        return exports.ox_inventory:GetItemCount(src, name)
+        return Inventory().GetItemCount(src, name)
     end)
     return ok and tonumber(count) or nil
 end
@@ -2083,7 +2109,7 @@ function Escrow.deliver(recipientCid, line)
         if asked and wait then return false end
     end
 
-    local recipient = exports.qbx_core:GetPlayerByCitizenId(recipientCid)
+    local recipient = Framework().GetPlayerByCitizenId(recipientCid)
     if not recipient or not recipient.PlayerData then return false, true end
 
     local src = recipient.PlayerData.source
@@ -2204,7 +2230,7 @@ function Escrow.deliver(recipientCid, line)
 
     -- CanCarryItem answers nil for an item it does not know.
     local fits = guarded(function()
-        return exports.ox_inventory:CanCarryItem(src, name, count, metadata)
+        return Inventory().CanCarryItem(src, name, count, metadata)
     end)
     if not fits then return false end
 
@@ -2215,7 +2241,7 @@ function Escrow.deliver(recipientCid, line)
     if not before then return false end
 
     local gave, raised = guarded(function()
-        return exports.ox_inventory:AddItem(src, name, count, metadata)
+        return Inventory().AddItem(src, name, count, metadata)
     end)
     if asItem and not raised and gave then
         Audit.financial('escrow_paid_as_item', recipientCid, line.contract_id, {

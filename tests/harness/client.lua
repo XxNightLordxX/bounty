@@ -134,6 +134,13 @@ local BLIP_NATIVES = {
     AddTextComponentSubstringPlayerName = function(text)
         if blipName then blipName.text = text end
     end,
+    -- The game's feed ticker: a notice shown with no phone adapter.
+    BeginTextCommandThefeedPost = function(kind) blipName = { kind = kind, feed = true } end,
+    EndTextCommandThefeedPostTicker = function()
+        Client.feed = Client.feed or {}
+        Client.feed[#Client.feed + 1] = blipName and blipName.text
+        blipName = nil
+    end,
     EndTextCommandSetBlipName = function(blip)
         onBlip(blip, function(r) r.name = blipName and blipName.text end)
         blipName = nil
@@ -296,6 +303,12 @@ function Client.boot(opts)
     require('crimson-hitman.shared.util')
     require('crimson-hitman.shared.geo')
     require('crimson-hitman.shared.log')
+    -- CrimsonIntegrations and the client's adapters, as the manifest loads
+    -- them: a registry of the client's own (on a live server the two sides
+    -- are separate Lua states), so the server's stays as it was.
+    local serverIntegrations = package.loaded['crimson-hitman.shared.integrations']
+    require('tests.harness.client_adapters')()
+    package.loaded['crimson-hitman.shared.integrations'] = serverIntegrations
     -- CrimsonNpc: the step markers ask it whether ox_target is up (the
     -- manifest lists client/npc.lua later; the markers ask only at run time).
     package.loaded['crimson-hitman.client.npc'] = nil

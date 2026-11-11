@@ -25,10 +25,10 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
-local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Improvements.ProofItems'
@@ -80,7 +80,7 @@ end
 ---@return table|nil slot
 ---@return boolean read false when the inventory could not be read
 local function proofSlot(actor, item, key, targetCid)
-    local ok, slots = Bridge.call('ox_inventory', 'Search', actor.source, 'slots', item, { [key] = targetCid })
+    local ok, slots = Integrations.call('inventory', 'Search', actor.source, 'slots', item, { [key] = targetCid })
     if not ok then return nil, false end
     for _, slot in pairs(type(slots) == 'table' and slots or {}) do
         if type(slot) == 'table' and type(slot.metadata) == 'table'
@@ -93,7 +93,7 @@ end
 
 --- Give the item back after a claim that did not pay. Audited either way.
 local function giveBack(actor, contractId, item, slot, why)
-    local ok, gave = Bridge.call('ox_inventory', 'AddItem', actor.source, item, 1, slot.metadata)
+    local ok, gave = Integrations.call('inventory', 'AddItem', actor.source, item, 1, slot.metadata)
     if ok and gave then
         deps.audit.action('proof_item_returned', actor.cid, contractId, { item = item, reason = why })
     else
@@ -112,7 +112,7 @@ end
 ---@return table|nil result the claim's own answer
 function Proof.handover(actor, rawId)
     if not Feature.on(BLOCK) then return false, CH.ERR.FEATURE_OFF end
-    if not Bridge.started('ox_inventory') then return false, CH.ERR.FEATURE_OFF end
+    if not Integrations.has('inventory') then return false, CH.ERR.FEATURE_OFF end
     local contractId = Util.toId(rawId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
 
@@ -163,7 +163,7 @@ function Proof.handover(actor, rawId)
     working[busy] = true
 
     -- The hitman's side first: the very slot found above, by its metadata.
-    local took, removed = Bridge.call('ox_inventory', 'RemoveItem', actor.source, item, 1, slot.metadata, slot.slot)
+    local took, removed = Integrations.call('inventory', 'RemoveItem', actor.source, item, 1, slot.metadata, slot.slot)
     if not took or not removed then
         working[busy] = nil
         deps.audit.rejected('proof_item_not_taken', actor.cid, contractId, { item = item })

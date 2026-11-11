@@ -10,6 +10,11 @@ local Holds = CrimsonBoot.require('server.holds')
 local Geo = CrimsonBoot.requireShared('geo')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Framework() return Integrations.get('framework') end
 
 local Kidnap = {}
 
@@ -74,7 +79,7 @@ function Kidnap.isCoerced(hitmanSource, targetSource)
     local rules = Config.Kidnap.Coercion or {}
 
     if rules.handcuffed then
-        local target = exports.qbx_core:GetPlayer(targetSource)
+        local target = Framework().GetPlayer(targetSource)
         local meta = target and target.PlayerData and target.PlayerData.metadata
         if meta and meta.ishandcuffed then return true, 'handcuffed' end
     end
@@ -90,10 +95,10 @@ function Kidnap.isCoerced(hitmanSource, targetSource)
     -- Optional hook for a server's own rope / ziptie resource.
     -- A resource name; GetResourceState takes nothing else.
     local provider = Config.Kidnap.RestraintProvider
-    if type(provider) == 'string' and GetResourceState(provider) == 'started' then
-        local ok, restrained = pcall(function()
-            return exports[provider]:IsRestrained(targetSource)
-        end)
+    if type(provider) == 'string' then
+        -- Called by name (Bridge.call: only while it is started; a raise
+        -- said once a minute).
+        local ok, restrained = Bridge.call(provider, 'IsRestrained', targetSource)
         if ok and restrained then return true, 'restraint_provider' end
     end
 

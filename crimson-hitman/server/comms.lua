@@ -7,6 +7,10 @@
 local Util = CrimsonBoot.requireShared('util')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Phone() return Integrations.get('phone') end
 
 local Comms = {}
 
@@ -435,7 +439,7 @@ function Comms.requestCall(actor, contractId, threadHandle)
     -- hung up. A second CreateCall rang the other party twice, and Hang up
     -- ended one of them. The page shows Hang up on this.
     local asked, inCall = pcall(function()
-        return exports['lb-phone']:IsInCall(actor.source)
+        return Phone().IsInCall(actor.source)
     end)
     if asked and inCall then return false, CH.ERR.ALREADY_IN_CALL end
 
@@ -533,7 +537,7 @@ end
 ---@return table|nil result { ended = boolean }
 function Comms.endCall(actor)
     local ok, inCall = pcall(function()
-        return exports['lb-phone']:IsInCall(actor.source)
+        return Phone().IsInCall(actor.source)
     end)
     -- Already over — the other side hung up or never answered — is not an
     -- error, and the page says so rather than claiming it ended anything.
@@ -542,7 +546,7 @@ function Comms.endCall(actor)
     if ok and not inCall then return true, nil, { ended = false } end
 
     local ended = pcall(function()
-        exports['lb-phone']:EndCall(actor.source)
+        Phone().EndCall(actor.source)
     end)
     return true, nil, { ended = ended }
 end
@@ -594,9 +598,9 @@ end
 --- call started: nil is a call that did not, however quietly it failed.
 local function lbPhonePlacer()
     return function(actor, number, anonymous, alias)
-        local createCall = resolveExport('lb-phone', 'CreateCall')
-        if not createCall then return false end
-        local ok, callId = pcall(createCall, nil,
+        local phone = Phone()
+        if not (phone and type(phone.canCall) == 'function' and phone.canCall()) then return false end
+        local ok, callId = pcall(phone.CreateCall,
             { source = actor.source, phoneNumber = alias or 'Unknown' },
             number,
             { requirePhone = true, hideNumber = anonymous == true })
@@ -621,7 +625,9 @@ local function findPlacer()
         return overridePlacer(spec.resource, spec.export)
     end
 
-    return resolveExport('lb-phone', 'CreateCall') and lbPhonePlacer() or nil
+    local phone = Phone()
+    local canCall = phone and type(phone.canCall) == 'function' and phone.canCall()
+    return canCall and lbPhonePlacer() or nil
 end
 
 --- Whether this server can place a call at all, and how.
@@ -676,7 +682,7 @@ function Comms.placeCall(actor, recipientCid, anonymous, alias)
     -- never handed back to the caller: the caller's phone is told to dial,
     -- it is not told what it dialled.
     local ok, number = pcall(function()
-        return exports['lb-phone']:GetEquippedPhoneNumber(recipient.source)
+        return Phone().GetEquippedPhoneNumber(recipient.source)
     end)
     if not ok or type(number) ~= 'string' or number == '' then return false end
 
@@ -695,9 +701,9 @@ end
 local maskingChecked, maskingOk = false, false
 function Comms.maskingAvailable()
     if maskingChecked then return maskingOk end
-    if not Bridge.started('lb-phone') then return false end
+    if not Integrations.has('phone') then return false end
     maskingChecked = true
-    local ok, config = Bridge.call('lb-phone', 'GetConfig')
+    local ok, config = Integrations.call('phone', 'GetConfig')
     maskingOk = ok and type(config) == 'table' and config.AnonymousCalls ~= false
     return maskingOk
 end

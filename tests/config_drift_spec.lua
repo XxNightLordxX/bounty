@@ -1520,14 +1520,14 @@ describe('a safety switch added to a section the operator already had', function
             'an operator who switched the release off is not told it still happens')
     end)
 
-    it('fills the coercion detectors and death providers when they are absent', function()
+    it('fills the coercion detectors, and the other scripts, when they are absent', function()
         boot(function()
             Config.Kidnap.Coercion = nil
-            Config.Completion.DeathStateProviders = nil
+            Config.Integrations = nil
         end)
         eq(Config.Kidnap.Coercion.handcuffed, true,
             'with coercion required and no detectors, no delivery can ever succeed')
-        eq(#Config.Completion.DeathStateProviders, 2)
+        eq(Config.Integrations.Ambulance, 'auto', 'a config from before step 5a asks every medical resource')
         resetConfig()
     end)
 end)

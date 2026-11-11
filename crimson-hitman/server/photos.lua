@@ -37,6 +37,10 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
+
+--- The adapters answering now (server/adapters/): nil while none does.
+local function Phone() return Integrations.get('phone') end
 
 local Photos = {}
 
@@ -603,7 +607,7 @@ end
 --- phone lets go of what was saved on it. nil where lb-phone cannot say.
 local function phoneNumberOf(src)
     local ok, number = pcall(function()
-        return exports['lb-phone']:GetEquippedPhoneNumber(src)
+        return Phone().GetEquippedPhoneNumber(src)
     end)
     if not ok or (type(number) ~= 'string' and type(number) ~= 'number') then return nil end
     number = tostring(number)
@@ -754,7 +758,7 @@ function Photos.galleryAllows(link)
     if not host:find('%.') then return false, host end
 
     local ok, phoneConfig = pcall(function()
-        return exports['lb-phone']:GetConfig()
+        return Phone().GetConfig()
     end)
     if not ok or type(phoneConfig) ~= 'table' then return nil, host end
     local hostnames = type(phoneConfig.UploadWhitelistedHostnames) == 'table'

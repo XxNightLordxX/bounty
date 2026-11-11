@@ -15,10 +15,13 @@ answered under [oxmysql](#oxmysql-as-the-mysql-store-relies-on-it).
 
 ### The stack
 
-Qbox (`qbx_core`), `ox_inventory`, `oxmysql` and lb-phone, with
-`sc-ambulance` / `qbx_medical`, `sc-dispatch`, `sc-blackmarket` and
-`MugShotBase64` detected at runtime and skipped when absent. `fxmanifest.lua`
-lists only `qbx_core` and `ox_inventory` as dependencies: lb-phone may start
+Qbox (`qbx_core`) and `oxmysql`, with every other script behind an adapter
+(`server/adapters/`, `client/adapters/`, `Config.Integrations`; see
+`docs/dev/adapters.md`): `ox_inventory`, `ox_target`, lb-phone,
+`sc-ambulance` / `qbx_medical`, `sc-dispatch`, `Renewed-Banking`,
+`qbx_vehiclekeys`, `sc-blackmarket` and `MugShotBase64`, detected at runtime
+and skipped when absent, one console line for each kind left without one.
+`fxmanifest.lua` lists only `qbx_core` as a dependency: lb-phone may start
 after this resource, and the client adds the app whenever lb-phone starts.
 
 ### Modules
@@ -448,7 +451,7 @@ for saved notices, `CreateCall`, `IsInCall` and `EndCall` for relay calls,
 `GetConfig` for upload hosts and caller masking, `ContainsBlacklistedWord` on
 reasons and messages, and the two gallery events above.
 
-**ox_inventory** (required). `GetInventoryItems`, `GetInventory`, `Search` and
+**ox_inventory** (optional, the inventory adapter; without one, item, weapon and dirty-money rewards are off). `GetInventoryItems`, `GetInventory`, `Search` and
 `GetItem` read what a player can put up; `RemoveItem` takes it into escrow;
 `CanCarryItem` then `AddItem` pay it out or hand it back, with the metadata it
 was taken with. Each call is made inside `pcall`, and a raise is a refusal,
@@ -466,10 +469,10 @@ cleared with `ClearNotification` when a contract on an officer ends, whatever
 `Config.Advisory` says by then (clearing an id never filed does nothing).
 
 **Other optional hooks**, each skipped when the resource is not started:
-`sc-ambulance` (`IsDead`, `IsLaststand` through
-`Config.Completion.DeathStateProviders`; QBox metadata answers otherwise),
+`sc-ambulance` (`IsDead`, `IsLaststand`, the ambulance adapter,
+`Config.Integrations.Ambulance`; QBox metadata answers otherwise),
 `sc-blackmarket` (`AddTrust(citizenid, amount)` on a completed contract,
-`Config.Record.Progression`), `MugShotBase64` (`GetMugShotBase64` on the client, for
+`Config.Record.Progression`, the progression adapter), `MugShotBase64` (`GetMugShotBase64` on the client, for
 headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 `Config.Immunity.PlaytimeProvider` (minutes played by citizen id; without it
 the playtime is counted here, see *New players and playtime*).

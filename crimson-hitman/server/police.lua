@@ -17,8 +17,8 @@
 --- feature; none of them names a placer or an operative, and nothing here
 --- adds anybody.
 
-local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Log = CrimsonBoot.requireShared('log')
+local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Police = {}
 
@@ -74,7 +74,7 @@ end
 --- gives them, coords and street; the unique id is held to 60 characters,
 --- the caller to 60 and the street to 100, as sc-dispatch takes them.
 ---@param entry table
----@return boolean filed false where sc-dispatch is not started or raised
+---@return boolean filed false with no dispatch adapter (Config.Integrations.Dispatch), or a raise
 function Police.dispatch(entry)
     local alert = {}
     for k, v in pairs(entry) do alert[k] = v end
@@ -82,14 +82,14 @@ function Police.dispatch(entry)
     if type(alert.unique_id) == 'string' then alert.unique_id = alert.unique_id:sub(1, 60) end
     if type(alert.caller) == 'string' then alert.caller = alert.caller:sub(1, 60) end
     if type(alert.street) == 'string' then alert.street = alert.street:sub(1, 100) end
-    return (Bridge.call('sc-dispatch', 'AddNotification', alert))
+    return (Integrations.call('dispatch', 'AddNotification', alert))
 end
 
 --- Take an entry off sc-dispatch by its unique id. Clearing one never
 --- filed does nothing.
 ---@param uid string
 function Police.clear(uid)
-    Bridge.call('sc-dispatch', 'ClearNotification', uid, Police.jobs())
+    Integrations.call('dispatch', 'ClearNotification', uid, Police.jobs())
 end
 
 --- Post one item to the city's news: lb-phone's PostBirdy as cfg.Account
@@ -107,12 +107,12 @@ function Police.press(cfg, text)
     local posted, why = false, nil
     if cfg.App == 'event' then
         posted = pcall(TriggerEvent, cfg.Event, { account = cfg.Account, text = text })
-    elseif GetResourceState('lb-phone') == 'started' then
-        local ran, ok = Bridge.call('lb-phone', 'PostBirdy', cfg.Account, text, nil, nil, nil, nil)
+    elseif Integrations.has('phone') then
+        local ran, ok = Integrations.call('phone', 'PostBirdy', cfg.Account, text, nil, nil, nil, nil)
         posted = ran and ok ~= false
         if not ran then why = tostring(ok) end
     else
-        why = 'lb-phone is not started'
+        why = 'no phone adapter answers (Config.Integrations.Phone)'
     end
     if not posted and os.time() - saidPressFailAt >= 60 then
         saidPressFailAt = os.time()

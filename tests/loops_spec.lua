@@ -770,6 +770,7 @@ describe('the client\'s NPC loop', function()
         -- As the manifest loads them: CrimsonGeo, CrimsonMarkers (the blips)
         -- and CrimsonNpc before client/rp_npc.lua.
         assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
+        require('tests.harness.client_adapters')(env)
         assert(loadfile('crimson-hitman/client/missionsteps.lua', 't', env))()
         assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
         t.loop = assert(loadfile('crimson-hitman/client/rp_npc.lua', 't', env))()

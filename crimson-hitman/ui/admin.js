@@ -3686,6 +3686,7 @@
     'Diagnostics': 'What the console says about slow jobs.',
     'Rate limits': 'How often each player may send each request.',
     'Staff commands': 'The names of the staff commands.',
+    'Other scripts': 'Which of your other scripts each kind of feature uses (inventory, dispatch, phone and the rest), or none.',
     'Edit in config.lua': 'Settings this panel never changes: edit config.lua and restart.',
     'Kept in the store, not on this list': 'Panel changes for keys this version does not have; Reset all clears them.',
     'Other': 'Settings not in any group above.'

@@ -43,24 +43,39 @@ end
 ---@return any ... the export's answers, or the reason ('not started', the raise)
 function Bridge.call(resource, export, ...)
     if not Bridge.started(resource) then return false, 'not started' end
-    local out = table.pack(pcall(function(...)
+    return Bridge.invoke(resource .. ' ' .. tostring(export), function(...)
         local api = exports[resource]
         return api[export](api, ...)
-    end, ...))
+    end, ...)
+end
+
+--- Run `fn` inside pcall, as Bridge.call runs an export: a raise is one
+--- line at most once a minute for the same `what` and answers false. The
+--- adapters' calls (Integrations.call, server/adapters/init.lua) go
+--- through here.
+---@param what string what is being called ('ox_inventory RemoveItem')
+---@param fn function
+---@return boolean ok false when it raised
+---@return any ... its answers, or the raise
+function Bridge.invoke(what, fn, ...)
+    local out = table.pack(pcall(fn, ...))
     if not out[1] then
-        Bridge.raised(resource .. ' ' .. tostring(export), out[2])
+        Bridge.raised(what, out[2])
         return false, out[2]
     end
     return true, table.unpack(out, 2, out.n)
 end
 
---- Whether lb-phone's own word filter refuses this text from this player.
---- False when lb-phone is not started, has no filter or its filter raised.
+--- Whether the phone's own word filter refuses this text from this player
+--- (the phone adapter's ContainsBlacklistedWord, server/adapters/phone/).
+--- False with no phone adapter, no filter, or a filter that raised.
 ---@param src integer
 ---@param text string
 ---@return boolean
 function Bridge.phoneRefuses(src, text)
-    local ok, blocked = Bridge.call('lb-phone', 'ContainsBlacklistedWord', src, text)
+    -- Asked at use: the adapters are built on this file.
+    local ok, blocked = CrimsonBoot.require('server.adapters.init')
+        .call('phone', 'ContainsBlacklistedWord', src, text)
     return ok and blocked == true
 end
 

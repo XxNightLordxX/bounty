@@ -830,6 +830,7 @@ describe('bug sweep U2: the roleplay NPC loop survives an NPC moving mid-load', 
             CreateThread = function(fn) thread = coroutine.create(fn) end,
         }, { __index = _G })
         assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
+        require('tests.harness.client_adapters')(env)
         assert(loadfile('crimson-hitman/client/missionsteps.lua', 't', env))()
         assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
         assert(loadfile('crimson-hitman/client/rp_npc.lua', 't', env))()
