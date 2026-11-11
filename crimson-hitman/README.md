@@ -143,6 +143,7 @@ dispatch, inventory or phone), add an adapter: `docs/dev/adapters.md`.
 - Carry your `config/config.lua` across. Settings changed in the panel are kept in the store and survive the update.
 - Payouts an older version left owed appear once under **Money waiting** in the panel's inbox (`/ch-stuck`): check the player has it, then **Pay** or **Delivered**.
 - Restarting `qbx_core` or `oxmysql` stops this resource with them: `ensure crimson-hitman` afterwards. Restarting `lb-phone`, `ox_inventory` or any other optional script is safe: what needs it is off while it is down, said in one console line.
+- **Moving your settings** to another server or keeping a copy: Developer, **Export & import**, **Export the settings**, then **Copy**. The text holds every setting changed from the panel (never a secret: the webhooks stay in server.cfg) and your own presets. It does not hold the map places (Locations) or the target limits set for a job or a player (Target limits): those belong to one server's map, jobs and characters. On the other server, paste it under Import and **Read it**: every change (from, to), every key refused and why (one the panel never changes, one this version does not have, one read-only, a value it would refuse) and the presets it would add. Nothing changes until **Apply it**, two clicks naming how many changes; each is then an ordinary setting change, audited and in Change history with Undo.
 - **Version check** (off as shipped): set `Config.VersionCheck.Enabled = true` and `Config.VersionCheck.Url` to an https address that serves the latest version number (plain text such as `1.3.0`, or JSON with it in). The server asks it once at start, with a plain GET: no body, no headers of its own, and an address with `?` or `#` (or a user name) in it is refused unasked, so nothing about your server is sent. A newer version is one console line; anything else says nothing. With no address (as shipped) nothing is ever asked.
 
 ### Escrow, and where the words live
@@ -498,6 +499,9 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `presetSave` | Write | Save the settings the presets name, as they are now, as Current |
 | `presetSaveOwn` | Write | Save the settings changed from the panel now as a preset of the server's own, under `name` (1-32 letters, digits, spaces, - _ '; not a shipped name; at most 20; the same name replaces it); audited `admin_preset_saved` |
 | `presetDelete` | Write | Delete a preset of the server's own by `name`; audited `admin_preset_deleted` |
+| `settingsExport` | Developer | Every setting changed from the panel (never a secret) and the server's own presets as one JSON `text` (`format`, `version`, `resource`, `exported`, `settings`, `presets`), with how many of each; not the map places or the target limits |
+| `settingsImport` | Developer | What an exported `text` (at most 200 KB) would change now: `changes` (key, label, from, to), `refused` (key, label, why: on the deny list, not a setting of this version, read-only, or a value the start-up checks refuse), `same`, and the `presets` it would add (or why not); changes nothing |
+| `settingsImportApply` | Write | Apply an exported `text` when its changes still number `expect` (the preview's): each through Settings.set (audited `admin_setting_changed`, in Change history with Undo), then its presets (only the values this server takes), then one `admin_settings_imported` row; needs the Developer section too |
 | `setup` | Write | The first-start setup: storage, the other scripts (detected, and the adapter chosen), the `add_ace` lines, the panel command, the key switches, each at the value in force |
 | `setupPreview` | Write | What applying the setup's choices would change, and what would be refused; changes nothing |
 | `setupApply` | Write | Apply the setup's choices, each as a setting change, and save the setup as done |
@@ -2030,6 +2034,7 @@ The audit log records every money movement and every refused attempt:
 
 **1.2.0, other scripts optional, first-start setup (newest)**
 
+- **Settings export and import**: Developer, Export & import: every setting changed from the panel and your own presets as one text; paste one in to see every change and every refused key with why, then apply it with two clicks, each change audited and undoable. Not the map places or the target limits.
 - **Your own presets**: Game rules, Presets keeps up to 20 presets of the server's own (the settings changed from the panel, under a name), previewed and applied like the shipped ones, deleted with two clicks, audited.
 - **Config check**: `/ch-diag config` (and Developer, Health, **Check the config**) lists every value out of range, missing script, missing ACE and risky combination, each with its fix. See Troubleshooting and /ch-diag.
 - **Version check** (`Config.VersionCheck`, off as shipped, no address): one HTTPS GET at start, sending nothing of this server's, and one console line when a newer version is out. See Updating.

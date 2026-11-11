@@ -274,6 +274,19 @@ adapter, `IsPrincipalAceAllowed('group.admin', …)` for each staff ACE and
 `command.<name>`, and `ConfigCheck.RISKS` (a `when(Config)` and a fix
 each). Add a risk there with its own test in `tests/configcheck_spec.lua`.
 
+### Settings export and import
+
+`server/settingsio.lua`: `export()` is `Settings.active()` (applied, not
+read-only, not a secret) plus `Presets.ownList()` as one JSON text
+(`format = 'crimson-hitman-settings'`, `version = 1`). `preview(text)` reads
+it (at most 200 KB) and sorts every key into changes, `refused` (secret,
+`Settings.DENY`, no catalogue entry, read-only, `Settings.check` refused)
+and `same`, and each preset through `Presets.importable`. `apply(text,
+expect)` previews again, refuses when the changes no longer number `expect`,
+then calls `Settings.set` for each and `Presets.importOwn` for each preset.
+The page sends the text as a latent event (client/admin.lua `LATENT_OPS`).
+`tests/settingsio_spec.lua`.
+
 ### The event and handler order
 
 Every net event and callback handler, in `app.lua` and `panel.lua`, runs in

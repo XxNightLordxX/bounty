@@ -84,6 +84,10 @@ local OPS = {
     presets = READ, presetApply = WRITE, presetSave = WRITE,
     -- Presets of the server's own (X5): saved under a name, and deleted.
     presetSaveOwn = WRITE, presetDelete = WRITE,
+    -- Settings export and import (server/settingsio.lua), in the Developer
+    -- section: reading the export and previewing an import are its own; an
+    -- apply changes settings, so the staff ACE's as well.
+    settingsExport = DEVELOPER, settingsImport = DEVELOPER, settingsImportApply = WRITE,
     -- The first-start setup (server/setup.lua): it shows the ACE lines and
     -- changes settings, so the staff ACE's alone.
     setup = WRITE, setupPreview = WRITE, setupApply = WRITE,
@@ -167,7 +171,7 @@ local WAITS_FOR_RECOVERY = {
     removeHitman = true, editText = true,
     suspend = true, unsuspend = true, protect = true, unprotect = true, manualPay = true,
     undoSetting = true, presetApply = true, presetSave = true, setupApply = true,
-    presetSaveOwn = true, presetDelete = true,
+    presetSaveOwn = true, presetDelete = true, settingsImportApply = true,
     targetJobSet = true, targetJobRemove = true, targetReset = true, targetExtend = true,
     targetCounts = true, targetOverride = true, targetOverrideClear = true, targetJobAction = true,
 }
@@ -2489,6 +2493,35 @@ H.presetDelete = function(src, data)
     local name = type(data.name) == 'string' and data.name:sub(1, 64) or nil
     local ok, err, message = deps.presets.deleteOwn(name, who, cid)
     return ok, err, message
+end
+
+--- Every setting changed from the panel and the server's own presets, as
+--- one JSON text (Developer > Export and import).
+H.settingsExport = function()
+    if not deps.settingsio then return false, 'unavailable', 'Export and import are not running.' end
+    return true, nil, nil, deps.settingsio.export()
+end
+
+--- What an exported text would change now: nothing changes.
+H.settingsImport = function(_, data)
+    if not deps.settingsio then return false, 'unavailable', 'Export and import are not running.' end
+    local preview, why = deps.settingsio.preview(data.text)
+    if not preview then return false, CH.ERR.INVALID_INPUT, why end
+    preview.values = nil
+    return true, nil, nil, preview
+end
+
+--- Apply an exported text (two clicks on the page, naming how many changes):
+--- each change through Settings.set, then its presets. The Developer
+--- section's, so its ACE as well as the staff one.
+H.settingsImportApply = function(src, data)
+    if not deps.settingsio then return false, 'unavailable', 'Export and import are not running.' end
+    if not developer(src) then
+        return false, 'developer_required', deps.admin.howToAuthorise(developerAce(), true)
+    end
+    local cid, who = staffOf(src)
+    local ok, err, message, detail = deps.settingsio.apply(data.text, data.expect, who, cid)
+    return ok, err, message, detail
 end
 
 H.resetSettings = function(src)

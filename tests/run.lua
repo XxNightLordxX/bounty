@@ -431,6 +431,7 @@ function _G.newStack()
     package.loaded['server.presets'] = nil
     package.loaded['server.setup'] = nil
     package.loaded['server.configcheck'] = nil
+    package.loaded['server.settingsio'] = nil
     package.loaded['server.intel.rumours'] = nil
     package.loaded['server.rp_burner'] = nil
     package.loaded['server.intel.engine'] = nil
@@ -503,6 +504,7 @@ function _G.newStack()
     local presets     = require('server.presets')
     local setup       = require('server.setup')
     local configcheck = require('server.configcheck')
+    local settingsio  = require('server.settingsio')
     local rpBurner    = require('server.rp_burner')
     local rpReason    = require('server.rp_reason')
     local intel        = require('server.intel.engine')
@@ -593,6 +595,7 @@ function _G.newStack()
     presets.init({ settings = settings, storage = storage, audit = audit })
     setup.init({ settings = settings, storage = storage, audit = audit })
     configcheck.init({ settings = settings })
+    settingsio.init({ settings = settings, presets = presets, audit = audit })
     rpBurner.init({ audit = audit })
     rpReason.init({ storage = storage, review = review, contracts = contracts })
     -- Intel, as main.lua wires it.
@@ -664,7 +667,7 @@ function _G.newStack()
         rpIntent = rpIntent, rpProtection = rpProtection,
         -- The roleplay features.
         rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason, presets = presets, setup = setup,
-        configcheck = configcheck,
+        configcheck = configcheck, settingsio = settingsio,
         -- Intel.
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         -- Contract decay.
@@ -701,7 +704,7 @@ function _G.newStack()
         rpConsequences = rpConsequences,
         rpIntent = rpIntent, rpProtection = rpProtection,
         rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason, presets = presets, setup = setup,
-        configcheck = configcheck,
+        configcheck = configcheck, settingsio = settingsio,
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,
@@ -776,7 +779,7 @@ local suites = {
     'adapters_spec',
     'locale_spec',
     'versioncheck_spec',
-    'configcheck_spec',
+    'configcheck_spec', 'settingsio_spec',
     'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.org_extras2_spec', 'workflows.org_extras3_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',
     'docs_spec',
 }

@@ -5,6 +5,16 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Settings export and import**
+- Developer, Export & import: every setting changed from the panel and your
+  own presets as one JSON text, to copy (not the map places, not the target
+  limits). Paste one in and read it: every change from and to, every refused
+  key with why (deny list, unknown, read-only, invalid value), the presets it
+  would add; nothing changes until Apply, two clicks. Each change goes
+  through the normal Save (audited, in Change history with Undo), then one
+  `admin_settings_imported` row. Panel ops `settingsExport`,
+  `settingsImport`, `settingsImportApply`.
+
 **Your own presets**
 - Game rules, Presets: name and save the settings changed from the panel as
   a preset of your own (up to 20; the same name replaces it), listed after

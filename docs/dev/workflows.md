@@ -52,8 +52,8 @@ when an item in scope is driven by nothing and not listed below with why.
 | netevent.client | yes | 18 | 18 |
 | netevent.server | yes | 11 | 11 |
 | nui | yes | 123 | 123 |
-| op | yes | 127 | 127 |
-| screen | yes | 78 | 78 |
+| op | yes | 130 | 130 |
+| screen | yes | 79 | 79 |
 | setting | counted | 572 | 0 |
 | switch | yes | 157 | 157 |
 | tick | yes | 45 | 45 |
@@ -522,6 +522,9 @@ None.
 | `setPlaytime` | panel: players > looks a player up, views them, their history, and every measure on them |
 | `setSetting` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup; panel: logs, locations, photos > lists a disposal step, respawns its vehicle and skips it; feature switches > every switch turns from the panel and back, in force at once and written down |
 | `settings` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
+| `settingsExport` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
+| `settingsImport` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
+| `settingsImportApply` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
 | `settle` | workflow matrix: shipped, a fault at a database await (mysql) > kill: crash in verify at await 13 (post); workflow matrix: shipped, a fault at a database await (mysql) > buyout: crash in settle at await 17 (pre); workflow matrix: shipped, a fault at a database await (mysql) > disposal: crash in verify at await 13 (post) |
 | `setup` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
 | `setupApply` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
@@ -613,6 +616,7 @@ None.
 | `admin.view:tljobs` | tests/ui/admin_run.js (every admin.view:) |
 | `admin.view:tlplayer` | tests/ui/admin_run.js (every admin.view:) |
 | `admin.view:tools` | tests/ui/admin_run.js (every admin.view:) |
+| `admin.view:transfer` | tests/ui/admin_run.js |
 | `phone.boardtab:contracts` | tests/ui/run.js |
 | `phone.boardtab:protection` | tests/ui/run.js |
 | `phone.dialog:choice` | tests/ui/run.js |

@@ -774,6 +774,12 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Reset both settings, open Presets again: your card lists the two changes; **Apply** (two clicks) puts them back, each in Change history with Undo
 - [ ] **Delete** on your card (two clicks) removes it; `restart crimson-hitman` keeps the presets that were not deleted
 
+## Settings export and import (X2)
+
+- [ ] Change a few settings, save a preset of your own, then Developer, **Export & import**, **Export the settings**: the count names them; **Copy** puts the text on the clipboard; it holds no webhook
+- [ ] Reset those settings, paste the text under Import and **Read it**: each change is listed from and to, nothing has changed yet; edit the text to add `"Database.Mode":"memory"` and read it again: it is refused with why
+- [ ] **Apply it** (two clicks): the settings are back, each in Change history with Undo, and your preset is listed (or said to be there already)
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

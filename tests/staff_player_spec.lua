@@ -597,6 +597,7 @@ describe('every panel op, for every level', function()
         announce = 'write', undoSetting = 'write',
         presets = 'read', presetApply = 'write', presetSave = 'write',
         presetSaveOwn = 'write', presetDelete = 'write',
+        settingsExport = 'developer', settingsImport = 'developer', settingsImportApply = 'write',
         setup = 'write', setupPreview = 'write', setupApply = 'write',
         addNote = 'write', removeHitman = 'write', editText = 'write',
         console = 'developer', whois = 'identity',

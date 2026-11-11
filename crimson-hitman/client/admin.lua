@@ -176,6 +176,11 @@ end)
 
 --- One request, { op, data }, sent on to the server and answered with what
 --- it says: { ok, err, message, data }. Answered on every path, once.
+--- The requests that carry a large text (a settings import), and the rate
+--- they are sent at (bytes a second).
+local LATENT_OPS = { settingsImport = true, settingsImportApply = true }
+local LATENT_BPS = 100000
+
 RegisterNUICallback('adminRequest', function(data, cb)
     local answered = false
     local function answer(value)
@@ -199,9 +204,14 @@ RegisterNUICallback('adminRequest', function(data, cb)
             answer({ ok = false, err = 'timeout' })
         end
     end)
-    TriggerServerEvent('crimson-hitman:admin', {
-        op = op, data = type(data.data) == 'table' and data.data or {}, __rid = rid,
-    })
+    local payload = { op = op, data = type(data.data) == 'table' and data.data or {}, __rid = rid }
+    -- A settings import carries the whole exported text: sent as a latent
+    -- event, which large payloads need, the rest as they always were.
+    if LATENT_OPS[op] then
+        TriggerLatentServerEvent('crimson-hitman:admin', LATENT_BPS, payload)
+    else
+        TriggerServerEvent('crimson-hitman:admin', payload)
+    end
 end)
 
 RegisterNUICallback('adminClose', function(_, cb)

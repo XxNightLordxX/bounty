@@ -278,6 +278,69 @@ function Presets.saveOwn(name, staff, actorCid)
         :format(clean, count, count == 1 and '' or 's', replacing and ' The one saved under that name before is replaced.' or '')
 end
 
+--- The own presets as the settings export carries them (server/settingsio.lua):
+--- { { name, values } }, by name.
+---@return table[]
+function Presets.ownList()
+    local out = {}
+    for _, row in ipairs(readOwn()) do out[#out + 1] = { name = row.name, values = Util.copy(row.values) } end
+    return out
+end
+
+--- The keys of an imported preset's values that may be kept: catalogue
+--- keys the panel may change, never a secret or one on the deny list, each
+--- with a value the start-up checks take.
+local function importValues(values)
+    local out, count = {}, 0
+    if type(values) ~= 'table' then return out, 0 end
+    for key, value in pairs(values) do
+        local entry = type(key) == 'string' and deps.settings.entry(key) or nil
+        if entry and not entry.readonly and not deps.settings.secretKey(key)
+            and not (deps.settings.DENY and deps.settings.DENY[key])
+            and deps.settings.check(key, Util.copy(value)) ~= nil then
+            out[key] = Util.copy(value)
+            count = count + 1
+        end
+    end
+    return out, count
+end
+
+--- Whether an imported preset would be added: a free own name, room, and
+--- at least one value this server takes. nil and why when not.
+---@param name any
+---@param values any
+---@return boolean ok
+---@return string|nil why
+function Presets.importable(name, values)
+    local clean, why = Presets.ownName(name)
+    if not clean then return false, why end
+    for _, row in ipairs(readOwn()) do
+        if row.name:lower() == clean:lower() then return false, 'A preset of that name is here already: kept as it is.' end
+    end
+    if #readOwn() >= Presets.OWN_MAX then
+        return false, ('This server keeps %d presets of its own already.'):format(Presets.OWN_MAX)
+    end
+    local _, count = importValues(values)
+    if count == 0 then return false, 'None of its settings is one this server takes.' end
+    return true
+end
+
+--- Add an imported preset (Presets.importable said yes), with only the
+--- values this server takes. Audited as a save is.
+---@return boolean ok
+function Presets.importOwn(name, values, staff, actorCid)
+    local ok = Presets.importable(name, values)
+    if not ok then return false end
+    local clean = Presets.ownName(name)
+    local kept, count = importValues(values)
+    local wrote = pcall(deps.storage.writeRpRow, { id = 'preset:own:' .. clean, kind = Presets.STORE_KIND,
+        name = clean, values = kept, own = true, by = staff, at = os.time() })
+    if not wrote then return false end
+    pcall(deps.audit.staff, 'admin_preset_saved', actorCid, nil,
+        { preset = clean, own = true, keys = count, imported = true, by = staff })
+    return true
+end
+
 --- Delete an own preset.
 ---@param name any
 ---@param staff string|nil

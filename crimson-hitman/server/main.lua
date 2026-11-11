@@ -1863,6 +1863,8 @@ function StartCrimsonHitman()
     local setup = CrimsonBoot.require('server.setup')
     -- The config check (server/configcheck.lua): /ch-diag config and Health.
     local configcheck = CrimsonBoot.require('server.configcheck')
+    -- Settings export and import (server/settingsio.lua), for the panel.
+    local settingsio = CrimsonBoot.require('server.settingsio')
     settings.init({ storage = Storage, audit = CrimsonBoot.require('server.audit'),
                     check = checkCandidate })
     settings.boot()
@@ -2061,6 +2063,7 @@ function StartCrimsonHitman()
     presets.init({ settings = settings, storage = Storage, audit = audit })
     setup.init({ settings = settings, storage = Storage, audit = audit })
     configcheck.init({ settings = settings })
+    settingsio.init({ settings = settings, presets = presets, audit = audit })
     rpBurner.init({ audit = audit })
     rpReason.init({ storage = Storage, review = review, contracts = contracts })
     -- Intel: the engine (the in-person gate's audit and the notices), the
@@ -2155,6 +2158,8 @@ function StartCrimsonHitman()
         setup = setup,
         -- The config check, for /ch-diag config and the panel's Health.
         configcheck = configcheck,
+        -- Settings export and import, for the panel's Developer section.
+        settingsio = settingsio,
         -- Intel: the engine (the in-person gate), the rules with going dark
         -- (the app's requests and the tick), the rumours and briefings.
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,

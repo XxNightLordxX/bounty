@@ -5814,6 +5814,66 @@ async function main() {
     clean(app, 'presets');
   })();
 
+  /* X2: Developer > Export and import (server/settingsio.lua). */
+  await (async function exportImport() {
+    const TEXT = '{"format":"crimson-hitman-settings","version":1,"settings":{"Limits.MaxAcceptedPerHitman":4}}';
+    const app = boot(standardServer({
+      settingsExport: { ok: true, data: { text: TEXT, settings: 1, presets: 0 } },
+      settingsImport: { ok: true, data: { same: 2,
+        changes: [{ key: 'Limits.MaxAcceptedPerHitman', label: 'Contracts a hitman may hold ' + XSS, from: '3', to: '4' }],
+        refused: [{ key: 'Database.Mode', label: 'Storage mode', why: 'Never changed from the panel.' }],
+        presets: [{ name: 'Night', keys: 1 }, { name: 'Strict', keys: 1, why: 'A shipped name.' }] } },
+      settingsImportApply: { ok: true, message: 'Imported: 1 setting changed; 1 preset added.' } }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('transfer');
+    await settled();
+    it('workflow screen:admin.view:transfer — Developer has Export & import, saying what is not in it', function () {
+      eq(app.byId('nav-transfer').getAttribute('aria-current'), 'page');
+      has(app.main(), 'Not in it: the map places (Locations) and the target limits');
+      eq(app.requests('settingsExport').length, 0, 'nothing asked by opening it');
+    });
+    app.click(app.button('Export the settings'));
+    await settled();
+    it('Export shows the text to copy and how much it holds', function () {
+      eq(app.requests('settingsExport').length, 1);
+      has(app.main(), '1 setting and 0 presets.');
+      has(app.main(), 'Limits.MaxAcceptedPerHitman');
+    });
+    app.click(app.button('Read it'));
+    await settled();
+    it('Read it with nothing pasted asks nothing and says so', function () {
+      eq(app.requests('settingsImport').length, 0);
+      has(app.main(), 'Paste the exported text first.');
+    });
+    app.type(app.$$('textarea').filter(function (t) { return t.getAttribute('data-bind') === 'io.text'; })[0], TEXT);
+    app.click(app.button('Read it'));
+    await settled();
+    it('the preview lists every change, every refused key with why, and the presets, escaped', function () {
+      eq(app.last('settingsImport').data, { text: TEXT });
+      has(app.main(), ': 3 → 4');
+      has(app.main(), 'Storage mode (Database.Mode): left as it is. Never changed from the panel.');
+      has(app.main(), 'Preset Night: added.');
+      has(app.main(), 'Preset Strict: not added. A shipped name.');
+      eq(app.body.querySelectorAll('img').length, 0, 'escaped');
+      eq(app.requests('settingsImportApply').length, 0, 'nothing applied by reading');
+    });
+    const apply = app.button('Apply it');
+    app.click(apply);
+    await settled();
+    it('Apply takes two clicks, the first naming the changes and the presets', function () {
+      eq(app.requests('settingsImportApply').length, 0);
+      has(app.text(apply), 'Click again: apply 1 change and add 1 preset');
+    });
+    app.click(apply);
+    await settled();
+    it('the second sends the text read and the count previewed', function () {
+      eq(app.last('settingsImportApply').data, { text: TEXT, expect: 1 });
+      has(app.main(), 'Imported: 1 setting changed; 1 preset added.');
+    });
+    clean(app, 'export and import');
+  })();
+
   /* Step 5b: the first-start setup, shown by itself until it is saved. */
   await (async function firstStartSetup() {
     const SETUP = { ok: true, data: {

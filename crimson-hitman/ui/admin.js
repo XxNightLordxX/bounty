@@ -357,7 +357,7 @@
     { id: 'locations', head: 'Setup', label: 'Locations', icon: 'location-dot', views: ['locations'] },
     { id: 'logs', head: 'Records', label: 'Logs', icon: 'list-ul', views: ['logs', 'alerts'] },
     { id: 'developer', head: 'Developer', label: 'Developer', icon: 'code',
-      views: ['health', 'devsettings', 'console', 'tools', 'setup'], developer: true },
+      views: ['health', 'devsettings', 'console', 'tools', 'setup', 'transfer'], developer: true },
     { id: 'help', head: null, label: 'Help', icon: 'circle-question', views: ['help', 'howto', 'permissions'] }
   ];
   /** Each view's name on its sub-tab, its icon, and on the breadcrumb. */
@@ -381,6 +381,7 @@
     logs: ['Logs', 'list-ul'], alerts: ['Alerts', 'bell'],
     health: ['Health', 'heart-pulse'], devsettings: ['Engine settings', 'gear'], console: ['Console', 'terminal'],
     tools: ['Test tools', 'screwdriver-wrench'], setup: ['First-start setup', 'wand-magic-sparkles'],
+    transfer: ['Export & import', 'right-left'],
     help: ['How it works', 'circle-question'], howto: ['How do I…', 'hand'], permissions: ['Who can do what', 'key']
   };
   /** One line of help under every view's title (drawn with the breadcrumb). */
@@ -424,6 +425,7 @@
     console: 'Run a staff console command from the panel.',
     tools: 'Test tools: try a feature without a real player.',
     setup: 'The first-start setup: storage, your other scripts, permissions, the panel command and the key switches.',
+    transfer: 'Every setting changed here and your own presets as one text: copy it out, or paste one in, see every change, then apply.',
     help: 'How the contract app works, in plain words, each card linked to its settings.',
     howto: 'Short answers to how do I…, each with a button to where it is done.',
     permissions: 'Who can do what: every permission this resource checks.'
@@ -431,7 +433,7 @@
   window.CH_ADMIN_VIEW_HELP = VIEW_HELP;
 
   /** The views only the Developer section's staff see. */
-  var DEV_VIEWS = { health: true, devsettings: true, console: true };
+  var DEV_VIEWS = { health: true, devsettings: true, console: true, transfer: true };
   /** A selected player's own tabs, shown once somebody is looked up. */
   var PERSON_VIEWS = { pmeasures: true, pmoney: true, pplaytime: true, phistory: true, pdiag: true };
   var PLAYER_VIEWS = { players: true, pmeasures: true, pmoney: true, pplaytime: true,
@@ -460,6 +462,7 @@
                    alerts: true, console: true, measures: true, exportContract: true, playerView: true,
                    history: true,
                    targetLimits: true, targetStatus: true, targetJobCount: true, presets: true,
+                   settingsExport: true, settingsImport: true,
                    orgGet: true, bossPermsGet: true, orgFunds: true, placeMyPosition: true,
                    rewardPreview: true, reassignPreview: true, disposalList: true, placeList: true };
 
@@ -489,6 +492,8 @@
     stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
     presets: { data: null, error: null, answer: null },
+    // Developer > Export and import (server/settingsio.lua).
+    transfer: { exported: null, preview: null, error: null, answer: null, text: null },
     setup: { data: null, error: null, answer: null, values: {}, preview: null, shown: false },
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
@@ -4814,6 +4819,106 @@
       }
       loadSetup();
     });
+  };
+
+  /* ---------- Developer > Export and import (server/settingsio.lua) ----
+
+     Export: every setting changed from the panel and this server's own
+     presets as one JSON text, to copy. Not in it: the map places
+     (Locations) and the target limits set for a job or a player (Target
+     limits). Import: paste a text and Read it: every change it would make
+     (from, to), every key it refuses and why, and the presets it would add,
+     with nothing changed; Apply then takes two clicks naming how many
+     changes, each one a setting change of its own in Change history with
+     its Undo. */
+  function transferBody() {
+    var t = S.transfer;
+    var p = t.preview;
+    var changes = p ? asList(p.changes) : [], refused = p ? asList(p.refused) : [],
+      presets = p ? asList(p.presets) : [];
+    var adds = presets.filter(function (x) { return !x.why; }).length;
+    var n = changes.length;
+    return frag(answerBox(t.answer),
+      card('Export', frag(
+        h('p.about', 'Every setting changed from this panel and your own presets, as one text to keep or to paste '
+          + 'into another server. Not in it: the map places (Locations) and the target limits set for a job or a '
+          + 'player (Target limits), which belong to this server’s map, jobs and characters.'),
+        h('div.btn-row', btn('.primary', 'io-export', {}, 'Export the settings', 'file-export'),
+          t.exported ? btn('', 'io-copy', {}, 'Copy', 'copy') : null),
+        t.exported ? h('p.sub', num(t.exported.settings) + ' setting' + (Number(t.exported.settings) === 1 ? '' : 's')
+          + ' and ' + num(t.exported.presets) + ' preset' + (Number(t.exported.presets) === 1 ? '' : 's') + '.') : null,
+        t.exported ? h('textarea.input.ct-export-text', { readonly: 'readonly', rows: '8',
+          'aria-label': 'The exported settings, to copy' }, String(t.exported.text || '')) : null)),
+      card('Import', frag(
+        h('p.about', 'Paste an exported text and read it: nothing changes until you apply it. A key this server '
+          + 'never changes from the panel, one it does not have, or a value it would refuse is listed with why '
+          + 'and left as it is.'),
+        h('textarea.input.ct-export-text', { 'data-bind': 'io.text', rows: '8',
+          'aria-label': 'The exported text to import' }, String(S.forms['io.text'] || '')),
+        h('div.btn-row', btn('', 'io-read', {}, 'Read it', 'magnifying-glass')),
+        t.error ? answerBox({ ok: false, text: t.error }) : null,
+        p ? frag(
+          n ? h('ul.plain.ps-changes', changes.map(function (c) {
+            return h('li', h('span.name', String(c.label)), ': ', h('span.mono', String(c.from)), ' → ',
+              h('span.mono', String(c.to)));
+          })) : h('p.note', 'No setting to change: they are as that text says already.'),
+          refused.length ? h('ul.warnings', refused.map(function (r) {
+            return h('li', String(r.label) + ' (' + String(r.key) + '): left as it is. ' + String(r.why));
+          })) : null,
+          Number(p.same) > 0 ? h('p.sub', num(p.same) + ' more already as that text says.') : null,
+          presets.length ? h('ul.plain', presets.map(function (x) {
+            return h('li', 'Preset ' + String(x.name) + ': ' + (x.why ? 'not added. ' + String(x.why) : 'added.'));
+          })) : null,
+          h('div.btn-row', writeBtn('.primary', 'io-apply', { disabled: (!n && !adds) || null },
+            'Apply it', 'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's')
+              + (adds ? ' and add ' + adds + ' preset' + (adds === 1 ? '' : 's') : ''), 'check'))) : null)));
+  }
+
+  function drawTransfer() {
+    if (S.section === 'transfer') setHtml(byId('io-body'), transferBody());
+  }
+
+  SHELL.transfer = function () {
+    return h('section.view', h('div.stack', { id: 'io-body' }, transferBody()));
+  };
+  LOAD.transfer = function () { drawTransfer(); };
+
+  ACTIONS['io-export'] = function () {
+    ask('settingsExport', {}, 'transfer').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) S.transfer.answer = { ok: false, text: words(reply) };
+      else { S.transfer.exported = reply.data || {}; S.transfer.answer = null; }
+      drawTransfer();
+    });
+  };
+  ACTIONS['io-copy'] = function () {
+    var copied = S.transfer.exported && copyText(String(S.transfer.exported.text || ''));
+    toast(copied ? 'Copied.' : 'Select the text and copy it.', copied ? 'ok' : 'error');
+  };
+  ACTIONS['io-read'] = function () {
+    var text = String(S.forms['io.text'] || '');
+    S.transfer.preview = null;
+    S.transfer.error = null;
+    if (!trim(text)) { S.transfer.error = 'Paste the exported text first.'; drawTransfer(); return; }
+    ask('settingsImport', { text: text }, 'transfer').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) S.transfer.error = words(reply);
+      else { S.transfer.preview = reply.data || {}; S.transfer.text = text; }
+      drawTransfer();
+    });
+  };
+  ACTIONS['io-apply'] = function (node) {
+    var p = S.transfer.preview;
+    if (!p || S.transfer.text == null) return;
+    if (!confirmed(node)) return;
+    write('settingsImportApply', { text: S.transfer.text, expect: asList(p.changes).length }, 'transfer', node)
+      .then(function (reply) {
+        if (!reply) return;
+        S.transfer.answer = { ok: reply.ok === true, text: words(reply) };
+        toast(words(reply), reply.ok ? 'ok' : 'error');
+        if (reply.ok) { S.transfer.preview = null; S.transfer.text = null; S.forms['io.text'] = ''; loadSettings(); }
+        drawTransfer();
+      });
   };
 
   SHELL.setup = function () {
