@@ -1859,6 +1859,8 @@ function StartCrimsonHitman()
     local settings = CrimsonBoot.require('server.settings')
     -- Named bundles of settings (server/presets.lua), for the panel.
     local presets = CrimsonBoot.require('server.presets')
+    -- The first-start setup screen (server/setup.lua), for the panel.
+    local setup = CrimsonBoot.require('server.setup')
     settings.init({ storage = Storage, audit = CrimsonBoot.require('server.audit'),
                     check = checkCandidate })
     settings.boot()
@@ -2055,6 +2057,7 @@ function StartCrimsonHitman()
     -- the reason rules (server/rp_*.lua).
     rpPlaces.init({ settings = settings, storage = Storage, audit = audit })
     presets.init({ settings = settings, storage = Storage, audit = audit })
+    setup.init({ settings = settings, storage = Storage, audit = audit })
     rpBurner.init({ audit = audit })
     rpReason.init({ storage = Storage, review = review, contracts = contracts })
     -- Intel: the engine (the in-person gate's audit and the notices), the
@@ -2144,6 +2147,8 @@ function StartCrimsonHitman()
         rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason,
         -- The panel's presets: named bundles of settings.
         presets = presets,
+        -- The first-start setup screen.
+        setup = setup,
         -- Intel: the engine (the in-person gate), the rules with going dark
         -- (the app's requests and the tick), the rumours and briefings.
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,

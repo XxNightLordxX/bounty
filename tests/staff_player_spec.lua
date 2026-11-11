@@ -596,6 +596,7 @@ describe('every panel op, for every level', function()
         testAlert = 'write', removePhotos = 'write', setPlaytime = 'write', manualPay = 'write',
         announce = 'write', undoSetting = 'write',
         presets = 'read', presetApply = 'write', presetSave = 'write',
+        setup = 'write', setupPreview = 'write', setupApply = 'write',
         addNote = 'write', removeHitman = 'write', editText = 'write',
         console = 'developer', whois = 'identity',
         -- Target limits.

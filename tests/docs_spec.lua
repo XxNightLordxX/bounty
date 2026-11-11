@@ -363,4 +363,39 @@ describe('the in-game checklist, against the code', function()
     end)
 end)
 
+describe('sale readiness (step 5b)', function()
+    it('opens the README with Install in 5 minutes, numbered and short', function()
+        local readme = file(README)
+        local first = readme:find('\n## ', 1, true)
+        eq(readme:sub(first, first + 26), '\n## Install in 5 minutes\n\n1')
+        local section = readme:sub(first + 1, readme:find('\n## ', first + 5, true))
+        local steps = 0
+        for _ in section:gmatch('\n%d%. ') do steps = steps + 1 end
+        truthy(steps >= 4 and steps <= 6, steps .. ' steps')
+        truthy(section:find('First-start setup', 1, true) or section:find('first-start setup', 1, true))
+    end)
+
+    it('keeps a changelog, newest first, with version headings only', function()
+        truthy(exists('crimson-hitman/CHANGELOG.md'), 'shipped with the resource')
+        local text = file('crimson-hitman/CHANGELOG.md')
+        local versions = {}
+        for v in text:gmatch('\n## (%d+%.%d+%.%d+)') do versions[#versions + 1] = v end
+        truthy(#versions >= 2)
+        local manifest = file('crimson-hitman/fxmanifest.lua')
+        eq(versions[1], manifest:match("\nversion '([%d.]+)'"), 'the newest is the version the manifest ships')
+        for i = 2, #versions do truthy(versions[i - 1] > versions[i], 'newest first') end
+    end)
+
+    it('leaves every file a server owner edits out of escrow', function()
+        local manifest = file('crimson-hitman/fxmanifest.lua')
+        local block = manifest:match('escrow_ignore%s*(%b{})')
+        truthy(block, 'escrow_ignore')
+        for _, glob in ipairs({ 'config/*.lua', 'server/adapters/*.lua', 'server/adapters/*/*.lua',
+                                 'client/adapters/*.lua', 'client/adapters/*/*.lua' }) do
+            truthy(block:find("'" .. glob .. "'", 1, true), glob)
+        end
+        truthy(file(README):find('Escrow, and where the words live', 1, true), 'and where the words live')
+    end)
+end)
+
 return { reference = reference, render = render, markdown = markdown }

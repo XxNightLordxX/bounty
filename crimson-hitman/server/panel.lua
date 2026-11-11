@@ -82,6 +82,9 @@ local OPS = {
     announce = WRITE, undoSetting = WRITE,
     -- Presets: named bundles of settings, previewed, then applied (server/presets.lua).
     presets = READ, presetApply = WRITE, presetSave = WRITE,
+    -- The first-start setup (server/setup.lua): it shows the ACE lines and
+    -- changes settings, so the staff ACE's alone.
+    setup = WRITE, setupPreview = WRITE, setupApply = WRITE,
     -- Target limits (server/targetlimits.lua): the lists and one player's
     -- standing are reads; a job's own limits are settings, the staff ACE's;
     -- a player's cooldown, counts and override, and a job's players at
@@ -161,7 +164,7 @@ local WAITS_FOR_RECOVERY = {
     resetSettings = true, refresh = true, freeze = true, unfreeze = true, adjustDeadline = true,
     removeHitman = true, editText = true,
     suspend = true, unsuspend = true, protect = true, unprotect = true, manualPay = true,
-    undoSetting = true, presetApply = true, presetSave = true,
+    undoSetting = true, presetApply = true, presetSave = true, setupApply = true,
     targetJobSet = true, targetJobRemove = true, targetReset = true, targetExtend = true,
     targetCounts = true, targetOverride = true, targetOverrideClear = true, targetJobAction = true,
 }
@@ -416,6 +419,9 @@ local function accessFor(src)
         refreshSeconds = math.max(2, math.floor(tonumber(Config.Admin.PanelRefreshSeconds) or 10)),
         recovery = recoveryState(),
         version = okVersion and version or nil,
+        -- No first-start setup saved yet: the page opens on it for staff who
+        -- may change settings (server/setup.lua).
+        setupDue = (deps.setup and allowed(src, WRITE) and not deps.setup.saved()) or nil,
     }
 end
 
@@ -2402,6 +2408,54 @@ H.presetApply = function(src, data)
     local refused = #detail.refused
     return true, nil, ('%s applied: %d setting%s changed%s. Each is in Change history with Undo; '
         .. 'Current holds what they were.'):format(name, #detail.applied, #detail.applied == 1 and '' or 's',
+        refused > 0 and (', %d left as they were (the preview says why)'):format(refused) or ''), detail
+end
+
+--- The first-start setup screen: storage, the other scripts, the ACE lines,
+--- the panel command and the key switches, each at the value in force.
+H.setup = function(src)
+    if not deps.setup then return false, 'unavailable', 'The setup is not running on this server.' end
+    return true, nil, nil, deps.setup.view(permissionsFor(src))
+end
+
+--- The values the setup page chose, as a table of at most 64 keys, or nil.
+local function setupValues(data)
+    local values = type(data) == 'table' and data.values
+    if type(values) ~= 'table' then return nil end
+    local out, n = {}, 0
+    for key, value in pairs(values) do
+        n = n + 1
+        if n > 64 or type(key) ~= 'string' or #key > 96 then return nil end
+        local kind = type(value)
+        if kind ~= 'string' and kind ~= 'boolean' and kind ~= 'number' then return nil end
+        out[key] = kind == 'string' and value:sub(1, 64) or value
+    end
+    return out
+end
+
+--- What applying the setup's values would change: nothing changes here.
+H.setupPreview = function(_, data)
+    if not deps.setup then return false, 'unavailable', 'The setup is not running on this server.' end
+    local values = setupValues(data)
+    if not values then return false, CH.ERR.INVALID_INPUT, 'The setup sent something it should not.' end
+    local preview = deps.setup.preview(values)
+    for _, change in ipairs(preview.changes) do change.value = nil end
+    return true, nil, nil, preview
+end
+
+--- Apply the setup (two clicks on the page): each change a setting change
+--- of its own, audited and in Change history with its Undo, and the setup
+--- saved as done.
+H.setupApply = function(src, data)
+    if not deps.setup then return false, 'unavailable', 'The setup is not running on this server.' end
+    local values = setupValues(data)
+    if not values then return false, CH.ERR.INVALID_INPUT, 'The setup sent something it should not.' end
+    local cid, who = staffOf(src)
+    local ok, err, detail = deps.setup.apply(values, who, cid)
+    if not ok then return false, err, detail end
+    local refused = #detail.refused
+    return true, nil, ('Setup saved: %d setting%s changed%s. Each is in Change history with Undo; it opens '
+        .. 'again from Developer, First-start setup.'):format(#detail.applied, #detail.applied == 1 and '' or 's',
         refused > 0 and (', %d left as they were (the preview says why)'):format(refused) or ''), detail
 end
 

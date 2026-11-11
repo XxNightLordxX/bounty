@@ -5,7 +5,7 @@ lua54 'yes'
 name 'crimson-hitman'
 author 'Crimson'
 description 'Crimson Hitman System — criminal contract board for QBox and lb-phone'
-version '1.1.0'
+version '1.2.0'
 
 shared_scripts {
     'shared/constants.lua',
@@ -92,6 +92,17 @@ files {
     'ui/admin.html',
     'ui/admin.css',
     'ui/admin.js',
+}
+
+-- Left readable on an escrowed build (FiveM Asset Escrow): every file a
+-- server owner edits. ui/, install/sql/ and data/ are not Lua, and only Lua
+-- is escrowed. README, "Escrow, and where the words live".
+escrow_ignore {
+    'config/*.lua',
+    'server/adapters/*.lua',
+    'server/adapters/*/*.lua',
+    'client/adapters/*.lua',
+    'client/adapters/*/*.lua',
 }
 
 -- Only the framework. Every other script is optional, behind an adapter

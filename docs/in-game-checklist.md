@@ -694,6 +694,20 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Freeze a contract (staff) or start the restart hold: Verify kill is refused with the same words, nothing paid.
 - [ ] Turn on body disposal and proof of intent together: a verified kill's baseline waits for the drop-off and then for intent (or the hold time); the hitman's card and receipt say what is missing; staff's Settle on a held line says until when; nothing is lost or paid twice.
 
+## Other scripts behind adapters (step 5a)
+
+- [ ] With every script you run started, the console says nothing new at start; `/ch-diag` prints `other scripts:` naming each one (dispatch=sc-dispatch, banking=Renewed-Banking, keys=qbx_vehiclekeys...).
+- [ ] `stop sc-dispatch`: one console line `integration dispatch off (...)`; an advisory still reaches officers' phones, nothing in the MDT. `ensure sc-dispatch`: it is used again.
+- [ ] `restart ox_inventory`: crimson-hitman keeps running (no `ensure` needed).
+- [ ] `Config.Integrations.Inventory = 'none'`, restart: one line at start; the Place form offers cash and bank only.
+- [ ] Developer > Engine settings, group Other scripts: each kind offers only `auto`, its adapters and `none`.
+
+## First-start setup (step 5b)
+
+- [ ] On a fresh store, `/hitmanadmin` as an admin opens on Developer > First-start setup; as a moderator it does not.
+- [ ] The setup shows the storage mode with its config line, each other script found, the `add_ace` lines with a tick for yours, the panel command and the key switches, each at its value now.
+- [ ] Change one choice, **Preview** lists it; **Apply** asks twice, then applies; the change is in Change history with Undo; reopening the panel no longer jumps to the setup.
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

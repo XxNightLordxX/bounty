@@ -293,7 +293,7 @@
     { id: 'locations', head: 'Setup', label: 'Locations', icon: 'location-dot', views: ['locations'] },
     { id: 'logs', head: 'Records', label: 'Logs', icon: 'list-ul', views: ['logs', 'alerts'] },
     { id: 'developer', head: 'Developer', label: 'Developer', icon: 'code',
-      views: ['health', 'devsettings', 'console', 'tools'], developer: true },
+      views: ['health', 'devsettings', 'console', 'tools', 'setup'], developer: true },
     { id: 'help', head: null, label: 'Help', icon: 'circle-question', views: ['help', 'howto', 'permissions'] }
   ];
   /** Each view's name on its sub-tab, its icon, and on the breadcrumb. */
@@ -313,7 +313,7 @@
     locations: ['Map points', 'location-dot'],
     logs: ['Logs', 'list-ul'], alerts: ['Alerts', 'bell'],
     health: ['Health', 'heart-pulse'], devsettings: ['Engine settings', 'gear'], console: ['Console', 'terminal'],
-    tools: ['Test tools', 'screwdriver-wrench'],
+    tools: ['Test tools', 'screwdriver-wrench'], setup: ['First-start setup', 'wand-magic-sparkles'],
     help: ['How it works', 'circle-question'], howto: ['How do I…', 'hand'], permissions: ['Who can do what', 'key']
   };
   /** One line of help under every view's title (drawn with the breadcrumb). */
@@ -352,6 +352,7 @@
     devsettings: 'Engine settings: storage, timings and limits only developers change.',
     console: 'Run a staff console command from the panel.',
     tools: 'Test tools: try a feature without a real player.',
+    setup: 'The first-start setup: storage, your other scripts, permissions, the panel command and the key switches.',
     help: 'How the contract app works, in plain words, each card linked to its settings.',
     howto: 'Short answers to how do I…, each with a button to where it is done.',
     permissions: 'Who can do what: every permission this resource checks.'
@@ -416,6 +417,7 @@
     stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
     presets: { data: null, error: null, answer: null },
+    setup: { data: null, error: null, answer: null, values: {}, preview: null, shown: false },
     alerts: { state: 'open', data: null, error: null, answers: {}, all: null, test: null },
     console: { kind: '', data: null, error: null, sig: null, loading: false, readAt: null },
     logs: { area: 'audit', kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
@@ -4561,6 +4563,168 @@
     });
   };
 
+  /* ---------- Developer > First-start setup (server/setup.lua) ---------
+
+     Shown by itself to the first staff member who may change settings,
+     while no setup has been saved, and opened again from here. Every
+     choice starts at the value in force: the other scripts (the adapter
+     each kind uses), the panel's command name and the key switches. The
+     storage mode and the ACE lines are shown with the exact line to write,
+     as both are server.cfg or config.lua's. Preview lists every change;
+     Apply takes two clicks and saves the setup as done, even with nothing
+     changed. */
+  function loadSetup() {
+    return ask('setup', {}, 'setup').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) { S.setup.error = words(reply); S.setup.data = null; }
+      else {
+        S.setup.error = null;
+        S.setup.data = reply.data || {};
+        // Every choice starts where it is now; a preview from before is gone.
+        S.setup.values = {};
+        S.setup.preview = null;
+      }
+      drawSetup();
+    });
+  }
+
+  function drawSetup() {
+    if (S.section === 'setup') setHtml(byId('su-body'), setupBody());
+  }
+
+  /** The value chosen for a key: the staff member's pick, or the one in force. */
+  function setupValue(key, current) {
+    var v = S.setup.values[key];
+    return v === undefined ? current : v;
+  }
+
+  function setupChoice(row) {
+    return h('div.su-row', h('span.name', String(row.label || row.key)), dropdown('su-pick:' + row.key));
+  }
+
+  DD['su-pick'] = {
+    options: function (key) {
+      var row = setupRows()[key];
+      if (!row) return [];
+      if (row.kind === 'switch') return [{ value: 'true', label: 'On' }, { value: 'false', label: 'Off' }];
+      return asList(row.choices).map(function (c) { return { value: String(c), label: String(c) }; });
+    },
+    value: function (key) {
+      var row = setupRows()[key];
+      return row ? String(setupValue(key, row.value)) : '';
+    },
+    pick: function (v, key) {
+      var row = setupRows()[key];
+      if (!row) return;
+      S.setup.values[key] = row.kind === 'switch' ? v === 'true' : v;
+      S.setup.preview = null;
+      drawSetup();
+    }
+  };
+
+  /** Every row the screen can change, by key. */
+  function setupRows() {
+    var d = S.setup.data || {};
+    var out = {};
+    asList(d.switches).forEach(function (r) { out[r.key] = r; });
+    asList(d.integrations).forEach(function (r) {
+      out[r.key] = { key: r.key, label: r.kind, kind: 'choice', choices: r.choices, value: r.choice };
+    });
+    return out;
+  }
+
+  function setupBody() {
+    var su = S.setup;
+    if (su.error) return empty(su.error);
+    if (!su.data) return loading('Reading the setup…');
+    var d = su.data;
+    var cmd = d.command || {};
+    var cmdBind = 'su.command';
+    var preview = su.preview;
+    var n = preview ? asList(preview.changes).length : 0;
+    return frag(
+      answerBox(su.answer),
+      d.saved ? h('p.note', 'Saved before' + (d.savedBy ? ' by ' + String(d.savedBy) : '') + '. Change anything '
+        + 'and apply again, or leave it as it is.') : h('p.hint', 'Nothing is saved yet: this screen shows until it is. '
+        + 'Every choice starts at what is in force now, so applying with nothing changed keeps the server as it is.'),
+      h('div.cols',
+        card('Storage', frag(
+          h('p.about', 'Where contracts and money are kept: mysql (the database) or json (files in data/). '
+            + 'Set it in config.lua; a change needs the old mode\'s money settled and a restart (README, Changing storage mode).'),
+          h('p', 'In force: ', h('span.mono', String((d.storage || {}).mode || ''))),
+          h('pre.output', String((d.storage || {}).line || '')))),
+        card('Permissions', frag(
+          h('p.about', 'The lines that grant the panel to a group, for server.cfg. A tick means you hold it.'),
+          h('ul.plain', asList(d.aces).map(function (a) {
+            return h('li', icon(a.held ? 'circle-check' : 'circle'), ' ', String(a.name), h('pre.output', String(a.line)));
+          }))))),
+      card('Other scripts', frag(
+        h('p.about', '‘auto’ uses the first one installed and started. ‘none’ turns off what needs it.'),
+        h('ul.plain', asList(d.integrations).map(function (r) {
+          var seen = asList(r.detected).map(function (x) { return String(x.name) + (x.up ? ' (running)' : ''); });
+          return h('li.su-int', setupChoice({ key: r.key, label: r.kind }),
+            h('p.sub', (r.active ? 'In use: ' + String(r.active) : 'Off: ' + String(r.without)) + '. Found: '
+              + (seen.length ? seen.join(', ') : 'none') + '.'));
+        })))),
+      card('Panel command and key switches', frag(
+        h('div.su-row', h('span.name', String(cmd.label || 'Panel command')),
+          field(cmdBind, { value: String(setupValue(cmd.key, cmd.value) || ''), maxlength: '32' })),
+        asList(d.switches).map(function (r) { return setupChoice(r); }))),
+      card('Preview', frag(
+        preview ? frag(
+          n ? h('ul.plain.ps-changes', asList(preview.changes).map(function (c) {
+            return h('li', h('span.name', String(c.label)), ': ', h('span.mono', String(c.from)), ' → ',
+              h('span.mono', String(c.to)));
+          })) : h('p.note', 'Nothing to change: applying saves the setup as it is.'),
+          asList(preview.refused).length ? h('ul.warnings', asList(preview.refused).map(function (r) {
+            return h('li', String(r.label) + ': left as it is. ' + String(r.why));
+          })) : null) : h('p.hint', 'Preview what applying would change; nothing changes until Apply.'),
+        h('div.btn-row',
+          btn('.ghost', 'su-preview', {}, 'Preview', 'eye'),
+          writeBtn('.primary', 'su-apply', { disabled: !preview || null }, 'Apply',
+            'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's') + ' and save', 'check')))));
+  }
+
+  /** What the staff member chose, with the command name typed. */
+  function setupValues() {
+    var out = {};
+    Object.keys(S.setup.values).forEach(function (k) { out[k] = S.setup.values[k]; });
+    var cmd = (S.setup.data || {}).command;
+    var typed = S.forms['su.command'];
+    if (cmd && typed != null && String(typed) !== String(cmd.value)) out[cmd.key] = String(typed);
+    return out;
+  }
+
+  ACTIONS['su-preview'] = function () {
+    ask('setupPreview', { values: setupValues() }, 'setup').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) { toast(words(reply), 'error'); return; }
+      S.setup.preview = reply.data || {};
+      drawSetup();
+    });
+  };
+  ACTIONS['su-apply'] = function (node) {
+    if (!confirmed(node)) return;
+    write('setupApply', { values: setupValues() }, 'setup', node).then(function (reply) {
+      if (!reply) return;
+      S.setup.answer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) {
+        var now = {};
+        Object.keys(S.access).forEach(function (k) { now[k] = S.access[k]; });
+        now.setupDue = false;
+        S.access = now;
+        loadSettings();
+      }
+      loadSetup();
+    });
+  };
+
+  SHELL.setup = function () {
+    return h('section.view', h('div.stack', { id: 'su-body' }, setupBody()));
+  };
+  LOAD.setup = function () { loadSetup(); };
+
   ACTIONS.section = function (node) { show(node.getAttribute('data-section')); };
   /** Look up / Freeze in the contract view: Players, on that party. */
   ACTIONS['party-lookup'] = function (node) {
@@ -6712,6 +6876,12 @@
     }
     var panel = byId('panel');
     if (panel) panel.hidden = false;
+    // No setup saved yet (server/setup.lua): the first staff member who may
+    // change settings is shown it, once a page load; Developer has it after.
+    if (S.access.setupDue === true && !S.setup.shown) {
+      S.setup.shown = true;
+      S.section = 'setup';
+    }
     show(S.section);
     startPolling();
   }

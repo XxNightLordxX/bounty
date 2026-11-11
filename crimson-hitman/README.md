@@ -6,6 +6,16 @@ is the owner's manual: how to install, run, configure and support it. How it
 is built and tested is in [docs/developer.md](../docs/developer.md); what to
 check in game is [docs/in-game-checklist.md](../docs/in-game-checklist.md).
 
+## Install in 5 minutes
+
+1. Copy `crimson-hitman` into your resources folder.
+2. Put `ensure crimson-hitman` in `server.cfg`, after `oxmysql`, `qbx_core` and the other scripts you use (`ox_inventory`, `lb-phone`, `ox_target`, ...).
+3. Give yourself the panel: `add_ace group.admin crimson.admin allow` in `server.cfg`.
+4. Open `config/config.lua`: set `Config.Database.Mode` (`'mysql'` or `'json'`). Everything else can wait.
+5. Start the server and type `/hitmanadmin` in game. The **first-start setup** opens: check the other scripts it found, the permissions, the command and the key switches, **Preview**, then **Apply** (two clicks). It opens again from Developer, First-start setup.
+
+Only `qbx_core` (with `oxmysql`) is required; every other script is optional and found on its own (`Config.Integrations`, [Other scripts](#other-scripts)). The full steps are under [Install](#install); what changed is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Start here
 
 **What it does.**
@@ -29,7 +39,7 @@ check in game is [docs/in-game-checklist.md](../docs/in-game-checklist.md).
 | Setup | **Boss permissions** | What bosses may do: the matrix, limits, delegation and the office, grant history |
 | Setup | **Locations** | Every place the resource uses, set from where you stand |
 | Records | **Logs** | The audit log with its search, Alerts & Discord |
-| Developer | **Developer** | Health, engine settings, the console, test tools |
+| Developer | **Developer** | Health, engine settings, the console, test tools, the first-start setup |
 
 **The roles** (the words used everywhere: see [Glossary](#glossary)):
 
@@ -133,6 +143,19 @@ dispatch, inventory or phone), add an adapter: `docs/dev/adapters.md`.
 - Carry your `config/config.lua` across. Settings changed in the panel are kept in the store and survive the update.
 - Payouts an older version left owed appear once under **Money waiting** in the panel's inbox (`/ch-stuck`): check the player has it, then **Pay** or **Delivered**.
 - Restarting `qbx_core` or `oxmysql` stops this resource with them: `ensure crimson-hitman` afterwards. Restarting `lb-phone`, `ox_inventory` or any other optional script is safe: what needs it is off while it is down, said in one console line.
+
+### Escrow, and where the words live
+
+On an escrowed build (FiveM Asset Escrow) everything you edit stays readable
+(`escrow_ignore` in `fxmanifest.lua`): `config/`, the adapters
+(`server/adapters/`, `client/adapters/`, see `docs/dev/adapters.md`). The
+page files (`ui/`), `install/sql/` and `data/` are never escrowed, as only
+Lua is. The words players and staff read live in: `ui/app.js` (the phone
+app, its refusals by code in `ERRORS`), `ui/admin.js` (the panel), and on the
+server the feature that says them (notices mostly in `server/notify.lua`,
+refusal codes in `shared/constants.lua`). Labels and messages a server owner
+sets are in `config/config.lua` (titles of advisories, bulletins and the
+city news, the command names). There is no single locale file.
 
 ### Changing storage mode
 
@@ -310,7 +333,7 @@ can do what* (every ACE, and how to grant it).
 | **Boss permissions** | Matrix, Limits, Delegation & office; **Grant history ▸** (Records › Logs, Grant history) | The ceiling on what bosses may do: powers by boss role and by one boss (**Allow**, **Deny** or **Inherit role**), every change listed before one **Save** that sends them together; **Revoke all** and **Copy from** per column; each power's limits; which powers need the boss office; every grant, with **Undo** on a role's |
 | **Locations** | Map points | The organisation's places (boss office, sign-up, meeting and handover spots, NPC spots), body disposal's vehicle spawn and drop-off (**Save**, **Save where I stand**, **Clear**), and the places that are settings (broker and informant NPC places, tip safe zones, rumour districts, witness areas, the prison zone). **Use my position** fills a row from where your character stands, read by the server |
 | **Logs** | Logs, Alerts | Every log in one view, one chip each: **Audit log** (search it, and flush it), **Setting changes** (every setting changed from the panel, with **Undo**), **Org audit** (every boss and staff action on the organisation) and **Grant history** (every grant, with **Undo** on a role's). Each section's own link (Game rules, Hitman organisation, Boss permissions, Target limits) opens it with its chip picked. Alerts: acknowledge alerts, see where Discord stands, send a test alert |
-| **Developer** | Health, Engine settings, Console, Test tools | Storage, recovery, kill photos, slow jobs and the diagnosis; debug, storage, rate limits and the read-only values; the console; **Bring timers forward** (test servers) and **Flush the audit log** |
+| **Developer** | Health, Engine settings, Console, Test tools, First-start setup | Storage, recovery, kill photos, slow jobs and the diagnosis; debug, storage, rate limits, the other scripts (`Config.Integrations`) and the read-only values; the console; **Bring timers forward** (test servers) and **Flush the audit log**; the **first-start setup** (shown by itself to the first staff member with `crimson.admin` until it is saved: storage mode, the other scripts found with an override, the exact `add_ace` lines and who holds them, the panel command and the key switches, every one at the value in force; **Preview**, then **Apply** in two clicks, each change a setting change in Change history with Undo, audited `admin_setup_applied`) |
 
 Without `crimson.identity`, an anonymous party is *Anonymous* everywhere,
 citizen ids read as the party's place (*the placer*, *the target*,
@@ -458,6 +481,9 @@ Every request the panel page sends (`server/panel.lua`), and who may send it.
 | `presets` | Read | Every preset with the changes it would make now and what would be refused |
 | `presetApply` | Write | Apply one preset by name: Current saved first, then each change as a setting change |
 | `presetSave` | Write | Save the settings the presets name, as they are now, as Current |
+| `setup` | Write | The first-start setup: storage, the other scripts (detected, and the adapter chosen), the `add_ace` lines, the panel command, the key switches, each at the value in force |
+| `setupPreview` | Write | What applying the setup's choices would change, and what would be refused; changes nothing |
+| `setupApply` | Write | Apply the setup's choices, each as a setting change, and save the setup as done |
 | `announce` | Write | One notice to every hitman, or everybody with the app |
 | `refresh` | Write | Bring every wait forward (test servers) |
 | `flush` | Write | Write the audit log now |
@@ -1731,7 +1757,13 @@ The audit log records every money movement and every refused attempt:
 
 ## What's New
 
-**1.1.0, the panel's reward, reassign and disposal controls (newest)**
+**1.2.0, other scripts optional, first-start setup (newest)**
+
+- Every script besides Qbox is optional, behind an adapter chosen by `Config.Integrations` ('auto' picks what is started, so nothing changes on a server that has them all); one missing turns off only what needs it, in one console line. `ox_inventory` is no longer a manifest dependency. Add your own adapter: `docs/dev/adapters.md`.
+- The **first-start setup** in the admin panel; **Install in 5 minutes** at the top of this file; `CHANGELOG.md`; editable files left out of escrow.
+- Merged: `Config.Completion.DeathStateProviders` into `Config.Integrations.Ambulance`, `Config.Organisation.Funds` into `Banking`, `Config.Record.Progression.Resource` into `Progression`.
+
+**1.1.0, the panel's reward, reassign and disposal controls**
 
 - The contract drawer's **Money** tab has **Change reward**: raise or lower by an amount, added by staff or charged to the placer, from cash or bank, with a reason; the server's figures (the reward before and after, what comes off staff's part and what goes back to the placer) are drawn before the button arms, and the armed button names them. **People** has **Reassign to another hitman**: the hitman looked up in Players, who comes off and whether the stake is waived said first, with the bar and the stakes to choose.
 - **Review fixes**: a cut of the reward never lands on a line a claim already owes its hitman; a disposal step stands at most `Config.Disposal.MaxHoldMinutes` (120) real minutes, away or not, and stops keeping its target off the board then; every lost disposal vehicle counts as a respawn, a relog in between or not; the disposal vehicle is kept by the server (orphan mode), in the hitman's routing bucket, with a random plate; a hitman staff assign is anonymous by default, with no fee; Reassign asks every check before anybody comes off and puts everybody back if the acceptance is refused after all; a placer gets `Config.Kidnap.MaxDeclines` (2) declines per contract, after which the next handover pays.

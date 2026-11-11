@@ -1824,3 +1824,81 @@ describe('what the admin panel reads, as the store holds it', function()
         eq(data.stuck and data.stuck.error, true)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- The first-start setup (step 5b)
+--------------------------------------------------------------------------
+
+describe('the first-start setup (step 5b)', function()
+    it('is due for staff who may write until it is saved, and never for a reader', function()
+        stack()
+        truthy(ask(6, 'access').data.setupDue, 'the first admin is shown it')
+        falsy(ask(7, 'access').data.setupDue, 'a reader is not')
+        eq(ask(7, 'setup').ok, false, 'nor may read it: it shows the ACE lines')
+    end)
+
+    it('shows every choice at the value in force: storage, other scripts, ACE lines, command, switches', function()
+        stack()
+        local reply = ask(6, 'setup')
+        eq(reply.ok, true, tostring(reply.message))
+        local d = reply.data
+        eq(d.saved, false)
+        eq(d.storage.mode, Config.Database.Mode)
+        truthy(d.storage.line:find("Config.Database.Mode = '", 1, true))
+        local kinds = {}
+        for _, row in ipairs(d.integrations) do kinds[row.kind] = row end
+        eq(kinds.dispatch.choice, 'auto')
+        eq(kinds.dispatch.active, 'sc-dispatch', 'what was detected')
+        eq(table.concat(kinds.dispatch.choices, ','), 'auto,sc-dispatch,none', 'to override')
+        local aceLine = false
+        for _, a in ipairs(d.aces) do
+            if a.line == 'add_ace group.admin crimson.admin allow' then aceLine = a.held end
+        end
+        eq(aceLine, true, 'the exact add_ace line, held by this admin')
+        eq(d.command.key, 'Admin.Commands.panel')
+        eq(d.command.value, Config.Admin.Commands.panel)
+        local switches = {}
+        for _, row in ipairs(d.switches) do switches[row.key] = row end
+        eq(switches['Intel.Enabled'].value, Config.Intel.Enabled)
+        eq(switches['TargetClasses.default.AllowAnonymousPlacer'].value,
+            Config.TargetClasses.default.AllowAnonymousPlacer)
+    end)
+
+    it('previews without changing anything, and refuses a key it does not offer', function()
+        stack()
+        local before = Config.Intel.Enabled
+        local reply = ask(6, 'setupPreview', { values = {
+            ['Intel.Enabled'] = not before, ['Integrations.Dispatch'] = 'none',
+            ['Limits.MaxAcceptedPerHitman'] = 9,
+        } })
+        eq(reply.ok, true, tostring(reply.message))
+        local keys = {}
+        for _, c in ipairs(reply.data.changes) do keys[#keys + 1] = c.key end
+        table.sort(keys)
+        eq(table.concat(keys, ','), 'Integrations.Dispatch,Intel.Enabled')
+        eq(reply.data.refused[1].key, 'Limits.MaxAcceptedPerHitman', 'not one the setup changes')
+        eq(Config.Intel.Enabled, before, 'nothing changed by a preview')
+        eq(Config.Integrations.Dispatch, 'auto')
+    end)
+
+    it('applies on a write, each change audited, and is saved even with nothing changed', function()
+        local s = stack()
+        eq(ask(7, 'setupApply', { values = {} }).ok, false, 'a reader may not')
+        local reply = ask(6, 'setupApply', { values = { ['Integrations.Dispatch'] = 'none' } })
+        eq(reply.ok, true, tostring(reply.message))
+        eq(Config.Integrations.Dispatch, 'none', 'in force')
+        s.audit.flush()
+        eq(#stored(s, 'admin_setup_applied'), 1)
+        truthy(#stored(s, 'admin_setting_changed') >= 1, 'as a Save is')
+        falsy(ask(6, 'access').data.setupDue, 'saved: not shown again by itself')
+        eq(ask(6, 'setup').data.saved, true, 'and it opens again from Developer')
+        eq(ask(6, 'setupApply', { values = {} }).ok, true, 'applying nothing is a save too')
+        resetConfig()
+    end)
+
+    it('refuses a payload that is not a table of plain values', function()
+        stack()
+        eq(ask(6, 'setupPreview', { values = 'x' }).err, CH.ERR.INVALID_INPUT)
+        eq(ask(6, 'setupApply', { values = { ['Intel.Enabled'] = { nested = true } } }).err, CH.ERR.INVALID_INPUT)
+    end)
+end)

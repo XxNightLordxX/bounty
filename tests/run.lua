@@ -427,6 +427,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.rp_reason'] = nil
     package.loaded['server.rp_places'] = nil
     package.loaded['server.presets'] = nil
+    package.loaded['server.setup'] = nil
     package.loaded['server.intel.rumours'] = nil
     package.loaded['server.rp_burner'] = nil
     package.loaded['server.intel.engine'] = nil
@@ -497,6 +498,7 @@ function _G.newStack()
     local rpProtection = require('crimson-hitman.server.rp_protection')
     local rpPlaces    = require('server.rp_places')
     local presets     = require('server.presets')
+    local setup       = require('server.setup')
     local rpBurner    = require('server.rp_burner')
     local rpReason    = require('server.rp_reason')
     local intel        = require('server.intel.engine')
@@ -585,6 +587,7 @@ function _G.newStack()
     playtime.init({ storage = storage, identity = identity })
     rpPlaces.init({ settings = settings, storage = storage, audit = audit })
     presets.init({ settings = settings, storage = storage, audit = audit })
+    setup.init({ settings = settings, storage = storage, audit = audit })
     rpBurner.init({ audit = audit })
     rpReason.init({ storage = storage, review = review, contracts = contracts })
     -- Intel, as main.lua wires it.
@@ -654,7 +657,7 @@ function _G.newStack()
         -- Roleplay.
         rpIntent = rpIntent, rpProtection = rpProtection,
         -- The roleplay features.
-        rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason, presets = presets,
+        rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason, presets = presets, setup = setup,
         -- Intel.
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         -- Contract decay.
@@ -690,7 +693,7 @@ function _G.newStack()
         summary = summary, thresholds = thresholds, announce = announce, reports = reports,
         rpConsequences = rpConsequences,
         rpIntent = rpIntent, rpProtection = rpProtection,
-        rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason, presets = presets,
+        rpPlaces = rpPlaces, rpBurner = rpBurner, rpReason = rpReason, presets = presets, setup = setup,
         intel = intel, intelRules = intelRules, intelRumours = intelRumours,
         impBoard = impBoard,
         impProof = impProof, impScrub = impScrub, impWeekly = impWeekly,

@@ -5755,6 +5755,63 @@ async function main() {
     clean(app, 'presets');
   })();
 
+  /* Step 5b: the first-start setup, shown by itself until it is saved. */
+  await (async function firstStartSetup() {
+    const SETUP = { ok: true, data: {
+      saved: false,
+      storage: { mode: 'mysql', choices: ['mysql', 'json'], line: "Config.Database.Mode = 'mysql'" },
+      integrations: [
+        { kind: 'dispatch', key: 'Integrations.Dispatch', choice: 'auto', active: 'sc-dispatch',
+          choices: ['auto', 'sc-dispatch', 'none'], detected: [{ name: 'sc-dispatch', up: true }],
+          without: 'nothing is filed in the police MDT' },
+        { kind: 'keys', key: 'Integrations.Keys', choice: 'auto', active: null,
+          choices: ['auto', 'qbx_vehiclekeys', 'none'], detected: [{ name: 'qbx_vehiclekeys', up: false }],
+          without: 'the disposal vehicle is left unlocked ' + XSS }],
+      aces: [{ name: 'Staff ACE (Config.Admin.Ace)', ace: 'crimson.admin', held: true,
+        line: 'add_ace group.admin crimson.admin allow' }],
+      command: { key: 'Admin.Commands.panel', label: 'Command name: panel', kind: 'text', value: 'hitmanadmin' },
+      switches: [{ key: 'Intel.Enabled', label: 'Informant features', kind: 'switch', value: true }] } };
+    const app = boot(standardServer({ setup: SETUP,
+      setupPreview: { ok: true, data: { changes: [{ key: 'Integrations.Dispatch', label: 'Other scripts: dispatch',
+        from: "'auto'", to: "'none'" }], refused: [], same: 0 } },
+      setupApply: { ok: true, message: 'Setup saved: 1 setting changed.', data: { applied: ['Integrations.Dispatch'], refused: [] } } }));
+    app.open(access({ canIdentify: false, setupDue: true }));
+    await settled();
+    it('opens on the setup by itself while none is saved, every choice at the value in force', function () {
+      eq(app.byId('nav-setup').getAttribute('aria-current'), 'page');
+      const text = app.main();
+      has(text, "Config.Database.Mode = 'mysql'");
+      has(text, 'add_ace group.admin crimson.admin allow');
+      has(text, 'In use: sc-dispatch');
+      has(text, 'Found: qbx_vehiclekeys');
+      eq(app.body.querySelectorAll('img').length, 0, 'escaped');
+      eq(app.requests('setupApply').length, 0, 'nothing applied by reading');
+      truthy(app.button('Apply').disabled, 'no Apply before a preview');
+    });
+    pick(app, 'su-pick:Integrations.Dispatch', 'none');
+    app.click(app.button('Preview'));
+    await settled();
+    it('Preview sends the choices and lists every change', function () {
+      eq(app.last('setupPreview').data, { values: { 'Integrations.Dispatch': 'none' } });
+      has(app.main(), "Other scripts: dispatch: 'auto' → 'none'");
+    });
+    const apply = app.button('Apply');
+    app.click(apply);
+    await settled();
+    it('Apply takes two clicks, the first naming how many changes', function () {
+      eq(app.requests('setupApply').length, 0, 'sent on one click');
+      has(app.text(apply), 'Click again: apply 1 change and save');
+    });
+    app.click(apply);
+    await settled();
+    it('the second applies and saves it, and reads the settings again', function () {
+      eq(app.last('setupApply').data, { values: { 'Integrations.Dispatch': 'none' } });
+      has(app.main(), 'Setup saved: 1 setting changed.');
+      truthy(app.requests('settings').length >= 1);
+    });
+    clean(app, 'the first-start setup');
+  })();
+
   await (async function targetLimitsSection() {
     const app = boot(tlServer());
     app.open(ADMIN);

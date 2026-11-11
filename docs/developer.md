@@ -381,6 +381,9 @@ resource (`GetParentResourceName()`):
 | `presets` | read | — | `{ presets = [{ name, about, builtIn, at?, changes = [{ key, label, from, to }], refused = [{ key, label, why }], same }] }`: every preset (server/presets.lua: the shipped Strict, Relaxed, Roleplay-heavy, and Current from the store, rp row kind `settings_preset`) against the settings in force now; reading changes nothing |
 | `presetApply` | write | `{ name }` | `{ applied = [keys], refused = [{ key, why }] }`: Current saved first (unless it is Current), then each change through `Settings.set` (audited `admin_setting_changed`, in Change history with Undo), and one `admin_preset_applied` row; refused `not_found`, `unchanged`, `store_failed` |
 | `presetSave` | write | — | saves Current (the values of every key a shipped preset names), audited `admin_preset_saved` |
+| `setup` | write | — | `{ saved, savedAt?, savedBy?, storage = { mode, choices, line }, integrations = [{ kind, key, choice, active, choices, detected, without, required }], aces = [{ name, ace, held, line }], command = { key, label, value }, switches = [{ key, label, kind, choices, value }] }` (server/setup.lua); `access` carries `setupDue` while none is saved, for staff who may write |
+| `setupPreview` | write | `{ values = { [key] = value } }` (at most 64 plain values) | `{ changes = [{ key, label, from, to }], refused = [{ key, label, why }], same }`; a key the setup does not offer is refused; changes nothing |
+| `setupApply` | write | `{ values }` | `{ applied = [keys], refused = [{ key, why }] }`: each change through `Settings.set` (audited `admin_setting_changed`), the setup saved (rp row kind `setup`), one `admin_setup_applied` row; refused `invalid_input`, `store_failed` |
 | `refresh` | write | — | `{ lines }` |
 | `diag` | read | `{ subject? }` (a server id) | `{ lines }` |
 | `flush` | write | — | `{ written }` |
