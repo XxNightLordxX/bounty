@@ -62,7 +62,8 @@ function Natives.install()
         if not fh then return nil end
         local text = fh:read('*a')
         fh:close()
-        return text:match("version%s+'([^']+)'")
+        -- The line `version '…'`, not fx_version 'cerulean' above it.
+        return text:match("\nversion%s+'([^']+)'")
     end
     _G.GetResourceState = function(name) return Natives.resourceStates[name] or 'missing' end
 
@@ -465,7 +466,7 @@ function Natives.install()
     _G.PerformHttpRequest = function(url, cb, method, body, headers)
         -- A stack resets Natives.calls without this list in it.
         Natives.calls.http = Natives.calls.http or {}
-        table.insert(Natives.calls.http, { url = url, method = method, body = body })
+        table.insert(Natives.calls.http, { url = url, method = method, body = body, headers = headers })
         if not cb then return end
         if Natives.httpAnswer then return cb(Natives.httpAnswer(url, method, body, headers)) end
         cb(204, '', {})

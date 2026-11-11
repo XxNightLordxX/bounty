@@ -67,7 +67,9 @@ describe('step 3h: one call site for every outside channel', function()
         local skip = { ['crimson-hitman/server/discord.lua'] = true }
         for path, text in pairs(serverFilesExcept(skip)) do
             local body = code(text)
-            if path ~= 'crimson-hitman/server/photos.lua' then
+            -- photos.lua asks whether its own public address leads here;
+            -- versioncheck.lua makes its one GET (X4, off as shipped), to no webhook.
+            if path ~= 'crimson-hitman/server/photos.lua' and path ~= 'crimson-hitman/server/versioncheck.lua' then
                 falsy(body:find('PerformHttpRequest', 1, true), path .. ' makes a request of its own')
             end
             for _, convar in ipairs({ "GetConvar('crimson_hitman_webhook'",

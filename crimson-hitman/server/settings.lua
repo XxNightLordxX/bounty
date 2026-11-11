@@ -88,6 +88,9 @@ local DENY = {
         why = 'The language players and staff see, from locales/<language>.lua and .json: the phone '
         .. 'app, the panel and the game take it as they load, so it is changed in config.lua and '
         .. 'in force after a restart.' .. EDIT_IN_CONFIG },
+    ['VersionCheck.Url'] = { label = 'Version check address',
+        why = 'An address the server asks once at start; it is asked only with nothing after a ? '
+        .. 'or #, so the address itself carries nothing of this server\'s.' .. EDIT_IN_CONFIG },
     ['Database.Mode'] = { label = 'Storage mode',
         why = 'Changing it needs the money in the old mode settled and a restart '
         .. '(README, Changing storage mode).' .. EDIT_IN_CONFIG },
@@ -644,6 +647,14 @@ local CATALOGUE = {
           .. 'contracts placed, completed and refunded in the last day, money in escrow, open '
           .. 'review items, frozen and suspended players. It never names anybody.',
       inflight = 'Read at the hour. At most once a day, a restart included.' },
+    { key = 'VersionCheck.Enabled', section = 'features', category = 'developer', group = 'Audit and debug',
+      kind = 'switch', label = 'Check for a newer version at start',
+      about = 'Off as shipped. On, with an address in Config.VersionCheck.Url (empty as shipped, '
+          .. 'which asks nothing), the server asks that address once at start, with a plain GET '
+          .. 'that sends no data of this server\'s, and says in the console when a newer version '
+          .. 'is out. Nothing else changes.',
+      inflight = 'Asked once, as the server starts: turned on now, the address is asked at the next '
+          .. 'start; turned off, the next start asks nothing.' },
     { key = 'Debug', section = 'features', category = 'developer', group = 'Audit and debug', kind = 'switch',
       label = 'Debug output in the server console',
       about = 'Off: the server console prints only what needs you (refusing to start, money '

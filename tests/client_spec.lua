@@ -38,7 +38,8 @@ describe('the client on an ordinary phone', function()
         -- And the build has to be the manifest's, not a placeholder: a stamp
         -- that never changes caches exactly as badly as no stamp at all.
         local manifest = io.open('crimson-hitman/fxmanifest.lua', 'r')
-        local version = manifest and manifest:read('*a'):match("version%s+'([^']+)'")
+        -- The line `version '…'`, not fx_version 'cerulean' above it.
+        local version = manifest and manifest:read('*a'):match("\nversion%s+'([^']+)'")
         if manifest then manifest:close() end
         truthy(version, 'fxmanifest.lua must carry a version to stamp with')
         truthy(registered.ui:find(version, 1, true),

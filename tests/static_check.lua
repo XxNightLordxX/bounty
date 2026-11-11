@@ -727,6 +727,7 @@ do
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['Bridge.reset']               = 'when each raise was last said, so a test can say one again',
         ['Locale.reset']               = 'the languages read and the keys said, so a test can try another',
+        ['VersionCheck.reset']         = 'whether the one ask was made, so a test can ask again',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
         ['OrgSpots.running']           = 'whether the organisation\'s NPC loop runs, so a test can '
             .. 'watch it stop',

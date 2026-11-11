@@ -254,6 +254,15 @@ every key used exists in English and scans the moved files
 console reason, an lb-phone camera mode). Console lines (`Log.*`, `print`,
 `error`) are never scanned: they stay English.
 
+### Version check
+
+`server/versioncheck.lua` runs once at the end of a sound start (main.lua,
+after `Log.started()`, inside pcall). `VersionCheck.allowed` refuses any
+address that is not `https://`, carries `?`, `#`, a space or a user name, or
+is over 512 characters; the request is `PerformHttpRequest(url, cb, 'GET',
+'', {})`. The answer is read for its first `n.n[.n]` and compared with the
+manifest's `version` by number. `tests/versioncheck_spec.lua`.
+
 ### The event and handler order
 
 Every net event and callback handler, in `app.lua` and `panel.lua`, runs in

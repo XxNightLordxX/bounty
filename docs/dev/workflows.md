@@ -42,9 +42,9 @@ when an item in scope is driven by nothing and not listed below with why.
 | Category | In scope | Items | Driven by a workflow |
 |---|---|---:|---:|
 | ace | counted | 5 | 0 |
-| audit | counted | 360 | 178 |
+| audit | counted | 362 | 177 |
 | command | yes | 12 | 12 |
-| config | counted | 629 | 0 |
+| config | counted | 632 | 0 |
 | err | counted | 152 | 4 |
 | event | yes | 24 | 24 |
 | ext | counted | 59 | 0 |
@@ -54,8 +54,8 @@ when an item in scope is driven by nothing and not listed below with why.
 | nui | yes | 123 | 123 |
 | op | yes | 125 | 125 |
 | screen | yes | 78 | 78 |
-| setting | counted | 571 | 0 |
-| switch | yes | 156 | 156 |
+| setting | counted | 572 | 0 |
+| switch | yes | 157 | 157 |
 | tick | yes | 45 | 45 |
 
 ## Not in scope, and why
@@ -786,6 +786,7 @@ None.
 | `Targeting.AllowBrowseAll` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Targeting.AllowNearby` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Targeting.AllowProtectedJobTargets` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `VersionCheck.Enabled` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `WhitelistedView.Alerts` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `WhitelistedView.Enabled` | feature switches > every switch turns from the panel and back, in force at once and written down |
 

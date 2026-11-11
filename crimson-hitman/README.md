@@ -143,6 +143,7 @@ dispatch, inventory or phone), add an adapter: `docs/dev/adapters.md`.
 - Carry your `config/config.lua` across. Settings changed in the panel are kept in the store and survive the update.
 - Payouts an older version left owed appear once under **Money waiting** in the panel's inbox (`/ch-stuck`): check the player has it, then **Pay** or **Delivered**.
 - Restarting `qbx_core` or `oxmysql` stops this resource with them: `ensure crimson-hitman` afterwards. Restarting `lb-phone`, `ox_inventory` or any other optional script is safe: what needs it is off while it is down, said in one console line.
+- **Version check** (off as shipped): set `Config.VersionCheck.Enabled = true` and `Config.VersionCheck.Url` to an https address that serves the latest version number (plain text such as `1.3.0`, or JSON with it in). The server asks it once at start, with a plain GET: no body, no headers of its own, and an address with `?` or `#` (or a user name) in it is refused unasked, so nothing about your server is sent. A newer version is one console line; anything else says nothing. With no address (as shipped) nothing is ever asked.
 
 ### Escrow, and where the words live
 
@@ -1849,6 +1850,8 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 | `Config.Audit.ContractRetentionDays` | `30` | days a finished contract is kept; 0 = forever |
 | `Config.Audit.ContractsPrunedPerTick` | `200` | finished contracts removed per tick |
 | `Config.Diagnostics.SlowJobMs` | `25` | a maintenance job slower than this prints a Debug line; 0 = never |
+| `Config.VersionCheck.Enabled` | `false` | ask Url once at start; the console says if a newer version is out |
+| `Config.VersionCheck.Url` | `''` | where the version is read (text or JSON); '' = nothing is asked |
 | `Config.RateLimit.Key` | `'license'` | 'license' (per account) \| 'citizenid' (per character) |
 | `Config.Cooldowns.diagnostic` | `{ burst = 10, per = 60 }` | the page's own fault reports |
 | `Config.Cooldowns.create` | `{ burst = 2, per = 60 }` | placing a contract |
@@ -2013,6 +2016,7 @@ The audit log records every money movement and every refused attempt:
 
 **1.2.0, other scripts optional, first-start setup (newest)**
 
+- **Version check** (`Config.VersionCheck`, off as shipped, no address): one HTTPS GET at start, sending nothing of this server's, and one console line when a newer version is out. See Updating.
 - **Translations**: the notices players get, police advisories, staff alerts and their Discord posts, everything the game shows, and every refusal on the phone and in the panel are read from language files (`locales/en.lua`, `locales/en.json`) in the language `Config.Locale` names; a missing key reads in English. See Updating, Escrow, and where the words live.
 
 - **Organisation extras 3**, each off as shipped: **several organisations** (rival crews, each its own job, roles, funds and places), **reputation and tiers**, **dead drops**, **territory**, the **garage**, **internal contracts** on rogue members, the **handler** NPC and the boss's **activity log**. See Optional features, Organisation extras 3.

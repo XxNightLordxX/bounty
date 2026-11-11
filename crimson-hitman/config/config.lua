@@ -909,6 +909,11 @@ Config.Diagnostics = {
     SlowJobMs = 25,  -- a maintenance job slower than this prints a Debug line; 0 = never
 }
 
+Config.VersionCheck = {
+    Enabled = false,  -- ask Url once at start; the console says if a newer version is out
+    Url     = '',     -- where the version is read (text or JSON); '' = nothing is asked
+}
+
 Config.RateLimit = {
     Key = 'license',  -- 'license' (per account) | 'citizenid' (per character)
 }

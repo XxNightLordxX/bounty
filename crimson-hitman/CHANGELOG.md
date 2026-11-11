@@ -5,6 +5,13 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Version check** (`Config.VersionCheck`, off as shipped)
+- `Enabled = false` and `Url = ''` as shipped: nothing is ever asked. On,
+  with an https address, one plain GET at start (no body, no headers of its
+  own, an address with a query or fragment refused unasked) and one console
+  line when the answer names a newer version. The switch is under Developer,
+  Engine settings; the address is config.lua's.
+
 **Translations** (`Config.Locale`, `'en'` as shipped)
 - The words players and staff read are looked up by key in language files:
   `locales/en.lua` (notices to players, police advisories, staff alerts and

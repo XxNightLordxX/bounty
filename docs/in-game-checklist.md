@@ -756,6 +756,11 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Copy `locales/en.lua` to `locales/xx.lua` (changing `CrimsonLocales.en` to `CrimsonLocales.xx`) and `locales/en.json` to `locales/xx.json`, change one text in each, set `Config.Locale = 'xx'` and restart: that text reads your words on the phone, in the panel and in the notice; the console says once that `xx` lacks no key (or names the first one it lacks)
 - [ ] With `Config.Locale = 'nonesuch'` the game, the phone and the panel read English, and the console says once that there is no such file
 
+## Version check (X4, off as shipped)
+
+- [ ] As shipped (`Config.VersionCheck.Enabled = false`, `Url = ''`) the start asks nothing: no outbound request in the server's network log
+- [ ] With `Config.VersionCheck.Enabled = true` and `Url` an https address serving `9.9.9`, a restart prints one line naming 9.9.9; serving `1.0.0` (older) prints nothing; an address with `?` in it is not asked and the console says why once
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

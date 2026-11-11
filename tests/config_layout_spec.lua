@@ -42,6 +42,8 @@ local CHANGED = {
 local ADDED = {
     -- The language players and staff read (Translations, X1), English.
     ['Locale'] = 'en',
+    -- The version check (X4), off and with no address.
+    ['VersionCheck'] = { Enabled = false, Url = '' },
     -- The step markers, on, and body disposal, off (server/missionsteps.lua,
     -- server/disposal.lua), with its rate-limit bucket.
     ['StepMarkers'] = { Enabled = true, KillScene = true, Handover = true, Protection = true },
@@ -463,6 +465,7 @@ describe('the configuration as one short file', function()
             -- The Staff section and the report bucket, new and whole, as
             -- ADDED says.
             if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report' or path == 'Organisation'
+                or path == 'VersionCheck'
                 or path == 'Cooldowns.org' or path == 'Cooldowns.orgWrite'
                 or path == 'StepMarkers' or path == 'Disposal' or path == 'Cooldowns.disposal'
                 or ((path:match('^Roleplay%.') or path:match('^Improvements%.')) and ADDED[path] ~= nil)) then

@@ -2360,6 +2360,9 @@ function StartCrimsonHitman()
     Log.reportProblems()
     Log.debug(('started in %s mode'):format(Config.Database.Mode))
     Log.started()
+    -- Whether a newer version is out (Config.VersionCheck, off as shipped and
+    -- inert with no address): one GET, answered later, after the start.
+    pcall(CrimsonBoot.require('server.versioncheck').run)
     return modules
 end
 
