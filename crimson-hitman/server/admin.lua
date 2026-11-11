@@ -2296,8 +2296,11 @@ function Admin.diagnose(source, subjectId, later, opts)
         local passAt, running = Kidnap.lastPassAt()
         if running then handover = ago(passAt) end
     end
+    -- The sampler sleeps while no contract is running (Death.sampling).
+    local sampler = ago(sampledAt)
+    if Death and Death.sampling and not Death.sampling() then sampler = 'idle' end
     say(('loops: maintenance tick %s | condition sampler %s | handover tick %s')
-        :format(closed == 'recovery_failed' and 'not started' or ago(tickAt), ago(sampledAt),
+        :format(closed == 'recovery_failed' and 'not started' or ago(tickAt), sampler,
             handover))
 
     -- What the start found wrong with the configuration (shared/log.lua):

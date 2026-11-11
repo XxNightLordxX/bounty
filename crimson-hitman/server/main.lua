@@ -2231,6 +2231,8 @@ function StartCrimsonHitman()
         -- the restart (Death.noteStarted).
         death.noteStarted()
         death.startSampler()
+        -- Asleep while nothing is running; the next write wakes it.
+        projection.onWrite(death.startSampler)
         -- Tip warnings still waiting from before the restart (server/intel/rules.lua).
         intelRules.resume()
         -- Where the roleplay NPCs stand moves on the clock: looked at by the

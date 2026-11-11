@@ -94,7 +94,7 @@ for name in ([[
 --- any projection. The prune runs every tick, so counting it as a write
 --- threw the kept board away every ten seconds for nothing.
 for name in ([[
-    prune pruneContracts writeRpRow deleteRpRow
+    prune pruneContracts writeRpRow writeRpRows deleteRpRow
 ]]):gmatch('[%w_]+') do KEEPS[name] = true end
 
 --- Writes that change the board only when they say they did: an expiry
@@ -127,6 +127,22 @@ local board = nil
 --- Store tables already watched, so a second init does not wrap twice.
 local watched = setmetatable({}, { __mode = 'k' })
 
+--- Who is told after a write that moves `generation` (Projection.onWrite):
+--- the condition sampler, which sleeps while nothing is running and wakes
+--- on the write that starts something. Each is called inside pcall.
+local writeListeners = {}
+
+local function wrote()
+    for i = 1, #writeListeners do pcall(writeListeners[i]) end
+end
+
+--- Be told after every write that moves `generation` (watchStore), in the
+--- writer's own thread: keep it to a flag check and a CreateThread.
+---@param fn function
+function Projection.onWrite(fn)
+    if type(fn) == 'function' then writeListeners[#writeListeners + 1] = fn end
+end
+
 --- Count the writes made through this store table (KEEPS says which are
 --- not), in place: every module holds the table, not its functions.
 ---@param storage table
@@ -148,7 +164,10 @@ function Projection.watchStore(storage)
             -- it waited is still thrown away, by the move after it.
             storage[name] = function(...)
                 local out = table.pack(pcall(fn, ...))
-                if not out[1] or movesIf(out[2]) then generation = generation + 1 end
+                if not out[1] or movesIf(out[2]) then
+                    generation = generation + 1
+                    wrote()
+                end
                 if not out[1] then error(out[2], 0) end
                 return table.unpack(out, 2, out.n)
             end
@@ -157,6 +176,7 @@ function Projection.watchStore(storage)
                 generation = generation + 1
                 local out = table.pack(pcall(fn, ...))
                 generation = generation + 1
+                wrote()
                 if not out[1] then error(out[2], 0) end
                 return table.unpack(out, 2, out.n)
             end

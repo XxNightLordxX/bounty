@@ -1,6 +1,6 @@
 --- The recurring loops: how often each runs, that each does nothing when it
 --- has nothing to do, and what a whole maintenance pass costs on a busy
---- server (README, Performance: the loops).
+--- server (docs/dev/loops.md).
 ---
 ---   * the maintenance tick runs every job on its first pass after a start,
 ---     then the scheduled ones at their own interval (the access check every
@@ -465,9 +465,10 @@ describe('the rest of the loops', function()
         -- row each for the 64 here.
         ['playtime.pass'] = 64,
         -- Each held contract's idle clocks, kept for a restart: a row a
-        -- contract at most once a minute, and at most 25 rows a pass
-        -- (Contracts.IDLE_CLOCK_WRITES_PER_PASS).
-        ['contracts.releaseIdleHolds'] = 25,
+        -- contract at most once a minute, at most 100 rows a pass
+        -- (Contracts.IDLE_CLOCK_WRITES_PER_PASS), all in one statement
+        -- (Storage.writeRpRows; it was a statement a row, 25 a pass).
+        ['contracts.releaseIdleHolds'] = 1,
     }
 
     it('sends the database nothing from a job with nothing to do, on a busy mysql server', function()
@@ -996,3 +997,244 @@ describe('a whole maintenance pass on a busy server', function()
         end)
     end
 end)
+
+--------------------------------------------------------------------------
+-- The per-job report (CH_PERF): docs/dev/loops.md's measured column
+--------------------------------------------------------------------------
+
+--- Every maintenance job over ten minutes of ten-second ticks on the city
+--- (200 live contracts, 64 players), on `mode` with every optional feature
+--- `on` or off: [job] = { runs, ms (all passes), worst (one pass, ms),
+--- statements (most in one pass), calls (store calls, all passes) }.
+local function perJob(mode, on)
+    local main, s = boot(mode)
+    city(s)
+    if on then features(true) end
+    main.tick()
+    tick(main)
+    local Timing = require('server.timing')
+    local run = Timing.run
+    local by, current = {}, nil
+    local real = {}
+    for name, fn in pairs(s.storage) do
+        if type(fn) == 'function' then
+            real[name] = fn
+            s.storage[name] = function(...)
+                if current then by[current].calls = by[current].calls + 1 end
+                return fn(...)
+            end
+        end
+    end
+    Timing.run = function(name, fn, ...)
+        by[name] = by[name] or { runs = 0, ms = 0, worst = 0, statements = 0, calls = 0 }
+        local from = Exec.statements and #Exec.statements or 0
+        local outer = current
+        current = name
+        local started = os.clock()
+        local out = table.pack(run(name, fn, ...))
+        local ms = (os.clock() - started) * 1000
+        current = outer
+        local b = by[name]
+        local n = (Exec.statements and #Exec.statements or 0) - from
+        b.runs, b.ms = b.runs + 1, b.ms + ms
+        if ms > b.worst then b.worst = ms end
+        if n > b.statements then b.statements = n end
+        return table.unpack(out, 1, out.n)
+    end
+    local ok, err = pcall(function() for _ = 1, 60 do tick(main) end end)
+    Timing.run = run
+    for name, fn in pairs(real) do s.storage[name] = fn end
+    if not ok then error(err, 0) end
+    return by
+end
+
+--------------------------------------------------------------------------
+-- Step 6: what each loop costs with nothing to do, and what wakes it
+--------------------------------------------------------------------------
+
+describe('the idle-hold clocks on a busy server', function()
+    it('go to mysql in one statement a pass, however many holds are counted', function()
+        local main, s = boot('mysql')
+        city(s)
+        main.tick()
+        tick(main)
+        -- A minute on: every one of the 200 holds' rows is due again.
+        Env.time = Env.time + 60
+        local from = #Exec.statements
+        s.contracts.releaseIdleHolds()
+        local sent = 0
+        for i = from + 1, #Exec.statements do
+            local sql = Exec.statements[i]
+            if sql:find('crimson_rp_rows', 1, true) then sent = sent + 1 end
+        end
+        eq(sent, 1, 'one statement for the pass (it was one a row, 25 a pass)')
+        eq(#s.storage.readRpRows('idle_clock'), s.contracts.IDLE_CLOCK_WRITES_PER_PASS,
+            'a pass\'s share of rows, all written')
+    end)
+
+    it('are kept in clocks.json on json, and never rewrite records.json', function()
+        local main, s = boot('json')
+        city(s)
+        main.tick()
+        tick(main)
+        local records = 0
+        local save = SaveResourceFile
+        _G.SaveResourceFile = function(res, file, ...)
+            if file == 'data/records.json' then records = records + 1 end
+            return save(res, file, ...)
+        end
+        local ok, err = pcall(function()
+            for _ = 1, 12 do tick(main) end
+        end)
+        _G.SaveResourceFile = save
+        truthy(ok, tostring(err))
+        eq(records, 0, 'two minutes of idle clocks wrote records.json (and the ledger in it) not once')
+        truthy(Natives.files['data/clocks.json'], 'their own file')
+        local decoded = json.decode(Natives.files['data/clocks.json'])
+        truthy(next(decoded.rows) ~= nil, 'with the rows in it')
+        truthy(#s.storage.readRpRows('idle_clock') > 0, 'read back from it')
+    end)
+end)
+
+describe('the condition sampler\'s thread', function()
+    local function samplers()
+        local n = 0
+        for _, fn in ipairs(Env.threads) do
+            if debug.getinfo(fn, 'S').short_src:find('death.lua', 1, true) then n = n + 1 end
+        end
+        return n
+    end
+
+    it('ends while nothing is running, and the write that places a contract starts it again', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        local death = require('server.completion.death')
+        eq(samplers(), 1, 'started at boot')
+        -- Its first pass finds nothing running and ends the thread.
+        local thread
+        for _, fn in ipairs(Env.threads) do
+            if debug.getinfo(fn, 'S').short_src:find('death.lua', 1, true) then thread = fn end
+        end
+        local co = coroutine.create(thread)
+        local realWait = _G.Wait
+        _G.Wait = coroutine.yield
+        local counts = storeReads(s.storage, function()
+            assert(coroutine.resume(co))     -- to its first wait
+            assert(coroutine.resume(co))     -- one pass
+        end, READS)
+        _G.Wait = realWait
+        eq(coroutine.status(co), 'dead', 'nothing running: the thread ended')
+        falsy(death.sampling(), 'and says so')
+        eq(counts.liveHitmen, nil, 'no roster read for nothing')
+        -- A contract placed is a write: the sampler is back.
+        truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } }), 'placed')
+        truthy(death.sampling(), 'running again')
+        eq(samplers(), 2, 'one new thread, not one a write')
+    end)
+end)
+
+describe('the NPC distance loop', function()
+    it('is one thread for every file that draws NPCs', function()
+        local t = { threads = {} }
+        local env = setmetatable({
+            CreateThread = function(fn) t.threads[#t.threads + 1] = coroutine.create(fn) end,
+            Wait = function(ms) coroutine.yield(ms) end,
+        }, { __index = _G })
+        assert(loadfile('crimson-hitman/client/npc.lua', 't', env))()
+        local Npc = env.CrimsonNpc
+        local rpOn, orgOn, rpPasses, orgPasses = true, true, 0, 0
+        Npc.watch('rp', function() rpPasses = rpPasses + 1; return false end, function() return rpOn end)
+        Npc.watch('org', function() orgPasses = orgPasses + 1; return true end, function() return orgOn end)
+        eq(#t.threads, 1, 'two owners, one thread (it was a loop each)')
+        local co = t.threads[1]
+        local _, ms = coroutine.resume(co)
+        eq(ms, 1000, 'one owner near: a second for both')
+        eq(rpPasses, 1); eq(orgPasses, 1)
+        orgOn = false
+        _, ms = coroutine.resume(co)
+        eq(ms, 2000, 'the near one gone: two seconds')
+        falsy(Npc.watching('org'), 'it left the loop')
+        rpOn = false
+        coroutine.resume(co)
+        eq(coroutine.status(co), 'dead', 'and the loop ends with the last')
+    end)
+end)
+
+--- The jobs of a feature that is off as shipped, or a staff tool's clock:
+--- with their features off, none calls the store at all in ten minutes.
+local QUIET_OFF = { 'record.tick', 'imp_decay.tick', 'imp_weekly.tick', 'rp.tick', 'rp_intent.sweep',
+    'rp_protection.sweep', 'informant.retryUnsaved', 'rp_places.announce', 'org.payroll', 'disposal.tick',
+    'mission_steps.tick', 'summary.tick', 'thresholds.sweep', 'target_limits.prune', 'holds.tick',
+    'sanctions.tick', 'holds.syncAppPause', 'amendments.expire', 'death.sweep', 'ratelimit.sweep',
+    'app.sweepHandles', 'app.sweepFloodCounters', 'escrow.retryWaiting', 'notify.deliverKept',
+    'contracts.retryStuckJoins', 'contracts.retryStuckClaims', 'contracts.retryStuckCreates',
+    'review.retryUnwritten', 'expireContracts', 'bridges.refreshAccess' }
+
+--- What a job may cost a pass on a busy mysql server with nothing to do,
+--- every feature on: [job] = { statements a pass, store calls in ten
+--- minutes }. A job not listed: none of either.
+local BUSY_ON = {
+    ['contracts.releaseIdleHolds'] = { 1, 20 }, ['contracts.finishEndings'] = { 1, 20 },
+    ['playtime.pass'] = { 64, 10 }, ['storage.heartbeat'] = { 1, 60 }, ['storage.flush'] = { 0, 60 },
+    ['audit.flush'] = { 0, 60 }, ['bailout.processQueue'] = { 0, 60 }, ['review.decide'] = { 0, 60 },
+    ['storage.prune'] = { 2, 2 }, ['ledger.forgetOldPhotos'] = { 2, 2 },
+}
+
+describe('every maintenance job on a busy server', function()
+    it('calls the store not once in ten minutes with its feature off, json and mysql', function()
+        for _, mode in ipairs({ 'json', 'mysql' }) do
+            local by = perJob(mode, false)
+            for _, name in ipairs(QUIET_OFF) do
+                truthy(by[name] and by[name].runs > 0, mode .. ': ' .. name .. ' ran')
+                eq(by[name].calls, 0, mode .. ': ' .. name .. ': store calls in ten minutes, off')
+                eq(by[name].statements, 0, mode .. ': ' .. name .. ': statements, off')
+            end
+        end
+    end)
+
+    it('stays inside its pinned statements and store calls with every feature on and nothing due', function()
+        local by = perJob('mysql', true)
+        for name, b in pairs(by) do
+            local cap = BUSY_ON[name] or { 0, 0 }
+            truthy(b.statements <= cap[1], ('%s: %d statements in a pass (pinned %d)')
+                :format(name, b.statements, cap[1]))
+            truthy(b.calls <= cap[2], ('%s: %d store calls in ten minutes (pinned %d)')
+                :format(name, b.calls, cap[2]))
+        end
+    end)
+end)
+
+if os.getenv('CH_PERF') then
+    describe('per-job costs (CH_PERF)', function()
+        it('measures every job, json and mysql, features off and on', function()
+            local cols, names = {}, {}
+            for _, mode in ipairs({ 'json', 'mysql' }) do
+                for _, on in ipairs({ false, true }) do
+                    local key = mode .. (on and ' on' or ' off')
+                    cols[#cols + 1] = key
+                    local by = perJob(mode, on)
+                    for name, b in pairs(by) do
+                        names[name] = names[name] or {}
+                        names[name][key] = b
+                    end
+                end
+            end
+            local sorted = {}
+            for name in pairs(names) do sorted[#sorted + 1] = name end
+            table.sort(sorted)
+            truthy(#sorted > 30, ('%d jobs measured'):format(#sorted))
+            io.write('\n  job | ' .. table.concat(cols, ' | ')
+                .. '  (runs in 10 min, avg ms, worst ms, most statements a pass, store calls in 10 min)\n')
+            for _, name in ipairs(sorted) do
+                local cells = {}
+                for _, key in ipairs(cols) do
+                    local b = names[name][key]
+                    cells[#cells + 1] = b and ('%d %.3f %.2f %d %d'):format(b.runs, b.ms / b.runs, b.worst,
+                        b.statements, b.calls) or '-'
+                end
+                io.write(('  %-30s | %s\n'):format(name, table.concat(cells, ' | ')))
+            end
+        end)
+    end)
+end

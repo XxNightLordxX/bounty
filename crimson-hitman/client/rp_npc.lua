@@ -22,17 +22,17 @@ local MODEL_WAIT_MS = 5000
 --- change in that time but the distance (a car at 150 km/h covers about
 --- 80 m in two seconds, the margin between NEAR_METRES and DRAW_METRES);
 --- With both off there is no loop to wait in (NpcLoop.start).
+--- The loop itself is CrimsonNpc's (client/npc.lua), shared with the
+--- organisation's NPCs: its pace is the one described here.
 local NEAR_METRES = 160.0
-local NEAR_WAIT_MS, FAR_WAIT_MS = 1000, 2000
 
 --- What the server last said: [npc] = { x, y, z, h, model, scenario, blip,
 --- at }, `at` the place as a vector, made once here rather than on every
 --- pass of the loop.
 local places = {}
 
---- Whether the distance loop is running. It runs only while there is a
---- place to measure, and ends on the pass that finds none.
-local watching = false
+--- The distance loop runs only while there is a place to measure, and
+--- leaves on the pass that finds none (CrimsonNpc.watch).
 local NpcLoop = {}
 --- What is drawn now: [npc] = { ped, key }. The blip is CrimsonMarkers'
 --- (client/missionsteps.lua), keyed 'npc:<npc>'; it stays over a logout.
@@ -160,27 +160,18 @@ local function pass()
     return near
 end
 
---- Start the distance loop, unless it is running. It ends on the pass that
---- finds nothing placed (both NPCs off, or every one taken away), and the
---- next answer that places one starts it again (apply).
+local function anyPlaced() return next(places) ~= nil end
+
+--- Start the distance loop, unless it is running. This file leaves it on
+--- the pass that finds nothing placed (both NPCs off, or every one taken
+--- away), and the next answer that places one joins it again (apply).
 function NpcLoop.start()
-    if watching then return end
-    watching = true
-    CreateThread(function()
-        while next(places) ~= nil do
-            -- One pass in a pcall: a native or a model that raises costs this
-            -- pass, never the loop (and with it every NPC for the session).
-            local ok, near = pcall(pass)
-            if not ok and CrimsonLog then CrimsonLog.debug(('roleplay NPCs: %s'):format(tostring(near))) end
-            Wait((near or not ok) and NEAR_WAIT_MS or FAR_WAIT_MS)
-        end
-        watching = false
-    end)
+    CrimsonNpc.watch('rp', pass, anyPlaced)
 end
 
---- Whether the loop is running, for the tests.
+--- Whether the loop is running for these NPCs, for the tests.
 function NpcLoop.running()
-    return watching
+    return CrimsonNpc.watching('rp')
 end
 
 -- The one question at start. Nothing loops until the answer places an NPC.

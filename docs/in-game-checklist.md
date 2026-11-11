@@ -708,6 +708,14 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] The setup shows the storage mode with its config line, each other script found, the `add_ace` lines with a tick for yours, the panel command and the key switches, each at its value now.
 - [ ] Change one choice, **Preview** lists it; **Apply** asks twice, then applies; the change is in Change history with Undo; reopening the panel no longer jumps to the setup.
 
+## Loops: event-driven, asleep while off (step 6)
+
+- [ ] With no contract running, `ch-diag` says `condition sampler idle`; place one and run it again within a few seconds: it says a second or two ago, and a kill on that contract is credited as before
+- [ ] `resmon` for `crimson-hitman` (F8, `resmon 1`) reads 0.00 to 0.01 ms with the phone put away and nobody near an NPC, and at most about 0.35 ms with the app open (estimates until measured; note your own idle and busy figures)
+- [ ] With the broker or informant on (`Config.Intel.Rumours`) and the organisation on, stand near an organisation NPC and the broker in turn: each is drawn within 80 m and removed past 100 m, and the reading stays within a few hundredths of a ms of idle
+- [ ] An exclusive contract held and not worked for a few minutes, then `restart crimson-hitman`: the hold is still released at `Config.Limits.ExclusiveIdleReleaseSeconds` counted across the restart (on `json`, `data/clocks.json` holds its clock; `records.json` is not rewritten every tick)
+- [ ] `ch-diag` lists every job with its interval as before, and `contracts.releaseIdleHolds` stays a few ms at worst with many holds
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

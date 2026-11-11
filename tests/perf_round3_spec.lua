@@ -1,4 +1,4 @@
---- Round 3 performance (README, Performance: the loops and the requests):
+--- Round 3 performance (docs/dev/loops.md, and README, Performance: the requests):
 --- what each change made cheaper, pinned by what it reads.
 ---
 ---   * Mine reads only the contracts not finished (O1), and the placing

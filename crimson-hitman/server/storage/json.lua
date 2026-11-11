@@ -1963,6 +1963,77 @@ local function savePlaytime()
     return true
 end
 
+--------------------------------------------------------------------------
+-- The idle-hold clocks
+--------------------------------------------------------------------------
+
+--- The idle-hold sweep's clocks (Contracts.releaseIdleHolds: crimson_rp_rows
+--- rows of kind 'idle_clock', ids 'idle:<contract>'), in clocks.json: a
+--- file of its own, written by the flush and the close only, as playtime
+--- is. They change every minute while a hold goes unworked, and in
+--- records.json each change rewrote the ledger and every other record with
+--- them, on every tick a hold was held. { rows = { [id] = row } }, read the
+--- first time it is asked for.
+local clocks = nil
+local clocksDirty = false
+--- Each clock row as it was last encoded, by id: a pass changes only some,
+--- so a flush encodes only those (as playtime's rows).
+local clocksText = {}
+
+local function clocksPath()
+    return directory() .. '/clocks.json'
+end
+
+--- Whether a roleplay row is an idle clock, kept in clocks.json.
+local function isClockRow(id)
+    return type(id) == 'string' and id:sub(1, 5) == 'idle:'
+end
+
+--- The clocks' file, read once. Missing is no clock kept yet; torn, its
+--- last whole write is put back (recoverFile), and with none the clocks
+--- start from nothing (an idle count is not money: a hold is released a
+--- window later at worst). A clock row records.json still holds is moved
+--- here, and records.json written without it at the next flush.
+local function clocksData()
+    if clocks then return clocks end
+    local raw = LoadResourceFile(resource, clocksPath())
+    local decoded = decodeTable(raw)
+    if not decoded then
+        local _, copy = recoverFile(clocksPath(), decodeTable, true, raw)
+        decoded = copy
+    end
+    clocks = { rows = type(decoded) == 'table' and type(decoded.rows) == 'table' and decoded.rows or {} }
+    for id, row in pairs(db and db.rpRows or {}) do
+        if isClockRow(id) then
+            clocks.rows[id] = row
+            db.rpRows[id] = nil
+            dirty, recordsDirty, clocksDirty = true, true, true
+        end
+    end
+    return clocks
+end
+
+--- Write the clocks' file whole, when something in it changed.
+---@return boolean written
+---@return string|nil file the file, when it could not be written
+local function saveClocks()
+    if not clocksDirty or not clocks then return true end
+    local rows = {}
+    for id, row in pairs(clocks.rows) do
+        local text = clocksText[id]
+        if not text then
+            text = json.encode(tostring(id)) .. ':' .. json.encode(row)
+            clocksText[id] = text
+        end
+        rows[#rows + 1] = text
+    end
+    if not writeRaw(clocksPath(), '{"rows":{' .. table.concat(rows, ',') .. '}}') then
+        return false, clocksPath()
+    end
+    clocksDirty = false
+    return true
+end
+
 function JsonStore.flush()
     -- The alerts changed since the records were written, which only this
     -- and the close take in (alertsDirty).
@@ -1970,7 +2041,8 @@ function JsonStore.flush()
     local ok, file = JsonStore.save(false)
     local logged, day = saveAudit()
     local counted, playtimeFile = savePlaytime()
-    return ok and logged and counted, file or day or playtimeFile
+    local clocked, clocksFile = saveClocks()
+    return ok and logged and counted and clocked, file or day or playtimeFile or clocksFile
 end
 
 function JsonStore.close()
@@ -1978,7 +2050,8 @@ function JsonStore.close()
     local ok, file = JsonStore.save(true)
     local logged, day = saveAudit()
     local counted, playtimeFile = savePlaytime()
-    return ok and logged and counted, file or day or playtimeFile
+    local clocked, clocksFile = saveClocks()
+    return ok and logged and counted and clocked, file or day or playtimeFile or clocksFile
 end
 
 --------------------------------------------------------------------------
@@ -2447,34 +2520,53 @@ end
 -- Roleplay features' own rows
 --------------------------------------------------------------------------
 
---- Rows that hold no money: an exclusive hold's idle clocks
---- (Contracts.releaseIdleHolds), saved at the next flush rather than at once.
-local function rpRowHoldsMoney(id)
-    return not (type(id) == 'string' and id:sub(1, 5) == 'idle:')
-end
-
 --- See the memory backend. In records.json, written at once: a payout held
---- for proof of intent, and a bodyguard job's money, are money paths.
+--- for proof of intent, and a bodyguard job's money, are money paths. The
+--- idle clocks, which hold no money, are in clocks.json instead (clocksData),
+--- saved at the next flush.
 function JsonStore.readRpRows(kind)
     local out = {}
     for _, row in pairs(db.rpRows or {}) do
         if row.kind == kind then out[#out + 1] = Util.copy(row) end
     end
+    if kind == 'idle_clock' then
+        for _, row in pairs(clocksData().rows) do
+            if row.kind == kind then out[#out + 1] = Util.copy(row) end
+        end
+    end
     table.sort(out, function(a, b) return tostring(a.id) < tostring(b.id) end)
     return out
 end
 
-function JsonStore.writeRpRow(row)
+local function writeRpRowNow(row)
+    if isClockRow(row.id) then
+        clocksData().rows[row.id] = Util.copy(row)
+        clocksText[row.id], clocksDirty = nil, true
+        return true
+    end
     db.rpRows = db.rpRows or {}
     db.rpRows[row.id] = Util.copy(row)
-    touch(rpRowHoldsMoney(row.id))
+    touch(true)
+    return true
+end
+
+JsonStore.writeRpRow = writeRpRowNow
+
+--- Several rows at once, each as writeRpRow.
+function JsonStore.writeRpRows(rows)
+    for i = 1, #(rows or {}) do writeRpRowNow(rows[i]) end
     return true
 end
 
 function JsonStore.deleteRpRow(id)
+    if isClockRow(id) then
+        local rows = clocksData().rows
+        if rows[id] then rows[id], clocksText[id], clocksDirty = nil, nil, true end
+        return true
+    end
     if db.rpRows and db.rpRows[id] then
         db.rpRows[id] = nil
-        touch(rpRowHoldsMoney(id))
+        touch(true)
     end
     return true
 end

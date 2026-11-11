@@ -5,6 +5,15 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Lighter loops**
+- The condition sampler no longer runs while no contract is running; it
+  starts again the moment one is placed. `ch-diag` says `idle` meanwhile.
+- An unworked hold's idle clocks are written in one statement a pass on
+  `mysql` (was one a hold), and on `json` in a small file of their own,
+  `data/clocks.json`, instead of rewriting `records.json` every tick.
+- The broker and informant and the organisation's NPCs share one distance
+  loop. Every loop is listed in `docs/dev/loops.md`.
+
 **Other scripts are optional, behind adapters**
 - Every script this resource works with besides Qbox is optional:
   `ox_inventory`, `ox_target`, `lb-phone`, `sc-dispatch`, `sc-ambulance` /

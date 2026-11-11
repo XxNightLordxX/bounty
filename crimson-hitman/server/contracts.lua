@@ -2717,11 +2717,16 @@ Contracts.IDLE_RELEASES_PER_PASS = 25
 --- passed since this process last wrote it, never on every pass; a count
 --- going back to nothing (the hitman worked it, made an attempt or was
 --- released) is written at once, so a restart cannot bring back idle time
---- the hitman has since worked off. At most IDLE_CLOCK_WRITES_PER_PASS rows
---- a pass; the rest wait, their counts kept, for the next.
+--- the hitman has since worked off. A pass's rows go to the store together,
+--- in one write (Storage.writeRpRows: one statement on mysql, and on json a
+--- small file of their own, clocks.json, rather than records.json and the
+--- ledger in it); at most IDLE_CLOCK_WRITES_PER_PASS rows a pass, the rest
+--- waiting, their counts kept, for the next. A hundred a pass keeps two
+--- hundred holds written about once a minute each (it was 25 a pass, a
+--- statement each, which let them fall behind).
 local CLOCK_KIND = 'idle_clock'
 local CLOCK_WRITE_SECONDS = 60
-Contracts.IDLE_CLOCK_WRITES_PER_PASS = 25
+Contracts.IDLE_CLOCK_WRITES_PER_PASS = 100
 
 --- What the store holds of each contract's clocks, as this process last
 --- wrote or read it. [contractId] = { at = os.time() of this process's last
@@ -2754,7 +2759,7 @@ end
 ---@param now integer
 local function keepClocks(order, keysOf, now)
     if not Storage.writeRpRow then return end
-    local writes = 0
+    local writes, batch = 0, {}
     for _, contractId in ipairs(order) do
         local want, any = {}, false
         for hitmanCid, k in pairs(keysOf[contractId]) do
@@ -2783,9 +2788,16 @@ local function keepClocks(order, keysOf, now)
             if changed and due and writes < Contracts.IDLE_CLOCK_WRITES_PER_PASS then
                 writes = writes + 1
                 clockRows[contractId] = { at = now, clocks = want }
-                pcall(Storage.writeRpRow, { id = clockRowId(contractId), kind = CLOCK_KIND,
-                    contract_id = contractId, clocks = want })
+                batch[writes] = { id = clockRowId(contractId), kind = CLOCK_KIND,
+                    contract_id = contractId, clocks = want }
             end
+        end
+    end
+    if writes > 0 then
+        if Storage.writeRpRows then
+            pcall(Storage.writeRpRows, batch)
+        else
+            for i = 1, writes do pcall(Storage.writeRpRow, batch[i]) end
         end
     end
     local stale = {}

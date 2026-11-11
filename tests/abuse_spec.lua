@@ -854,6 +854,14 @@ describe('an exclusive contract held by somebody who is not working it', functio
             if row.kind == 'idle_clock' then writes = writes + 1 end
             return real(row)
         end
+        -- A pass's rows go together (Storage.writeRpRows): counted a row each.
+        local realMany = s.storage.writeRpRows
+        s.storage.writeRpRows = function(rows)
+            for _, row in ipairs(rows) do
+                if row.kind == 'idle_clock' then writes = writes + 1 end
+            end
+            return realMany(rows)
+        end
         -- Staff hold the hitman: no clock runs, so nothing is written.
         s.contracts.releaseIdleHolds()
         local frozen = s.holds.on

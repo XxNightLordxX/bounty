@@ -14,12 +14,11 @@
 --- itself, only when the player looks at it), and its option asks the
 --- server, which checks where it sees the player before it answers. An NPC
 --- spot's ped is local, made only within DrawMetres and removed past
---- REMOVE_EXTRA metres more, by one distance check a second while one is
+--- REMOVE_EXTRA metres more, by the one NPC distance loop (client/npc.lua), a pass a second while one is
 --- near and every two seconds while all are far, and no loop at all with no
 --- NPC spot. Everything goes on a logout and at the resource's stop.
 
 local REMOVE_EXTRA = 20.0
-local NEAR_WAIT_MS, FAR_WAIT_MS = 1000, 2000
 local MODEL_WAIT_MS = 5000
 
 local OrgSpots = {}
@@ -30,7 +29,6 @@ local Spots = {}
 --- CrimsonMarkers' (client/missionsteps.lua), keyed 'org:<id>'.
 local Zones, Peds = {}, {}
 local Draw, Model = 40.0, 'g_m_m_armboss_01'
-local watching = false
 
 local Npc, Geo = CrimsonNpc, CrimsonGeo
 local targetUp = Npc.targetUp
@@ -115,21 +113,14 @@ local function anyNpc()
     return false
 end
 
---- The distance loop, only while there is an NPC spot.
+--- The distance loop (CrimsonNpc.watch, shared with the roleplay NPCs),
+--- only while there is an NPC spot.
 function OrgSpots.start()
-    if watching then return end
-    watching = true
-    CreateThread(function()
-        while anyNpc() do
-            local ok, near = pcall(pass)
-            Wait((ok and near) and NEAR_WAIT_MS or FAR_WAIT_MS)
-        end
-        watching = false
-    end)
+    CrimsonNpc.watch('org', pass, anyNpc)
 end
 
---- Whether the NPC loop is running, for the tests.
-function OrgSpots.running() return watching end
+--- Whether the NPC loop is running for these spots, for the tests.
+function OrgSpots.running() return CrimsonNpc.watching('org') end
 
 --- Take what the server sent, type-checked: it is a server-wide event name.
 ---@param data table { spots = { { id, kind, label, x, y, z, h, radius, blip } }, draw, model }

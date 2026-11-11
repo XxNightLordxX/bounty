@@ -1590,79 +1590,12 @@ and `tests/handlers_spec.lua` pin these figures.
 
 ### The loops
 
-**The maintenance tick** (every `Config.Audit.FlushIntervalMs`, 10 s as
-shipped). Every job runs inside `pcall` (a job that raises is logged and the
-others go on) and stops with the resource. On a busy `mysql` server with
-nothing to do, a tick sends two statements at most: the heartbeat, and every
-third tick the endings check; while holds are idling, each held contract's
-idle clocks are written too, at most once a minute each and 25 a pass
-(`tests/loops_spec.lua` pins it job by job).
-
-The last column says why each job cannot reasonably cost less: its interval
-is bound by what it guards, and what is left is the least it must read. Where
-a trade-off is left on purpose, it says which and why.
-
-| Job | Interval | Cost a pass (`mysql` / `json`) | Why it cannot reasonably go lower |
-|---|---|---|---|
-| `contracts.releaseIdleHolds` | 10 s | 1.9 / 1.0 ms, 0 statements with nothing due; 75 ms and 252 statements releasing its cap of 25 | A hold is released within one tick of its window. It reads the shared snapshot (`Projection.liveSnapshot`, re-read only after a write) and asks `qbx_core` once per person; **at most 25 releases a pass**. The idle and attempt clocks are kept in `crimson_rp_rows` (kind `idle_clock`, a row a held contract) so a restart resumes them, downtime not counted: a row is written at most once a minute, at once when a count goes back to nothing, and at most 25 a pass |
-| `expireContracts` | 10 s, skipped until the next deadline, a presence change or a contract change | 0.11 / 0.07 ms; 317 ms and 726 statements ending its cap of 25 | Sleeps until the soonest deadline; reads the snapshot. **At most 25 endings a pass.** Trade-off: each ending re-reads its contract under its lock, kept because it moves money |
-| `audit.flush`, `storage.flush` | 10 s | 0.28 / 0.88 ms; 0 / 0.33 ms | A crash loses at most ten seconds of log rows and (`json`) changed files; only what changed is written |
-| `storage.heartbeat` | `json` 60 s, `mysql` 10 s | 0.01 ms; one statement or file | A restart's downtime is dated from it; on a tick of its own |
-| `playtime.pass` | 60 s | 0.21 / 0.16 ms; one transaction of a row per player | Playtime is counted in minutes; one batch for everybody |
-| `storage.prune` | 600 s, every tick while a batch is full | 1.1 / 0.1 ms | Retention counts days; at most 25 contracts a pass on `mysql` |
-| `bailout.processQueue`, `photos.expire`, `photos.forgetKept`, `amendments.expire`, `death.sweep`, the stuck-work retries, `review.retryUnwritten` / `review.decide` | 10 s (photos only while kill photos are in use) | under 0.02 ms each, 0 statements with nothing to do | Each reads an index or list in memory, and the store only when something in it is due |
-| `bridges.refreshAccess` | 30 s | 0.32 / 0.29 ms (7 ms seen live) | The backstop for every event that tells a player at once (login, job, duty, setting); one job read a player is the least it can check |
-| `notify.deliverKept` | 10 s | 0.00 ms with nothing kept | A kept notice goes on the first tick its minute opens |
-| `rp_places.announce` | 60 s | 0.02 ms off, 0.14 ms on | NPC places rotate by the hour; a change from the panel is announced at once |
-| `holds.syncAppPause`, `thresholds.sweep` | 60 s | 0.00 ms | Each is a comparison or two; the pause follows its switch at once anyway |
-| `holds.tick`, `sanctions.tick`, `summary.tick` | 10 s | 0.00 ms | One comparison each; the end they guard happens on the tick it falls due |
-| `contracts.finishEndings`, `ledger.forgetOldPhotos`, `photo.loadAllowedHosts`, `escrow.retryWaiting` | 30 s, 600 s, `PhotoHostRefreshSeconds`, 30 s per player | under 0.15 ms | Gated inside; each runs when what it guards can have changed |
-| `record.tick` (heat and the police bulletin, placer records) | 60 s | 0.01 ms, 0 statements, off **and** on | Off: one switch read. On: heat is kept in memory and pruned only once the oldest heat has cooled; the bulletin waits its own `BulletinEveryMinutes`, and finds a working hitman in the shared snapshot (was two reads per known hitman) |
-| `imp_decay.tick` (contract decay) | 60 s, on a tick of its own | off 0.01 ms; on, nothing due 0.08 ms and 0 statements; due, 91 / 136 ms and about 300 statements for its cap of **25 steps** | Sleeps until its soonest step is due and reads the snapshot. Trade-off: each `rise` step is a charge that re-reads its contract and goes through the placer's own add-to-reward path, kept because it moves money; 100 contracts due together take four passes (was all in one: 1,951 statements, 0.7 to 1.1 s) |
-| `imp_weekly.tick` (weekly stats) | 10 s, asleep until the post is due | 0.01 ms off and on | Works out the calendar once, then one comparison a tick; the week's totals are read only when it posts |
-| `rp.tick` (EMS before re-listing) | 10 s | 0.01 ms off, 0.01 ms on with nobody recovering | Looks only at targets killed on a contract, in memory; nothing while nobody is |
-| `rp_intent.sweep` (proof of intent) | 10 s | 0.01 ms, 0 statements with no hold | Reads only the contracts that have a hold. Trade-off: a held payout re-reads its proof at most every 5 s, kept because the hold gates money |
-| `disposal.tick` (body disposal) | 10 s | 0 statements with no step | Nothing while no step runs; one row write a step a minute while its clock runs |
-| `mission_steps.tick` (step markers) | 10 s | 0 statements | Memory only; nothing at all while no marker is drawn or due |
-| `rp_protection.sweep` (bodyguards) | 10 s | 0.01 ms, 0 statements with no job | Nothing while no job is kept; a job's contract is read only once it has left the snapshot of what is running (was a read a job a tick); **at most 25 settles a pass** |
-| `informant.retryUnsaved` | 10 s | 0.00 ms | In memory until a write the store refused is waiting |
-
-With every optional feature **off**, each of the optional jobs above
-(`imp_*`, `rp*`, `informant.retryUnsaved`) sends no statement and reads
-nothing from the store; with them all **on** and nothing due, none sends a
-statement either (`tests/loops_spec.lua`, *the optional features' jobs*). A
-whole tick with every job due stays under 100 ms with the features off and
-under 300 / 450 ms (`json` / `mysql`, harness) with them on, the worst being
-the hour an untaken board's decay steps fall due. Informant tip warnings
-(`Config.Intel.WarningDelay`) are one timer per waiting warning, not
-a loop; going dark ends when it is next looked at.
-
-The scheduled jobs never share a tick with the playtime pass or the `json`
-heartbeat, and the access check, the NPC places and contract decay never
-share one with each other: one tick's jobs run in the same server frame, so
-what shares a tick shares a hitch.
-
-**The server's own clocks**
-
-| Loop | Interval | Why that often | Cost a pass (`mysql` / `json`) |
-|---|---|---|---|
-| Condition sampler (`death.sampler`) | `Config.Completion.ConditionSampleMs`, 1 s | Damage is credited from the last sample, so attribution is only as precise as this. The running contracts and their rosters come from one snapshot shared with the idle holds and the expiry pass (`Projection.liveSnapshot`), read again only after something is written (was 2 statements every second, 1 with nothing running); each target's medical state and position is read once a pass, however many contracts name them | 0.94 (1.7) / 1.13 (5.5); 0 statements while nothing is written |
-| Handover countdown | `Config.Kidnap.TickMs`, 1 s | Only while a handover is under way; the thread ends with the last one. Each countdown reads its contract once a pass (a statement a second per handover on `mysql`), and moves on by the time since the last pass (at least one tick, at most three), not by one tick whatever the pass waited on the database | (per handover) |
-| Hit checks | 50 ms | Only while a hit waits for its damage to show, for that victim | (per hit) |
-| Discord poster, alert flush | timers | Only while something waits to be posted | |
-
-**Client**
-
-| Loop | Interval | Why that often |
-|---|---|---|
-| Death watcher | 1 s, while a character is loaded | The server waits a few seconds for the victim's own report before attributing a death without it. A few natives a pass, the state bags read once, nothing made (was two reads through a new closure each, 80 bytes of garbage a pass); an event only when the answer changes. It runs for every player, not only those on a contract: a game told when a contract named it would tell a target there is one |
-| Mask watcher | 1 s, only while `Config.Targeting.AllowNearby` is on | One native a pass; an event only when the mask changes |
-| Roleplay NPCs | 1 s within 160 m of an NPC or while one is drawn, 2 s further off; **no thread at all with both off** (was a 2 s look at an empty table, all game) | An NPC appears within 80 m; 160 m is the ground a car covers in two seconds and more. The loop starts when the server says an NPC stands somewhere (at start, or when one moves or is switched on) and ends on the pass after both are switched off. Peds go at logout and are not drawn on the character screen |
-| App heartbeat | 15 s | Puts the app back on a phone that lost it; nothing is sent |
-| Asking for access | 2, 2, 2, 5, 5, 10 s, then 30 s, until answered | A start that missed the join push |
-| Admin panel Escape guard | every frame, only while the panel is open | It reads the key |
-| Phone page (`ui/app.js`) | handover poll, 1 s on screen and 5 s put away, only while one runs; **nothing else** (was a 30 s repaint of the deadline chips, phone put away included) | lb-phone keeps the app's frame alive all game. Put away (lb-phone's `onClose`, passed on by `client/main.lua`, or the document hidden), a push only notes what it asked for, and the page reads it once when shown again; an answer the same as the one on screen is not drawn again. The chips are the server's band, which only a new read moves |
-| Admin panel (`ui/admin.js`) | overview every `Config.Admin.PanelRefreshSeconds` (10 s), only while open | Stopped on close. An overview answer the same as the last one only moves its *Updated* time |
+Every loop, timer and tick job, with its interval, the deadline it guards,
+what it cost measured off and on, and why it cannot reasonably cost less,
+is in [docs/dev/loops.md](../docs/dev/loops.md). In short: nothing runs per
+frame while idle, every optional feature costs its job one comparison while
+off, and the loops that can sleep until something is due or something
+happens do.
 
 ### What resmon should show
 

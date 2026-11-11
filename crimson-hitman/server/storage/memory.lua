@@ -2000,9 +2000,18 @@ function Memory.readRpRows(kind)
 end
 
 ---@param row table { id, kind, ... }
-function Memory.writeRpRow(row)
+local function writeRpRowNow(row)
     db.rpRows = db.rpRows or {}
     db.rpRows[row.id] = Util.copy(row)
+    return true
+end
+
+Memory.writeRpRow = writeRpRowNow
+
+--- Several rows at once, each as writeRpRow.
+---@param rows table[]
+function Memory.writeRpRows(rows)
+    for i = 1, #(rows or {}) do writeRpRowNow(rows[i]) end
     return true
 end
 

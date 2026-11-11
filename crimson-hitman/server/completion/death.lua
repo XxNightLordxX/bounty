@@ -700,6 +700,14 @@ end
 --- the hit: the check for it measures from the hit, not from the sample.
 local sampling = false
 
+--- Whether the sampler's thread is running (asleep while nothing is):
+--- /ch-diag's loops line.
+---@return boolean
+function Death.sampling()
+    return sampling
+end
+
+---@return boolean started false when it was running already
 function Death.startSampler()
     if sampling then return false end
     sampling = true
@@ -715,16 +723,29 @@ function Death.startSampler()
     -- (Projection.liveSnapshot): the same two reads, shared with the idle
     -- holds and the expiry pass, were two statements a second on mysql with
     -- nothing changing.
+    --
+    -- And nothing at all while nothing is running: the pass that finds no
+    -- live contract forgets who was watched (once) and answers false, and
+    -- the thread ends there. The next write through the store (a contract
+    -- placed, taken or moved: Projection.onWrite) starts it again, so a
+    -- contract is sampled within ConditionSampleMs of going live, as when
+    -- the thread ran all game.
     local function pass()
+        local live, hitmen
         if Projection and Projection.liveSnapshot then
-            local live, hitmen = Projection.liveSnapshot()
-            return Death.watchTargets(live, #live == 0 and {} or hitmen)
+            live, hitmen = Projection.liveSnapshot()
+        else
+            live = Storage.liveContracts()
         end
-        local live = Storage.liveContracts()
         -- Nothing running: no roster to read (a second query a second on
         -- mysql for nothing), and the pass only forgets who was watched.
-        if #live == 0 then return Death.watchTargets(live, {}) end
-        Death.watchTargets(live, Storage.liveHitmen and Storage.liveHitmen() or nil)
+        if #live == 0 then
+            if next(watching) ~= nil then Death.watchTargets(live, {}) end
+            return false
+        end
+        if not hitmen then hitmen = Storage.liveHitmen and Storage.liveHitmen() or nil end
+        Death.watchTargets(live, hitmen)
+        return true
     end
 
     if Timing and Timing.interval then
@@ -733,15 +754,19 @@ function Death.startSampler()
     CreateThread(function()
         while true do
             Wait(Config.Completion.ConditionSampleMs or 1000)
-            local ok
+            local ok, running
             if Timing then
-                ok = Timing.run('death.sampler', pass)
+                ok, running = Timing.run('death.sampler', pass)
             else
-                ok = pcall(pass)
+                ok, running = pcall(pass)
             end
             -- A sampler that dies takes attribution with it, and silently.
             if not ok then
                 Log.debug('condition sampler errored; retrying next tick')
+            elseif running == false then
+                -- Nothing running: asleep until the next write wakes it.
+                sampling = false
+                return
             end
         end
     end)

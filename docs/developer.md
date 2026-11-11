@@ -154,8 +154,8 @@ One thread, every `Config.Audit.FlushIntervalMs` (10 s). Each job runs inside
 their own so no two heavy jobs share a tick; self-gated jobs sleep until their
 next due time. Jobs that read what is running share one read per change
 (`Projection.liveSnapshot`). Per-pass batches are capped (25 releases, 25
-endings, 25 decay steps, 25 bodyguard settles). The README's loops table and
-`tests/loops_spec.lua` hold every job's cost.
+endings, 25 decay steps, 25 bodyguard settles). [docs/dev/loops.md](dev/loops.md)
+lists every loop and its cost; `tests/loops_spec.lua` pins them.
 
 ### Storage
 
@@ -177,9 +177,11 @@ back by `Contracts.reindexHolds`). Only time the clock could run is counted
 (the first pass after a start adds nothing for the downtime); a row is
 written when its counts have grown and a minute has passed since this
 process last wrote it, at once when a count goes back to nothing, at most
-`Contracts.IDLE_CLOCK_WRITES_PER_PASS` (25) a pass, and dropped with the
-hold. On `json` it is saved at the tick's flush, not synced at once: it
-holds no money.
+`Contracts.IDLE_CLOCK_WRITES_PER_PASS` (100) a pass, all of a pass's rows
+in one write (`Storage.writeRpRows`: one statement on `mysql`), and dropped
+with the hold. On `json` they are kept in `clocks.json`, a file of their own
+saved at the tick's flush, not synced at once and never in `records.json`:
+they hold no money.
 
 ## Testing
 

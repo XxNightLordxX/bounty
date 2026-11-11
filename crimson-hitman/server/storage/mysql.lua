@@ -3752,6 +3752,28 @@ function MySQLStore.writeRpRow(row)
     return true
 end
 
+--- Several rows in one statement: an upsert of each, as writeRpRow's. The
+--- idle-hold sweep's clocks (Contracts.releaseIdleHolds) go this way, one
+--- statement a pass where they were one a row.
+---@param rows table[] each { id, kind, contract_id, ... }
+function MySQLStore.writeRpRows(rows)
+    if type(rows) ~= 'table' or #rows == 0 then return true end
+    local marks, params, now = {}, {}, os.time()
+    for i = 1, #rows do
+        local row = rows[i]
+        marks[i] = '(?, ?, ?, ?, ?)'
+        local at = #params
+        params[at + 1], params[at + 2], params[at + 3] = row.id, row.kind, row.contract_id
+        params[at + 4], params[at + 5] = json.encode(row), now
+    end
+    db.query('INSERT INTO crimson_rp_rows (id, kind, contract_id, body, updated_at) VALUES '
+        .. table.concat(marks, ', ') .. [[
+        ON DUPLICATE KEY UPDATE kind = VALUES(kind), contract_id = VALUES(contract_id),
+            body = VALUES(body), updated_at = VALUES(updated_at)
+    ]], params)
+    return true
+end
+
 function MySQLStore.deleteRpRow(id)
     db.query('DELETE FROM crimson_rp_rows WHERE id = ?', { id })
     return true

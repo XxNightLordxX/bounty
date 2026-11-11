@@ -623,14 +623,13 @@ local function insert(sql, params)
     for column in list:gmatch('[%w_]+') do columns[#columns + 1] = column end
 
     -- Several rows in one statement, VALUES (...),(...): each group a row,
-    -- its parameters in order. Not under ON DUPLICATE KEY UPDATE, whose
-    -- VALUES(col) are not row groups.
-    local groups = 1
-    if not sql:find('ON DUPLICATE KEY UPDATE', 1, true) then
-        groups = 0
-        for _ in (sql:match('VALUES%s*(.*)$') or ''):gmatch('%b()') do groups = groups + 1 end
-        groups = math.max(groups, 1)
-    end
+    -- its parameters in order. Under ON DUPLICATE KEY UPDATE only the groups
+    -- before it, since its VALUES(col) are not row groups; each row is then
+    -- an upsert of its own, as MySQL takes it.
+    local groups = 0
+    local rowsText = sql:match('VALUES%s*(.-)%s*ON DUPLICATE KEY UPDATE') or sql:match('VALUES%s*(.*)$') or ''
+    for _ in rowsText:gmatch('%b()') do groups = groups + 1 end
+    groups = math.max(groups, 1)
 
     -- Every row checked before any is stored: one statement is all or
     -- nothing, so a row the database refuses leaves none of the others.

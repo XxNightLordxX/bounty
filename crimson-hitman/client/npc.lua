@@ -86,4 +86,63 @@ function CrimsonNpc.remove(ped)
     if ped and DoesEntityExist(ped) then DeleteEntity(ped) end
 end
 
+-- ============================================================================
+--                              THE DISTANCE LOOP
+-- ============================================================================
+-- One loop for every file that draws NPCs (client/rp_npc.lua's broker and
+-- informant, client/org.lua's organisation spots): a pass a second while
+-- one of them says something is near or drawn, every two seconds while all
+-- are far, and no thread at all while none has an NPC placed. Each was a
+-- loop of its own, so a member near both ran two. Nothing is made per pass
+-- here; each owner's pass reads the ped's coordinates once.
+
+local NEAR_WAIT_MS, FAR_WAIT_MS = 1000, 2000
+
+--- The owners watching: [name] = { pass = fun(): boolean near, active = fun(): boolean }
+local Watchers = {}
+local looping = false
+
+local function loop()
+    while true do
+        local near = false
+        for name, w in pairs(Watchers) do
+            if not w.active() then
+                Watchers[name] = nil
+            else
+                -- One pass in a pcall: a native or a model that raises costs
+                -- this pass, never the loop (and with it every NPC).
+                local ok, isNear = pcall(w.pass)
+                if not ok and CrimsonLog then
+                    CrimsonLog.debug(('NPCs (%s): %s'):format(name, tostring(isNear)))
+                end
+                if isNear or not ok then near = true end
+            end
+        end
+        if next(Watchers) == nil then break end
+        Wait(near and NEAR_WAIT_MS or FAR_WAIT_MS)
+    end
+    looping = false
+end
+
+--- Watch an owner's NPCs with the one distance loop, started if it is not
+--- running. `pass` draws what came near and removes what went far, and says
+--- whether anything is near; `active` says whether the owner has an NPC
+--- placed, and the owner leaves the loop on the first pass it has none.
+---@param name string
+---@param pass fun(): boolean
+---@param active fun(): boolean
+function CrimsonNpc.watch(name, pass, active)
+    Watchers[name] = { pass = pass, active = active }
+    if looping then return end
+    looping = true
+    CreateThread(loop)
+end
+
+--- Whether the loop is watching an owner's NPCs.
+---@param name string
+---@return boolean
+function CrimsonNpc.watching(name)
+    return looping and Watchers[name] ~= nil
+end
+
 return CrimsonNpc
