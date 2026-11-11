@@ -428,6 +428,34 @@ describe('the admin panel overview', function()
         truthy(mentions(data.warnings, 'REVIEW QUEUE'), table.concat(data.warnings, ' | '))
     end)
 
+    it('reads the diagnosis by what each line is for, never by its words (any language)', function()
+        local Locale = require('crimson-hitman.shared.locale')
+        local real = Config.Locale
+        CrimsonLocales.zz = {
+            ['admin.money_event_wait_in_the_review'] = '  zz: %d money in the queue',
+            ['admin.name_a_player_to_test_the'] = '  zz: name a player',
+        }
+        local ok, err = pcall(function()
+            local s = stack()
+            Locale.reset()
+            Config.Locale = 'zz'
+            s.review.open({ kind = 'bailout_refund_stranded', contract_id = 'ct00000001',
+                cids = { payer = 'TARGET01' }, amount = 5000, account = 'bank' })
+            local lines, marks = s.admin.diagnose(0, nil, nil, { panel = true })
+            local seen = {}
+            for i, line in ipairs(lines) do seen[line] = marks[i] end
+            eq(seen['  zz: 1 money in the queue'], 'act', 'marked as wanting doing')
+            eq(seen['  zz: name a player'], 'console', 'marked as the console\'s only')
+            local data = ask(6, 'overview').data
+            truthy(mentions(data.warnings, 'zz: 1 money in the queue'), table.concat(data.warnings, ' | '))
+            falsy(mentions(data.warnings, 'zz: name a player'), 'the console\'s own line is left out')
+        end)
+        Config.Locale = real
+        CrimsonLocales.zz = nil
+        Locale.reset()
+        if not ok then error(err, 0) end
+    end)
+
     it('is shared for a few seconds, and read again after a write', function()
         local s, f = stack()
         eq(ask(6, 'overview').data.contracts.total, 0)

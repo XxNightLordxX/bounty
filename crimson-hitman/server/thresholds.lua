@@ -23,6 +23,7 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Window = CrimsonBoot.require('server.lib.window')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Thresholds = {}
 
@@ -32,14 +33,11 @@ Thresholds.HOUR, Thresholds.DAY, Thresholds.TEN_MINUTES = 3600, 86400, 600
 
 local RULES = {
     placed = { setting = 'AlertPlacedPerHour', window = Thresholds.HOUR,
-               text = 'staff alert: player %s placed %d contracts in the last hour '
-                   .. '(more than %d, Staff.AlertPlacedPerHour)' },
+               text = L('thresholds.staff_alert_player_placed_contracts_in') },
     target = { setting = 'AlertTargetPerDay', window = Thresholds.DAY,
-               text = 'staff alert: target %s had %d contracts placed on them in the last day '
-                   .. '(more than %d, Staff.AlertTargetPerDay)' },
+               text = L('thresholds.staff_alert_target_had_contracts_placed') },
     refused = { setting = 'AlertRefusalsPer10Min', window = Thresholds.TEN_MINUTES,
-                text = 'staff alert: player %s was refused %d times in the last 10 minutes '
-                    .. '(more than %d, Staff.AlertRefusalsPer10Min)' },
+                text = L('thresholds.staff_alert_player_was_refused_times') },
 }
 
 --- One window per kind (Window.new), each entry { times, alertedAt|nil }.

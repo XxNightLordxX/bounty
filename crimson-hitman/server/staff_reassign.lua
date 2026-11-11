@@ -47,6 +47,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
+local L = CrimsonBoot.requireShared('locale').t
 
 local StaffReassign = {}
 
@@ -54,9 +55,9 @@ local deps
 
 StaffReassign.OPS = {}
 
-StaffReassign.ASSIGNED_TITLE = 'Contract assigned'
-StaffReassign.PLACER_TITLE = 'Contract reassigned'
-StaffReassign.REINSTATED_TITLE = 'Back on the contract'
+StaffReassign.ASSIGNED_TITLE = L('staff_reassign.contract_assigned')
+StaffReassign.PLACER_TITLE = L('staff_reassign.contract_reassigned')
+StaffReassign.REINSTATED_TITLE = L('staff_reassign.back_on_the_contract')
 
 --- How the new hitman goes on it (opReassign's `identity`).
 StaffReassign.IDENTITIES = { anonymous = true, named = true, carry = true }
@@ -212,7 +213,7 @@ local function reassignUnlocked(staff, contractId, subject, opts)
                 back = back + 1
                 if r.record then deps.staffContract.liftRemoval(contractId, r.record) end
                 deps.notify.tellOrKeep(r.cid, StaffReassign.REINSTATED_TITLE,
-                    'Staff put you back on a contract you were taken off a moment ago, with your stake.',
+                    L('staff_reassign.staff_put_you_back_on_a'),
                     { bypassBudget = true }, contractId)
             elseif r.held then
                 -- Not put back (it ended meanwhile, or the row moved): the
@@ -264,15 +265,15 @@ local function reassignUnlocked(staff, contractId, subject, opts)
         stake = acceptOpts.waiveStake and 'waived' or 'charged', reason = opts.reason,
         identity = opts.identity or 'anonymous', anonymous = not named,
     })
-    local target = tostring(contract.target_name or 'a target')
+    local target = tostring(contract.target_name or L('staff_reassign.a_target'))
     deps.notify.tellOrKeep(actor.cid, StaffReassign.ASSIGNED_TITLE,
-        ('Staff assigned you a contract on %s. It is under Mine.%s%s'):format(target,
-            acceptOpts.waiveStake and ' You put no stake up for it.' or '',
-            named and ' The person who placed it sees your name.'
-                or ' You are on it anonymously, at no charge.'),
+        (L('staff_reassign.staff_assigned_you_a_contract_on')):format(target,
+            acceptOpts.waiveStake and L('staff_reassign.you_put_no_stake_up_for') or '',
+            named and L('staff_reassign.the_person_who_placed_it_sees')
+                or L('staff_reassign.you_are_on_it_anonymously_at')),
         { bypassBudget = true }, contractId)
     deps.notify.tellOrKeep(contract.creator_cid, StaffReassign.PLACER_TITLE,
-        ('Staff gave your contract on %s to another hitman.'):format(target),
+        (L('staff_reassign.staff_gave_your_contract_on_to')):format(target),
         { bypassBudget = true }, contractId)
     return true, nil, { alias = type(row) == 'table' and row.alias or nil, removed = removed,
         stakeWaived = acceptOpts.waiveStake, anonymous = not named }
@@ -293,25 +294,25 @@ end
 --------------------------------------------------------------------------
 
 local MESSAGES = {
-    [CH.ERR.NOT_FOUND] = 'No contract has that id.',
-    [CH.ERR.ALREADY_SETTLED] = 'It has ended.',
-    [CH.ERR.BAD_STATE] = 'Only a live contract (active or accepted) can be reassigned.',
-    claim_running = 'A payout on it is being settled right now. Try again in a moment.',
-    buyout_queued = 'Its target has paid a buyout that is waiting out its delay; that settles first.',
-    [CH.ERR.BUSY] = 'Something else was changing this contract. Try again in a moment.',
-    hitman_away = 'That hitman is not in the city now: they have to be, to take a contract.',
-    already_on = 'That hitman is already on it.',
-    [CH.ERR.SELF_TARGET] = 'That player is its target.',
-    [CH.ERR.SELF_ACCEPT] = 'That player placed it.',
-    [CH.ERR.SAME_ACCOUNT] = 'That player shares an account with its placer or its target.',
-    [CH.ERR.PROTECTION_GUARDING] = 'That player is paid to guard its target.',
-    [CH.ERR.SUSPENDED] = 'That player is suspended from contracts.',
-    [CH.ERR.STAFF_BARRED] = 'Staff barred that player from this contract.',
-    [CH.ERR.LIMIT_REACHED] = 'That hitman holds as many contracts as they may (Config.Limits.MaxAcceptedPerHitman).',
-    [CH.ERR.INSUFFICIENT] = 'That hitman cannot cover the stake (Config.Staff.ReassignStake is charge).',
-    [CH.ERR.BLACKLISTED_JOB] = 'That player\'s job is barred from the app.',
-    [CH.ERR.APP_PAUSED] = 'The app is paused (Config.Holds.AppPaused).',
-    [CH.ERR.ANONYMITY_OFF] = 'Accepting anonymously is off on this server.',
+    [CH.ERR.NOT_FOUND] = L('staff_reassign.no_contract_has_that_id'),
+    [CH.ERR.ALREADY_SETTLED] = L('staff_reassign.it_has_ended'),
+    [CH.ERR.BAD_STATE] = L('staff_reassign.only_a_live_contract_active_or'),
+    claim_running = L('staff_reassign.a_payout_on_it_is_being'),
+    buyout_queued = L('staff_reassign.its_target_has_paid_a_buyout'),
+    [CH.ERR.BUSY] = L('staff_reassign.something_else_was_changing_this_contract'),
+    hitman_away = L('staff_reassign.that_hitman_is_not_in_the'),
+    already_on = L('staff_reassign.that_hitman_is_already_on_it'),
+    [CH.ERR.SELF_TARGET] = L('staff_reassign.that_player_is_its_target'),
+    [CH.ERR.SELF_ACCEPT] = L('staff_reassign.that_player_placed_it'),
+    [CH.ERR.SAME_ACCOUNT] = L('staff_reassign.that_player_shares_an_account_with'),
+    [CH.ERR.PROTECTION_GUARDING] = L('staff_reassign.that_player_is_paid_to_guard'),
+    [CH.ERR.SUSPENDED] = L('staff_reassign.that_player_is_suspended_from_contracts'),
+    [CH.ERR.STAFF_BARRED] = L('staff_reassign.staff_barred_that_player_from_this'),
+    [CH.ERR.LIMIT_REACHED] = L('staff_reassign.that_hitman_holds_as_many_contracts'),
+    [CH.ERR.INSUFFICIENT] = L('staff_reassign.that_hitman_cannot_cover_the_stake'),
+    [CH.ERR.BLACKLISTED_JOB] = L('staff_reassign.that_players_job_is_barred_from'),
+    [CH.ERR.APP_PAUSED] = L('staff_reassign.the_app_is_paused_config_holds'),
+    [CH.ERR.ANONYMITY_OFF] = L('staff_reassign.accepting_anonymously_is_off_on_this'),
 }
 
 local function said(err, detail)
@@ -319,23 +320,23 @@ local function said(err, detail)
     if err == 'not_assigned' then
         local inner = detail and detail.err
         local back = detail and detail.reinstated or 0
-        return ('The new hitman could not be assigned after all: %s %s'):format(
-            MESSAGES[inner] or ('their Accept was refused (' .. tostring(inner) .. ').'),
+        return (L('staff_reassign.the_new_hitman_could_not_be')):format(
+            MESSAGES[inner] or (L('staff_reassign.their_accept_was_refused') .. tostring(inner) .. ').'),
             back == (detail and detail.removed or 0)
-                and 'Everybody taken off it was put back on it, with their stake, and no bar was kept.'
-                or ('%d of %d operative(s) taken off it could not be put back; look at the contract.')
+                and L('staff_reassign.everybody_taken_off_it_was_put')
+                or (L('staff_reassign.of_operative_taken_off_it_could'))
                     :format((detail and detail.removed or 0) - back, detail and detail.removed or 0))
     end
     if err == 'not_all_removed' then
-        return ('Only %d operative(s) were taken off it before one could not be.%s Look at the contract.')
-            :format(detail and detail.removed or 0, detail and detail.assigned and ' The new hitman is on it.' or '')
+        return (L('staff_reassign.only_operative_were_taken_off_it'))
+            :format(detail and detail.removed or 0, detail and detail.assigned and L('staff_reassign.the_new_hitman_is_on_it') or '')
     end
-    return base or ('Not reassigned: their Accept was refused (' .. tostring(err) .. ').')
+    return base or (L('staff_reassign.not_reassigned_their_accept_was_refused') .. tostring(err) .. ').')
 end
 
 local function subjectOf(src, data)
     if data.ref == nil then
-        return nil, CH.ERR.INVALID_INPUT, 'Look the hitman up under Players first, then reassign from the lookup.'
+        return nil, CH.ERR.INVALID_INPUT, L('staff_reassign.look_the_hitman_up_under_players')
     end
     return deps.panel.writeSubject({ ref = data.ref }, src)
 end
@@ -343,16 +344,16 @@ end
 local function frozenSaid(src, id, err)
     local contract = deps.storage.readContract(id)
     if contract and Holds.shown(contract, nil, deps.panel.identifies(src)) then
-        return false, err, 'It is on hold by staff, and nothing on it moves: unfreeze first.'
+        return false, err, L('staff_reassign.it_is_on_hold_by_staff')
     end
-    return false, 'not_reassigned', 'Not reassigned: try again in a moment.'
+    return false, 'not_reassigned', L('staff_reassign.not_reassigned_try_again_in_a')
 end
 
 --- { id, ref } -> who is on it now (by alias), whether the stake is waived,
 --- and what would refuse the hitman named, if anything.
 local function opPreview(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('staff_reassign.give_a_contract_id') end
     local contract = deps.storage.readContract(id)
     if not contract then return false, CH.ERR.NOT_FOUND, MESSAGES[CH.ERR.NOT_FOUND] end
     local view = { stakeWaived = StaffReassign.waived(), stake = contract.penalty_amount or 0, operatives = {} }
@@ -400,12 +401,12 @@ end
 --- { id, ref, reason, block (default true), returnStake, anonymous }.
 local function opReassign(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('staff_reassign.give_a_contract_id') end
     local reason = type(data.reason) == 'string' and Util.sanitizeText(data.reason, 120) or nil
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('staff_reassign.give_a_reason_it_goes_on') end
     for _, key in ipairs({ 'block', 'returnStake', 'anonymous' }) do
         if data[key] ~= nil and type(data[key]) ~= 'boolean' then
-            return false, CH.ERR.INVALID_INPUT, 'Tick or untick it.'
+            return false, CH.ERR.INVALID_INPUT, L('staff_reassign.tick_or_untick_it')
         end
     end
     -- How the new hitman goes on it: 'anonymous' (the default), 'named' or
@@ -413,7 +414,7 @@ local function opReassign(src, data)
     local identity = data.identity
     if identity == nil then identity = data.anonymous == false and 'named' or 'anonymous' end
     if not StaffReassign.IDENTITIES[identity] then
-        return false, CH.ERR.INVALID_INPUT, 'Choose anonymous, named or as they had it.'
+        return false, CH.ERR.INVALID_INPUT, L('staff_reassign.choose_anonymous_named_or_as_they')
     end
     local subject, subjectErr, message = subjectOf(src, data)
     if not subject then return false, subjectErr, message end
@@ -426,13 +427,12 @@ local function opReassign(src, data)
     end
     local stakes = 0
     for _, r in ipairs(detail.removed) do stakes = stakes + (r.forfeited or 0) end
-    return true, nil, ('Reassigned to %s; %d operative(s) taken off it%s.%s Each was told as Remove '
-        .. 'operative tells them; the placer that staff gave it to another hitman.')
-        :format(tostring(detail.alias or 'the new hitman'), #detail.removed,
-            stakes > 0 and (' ($%d of stakes went to the placer)'):format(stakes) or '',
-            (detail.stakeWaived and ' Their stake was waived.' or ' They put up the stake as on Accept.')
-                .. (detail.anonymous and ' They are on it anonymously, at no charge.'
-                    or ' The placer sees their name.')),
+    return true, nil, (L('staff_reassign.reassigned_to_operative_taken_off_it'))
+        :format(tostring(detail.alias or L('staff_reassign.the_new_hitman')), #detail.removed,
+            stakes > 0 and (L('staff_reassign.of_stakes_went_to_the_placer')):format(stakes) or '',
+            (detail.stakeWaived and L('staff_reassign.their_stake_was_waived') or L('staff_reassign.they_put_up_the_stake_as'))
+                .. (detail.anonymous and L('staff_reassign.they_are_on_it_anonymously_at')
+                    or L('staff_reassign.the_placer_sees_their_name'))),
         { alias = detail.alias, removed = #detail.removed, stakeWaived = detail.stakeWaived,
           anonymous = detail.anonymous }
 end
@@ -453,7 +453,7 @@ function StaffReassign.validate(warn)
     if type(Config.Staff) ~= 'table' then return end
     local value = Config.Staff.ReassignStake
     if value ~= 'waive' and value ~= 'charge' then
-        warn[#warn + 1] = ('Config.Staff.ReassignStake is %s; it has to be \'waive\' or \'charge\'. Using '
+        warn[#warn + 1] = (L('staff_reassign.config_staff_reassignstake_is_it_has')
             .. '\'waive\'.'):format(tostring(value))
         Config.Staff.ReassignStake = 'waive'
     end

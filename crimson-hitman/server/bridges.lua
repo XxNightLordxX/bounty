@@ -12,6 +12,7 @@ local Lifecycle = CrimsonBoot.require('server.lib.lifecycle')
 local Words = CrimsonBoot.requireShared('words')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Bridges = {}
 
@@ -541,10 +542,8 @@ function Bridges.install(modules)
         if lastHeld[src] == job then return end
         lastHeld[src] = job
         local words = mode == 'whitelisted'
-            and ('The app only shows the whitelisted-job screen while you hold the %s job. '
-                .. 'Quit it from your job menu for the whole app.')
-            or ('Closed to you while you hold the %s job. Quit it from your job '
-                .. 'menu to use it again.')
+            and (L('bridges.the_app_only_shows_the_whitelisted'))
+            or (L('bridges.closed_to_you_while_you_hold'))
         modules.notify.toCitizen(actor.cid, 'Crimson-Hitman', words:format(job),
             { bypassBudget = true })
     end
@@ -1063,7 +1062,7 @@ function Bridges.sendOutput(src, lines, notice)
     -- One short notice through the notify bridge, for somebody who typed
     -- the command in chat and is looking there for its answer.
     if notice and Notify then
-        Notify.onScreen(src, 'Crimson-Hitman', 'Printed to your F8 console')
+        Notify.onScreen(src, 'Crimson-Hitman', L('bridges.printed_to_your_f8_console'))
     end
     return events
 end
@@ -1104,8 +1103,7 @@ function Bridges.runCommand(src, fn, moves)
             Log.debug(('a staff command run by player %s raised: %s')
                 :format(tostring(src), tostring(err)))
         end
-        gathering.lines[#gathering.lines + 1] = 'That raised an error on the server; the diagnosis '
-            .. 'lists it.'
+        gathering.lines[#gathering.lines + 1] = L('bridges.that_raised_an_error_on_the')
     end
     Bridges.sendOutput(src, gathering.lines, true)
 end
@@ -1208,9 +1206,9 @@ function Bridges.installCommands(modules)
     --- words: a raw code, 'No such contract (invalid_input).', was all a
     --- staff member who typed the command alone was told.
     local function noContract(src, name, err)
-        if err == CH.ERR.NOT_FOUND then return reply(src, 'No contract has that id.') end
-        return reply(src, ('%sUsage: /%s <contract id>'):format(
-            err and 'That is not a contract id. ' or '', name))
+        if err == CH.ERR.NOT_FOUND then return reply(src, L('bridges.no_contract_has_that_id')) end
+        return reply(src, (L('bridges.susage_contract_id')):format(
+            err and L('bridges.that_is_not_a_contract_id') or '', name))
     end
 
     command(names.timeline, Config.Admin.Ace, function(src, args)
@@ -1220,14 +1218,14 @@ function Bridges.installCommands(modules)
 
         local c = view.contract
         reply(src, ('%s  %s  %s -> %s'):format(c.id, c.state, c.creator, c.target))
-        reply(src, ('slots %d/%d  created %s%s'):format(
+        reply(src, (L('bridges.slots_created')):format(
             c.claimed or 0, c.slots or 1, os.date('%Y-%m-%d %H:%M', c.created_at),
             c.resolved_at and ('  resolved ' .. os.date('%Y-%m-%d %H:%M', c.resolved_at)
                 .. ' (' .. tostring(c.resolution) .. ')') or ''))
 
         for i = 1, #view.escrow do
             local line = view.escrow[i]
-            reply(src, ('  escrow %s  %s %s  %s  slot %s  %s'):format(
+            reply(src, (L('bridges.escrow_slot')):format(
                 line.id, line.portion, line.source, describeLine(line),
                 tostring(line.slot), line.state))
         end
@@ -1245,19 +1243,19 @@ function Bridges.installCommands(modules)
     if names.contracts then
         command(names.contracts, Config.Admin.Ace, function(src, args)
             if not args[1] then
-                return reply(src, ('Usage: /%s <player id|citizen id>'):format(names.contracts))
+                return reply(src, (L('bridges.usage_player_id_citizen_id')):format(names.contracts))
             end
             local rows, err = Admin.contractsOf(src, args[1])
             if not rows then
                 return reply(src, err == CH.ERR.NOT_FOUND
-                    and 'Nobody with that player id is online. Give their citizen id instead.'
-                    or  'Give a player id or a citizen id.')
+                    and L('bridges.nobody_with_that_player_id_is')
+                    or  L('bridges.give_a_player_id_or_a'))
             end
-            if #rows == 0 then return reply(src, 'No contracts on record for them.') end
+            if #rows == 0 then return reply(src, L('bridges.no_contracts_on_record_for_them')) end
 
             for i = 1, #rows do
                 local row = rows[i]
-                reply(src, ('%s  %-10s %-6s%s  on %s  %s%s'):format(
+                reply(src, (L('bridges.10s_6s_on')):format(
                     row.id, row.state, row.role, row.anonymous and ' (anon)' or '',
                     tostring(row.target or '?'),
                     row.created_at and os.date('%Y-%m-%d %H:%M', row.created_at) or '',
@@ -1291,15 +1289,13 @@ function Bridges.installCommands(modules)
         for _, party in ipairs(item.parties or {}) do
             parties[#parties + 1] = ('%s %s'):format(party.role, tostring(party.who))
         end
-        reply(src, ('  %s  %s  contract %s  %s  %s%s'):format(item.id, item.kind,
-            tostring(item.contract or 'n/a'), #what > 0 and table.concat(what, ', ') or 'nothing recorded',
-            #parties > 0 and table.concat(parties, ', ') or 'no party recorded',
+        reply(src, (L('bridges.contract')):format(item.id, item.kind,
+            tostring(item.contract or 'n/a'), #what > 0 and table.concat(what, ', ') or L('bridges.nothing_recorded'),
+            #parties > 0 and table.concat(parties, ', ') or L('bridges.no_party_recorded'),
             item.created_at and ('  (' .. os.date('%Y-%m-%d %H:%M', item.created_at) .. ')') or ''))
         if item.about then reply(src, '    ' .. item.about) end
         if bare > 0 then
-            reply(src, ('    %d of its goods were kept without their metadata (too big to keep): '
-                .. 'given back, they come without their serial, registration, attachments or '
-                .. 'what was inside'):format(bare))
+            reply(src, (L('bridges.of_its_goods_were_kept_without')):format(bare))
         end
 
         local known = {}
@@ -1314,24 +1310,22 @@ function Bridges.installCommands(modules)
         if now.contract then said[#said + 1] = 'contract ' .. tostring(now.contract) end
         if now.buyout then said[#said + 1] = 'buyout ' .. tostring(now.buyout) end
         if now.lines then
-            said[#said + 1] = ('lines held %d, settled %d, not in the store %d')
+            said[#said + 1] = (L('bridges.lines_held_settled_not_in_the'))
                 :format(now.lines.held, now.lines.settled, now.lines.missing)
         end
         if #said > 0 then reply(src, '    now: ' .. table.concat(said, '; ')) end
 
         if item.unwritten then
-            reply(src, '    the store has not taken this yet; it is written once it answers, within '
-                .. 'a tick, and can be resolved then')
+            reply(src, L('bridges.the_store_has_not_taken_this'))
         elseif item.settles and item.state == 'open' then
-            reply(src, ('    the server settles this itself from its own record once the database '
-                .. 'answers; /%s %s pay <role> settles it the same way now'):format(names.review, item.id))
+            reply(src, (L('bridges.the_server_settles_this_itself_from')):format(names.review, item.id))
         elseif item.state == 'resolving' then
-            reply(src, ('    being resolved (%s, by %s) and stopped part-way: /%s %s finishes it as decided')
+            reply(src, (L('bridges.being_resolved_by_and_stopped_part'))
                 :format(tostring(item.resolution and item.resolution.action), tostring(item.resolved_by),
                     names.review, item.id))
         elseif item.state == 'resolved' then
             local r = item.resolution or {}
-            reply(src, ('    resolved: %s%s by %s%s%s'):format(tostring(r.action),
+            reply(src, (L('bridges.resolved_by')):format(tostring(r.action),
                 r.cid and (' to ' .. tostring(r.cid)) or '', tostring(item.resolved_by),
                 item.resolved_at and (' ' .. os.date('%Y-%m-%d %H:%M', item.resolved_at)) or '',
                 r.note and (' (' .. r.note .. ')') or ''))
@@ -1344,12 +1338,12 @@ function Bridges.installCommands(modules)
         if not names.review then return 0 end
         local items = Admin.reviews(src)
         if #items == 0 then return 0 end
-        reply(src, ('%d money event(s) no rule could settle wait for you in the review queue:')
+        reply(src, (L('bridges.money_event_no_rule_could_settle'))
             :format(#items))
         for i = 1, #items do sayReview(src, items[i]) end
-        reply(src, ('Resolve one with /%s <id> refund <citizenid|role> <amount> [cash|bank|dirty], '
+        reply(src, (L('bridges.resolve_one_with_id_refund_citizenid')
             .. '/%s <id> refund <citizenid|role> items, /%s <id> pay <citizenid|role>, or /%s <id> '
-            .. 'dismiss <note>. A role is one the item names (payer, creator, ...).')
+            .. L('bridges.dismiss_note_a_role_is_one'))
             :format(names.review, names.review, names.review, names.review))
         return #items
     end
@@ -1364,7 +1358,7 @@ function Bridges.installCommands(modules)
         -- And the review queue, last: money no rule could settle, kept until
         -- staff resolve it rather than only in the log, which is pruned.
         if #lines == 0 then
-            if listReviews(src) == 0 then reply(src, 'No interrupted releases.') end
+            if listReviews(src) == 0 then reply(src, L('bridges.no_interrupted_releases')) end
             return
         end
 
@@ -1381,16 +1375,14 @@ function Bridges.installCommands(modules)
         -- them over (Admin.interrupted): not left for staff, and settled by
         -- the server itself (Contracts.finishEndings).
         if #unfinished > 0 then
-            reply(src, ('%d escrow line(s) of contracts whose ending did not finish (it raised part-way) '
-                .. 'wait to be handed over:'):format(#unfinished))
+            reply(src, (L('bridges.escrow_line_of_contracts_whose_ending')):format(#unfinished))
             for i = 1, #unfinished do
                 local line = unfinished[i]
-                reply(src, ('  %s  contract %s  %s %s  ending unfinished; it settles itself within a '
+                reply(src, (L('bridges.contract_ending_unfinished_it_settles_itself')
                     .. 'minute'):format(line.line, line.contract, tostring(line.portion),
                     describeLine(line)))
             end
-            reply(src, ('The server finishes each ending as a restart would: a stake by why the contract '
-                .. 'ended, the rest back to the placer. Nothing for /%s to do.'):format(names.settle))
+            reply(src, (L('bridges.the_server_finishes_each_ending_as')):format(names.settle))
         end
 
         -- Lines left for staff (Escrow.parked): a give that kept raising with
@@ -1400,38 +1392,35 @@ function Bridges.installCommands(modules)
         -- unqueued); and one left `releasing` by a call that raised. Owed to
         -- the player named, and given to nobody until settled here.
         if #parked > 0 then
-            reply(src, ('%d escrow line(s) raised an error when they were given, or were stopped '
-                .. 'while being given, and wait for you:'):format(#parked))
+            reply(src, (L('bridges.escrow_line_raised_an_error_when')):format(#parked))
             for i = 1, #parked do
                 local line = parked[i]
                 -- What is known: a part that arrived is on the line; why it
                 -- was left, and when, while the log still has the row.
-                local known = 'why is no longer in the log'
+                local known = L('bridges.why_is_no_longer_in_the')
                 if line.why == 'interrupted' then
-                    known = 'the server stopped while it was being given'
+                    known = L('bridges.the_server_stopped_while_it_was')
                 elseif line.why == 'unknown' then
-                    known = 'raised, and what arrived could not be read'
+                    known = L('bridges.raised_and_what_arrived_could_not')
                 elseif line.why == 'raised' then
-                    known = ('raised %d times with nothing arriving'):format(line.raised)
+                    known = (L('bridges.raised_times_with_nothing_arriving')):format(line.raised)
                 elseif line.why == 'stalled' then
-                    known = 'giving it stopped part-way, and nothing will try it again'
+                    known = L('bridges.giving_it_stopped_part_way_and')
                 elseif line.why == 'unqueued' then
-                    known = 'owed and in no retry queue, so nothing will give it'
+                    known = L('bridges.owed_and_in_no_retry_queue')
                 elseif line.why == 'stalled_claim' then
-                    known = 'stalled claim: the claim that owed it raised before paying it, '
-                        .. 'so nothing will give it'
+                    known = L('bridges.stalled_claim_the_claim_that_owed')
                 elseif line.why == 'stopped' then
-                    known = 'a raise stopped it while it was being given'
+                    known = L('bridges.a_raise_stopped_it_while_it')
                 elseif line.why == 'releasing' then
-                    known = 'left mid-release by a call that raised, and nothing is finishing it'
+                    known = L('bridges.left_mid_release_by_a_call')
                 elseif line.why == 'never_given_release' then
-                    known = 'left mid-release by a call that raised before it named anyone, so '
-                        .. 'nothing of it was given'
+                    known = L('bridges.left_mid_release_by_a_call_2')
                 end
                 if (line.arrived or 0) > 0 then
-                    known = ('%s; %s of it arrived'):format(known, tostring(line.arrived))
+                    known = (L('bridges.of_it_arrived')):format(known, tostring(line.arrived))
                 end
-                reply(src, ('  %s  contract %s  %s %s  owed to %s  %s%s'):format(
+                reply(src, (L('bridges.contract_owed_to')):format(
                     line.line, line.contract, tostring(line.portion), describeLine(line),
                     tostring(line.intended), known,
                     line.at and ('  (' .. os.date('%Y-%m-%d %H:%M', line.at) .. ')') or ''))
@@ -1442,27 +1431,24 @@ function Bridges.installCommands(modules)
                 -- and pay alone would give that part again.
                 if line.why ~= 'raised' and line.why ~= 'never_given_release'
                     and not modules.escrow.NEVER_GIVEN[line.why] then
-                    reply(src, ('    arrival unknown: check what they received, then pay the rest '
-                        .. 'with /%s %s pay <amount>, or delivered'):format(names.settle, line.line))
+                    reply(src, (L('bridges.arrival_unknown_check_what_they_received')):format(names.settle, line.line))
                 end
                 -- Never given, so neither handed back nor called delivered
                 -- (Admin.settleLine): paid to whom it is owed, in full.
                 if line.why == 'unqueued' or (line.why == 'never_given_release' and line.owed) then
-                    reply(src, ('    never given: only /%s %s pay settles it, to them')
+                    reply(src, (L('bridges.never_given_only_pay_settles_it'))
                         :format(names.settle, line.line))
                 end
                 -- Owed to nobody either: there is nobody to pay, and a
                 -- return puts it back to its contract.
                 if line.why == 'never_given_release' and not line.owed then
-                    reply(src, ('    owed to nobody: /%s %s return puts it back to its contract, '
-                        .. 'which keeps it while it is live and hands it back once it is closed')
+                    reply(src, (L('bridges.owed_to_nobody_return_puts_it'))
                         :format(names.settle, line.line))
                 end
                 -- Its contract stays COMPLETING, which nothing but the next
                 -- start puts back; the payout need not wait for it.
                 if line.why == 'stalled_claim' then
-                    reply(src, ('    stalled claim: contract %s stays mid-claim until the next start, '
-                        .. 'and nothing of this was given: only /%s %s pay settles it, to them')
+                    reply(src, (L('bridges.stalled_claim_contract_stays_mid_claim'))
                         :format(line.contract, names.settle, line.line))
                 end
             end
@@ -1477,56 +1463,47 @@ function Bridges.installCommands(modules)
                     returnable = true
                 end
             end
-            reply(src, ('Whether such a give arrived cannot always be told, so check their '
-                .. 'inventory or balance first. /%s <line> delivered if it is there (settled, '
-                .. 'nothing given); /%s <line> pay if it is not (gives only what has not '
-                .. 'arrived), or /%s <line> pay <amount> to give exactly what is missing%s')
+            reply(src, (L('bridges.whether_such_a_give_arrived_cannot'))
                 :format(names.settle, names.settle, names.settle, returnable
-                    and ('; /%s <line> return to hand that back to whoever put it up instead (not '
-                        .. 'for a line owed to somebody, which nobody put up)'):format(names.settle)
+                    and (L('bridges.line_return_to_hand_that_back')):format(names.settle)
                     or ''))
         end
 
         -- Lines owed and queued to a citizen id no character has
         -- (Admin.interrupted): typed wrong before ids were checked.
         if #nobody > 0 then
-            reply(src, ('%d escrow line(s) are owed and queued to a citizen id no character has, '
-                .. 'so nothing will give them:'):format(#nobody))
+            reply(src, (L('bridges.escrow_line_are_owed_and_queued')):format(#nobody))
             for i = 1, #nobody do
                 local line = nobody[i]
-                reply(src, ('  %s  contract %s  %s %s  owed to %s'):format(line.line, line.contract,
+                reply(src, (L('bridges.contract_owed_to_2')):format(line.line, line.contract,
                     tostring(line.portion), describeLine(line), tostring(line.intended)))
                 if line.why == 'owed_to_unchecked' then
-                    reply(src, '    could not be checked: qbx_core did not say whether anybody has '
-                        .. 'that citizen id, so it stays queued for them and is not moved')
+                    reply(src, L('bridges.could_not_be_checked_qbx_core'))
                 else
-                    reply(src, ('    /%s %s return <citizenid> moves it to the citizen id it should '
-                        .. 'go to'):format(names.settle, line.line))
+                    reply(src, (L('bridges.return_citizenid_moves_it_to_the')):format(names.settle, line.line))
                 end
             end
         end
 
         if #interrupted > 0 then
-            reply(src, ('%d escrow line(s) were mid-release at a shutdown:'):format(#interrupted))
+            reply(src, (L('bridges.escrow_line_were_mid_release_at')):format(#interrupted))
             for i = 1, #interrupted do
                 local line = interrupted[i]
-                reply(src, ('  %s  contract %s  %s %s  was paying %s  (%s)'):format(
+                reply(src, (L('bridges.contract_was_paying')):format(
                     line.line, line.contract, tostring(line.portion), describeLine(line),
                     tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
                 -- What settles this one (Admin.interrupted): a pay needs
                 -- somebody to go to, which a line the boot put back naming
                 -- nobody does not have.
                 if line.settles == 'queued' then
-                    reply(src, '    queued for them since: nothing to settle')
+                    reply(src, L('bridges.queued_for_them_since_nothing_to'))
                 elseif line.settles == 'return_owner' then
-                    reply(src, ('    does not say whose it is: /%s %s return <citizenid> once you know '
-                        .. 'who put it up'):format(names.settle, line.line))
+                    reply(src, (L('bridges.does_not_say_whose_it_is')):format(names.settle, line.line))
                 elseif line.settles == 'pay_or_return' then
-                    reply(src, ('    /%s %s pay (to them) or return (to whoever put it up)')
+                    reply(src, (L('bridges.pay_to_them_or_return_to'))
                         :format(names.settle, line.line))
                 else
-                    reply(src, ('    names nobody to pay: only /%s %s return settles it, to whoever '
-                        .. 'put it up'):format(names.settle, line.line))
+                    reply(src, (L('bridges.names_nobody_to_pay_only_return')):format(names.settle, line.line))
                 end
             end
         end
@@ -1534,14 +1511,14 @@ function Bridges.installCommands(modules)
         -- Lines of a contract never stored, written before a line said
         -- whose it was (Admin.interrupted).
         if #nameless > 0 then
-            reply(src, ('%d escrow line(s) of contracts never stored do not say whose they '
+            reply(src, (L('bridges.escrow_line_of_contracts_never_stored')
                 .. 'are:'):format(#nameless))
             for i = 1, #nameless do
                 local line = nameless[i]
-                reply(src, ('  %s  contract %s  %s %s'):format(line.line, line.contract,
+                reply(src, (L('bridges.contract_2')):format(line.line, line.contract,
                     tostring(line.portion), describeLine(line)))
             end
-            reply(src, ('Find out who put each up, then /%s <line> return <citizenid>')
+            reply(src, (L('bridges.find_out_who_put_each_up'))
                 :format(names.settle))
         end
 
@@ -1561,7 +1538,7 @@ function Bridges.installCommands(modules)
                 end
                 local what = tostring((args or {})[1] or 'timers'):lower()
                 if what ~= 'timers' and what ~= 'refresh' then
-                    return reply(src, ('Usage: /%s timers'):format(names.refresh))
+                    return reply(src, (L('bridges.usage_timers')):format(names.refresh))
                 end
                 local lines = Admin.refreshTimers(src)
                 for i = 1, #lines do reply(src, lines[i]) end
@@ -1585,8 +1562,8 @@ function Bridges.installCommands(modules)
             if first == nil or first == 'list' or first == 'all' then
                 local items = Admin.reviews(src, first == 'all')
                 if #items == 0 then
-                    return reply(src, first == 'all' and 'The review queue has never held anything.'
-                        or 'Nothing waits in the review queue.')
+                    return reply(src, first == 'all' and L('bridges.the_review_queue_has_never_held')
+                        or L('bridges.nothing_waits_in_the_review_queue'))
                 end
                 for i = 1, #items do sayReview(src, items[i]) end
                 return
@@ -1609,8 +1586,7 @@ function Bridges.installCommands(modules)
         local panelCommand = names.panel
         command(names.panel, Config.Admin.Ace, function(src)
             if src == 0 then
-                return reply(src, ('The admin panel opens in game. From the console: /%s, /%s, '
-                    .. '/%s and /%s.'):format(names.diagnose, names.stuck, names.contracts,
+                return reply(src, (L('bridges.the_admin_panel_opens_in_game')):format(names.diagnose, names.stuck, names.contracts,
                     names.timeline))
             end
             local access = modules.panel and modules.panel.open(src)
@@ -1631,14 +1607,14 @@ function Bridges.installCommands(modules)
         local who, err = Admin.identify(src, args[1])
         if not who then return noContract(src, names.whois, err) end
 
-        reply(src, ('creator  %s  %s%s'):format(who.creator.cid, who.creator.name,
-            who.creator.anonymous and '  (listed anonymously)' or ''))
-        reply(src, ('target   %s  %s'):format(who.target.cid, who.target.name))
+        reply(src, (L('bridges.creator')):format(who.creator.cid, who.creator.name,
+            who.creator.anonymous and L('bridges.listed_anonymously') or ''))
+        reply(src, (L('bridges.target')):format(who.target.cid, who.target.name))
         for i = 1, #who.hitmen do
             local h = who.hitmen[i]
             reply(src, ('%-8s %s  %s%s'):format(
                 h.alias or 'operative', h.cid, h.name,
-                h.anonymous and '  (listed anonymously)' or ''))
+                h.anonymous and L('bridges.listed_anonymously') or ''))
         end
     end, true)
 
@@ -1651,30 +1627,28 @@ end
 
 --- What /cleanse says for each refusal, in the words the app's buyout
 --- uses, since the app may be closed to the player running it.
-local STILL_A_TARGET = 'You are still a target until it closes; if a hitman finishes first, '
-    .. 'your money comes back.'
+local STILL_A_TARGET = L('bridges.you_are_still_a_target_until')
 local CLEANSE_REFUSALS = {
-    [CH.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
-    [CH.ERR.NO_BUYOUT_PRICE] = 'the person who placed it did not put a price on closing it.',
-    [CH.ERR.BUYOUT_PENDING] = 'you have already paid. ' .. STILL_A_TARGET,
-    [CH.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
-    [CH.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
-    [CH.ERR.INSUFFICIENT] = 'your bank or your cash has to cover the full price on its own; '
-        .. 'it is never split.',
-    [CH.ERR.ALREADY_SETTLED] = 'that contract has already closed.',
-    [CH.ERR.NOT_FOUND] = 'no contract on you has that id.',
-    [CH.ERR.NOT_PARTICIPANT] = 'that contract is not on you.',
-    [CH.ERR.INVALID_INPUT] = 'that is not a contract id.',
-    [CH.ERR.LOCKED] = 'someone got there first.',
-    [CH.ERR.BUSY] = 'that was busy for a moment. Try again.',
-    [CH.ERR.CONTRACT_FROZEN] = 'this contract is on hold by staff.',
-    [CH.ERR.APP_PAUSED] = 'contracts are paused by staff.',
-    [CH.ERR.RESTART_HOLD] = 'contracts are paused until the server restart.',
+    [CH.ERR.BAILOUT_OFF] = L('bridges.this_server_does_not_offer_buyouts'),
+    [CH.ERR.NO_BUYOUT_PRICE] = L('bridges.the_person_who_placed_it_did'),
+    [CH.ERR.BUYOUT_PENDING] = L('bridges.you_have_already_paid') .. STILL_A_TARGET,
+    [CH.ERR.INCAPACITATED] = L('bridges.not_from_the_floor_get_up'),
+    [CH.ERR.HANDOVER_IN_PROGRESS] = L('bridges.somebody_has_hold_of_you'),
+    [CH.ERR.INSUFFICIENT] = L('bridges.your_bank_or_your_cash_has'),
+    [CH.ERR.ALREADY_SETTLED] = L('bridges.that_contract_has_already_closed'),
+    [CH.ERR.NOT_FOUND] = L('bridges.no_contract_on_you_has_that'),
+    [CH.ERR.NOT_PARTICIPANT] = L('bridges.that_contract_is_not_on_you'),
+    [CH.ERR.INVALID_INPUT] = L('bridges.that_is_not_a_contract_id_2'),
+    [CH.ERR.LOCKED] = L('bridges.someone_got_there_first'),
+    [CH.ERR.BUSY] = L('bridges.that_was_busy_for_a_moment'),
+    [CH.ERR.CONTRACT_FROZEN] = L('bridges.this_contract_is_on_hold_by'),
+    [CH.ERR.APP_PAUSED] = L('bridges.contracts_are_paused_by_staff'),
+    [CH.ERR.RESTART_HOLD] = L('bridges.contracts_are_paused_until_the_server'),
 }
 
 --- The sentence §14.40 has every buyout end on: this contract closing is
 --- not the city's last.
-local NOT_THE_LAST = 'Closing this one does not mean nobody else is after you.'
+local NOT_THE_LAST = L('bridges.closing_this_one_does_not_mean')
 
 --- How long a price /cleanse printed stays the one `/cleanse <id>` pays,
 --- in seconds. The placer may change the buyout until somebody accepts
@@ -1750,19 +1724,19 @@ function Bridges.installBuyoutCommand(modules)
     local function list(src, shown, actor)
         local buyouts = Config.Bailout.Enabled == true
         if #shown == 0 then
-            return answer(src, buyouts and 'Nothing is out on you.'
-                or 'Nothing is out on you. This server does not offer buyouts.')
+            return answer(src, buyouts and L('bridges.nothing_is_out_on_you')
+                or L('bridges.nothing_is_out_on_you_this'))
         end
         local buyable = 0
-        answer(src, ('%d contract(s) out on you:'):format(#shown))
+        answer(src, (L('bridges.contract_out_on_you')):format(#shown))
         for i = 1, #shown do
             local entry, how = shown[i], nil
             if entry.queued then
-                how = ('%s  paid; you are still a target until it closes'):format(Words.dollars(entry.amount, 'none'))
+                how = (L('bridges.paid_you_are_still_a_target')):format(Words.dollars(entry.amount, 'none'))
             elseif entry.amount <= 0 then
-                how = 'no buyout offered'
+                how = L('bridges.no_buyout_offered')
             elseif not buyouts then
-                how = 'buyouts are off'
+                how = L('bridges.buyouts_are_off')
             else
                 how = Words.dollars(entry.amount, 'none')
                 buyable = buyable + 1
@@ -1771,18 +1745,18 @@ function Bridges.installBuyoutCommand(modules)
             answer(src, ('  %s  %s'):format(entry.id, how))
         end
         if buyable > 0 then
-            answer(src, ('Buy one out with /%s <id> at the price listed (or /%s <id> <price>).')
+            answer(src, (L('bridges.buy_one_out_with_id_at'))
                 :format(Config.Bailout.Command, Config.Bailout.Command))
         end
     end
 
     local function cleanse(src, args)
         if src == 0 then
-            return answer(src, 'This is for a player buying out a contract on themselves.')
+            return answer(src, L('bridges.this_is_for_a_player_buying'))
         end
         local actor = modules.identity.resolve(src)
         if not actor then
-            return answer(src, 'Load a character first: this buys out a contract on your character.')
+            return answer(src, L('bridges.load_a_character_first_this_buys'))
         end
 
         -- Not while boot recovery runs (App.ready), like every app request,
@@ -1793,10 +1767,9 @@ function Bridges.installBuyoutCommand(modules)
         -- RECOVERY FAILED).
         if modules.app and modules.app.ready == false then
             if modules.app.recoveryFailed then
-                return answer(src, 'The server\'s contract system failed to start, and staff have '
-                    .. 'been told. Nothing was charged.')
+                return answer(src, L('bridges.the_servers_contract_system_failed_to'))
             end
-            return answer(src, 'The server is still starting. Try again in a moment.')
+            return answer(src, L('bridges.the_server_is_still_starting_try'))
         end
 
         -- Deliberately past the app's job gate: being barred from the
@@ -1812,8 +1785,8 @@ function Bridges.installBuyoutCommand(modules)
         -- exactly what it said was refused as "Slow down."
         local function slowDown(bucket)
             local wait = modules.ratelimit.retryAfter(actor, bucket) or 0
-            return answer(src, wait > 0 and ('Slow down. Try again %s.'):format(Words.inAbout(wait))
-                or 'Slow down.')
+            return answer(src, wait > 0 and (L('bridges.slow_down_try_again')):format(Words.inAbout(wait))
+                or L('bridges.slow_down'))
         end
         if not modules.ratelimit.check(actor, 'load') then return slowDown('load') end
 
@@ -1821,32 +1794,32 @@ function Bridges.installBuyoutCommand(modules)
         if not args[1] then return list(src, shown, actor) end
 
         if not Config.Bailout.Enabled then
-            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
+            return answer(src, L('bridges.could_not_buy_it_out') .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
         end
         -- Only one it lists: a contract still inside its wait is not
         -- theirs to know of, so not to buy either.
         local id = Util.toId(args[1])
         if not id then
-            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.INVALID_INPUT])
+            return answer(src, L('bridges.could_not_buy_it_out') .. CLEANSE_REFUSALS[CH.ERR.INVALID_INPUT])
         end
         local listed
         for i = 1, #shown do
             if shown[i].id == id then listed = shown[i] end
         end
         if not listed then
-            return answer(src, #shown == 0 and 'Nothing is out on you.'
-                or ('Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.NOT_FOUND]))
+            return answer(src, #shown == 0 and L('bridges.nothing_is_out_on_you')
+                or (L('bridges.could_not_buy_it_out') .. CLEANSE_REFUSALS[CH.ERR.NOT_FOUND]))
         end
         -- Paid already, as the listing says: no allowance spent on asking.
         if listed.queued then
-            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BUYOUT_PENDING])
+            return answer(src, L('bridges.could_not_buy_it_out') .. CLEANSE_REFUSALS[CH.ERR.BUYOUT_PENDING])
         end
         local buyable = false
         for _, entry in ipairs(modules.bailout.available(actor, shown)) do
             if entry.id == id then buyable = true end
         end
         if not buyable then
-            return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.NO_BUYOUT_PRICE])
+            return answer(src, L('bridges.could_not_buy_it_out') .. CLEANSE_REFUSALS[CH.ERR.NO_BUYOUT_PRICE])
         end
 
         -- The price they agree to: the one typed (/cleanse <id> <price>),
@@ -1858,20 +1831,19 @@ function Bridges.installBuyoutCommand(modules)
         if args[2] ~= nil then
             typed = tonumber((tostring(args[2]):gsub('[%$,]', '')))
             if not typed or typed < 0 or typed ~= math.floor(typed) then
-                return answer(src, ('Could not buy it out: the price is a whole number of dollars, as '
-                    .. '/%s lists it.'):format(cmd))
+                return answer(src, (L('bridges.could_not_buy_it_out_the')):format(cmd))
             end
         end
         local agreed = typed or quoted(actor.cid, id)
         local function priceNow(amount, before)
             quote(actor.cid, id, amount)
-            return answer(src, ('%s The buyout on %s is %s now. Run /%s %s again within %d minutes to pay '
+            return answer(src, (L('bridges.the_buyout_on_is_now_run')
                 .. 'it, or /%s %s %d.'):format(before, id, Words.dollars(amount, 'none'), cmd, id,
                     QUOTE_SECONDS // 60, cmd, id, amount))
         end
-        if agreed == nil then return priceNow(listed.amount, 'Nothing was bought yet.') end
+        if agreed == nil then return priceNow(listed.amount, L('bridges.nothing_was_bought_yet')) end
         if agreed ~= listed.amount then
-            return priceNow(listed.amount, ('Nothing was bought: the price changed from %s.')
+            return priceNow(listed.amount, (L('bridges.nothing_was_bought_the_price_changed'))
                 :format(Words.dollars(agreed, 'none')))
         end
 
@@ -1893,12 +1865,10 @@ function Bridges.installBuyoutCommand(modules)
             Log.raised('command ' .. Config.Bailout.Command, ('/%s run by player %s raised: %s')
                 :format(Config.Bailout.Command, tostring(src), Util.dbError(ok)))
             if modules.storage and modules.storage.timedOut and modules.storage.timedOut(ok) then
-                return answer(src, 'The server\'s records did not answer in time. Run /'
-                    .. Config.Bailout.Command .. ' before you try again: the payment may still '
-                    .. 'go through.')
+                return answer(src, L('bridges.the_servers_records_did_not_answer')
+                    .. Config.Bailout.Command .. L('bridges.before_you_try_again_the_payment'))
             end
-            return answer(src, 'Something broke on the server, not on your end. If anything was '
-                .. 'taken it has been returned or left for staff.')
+            return answer(src, L('bridges.something_broke_on_the_server_not'))
         end
         if not ok then
             -- Nothing was bought, so the purchase allowance goes back,
@@ -1906,19 +1876,18 @@ function Bridges.installBuyoutCommand(modules)
             -- printed the raw code, "Could not buy it out: incapacitated".
             modules.ratelimit.refund(actor, 'bailout')
             if err == CH.ERR.INSUFFICIENT and type(third) == 'table' and tonumber(third.need) then
-                return answer(src, ('Could not buy it out: your bank or your cash has to cover the '
-                    .. 'full %s on its own; it is never split.'):format(Words.dollars(third.need, 'none')))
+                return answer(src, (L('bridges.could_not_buy_it_out_your')):format(Words.dollars(third.need, 'none')))
             end
             if err == CH.ERR.TERMS_CHANGED and type(third) == 'table' and tonumber(third.amount) then
-                return priceNow(tonumber(third.amount), ('Nothing was bought: the price changed from %s.')
+                return priceNow(tonumber(third.amount), (L('bridges.nothing_was_bought_the_price_changed'))
                     :format(Words.dollars(agreed, 'none')))
             end
             -- Put on hold by staff after the charge: the premium came back.
             if err == CH.ERR.CONTRACT_FROZEN and type(third) == 'table' and third.refunded then
-                return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[err]
-                    .. ' Your payment was returned.')
+                return answer(src, L('bridges.could_not_buy_it_out') .. CLEANSE_REFUSALS[err]
+                    .. L('bridges.your_payment_was_returned'))
             end
-            return answer(src, 'Could not buy it out: ' .. (CLEANSE_REFUSALS[err] or tostring(err)))
+            return answer(src, L('bridges.could_not_buy_it_out') .. (CLEANSE_REFUSALS[err] or tostring(err)))
         end
         quote(actor.cid, id, nil)
         -- Whether it closed now or waits on a hitman, as the app says it:
@@ -1926,11 +1895,10 @@ function Bridges.installBuyoutCommand(modules)
         -- walking into the open thinking they are safe.
         if third == true then
             local delay = tonumber(Config.Bailout.ProcessingDelaySeconds) or 0
-            local wait = delay < 60 and 'in under a minute' or Words.inAbout(delay)
-            return answer(src, ('Paid. It closes %s. You are still a target until then; if a '
-                .. 'hitman finishes first, your money comes back. %s'):format(wait, NOT_THE_LAST))
+            local wait = delay < 60 and L('bridges.in_under_a_minute') or Words.inAbout(delay)
+            return answer(src, (L('bridges.paid_it_closes_you_are_still')):format(wait, NOT_THE_LAST))
         end
-        answer(src, 'Paid. Contract closed. ' .. NOT_THE_LAST)
+        answer(src, L('bridges.paid_contract_closed') .. NOT_THE_LAST)
     end
 
     RegisterCommand(Config.Bailout.Command, function(src, args)
@@ -1941,7 +1909,7 @@ function Bridges.installBuyoutCommand(modules)
             -- in their words, not staff's.
             Log.debug(('/%s run by player %s raised: %s')
                 :format(Config.Bailout.Command, tostring(src), Util.dbError(err)))
-            answer(src, 'Something broke on the server, not on your end. Nothing was charged.')
+            answer(src, L('bridges.something_broke_on_the_server_not_2'))
         end
     end, false)
     return true

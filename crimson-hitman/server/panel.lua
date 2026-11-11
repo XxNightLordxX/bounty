@@ -372,7 +372,7 @@ local function permissionsFor(src)
     local Admin = deps.admin
     local function holds(ace) return IsPlayerAceAllowed(src, ace) and true or false end
     local function grant(ace)
-        return (Admin.howToAuthorise(ace, true):gsub(L('panel.not_authorised_this_needs_the_ace'), ''))
+        return (select(2, Admin.grantFor(ace)))
     end
     local out = {
         { ace = Config.Admin.Ace, name = L('panel.staff_ace_config_admin_ace'), held = holds(Config.Admin.Ace),
@@ -414,7 +414,8 @@ local function accessFor(src)
         developerAce = developerAce(),
         developerByAce = isDeveloper and deps.admin.allowed(src, developerAce(), true) or false,
         developerHint = isDeveloper and not deps.admin.allowed(src, developerAce(), true)
-            and deps.admin.howToAuthorise(developerAce(), true):gsub('^Not authorised: ', L('panel.to_give_the_developer_section_to')) or nil,
+            and L('panel.to_give_the_developer_section_to') .. table.concat({ deps.admin.grantFor(developerAce()) })
+            or nil,
         permissions = permissionsFor(src),
         pageSize = math.max(5, math.min(100, math.floor(tonumber(Config.Admin.PanelPageSize) or 25))),
         refreshSeconds = math.max(2, math.floor(tonumber(Config.Admin.PanelRefreshSeconds) or 10)),
@@ -797,29 +798,23 @@ end
 -- The overview
 --------------------------------------------------------------------------
 
---- What the diagnosis says that wants doing (the lines with '->', or a
---- word in capitals), run as the console would, which asks no player's
---- phone for anything, in the panel's words. The lines only the console
---- needs are left out, and so are the console's own lines it keeps (marked
---- with a dot), which are notes, not things to do.
-local CONSOLE_ONLY = {
-    'name somebody who is in the city', 'run from the console', 'the server-wide checks below',
-    'name a player to test',
-}
-
+--- What the diagnosis says that wants doing (the lines with '->', the lines
+--- it marks 'act', or a word in capitals), run as the console would, which
+--- asks no player's phone for anything, in the panel's words. The lines only
+--- the console needs (marked 'console') are left out, and so are the
+--- console's own lines it keeps (marked with a dot), which are notes, not
+--- things to do. Read by mark, never by the words: they are in the
+--- language Config.Locale names.
 local function diagWarnings()
-    local ok, lines = pcall(deps.admin.diagnose, 0, nil, nil, { panel = true })
+    local ok, lines, marks = pcall(deps.admin.diagnose, 0, nil, nil, { panel = true })
     if not ok or type(lines) ~= 'table' then
         return { L('panel.the_diagnosis_itself_raised'):format(Util.dbError(lines)) }
     end
+    marks = type(marks) == 'table' and marks or {}
     local out = {}
-    for _, line in ipairs(lines) do
-        local skip = line:find('^%-%-%-') ~= nil or line:find('^%s*·') ~= nil
-            or line:find('^console:') ~= nil
-        for _, text in ipairs(CONSOLE_ONLY) do
-            if line:find(text, 1, true) then skip = true end
-        end
-        if not skip and (line:find('->', 1, true) or line:find('%u%u%u%u')) then
+    for i, line in ipairs(lines) do
+        local skip = marks[i] == 'console' or line:find('^%-%-%-') ~= nil or line:find('^%s*·') ~= nil
+        if not skip and (marks[i] == 'act' or line:find('->', 1, true) or line:find('%u%u%u%u')) then
             out[#out + 1] = (line:gsub('^%s+', ''))
         end
     end

@@ -28,6 +28,7 @@ local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
 local Lock = CrimsonBoot.require('server.lib.lock')
 local Db = CrimsonBoot.require('server.lib.db')
+local L = CrimsonBoot.requireShared('locale').t
 
 local TargetLimits = {}
 
@@ -41,17 +42,17 @@ local Storage, Audit, Identity
 --- lists them, with the range a value must be in. 0 is off for every one
 --- but the cap on live contracts, which is at least 1.
 TargetLimits.KEYS = {
-    { key = 'TargetCooldownAfterResolveSeconds', label = 'Wait after a contract on them ends', unit = 's',
+    { key = 'TargetCooldownAfterResolveSeconds', label = L('targetlimits.wait_after_a_contract_on_them'), unit = 's',
       min = 0, max = 604800 },
-    { key = 'SameCreatorSameTargetCooldownSeconds', label = 'Wait before the same placer names them again',
+    { key = 'SameCreatorSameTargetCooldownSeconds', label = L('targetlimits.wait_before_the_same_placer_names'),
       unit = 's', min = 0, max = 604800 },
-    { key = 'TargetCooldownAfterCompletionSeconds', label = 'Wait after a completed contract on them',
+    { key = 'TargetCooldownAfterCompletionSeconds', label = L('targetlimits.wait_after_a_completed_contract_on'),
       unit = 's', min = 0, max = 2592000 },
-    { key = 'MaxActiveContractsPerTarget', label = 'Live contracts on them at once', unit = 'contracts',
+    { key = 'MaxActiveContractsPerTarget', label = L('targetlimits.live_contracts_on_them_at_once'), unit = 'contracts',
       min = 1, max = 50 },
-    { key = 'MaxContractsPerTargetPerDay', label = 'Contracts placed on them in 24 hours', unit = 'contracts',
+    { key = 'MaxContractsPerTargetPerDay', label = L('targetlimits.contracts_placed_on_them_in_24'), unit = 'contracts',
       min = 0, max = 100 },
-    { key = 'MaxContractsPerTargetPerWeek', label = 'Contracts placed on them in 7 days', unit = 'contracts',
+    { key = 'MaxContractsPerTargetPerWeek', label = L('targetlimits.contracts_placed_on_them_in_7'), unit = 'contracts',
       min = 0, max = 500 },
 }
 local KEY = {}
@@ -101,18 +102,18 @@ end
 ---@return table|nil clean
 ---@return string|nil why
 function TargetLimits.cleanLimits(limits, allowEmpty)
-    if type(limits) ~= 'table' then return nil, 'limits are not a table' end
+    if type(limits) ~= 'table' then return nil, L('targetlimits.limits_are_not_a_table') end
     local out, count = {}, 0
     for key, value in pairs(limits) do
-        if type(key) ~= 'string' or not KEY[key] then return nil, ('unknown limit %s'):format(tostring(key)) end
+        if type(key) ~= 'string' or not KEY[key] then return nil, (L('targetlimits.unknown_limit')):format(tostring(key)) end
         local n = LimitValue(key, value)
         if n == nil then
-            return nil, ('%s must be a whole number from %d to %d'):format(key, KEY[key].min, KEY[key].max)
+            return nil, (L('targetlimits.must_be_a_whole_number_from')):format(key, KEY[key].min, KEY[key].max)
         end
         out[key] = n
         count = count + 1
     end
-    if count == 0 and not allowEmpty then return nil, 'no limits given' end
+    if count == 0 and not allowEmpty then return nil, L('targetlimits.no_limits_given') end
     return out
 end
 
@@ -139,7 +140,7 @@ function TargetLimits.checkConfig(warn)
         if value == nil then
             Config.Limits[key] = 0
         elseif LimitValue(key, value) == nil or type(value) ~= 'number' then
-            warn[#warn + 1] = ('Limits.%s is %s; it has to be a whole number from 0 to %d. Using 0 (off).')
+            warn[#warn + 1] = (L('targetlimits.limits_is_it_has_to_be'))
                 :format(key, tostring(value), KEY[key].max)
             Config.Limits[key] = 0
         end
@@ -180,19 +181,19 @@ end
 --- A player row as the store held it, checked; nil and why for one that is
 --- not applied.
 local function CleanPlayer(row)
-    if type(row) ~= 'table' or type(row.cid) ~= 'string' or row.cid == '' then return nil, 'no citizen id' end
+    if type(row) ~= 'table' or type(row.cid) ~= 'string' or row.cid == '' then return nil, L('targetlimits.no_citizen_id') end
     for _, f in ipairs({ 'cleared_at', 'same_cleared_at', 'buyout_cleared_at', 'counts_reset_at', 'until_at',
         'at' }) do
-        if row[f] ~= nil and not tonumber(row[f]) then return nil, f .. ' is not a time' end
+        if row[f] ~= nil and not tonumber(row[f]) then return nil, f .. L('targetlimits.is_not_a_time') end
     end
     if row.override ~= nil then
-        if type(row.override) ~= 'table' then return nil, 'override is not a table' end
+        if type(row.override) ~= 'table' then return nil, L('targetlimits.override_is_not_a_table') end
         local limits, why = TargetLimits.cleanLimits(row.override.limits or {}, true)
         if not limits then return nil, why end
         if row.override.until_at ~= nil and not tonumber(row.override.until_at) then
-            return nil, 'override until is not a time'
+            return nil, L('targetlimits.override_until_is_not_a_time')
         end
-        if not row.override.exempt and next(limits) == nil then return nil, 'override sets nothing' end
+        if not row.override.exempt and next(limits) == nil then return nil, L('targetlimits.override_sets_nothing') end
         row.override = { exempt = row.override.exempt == true, limits = limits,
                          until_at = tonumber(row.override.until_at), reason = row.override.reason }
     end
@@ -212,7 +213,7 @@ function TargetLimits.reload()
     for _, row in ipairs(jobRows or {}) do
         local job = TargetLimits.jobName(row.job)
         local limits, why = TargetLimits.cleanLimits(row.limits)
-        if not job then why = 'job name is not [a-z0-9_]+' end
+        if not job then why = L('targetlimits.job_name_is_not_a_z0') end
         if job and limits then
             Jobs[job] = { job = job, limits = limits, by_cid = row.by_cid, at = tonumber(row.at) }
         else

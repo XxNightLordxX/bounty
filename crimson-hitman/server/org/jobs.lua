@@ -29,6 +29,7 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
@@ -71,7 +72,7 @@ end
 local function core(cid, name, ...)
     if cid then applying[cid] = (applying[cid] or 0) + 1 end
     local adapter = Framework()
-    local ran, ok, err = false, 'not started', nil
+    local ran, ok, err = false, L('org_jobs.not_started'), nil
     if adapter and Integrations.up(adapter) then ran, ok, err = Integrations.call('framework', name, ...) end
     if cid then
         applying[cid] = (applying[cid] or 1) - 1
@@ -108,8 +109,7 @@ end
 function Jobs.register(org)
     local ran, ok, msg = core(nil, 'CreateJobs', { [org.job] = Jobs.definition(org) })
     if not ran or ok == false then
-        sayOnce('create:' .. org.job, ('warning: qbx_core would not register the organisation job %s (%s); '
-            .. 'members keep their place here and are put back once it registers'):format(org.job,
+        sayOnce('create:' .. org.job, (L('org_jobs.warning_qbx_core_would_not_register')):format(org.job,
             tostring(msg or ok)), true)
         return false
     end
@@ -204,25 +204,19 @@ function Jobs.checkConvars()
     local out = {}
     local clean = tostring(GetConvar('qbx:cleanPlayerGroups', 'false')):lower()
     if clean == 'true' or clean == '1' then
-        local text = 'warning: qbx:cleanPlayerGroups is on: at every qbx_core start it deletes the '
-            .. 'members of any job not yet registered, which is the hitman organisation\'s every time. '
-            .. 'Set it false in server.cfg; this resource puts its members back, but their job is gone '
-            .. 'until it does.'
+        local text = L('org_jobs.warning_qbx_cleanplayergroups_is_on_at')
         sayOnce('cleanPlayerGroups', text, true)
         out[#out + 1] = text
     end
     local manage = tostring(GetConvar('qbx:enableGroupManagement', 'false')):lower()
     if manage == 'true' or manage == '1' then
-        local text = 'warning: qbx:enableGroupManagement is on: qbx_management copies the organisation '
-            .. 'job into its own table, overwrites its type, and lets a qbx boss menu change its '
-            .. 'grades. Set it false while this resource owns the job.'
+        local text = L('org_jobs.warning_qbx_enablegroupmanagement_is_on_qbx')
         sayOnce('enableGroupManagement', text, false)
         out[#out + 1] = text
     end
     local maxJobs = tonumber(GetConvar('qbx:max_jobs_per_player', '1')) or 1
     if maxJobs < 2 then
-        local text = 'note: qbx:max_jobs_per_player is 1, so a player who already has a job cannot be '
-            .. 'hired into the organisation (qbx_core answers max_jobs). Set it to 2 or more for both.'
+        local text = L('org_jobs.note_qbx_max_jobs_per_player')
         sayOnce('maxJobs', text, false)
         out[#out + 1] = text
     end
@@ -235,10 +229,7 @@ end
 function Jobs.checkStartOrder(org)
     local bank = Integrations.get('banking')
     if not bank or bank.resource ~= 'Renewed-Banking' then return end
-    sayOnce('rbOrder:' .. org.job, ('warning: Renewed-Banking started before the %s job was registered: '
-        .. 'its bank screen does not know the job until it restarts. Ensure crimson-hitman before '
-        .. 'Renewed-Banking in server.cfg, or restart Renewed-Banking once; the organisation\'s funds '
-        .. 'work either way.'):format(org.job), false)
+    sayOnce('rbOrder:' .. org.job, (L('org_jobs.warning_renewed_banking_started_before_the')):format(org.job), false)
 end
 
 return Jobs

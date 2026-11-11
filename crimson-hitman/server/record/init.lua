@@ -27,6 +27,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Heat = CrimsonBoot.require('server.record.heat')
 local Placer = CrimsonBoot.require('server.record.placer')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Record = {}
 
@@ -50,10 +51,10 @@ end
 --- A short label for the record. Deliberately vague at the low end: a new
 --- hitman should not be visibly marked as one.
 function Record.standing(completed, failed)
-    if completed >= 50 then return 'Notorious' end
-    if completed >= 20 then return 'Established' end
-    if completed >= 5  then return 'Known' end
-    return 'Unproven'
+    if completed >= 50 then return L('record.notorious') end
+    if completed >= 20 then return L('record.established') end
+    if completed >= 5  then return L('record.known') end
+    return L('record.unproven')
 end
 
 --- A player's record, as the app and the panel show it.
@@ -228,9 +229,9 @@ function Record.factorFor(contract, hitmanCid, fulfilment)
         end
     end
     if wrote then add('thread', rules.ThreadBonus) end
-    if contract.meeting_x ~= nil and contract.meeting_y ~= nil then add('meeting point', rules.MeetingBonus) end
-    if fulfilment == CH.FULFILMENT.KIDNAPPING then add('live handover', rules.HandoverBonus) end
-    if Record.witnessFree(contract, hitmanCid) then add('no witnesses', rules.WitnessFreeBonus) end
+    if contract.meeting_x ~= nil and contract.meeting_y ~= nil then add(L('record.meeting_point'), rules.MeetingBonus) end
+    if fulfilment == CH.FULFILMENT.KIDNAPPING then add(L('record.live_handover'), rules.HandoverBonus) end
+    if Record.witnessFree(contract, hitmanCid) then add(L('record.no_witnesses'), rules.WitnessFreeBonus) end
 
     local most = num(rules.MaxFactor)
     if factor > most then factor = most end
@@ -252,7 +253,7 @@ function Record.describe(earned)
     for i, part in ipairs(earned.parts) do
         words[#words + 1] = (i == 1 and '%s %s' or '%s +%s'):format(part.label, tostring(part.value))
     end
-    return ('Reputation x%s (%s%s).'):format(tostring(earned.factor), table.concat(words, ', '),
+    return (L('record.reputation_x')):format(tostring(earned.factor), table.concat(words, ', '),
         earned.capped and ', capped' or '')
 end
 
@@ -370,7 +371,7 @@ Record.RULES = {
         Enabled = { kind = 'switch' },
         CompletionsPerLevel = { kind = 'number', integer = true, min = 1, max = 1000 },
         Tiers = { kind = 'list', each = Record.parseTier, most = 20,
-            says = "a list of tiers, each 'name, least reward, least level'" },
+            says = L('record.a_list_of_tiers_each_name') },
     },
     Heat = {
         Enabled = { kind = 'switch' },
@@ -381,8 +382,8 @@ Record.RULES = {
         Threshold = { kind = 'number', integer = true, min = 1, max = 1000 },
         WarnTargetChancePercent = { kind = 'number', integer = true, min = 0, max = 100 },
         BulletinEveryMinutes = { kind = 'number', integer = true, min = 0, max = 1440 },
-        BulletinTitle = { kind = 'text', pattern = TEXT, max = 60, says = 'text up to 60 characters, no < or >' },
-        BulletinText = { kind = 'text', pattern = TEXT, max = 160, says = 'text up to 160 characters, no < or >' },
+        BulletinTitle = { kind = 'text', pattern = TEXT, max = 60, says = L('record.text_up_to_60_characters_no') },
+        BulletinText = { kind = 'text', pattern = TEXT, max = 160, says = L('record.text_up_to_160_characters_no') },
     },
     PlacerRecord = {
         Enabled = { kind = 'switch' }, ShowForAnonymous = { kind = 'switch' },
@@ -403,7 +404,7 @@ function Record.validate(warn, filled)
     end
     local rules = Feature.block(REPUTATION)
     if rules.BaseFactor > rules.MaxFactor then
-        warn[#warn + 1] = ('Config.Record.Reputation.BaseFactor (%s) is above MaxFactor (%s). Using %s for both.')
+        warn[#warn + 1] = (L('record.config_record_reputation_basefactor_is_above'))
             :format(tostring(rules.BaseFactor), tostring(rules.MaxFactor), tostring(rules.MaxFactor))
         rules.BaseFactor = rules.MaxFactor
     end

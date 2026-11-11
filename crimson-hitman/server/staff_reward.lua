@@ -41,6 +41,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
+local L = CrimsonBoot.requireShared('locale').t
 
 local StaffReward = {}
 
@@ -54,8 +55,8 @@ local CLAIM_WAIT_MS, CLAIM_POLL_MS = 3000, 100
 StaffReward.OPS = {}
 
 --- What players read. Never who changed it or why.
-StaffReward.TITLE_RAISED = 'Reward raised'
-StaffReward.TITLE_LOWERED = 'Reward lowered'
+StaffReward.TITLE_RAISED = L('staff_reward.reward_raised')
+StaffReward.TITLE_LOWERED = L('staff_reward.reward_lowered')
 
 ---@return integer the most one change may move now; 0 = off
 local function most()
@@ -174,18 +175,18 @@ end
 
 --- Tell the placer and every active operative, each in their own words.
 local function tell(contract, raised, placerLine)
-    local target = tostring(contract.target_name or 'your target')
+    local target = tostring(contract.target_name or L('staff_reward.your_target'))
     local title = raised and StaffReward.TITLE_RAISED or StaffReward.TITLE_LOWERED
     local verb = raised and 'raised' or 'lowered'
     deps.notify.tellOrKeep(contract.creator_cid, title,
-        ('Staff %s the reward on your contract on %s.%s'):format(verb, target, placerLine or ''),
+        (L('staff_reward.staff_the_reward_on_your_contract')):format(verb, target, placerLine or ''),
         { bypassBudget = true }, contract.id)
     local cids = {}
     for _, h in ipairs(deps.storage.readHitmen(contract.id) or {}) do
         if h.state == 'active' then
             cids[#cids + 1] = h.hitman_cid
             deps.notify.tellOrKeep(h.hitman_cid, title,
-                ('Staff %s the reward on a contract you hold. Its card shows the new figure.'):format(verb),
+                (L('staff_reward.staff_the_reward_on_a_contract')):format(verb),
                 { bypassBudget = true }, contract.id)
         end
     end
@@ -269,12 +270,12 @@ local function changeUnlocked(staff, contractId, by, opts)
     })
     local placerLine
     if by > 0 and done.from == 'placer' then
-        placerLine = (' $%d was taken from your %s for it.'):format(by, opts.account)
+        placerLine = (L('staff_reward.was_taken_from_your_for_it')):format(by, opts.account)
     elseif (done.toPlacer or 0) > 0 then
         placerLine = (done.queued or 0) > 0
-            and (' $%d of what you put up is waiting for you: it arrives when you next have room.')
+            and (L('staff_reward.of_what_you_put_up_is'))
                 :format(done.toPlacer)
-            or (' $%d of what you put up came back to you.'):format(done.toPlacer)
+            or (L('staff_reward.of_what_you_put_up_came')):format(done.toPlacer)
     end
     tell(deps.storage.readContract(contractId) or contract, by > 0, placerLine)
     return true, nil, done
@@ -336,15 +337,15 @@ end
 --------------------------------------------------------------------------
 
 local MESSAGES = {
-    [CH.ERR.NOT_FOUND] = 'No contract has that id.',
-    [CH.ERR.ALREADY_SETTLED] = 'It has ended, or every payout on it is collected.',
-    [CH.ERR.BAD_STATE] = 'Only a live contract (active or accepted) has a reward to change.',
-    claim_running = 'A payout on it is being settled right now. Try again in a moment.',
-    buyout_queued = 'Its target has paid a buyout that is waiting out its delay; that settles first.',
-    [CH.ERR.BUSY] = 'Something else was changing this contract. Try again in a moment.',
-    placer_away = 'Charging the placer needs them in the city; add it as staff instead, or try later.',
-    [CH.ERR.INSUFFICIENT] = 'The placer cannot cover that from the account chosen.',
-    [CH.ERR.REWARD_TOO_SMALL] = 'Not below the least a reward may be worth (Config.Limits.MinContractReward).',
+    [CH.ERR.NOT_FOUND] = L('staff_reward.no_contract_has_that_id'),
+    [CH.ERR.ALREADY_SETTLED] = L('staff_reward.it_has_ended_or_every_payout'),
+    [CH.ERR.BAD_STATE] = L('staff_reward.only_a_live_contract_active_or'),
+    claim_running = L('staff_reward.a_payout_on_it_is_being'),
+    buyout_queued = L('staff_reward.its_target_has_paid_a_buyout'),
+    [CH.ERR.BUSY] = L('staff_reward.something_else_was_changing_this_contract'),
+    placer_away = L('staff_reward.charging_the_placer_needs_them_in'),
+    [CH.ERR.INSUFFICIENT] = L('staff_reward.the_placer_cannot_cover_that_from'),
+    [CH.ERR.REWARD_TOO_SMALL] = L('staff_reward.not_below_the_least_a_reward'),
 }
 
 local function refused(src, contractId, err, detail)
@@ -353,32 +354,30 @@ local function refused(src, contractId, err, detail)
         -- through an anonymous party they may not see, no more than that.
         local contract = deps.storage.readContract(contractId)
         if contract and Holds.shown(contract, nil, deps.panel.identifies(src)) then
-            return false, err, 'It is on hold by staff, and nothing on it moves: unfreeze first.'
+            return false, err, L('staff_reward.it_is_on_hold_by_staff')
         end
-        return false, 'not_changed', 'Not changed: try again in a moment.'
+        return false, 'not_changed', L('staff_reward.not_changed_try_again_in_a')
     end
     if err == 'too_low' then
-        return false, err, ('That collection can be lowered by $%d at most: only money it still holds '
-            .. 'unclaimed moves, and it keeps some.'):format(detail and detail.most or 0), detail
+        return false, err, (L('staff_reward.that_collection_can_be_lowered_by')):format(detail and detail.most or 0), detail
     end
     if err == 'too_much_value' then
-        return false, err, ('Not past the most a contract may hold (Config.MaxContractValue): $%d more '
-            .. 'at most.'):format(detail and detail.max or 0), detail
+        return false, err, (L('staff_reward.not_past_the_most_a_contract')):format(detail and detail.max or 0), detail
     end
     if err == CH.ERR.REWARD_TOO_SMALL then
-        return false, err, ('Not below $%d, the least a reward may be worth (Config.Limits.MinContractReward).')
+        return false, err, (L('staff_reward.not_below_the_least_a_reward_2'))
             :format(detail and detail.min or 0), detail
     end
-    return false, err, MESSAGES[err] or 'Not changed: try again in a moment.'
+    return false, err, MESSAGES[err] or L('staff_reward.not_changed_try_again_in_a')
 end
 
 --- { id, by } -> what the change would do; a read, scrubbed of nobody (it
 --- names no party).
 local function opPreview(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('staff_reward.give_a_contract_id') end
     local by = data.by ~= nil and wholeChange(data.by) or nil
-    if data.by ~= nil and not by then return false, CH.ERR.INVALID_INPUT, 'Give a whole number of dollars.' end
+    if data.by ~= nil and not by then return false, CH.ERR.INVALID_INPUT, L('staff_reward.give_a_whole_number_of_dollars') end
     local view = StaffReward.preview(id, by)
     if view.refused == CH.ERR.NOT_FOUND then return refused(src, id, view.refused) end
     if view.refused == CH.ERR.CONTRACT_FROZEN then
@@ -394,48 +393,48 @@ end
 --- ('cash' | 'bank'), reason }.
 local function opChange(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('staff_reward.give_a_contract_id') end
     local max = most()
     if max == 0 then
-        return false, 'reward_change_off', 'Changing a reward is off (Config.Staff.RewardChangeMax is 0).'
+        return false, 'reward_change_off', L('staff_reward.changing_a_reward_is_off_config')
     end
     local by = wholeChange(data.by)
     if not by then
-        return false, CH.ERR.INVALID_INPUT, 'Give a whole number of dollars to raise (above 0) or lower (below 0) it by.'
+        return false, CH.ERR.INVALID_INPUT, L('staff_reward.give_a_whole_number_of_dollars_2')
     end
     if math.abs(by) > max then
-        return false, 'too_much', ('At most $%d at once (Config.Staff.RewardChangeMax).'):format(max), { max = max }
+        return false, 'too_much', (L('staff_reward.at_most_at_once_config_staff')):format(max), { max = max }
     end
     local from = data.from == nil and 'staff' or data.from
     if from ~= 'staff' and from ~= 'placer' then
-        return false, CH.ERR.INVALID_INPUT, 'A raise is added by staff or charged to the placer.'
+        return false, CH.ERR.INVALID_INPUT, L('staff_reward.a_raise_is_added_by_staff')
     end
     local account = data.account == nil and 'bank' or data.account
     if account ~= 'cash' and account ~= 'bank' then
-        return false, CH.ERR.INVALID_INPUT, 'Cash or bank.'
+        return false, CH.ERR.INVALID_INPUT, L('staff_reward.cash_or_bank')
     end
     local reason = type(data.reason) == 'string' and Util.sanitizeText(data.reason, 120) or nil
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('staff_reward.give_a_reason_it_goes_on') end
 
     local ok, err, detail = StaffReward.change(deps.panel.staffActor(src), id, by,
         { from = from, account = account, reason = reason })
     if not ok then return refused(src, id, err, detail) end
     local said
     if by > 0 then
-        said = ('Reward raised from $%d to $%d, %s.'):format(detail.before, detail.after,
-            detail.from == 'placer' and ('charged to the placer\'s ' .. account) or 'added by staff')
+        said = (L('staff_reward.reward_raised_from_to')):format(detail.before, detail.after,
+            detail.from == 'placer' and (L('staff_reward.charged_to_the_placers') .. account) or L('staff_reward.added_by_staff'))
     else
-        said = ('Reward lowered from $%d to $%d.'):format(detail.before, detail.after)
+        said = (L('staff_reward.reward_lowered_from_to')):format(detail.before, detail.after)
         if (detail.toPlacer or 0) > 0 then
-            said = said .. (' $%d went back to the placer%s.'):format(detail.toPlacer,
-                (detail.queued or 0) > 0 and ' (waiting for them)' or '')
+            said = said .. (L('staff_reward.went_back_to_the_placer')):format(detail.toPlacer,
+                (detail.queued or 0) > 0 and L('staff_reward.waiting_for_them') or '')
         end
         if (detail.toStaff or 0) > 0 then
-            said = said .. (' $%d staff had added came off.'):format(detail.toStaff)
+            said = said .. (L('staff_reward.staff_had_added_came_off')):format(detail.toStaff)
         end
-        if detail.partial then said = said .. ' A payout took part of it meanwhile; the rest is as it was.' end
+        if detail.partial then said = said .. L('staff_reward.a_payout_took_part_of_it') end
     end
-    return true, nil, said .. ' The placer and the operatives were told it changed, by staff.', detail
+    return true, nil, said .. L('staff_reward.the_placer_and_the_operatives_were'), detail
 end
 
 --- Add the ops to the panel.
@@ -456,8 +455,7 @@ function StaffReward.validate(warn)
     if type(Config.Staff) ~= 'table' then return end
     local value = Config.Staff.RewardChangeMax
     if type(value) ~= 'number' or value ~= value or value < 0 or value ~= math.floor(value) then
-        warn[#warn + 1] = ('Config.Staff.RewardChangeMax is %s, not a whole number of dollars (0 turns '
-            .. 'reward changes off); using 100000.'):format(tostring(value))
+        warn[#warn + 1] = (L('staff_reward.config_staff_rewardchangemax_is_not_a')):format(tostring(value))
         Config.Staff.RewardChangeMax = 100000
     end
 end

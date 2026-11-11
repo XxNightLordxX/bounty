@@ -37,6 +37,7 @@ local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Markers = CrimsonBoot.require('server.lib.markers')
+local L = CrimsonBoot.requireShared('locale').t
 
 local MissionSteps = {}
 
@@ -85,12 +86,12 @@ function MissionSteps.validate(warn)
     local block = Config.StepMarkers
     if block == nil then return end
     if type(block) ~= 'table' then
-        warn[#warn + 1] = 'Config.StepMarkers must be a table'
+        warn[#warn + 1] = L('missionsteps.config_stepmarkers_must_be_a_table')
         return
     end
     for _, key in ipairs({ 'Enabled', 'KillScene', 'Handover', 'Protection' }) do
         if block[key] ~= nil and type(block[key]) ~= 'boolean' then
-            warn[#warn + 1] = ('Config.StepMarkers.%s must be true or false'):format(key)
+            warn[#warn + 1] = (L('missionsteps.config_stepmarkers_must_be_true_or')):format(key)
         end
     end
 end
@@ -377,9 +378,9 @@ end
 --- The admin panel's settings for both (server/settings.lua adds them, in
 --- their own category, 'mission-steps'). The disposal spots are not here:
 --- they are set in the panel's Locations (placeSet), as every place is.
-local GROUP, DISPOSAL = 'Step markers', 'Body disposal'
-local AT_USE = 'Read each time it is used.'
-local NEXT = 'Read at the next verified kill: a disposal already under way finishes as it started.'
+local GROUP, DISPOSAL = L('missionsteps.step_markers'), L('missionsteps.body_disposal')
+local AT_USE = L('missionsteps.read_each_time_it_is_used')
+local NEXT = L('missionsteps.read_at_the_next_verified_kill')
 local function Row(key, kind, label, about, inflight, extra)
     local entry = { key = key, section = kind == 'switch' and 'features' or 'limits', category = 'mission-steps',
         group = key:match('^StepMarkers') and GROUP or DISPOSAL, kind = kind, label = label, about = about,
@@ -388,53 +389,51 @@ local function Row(key, kind, label, about, inflight, extra)
     return entry
 end
 MissionSteps.CATALOGUE = {
-    Row('StepMarkers.Enabled', 'switch', 'Map markers for each step',
-        'Each step of a contract is marked on the map of the one party who acts on it, never the target\'s.',
-        'Markers already drawn come off, or go on, within one maintenance tick.'),
-    Row('StepMarkers.KillScene', 'switch', 'Mark the kill to verify',
-        'The hitman sees where the body lies until the kill is verified or lapses.', AT_USE),
-    Row('StepMarkers.Handover', 'switch', 'Mark the handover circle',
-        'The placer and the hitman see the handover circle while it counts down.', AT_USE),
-    Row('StepMarkers.Protection', 'switch', 'Mark the guard\'s pin',
-        'A bodyguard on a job sees their client\'s meeting pin.', AT_USE),
-    Row('Disposal.Enabled', 'switch', 'Body disposal',
-        'A verified kill pays once the hitman has taken the body to the drop-off in the disposal vehicle. '
-            .. 'Needs both spots set.',
-        'Off: every disposal under way finishes and pays at the next tick. On: from the next verified kill.'),
-    Row('Disposal.VehicleModel', 'text', 'Disposal vehicle model', 'A vehicle model the game knows by name.',
-        'Read when a vehicle is made.', { pattern = '^[%w_]+$', maxLength = 32 }),
-    Row('Disposal.PayNowPercent', 'number', 'Paid at the kill (%)',
-        'This much of a cash or bank payout is handed over at the kill; the rest at the drop-off.', NEXT,
+    Row('StepMarkers.Enabled', 'switch', L('missionsteps.map_markers_for_each_step'),
+        L('missionsteps.each_step_of_a_contract_is'),
+        L('missionsteps.markers_already_drawn_come_off_or')),
+    Row('StepMarkers.KillScene', 'switch', L('missionsteps.mark_the_kill_to_verify'),
+        L('missionsteps.the_hitman_sees_where_the_body'), AT_USE),
+    Row('StepMarkers.Handover', 'switch', L('missionsteps.mark_the_handover_circle'),
+        L('missionsteps.the_placer_and_the_hitman_see'), AT_USE),
+    Row('StepMarkers.Protection', 'switch', L('missionsteps.mark_the_guards_pin'),
+        L('missionsteps.a_bodyguard_on_a_job_sees'), AT_USE),
+    Row('Disposal.Enabled', 'switch', L('missionsteps.body_disposal'),
+        L('missionsteps.a_verified_kill_pays_once_the'),
+        L('missionsteps.off_every_disposal_under_way_finishes')),
+    Row('Disposal.VehicleModel', 'text', L('missionsteps.disposal_vehicle_model'), L('missionsteps.a_vehicle_model_the_game_knows'),
+        L('missionsteps.read_when_a_vehicle_is_made'), { pattern = '^[%w_]+$', maxLength = 32 }),
+    Row('Disposal.PayNowPercent', 'number', L('missionsteps.paid_at_the_kill'),
+        L('missionsteps.this_much_of_a_cash_or'), NEXT,
         { integer = true, min = 0, max = 90 }),
-    Row('Disposal.TimeLimitMinutes', 'number', 'Time to dispose of the body (minutes)',
-        'Counted only while the hitman is in the city and nothing holds the contract. The hitman is told a band.',
+    Row('Disposal.TimeLimitMinutes', 'number', L('missionsteps.time_to_dispose_of_the_body'),
+        L('missionsteps.counted_only_while_the_hitman_is'),
         AT_USE, { integer = true, min = 1, max = 240 }),
-    Row('Disposal.OnTimeout', 'choice', 'When time runs out',
-        '"pay": the hitman is paid anyway. "reduced": they keep the share below. "refund": it goes back to the placer.',
+    Row('Disposal.OnTimeout', 'choice', L('missionsteps.when_time_runs_out'),
+        L('missionsteps.pay_the_hitman_is_paid_anyway'),
         AT_USE, { choices = { 'pay', 'reduced', 'refund' } }),
-    Row('Disposal.ReducedPercent', 'number', 'Kept on a late disposal (%)',
-        'With "reduced", what the hitman keeps of the money; items are paid whole.', AT_USE,
+    Row('Disposal.ReducedPercent', 'number', L('missionsteps.kept_on_a_late_disposal'),
+        L('missionsteps.with_reduced_what_the_hitman_keeps'), AT_USE,
         { integer = true, min = 0, max = 100 }),
-    Row('Disposal.LoadMetres', 'number', 'Load range (m)', 'How near the body the hitman stands to load it.',
+    Row('Disposal.LoadMetres', 'number', L('missionsteps.load_range_m'), L('missionsteps.how_near_the_body_the_hitman'),
         AT_USE, { min = 1, max = 25 }),
-    Row('Disposal.DropMetres', 'number', 'Drop-off range (m)', 'How near the drop-off the hitman stands.',
+    Row('Disposal.DropMetres', 'number', L('missionsteps.drop_off_range_m'), L('missionsteps.how_near_the_drop_off_the'),
         AT_USE, { min = 1, max = 50 }),
-    Row('Disposal.VehicleMetres', 'number', 'Vehicle range (m)',
-        'How near the body, and the drop-off, the disposal vehicle must be.', AT_USE, { min = 2, max = 50 }),
-    Row('Disposal.AbandonMetres', 'number', 'Abandoned beyond (m)',
-        'A vehicle the hitman leaves this far behind, for the minutes below, is taken back to the spawn spot.',
+    Row('Disposal.VehicleMetres', 'number', L('missionsteps.vehicle_range_m'),
+        L('missionsteps.how_near_the_body_and_the'), AT_USE, { min = 2, max = 50 }),
+    Row('Disposal.AbandonMetres', 'number', L('missionsteps.abandoned_beyond_m'),
+        L('missionsteps.a_vehicle_the_hitman_leaves_this'),
         AT_USE, { min = 50, max = 5000 }),
-    Row('Disposal.AbandonMinutes', 'number', 'Abandoned after (minutes)', 'See the row above.', AT_USE,
+    Row('Disposal.AbandonMinutes', 'number', L('missionsteps.abandoned_after_minutes'), L('missionsteps.see_the_row_above'), AT_USE,
         { integer = true, min = 1, max = 60 }),
-    Row('Disposal.MaxRespawns', 'number', 'Times the vehicle is made again',
-        'When it is lost, destroyed or abandoned. Staff can always make it again.', AT_USE,
+    Row('Disposal.MaxRespawns', 'number', L('missionsteps.times_the_vehicle_is_made_again'),
+        L('missionsteps.when_it_is_lost_destroyed_or'), AT_USE,
         { integer = true, min = 0, max = 10 }),
-    Row('Disposal.MaxHoldMinutes', 'number', 'Longest a disposal may stand (real minutes)',
-        'From the kill, the hitman in the city or not. Past it the step times out as "When time runs out" says, '
-            .. 'and its target may be listed again. Never shorter than the time to dispose of the body.', AT_USE,
+    Row('Disposal.MaxHoldMinutes', 'number', L('missionsteps.longest_a_disposal_may_stand_real'),
+        L('missionsteps.from_the_kill_the_hitman_in'), AT_USE,
         { integer = true, min = 10, max = 2880 }),
-    Row('Disposal.DespawnSeconds', 'number', 'Taken away after the drop-off (s)',
-        'Time to get out before the vehicle goes.', AT_USE, { integer = true, min = 0, max = 300 }),
+    Row('Disposal.DespawnSeconds', 'number', L('missionsteps.taken_away_after_the_drop_off'),
+        L('missionsteps.time_to_get_out_before_the'), AT_USE, { integer = true, min = 0, max = 300 }),
 }
 
 return MissionSteps

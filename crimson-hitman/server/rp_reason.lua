@@ -13,6 +13,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Roleplay.ReasonQuality'
@@ -105,8 +106,7 @@ function Reason.validate(warn)
     local block = Config.Roleplay.ReasonQuality
     local most = Config.Reason and tonumber(Config.Reason.MaxLength)
     if most and block.MinLength > most then
-        warn[#warn + 1] = ('Roleplay.ReasonQuality.MinLength is %d, above Reason.MaxLength (%d): no '
-            .. 'reason could be given. Using %d.'):format(block.MinLength, most, most)
+        warn[#warn + 1] = (L('rp_reason.roleplay_reasonquality_minlength_is_above_reason')):format(block.MinLength, most, most)
         block.MinLength = math.floor(most)
     end
 end

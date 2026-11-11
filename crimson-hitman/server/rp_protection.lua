@@ -54,6 +54,7 @@ local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Roleplay.Protection'
@@ -274,8 +275,8 @@ local function payShare(job, who)
         -- settle said what the job paid, and a guard who was away is paid
         -- later, on the tick.
         if who == 'guard' then
-            pcall(Notify.tellOrKeep, cid, 'Protection job paid',
-                ('$%d from the protection job is in your %s.'):format(amount,
+            pcall(Notify.tellOrKeep, cid, L('rp_protection.protection_job_paid'),
+                (L('rp_protection.from_the_protection_job_is_in')):format(amount,
                     job.account == 'cash' and 'cash' or 'bank'), { bypassBudget = true })
         end
         return true
@@ -359,21 +360,21 @@ local function settle(job, outcome, why)
         { job = job.id, outcome = outcome, why = why, guard_due = guardDue, target_due = amount - guardDue })
 
     if job.guard_cid then
-        local words = guardDue > 0 and ('The job is over. It pays you $%d.'):format(guardDue)
-            or 'The job is over. It paid you nothing.'
+        local words = guardDue > 0 and (L('rp_protection.the_job_is_over_it_pays')):format(guardDue)
+            or L('rp_protection.the_job_is_over_it_paid')
         if outcome == 'completed' and guardDue > 0 then
-            words = ('The job is over: the contract on them was carried out. It pays you $%d of it.')
+            words = (L('rp_protection.the_job_is_over_the_contract'))
                 :format(guardDue)
         elseif outcome == 'completed' then
-            words = 'The job is over: the contract on them was carried out. It paid you nothing.'
+            words = L('rp_protection.the_job_is_over_the_contract_2')
         elseif outcome == 'survived' and guardDue > 0 then
-            words = ('The job is over: they made it. It pays you $%d.'):format(guardDue)
+            words = (L('rp_protection.the_job_is_over_they_made')):format(guardDue)
         end
-        pcall(Notify.tellOrKeep, job.guard_cid, 'Protection job', words, { bypassBudget = true })
+        pcall(Notify.tellOrKeep, job.guard_cid, L('rp_protection.protection_job'), words, { bypassBudget = true })
     end
     if job.target_due > 0 then
-        pcall(Notify.tellOrKeep, job.target_cid, 'Protection',
-            ('Your protection job is over. $%d of it comes back to you.'):format(job.target_due),
+        pcall(Notify.tellOrKeep, job.target_cid, L('rp_protection.protection'),
+            (L('rp_protection.your_protection_job_is_over_of')):format(job.target_due),
             { bypassBudget = true })
     end
     payOut(job)
@@ -642,7 +643,7 @@ function Protection.movePin(actor, payload)
     job.pin = pin
     save(job)
     if job.guard_cid then
-        pcall(Notify.toCitizen, job.guard_cid, 'Protection job', 'Your client moved the meeting pin.')
+        pcall(Notify.toCitizen, job.guard_cid, L('rp_protection.protection_job'), L('rp_protection.your_client_moved_the_meeting_pin'))
         pcall(Notify.push, job.guard_cid, 'protection')
     end
     return { moved = true }
@@ -701,7 +702,7 @@ local function counterTargets(contract, viewerCid, hitmen)
             local h = hitmen[i]
             if h.state == 'active' and h.anon ~= true and type(h.hitman_name) == 'string'
                 and h.hitman_cid ~= viewerCid then
-                add(h.hitman_cid, h.alias or 'An operative', h.hitman_name)
+                add(h.hitman_cid, h.alias or L('rp_protection.an_operative'), h.hitman_name)
             end
         end
     end
@@ -773,14 +774,11 @@ local function acceptUnlocked(actor, payload)
     job.guard_anon, job.taken_at = anonymous or nil, os.time()
     save(job)
     Audit.action('protection_accepted', actor.cid, job.contract_id, { job = job.id, anon = anonymous or nil })
-    pcall(Notify.tellOrKeep, job.target_cid, 'Protection', 'Somebody took your protection job. '
-        .. 'They have your name and your meeting pin.', { bypassBudget = true })
+    pcall(Notify.tellOrKeep, job.target_cid, L('rp_protection.protection'), L('rp_protection.somebody_took_your_protection_job_they'), { bypassBudget = true })
     pcall(Notify.push, job.target_cid, 'protection')
     -- And the guard, on their phone: hired, by whom, for how much and how it
     -- pays. The board said so for as long as it was open, and nothing after.
-    pcall(Notify.tellOrKeep, actor.cid, 'Protection job', ('You are hired to guard %s for $%d. '
-        .. 'You are paid if the contract on them ends without being carried out. Set GPS on the '
-        .. 'Protection tab takes you to their pin.'):format(tostring(job.target_name or 'them'),
+    pcall(Notify.tellOrKeep, actor.cid, L('rp_protection.protection_job'), (L('rp_protection.you_are_hired_to_guard_for')):format(tostring(job.target_name or 'them'),
         math.floor(tonumber(job.amount) or 0)), { bypassBudget = true })
     return Protection.board(actor)
 end
@@ -913,7 +911,7 @@ function Protection.validate(warn, filled)
     local rules = Feature.check(BLOCK, Protection.RULES, warn, filled)
     Feature.check('Roleplay.HitOnHitman', Protection.HIT_RULES, warn, filled)
     if rules.MinReward > rules.MaxReward then
-        warn[#warn + 1] = ('Config.Roleplay.Protection.MinReward (%d) is above MaxReward (%d). Using %d for both.')
+        warn[#warn + 1] = (L('rp_protection.config_roleplay_protection_minreward_is_above'))
             :format(rules.MinReward, rules.MaxReward, rules.MaxReward)
         rules.MinReward = rules.MaxReward
     end

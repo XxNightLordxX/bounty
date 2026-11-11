@@ -7,6 +7,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Amendments = {}
 
@@ -294,8 +295,8 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec, opts)
     local people = participants(contract)
     for cid, role in pairs(people) do
         if role == 'hitman' then
-            Notify.toCitizen(cid, 'Contract improved',
-                'The person who placed a contract you hold has increased its reward.')
+            Notify.toCitizen(cid, L('amendments.contract_improved'),
+                L('amendments.the_person_who_placed_a_contract'))
         end
     end
     pushOthers(contract, actor.cid, 'improved')
@@ -546,8 +547,8 @@ improveUnlocked = function(actor, contractId, kind, payload)
     local people = participants(contract)
     for cid, role in pairs(people) do
         if role == 'hitman' then
-            Notify.toCitizen(cid, 'Contract improved',
-                'The person who placed a contract you hold has improved its terms.')
+            Notify.toCitizen(cid, L('amendments.contract_improved'),
+                L('amendments.the_person_who_placed_a_contract_2'))
         end
     end
     pushOthers(contract, actor.cid, 'improved')
@@ -730,8 +731,8 @@ proposeUnlocked = function(actor, contractId, kind, payload)
 
     for cid in pairs(people) do
         if cid ~= actor.cid then
-            Notify.toCitizen(cid, 'Contract change proposed',
-                'The other party has proposed a change to a contract you hold.')
+            Notify.toCitizen(cid, L('amendments.contract_change_proposed'),
+                L('amendments.the_other_party_has_proposed_a'))
             Notify.push(cid, 'proposal', contractId)
         end
     end
@@ -798,11 +799,11 @@ function Amendments.openFor(actor, contractId)
         if proposal.proposer == contract.creator_cid then
             -- By what they are to the reader, not "The client", which named
             -- nobody a hitman had been introduced to.
-            proposerName = contract.anon_creator and 'The person who placed it'
+            proposerName = contract.anon_creator and L('amendments.the_person_who_placed_it')
                 or contract.creator_name
         else
             local hitman = Storage.readHitman(contractId, proposal.proposer)
-            proposerName = hitman and hitman.alias or 'An operative'
+            proposerName = hitman and hitman.alias or L('amendments.an_operative')
             -- One who took it under their name is named to the person who
             -- placed it, as their roster names them (Projection); to anybody
             -- else, and always for one who took it anonymously, the alias.
@@ -1013,16 +1014,15 @@ respondUnlocked = function(actor, amendmentId, approve, keyHeld)
                 { kind = proposal.kind, withdrawn = true })
             for cid in pairs(people) do
                 if cid ~= actor.cid then
-                    Notify.toCitizen(cid, 'Change withdrawn',
-                        'The change proposed to a contract you are on was taken back. '
-                        .. 'The original terms stand.')
+                    Notify.toCitizen(cid, L('amendments.change_withdrawn'),
+                        L('amendments.the_change_proposed_to_a_contract'))
                 end
             end
         else
             Audit.action('amendment_declined', actor.cid, proposal.contract_id,
                 { kind = proposal.kind })
-            Notify.toCitizen(proposal.proposer, 'Change declined',
-                'Your proposed contract change was declined. The original terms stand.')
+            Notify.toCitizen(proposal.proposer, L('amendments.change_declined'),
+                L('amendments.your_proposed_contract_change_was_declined'))
         end
         pushOthers(contract, actor.cid, 'proposal')
         return true, nil, 'declined'
@@ -1075,8 +1075,8 @@ respondUnlocked = function(actor, amendmentId, approve, keyHeld)
         local now = Storage.readContract(proposal.contract_id) or contract
         for cid in pairs(participants(now)) do
             if not proposal.approvals[cid] then
-                Notify.toCitizen(cid, 'Contract change proposed',
-                    'The other party has proposed a change to a contract you hold.')
+                Notify.toCitizen(cid, L('amendments.contract_change_proposed'),
+                    L('amendments.the_other_party_has_proposed_a'))
                 Notify.push(cid, 'proposal', proposal.contract_id)
             end
         end
@@ -1094,9 +1094,8 @@ respondUnlocked = function(actor, amendmentId, approve, keyHeld)
     if not ok then
         for cid in pairs(proposal.approvals) do
             if cid ~= actor.cid then
-                Notify.tellOrKeep(cid, 'Change not made',
-                    'A contract change everyone agreed to no longer applies: the contract '
-                    .. 'had moved on before it went in. The terms are unchanged.',
+                Notify.tellOrKeep(cid, L('amendments.change_not_made'),
+                    L('amendments.a_contract_change_everyone_agreed_to'),
                     nil, proposal.contract_id)
             end
         end
@@ -1286,7 +1285,7 @@ applyUnlocked = function(proposal, keyHeld)
 
     local people = participants(contract)
     for cid in pairs(people) do
-        Notify.toCitizen(cid, 'Contract amended', 'A contract you hold has been changed by agreement.')
+        Notify.toCitizen(cid, L('amendments.contract_amended'), L('amendments.a_contract_you_hold_has_been'))
         Notify.push(cid, 'amended', proposal.contract_id)
     end
 
@@ -1369,14 +1368,13 @@ function Amendments.recoverApplying()
         Storage.writeAmendment(proposal)
         closed = closed + 1
         local contract = Storage.readContract(proposal.contract_id)
-        local body = ('The server stopped while a change everyone agreed to on the contract '
-            .. 'on %s was going in. The change may or may not have gone in; look at the '
-            .. 'contract.'):format(contract and contract.target_name or 'your target')
+        local body = (L('amendments.the_server_stopped_while_a_change')
+            .. 'contract.'):format(contract and contract.target_name or L('amendments.your_target'))
         local told = {}
         local function tell(cid)
             if not cid or told[cid] then return end
             told[cid] = true
-            Notify.tellOrKeep(cid, 'Change interrupted', body, { bypassBudget = true },
+            Notify.tellOrKeep(cid, L('amendments.change_interrupted'), body, { bypassBudget = true },
                 proposal.contract_id)
         end
         if contract then

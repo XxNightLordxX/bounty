@@ -38,6 +38,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Phone() return Integrations.get('phone') end
@@ -285,17 +286,17 @@ function Photos.selfTest()
     local resource = GetCurrentResourceName()
     local okWrite, wrote = pcall(SaveResourceFile, resource, SELF_TEST_FILE, data, #data)
     if not okWrite or wrote == false then
-        return false, ('could not write %s'):format(SELF_TEST_FILE)
+        return false, (L('photos.could_not_write')):format(SELF_TEST_FILE)
     end
     local okRead, back = pcall(LoadResourceFile, resource, SELF_TEST_FILE)
     removeFile(SELF_TEST_FILE)
     if not okRead or type(back) ~= 'string' then
-        return false, ('wrote %s but could not read it back'):format(SELF_TEST_FILE)
+        return false, (L('photos.wrote_but_could_not_read_it')):format(SELF_TEST_FILE)
     end
     if back ~= data then
-        return false, ('read back %d of %d bytes, not the same'):format(#back, #data)
+        return false, (L('photos.read_back_of_bytes_not_the')):format(#back, #data)
     end
-    return true, ('wrote and read back %d bytes'):format(#data)
+    return true, (L('photos.wrote_and_read_back_bytes')):format(#data)
 end
 
 --- What a record points at, read before the store lets go of it: closing a
@@ -535,23 +536,22 @@ local function baseFromWeb()
     local ok, value = pcall(GetConvar, 'web_baseUrl', '')
     local host = ok and type(value) == 'string' and value or ''
     host = host:gsub('^%s+', ''):gsub('%s+$', ''):gsub('^%a[%w+.-]*://', ''):gsub('/+$', '')
-    if host == '' then return nil, 'web_baseUrl is not set' end
+    if host == '' then return nil, L('photos.web_baseurl_is_not_set') end
     local name = host:match('^([%w%.%-]+)') or ''
     if name ~= host:match('^([^:]+)') or not name:find('%.') or name:find('%.%.')
         or not host:match('^[%w%.%-]+:?%d*$') then
-        return nil, ('web_baseUrl "%s" is not a host name'):format(host)
+        return nil, (L('photos.web_baseurl_is_not_a_host')):format(host)
     end
     -- Cfx.re switched its own *.users.cfx.re proxy off on 30 June 2026. A
     -- server that still carries such an address would hand phones links
     -- that lead nowhere, and the photo would be lost from their Photos.
     if name:lower():find('users%.cfx%.re$') then
-        return nil, ('web_baseUrl "%s" is a users.cfx.re address, which Cfx.re shut down '
+        return nil, (L('photos.web_baseurl_is_a_users_cfx')
             .. 'on 30 June 2026'):format(host)
     end
     -- A bare address has no certificate a phone accepts for https.
     if name:match('^%d+%.%d+%.%d+%.%d+$') then
-        return nil, ('web_baseUrl "%s" is an IP address, which a phone cannot load a photo '
-            .. 'from over https'):format(host)
+        return nil, (L('photos.web_baseurl_is_an_ip_address')):format(host)
     end
     return 'https://' .. host .. '/' .. GetCurrentResourceName()
 end
@@ -568,7 +568,7 @@ function Photos.publicBase()
     if explicit ~= nil and explicit ~= '' then
         local base = Photos.checkBase(explicit)
         if base then return base, 'Config.Completion.PhotoPublicUrl' end
-        return nil, 'Config.Completion.PhotoPublicUrl is not an https:// address'
+        return nil, L('photos.config_completion_photopublicurl_is_not_an')
     end
     local base, why = baseFromWeb()
     if base then return base, 'web_baseUrl' end
@@ -668,7 +668,7 @@ function Photos.serveHttp(req, res)
             ['Content-Type'] = 'text/plain; charset=utf-8',
             [Photos.MARKER] = '1',
         })
-        res.send('Not found.')
+        res.send(L('photos.not_found'))
     end
 
     -- With kill photos off (Config.Completion.KillPhotos) nothing is
@@ -738,7 +738,7 @@ function Photos.checkReach(base, done)
         done(status == 404 and marked, status, marked, err ~= nil and tostring(err) or nil)
     end, 'GET', '', {})
     if not asked and not answered then
-        done(false, 0, false, 'this server could not make the request')
+        done(false, 0, false, L('photos.this_server_could_not_make_the'))
     end
 end
 

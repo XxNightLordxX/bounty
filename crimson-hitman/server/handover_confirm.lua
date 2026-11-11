@@ -23,6 +23,7 @@
 --- guard, the 'accept' bucket). Only the contract's placer is answered anything but
 --- not found; nothing names the hitman to them or them to the hitman.
 
+local L = CrimsonBoot.requireShared('locale').t
 local HandoverConfirm = {}
 
 --- Start-up check of the three settings (main.lua): each wrong one is the
@@ -32,26 +33,26 @@ function HandoverConfirm.validate(warn)
     local k = Config.Kidnap
     if type(k) ~= 'table' then return end
     if k.PlacerConfirms ~= nil and type(k.PlacerConfirms) ~= 'boolean' then
-        warn[#warn + 1] = ('Config.Kidnap.PlacerConfirms is %s; it has to be true or false. Using false.')
+        warn[#warn + 1] = (L('handover_confirm.config_kidnap_placerconfirms_is_it_has'))
             :format(tostring(k.PlacerConfirms))
         k.PlacerConfirms = false
     end
     local seconds = k.ConfirmSeconds
     if type(seconds) ~= 'number' or seconds ~= seconds or seconds < 10 or seconds > 600
         or seconds ~= math.floor(seconds) then
-        warn[#warn + 1] = ('Config.Kidnap.ConfirmSeconds is %s; it has to be a whole number of seconds '
+        warn[#warn + 1] = (L('handover_confirm.config_kidnap_confirmseconds_is_it_has')
             .. 'from 10 to 600. Using 60.'):format(tostring(seconds))
         k.ConfirmSeconds = 60
     end
     if k.ConfirmMissed ~= 'rearm' and k.ConfirmMissed ~= 'pay' then
-        warn[#warn + 1] = ('Config.Kidnap.ConfirmMissed is %s; it has to be \'rearm\' or \'pay\'. Using '
+        warn[#warn + 1] = (L('handover_confirm.config_kidnap_confirmmissed_is_it_has')
             .. '\'rearm\'.'):format(tostring(k.ConfirmMissed))
         k.ConfirmMissed = 'rearm'
     end
     local most = k.MaxDeclines
     if most ~= nil and (type(most) ~= 'number' or most ~= most or most < 0 or most > 20
         or most ~= math.floor(most)) then
-        warn[#warn + 1] = ('Config.Kidnap.MaxDeclines is %s; it has to be a whole number from 0 to 20. '
+        warn[#warn + 1] = (L('handover_confirm.config_kidnap_maxdeclines_is_it_has')
             .. 'Using 2.'):format(tostring(most))
         k.MaxDeclines = 2
     end

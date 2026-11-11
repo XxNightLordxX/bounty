@@ -35,6 +35,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Review = {}
 
@@ -50,64 +51,24 @@ Review.STATE = { OPEN = 'open', RESOLVING = 'resolving', RESOLVED = 'resolved' }
 --- the same at once. An item opened before this version has no such record
 --- and keeps the advice after "older one".
 Review.KINDS = {
-    bailout_unrecorded = 'a buyout was charged, and the store would neither record it nor say '
-        .. 'whether it had. The server records it, or refunds it once the contract has ended '
-        .. 'without it, by itself once the database answers; Refund does the same now, and waits '
-        .. 'while the contract is still open. An older one without that record: if the contract '
-        .. 'shows the buyout (queued or bought out), dismiss; if not, refund the payer',
-    bailout_refund_stranded = 'a buyout premium handed back reached nobody: refund the payer '
-        .. 'what did not arrive',
-    bailout_settle_raised = 'a queued buyout kept raising as it was settled, and the server '
-        .. 'stopped trying: if the contract is bought out and the placer has not had the premium, '
-        .. 'pay the creator; if it ended another way, refund the payer',
-    owe_id_exhausted = 'money owed to a player could not be put on the books (the store had no '
-        .. 'line id left): pay them',
-    anonymity_fee_refund_failed = 'an anonymity fee owed back could not be credited: refund '
-        .. 'what did not arrive',
-    location_tip_refund_failed = 'an informant tip that could not be delivered was owed back, '
-        .. 'and could not be credited: refund what did not arrive',
-    intel_unrecorded = 'an intel purchase was charged and the server stopped before it finished. '
-        .. 'The server settles it by itself at the next start: kept where the purchase is on record, '
-        .. 'its price owed back to the buyer where not. Left here, it could not tell: check whether '
-        .. 'the buyer has what they paid for, and refund them if not',
-    org_funds_interrupted = 'money moved in or out of the organisation\'s Renewed-Banking account and '
-        .. 'the server stopped before the ledger recorded it. The server settles it by itself at the '
-        .. 'next start (a debit put back, a credit\'s row written, a member\'s deposit made). Left '
-        .. 'here, it could not: check the account against the ledger, as the note says',
-    org_payroll_unconfirmed ='an organisation salary left the funds and the server stopped before '
-        .. 'it said whether the member\'s bank took it: check the member\'s bank (the transaction '
-        .. '"crimson-hitman organisation salary"); pay them if it never arrived, else dismiss',
-    escrow_take_unverified = 'escrow was taken and the store would not say whether it was '
-        .. 'written. The server hands every line it took back to whom it came from by itself '
-        .. 'once the database answers; Refund does the same now. An older one without that '
-        .. 'record: lines the store has now are held or handed back already, so only what it '
-        .. 'does not have is given',
-    escrow_take_raised = 'taking a line of escrow raised, so whether it left the player is not '
-        .. 'known: check what they have, and refund it if it left them',
-    escrow_rollback_failed = 'escrow taken for a contract that was not placed could not be given '
-        .. 'back: refund what did not arrive',
-    contract_unrecorded = 'a contract\'s escrow was taken, and the store would neither write the '
-        .. 'contract nor say whether it had. The server places it, with its escrow, by itself once '
-        .. 'the database answers, and tells the placer; Refund does the same now. No anonymity '
-        .. 'fee was taken for it. An older one without that record: its escrow is handed back by '
-        .. 'the server, so refund only the anonymity fee it names, where the contract does not exist',
-    escrow_settle_lost = 'a payout reached its recipient, and something else settled its line as '
-        .. 'well: check nobody was paid it twice, then dismiss',
-    player_report = 'a player reported this contract, or a message thread on it, from the app: '
-        .. 'read their note and the messages, deal with it in the city, '
-        .. 'then dismiss with what was done. No money is in it',
-    low_effort_reason = 'a contract was placed or edited with a low-effort reason (Roleplay: '
-        .. 'Reason quality, server/rp_reason.lua): read the reason on the contract, deal with it '
-        .. 'in the city, then dismiss with what was done. No money is in it',
-    protection_charge_unknown = 'a bodyguard job\'s reward was being taken from the target when the '
-        .. 'server stopped, and whether it was is not known (server/rp_protection.lua): check the '
-        .. 'target\'s account; if it was taken, refund the target, if not, dismiss with a note. The '
-        .. 'job is off the board either way, and nothing else pays it',
-    protection_payout_unconfirmed = 'a bodyguard job\'s share (the guard\'s pay, or what goes back '
-        .. 'to the target) was being paid when the server stopped, or its payment raised, so '
-        .. 'whether it arrived is not known: check their account; Pay gives what the item records '
-        .. 'less what is known to have arrived, Refund with an amount gives part of it, and dismiss '
-        .. 'with a note if it arrived. Nothing else pays it',
+    bailout_unrecorded = L('review.a_buyout_was_charged_and_the'),
+    bailout_refund_stranded = L('review.a_buyout_premium_handed_back_reached'),
+    bailout_settle_raised = L('review.a_queued_buyout_kept_raising_as'),
+    owe_id_exhausted = L('review.money_owed_to_a_player_could'),
+    anonymity_fee_refund_failed = L('review.an_anonymity_fee_owed_back_could'),
+    location_tip_refund_failed = L('review.an_informant_tip_that_could_not'),
+    intel_unrecorded = L('review.an_intel_purchase_was_charged_and'),
+    org_funds_interrupted = L('review.money_moved_in_or_out_of'),
+    org_payroll_unconfirmed =L('review.an_organisation_salary_left_the_funds'),
+    escrow_take_unverified = L('review.escrow_was_taken_and_the_store'),
+    escrow_take_raised = L('review.taking_a_line_of_escrow_raised'),
+    escrow_rollback_failed = L('review.escrow_taken_for_a_contract_that'),
+    contract_unrecorded = L('review.a_contracts_escrow_was_taken_and'),
+    escrow_settle_lost = L('review.a_payout_reached_its_recipient_and'),
+    player_report = L('review.a_player_reported_this_contract_or'),
+    low_effort_reason = L('review.a_contract_was_placed_or_edited'),
+    protection_charge_unknown = L('review.a_bodyguard_jobs_reward_was_being'),
+    protection_payout_unconfirmed = L('review.a_bodyguard_jobs_share_the_guards'),
 }
 
 --- What settles an item that carries its whole record (`known.decide`), by

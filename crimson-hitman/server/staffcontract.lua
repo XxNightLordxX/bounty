@@ -26,6 +26,7 @@
 local Log = CrimsonBoot.requireShared('log')
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
+local L = CrimsonBoot.requireShared('locale').t
 
 local StaffContract = {}
 
@@ -39,8 +40,8 @@ local removals = {}
 
 --- What a player says to the operative staff took off a contract, and the
 --- title it goes under. Never who did it or why.
-StaffContract.REMOVED_TITLE = 'Taken off a contract'
-StaffContract.REMOVED_TEXT = 'Staff removed you from a contract.'
+StaffContract.REMOVED_TITLE = L('staffcontract.taken_off_a_contract')
+StaffContract.REMOVED_TEXT = L('staffcontract.staff_removed_you_from_a_contract')
 
 --- The texts on a contract staff may replace, and the checks each goes
 --- through. A contract keeps one piece of player text: its reason.

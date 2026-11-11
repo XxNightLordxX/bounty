@@ -4,45 +4,119 @@
 --- in the language Config.Locale names, English where that language lacks
 --- one.
 ---
---- Moved so far (README, Translations, lists the rest): the notices players
---- get (server/notify.lua), staff alerts and their Discord posts
---- (server/alerts.lua, server/discord.lua), staff notices
---- (server/announce.lua), the police advisories (notify.lua's dispatch
---- entries), every answer of the admin panel's requests (server/panel.lua),
---- everything the game itself shows (client/), the phone app's
---- refusals (ERRORS) and the panel's (WORDS). The scan below is what keeps a
---- sentence from being written into one of those files again.
+--- Moved: every server file (notices, alerts, staff answers, the panel's
+--- requests, the diagnosis and the staff commands, the buyout command, the
+--- feature modules, the organisation, the setting labels and help), and
+--- everything the game itself shows (client/). The scan below is what keeps
+--- a sentence from being written into one of those files again.
 
 local TextScan = require('tests.harness.textscan')
 local Locale = require('crimson-hitman.shared.locale')
 local Log = require('crimson-hitman.shared.log')
 
+--- Files whose every sentence is a console line or an error the start
+--- raises for the owner reading the console (which stays English): the
+--- stores' start refusals and outage lines, the start's waits, the version
+--- check. Never scanned.
+local CONSOLE_FILES = {
+    ['server/storage/mysql.lua'] = true, ['server/storage/json.lua'] = true,
+    ['server/storage/memory.lua'] = true, ['server/boot.lua'] = true, ['server/versioncheck.lua'] = true,
+}
+
 --- The files whose words are all in the language files: none may hold a
---- sentence of its own.
+--- sentence of its own. Every server file but CONSOLE_FILES, and the game's.
 local SCANNED = {
-    'server/notify.lua', 'server/alerts.lua', 'server/discord.lua', 'server/announce.lua',
-    'server/police.lua',
-    'server/panel.lua',
     'client/main.lua', 'client/missionsteps.lua', 'client/admin.lua', 'client/org.lua',
     'client/rp_npc.lua', 'client/npc.lua', 'client/mugshot.lua',
 }
+do
+    local files = io.popen('ls crimson-hitman/server/*.lua crimson-hitman/server/*/*.lua')
+    for path in files:lines() do
+        local rel = path:gsub('^crimson%-hitman/', '')
+        if not CONSOLE_FILES[rel] then SCANNED[#SCANNED + 1] = rel end
+    end
+    files:close()
+end
 
---- What the scan reads as words in those files and is not, by file: each
---- with why.
+--- What the scan reads as words in every file and is not: names the code
+--- passes and never shows. Config sections and keys (read(Config, ...),
+--- Feature.on('Mugshot'), the organisation's extras by name), key prefixes
+--- ('Intel.', 'Organisation.Limits.'), ox_inventory's Search export.
+local NAMES = {}
+for name in ([[Account Alerts Amendments Anonymity Audit Bailout Bonus Completion Cost Depth Enabled Holds
+    Immunity Informant Intel Kidnap Ledger Limits Mugshot Penalty Radius Reason Relay Sources Staff Duty
+    Organisation Recruitment Roles Armory Channel Codenames Discipline Dossiers Garage Payroll Probation
+    Stats Handler Reputation Territory Heat Progression Tiers Handover Protection Disposal Debug Ace
+    Search Locale]]):gmatch('%S+') do NAMES[name] = true end
+for _, prefix in ipairs({ 'Admin.Commands.', 'Record.', 'Roleplay.', 'Intel.', 'Improvements.',
+    'Integrations.', 'Organisation.Limits.', 'Cooldowns.', 'command.', 'contract.', 'count.', 'handover.' }) do
+    NAMES[prefix] = true
+end
+
+--- And by file: each with why.
 local ALLOW = {
     -- The reason a city news post was not made, said only in the console
     -- line two lines below it.
     ['server/police.lua'] = { ['no phone adapter answers (Config.Integrations.Phone)'] = true },
-    -- Patterns matched against the diagnosis's own lines (server/admin.lua,
-    -- not moved yet), which must read as admin.lua writes them; the preset
-    -- name kept in an audit row, which is data; and a console line.
-    ['server/panel.lua'] = { ['^Not authorised: '] = true, ['name somebody who is in the city'] = true,
-        ['run from the console'] = true, ['the server-wide checks below'] = true,
-        ['name a player to test'] = true, ['Current'] = true,
-        ["the admin panel\\'s %s raised: %s"] = true },
+    -- The preset name kept in an audit row, which is data; and a console line.
+    ['server/panel.lua'] = { ['Current'] = true, ["the admin panel\\'s %s raised: %s"] = true },
+    -- The shipped presets' names, which are what they are applied, saved
+    -- and audited by.
+    ['server/presets.lua'] = { ['Current'] = true, ['Strict'] = true, ['Relaxed'] = true },
+    -- A date format (os.date).
+    ['server/admin.lua'] = { ['!%Y-%m-%d %H:%M UTC'] = true },
+    -- The name the page's own fault report goes by, compared.
+    ['server/app.lua'] = { ['page diagnostics'] = true },
+    -- The body of a photo address that serves nothing: no person reads it.
+    ['server/bridges.lua'] = { ['Not found.'] = true },
+    -- The alias messages were signed with before, still on stored rows.
+    ['server/comms.lua'] = { ['Client'] = true },
+    -- The database's own errors, matched to know a deadlock from a timeout.
+    ['server/contracts.lua'] = { ['Deadlock found'] = true, ['Lock wait timeout'] = true,
+        ['was unable to execute a query'] = true },
+    -- FiveM's error for an export that is not there, matched.
+    ['server/identity.lua'] = { ['No such export'] = true },
+    -- The answer stored before a look-up that found nobody was marked so.
+    ['server/intel/informants.lua'] = { ['Unknown operative'] = true },
+    -- The grade the job is registered with in qbx_core: qbx_core's data.
+    ['server/org/jobs.lua'] = { ['Member'] = true },
     -- lb-phone's camera mode name (SetCameraComponent), not a word shown.
     ['client/main.lua'] = { ['Photo'] = true },
+    -- Console lines from the start, through local helpers (reindexed, add).
+    ['server/main.lua'] = {},
 }
+for _, line in ipairs({ 'a change proposed before this start does not lapse on its own',
+    'a contract on an officer taken while acceptance bulletins are off may be listed ',
+    'a contract placed just before it is shown to its target at once, unannounced',
+    'a hold taken before this start is not released for being idle', 'as open once they are back on',
+    'custom restraint detection for handovers', 'placing masked calls between parties',
+    'playtime for the new-player immunity rule', 'the list of contracts with open proposed changes',
+    'the list of held contracts', 'the waits before targets are told of new contracts',
+    'what the whitelisted-job view says of taken contracts' }) do
+    ALLOW['server/main.lua'][line] = true
+end
+
+--- The settings' group names (server/settings.lua, its catalogue and the
+--- organisation's): the English name is the group's id, read by
+--- AREA_OF_GROUP, MONEY and the panel's own checks; what staff read is
+--- its label, settings_group.* (Settings.groupLabel).
+local function groupIds()
+    local ids = {}
+    for key, text in pairs(require('crimson-hitman.locales.en')) do
+        if key:find('^settings_group%.') then ids[text] = true end
+    end
+    return ids
+end
+
+local function allowed(path)
+    local out = {}
+    for text in pairs(NAMES) do out[text] = true end
+    for text in pairs(ALLOW[path] or {}) do out[text] = true end
+    if path == 'server/settings.lua' or path:find('settings_catalogue') then
+        for text in pairs(groupIds()) do out[text] = true end
+    end
+    return out
+end
 
 local function src(path) return read_file('crimson-hitman/' .. path) end
 
@@ -72,7 +146,7 @@ describe('Translations: the language files', function()
     it('no file moved over holds a sentence of its own', function()
         local left = {}
         for _, path in ipairs(SCANNED) do
-            for _, lit in ipairs(TextScan.hardCoded(src(path), ALLOW[path])) do
+            for _, lit in ipairs(TextScan.hardCoded(src(path), allowed(path))) do
                 left[#left + 1] = ('%s:%d %q'):format(path, lit.line, lit.text)
             end
         end
@@ -117,6 +191,50 @@ describe('Translations: the language files', function()
         truthy(src('config/defaults.lua'):find("ConfigDefaults.Locale = 'en'", 1, true))
         truthy(src('client/main.lua'):find("'&lang=' .. CrimsonLocale.language()", 1, true), 'the phone is told')
         truthy(src('client/admin.lua'):find('locale = CrimsonLocale.language()', 1, true), 'the panel is told')
+    end)
+end)
+
+describe('Translations: words read by key, never matched by their words', function()
+    it('a setting keeps its English group as its id and shows its label in the language', function()
+        local real = Config.Locale
+        CrimsonLocales.zz = { ['settings_group.access'] = 'Zugang' }
+        local ok, err = pcall(function()
+            local s = newStack()
+            Locale.reset()
+            Config.Locale = 'zz'
+            local row
+            for _, r in ipairs(s.settings.view().features) do
+                if r.key == 'BlockOffDuty' then row = r end
+            end
+            truthy(row, 'BlockOffDuty listed')
+            eq(row.group, 'Access', 'the id the area and the page read')
+            eq(s.settings.groupLabel('Access'), 'Zugang')
+            eq(s.settings.groupLabel('No such group'), 'No such group', 'one with no label reads as itself')
+            eq(row.groupLabel, 'Zugang', 'the page is sent the label')
+            local en = englishTable()
+            for group, key in pairs(s.settings.GROUP_LABEL) do
+                eq(en[key], group, 'settings_group key ' .. key .. ' reads its group in English')
+            end
+        end)
+        Config.Locale = real
+        CrimsonLocales.zz = nil
+        Locale.reset()
+        if not ok then error(err, 0) end
+        local s = newStack()
+        for _, r in ipairs(s.settings.view().features) do
+            if r.key == 'BlockOffDuty' then eq(r.groupLabel, 'Access', 'English as shipped') end
+        end
+    end)
+
+    it('the panel builds its ACE answers from parts, never by cutting a sentence', function()
+        local s = newStack()
+        local needs, grant = s.admin.grantFor('crimson.dev')
+        eq(needs, 'this needs the crimson.dev ACE. ')
+        eq(grant, 'Grant it with add_ace group.admin crimson.dev allow, pasted into the server console '
+            .. 'until the next restart, or put in server.cfg to keep it.')
+        eq(s.admin.howToAuthorise('crimson.dev', true), 'Not authorised: ' .. needs .. grant,
+            'the panel\'s refusal reads as before')
+        falsy(read_file('crimson-hitman/server/panel.lua'):find(':gsub(\'^Not authorised', 1, true))
     end)
 end)
 

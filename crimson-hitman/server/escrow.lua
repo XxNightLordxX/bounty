@@ -9,6 +9,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
@@ -2066,12 +2067,12 @@ local function afterRaise(recipientCid, line, name, count, raised, before, arriv
             raises = raises, unknown = unknown or nil, before = before, arrived = arrived,
             review = true,
         })
-        local what = ('raised %d times with nothing arriving'):format(raises)
+        local what = (L('escrow.raised_times_with_nothing_arriving')):format(raises)
         if arrived and arrived > 0 then
-            what = ('raised with %d of it arriving; /%s pay gives only the rest')
+            what = (L('escrow.raised_with_of_it_arriving_pay'))
                 :format(arrived, tostring(Config.Admin.Commands.settle))
         elseif unknown then
-            what = 'raised, and whether it arrived could not be checked'
+            what = L('escrow.raised_and_whether_it_arrived_could')
         end
         Log.always(('escrow line %s: giving %s x%s %s; left for staff (/%s)'
             .. ' — check what they have'):format(tostring(line.id), tostring(name), tostring(count), what,

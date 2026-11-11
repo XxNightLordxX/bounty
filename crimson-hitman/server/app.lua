@@ -11,6 +11,7 @@ local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Inventory() return Integrations.get('inventory') end
@@ -584,7 +585,7 @@ local function handler(name, action, fn, access, exempt)
             -- anywhere to read: the diagnosis lists it now. One that moves
             -- money is printed whatever Config.Debug says, once every few
             -- minutes per request (MONEY_REQUESTS); a read with Debug on.
-            local text = ('the %s handler threw: %s'):format(name, tostring(result))
+            local text = (L('app.the_handler_threw')):format(name, tostring(result))
             if MONEY_REQUESTS[name] then
                 Log.raised('request ' .. name, text)
             else
@@ -1168,7 +1169,7 @@ function App.register()
         if toOrg then
             if not (deps.org and deps.org.sendRefusal) then return false, 'org_off' end
             if toOrgId and not deps.org.byId(toOrgId) then
-                return false, 'org_not_found', { message = 'No such organisation: refresh and try again.' }
+                return false, 'org_not_found', { message = L('app.no_such_organisation_refresh_and_try') }
             end
             local refused, data = deps.org.sendRefusal(toOrgId)
             if refused then return false, refused, data end
@@ -1813,10 +1814,10 @@ function App.register()
         end
 
         if requested then
-            local lines = { ('player %s\'s app sent its log (build %s, %s):')
+            local lines = { (L('app.player_ss_app_sent_its_log'))
                 :format(tostring(actor.source), build or 'unknown', actor.cid) }
             for i = 1, #stackLines do lines[#lines + 1] = '  page: ' .. stackLines[i] end
-            if #stackLines == 0 then lines[#lines + 1] = '  page: nothing recorded' end
+            if #stackLines == 0 then lines[#lines + 1] = L('app.page_nothing_recorded') end
             for i = 1, #lines do lines[i] = Log.plain(lines[i]) end
             local sent = false
             if type(asked.deliver) == 'function' then

@@ -49,6 +49,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Places = CrimsonBoot.require('server.rp_places')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Intel = {}
 
@@ -382,19 +383,19 @@ function Intel.decideUnrecorded(item)
     local payer = type(item.cids) == 'table' and item.cids.payer or nil
     local amount = math.floor(tonumber(item.amount) or 0)
     if not (product and product.recorded and item.contract_id and payer and amount > 0) then
-        return 'staff', 'it does not carry the purchase\'s record'
+        return 'staff', L('intel_engine.it_does_not_carry_the_purchases')
     end
     if product.recorded(item.contract_id, payer, type(known.mark) == 'table' and known.mark or {}) then
-        return 'done', 'the purchase is on record, so it stands'
+        return 'done', L('intel_engine.the_purchase_is_on_record_so')
     end
-    if not (Bailout and Bailout.payOwed) then return 'staff', 'nothing here can give the price back' end
+    if not (Bailout and Bailout.payOwed) then return 'staff', L('intel_engine.nothing_here_can_give_the_price') end
     Bailout.payOwed({ id = item.contract_id }, ('intel:%s'):format(tostring(item.id)), payer, amount,
         item.account, product.refund.action)
     if Audit then
         Audit.financial(product.refund.action, payer, item.contract_id,
             { amount = amount, account = item.account, reason = 'interrupted', review = item.id })
     end
-    return 'done', 'the purchase was not on record, so its price was given back'
+    return 'done', L('intel_engine.the_purchase_was_not_on_record')
 end
 
 --- Buy one product on one contract, one purchase at a time per the
@@ -442,7 +443,7 @@ Intel.TELL = {
     --- A player a broker filled in on a contract.
     briefed = function(notify, cid, contractId)
         if notify.toCitizen then
-            pcall(notify.toCitizen, cid, 'Crimson-Hitman', 'A broker filled you in on a contract. Check the board.')
+            pcall(notify.toCitizen, cid, 'Crimson-Hitman', L('intel_engine.a_broker_filled_you_in_on'))
         end
         return notify.push and notify.push(cid, 'briefed', contractId)
     end,
@@ -495,7 +496,7 @@ Intel.IN_PERSON_RULES = {
     Enabled = { kind = 'switch', default = false },
     Radius = { kind = 'number', min = 1, max = 100, default = 5.0 },
     Locations = { kind = 'list', each = Places.parsePoint, default = {},
-        says = "a list of places, each 'x, y, z, heading'" },
+        says = L('intel_engine.a_list_of_places_each_x') },
     RotateHours = { kind = 'number', min = 1, max = 168, integer = true, default = 3 },
     Model = { kind = 'text', default = 'a_m_y_hipster_01' },
     Scenario = { kind = 'text', default = 'WORLD_HUMAN_LEANING' },

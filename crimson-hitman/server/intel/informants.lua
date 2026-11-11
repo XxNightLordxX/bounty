@@ -13,6 +13,11 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
+local L = CrimsonBoot.requireShared('locale').t
+
+--- The name a look-up that found nobody by name answered with before such an
+--- answer was marked `unknown`: kept on stored records, so still read.
+local UNKNOWN_BEFORE = 'Unknown operative'
 -- The one purchase engine (server/intel/engine.lua): the check, the charge,
 -- the refund and the notices; this module keeps what the look-ups find.
 local Intel = CrimsonBoot.require('server.intel.engine')
@@ -59,14 +64,14 @@ local random = math.random
 --- The pick that names the person who placed the contract, on the target's
 --- informant. Every other pick is an operative's handle.
 local PLACER = 'placer'
-local PLACER_LABEL = 'The person who placed it'
+local PLACER_LABEL = L('intel_informants.the_person_who_placed_it')
 
 --- What a look-up that found nothing says, to each buyer.
-local TARGET_MISS = 'Your informant could not find out who it is.'
-local PLACER_MISS = 'Your informant could not find out who they are.'
+local TARGET_MISS = L('intel_informants.your_informant_could_not_find_out')
+local PLACER_MISS = L('intel_informants.your_informant_could_not_find_out_2')
 
 --- The phone notice an operative a placer found out about may be sent.
-local ALERT_TITLE = 'You have been found out'
+local ALERT_TITLE = L('intel_informants.you_have_been_found_out')
 
 function Informant.init(deps)
     Storage, Identity, Audit = deps.storage, deps.identity, deps.audit
@@ -151,7 +156,7 @@ end
 --- How an operative is called to a buyer: the alias the contract gave their
 --- row ('Operative #1'), the same one the placer's card shows.
 local function labelOf(row)
-    return type(row.alias) == 'string' and row.alias or 'An operative'
+    return type(row.alias) == 'string' and row.alias or L('intel_informants.an_operative')
 end
 
 --- Whether the target is already shown this operative's name: one who took
@@ -173,12 +178,13 @@ end
 function Informant.describe(cid, mode, knownName)
     local actor = cid and Identity.byCitizenId(cid)
     if (mode or Config.Intel.Informant.RevealMode) == 'name' then
-        return { name = (actor and actor.name) or knownName or 'Unknown operative' }
+        return { name = (actor and actor.name) or knownName or L('intel_informants.unknown_operative'),
+            unknown = not ((actor and actor.name) or knownName) or nil }
     end
     return {
         description = actor
-            and ('Seen recently around %s'):format(actor.job and actor.job.name or 'the city')
-            or 'A face you have seen before',
+            and (L('intel_informants.seen_recently_around')):format(actor.job and actor.job.name or L('intel_informants.the_city'))
+            or L('intel_informants.a_face_you_have_seen_before'),
     }
 end
 
@@ -443,7 +449,7 @@ function Informant.answerFor(contractId, cid)
     local found = {}
     for _, p in pairs(record and record.picks or {}) do
         if p.found and answerText(p.answer) then
-            found[#found + 1] = { label = p.label or 'An operative', text = answerText(p.answer) }
+            found[#found + 1] = { label = p.label or L('intel_informants.an_operative'), text = answerText(p.answer) }
         end
     end
     table.sort(found, function(a, b) return a.label < b.label end)
@@ -572,10 +578,9 @@ end
 --- card does (by its target) and never who placed it.
 local function alertOperative(contract, hitmanCid)
     if not (Notify and Notify.tellOrKeep) then return false end
-    local target = contract.target_name or 'your target'
+    local target = contract.target_name or L('intel_informants.your_target')
     return Intel.tell('foundOut', Notify, hitmanCid, ALERT_TITLE,
-        ('The person who placed one of your contracts has found out who you are: your contract '
-            .. 'on %s.'):format(target), contract.id)
+        (L('intel_informants.the_person_who_placed_one_of')):format(target), contract.id)
 end
 
 --- Buy one look-up from the placer's informant on one operative, one
@@ -757,8 +762,8 @@ function Informant.revealedOperatives(contractId, cid)
     local out = {}
     for pick, p in pairs(record and record.picks or {}) do
         if pick ~= PLACER and p.found and type(p.answer) == 'table' and type(p.answer.name) == 'string'
-            and p.answer.name ~= 'Unknown operative' then
-            out[#out + 1] = { cid = pick, label = p.label or 'An operative', name = p.answer.name }
+            and p.answer.unknown ~= true and p.answer.name ~= UNKNOWN_BEFORE then
+            out[#out + 1] = { cid = pick, label = p.label or L('intel_informants.an_operative'), name = p.answer.name }
         end
     end
     table.sort(out, function(a, b) return a.label < b.label end)

@@ -45,9 +45,12 @@ are named by their place in `config/config.lua`; the README has the details.
   refusals). Copy both to a language of your own and set `Config.Locale`; a
   key it lacks reads in English, said once in the console. The wording is
   unchanged. Every answer and refusal of the admin panel's requests
-  (`server/panel.lua`) is in `locales/en.lua` too. The pages' other labels
-  and the rest of the server's sentences follow in later steps (README,
-  Escrow, and where the words live).
+  (`server/panel.lua`) is in `locales/en.lua` too, and so is every other
+  sentence the server says: the staff commands and the diagnosis, the buyout
+  command, every feature's refusals and notices, the organisation's, and the
+  panel's setting labels, help and group names. The pages' other labels
+  follow in later steps (README, Escrow, and where the words live, which
+  says step by step how to add a language).
 
 **Organisation extras 3** (each its own switch under `Config.Organisation`, off as shipped)
 - **Several organisations** (`SeveralOrganisations`, `MaxOrganisations`):

@@ -20,6 +20,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Places = CrimsonBoot.require('server.rp_places')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 -- The Intel engine's delivery (server/intel/engine.lua): a briefing is
 -- intel given, not sold, so it uses the engine's notices alone.
 local Intel = CrimsonBoot.require('server.intel.engine')
@@ -108,7 +109,7 @@ end
 
 local function zoneFor(contract)
     local zones = Feature.block(BLOCK).Zones
-    if type(zones) ~= 'table' or #zones == 0 then return 'somewhere in the city' end
+    if type(zones) ~= 'table' or #zones == 0 then return L('intel_rumours.somewhere_in_the_city') end
     return tostring(zones[(hashOf(tostring(contract.id)) % #zones) + 1])
 end
 
@@ -324,12 +325,12 @@ Rumours.RULES = {
     AreaMode = { kind = 'choice', choices = { 'district', 'zones' }, default = 'district' },
     Zones = { kind = 'list', default = {} },
     Districts = { kind = 'list', each = Places.parseArea, default = {},
-        says = "a list of 'x, y, name'" },
+        says = L('intel_rumours.a_list_of_x_y_name') },
     BandPercent = { kind = 'number', min = 0, max = 100, integer = true, default = 25 },
     Radius = { kind = 'number', min = 1, max = 100, default = 5.0 },
     BriefValidMinutes = { kind = 'number', min = 1, max = 1440, integer = true, default = 30 },
     Locations = { kind = 'list', each = Places.parsePoint, default = {},
-        says = "a list of places, each 'x, y, z, heading'" },
+        says = L('intel_rumours.a_list_of_places_each_x') },
     RotateHours = { kind = 'number', min = 1, max = 168, integer = true, default = 4 },
     Model = { kind = 'text', default = 'g_m_m_armboss_01' },
     Scenario = { kind = 'text', default = 'WORLD_HUMAN_SMOKING' },

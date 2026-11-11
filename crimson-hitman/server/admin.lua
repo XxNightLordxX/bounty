@@ -15,6 +15,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Admin = {}
 
@@ -71,17 +72,17 @@ local function reportTiming(say)
     local slowest = Timing.slowest()
     local over = tonumber(Config.Diagnostics and Config.Diagnostics.SlowJobMs) or 0
     if #slowest == 0 then
-        say('maintenance jobs: not timed yet (the first tick runs a few seconds after start)')
+        say(L('admin.maintenance_jobs_not_timed_yet_the'))
         return
     end
-    say(('maintenance jobs, slowest first (ms over the last %d runs; warning above %s):')
+    say((L('admin.maintenance_jobs_slowest_first_ms_over'))
         :format(Timing.WINDOW, over > 0 and (tostring(over) .. ' ms') or 'off'))
     for i = 1, #slowest do
         local job = slowest[i]
-        say(('  %-28s max %7.2f  avg %7.2f  last %7.2f  runs %d%s%s'):format(
+        say((L('admin.28s_max_7_2f_avg_7')):format(
             job.name, job.max, job.avg, job.last, job.runs,
-            job.every and ('  every %gs'):format(job.every) or '',
-            (over > 0 and job.max > over) and '  SLOW' or ''))
+            job.every and (L('admin.every_gs')):format(job.every) or '',
+            (over > 0 and job.max > over) and L('admin.slow') or ''), (over > 0 and job.max > over) and 'act' or nil)
     end
 end
 
@@ -133,11 +134,32 @@ end
 --- Config.Admin.Commands: the console route a refusal offers is the command
 --- that was refused, not the diagnosis for every one of them.
 local USAGE = {
-    diagnose = '%s <player id>', timeline = '%s <contract id>', whois = '%s <contract id>',
-    contracts = '%s <player id|citizen id>', void = '%s <contract id> <reason>', stuck = '%s',
+    diagnose = L('admin.player_id'), timeline = L('admin.contract_id'), whois = L('admin.contract_id'),
+    contracts = L('admin.player_id_citizen_id'), void = L('admin.contract_id_reason'), stuck = '%s',
     settle = '%s <line> pay|return|delivered', review = '%s <id> refund|pay|dismiss ...',
-    refresh = '%s timers',
+    refresh = L('admin.timers'),
 }
+
+--- The command that grants `ace`, as staff paste it.
+---@param ace string
+---@return string
+local function grantCommand(ace)
+    if ace == Config.Admin.IdentityAce then
+        return (L('admin.add_ace_identifier_license_their_licence')):format(ace, ace)
+    end
+    return (L('admin.add_ace_group_admin_allow')):format(ace)
+end
+
+--- What the admin panel says an ACE needs and how to grant it, in two
+--- parts it puts after its own opening ("Not authorised: ", or the
+--- Permissions page's "To give ... to its own people: "): which ACE, then
+--- the grant. Built from keys, so no caller cuts a sentence by its words.
+---@param ace string
+---@return string needs "this needs the <ace> ACE. "
+---@return string grant "Grant it with <command>, ..."
+function Admin.grantFor(ace)
+    return (L('admin.this_needs_the_ace')):format(ace), (L('admin.grant_it_with')):format(grantCommand(ace))
+end
 
 --- What to grant somebody who was refused, said in full.
 ---
@@ -158,17 +180,10 @@ local USAGE = {
 --- crimson.admin): told why their access does not reach this one
 ---@return string
 function Admin.howToAuthorise(ace, panel, command, strict, hasExtraAce)
-    local grant
-    if ace == Config.Admin.IdentityAce then
-        grant = ('add_ace identifier.license:<their licence> %s allow for one person, or to a '
-            .. 'group of its own (add_ace group.<name> %s allow); not group.admin, since unmasking '
-            .. 'is for fewer people than the staff tools'):format(ace, ace)
-    else
-        grant = ('add_ace group.admin %s allow'):format(ace)
-    end
+    local grant = grantCommand(ace)
     if panel then
-        return ('Not authorised: this needs the %s ACE. Grant it with %s, pasted into the server '
-            .. 'console until the next restart, or put in server.cfg to keep it.'):format(ace, grant)
+        local needs, grantIt = Admin.grantFor(ace)
+        return L('admin.not_authorised') .. needs .. grantIt
     end
     -- The console route matters more than the ACE for the one command an
     -- owner needs before anything is set up. Somebody locked out in game
@@ -182,12 +197,9 @@ function Admin.howToAuthorise(ace, panel, command, strict, hasExtraAce)
     usage = usage or USAGE.diagnose:format(tostring(names.diagnose))
     local why = ''
     if strict and hasExtraAce then
-        why = (' This one changes money or unmasks a party, so it needs %s itself; the access you '
-            .. 'have opens the read-only tools.'):format(ace)
+        why = (L('admin.this_one_changes_money_or_unmasks')):format(ace)
     end
-    return ('Not authorised.%s Right now: run it in the server console, which never refuses: '
-        .. '%s. To have it in game: %s, pasted into the console to grant it until the next '
-        .. 'restart, or put in server.cfg to keep it.'):format(why, usage, grant)
+    return (L('admin.not_authorised_right_now_run_it')):format(why, usage, grant)
 end
 
 --- Resolve who ran a command, for the audit row. The console has no citizen
@@ -411,7 +423,7 @@ end
 local function nobodyFor(src, cid)
     local canIdentify = src == nil or src == 0
         or Admin.allowed(src, Config.Admin.IdentityAce, true)
-    return canIdentify and cid or 'a citizen id no character has'
+    return canIdentify and cid or L('admin.a_citizen_id_no_character_has')
 end
 
 --- Every interrupted release still open, and who it was paying.
@@ -760,10 +772,10 @@ end
 --- A party to a contract by role, for staff who may not see who they are.
 function Admin.partyRole(contract, cid)
     if not cid then return '(nobody)' end
-    if not contract then return '(a player)' end
-    if cid == contract.creator_cid then return 'the placer' end
-    if cid == contract.target_cid then return 'the target' end
-    return 'an operative'
+    if not contract then return L('admin.a_player') end
+    if cid == contract.creator_cid then return L('admin.the_placer') end
+    if cid == contract.target_cid then return L('admin.the_target') end
+    return L('admin.an_operative')
 end
 
 --------------------------------------------------------------------------
@@ -804,14 +816,11 @@ end
 
 --- While boot recovery runs (App.ready): what a write would act on is not
 --- decided yet.
-Admin.RECOVERING = 'Still recovering from the restart: nothing is settled, voided or listed '
-    .. 'until that has finished. Try again in a moment.'
+Admin.RECOVERING = L('admin.still_recovering_from_the_restart_nothing')
 
 --- And once recovery has raised (App.recoveryFailed): it never finishes in
 --- this process, so waiting a moment changes nothing.
-Admin.RECOVERY_FAILED = 'Recovery failed at the last start (the server console says why): '
-    .. 'nothing is settled, voided or listed, and the app stays closed. Fix the logged cause, '
-    .. 'then restart the resource.'
+Admin.RECOVERY_FAILED = L('admin.recovery_failed_at_the_last_start')
 
 --- What a staff write says while recovery has not finished, or nil once
 --- it has.
@@ -838,51 +847,38 @@ function Admin.voidAnswer(id, ok, err, panel, detail)
     -- the restart that puts it back to accepted.
     if err == 'stalled_claim' then
         if panel then
-            return ('Could not void it: contract %s is mid-claim with no claim running (a '
-                .. 'stalled claim: the claim paying a collection raised part-way), and only the '
-                .. 'next start puts it back. Pay each line Stuck escrow lists for it as a stalled '
-                .. 'claim with its Pay button, then restart the resource: recovery puts the contract '
-                .. 'back to accepted (or completes it, if that was its last collection), and Void '
-                .. 'contract closes it then.'):format(tostring(id))
+            return (L('admin.could_not_void_it_contract_is')):format(tostring(id))
         end
-        return ('Could not void it: contract %s is mid-claim with no claim running (a '
-            .. 'stalled claim: the claim paying a collection raised part-way), and only the next '
-            .. 'start puts it back. Pay each line /%s lists for it as a stalled claim with /%s '
-            .. '<line> pay, then restart the resource: recovery puts the contract back to accepted '
-            .. '(or completes it, if that was its last collection), and /%s %s closes it then.')
+        return (L('admin.could_not_void_it_contract_is_2'))
             :format(tostring(id), names.stuck, names.settle, names.void, tostring(id))
     end
-    if ok then return 'Contract voided; escrow returned to the creator.' end
+    if ok then return L('admin.contract_voided_escrow_returned_to_the') end
     -- The ending raised part-way (Admin.void): closed already, or not.
     if err == 'raised' then
         if detail == 'closed' then
-            return ('Voided, but its ending raised an error part-way (in the console): contract %s '
-                .. 'is closed, and the server finishes that ending itself within a minute, returning '
-                .. 'its escrow to the creator. Nothing for you to do.'):format(tostring(id))
+            return (L('admin.voided_but_its_ending_raised_an')):format(tostring(id))
         end
-        return ('Not voided: closing contract %s raised an error (in the console), and it is still '
-            .. 'open, its escrow held. Try again in a moment.'):format(tostring(id))
+        return (L('admin.not_voided_closing_contract_raised_an')):format(tostring(id))
     end
     if err == CH.ERR.INVALID_INPUT then
-        if panel then return 'Not voided: give a contract id, as ct00000001.' end
-        return ('Usage: /%s <contract id> [reason]. Nothing was voided.'):format(names.void)
+        if panel then return L('admin.not_voided_give_a_contract_id') end
+        return (L('admin.usage_contract_id_reason_nothing_was')):format(names.void)
     end
     if err == CH.ERR.NOT_FOUND then
         if panel then
-            return 'No contract has that id; nothing was voided. Find it in Contracts.'
+            return L('admin.no_contract_has_that_id_nothing')
         end
-        return ('No contract has that id; nothing was voided. %s'):format(names.contracts
-            and ('/%s <player id|citizen id> lists a player\'s contracts.'):format(names.contracts)
-            or ('/%s <id> shows a contract.'):format(names.timeline))
+        return (L('admin.no_contract_has_that_id_nothing_2')):format(names.contracts
+            and (L('admin.player_id_citizen_id_lists_a')):format(names.contracts)
+            or (L('admin.id_shows_a_contract')):format(names.timeline))
     end
     if err == CH.ERR.ALREADY_SETTLED then
-        return 'Already closed, by its own ending or another void; nothing was voided or returned again.'
+        return L('admin.already_closed_by_its_own_ending')
     end
     if err == CH.ERR.LOCKED then
-        return 'Not voided yet: a claim or its ending is running on it right now; nothing moved. '
-            .. 'Try again in a moment.'
+        return L('admin.not_voided_yet_a_claim_or')
     end
-    return ('Could not void it (%s); nothing was voided.'):format(tostring(err))
+    return (L('admin.could_not_void_it_nothing_was')):format(tostring(err))
 end
 
 --- What a settle says (Admin.settleLine).
@@ -894,151 +890,111 @@ end
 function Admin.settleAnswer(ok, err, detail, panel)
     local names = Config.Admin.Commands
     -- Where staff look again: the command, or the panel's section.
-    local stuck = panel and 'Stuck escrow' or ('/' .. tostring(names.stuck))
+    local stuck = panel and L('admin.stuck_escrow') or ('/' .. tostring(names.stuck))
     if err == 'recovering' then return Admin.RECOVERING end
     if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
     if err == 'live' then
         if panel then
-            return ('Not settled: contract %s is still live and this line is its own (a payout '
-                .. 'its next claim pays, a bonus or a stake), not one left for you. Void contract, '
-                .. 'in its view, closes a live contract and returns its escrow; settling is only '
-                .. 'for what Stuck escrow lists.'):format(tostring(detail))
+            return (L('admin.not_settled_contract_is_still_live')):format(tostring(detail))
         end
-        return ('Not settled: contract %s is still live and this line is its own (a payout '
-            .. 'its next claim pays, a bonus or a stake), not one left for you. /%s %s closes a live '
-            .. 'contract and returns its escrow; /%s settles only what /%s lists.')
+        return (L('admin.not_settled_contract_is_still_live_2'))
             :format(tostring(detail), names.void, tostring(detail), names.settle, names.stuck)
     end
     -- Closed, by an ending that raised before it handed this over
     -- (Admin.settleLine): the maintenance tick finishes it.
     if err == 'ending_unfinished' then
-        return ('Not settled: ending unfinished; it settles itself within a minute. '
-            .. 'Contract %s closed, but its ending raised before it handed this line over; the '
-            .. 'server finishes that ending as a restart would (a stake by why it ended, the rest '
-            .. 'back to the placer), so there is nothing for you to settle. Nothing moved.')
+        return (L('admin.not_settled_ending_unfinished_it_settles'))
             :format(tostring(detail))
     end
     if ok and err == 'intent_held' then
-        return ('Settled as owed: no longer left for staff. It is theirs and queued, held for proof '
-            .. 'of intent (releases at %s): handed over once they show intent on the contract, or at '
-            .. 'that time at the latest. Nothing more to do.')
+        return (L('admin.settled_as_owed_no_longer_left'))
             :format(os.date('!%Y-%m-%d %H:%M UTC', math.floor(tonumber(detail) or 0)))
     end
     if err == 'intent_held' then
-        return ('Not settled: held for proof of intent (releases at %s). The payout is theirs and '
-            .. 'stays owed in escrow; it is handed over once they show intent on the contract, or '
-            .. 'at that time at the latest. Nothing to settle.')
+        return (L('admin.not_settled_held_for_proof_of'))
             :format(os.date('!%Y-%m-%d %H:%M UTC', math.floor(tonumber(detail) or 0)))
     end
     if ok and err == 'queued' and detail == 'refused' then
-        return ('Queued: they are in the city, but the give was refused (no room in their '
-            .. 'pockets, their account would not take it, or their inventory could not be read), '
-            .. 'so it goes on their retry queue and is tried again while they are in the city and '
-            .. 'at their next login; see %s.'):format(stuck)
+        return (L('admin.queued_they_are_in_the_city')):format(stuck)
     end
     if ok and err == 'queued' then
-        return 'Queued: they are not in the city, so it is delivered at their next login.'
+        return L('admin.queued_they_are_not_in_the')
     end
     if ok and err == 'requeued' then
-        return ('Re-queued after a failed give: giving it raised an error with nothing '
-            .. 'arriving, so it goes back on their retry queue and is tried again while they are '
-            .. 'in the city and at their next login; three such raises leave it for staff (see %s).')
+        return (L('admin.re_queued_after_a_failed_give'))
             :format(stuck)
     end
     if err == 'parked' then
-        return ('Not settled: giving it raised again, so it is left for staff again; '
-            .. 'see %s.'):format(stuck)
+        return (L('admin.not_settled_giving_it_raised_again')):format(stuck)
     end
     if err == 'already_queued' then
-        return ('Already queued for %s: it is theirs, given while they are in the city '
-            .. 'or at their next login. Nothing to settle.'):format(tostring(detail))
+        return (L('admin.already_queued_for_it_is_theirs')):format(tostring(detail))
     end
     if err == 'pay_only' then
         if panel then
-            return ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
-                .. 'so only Pay, of the whole line, settles it, to them.'):format(tostring(detail))
+            return (L('admin.not_settled_nothing_of_it_was')):format(tostring(detail))
         end
-        return ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
-            .. 'so only /%s <line> pay, with no amount, settles it, to them.')
+        return (L('admin.not_settled_nothing_of_it_was_2'))
             :format(tostring(detail), names.settle)
     end
     if err == 'owes_less' then
-        return ('Not settled: the line now owes only %s, less than that amount; '
-            .. 'check again (%s).'):format(tostring(detail), stuck)
+        return (L('admin.not_settled_the_line_now_owes')):format(tostring(detail), stuck)
     end
     if err == 'not_left' then
-        return ('Not settled: it is no longer left for staff, as something settled or '
-            .. 'moved it since it was read; see %s.'):format(stuck)
+        return (L('admin.not_settled_it_is_no_longer')):format(stuck)
     end
     if err == 'raised' then
-        return ('Not settled: settling it raised an error (logged as admin_settle_raised, '
-            .. 'and in the console). Anything it left mid-give is left for staff; see %s.')
+        return (L('admin.not_settled_settling_it_raised_an'))
             :format(stuck)
     end
     if err == CH.ERR.LOCKED then
-        return ('Not settled: something else is giving or settling it right now (a '
-            .. 'release, a login retry, the claim on its contract, another settle), or it is owed '
-            .. 'to somebody else; nothing moved. Check again with %s.'):format(stuck)
+        return (L('admin.not_settled_something_else_is_giving')):format(stuck)
     end
     -- A citizen id typed for a return (Admin.knownCitizenId).
     if err == 'no_such_player' then
         if detail == 'unchecked' then
-            return 'Not settled: nobody in the city or on record here has that citizen id, and '
-                .. 'qbx_core could not be asked about characters who are away; nothing moved. Try '
-                .. 'again when they are in the city.'
+            return L('admin.not_settled_nobody_in_the_city')
         end
-        return 'Not settled: nobody on this server has that citizen id; check how it is spelt. '
-            .. 'Nothing moved.'
+        return L('admin.not_settled_nobody_on_this_server')
     end
     -- Owed and queued to a citizen id no character has (owedToNobody).
     if err == 'owed_to_nobody' then
-        return ('Not settled: it is owed and queued to %s, so nothing would ever give it. Return '
-            .. 'it to the citizen id it should go to: %s.'):format(tostring(detail or
-                'a citizen id no character has'), panel and 'Return to'
+        return (L('admin.not_settled_it_is_owed_and')):format(tostring(detail or
+                L('admin.a_citizen_id_no_character_has')), panel and L('admin.return_to')
                 or ('/%s <line> return <citizenid>'):format(names.settle))
     end
     if ok and err == 'repointed' then
-        local now = detail == 'given' and 'given to them now'
-            or (detail == 'refused' and ('on their retry queue: they are in the city, but the give was '
-                .. 'refused (no room in their pockets, or their account would not take it)'))
-            or 'delivered at their next login'
-        return ('Re-pointed: it was owed to a citizen id no character has, and is owed to them '
-            .. 'instead, %s.'):format(now)
+        local now = detail == 'given' and L('admin.given_to_them_now')
+            or (detail == 'refused' and (L('admin.on_their_retry_queue_they_are')))
+            or L('admin.delivered_at_their_next_login')
+        return (L('admin.re_pointed_it_was_owed_to')):format(now)
     end
     if err == 'unchecked' then
-        return 'Not settled: whether anybody has the citizen id it is owed to could not be '
-            .. 'checked (qbx_core did not answer), so it stays queued for them. Nothing moved.'
+        return L('admin.not_settled_whether_anybody_has_the')
     end
     -- Left mid-release before it named anyone (Admin.settleLine).
     if ok and err == 'put_back' then
-        return ('Put back: it was left mid-release before it named anyone, so nothing of it was '
-            .. 'given; it is contract %s\'s own again (a payout its next claim pays, a bonus or a '
-            .. 'stake), and nothing is left to settle.'):format(tostring(detail))
+        return (L('admin.put_back_it_was_left_mid')):format(tostring(detail))
     end
     if err == 'return_only' then
-        return ('Not settled: it was left mid-release before it named anyone and is owed to '
-            .. 'nobody, so there is nobody to pay; only %s settles it, putting it back to its '
-            .. 'contract. Nothing moved.'):format(panel and 'Return'
+        return (L('admin.not_settled_it_was_left_mid')):format(panel and L('admin.return')
                 or ('/%s <line> return'):format(names.settle))
     end
     if err == CH.ERR.ALREADY_SETTLED then
-        return ('Already settled, by another settle or its own ending; nothing moved. %s.')
-            :format(panel and 'Refresh Stuck escrow' or ('Check %s again'):format(stuck))
+        return (L('admin.already_settled_by_another_settle_or'))
+            :format(panel and L('admin.refresh_stuck_escrow') or (L('admin.check_again')):format(stuck))
     end
     if err == CH.ERR.NOT_FOUND then
-        return ('No escrow line has that id; nothing moved. %s lists every line waiting for you.')
+        return (L('admin.no_escrow_line_has_that_id'))
             :format(stuck)
     end
     if err == CH.ERR.INVALID_INPUT then
         if panel then
-            return 'Not settled: that is not how this line settles; nothing moved. Stuck escrow '
-                .. 'shows each line with the buttons that settle it.'
+            return L('admin.not_settled_that_is_not_how')
         end
-        return ('Usage: /%s <line> pay [amount] | return [citizenid, only for a line that does '
-            .. 'not say whose it is] | delivered. Nothing moved; %s lists each line with what '
-            .. 'settles it.'):format(names.settle, stuck)
+        return (L('admin.usage_line_pay_amount_return_citizenid')):format(names.settle, stuck)
     end
-    return ok and 'Line settled.' or ('Could not settle it (%s); nothing moved.'):format(tostring(err))
+    return ok and L('admin.line_settled') or (L('admin.could_not_settle_it_nothing_moved')):format(tostring(err))
 end
 
 --- What resolving a review item says (Admin.resolveReview).
@@ -1055,81 +1011,61 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
     if ok then
         local r = detail or {}
         if r.action == 'dismiss' then
-            return 'Dismissed. Nothing was given.' .. (r.continued
-                and ' It had been decided so before a stop, and is finished now.' or '')
+            return L('admin.dismissed_nothing_was_given') .. (r.continued
+                and L('admin.it_had_been_decided_so_before') or '')
         end
         -- One carrying its whole record, settled as the server settles it.
         if r.action == 'settled' then
-            return ('Settled as the server settles it, from its own record: %s.%s')
+            return (L('admin.settled_as_the_server_settles_it'))
                 :format(tostring(r.note or 'done'), r.ignored
-                    and ' What was typed was not used: the record says what was taken.' or '')
+                    and L('admin.what_was_typed_was_not_used') or '')
         end
-        return ('Resolved: %d line(s) given, %d owed and given while they are in '
-            .. 'the city or at their next login, %d left for %s (giving raised). %s%s')
+        return (L('admin.resolved_line_given_owed_and_given'))
             :format(r.settled or 0, r.pending or 0, r.parked or 0,
-                panel and 'Stuck escrow' or ('/' .. tostring(names.stuck)),
-                r.continued and 'It had been decided before a stop and was finished as decided, '
-                    .. 'not as asked now. ' or '',
-                (tonumber(r.bare) or 0) > 0 and ('%d of the goods went without the metadata they '
-                    .. 'were taken with, which was too big to keep: a serial, registration, '
-                    .. 'attachments or what was inside is not as it was.'):format(r.bare) or '')
+                panel and L('admin.stuck_escrow') or ('/' .. tostring(names.stuck)),
+                r.continued and L('admin.it_had_been_decided_before_a') or '',
+                (tonumber(r.bare) or 0) > 0 and (L('admin.of_the_goods_went_without_the')):format(r.bare) or '')
     end
     local why = {
-        [CH.ERR.NOT_FOUND] = 'No review item has that id.',
-        [CH.ERR.ALREADY_SETTLED] = 'Already resolved; nothing was given again.',
-        [CH.ERR.BUSY] = 'It is being resolved right now. Look again in a moment.',
-        [CH.ERR.LOCKED] = 'Something else resolved or began resolving it meanwhile; look again.',
-        note_required = panel and 'Say why in the note: a dismissal gives nothing, and the note is '
-            .. 'the record of why.' or ('Say why: /' .. names.review .. ' <id> dismiss <note>.'),
+        [CH.ERR.NOT_FOUND] = L('admin.no_review_item_has_that_id'),
+        [CH.ERR.ALREADY_SETTLED] = L('admin.already_resolved_nothing_was_given_again'),
+        [CH.ERR.BUSY] = L('admin.it_is_being_resolved_right_now'),
+        [CH.ERR.LOCKED] = L('admin.something_else_resolved_or_began_resolving'),
+        note_required = panel and L('admin.say_why_in_the_note_a') or (L('admin.say_why') .. names.review .. ' <id> dismiss <note>.'),
         no_party = (type(detail) == 'string' and detail ~= '')
-            and ('Name who it goes to: a role the item names (%s), or the citizen id of a player '
-                .. 'this server has. Nothing was given.'):format(detail)
-            or 'Name who it goes to: a role the item names, or the citizen id of a player this '
-                .. 'server has. Nothing was given.',
-        which_money = 'It records more than one kind of money: say which (cash, bank or dirty).',
-        nothing_recorded = 'It records nothing of that to give; use pay, or items for goods.',
-        over_recorded = ('That is more than it records (%s); refund at most that.')
+            and (L('admin.name_who_it_goes_to_a')):format(detail)
+            or L('admin.name_who_it_goes_to_a_2'),
+        which_money = L('admin.it_records_more_than_one_kind'),
+        nothing_recorded = L('admin.it_records_nothing_of_that_to'),
+        over_recorded = (L('admin.that_is_more_than_it_records'))
             :format(tostring(detail)),
         -- Worded from the item's state read after the raise (W131): one
         -- still open had nothing decided on it.
-        raised = (detail == 'open' and ('Resolving it raised an error (in the console) before '
-                .. 'anything was decided: it is still open, and nothing was given. Try again once '
-                .. 'the cause is fixed.'))
-            or (detail == 'resolving' and (panel and ('Resolving it raised an error (in the '
-                .. 'console) part-way. It is left being resolved, with the decision on it: Finish as '
-                .. 'decided on its card in Needs review finishes it.')
-                or ('Resolving it raised an error (in the console) part-way. It is left being '
-                .. 'resolved, with the decision on it: /%s %s finishes it.')
+        raised = (detail == 'open' and (L('admin.resolving_it_raised_an_error_in')))
+            or (detail == 'resolving' and (panel and (L('admin.resolving_it_raised_an_error_in_2'))
+                or (L('admin.resolving_it_raised_an_error_in_3'))
                     :format(names.review, tostring(id))))
-            or (panel and 'Resolving it raised an error (in the console). Look at it again in Needs '
-                .. 'review: one being resolved is finished with Finish as decided; one still open had '
-                .. 'nothing decided.'
-            or ('Resolving it raised an error (in the console). Look at it again (/%s): one being '
-                .. 'resolved is finished with /%s %s; one still open had nothing decided.')
+            or (panel and L('admin.resolving_it_raised_an_error_in_4')
+            or (L('admin.resolving_it_raised_an_error_in_5'))
                     :format(names.review, names.review, tostring(id))),
         being_resolved = (function()
             local r = type(detail) == 'table' and detail or {}
-            local decided = ('as decided before (%s, by %s)'):format(tostring(r.action or 'a decision'),
+            local decided = (L('admin.as_decided_before_by')):format(tostring(r.action or L('admin.a_decision')),
                 tostring(r.by or 'staff'))
-            return panel and ('It is being resolved already, %s. Finish as decided on its card in '
-                    .. 'Needs review finishes it; nothing was given now.'):format(decided)
-                or ('It is being resolved already, %s. /%s %s alone finishes it; nothing was given '
-                    .. 'now.'):format(decided, names.review, tostring(id))
+            return panel and (L('admin.it_is_being_resolved_already_finish')):format(decided)
+                or (L('admin.it_is_being_resolved_already_alone')):format(decided, names.review, tostring(id))
         end)(),
-        unwritten = 'It can be resolved once the store has taken it, within a tick. Nothing was given.',
-        nothing_missing = 'The store has every line it names, held or handed back already, so '
-            .. 'nothing of it is missing and nothing was given. Dismiss it with a note once you '
-            .. 'have checked.',
-        not_yet = ('Not settled yet: %s. The server settles it itself once it can; nothing was '
-            .. 'given.'):format(type(detail) == 'string' and detail or 'it cannot be decided yet'),
+        unwritten = L('admin.it_can_be_resolved_once_the'),
+        nothing_missing = L('admin.the_store_has_every_line_it'),
+        not_yet = (L('admin.not_settled_yet_the_server_settles')):format(type(detail) == 'string' and detail or L('admin.it_cannot_be_decided_yet')),
     }
     if why[err] then return why[err] end
     if panel then
-        return 'Say refund, pay or dismiss, and whom it goes to: a role the item names, or a citizen id.'
+        return L('admin.say_refund_pay_or_dismiss_and')
     end
     return ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
         .. '[cash|bank|dirty] | refund <citizenid|role> items | pay <citizenid|role> | '
-        .. 'dismiss <note> | /%s <id> alone finishes one being resolved as decided')
+        .. L('admin.dismiss_note_id_alone_finishes_one'))
         :format(names.review, names.review, names.review)
 end
 
@@ -1205,7 +1141,7 @@ function Admin.void(src, contractId, reason)
     -- and one that went through was only queued, lost with the queue in a
     -- crash inside the flush interval.
     local who = callerCid(src)
-    local why = Util.sanitizeText(reason, 120) or 'none given'
+    local why = Util.sanitizeText(reason, 120) or L('admin.none_given')
     Audit.financial('admin_void', who, contractId, { reason = why })
     logNow()
 
@@ -1224,8 +1160,8 @@ function Admin.void(src, contractId, reason)
         local read, now = pcall(Storage.readContract, contractId)
         if read and now and now.state == CH.STATE.VOIDED then
             if Photos then pcall(Photos.forgetContract, contractId) end
-            pcall(Notify.tellOrKeep, contract.creator_cid, 'Contract voided',
-                'Staff closed your contract. Your escrow is on its way back to you.',
+            pcall(Notify.tellOrKeep, contract.creator_cid, L('admin.contract_voided'),
+                L('admin.staff_closed_your_contract_your_escrow'),
                 { bypassBudget = true }, contractId)
             return false, 'raised', 'closed'
         end
@@ -1252,17 +1188,15 @@ function Admin.void(src, contractId, reason)
     -- logged off, who found the money with nothing to say why.
     local owed, parked = 0, 0
     if Contracts.owedTo then owed, parked = Contracts.owedTo(contractId, contract.creator_cid) end
-    local voidBody = 'Staff closed your contract. '
+    local voidBody = L('admin.staff_closed_your_contract')
     if owed > 0 or parked > 0 then
-        voidBody = voidBody .. 'Most of what you put up is back.'
-            .. (owed > 0 and (' %d thing(s) could not be handed over yet and arrive as soon as '
-                .. 'you can take them.'):format(owed) or '')
-            .. (parked > 0 and (' %d thing(s) could not be confirmed as handed back; staff have '
-                .. 'been asked to check.'):format(parked) or '')
+        voidBody = voidBody .. L('admin.most_of_what_you_put_up')
+            .. (owed > 0 and (L('admin.thing_could_not_be_handed_over')):format(owed) or '')
+            .. (parked > 0 and (L('admin.thing_could_not_be_confirmed_as')):format(parked) or '')
     else
-        voidBody = voidBody .. 'Everything you put up has been returned.'
+        voidBody = voidBody .. L('admin.everything_you_put_up_has_been')
     end
-    Notify.tellOrKeep(contract.creator_cid, 'Contract voided', voidBody, { bypassBudget = true },
+    Notify.tellOrKeep(contract.creator_cid, L('admin.contract_voided'), voidBody, { bypassBudget = true },
         contractId)
 
     return true
@@ -1271,9 +1205,9 @@ end
 --- What every party of a contract staff moved the deadline of is told: that
 --- it moved and which way, never by how much, to when, by whom or why.
 Admin.DEADLINE_TEXT = {
-    title     = 'Contract time',
-    extended  = 'Staff have extended this contract\'s time.',
-    shortened = 'Staff have shortened this contract\'s time.',
+    title     = L('admin.contract_time'),
+    extended  = L('admin.staff_have_extended_this_contracts_time'),
+    shortened = L('admin.staff_have_shortened_this_contracts_time'),
 }
 
 --- The states whose deadline staff may move: the ones it still runs in.
@@ -1784,7 +1718,7 @@ function Admin.settleLine(src, lineId, disposition, owner)
                     cids = { recipient = recipient },
                     items = { { id = line.id, source = line.source, amount = line.amount,
                                 item = line.item, quantity = line.quantity } },
-                    known = { delivered = 'staff found it with them', by = who or 'console' },
+                    known = { delivered = L('admin.staff_found_it_with_them'), by = who or 'console' },
                 })
             end
         end
@@ -1943,10 +1877,10 @@ local function namesOfParties(names, contract, hitmen)
             if type(cid) == 'string' then names[cid] = Admin.partyRole(contract, cid) end
         end
         if contract.anon_creator == true and type(contract.creator_name) == 'string' then
-            names[contract.creator_name] = 'Anonymous'
+            names[contract.creator_name] = L('admin.anonymous')
         end
         for _, account in pairs({ contract.creator_account, contract.target_account }) do
-            if type(account) == 'string' then names[account] = '(an account)' end
+            if type(account) == 'string' then names[account] = L('admin.an_account') end
         end
     end
     for _, hitman in ipairs(hitmen or {}) do
@@ -1954,9 +1888,9 @@ local function namesOfParties(names, contract, hitmen)
             names[hitman.hitman_cid] = Admin.partyRole(contract, hitman.hitman_cid)
         end
         if hitman.anon == true and type(hitman.hitman_name) == 'string' then
-            names[hitman.hitman_name] = 'Anonymous'
+            names[hitman.hitman_name] = L('admin.anonymous')
         end
-        if type(hitman.hitman_account) == 'string' then names[hitman.hitman_account] = '(an account)' end
+        if type(hitman.hitman_account) == 'string' then names[hitman.hitman_account] = L('admin.an_account') end
     end
 end
 
@@ -2166,8 +2100,8 @@ end
 ---@return string
 local function describeSwitch(value)
     if type(value) == 'boolean' then return tostring(value) end
-    if value == nil then return 'not set (reads as OFF)' end
-    return ('%s (a %s, not a boolean — this reads as OFF)')
+    if value == nil then return L('admin.not_set_reads_as_off') end
+    return (L('admin.a_not_a_boolean_this_reads'))
         :format(tostring(value), type(value))
 end
 
@@ -2203,30 +2137,25 @@ end
 local function sayPlaytime(say, actor)
     local floor = tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0
     local provider = Config.Immunity.PlaytimeProvider
-    local from = 'QBox metadata where a character has a playtime figure, else the built-in tracker'
+    local from = L('admin.qbox_metadata_where_a_character_has')
     if provider and provider.resource then
-        from = ('%s\'s %s export (%s), else QBox metadata, else the built-in tracker')
+        from = (L('admin.ss_export_else_qbox_metadata_else'))
             :format(provider.resource, tostring(provider.export), GetResourceState(provider.resource))
     end
-    say(('playtime: a target needs %s hour(s) played; read from %s'):format(tostring(floor), from))
+    say((L('admin.playtime_a_target_needs_hour_played')):format(tostring(floor), from))
     if Playtime then
         local state = Playtime.state()
         if not state.since then
-            say('  tracker: not started yet. Its first pass, within a minute of the start, records '
-                .. 'which characters are from before it; until then the rule is skipped for anybody '
-                .. 'it has not decided.')
+            say(L('admin.tracker_not_started_yet_its_first'))
         elseif state.grace then
             local days = tonumber(Config.Immunity.GrandfatherDays) or 0
-            say(('  tracker: counting since %s. qbx_core\'s players table could not be read then, so '
-                .. 'characters first seen before %s (Config.Immunity.GrandfatherDays) are '
-                .. 'grandfathered, a brand-new one among them.')
+            say((L('admin.tracker_counting_since_qbx_cores_players'))
                 :format(utcText(state.since), utcText(state.since + days * 86400)))
         else
-            say(('  tracker: counting since %s; characters numbered up to %d in qbx_core\'s players '
-                .. 'table are from before it and grandfathered.')
+            say((L('admin.tracker_counting_since_characters_numbered_up'))
                 :format(utcText(state.since), state.playersId))
         end
-        say(('  %d character(s) counted now, %d row(s) waiting to be written')
+        say((L('admin.character_counted_now_row_waiting_to'))
             :format(state.counting, state.unwritten))
     end
     if not actor then return end
@@ -2234,22 +2163,22 @@ local function sayPlaytime(say, actor)
     local hours, answered, grandfathered = Identity.playtimeHours(actor)
     local view = Playtime and Playtime.view(actor.cid) or nil
     if view and view.unread then
-        say('  this player: their counted time could not be read from the store')
+        say(L('admin.this_player_their_counted_time_could'))
     elseif view then
-        local decided = view.grandfathered == true and 'yes, from before the tracker'
-            or view.grandfathered == false and 'no' or 'not decided yet'
-        say(('  this player: %s counted by the tracker; grandfathered: %s')
+        local decided = view.grandfathered == true and L('admin.yes_from_before_the_tracker')
+            or view.grandfathered == false and 'no' or L('admin.not_decided_yet')
+        say((L('admin.this_player_counted_by_the_tracker'))
             :format(Words.hours(view.hours), decided))
     end
     if hours == nil then
-        say('  -> nothing answers for them yet, so the playtime rule is skipped for them')
+        say(L('admin.nothing_answers_for_them_yet_so'))
     elseif answered == 'tracker' and grandfathered then
-        say('  -> fair game by playtime: grandfathered')
+        say(L('admin.fair_game_by_playtime_grandfathered'))
     else
-        local source = answered == 'provider' and 'the export' or answered == 'metadata'
-            and 'QBox metadata' or 'the tracker'
-        say(('  -> %s, from %s: %s'):format(Words.hours(hours), source, hours < floor
-            and 'protected as too new to be a target' or 'fair game by playtime'))
+        local source = answered == 'provider' and L('admin.the_export') or answered == 'metadata'
+            and L('admin.qbox_metadata') or L('admin.the_tracker')
+        say((L('admin.from')):format(Words.hours(hours), source, hours < floor
+            and L('admin.protected_as_too_new_to_be') or L('admin.fair_game_by_playtime')))
     end
 end
 
@@ -2262,20 +2191,28 @@ function Admin.diagnose(source, subjectId, later, opts)
         return ConfigCheck.lines()
     end
     local out = {}
+    -- What each line is for the admin panel's overview, by line: 'act' a
+    -- line that wants doing, 'console' one only the console needs. Said
+    -- here, by the line that writes it, so the overview never reads the
+    -- words (they are in the language Config.Locale names). [i] = mark
+    local marks = {}
     -- In the panel, a line kept from the console that names a command
     -- (a review left for staff: "see /ch-stuck") names the panel's place
     -- for it instead (Admin.panelWords).
-    local function say(line) out[#out + 1] = panel and Admin.panelWords(line) or line end
+    local function say(line, mark)
+        out[#out + 1] = panel and Admin.panelWords(line) or line
+        marks[#out] = mark
+    end
 
-    say('--- crimson-hitman diagnosis ---')
+    say(L('admin.crimson_hitman_diagnosis'))
     say(('storage: %s%s'):format(tostring(Config.Database.Mode), Config.Database.Mode == 'memory'
-        and ' (testing only: contracts and escrow do not survive a restart)' or ''))
+        and L('admin.testing_only_contracts_and_escrow_do') or ''))
     -- The other scripts, one line: what answers each kind (Config.Integrations).
     local scripts = {}
     for _, st in ipairs(Integrations.statusAll()) do
-        scripts[#scripts + 1] = ('%s=%s'):format(st.kind, st.active or ('off (' .. st.choice .. ')'))
+        scripts[#scripts + 1] = ('%s=%s'):format(st.kind, st.active or (L('admin.off') .. st.choice .. ')'))
     end
-    say('other scripts: ' .. table.concat(scripts, ', '))
+    say(L('admin.other_scripts') .. table.concat(scripts, ', '))
 
     -- Whether the app is open at all, first (W122): while boot recovery runs,
     -- or after it failed, every request is refused at a gate the handler
@@ -2283,13 +2220,12 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- whose players are told only "busy" or "failed to start".
     local closed = recovering()
     if closed == 'recovering' then
-        say('recovery: still running from the start')
-        say('  -> the app answers every request "busy" until it finishes: '
+        say(L('admin.recovery_still_running_from_the_start'))
+        say(L('admin.the_app_answers_every_request_busy')
             .. Admin.RECOVERING)
     elseif closed == 'recovery_failed' then
-        say('recovery: FAILED at the start')
-        say('  -> the app answers every request "failed to start", and the login payouts and '
-            .. 'the maintenance tick do not run: ' .. Admin.RECOVERY_FAILED)
+        say(L('admin.recovery_failed_at_the_start'), 'act')
+        say(L('admin.the_app_answers_every_request_failed') .. Admin.RECOVERY_FAILED)
     end
 
     -- The database and the loops, read without asking the database (mysql's
@@ -2300,29 +2236,26 @@ function Admin.diagnose(source, subjectId, later, opts)
         if health.down then
             local since = tonumber(health.since) or os.time()
             local seconds = math.max(0, os.time() - since)
-            say(('database: NOT ANSWERING since %s (%dm%02ds); last given up on: "%s"')
+            say((L('admin.database_not_answering_since_dm_02ds'))
                 :format(os.date('%H:%M:%S', since), seconds // 60, seconds % 60,
-                    tostring(health.lastWhat)))
-            say(('  -> what needs it is refused until it answers; a payment it caught is settled '
-                .. 'by the server once it does, or left for staff (/%s). Restart the resource '
-                .. 'only once this says answering.'):format(tostring(Config.Admin.Commands.stuck)))
+                    tostring(health.lastWhat)), 'act')
+            say((L('admin.what_needs_it_is_refused_until')):format(tostring(Config.Admin.Commands.stuck)))
         else
             local slow = (tonumber(health.oldestMs) or 0) >= 2000
-                and ('; one statement has waited %d s so far ("%s")')
+                and (L('admin.one_statement_has_waited_so_far'))
                     :format(math.floor(health.oldestMs / 1000), tostring(health.oldestWhat))
                 or ''
-            say(('database: answering (%d statement(s) given up on since start, %d answered '
-                .. 'after that)%s'):format(tonumber(health.gaveUp) or 0, tonumber(health.late) or 0,
+            say((L('admin.database_answering_statement_given_up_on')):format(tonumber(health.gaveUp) or 0, tonumber(health.late) or 0,
                 slow))
         end
         local missing = Audit and Audit.unconfirmed and Audit.unconfirmed() or 0
         if missing > 0 then
-            say(('  %d audit row(s) may be missing: their write got no answer'):format(missing))
+            say((L('admin.audit_row_may_be_missing_their')):format(missing))
         end
     end
     local function ago(at)
-        if not at then return 'not run yet' end
-        return ('%d s ago'):format(math.max(0, os.time() - at))
+        if not at then return L('admin.not_run_yet') end
+        return (L('admin.ago')):format(math.max(0, os.time() - at))
     end
     local tickAt = Timing and Timing.lastAt and Timing.lastAt('audit.flush') or nil
     local sampledAt = Timing and Timing.lastAt and Timing.lastAt('death.sampler') or nil
@@ -2334,8 +2267,8 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- The sampler sleeps while no contract is running (Death.sampling).
     local sampler = ago(sampledAt)
     if Death and Death.sampling and not Death.sampling() then sampler = 'idle' end
-    say(('loops: maintenance tick %s | condition sampler %s | handover tick %s')
-        :format(closed == 'recovery_failed' and 'not started' or ago(tickAt), sampler,
+    say((L('admin.loops_maintenance_tick_condition_sampler_handover'))
+        :format(closed == 'recovery_failed' and L('admin.not_started') or ago(tickAt), sampler,
             handover))
 
     -- What the start found wrong with the configuration (shared/log.lua):
@@ -2343,12 +2276,12 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- this is where that line sends staff. First, so it is not missed.
     local kept = Log.view()
     if #kept.problems > 0 then
-        say(('settings that need attention: %d'):format(kept.count))
+        say((L('admin.settings_that_need_attention')):format(kept.count))
         for _, text in ipairs(kept.problems) do
             say('  -> ' .. (text:gsub('^warning: ', '')))
         end
     else
-        say('settings that need attention: none')
+        say(L('admin.settings_that_need_attention_none'))
     end
 
     --- What the console said, and with Config.Debug off would have said
@@ -2357,12 +2290,12 @@ function Admin.diagnose(source, subjectId, later, opts)
     --- every way it ends. Marked with a dot, which the admin panel's
     --- overview does not take for something to act on.
     local function consoleNotes()
-        say(('console: debug output %s (Config.Debug); what this start said, and the newest '
-            .. 'since:'):format(kept.debug and 'on' or 'off, so only what needs you was printed'))
+        say((L('admin.console_debug_output_config_debug_what')
+            .. 'since:'):format(kept.debug and 'on' or L('admin.off_so_only_what_needs_you')), 'console')
         if #kept.boot == 0 and #kept.recent == 0 then say('  · nothing') end
         for _, text in ipairs(kept.boot) do say('  · ' .. text) end
         if (kept.bootLeft or 0) > 0 then
-            say(('  · (and %d more line(s) the start said, not kept)'):format(kept.bootLeft))
+            say((L('admin.and_more_line_the_start_said')):format(kept.bootLeft))
         end
         for _, entry in ipairs(kept.recent) do
             say(('  · %s  %s%s'):format(entry.at and os.date('%H:%M:%S', entry.at) or '--:--:--',
@@ -2391,41 +2324,28 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- Neither line below carries the '->' this report marks something to
     -- act on with: there is nothing to do about a setting that is unused.
     if placing == CH.FULFILMENT_RULE.ALIVE then
-        say('completion: alive (Config.Completion.Fulfilment): live transfer only. A '
-            .. 'contract is completed only when the target is brought alive to the person '
-            .. 'who placed it, who has to be there for the handover; a kill never completes one')
+        say(L('admin.completion_alive_config_completion_fulfilment_live'))
         if other > 0 then
-            say(('  the kill photo settings (Config.Completion.PhotoStorage and the other '
-                .. 'Photo* settings, ExtraPhotoHosts, ProofWindowSeconds) and Config.Bonus are '
-                .. 'not used by new contracts. %d live contract(s) were placed under \'either\' '
-                .. 'and can still be completed by a kill until they end; those still use them.')
+            say((L('admin.the_kill_photo_settings_config_completion'))
                 :format(other))
         else
-            say('  no kill photo is taken, so the kill photo settings '
-                .. '(Config.Completion.PhotoStorage and the other Photo* settings, '
-                .. 'ExtraPhotoHosts, ProofWindowSeconds) and Config.Bonus are not used, beyond '
-                .. 'photos taken before and still waiting for or kept by their clients')
+            say(L('admin.no_kill_photo_is_taken_so'))
         end
     else
-        say(('completion: either (Config.Completion.Fulfilment): a kill, verified %s, or a '
-            .. 'live handover to the person who placed it completes a contract')
-            :format(killPhotos and 'with a photo' or 'at the scene with no photo'))
+        say((L('admin.completion_either_config_completion_fulfilment_a'))
+            :format(killPhotos and L('admin.with_a_photo') or L('admin.at_the_scene_with_no_photo')))
         if other > 0 then
-            say(('  %d live contract(s) were placed under \'alive\' and are completed only by '
-                .. 'a handover until they end'):format(other))
+            say((L('admin.live_contract_were_placed_under_alive')):format(other))
         end
     end
 
     -- Kill photos at all, said in so many words: an owner who switched them
     -- off has the answer to "why did nothing ask Fivemanage" here.
     if killPhotos then
-        say('Kill photos: on (Config.Completion.KillPhotos)')
+        say(L('admin.kill_photos_on_config_completion_killphotos'))
     else
-        say('Kill photos: off')
-        say('  Config.Completion.KillPhotos is false: no kill photo is taken, uploaded, kept or '
-            .. 'served, and no image host is asked anything. Verify kill (under \'either\') '
-            .. 'completes at the scene on the server\'s own checks. PhotoStorage, the other '
-            .. 'Photo* settings, ExtraPhotoHosts and Config.Ledger.StorePhotos do not apply.')
+        say(L('admin.kill_photos_off'))
+        say(L('admin.config_completion_killphotos_is_false_no'))
     end
 
     -- Writes that did not read back as what was written.
@@ -2437,10 +2357,8 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- comment above it described a behaviour that did not exist.
     local mismatched = Storage.readBackMismatches and Storage.readBackMismatches() or 0
     if mismatched > 0 then
-        say(('  %d WRITE(S) READ BACK DIFFERENTLY.'):format(mismatched))
-        say('    -> the engine accepted every one of them, so nothing is known '
-            .. 'to be lost yet. If contracts stop surviving restarts, this is '
-            .. 'the first thing to believe.')
+        say((L('admin.write_read_back_differently')):format(mismatched), 'act')
+        say(L('admin.the_engine_accepted_every_one_of'))
     end
 
     -- Fulfilments waiting on a proof that has not arrived. A number that
@@ -2448,7 +2366,7 @@ function Admin.diagnose(source, subjectId, later, opts)
     if Death and Death.pendingCount then
         local waiting = Death.pendingCount()
         if waiting > 0 then
-            say(('  %d completion(s) waiting on proof.'):format(waiting))
+            say((L('admin.completion_waiting_on_proof')):format(waiting))
         end
     end
     -- Hits on downed players kept for their death reports: a number that
@@ -2456,7 +2374,7 @@ function Admin.diagnose(source, subjectId, later, opts)
     if Death and Death.keptDownHits then
         local kept = Death.keptDownHits()
         if kept > 0 then
-            say(('  %d hit(s) on downed players kept for their death reports.'):format(kept))
+            say((L('admin.hit_on_downed_players_kept_for')):format(kept))
         end
     end
 
@@ -2465,22 +2383,21 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- top of any report about why something is missing.
     local held = Storage.quarantined and Storage.quarantined() or {}
     if #held > 0 then
-        say(('  %d CONTRACT(S) COULD NOT BE LOADED:'):format(#held))
+        say((L('admin.contract_could_not_be_loaded')):format(#held), 'act')
         for i = 1, #held do
             say(('    %s (%s)'):format(held[i].id, held[i].reason))
         end
-        say('    -> restore those files from a backup and restart, or settle '
-            .. 'them by hand and take their ids out of data/store.json')
+        say(L('admin.restore_those_files_from_a_backup'))
     end
 
     -- Money no rule could settle, waiting for staff (server/review.lua).
     local reviewing = Review and Review.openCount() or 0
     if reviewing > 0 then
-        say(('  %d MONEY EVENT(S) WAIT IN THE REVIEW QUEUE.'):format(reviewing))
+        say((L('admin.money_event_wait_in_the_review')):format(reviewing), 'act')
         if panel then
-            say('    -> Needs review lists them with what is known, and resolves each')
+            say(L('admin.needs_review_lists_them_with_what'))
         else
-            say(('    -> /%s lists them with what is known, and /%s resolves each')
+            say((L('admin.lists_them_with_what_is_known'))
                 :format(tostring(Config.Admin.Commands.stuck), tostring(Config.Admin.Commands.review)))
         end
     end
@@ -2503,22 +2420,22 @@ function Admin.diagnose(source, subjectId, later, opts)
             end
             if row.unknown then unsure = unsure + 1 end
         end
-        say(('admin panel settings in force over config.lua: %d%s%s'):format(inForce,
-            notApplied > 0 and (', and %d not applied'):format(notApplied) or '',
-            unsure > 0 and (', and %d the store may or may not hold'):format(unsure) or ''))
+        say((L('admin.admin_panel_settings_in_force_over')):format(inForce,
+            notApplied > 0 and (L('admin.and_not_applied')):format(notApplied) or '',
+            unsure > 0 and (L('admin.and_the_store_may_or_may')):format(unsure) or ''))
         for _, row in ipairs(active) do
             local note = ''
             if row.ignored then
-                note = '  -> NOT APPLIED: ' .. row.ignored .. '; reset it in the panel'
+                note = L('admin.not_applied') .. row.ignored .. L('admin.reset_it_in_the_panel')
             elseif row.unknown then
-                note = ('  -> STORE UNKNOWN: a change to it raised, and so did reading it back (%s); '
-                    .. 'set or reset it again in the panel'):format(row.unknown)
+                note = (L('admin.store_unknown_a_change_to_it')):format(row.unknown)
             end
-            say(('  %s = %s  (by %s, %s)%s'):format(row.key, Settings.describe(row.value),
-                tostring(row.by or '?'), row.at and os.date('%Y-%m-%d %H:%M', row.at) or '?', note))
+            say((L('admin.by')):format(row.key, Settings.describe(row.value),
+                tostring(row.by or '?'), row.at and os.date('%Y-%m-%d %H:%M', row.at) or '?', note),
+                note ~= '' and 'act' or nil)
         end
     else
-        say('admin panel settings: none; config.lua is in force as it stands')
+        say(L('admin.admin_panel_settings_none_config_lua'))
     end
 
     -- Server-wide, so before the player checks, which can stop early.
@@ -2551,26 +2468,24 @@ function Admin.diagnose(source, subjectId, later, opts)
 
     local actor = subject and Identity.resolve(subject) or nil
     if unnamed then
-        say(('identity: %s is not a player id, and nobody in the city has it as a citizen id.')
+        say((L('admin.identity_is_not_a_player_id'))
             :format(tostring(subjectId)))
-        say('  -> Give a player id (or nothing to run it as yourself). The server-wide checks '
-            .. 'below still ran.')
+        say(L('admin.give_a_player_id_or_nothing'))
     elseif not actor then
         if subjectId then
-            say(('identity: player %s is not connected, or this server cannot '
-                .. 'describe them.'):format(tostring(subjectId)))
+            say((L('admin.identity_player_is_not_connected_or')):format(tostring(subjectId)))
         elseif source == 0 then
-            say('identity: run from the console, which has no character of its own.')
+            say(L('admin.identity_run_from_the_console_which'), 'console')
         else
-            say('identity: COULD NOT RESOLVE this player. Nothing else can work.')
+            say(L('admin.identity_could_not_resolve_this_player'), 'act')
         end
         if panel then
-            say('  -> name somebody who is in the city: their player id, beside Run the diagnosis')
+            say(L('admin.name_somebody_who_is_in_the'), 'console')
         else
-            say(('  -> name somebody who is in the city:  %s <playerid>')
-                :format(tostring(Config.Admin.Commands.diagnose)))
+            say((L('admin.name_somebody_who_is_in_the_2'))
+                :format(tostring(Config.Admin.Commands.diagnose)), 'console')
         end
-        say('  the server-wide checks below still ran.')
+        say(L('admin.the_server_wide_checks_below_still'), 'console')
     else
         say(('identity: %s (%s)'):format(tostring(actor.name), tostring(actor.cid)))
     end
@@ -2585,13 +2500,13 @@ function Admin.diagnose(source, subjectId, later, opts)
     sayPlaytime(say, actor)
 
     -- Targeting -----------------------------------------------------------
-    say(('browse all: %s   nearby: %s   min query: %s'):format(
+    say((L('admin.browse_all_nearby_min_query')):format(
         tostring(Config.Targeting.AllowBrowseAll),
         tostring(Config.Targeting.AllowNearby),
         tostring(Config.Targeting.MinQueryLength)))
 
     local online = Identity.online()
-    say(('online: %d player(s)'):format(#online))
+    say((L('admin.online_player')):format(#online))
 
     -- How many of them this resource could actually describe. A roster that
     -- is short because the framework could not read somebody is the exact
@@ -2599,8 +2514,7 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- alone.
     local connected = #(GetPlayers() or {})
     if connected > #online then
-        say(('  -> %d of %d connected players could not be described by the '
-            .. 'framework and are left out of every list'):format(
+        say((L('admin.of_connected_players_could_not_be')):format(
             connected - #online, connected))
     end
 
@@ -2613,7 +2527,7 @@ function Admin.diagnose(source, subjectId, later, opts)
                 others = others + 1
             end
         end
-        say(('targetable by you: %d  (yourself and your own account are never listed)')
+        say((L('admin.targetable_by_you_yourself_and_your'))
             :format(others))
     end
 
@@ -2625,13 +2539,11 @@ function Admin.diagnose(source, subjectId, later, opts)
         if online[i].account == nil then unknown = unknown + 1 end
     end
     if unknown > 0 then
-        say(('  account unreadable for %d of %d online — check your server has '
-            .. 'licence identifiers enabled'):format(unknown, #online))
+        say((L('admin.account_unreadable_for_of_online_check')):format(unknown, #online))
     end
 
     if actor and others == 0 and #online > 0 then
-        say('  -> the list is empty because everyone online shares your account, '
-            .. 'or you are the only one here. Try with a second player.')
+        say(L('admin.the_list_is_empty_because_everyone'))
     end
 
     -- Inventory -----------------------------------------------------------
@@ -2641,45 +2553,40 @@ function Admin.diagnose(source, subjectId, later, opts)
         -- is answerable without a player.
         local itemOff = Config.Sources.item or {}
         local weaponOff = Config.Sources.weapon or {}
-        say(('item escrow: %s   weapon escrow: %s'):format(
+        say((L('admin.item_escrow_weapon_escrow')):format(
             describeSwitch(itemOff.enabled), describeSwitch(weaponOff.enabled)))
         if itemOff.enabled ~= true or weaponOff.enabled ~= true then
-            say('  -> the app tells players this server takes money only. If you '
-                .. 'did not mean that, your config.lua predates '
-                .. 'Config.Sources.item and .weapon.')
+            say(L('admin.the_app_tells_players_this_server'))
         end
-        say('  name a player to test the ox_inventory reads themselves.')
+        say(L('admin.name_a_player_to_test_the'), 'console')
         consoleNotes()
         say('--- end ---')
-        return out
+        return out, marks
     end
 
     local carried, readOk = App.readInventory(actor)
     local count = 0
     for _ in pairs(carried or {}) do count = count + 1 end
 
-    say(('inventory read: %s'):format(
-        readOk and tostring(App.inventorySource) or 'NO EXPORT ANSWERED'))
-    say(('  slots seen: %d'):format(count))
+    say((L('admin.inventory_read')):format(
+        readOk and tostring(App.inventorySource) or L('admin.no_export_answered')), not readOk and 'act' or nil)
+    say((L('admin.slots_seen')):format(count))
     -- Read defensively: a config that never had these is exactly the case
     -- worth reporting, and a diagnosis that throws diagnoses nothing.
     local itemSource = Config.Sources.item or {}
     local weaponSource = Config.Sources.weapon or {}
 
-    say(('  item escrow: %s   weapon escrow: %s'):format(
+    say((L('admin.item_escrow_weapon_escrow_2')):format(
         describeSwitch(itemSource.enabled), describeSwitch(weaponSource.enabled)))
     if itemSource.enabled ~= true or weaponSource.enabled ~= true then
-        say('  -> the app tells players this server takes money only. If you did '
-            .. 'not mean that, your config.lua predates Config.Sources.item and '
-            .. '.weapon.')
+        say(L('admin.the_app_tells_players_this_server'))
     end
-    say(('  offerable to you: %d item(s), %d weapon(s)'):format(
+    say((L('admin.offerable_to_you_item_weapon')):format(
         #App.escrowableItems(actor, carried), #App.escrowableWeapons(actor, carried)))
     if not readOk then
-        say('  -> ox_inventory answered neither read. Items and weapons cannot be '
-            .. 'offered; money still works.')
+        say(L('admin.ox_inventory_answered_neither_read_items'))
     elseif count == 0 then
-        say('  -> you are carrying nothing. Pick something up and run this again.')
+        say(L('admin.you_are_carrying_nothing_pick_something'))
     end
 
     -- Death detection -----------------------------------------------------
@@ -2694,31 +2601,25 @@ function Admin.diagnose(source, subjectId, later, opts)
         -- Which one answered: a medical resource's exports, or qbx_core's
         -- metadata. qbx_medical is always the second, since its IsDead and
         -- IsLaststand are client exports only.
-        say(('death state: readable (dead=%s, last stand=%s), from %s')
+        say((L('admin.death_state_readable_dead_last_stand'))
             :format(tostring(dead), tostring(lastStand),
-                answeredBy == 'metadata' and 'QBox metadata' or tostring(answeredBy)))
+                answeredBy == 'metadata' and L('admin.qbox_metadata') or tostring(answeredBy)))
     else
-        say('death state: NOTHING COULD ANSWER')
+        say(L('admin.death_state_nothing_could_answer'), 'act')
         -- Led by what fails on this server: on 'alive' a handover is the only
         -- way a contract completes, and a kill photo is taken only for a
         -- contract placed under 'either' that is still live.
         if placing == CH.FULFILMENT_RULE.ALIVE then
-            say('  -> no configured death provider responded and this player has no QBox '
-                .. 'metadata to fall back on. Every live handover of them is refused, since one '
-                .. 'needs them shown alive and conscious, so no contract on them can complete.'
-                .. (photosUsed and ' A kill photo of them, for a contract placed under '
-                    .. '\'either\' and still live, is refused too.' or ''))
+            say(L('admin.no_configured_death_provider_responded_and')
+                .. (photosUsed and L('admin.a_kill_photo_of_them_for') or ''))
         else
-            say('  -> no configured death provider responded and this player has no '
-                .. 'QBox metadata to fall back on. Eliminations cannot be verified: '
-                .. 'every photo of a real kill is refused. Deliveries alive are '
-                .. 'refused too, for the same reason.')
+            say(L('admin.no_configured_death_provider_responded_and_2'))
         end
         local providers = {}
         for _, seen in ipairs(Integrations.status('ambulance').detected) do
             providers[#providers + 1] = ('%s(%s)'):format(seen.resource, tostring(GetResourceState(seen.resource)))
         end
-        say(('  providers tried (Config.Integrations.Ambulance = %s): %s'):format(
+        say((L('admin.providers_tried_config_integrations_ambulance')):format(
             Integrations.choice('ambulance'), #providers > 0 and table.concat(providers, ', ') or 'none'))
     end
 
@@ -2731,10 +2632,10 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- symptom.
     local gateOk, gateActor, gateErr = pcall(Identity.gate, subject)
     if not gateOk then
-        say(('gate: THREW  %s'):format(tostring(gateActor)))
-        say('  -> every request from this player is refused. Nothing can work.')
+        say((L('admin.gate_threw')):format(tostring(gateActor)), 'act')
+        say(L('admin.every_request_from_this_player_is'))
     elseif not gateActor then
-        say(('gate: REFUSES this player (%s)'):format(tostring(gateErr)))
+        say((L('admin.gate_refuses_this_player')):format(tostring(gateErr)), 'act')
         -- Which job, and which setting it matched. This used to name a
         -- Config.Blacklist that does not exist, and an admin who searched
         -- config.lua for it found only EscrowBlacklist, which is unrelated.
@@ -2754,33 +2655,31 @@ function Admin.diagnose(source, subjectId, later, opts)
             local jobType = job.type and tostring(job.type):lower() or nil
             local jobName = job.name and tostring(job.name):lower() or nil
             -- In the order Identity.isBlockedJob checks them.
-            local matched = 'Config.BlockedJobTypes or Config.BlockedJobNames'
+            local matched = L('admin.config_blockedjobtypes_or_config_blockedjobnames')
             if jobType and Config.BlockedJobTypes[jobType] then
-                matched = ('Config.BlockedJobTypes (%s)'):format(jobType)
+                matched = (L('admin.config_blockedjobtypes')):format(jobType)
             elseif jobName and Config.BlockedJobNames[jobName] then
-                matched = ('Config.BlockedJobNames (%s)'):format(jobName)
+                matched = (L('admin.config_blockedjobnames')):format(jobName)
             end
-            say(('  -> barred by the %s job%s%s: it matches %s'):format(
+            say((L('admin.barred_by_the_job_it_matches')):format(
                 tostring(jobName or barredName),
                 jobType and (' (type ' .. jobType .. ')') or '',
-                held and ', which they hold but are not working' or '',
+                held and L('admin.which_they_hold_but_are_not') or '',
                 matched))
             if Config.BlockOffDuty and (held or job.onduty == false) then
-                say('     off duty still counts while Config.BlockOffDuty is on')
+                say(L('admin.off_duty_still_counts_while_config'))
             end
             -- With the whitelisted-job view on, the app is theirs with one
             -- screen, whatever HideAppFromBlockedJobs says.
             local shown
             if Identity.whitelistedViewOn() then
-                shown = 'the app shows them the whitelisted-job view alone '
-                    .. '(Config.WhitelistedView): the contracts on them and on other '
-                    .. 'whitelisted-job members, and the buyout on their own'
+                shown = L('admin.the_app_shows_them_the_whitelisted')
             elseif Config.HideAppFromBlockedJobs == false then
-                shown = 'the app is installed but answers nothing for them'
+                shown = L('admin.the_app_is_installed_but_answers')
             else
-                shown = 'the app is hidden from their phone'
+                shown = L('admin.the_app_is_hidden_from_their')
             end
-            say('  -> ' .. shown .. ', by design. Nothing else below will look wrong.')
+            say('  -> ' .. shown .. L('admin.by_design_nothing_else_below_will'))
         end
     else
         say('gate: passes')
@@ -2806,12 +2705,12 @@ function Admin.diagnose(source, subjectId, later, opts)
 
     -- Run directly, so past the gate that is closed while recovery has not
     -- finished (above): an answer here is not what a player gets then.
-    say(closed and 'handlers (run directly, past the closed gate above):' or 'handlers:')
+    say(closed and L('admin.handlers_run_directly_past_the_closed') or 'handlers:')
     for i = 1, #probes do
         local probeName = probes[i]
         local fn = App and App.handlers and App.handlers[probeName]
         if not fn then
-            say(('  %s: NOT REGISTERED'):format(probeName))
+            say((L('admin.not_registered')):format(probeName), 'act')
         else
             local ok, result, resultErr = pcall(fn, actor, payloads[probeName] or {})
             if not ok then
@@ -2819,17 +2718,17 @@ function Admin.diagnose(source, subjectId, later, opts)
                 -- line that was previously going nowhere an operator could
                 -- reach: the player saw a shrug and the console said
                 -- nothing at all.
-                say(('  %s: THREW  %s'):format(probeName, tostring(result)))
+                say((L('admin.threw')):format(probeName, tostring(result)), 'act')
             elseif result == false or result == nil then
-                say(('  %s: refused (%s)'):format(probeName, tostring(resultErr)))
+                say((L('admin.refused')):format(probeName, tostring(resultErr)))
             else
                 local size
                 if type(result) == 'table' then
-                    if result.people then size = ('%d people'):format(#result.people)
-                    elseif result.contracts then size = ('%d contracts'):format(#result.contracts)
-                    elseif result.items then size = ('%d items, %d weapons')
+                    if result.people then size = (L('admin.people')):format(#result.people)
+                    elseif result.contracts then size = (L('admin.contracts')):format(#result.contracts)
+                    elseif result.items then size = (L('admin.items_weapons'))
                         :format(#result.items, #(result.weapons or {}))
-                    elseif result.onYou then size = ('%d on them, %d on whitelisted jobs')
+                    elseif result.onYou then size = (L('admin.on_them_on_whitelisted_jobs'))
                         :format(#result.onYou, #(result.colleagues or {}))
                     end
                 end
@@ -2850,24 +2749,20 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- upload host, right under the line saying those settings are unused.
     local storage = Photo and Photo.storage and Photo.storage() or 'server'
     if not killPhotos then
-        say('photo settings: not used (kill photos are off); nothing here needs setting up')
+        say(L('admin.photo_settings_not_used_kill_photos'))
     elseif not photosUsed then
-        say('photo settings: not used (live transfer only); nothing here needs setting up')
+        say(L('admin.photo_settings_not_used_live_transfer'))
     elseif storage == 'host' then
-        say('photo storage: host (lb-phone\'s camera uploads to the phone\'s image host; '
-            .. 'this server keeps the link)')
+        say(L('admin.photo_storage_host_lb_phones_camera'))
     else
-        say('photo storage: server (taken in the app and kept in data/photos; no image '
-            .. 'host is used)')
+        say(L('admin.photo_storage_server_taken_in_the'))
         -- And whether it can: a binary file written there and read back.
         if Photos and Photos.selfTest then
             local ran, ok, detail = pcall(Photos.selfTest)
             if ran and ok then
-                say(('  data/photos write and read-back: ok (%s)'):format(tostring(detail)))
+                say((L('admin.data_photos_write_and_read_back')):format(tostring(detail)))
             else
-                say(('  -> data/photos write and read-back FAILED (%s). Kill photos cannot be '
-                    .. 'kept on this server: make sure data/photos exists in this resource and '
-                    .. 'the server can write to it.'):format(ran and tostring(detail) or 'it raised'))
+                say((L('admin.data_photos_write_and_read_back_2')):format(ran and tostring(detail) or L('admin.it_raised')), 'act')
             end
         end
     end
@@ -2880,56 +2775,41 @@ function Admin.diagnose(source, subjectId, later, opts)
     if photosUsed and storage == 'server' and Photos and Photos.publicBase then
         local base, from = Photos.publicBase()
         if base and type(GetPasswordHash) ~= 'function' then
-            say(('photo links: none (this server build has no GetPasswordHash, so it cannot '
-                .. 'make a link nobody can guess; %s is not used)'):format(base))
+            say((L('admin.photo_links_none_this_server_build')):format(base))
         elseif base then
-            say(('photo links: %s/p/... (from %s)'):format(base, from))
+            say((L('admin.photo_links_p_from')):format(base, from))
             local allowed, host = Photos.galleryAllows(base .. '/p/x.webp')
             if allowed == true then
-                say(('  lb-phone\'s upload allow list takes %s: yes'):format(host))
+                say((L('admin.lb_phones_upload_allow_list_takes')):format(host))
             elseif allowed == nil then
-                say(('  could not read lb-phone\'s config to check that it takes %s. Make sure '
-                    .. 'it is in Config.UploadWhitelistedHostnames in lb-phone\'s config.')
+                say((L('admin.could_not_read_lb_phones_config'))
                     :format(host))
             else
-                say(('  -> lb-phone\'s upload allow list does NOT take %s, so phones may refuse '
-                    .. 'to save these photos. Add "%s" to Config.UploadWhitelistedHostnames in '
-                    .. 'lb-phone\'s config.'):format(host, host))
+                say((L('admin.lb_phones_upload_allow_list_does')):format(host, host))
             end
             -- Whether it leads here at all. Everything above can be right
             -- and every link still dead: no '/<resource>' on the address, a
             -- proxy that does not pass it on, a bad certificate. Asked of
             -- the address itself, and answered after this report.
             if later and Photos.checkReach then
-                say('  checking that this address reaches this resource; the answer follows')
+                say(L('admin.checking_that_this_address_reaches_this'))
                 local resource = GetCurrentResourceName()
                 Photos.checkReach(base, function(reached, status, marked, err)
                     if reached then
-                        later(('photo links: %s reaches this resource: yes'):format(base))
+                        later((L('admin.photo_links_reaches_this_resource_yes')):format(base))
                     elseif status == 0 then
-                        later(('photo links: -> this server could not load %s/p/... (%s). If '
-                            .. 'phones cannot either, every photo saved to Photos by link is a '
-                            .. 'broken picture. Check the address, its certificate and its DNS. '
-                            .. 'Some networks cannot reach their own public address from inside, '
-                            .. 'so try a link from a phone before changing anything.')
-                            :format(base, err or 'no answer'))
+                        later((L('admin.photo_links_this_server_could_not'))
+                            :format(base, err or L('admin.no_answer')))
                     else
-                        later(('photo links: -> %s/p/... answered %d%s, not this resource, so '
-                            .. 'every photo saved to Photos by link would be a broken picture. '
-                            .. 'The address has to lead to this server\'s /%s/ (web_baseUrl, or '
-                            .. 'Config.Completion.PhotoPublicUrl ending in /%s), and any proxy in '
-                            .. 'front has to pass that path on.')
-                            :format(base, status, marked and ' from this resource' or '',
+                        later((L('admin.photo_links_p_answered_not_this'))
+                            :format(base, status, marked and L('admin.from_this_resource') or '',
                                 resource, resource))
                     end
                 end)
             end
         else
-            say(('photo links: none (%s)'):format(tostring(from)))
-            say('  -> photos saved to Photos go through lb-phone\'s own upload if the phone '
-                .. 'has one, and are kept in the app if not. To serve them from this server '
-                .. 'with no image host, set Config.Completion.PhotoPublicUrl or web_baseUrl '
-                .. '(Qbox Nucleus: set web_baseUrl "<name>.server.qbox.re").')
+            say((L('admin.photo_links_none')):format(tostring(from)))
+            say(L('admin.photos_saved_to_photos_go_through'))
         end
     end
     -- What the photos on disk come to: an owner who never hears from the
@@ -2940,30 +2820,27 @@ function Admin.diagnose(source, subjectId, later, opts)
         if okTotals and ((photosUsed and storage == 'server')
                 or totals.waiting.count + totals.kept.count + totals.served.count > 0) then
             local function size(bytes)
-                return ('%.1f MB'):format((tonumber(bytes) or 0) / 1048576)
+                return (L('admin.1f_mb')):format((tonumber(bytes) or 0) / 1048576)
             end
-            say(('photos on disk%s: %d waiting (%s), %d kept in the app (%s), %d served to '
-                .. 'phones\' Photos (%s)'):format(photosUsed and '' or ' (taken before)',
+            say((L('admin.photos_on_disk_waiting_kept_in')):format(photosUsed and '' or L('admin.taken_before'),
                 totals.waiting.count, size(totals.waiting.bytes),
                 totals.kept.count, size(totals.kept.bytes),
                 totals.served.count, size(totals.served.bytes)))
             if Config.Completion.KeptPhotoDays then
-                say(('  kept photos are deleted after %s day(s) (Config.Completion.KeptPhotoDays)')
+                say((L('admin.kept_photos_are_deleted_after_day'))
                     :format(tostring(Config.Completion.KeptPhotoDays)))
             elseif totals.kept.count > 0 then
-                say('  kept photos stay until their owner deletes them; '
-                    .. 'Config.Completion.KeptPhotoDays puts a limit on that')
+                say(L('admin.kept_photos_stay_until_their_owner'))
             end
         end
     end
     if photosUsed and storage == 'host' and Photo and Photo.allowedHosts then
         local okHosts, hosts = pcall(Photo.allowedHosts)
         hosts = okHosts and type(hosts) == 'table' and hosts or {}
-        say(('photo hosts: %d%s'):format(#hosts,
+        say((L('admin.photo_hosts')):format(#hosts,
             #hosts > 0 and (' (' .. table.concat(hosts, ', ') .. ')') or ''))
         if #hosts == 0 then
-            say('  -> no upload host is allowed: every kill photo will be refused. Add the '
-                .. 'phone\'s image host to Config.Completion.ExtraPhotoHosts (for Fivemanage: '
+            say(L('admin.no_upload_host_is_allowed_every')
                 .. 'fivemanage.com, fmfile.com)')
         end
     end
@@ -2989,20 +2866,18 @@ function Admin.diagnose(source, subjectId, later, opts)
         -- threw on it and took the whole diagnosis down with it.
         parts[#parts + 1] = ('%s=%s'):format(buckets[i],
             type(rule) == 'table' and ('%s/%ss'):format(tostring(rule.burst), tostring(rule.per))
-                or 'MISSING')
+                or L('admin.missing'))
     end
-    say(('rate limits: %s'):format(table.concat(parts, '  ')))
+    say((L('admin.rate_limits')):format(table.concat(parts, '  ')), missing > 0 and 'act' or nil)
     if missing > 0 then
-        say(('  -> %d bucket(s) your config does not set; those actions fall '
-            .. 'back to %s/%ss, which may be stricter or looser than intended')
+        say((L('admin.bucket_your_config_does_not_set'))
             :format(missing, RateLimit and RateLimit.FALLBACK.burst or 10,
                     RateLimit and RateLimit.FALLBACK.per or 10))
     end
-    say(('  keyed on: %s'):format(tostring(Config.RateLimit.Key)))
+    say((L('admin.keyed_on')):format(tostring(Config.RateLimit.Key)))
 
     if Config.Debug then
-        say('debug: ON — the server console prints everything, page faults with their full '
-            .. 'stack. Leave it off on a busy server; the reports are recorded either way.')
+        say(L('admin.debug_on_the_server_console_prints'))
     end
 
     -- What the app itself has reported.
@@ -3018,7 +2893,7 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- player's broken page answered a question about this one.
     local faults = App and App.recentPageFaults and App.recentPageFaults() or {}
     if #faults == 0 then
-        say('app faults: none reported by any player\'s page this session.')
+        say(L('admin.app_faults_none_reported_by_any'))
     else
         local ordered, own = {}, 0
         for _, fault in ipairs(faults) do
@@ -3030,19 +2905,17 @@ function Admin.diagnose(source, subjectId, later, opts)
         for _, fault in ipairs(faults) do
             if not (actor and fault.cid == actor.cid) then ordered[#ordered + 1] = fault end
         end
-        say(('app faults: %d reported by players\' pages%s, newest first:')
-            :format(#faults, actor and (', %d by this player\'s'):format(own) or ''))
+        say((L('admin.app_faults_reported_by_players_pages'))
+            :format(#faults, actor and (L('admin.by_this_players')):format(own) or ''))
         for i = 1, math.min(#ordered, 5) do
             local fault = ordered[i]
             local theirs = actor and fault.cid ~= actor.cid
-            say(('  %s  %s  build %s  %s%s'):format(
+            say((L('admin.build')):format(
                 os.date('%H:%M:%S', fault.at), fault.cid or 'unknown',
-                fault.build or '?', fault.what, theirs and '  (another player\'s)' or ''))
-            if fault.where then say(('      at %s'):format(fault.where)) end
+                fault.build or '?', fault.what, theirs and L('admin.another_players') or ''))
+            if fault.where then say((L('admin.at')):format(fault.where)) end
         end
-        say('  -> a fault here is a bug in this resource, not in the player\'s '
-            .. 'game. The build number says which copy of the page they are '
-            .. 'running, which is the first thing to check.')
+        say(L('admin.a_fault_here_is_a_bug'))
     end
 
     -- And ask the named player's open app what it has seen.
@@ -3060,8 +2933,7 @@ function Admin.diagnose(source, subjectId, later, opts)
     if subject and actor and Identity.isBarred(actor) and not Identity.whitelistedViewOn() then
         -- The app is closed to their job, and so is the one way its log
         -- comes back (pageError, open to them only beside the view).
-        say(('  player %s is on a job the app bars and the whitelisted-job view is off, so '
-            .. 'their app cannot send its log.'):format(tostring(subject)))
+        say((L('admin.player_is_on_a_job_the')):format(tostring(subject)))
     elseif subject then
         local function toAsker(said)
             if later then return later(said) end
@@ -3072,24 +2944,23 @@ function Admin.diagnose(source, subjectId, later, opts)
         end
         if App and App.expectDump then App.expectDump(subject, toAsker) end
         TriggerClientEvent('crimson-hitman:askDiagnostics', subject)
-        say(('  asked player %s\'s app for its own log; if it is open, the '
-            .. 'answer follows here within a second or two.')
+        say((L('admin.asked_player_ss_app_for_its'))
             :format(tostring(subject)))
     end
 
     consoleNotes()
     say('--- end ---')
-    return out
+    return out, marks
 end
 
 --- Where the admin panel has each command: the panel has no commands in
 --- it, so a line written for the console ("left for staff (/ch-stuck)")
 --- reads with the section or button that does the same thing.
 local PANEL_PLACES = {
-    stuck = 'Stuck escrow', settle = 'Stuck escrow', review = 'Needs review',
-    void = 'Void contract', timeline = 'the contract\'s view', contracts = 'Players',
-    whois = 'Whois', diagnose = 'Run the diagnosis', refresh = 'Bring timers forward',
-    panel = 'the admin panel',
+    stuck = L('admin.stuck_escrow'), settle = L('admin.stuck_escrow'), review = L('admin.needs_review'),
+    void = L('admin.void_contract'), timeline = L('admin.the_contracts_view'), contracts = L('admin.players'),
+    whois = L('admin.whois'), diagnose = L('admin.run_the_diagnosis'), refresh = L('admin.bring_timers_forward'),
+    panel = L('admin.the_admin_panel'),
 }
 
 --- A console line in the admin panel's words: every /command in it named
@@ -3301,31 +3172,25 @@ function Admin.refreshTimers(src)
     Audit.flush()
 
     local lines = {
-        ('Timers refreshed. %d rate-limit bucket(s) and %d flood counter(s) cleared.')
+        (L('admin.timers_refreshed_rate_limit_bucket_and'))
             :format(counts.buckets, counts.flood),
-        ('%d live contract(s) given a full deadline and lifetime; %d slot cooldown(s) '
-            .. 'and %d amendment proposal(s) refreshed.')
+        (L('admin.live_contract_given_a_full_deadline'))
             :format(counts.deadlines, counts.slots, counts.proposals),
-        ('%d resolved contract(s) aged past every re-list cooldown (%ds).')
+        (L('admin.resolved_contract_aged_past_every_re'))
             :format(counts.resolved, back),
-        ('%d informant reroll lock(s), %d handover re-arm cooldown(s), %d headshot '
-            .. 'refresh floor(s), %d respawn immunity window(s) and %d new-player '
-            .. 'session window(s) cleared.')
+        (L('admin.informant_reroll_lock_handover_re_arm'))
             :format(counts.informant, counts.rearm, counts.mugshots, counts.respawn,
                     counts.sessions),
-        ('The one wait left is total playtime (%s hours), which this refresh leaves alone. '
-            .. 'Where the built-in tracker answers for a character, their counted hours can be '
-            .. 'set under Players in the admin panel.')
+        (L('admin.the_one_wait_left_is_total'))
             :format(tostring(Config.Immunity.MinTargetPlaytimeHours)),
-        'Purchase and slot COUNTS are untouched, and no countdown was advanced.',
+        L('admin.purchase_and_slot_counts_are_untouched'),
     }
     if counts.failed > 0 then
         -- Right after the live count, which leaves these out: each may be
         -- refreshed part-way (the lifetime, say, and not the deadline).
-        table.insert(lines, 3, ('%d contract(s) could not be refreshed, because the store refused '
-            .. 'a write (the server console says why), and may be refreshed only part-way: %s.')
+        table.insert(lines, 3, (L('admin.contract_could_not_be_refreshed_because'))
             :format(counts.failed, table.concat(failed, ', ', 1, math.min(#failed, 10))
-                .. (#failed > 10 and (' and %d more'):format(#failed - 10) or '')))
+                .. (#failed > 10 and (L('admin.and_more')):format(#failed - 10) or '')))
     end
     return lines
 end

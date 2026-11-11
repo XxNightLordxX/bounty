@@ -26,6 +26,7 @@
 
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local ConfigCheck = {}
 
@@ -44,10 +45,10 @@ end
 local function settingFix(line)
     local key = keyIn(line)
     if key then
-        return ('change Config.%s in config/config.lua, or in the admin panel (Settings: search %s)')
+        return (L('configcheck.change_config_in_config_config_lua'))
             :format(key, key)
     end
-    return 'change the setting it names in config/config.lua, or in the admin panel\'s Settings'
+    return L('configcheck.change_the_setting_it_names_in')
 end
 
 --- The group every staff ACE is checked against: what the README's
@@ -58,43 +59,37 @@ ConfigCheck.GROUP = 'group.admin'
 --- whether it applies; text and fix are what is said.
 ConfigCheck.RISKS = {
     { when = function(c) return c.Debug == true end,
-      text = 'Config.Debug is on: the console prints every debug line, which is noisy on a live server',
-      fix = 'set Config.Debug = false once the server is set up (the diagnosis still lists everything)' },
+      text = L('configcheck.config_debug_is_on_the_console'),
+      fix = L('configcheck.set_config_debug_false_once_the') },
     { when = function(c) return type(c.Database) == 'table' and c.Database.Mode == 'memory' end,
-      text = 'storage is \'memory\' (Config.Database.Mode): every contract and all escrowed money are lost '
-          .. 'at a restart',
-      fix = 'set Config.Database.Mode = \'mysql\' (or \'json\'); memory is for testing only' },
+      text = L('configcheck.storage_is_memory_config_database_mode'),
+      fix = L('configcheck.set_config_database_mode_mysql_or') },
     { when = function(c) return type(c.Database) == 'table' and c.Database.AllowModeSwitch == true end,
-      text = 'Config.Database.AllowModeSwitch is on: the next start opens a new storage mode even while the '
-          .. 'old one still holds players\' money',
-      fix = 'set it back to false once the switch is done and the old money settled' },
+      text = L('configcheck.config_database_allowmodeswitch_is_on_the'),
+      fix = L('configcheck.set_it_back_to_false_once') },
     { when = function(c)
           local a = type(c.Admin) == 'table' and c.Admin or {}
           return a.IdentityAce ~= nil and a.IdentityAce == a.Ace
       end,
-      text = 'Config.Admin.IdentityAce is the same ACE as Config.Admin.Ace: everybody with the staff tools '
-          .. 'can see who is behind an anonymous party',
-      fix = 'give Config.Admin.IdentityAce a name of its own (crimson.identity as shipped) and grant it to '
-          .. 'fewer people' },
+      text = L('configcheck.config_admin_identityace_is_the_same'),
+      fix = L('configcheck.give_config_admin_identityace_a_name') },
     { when = function(c) return type(c.Admin) == 'table' and c.Admin.Enabled == false end,
-      text = 'Config.Admin.Enabled is off: no staff command and no admin panel answers, so money left for '
-          .. 'staff cannot be settled',
-      fix = 'set Config.Admin.Enabled = true' },
+      text = L('configcheck.config_admin_enabled_is_off_no'),
+      fix = L('configcheck.set_config_admin_enabled_true') },
     { when = function(c)
           local alerts = type(c.Alerts) == 'table' and c.Alerts or {}
           if alerts.ToDiscord ~= true then return false end
           -- The one reader of the webhook convars (server/discord.lua).
           return CrimsonBoot.require('server.discord').url('alerts') == nil
       end,
-      text = 'Config.Alerts.ToDiscord is on and no webhook is set: alerts reach only the panel',
-      fix = 'add  set crimson_hitman_alert_webhook "https://discord.com/api/webhooks/..."  to server.cfg '
-          .. '(set, never setr), or turn Config.Alerts.ToDiscord off' },
+      text = L('configcheck.config_alerts_todiscord_is_on_and'),
+      fix = L('configcheck.add_set_crimson_hitman_alert_webhook') },
     { when = function(c)
           local v = type(c.VersionCheck) == 'table' and c.VersionCheck or {}
           return v.Enabled == true and (type(v.Url) ~= 'string' or v.Url == '')
       end,
-      text = 'Config.VersionCheck.Enabled is on with no Config.VersionCheck.Url: nothing is asked',
-      fix = 'give the https:// address of the version file, or turn it off' },
+      text = L('configcheck.config_versioncheck_enabled_is_on_with'),
+      fix = L('configcheck.give_the_https_address_of_the') },
 }
 
 --- Every finding, in order: { kind, text, fix }.
@@ -123,16 +118,14 @@ function ConfigCheck.findings()
         if line and (st.needed or st.required) then
             local fix
             if not st.valid then
-                fix = ('set Config.Integrations.%s to \'auto\' or one of: %s'):format(st.key,
+                fix = (L('configcheck.set_config_integrations_to_auto_or')):format(st.key,
                     table.concat(st.names, ', '))
             elseif st.choice == 'none' then
-                fix = ('set Config.Integrations.%s = \'auto\' once you run one of: %s, or leave it if '
-                    .. 'you mean it'):format(st.key, table.concat(st.names, ', '))
+                fix = (L('configcheck.set_config_integrations_auto_once_you')):format(st.key, table.concat(st.names, ', '))
             else
                 local names = {}
                 for i = 1, #st.detected do names[i] = st.detected[i].resource end
-                fix = ('install and start %s before crimson-hitman in server.cfg, or set '
-                    .. 'Config.Integrations.%s = \'none\' to say you mean it')
+                fix = (L('configcheck.install_and_start_before_crimson_hitman'))
                     :format(#names > 0 and table.concat(names, ' or ') or 'one', st.key)
             end
             add('script', line, fix)
@@ -146,15 +139,14 @@ function ConfigCheck.findings()
         return ok and (yes == true or yes == 1)
     end
     for _, item in ipairs({
-        { 'Ace', 'the staff tools and the panel' }, { 'ModeratorAce', 'freezing, suspending and voiding' },
-        { 'IdentityAce', 'seeing who is behind an anonymous party' }, { 'DeveloperAce', 'the panel\'s Developer section' },
+        { 'Ace', L('configcheck.the_staff_tools_and_the_panel') }, { 'ModeratorAce', L('configcheck.freezing_suspending_and_voiding') },
+        { 'IdentityAce', L('configcheck.seeing_who_is_behind_an_anonymous') }, { 'DeveloperAce', L('configcheck.the_panels_developer_section') },
     }) do
         local ace = admin[item[1]]
         if type(ace) == 'string' and ace ~= '' and not held(ace) then
-            add('permission', ('%s does not hold %s (Config.Admin.%s), for %s'):format(ConfigCheck.GROUP, ace,
+            add('permission', (L('configcheck.does_not_hold_config_admin_for')):format(ConfigCheck.GROUP, ace,
                 item[1], item[2]),
-                ('add  add_ace %s %s allow  to server.cfg (README, Permissions), or to a group of its own '
-                    .. 'if fewer people should have it'):format(ConfigCheck.GROUP, ace))
+                (L('configcheck.add_add_ace_allow_to_server')):format(ConfigCheck.GROUP, ace))
         end
     end
     local commands = type(admin.Commands) == 'table' and admin.Commands or {}
@@ -166,10 +158,9 @@ function ConfigCheck.findings()
         if not held('command.' .. name) then blocked[#blocked + 1] = name end
     end
     if #blocked > 0 then
-        add('permission', ('%s may not run %s (a restricted command needs command.<name>)')
+        add('permission', (L('configcheck.may_not_run_a_restricted_command'))
             :format(ConfigCheck.GROUP, table.concat(blocked, ', ')),
-            ('add  add_ace %s command allow  (FiveM\'s own default), or one add_ace %s command.<name> '
-                .. 'allow for each'):format(ConfigCheck.GROUP, ConfigCheck.GROUP))
+            (L('configcheck.add_add_ace_command_allow_fivems')):format(ConfigCheck.GROUP, ConfigCheck.GROUP))
     end
 
     -- Risky combinations.
@@ -184,15 +175,14 @@ end
 ---@return string[]
 function ConfigCheck.lines()
     local found = ConfigCheck.findings()
-    local out = { '--- crimson-hitman config check ---' }
-    local words = { setting = 'setting', script = 'other script', permission = 'permission', risky = 'risky' }
+    local out = { L('configcheck.crimson_hitman_config_check') }
+    local words = { setting = 'setting', script = L('configcheck.other_script'), permission = 'permission', risky = 'risky' }
     for _, f in ipairs(found) do
         out[#out + 1] = ('%s: %s'):format(words[f.kind] or f.kind, f.text)
         out[#out + 1] = '  -> fix: ' .. tostring(f.fix)
     end
-    out[#out + 1] = #found == 0 and 'nothing to fix: every value is in range, every script a switched-on '
-        .. 'feature needs answers, and group.admin holds every staff ACE'
-        or ('%d thing(s) to look at'):format(#found)
+    out[#out + 1] = #found == 0 and L('configcheck.nothing_to_fix_every_value_is')
+        or (L('configcheck.thing_to_look_at')):format(#found)
     out[#out + 1] = '--- end ---'
     return out
 end

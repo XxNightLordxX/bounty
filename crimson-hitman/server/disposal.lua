@@ -53,6 +53,7 @@ local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Registry = CrimsonBoot.require('server.places')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Keys() return Integrations.get('keys') end
@@ -115,26 +116,26 @@ function Disposal.validate(warn)
     local block = Config.Disposal
     if block == nil then return end
     if type(block) ~= 'table' then
-        warn[#warn + 1] = 'Config.Disposal must be a table'
+        warn[#warn + 1] = L('disposal.config_disposal_must_be_a_table')
         return
     end
     if block.Enabled ~= nil and type(block.Enabled) ~= 'boolean' then
-        warn[#warn + 1] = 'Config.Disposal.Enabled must be true or false'
+        warn[#warn + 1] = L('disposal.config_disposal_enabled_must_be_true')
     end
     for key, rule in pairs(Disposal.RULES) do
         local v = block[key]
         if v ~= nil then
             if rule.kind == 'number' then
                 if type(v) ~= 'number' or v ~= v or v < rule.min or v > rule.max then
-                    warn[#warn + 1] = ('Config.Disposal.%s must be a number from %s to %s')
+                    warn[#warn + 1] = (L('disposal.config_disposal_must_be_a_number'))
                         :format(key, rule.min, rule.max)
                 end
             elseif rule.kind == 'choice' then
                 if not rule.choices[v] then
-                    warn[#warn + 1] = ('Config.Disposal.%s must be \'pay\', \'reduced\' or \'refund\''):format(key)
+                    warn[#warn + 1] = (L('disposal.config_disposal_must_be_pay_reduced')):format(key)
                 end
             elseif type(v) ~= 'string' or #v > rule.max or not v:match(rule.pattern) then
-                warn[#warn + 1] = ('Config.Disposal.%s must be a vehicle model name'):format(key)
+                warn[#warn + 1] = (L('disposal.config_disposal_must_be_a_vehicle')):format(key)
             end
         end
     end
@@ -143,7 +144,7 @@ function Disposal.validate(warn)
         local empty = type(v) == 'table' and next(v) == nil
         if v ~= nil and v ~= false and not empty and (type(v) ~= 'table' or not tonumber(v.x)
             or not tonumber(v.y) or not tonumber(v.z)) then
-            warn[#warn + 1] = ('Config.Disposal.%s must be {} or { x = , y = , z = , h = }'):format(key)
+            warn[#warn + 1] = (L('disposal.config_disposal_must_be_or_x')):format(key)
         end
     end
 end
@@ -204,7 +205,7 @@ end
 ---@return string
 function Disposal.band(seconds)
     seconds = tonumber(seconds) or 0
-    if seconds >= 20 * 60 then return 'plenty of time (over 20 minutes)' end
+    if seconds >= 20 * 60 then return L('disposal.plenty_of_time_over_20_minutes') end
     if seconds >= 10 * 60 then return 'between 10 and 20 minutes' end
     if seconds >= 5 * 60 then return 'between 5 and 10 minutes' end
     return 'under 5 minutes'
@@ -407,15 +408,14 @@ local function SpawnVehicle(step, why)
     local model = type(Cfg().VehicleModel) == 'string' and Cfg().VehicleModel or 'romero'
     local ok, vehicle = pcall(Disposal.world.spawn, model, at)
     if not ok or not vehicle or vehicle == 0 then
-        Say('spawn', ('body disposal: the vehicle %s could not be made at the spawn spot (%s); check '
+        Say('spawn', (L('disposal.body_disposal_the_vehicle_could_not')
             .. 'Config.Disposal.VehicleModel'):format(tostring(model), tostring(vehicle)))
         return false
     end
     local plate = NewPlate()
     local prepared, keyed = pcall(Disposal.world.prepare, vehicle, plate, actor.source)
     if prepared and keyed == false then
-        Say('keys', 'body disposal: qbx_vehiclekeys is not started, so the disposal vehicle is left '
-            .. 'unlocked for anybody to drive')
+        Say('keys', L('disposal.body_disposal_qbx_vehiclekeys_is_not'))
     end
     rt.vehicle, rt.reached, rt.farSince, rt.spawnedOnce, rt.plate, rt.removedByUs = vehicle, nil, nil, true, plate, nil
     Deps.audit.action('disposal_vehicle', step.hitman_cid, step.contract_id, { why = why, plate = plate })
@@ -553,15 +553,14 @@ local function Finish(step, why)
     escrow.noteWaiting(step.hitman_cid, true)
     if ActorOf(step.hitman_cid) then pcall(escrow.retryPending, step.hitman_cid) end
     local words = {
-        delivered = 'The body is dropped off: your payout is being handed over.',
-        timeout_pay = 'Time ran out on the body, but your payout is being handed over.',
-        timeout_reduced = 'Time ran out on the body: part of your payout went back to the placer, '
-            .. 'and the rest is being handed over.',
-        timeout_refund = 'Time ran out on the body: your payout went back to the placer.',
-        staff_skip = 'Staff finished the disposal for you: your payout is being handed over.',
-        switched_off = 'Body disposal is switched off: your payout is being handed over.',
+        delivered = L('disposal.the_body_is_dropped_off_your'),
+        timeout_pay = L('disposal.time_ran_out_on_the_body'),
+        timeout_reduced = L('disposal.time_ran_out_on_the_body_2'),
+        timeout_refund = L('disposal.time_ran_out_on_the_body_3'),
+        staff_skip = L('disposal.staff_finished_the_disposal_for_you'),
+        switched_off = L('disposal.body_disposal_is_switched_off_your'),
     }
-    Tell(step.hitman_cid, 'Body disposal', words[why] or words.timeout_pay)
+    Tell(step.hitman_cid, L('disposal.body_disposal'), words[why] or words.timeout_pay)
     Refresh()
     return true
 end
@@ -592,9 +591,7 @@ local function PayNow(step)
 end
 
 local function Instructions(step)
-    return ('Get rid of the body. A disposal vehicle is waiting at the spot marked on your map: take '
-        .. 'it to the body (marked), load it, and drive it to the drop-off (marked once it is loaded). '
-        .. 'You are paid at the drop-off. Time left: %s.'):format(Disposal.band(LeftOf(step)))
+    return (L('disposal.get_rid_of_the_body_a')):format(Disposal.band(LeftOf(step)))
 end
 
 --- A claim is about to release a payout (Contracts.claimSlot, under its
@@ -616,8 +613,7 @@ function Disposal.onClaim(contract, hitmanCid, fulfilment, opts)
     if not body then return end
     if not Load() then return end
     if not Disposal.spot('vehicle') or not Disposal.spot('drop') then
-        Say('spots', 'body disposal is on but its vehicle spawn spot or its drop-off is not set, so kills '
-            .. 'pay at once (admin panel: Locations, placeSet)')
+        Say('spots', L('disposal.body_disposal_is_on_but_its'))
         return
     end
     local slot = tonumber(contract.next_slot) or 1
@@ -645,7 +641,7 @@ function Disposal.afterClaim(contractId, hitmanCid, claimed)
                     { slot = step.slot, limit = LimitSeconds() })
                 PayNow(step)
                 SpawnVehicle(step, 'start')
-                Tell(hitmanCid, 'Body disposal', Instructions(step))
+                Tell(hitmanCid, L('disposal.body_disposal'), Instructions(step))
                 Refresh()
             end
         end
@@ -691,7 +687,7 @@ function Disposal.act(actor, action, contractId)
     local step = StepFor(actor.cid, contractId)
     if not step then return false, 'no_step' end
     if Held(step) then
-        Tell(actor.cid, 'Body disposal', 'The contract is on hold: nothing can be done with the body until it is lifted.')
+        Tell(actor.cid, L('disposal.body_disposal'), L('disposal.the_contract_is_on_hold_nothing'))
         return false, 'held'
     end
     local rt = Runtime[step.id] or {}
@@ -702,14 +698,13 @@ function Disposal.act(actor, action, contractId)
         if step.stage ~= 'body' then return false, 'stage' end
         if not Near(me, step.body, Num('LoadMetres', 3)) then return false, 'far' end
         if not Near(vehicleAt, step.body, vehicleMetres) then
-            Tell(actor.cid, 'Body disposal', 'Bring the disposal vehicle up to the body first.')
+            Tell(actor.cid, L('disposal.body_disposal'), L('disposal.bring_the_disposal_vehicle_up_to'))
             return false, 'no_vehicle'
         end
         step.stage = 'loaded'
         Write(step)
         Deps.audit.action('disposal_loaded', actor.cid, step.contract_id, {})
-        Tell(actor.cid, 'Body disposal', ('The body is loaded. Drive it to the drop-off marked on your map. '
-            .. 'Time left: %s.'):format(Disposal.band(LeftOf(step))))
+        Tell(actor.cid, L('disposal.body_disposal'), (L('disposal.the_body_is_loaded_drive_it')):format(Disposal.band(LeftOf(step))))
         Refresh()
         return true
     elseif action == 'drop' then
@@ -717,7 +712,7 @@ function Disposal.act(actor, action, contractId)
         if step.stage ~= 'loaded' or not drop then return false, 'stage' end
         if not Near(me, drop, Num('DropMetres', 8)) then return false, 'far' end
         if not Near(vehicleAt, drop, vehicleMetres) then
-            Tell(actor.cid, 'Body disposal', 'The body is in the disposal vehicle: bring the vehicle here.')
+            Tell(actor.cid, L('disposal.body_disposal'), L('disposal.the_body_is_in_the_disposal'))
             return false, 'no_vehicle'
         end
         Finish(step, 'delivered')
@@ -941,10 +936,10 @@ local function RegisterSpots()
         local kindName = SPOTS[name]
         Registry.kind(kindName, {
             group = 'disposal', icon = name == 'vehicle' and 'truck' or 'flag-checkered',
-            label = name == 'vehicle' and 'Disposal vehicle spawn' or 'Body drop-off',
-            one = name == 'vehicle' and 'the vehicle spawn' or 'the drop-off', single = true,
+            label = name == 'vehicle' and L('disposal.disposal_vehicle_spawn') or L('disposal.body_drop_off'),
+            one = name == 'vehicle' and L('disposal.the_vehicle_spawn') or L('disposal.the_drop_off'), single = true,
             max = function() return 1 end,
-            says = { invalid_input = 'Give the spot (vehicle or drop) and a point on the map.' },
+            says = { invalid_input = L('disposal.give_the_spot_vehicle_or_drop') },
             after = function(who, row)
                 Deps.audit.action('disposal_spot_set', who.cid, nil, { spot = name })
                 Refresh()
@@ -957,7 +952,7 @@ local function RegisterSpots()
                 local cfg = Point(name == 'vehicle' and Cfg().VehicleSpawn or Cfg().DropOff)
                 return { on = Feature.on('Disposal'), switch = 'Disposal.Enabled', defaults = cfg and { cfg } or {},
                     using = (Registry.rows(kindName) or {})[1] and 'panel' or 'config',
-                    note = 'Body disposal cannot start a step until both are set.' }
+                    note = L('disposal.body_disposal_cannot_start_a_step') }
             end,
         })
     end
@@ -986,17 +981,17 @@ local function AddOps(panel)
     end)
     panel.extend('disposalSkip', WRITE, function(src, data)
         local ok, err = Disposal.skip(staffCid(src), Text.field(data.id, 64))
-        if not ok then return false, err, 'No disposal step by that id.' end
-        return true, nil, 'Finished: the payout is being handed over.'
+        if not ok then return false, err, L('disposal.no_disposal_step_by_that_id') end
+        return true, nil, L('disposal.finished_the_payout_is_being_handed')
     end)
     panel.extend('disposalRespawn', WRITE, function(src, data)
         local ok, err = Disposal.respawn(staffCid(src), Text.field(data.id, 64))
         if not ok then
-            return false, err, err == 'away' and 'The hitman is not in the city: the vehicle is made when they are back.'
-                or err == 'no_spot' and 'The vehicle could not be made: set the spawn spot and check the model.'
-                or 'No disposal step by that id.'
+            return false, err, err == 'away' and L('disposal.the_hitman_is_not_in_the')
+                or err == 'no_spot' and L('disposal.the_vehicle_could_not_be_made')
+                or L('disposal.no_disposal_step_by_that_id')
         end
-        return true, nil, 'The vehicle is back at the spawn spot.'
+        return true, nil, L('disposal.the_vehicle_is_back_at_the')
     end)
 end
 

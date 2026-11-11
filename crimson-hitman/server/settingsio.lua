@@ -26,6 +26,7 @@
 --- and refuses it when the changes are no longer the ones previewed.
 
 local Util = CrimsonBoot.requireShared('util')
+local L = CrimsonBoot.requireShared('locale').t
 
 local SettingsIO = {}
 
@@ -72,21 +73,21 @@ end
 
 --- Read a text: the table it holds, or nil and why.
 local function decode(text)
-    if type(text) ~= 'string' or text == '' then return nil, 'Paste the exported text first.' end
+    if type(text) ~= 'string' or text == '' then return nil, L('settingsio.paste_the_exported_text_first') end
     if #text > SettingsIO.BYTES_MAX then
-        return nil, ('That text is longer than %d KB: it is not an export of these settings.')
+        return nil, (L('settingsio.that_text_is_longer_than_kb'))
             :format(SettingsIO.BYTES_MAX // 1000)
     end
     local ok, body = pcall(json.decode, text)
-    if not ok or type(body) ~= 'table' then return nil, 'That text is not JSON: copy the whole export again.' end
+    if not ok or type(body) ~= 'table' then return nil, L('settingsio.that_text_is_not_json_copy') end
     if body.format ~= SettingsIO.FORMAT then
-        return nil, 'That text is not a settings export from this resource.'
+        return nil, L('settingsio.that_text_is_not_a_settings')
     end
     if tonumber(body.version) ~= SettingsIO.VERSION then
-        return nil, 'That export is from a version of this resource this one does not read.'
+        return nil, L('settingsio.that_export_is_from_a_version')
     end
-    if body.settings ~= nil and type(body.settings) ~= 'table' then return nil, 'Its settings are not a list.' end
-    if body.presets ~= nil and type(body.presets) ~= 'table' then return nil, 'Its presets are not a list.' end
+    if body.settings ~= nil and type(body.settings) ~= 'table' then return nil, L('settingsio.its_settings_are_not_a_list') end
+    if body.presets ~= nil and type(body.presets) ~= 'table' then return nil, L('settingsio.its_presets_are_not_a_list') end
     return body
 end
 
@@ -111,13 +112,13 @@ function SettingsIO.preview(text)
         local deny = type(key) == 'string' and Settings.DENY and Settings.DENY[key] or nil
         if type(key) ~= 'string' or Settings.secretKey(key) then
             out.refused[#out.refused + 1] = { key = tostring(key), label = label,
-                why = 'A secret: never imported.' }
+                why = L('settingsio.a_secret_never_imported') }
         elseif deny then
             out.refused[#out.refused + 1] = { key = key, label = deny.label or label,
-                why = 'Never changed from the panel. ' .. tostring(deny.why) }
+                why = L('settingsio.never_changed_from_the_panel') .. tostring(deny.why) }
         elseif not entry then
             out.refused[#out.refused + 1] = { key = key, label = label,
-                why = 'Not a setting this version has.' }
+                why = L('settingsio.not_a_setting_this_version_has') }
         elseif entry.readonly then
             out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(entry.readonly) }
         else
@@ -136,7 +137,7 @@ function SettingsIO.preview(text)
     for _, preset in ipairs(type(body.presets) == 'table' and body.presets or {}) do
         local name = type(preset) == 'table' and preset.name or nil
         local values = type(preset) == 'table' and preset.values or nil
-        local ok, refusal = false, 'It has no settings.'
+        local ok, refusal = false, L('settingsio.it_has_no_settings')
         if deps.presets and deps.presets.importable then
             ok, refusal = deps.presets.importable(name, values)
         end
@@ -162,10 +163,10 @@ function SettingsIO.apply(text, expect, staff, actorCid)
     local addable = 0
     for _, p in ipairs(preview.presets) do if not p.why then addable = addable + 1 end end
     if tonumber(expect) ~= #preview.changes then
-        return false, 'invalid_value', 'The settings changed since the preview: read the text again first.'
+        return false, 'invalid_value', L('settingsio.the_settings_changed_since_the_preview')
     end
     if #preview.changes == 0 and addable == 0 then
-        return false, 'unchanged', 'Nothing to change: the settings are as that text says already.'
+        return false, 'unchanged', L('settingsio.nothing_to_change_the_settings_are')
     end
     local applied, refused = {}, {}
     for _, change in ipairs(preview.changes) do
@@ -190,7 +191,7 @@ function SettingsIO.apply(text, expect, staff, actorCid)
     end
     pcall(deps.audit.staff, 'admin_settings_imported', actorCid, nil,
         { keys = applied, refused = #refused + #preview.refused, presets = added, by = staff })
-    return true, nil, ('Imported: %d setting%s changed%s%s. Each is in Change history with its Undo.')
+    return true, nil, (L('settingsio.imported_setting_changed_each_is_in'))
         :format(#applied, #applied == 1 and '' or 's',
             #refused > 0 and (', ' .. #refused .. ' refused') or '',
             #added > 0 and ('; ' .. #added .. ' preset' .. (#added == 1 and '' or 's') .. ' added') or ''),

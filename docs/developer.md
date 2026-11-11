@@ -239,20 +239,45 @@ loaded before the job was registered this process (`Org.loadedSinceRegister`).
 
 ### Translations
 
-Every word players and staff read in the files moved so far is a key:
-server and client Lua call `L('area.key')` (`local L =
-CrimsonBoot.requireShared('locale').t` on the server, `CrimsonLocale.t` on the
-client), which reads `locales/<Config.Locale>.lua` and falls back to
-`locales/en.lua`; the pages call `Text.t('section.key')` or read a whole
-`Text.section(name)` from `locales/<lang>.json`, loaded synchronously as the
-page starts (the phone is told the language by `?lang=` on its address, the
-panel by its open message). Texts keep their `%s`/`%d` and are formatted by
-the caller, so the wording is the same. `tests/locale_spec.lua` checks that
-every key used exists in English and scans the moved files
-(`tests/harness/textscan.lua`) for a sentence written back into code; its
-`ALLOW` list names the literals that read as words and are not shown (a
-console reason, an lb-phone camera mode). Console lines (`Log.*`, `print`,
-`error`) are never scanned: they stay English.
+Every word players and staff read is a key: server and client Lua call
+`L('area.key')` (`local L = CrimsonBoot.requireShared('locale').t` on the
+server, `CrimsonLocale.t` on the client), which reads
+`locales/<Config.Locale>.lua` and falls back to `locales/en.lua`; the pages
+call `Text.t('section.key')` or read a whole `Text.section(name)` from
+`locales/<lang>.json`, loaded synchronously as the page starts (the phone is
+told the language by `?lang=` on its address, the panel by its open message).
+Texts keep their `%s`/`%d` and are formatted by the caller, so the wording is
+the same. Keys are `<file area>.<first words>`: `admin.*` server/admin.lua,
+`bridges.*` server/bridges.lua, `settings.*` and `settings_group.*`
+server/settings.lua, `org_settings.*` server/org/settings_catalogue.lua,
+`org.*` server/org/init.lua, `org_extras2.*` server/org/extras2.lua, and so on
+for every server file (its path under server/ with `_` for `/`).
+
+Where words used to be matched, they are not any more:
+- The panel's Dashboard reads the diagnosis by marks: `Admin.diagnose`
+  returns `lines, marks`, and `say(line, 'act')` marks a line that wants doing,
+  `say(line, 'console')` one only the console needs (panel.lua
+  `diagWarnings`; a `->` and a word in capitals still count, as before).
+- The panel's ACE answers are built from `Admin.grantFor(ace)` (which ACE,
+  then the grant), never by cutting `Admin.howToAuthorise`'s sentence.
+- A setting's `group` stays its English id (AREA_OF_GROUP, MONEY, the page's
+  checks); `Settings.view` sends `groupLabel` (and `moneyLabel`) from
+  `GROUP_LABEL`, keys looked up each time (`Settings.groupLabel`).
+- An informant answer that found nobody by name is marked `unknown`; one
+  stored before still reads by its English text (`UNKNOWN_BEFORE`).
+
+Strings that stay in code are names, never shown: config sections and keys
+(`Feature.on('Mugshot')`), key prefixes, preset names (their ids), stored
+data (the old placer alias), patterns of other software's errors, a date
+format. `tests/locale_spec.lua` checks that every key used exists in English
+and scans every server file and the game's (`tests/harness/textscan.lua`) for
+a sentence written back into code; `NAMES` and `ALLOW` list what it reads as
+words and is not, each with why. Console lines (`Log.*`, `print`, `error`,
+`Db.try`, `Lifecycle.run`) are never scanned: they stay English, and so do
+the files that only print to the console (`CONSOLE_FILES`: the stores,
+server/boot.lua, server/versioncheck.lua).
+
+To add a language: README, Escrow, and where the words live.
 
 ### Version check
 

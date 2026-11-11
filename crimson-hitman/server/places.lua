@@ -36,6 +36,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Text = CrimsonBoot.requireShared('text')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Places = {}
 
@@ -55,12 +56,12 @@ local Storage = nil
 local Seq = 0
 
 local SAYS = {
-    invalid_input = 'Check the place: a point on the map, a heading from 0 to 360 and a short name.',
-    not_found = 'That place is gone. Refresh Locations.',
-    limit_reached = 'At the most places of this kind.',
-    store_unreadable = 'The store did not take it; nothing was changed. Try again.',
-    no_position = 'The server cannot see your character right now.',
-    feature_off = 'Its feature is off.',
+    invalid_input = L('places.check_the_place_a_point_on'),
+    not_found = L('places.that_place_is_gone_refresh_locations'),
+    limit_reached = L('places.at_the_most_places_of_this'),
+    store_unreadable = L('places.the_store_did_not_take_it'),
+    no_position = L('places.the_server_cannot_see_your_character'),
+    feature_off = L('places.its_feature_is_off'),
 }
 
 local function owned(owner)
@@ -241,7 +242,7 @@ end
 
 local function refuse(kind, err, extra)
     local text = (type(extra) == 'table' and extra.message) or (kind and kind.says and kind.says[err]) or SAYS[err]
-    return false, err, text or 'Not done.', extra
+    return false, err, text or L('places.not_done'), extra
 end
 
 -- ============================================================================
@@ -477,21 +478,21 @@ function Places.addOps(panel)
             id = Text.field(data.id, 48), label = Text.field(data.label, 128), radius = data.radius,
             blip = data.blip, enabled = data.enabled, here = data.here == true,
             x = data.x, y = data.y, z = data.z, heading = data.heading })
-        return said(ok, err, ok and rowView(row) or row, extra, 'Place saved.')
+        return said(ok, err, ok and rowView(row) or row, extra, L('places.place_saved'))
     end)
     panel.extend('placeRemove', WRITE, function(src, data)
         local id = Text.field(data.id, 48)
         if not id then return false, 'invalid_input', SAYS.not_found end
         local ok, err, what = Places.remove(staff(src), id)
-        return said(ok, err, ok and nil or what, nil, 'Place removed.')
+        return said(ok, err, ok and nil or what, nil, L('places.place_removed'))
     end)
     panel.extend('placeReset', WRITE, function(src, data)
         local name = Text.field(data.kind, 24)
         local ok, err, what = Places.reset(staff(src), name or '')
         if not ok then
-            return false, err, err == 'not_found' and 'None set: it already uses the config list.' or what
+            return false, err, err == 'not_found' and L('places.none_set_it_already_uses_the') or what
         end
-        return true, nil, ('%d place(s) removed: the config list applies again.'):format(what)
+        return true, nil, (L('places.place_removed_the_config_list_applies')):format(what)
     end)
 end
 

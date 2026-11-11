@@ -20,6 +20,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Text = CrimsonBoot.requireShared('text')
 local Org = CrimsonBoot.require('server.org.init')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 
 local StaffOps = {}
 
@@ -59,7 +60,7 @@ local function staff(src)
 end
 
 local function said(ok, err, extra, message, okText)
-    if ok then return true, nil, okText or 'Done.', extra end
+    if ok then return true, nil, okText or L('org_staff_ops.done'), extra end
     return false, err, message or Org.message(err), extra
 end
 
@@ -77,7 +78,7 @@ end
 local function bool(v) return type(v) == 'boolean' and v or nil end
 
 local function off()
-    return false, Org.ERR.OFF, 'The organisation is switched off (Config.Organisation.Enabled).'
+    return false, Org.ERR.OFF, L('org_staff_ops.the_organisation_is_switched_off_config')
 end
 
 local OPS = {}
@@ -134,12 +135,12 @@ local function orgLog(src, data)
             for key, value in pairs(detail) do
                 if type(value) == 'string' and (value == r.actor_cid or (org and org.members[value])
                     or key == 'member' or (key == 'id' and detail.subject == 'member')) then
-                    detail[key] = 'a member'
+                    detail[key] = L('org_staff_ops.a_member')
                 end
             end
         end
         out[#out + 1] = { ts = r.ts, action = r.action, kind = r.kind, contract = r.contract_id,
-            by = canIdentify and r.actor_cid or (detail.by == 'boss' and 'a boss' or 'a staff member'),
+            by = canIdentify and r.actor_cid or (detail.by == 'boss' and L('org_staff_ops.a_boss') or L('org_staff_ops.a_staff_member')),
             detail = detail }
     end
     return true, nil, nil, { rows = out }
@@ -152,9 +153,9 @@ end
 OPS.orgSetup = { 'write', function(src)
     if not Feature.on('Organisation') then return off() end
     local ok = Org.boot(false)
-    if not ok then return false, Org.ERR.REFUSED, 'The organisation could not be read; the console says why.' end
+    if not ok then return false, Org.ERR.REFUSED, L('org_staff_ops.the_organisation_could_not_be_read') end
     Org.record('org_setup', staff(src), {})
-    return true, nil, 'The job is registered and every online member is in step.', Org.staffView(staff(src).cid)
+    return true, nil, L('org_staff_ops.the_job_is_registered_and_every'), Org.staffView(staff(src).cid)
 end }
 
 OPS.orgRename = { 'write', function(src, data)
@@ -167,7 +168,7 @@ end }
 
 OPS.orgNotice = { 'write', function(src, data)
     local text = data.text
-    if text ~= false and type(text) ~= 'string' then return false, Org.ERR.INVALID, 'Write the notice.' end
+    if text ~= false and type(text) ~= 'string' then return false, Org.ERR.INVALID, L('org_staff_ops.write_the_notice') end
     return said(Org.notice(staff(src), text, data.broadcast == true))
 end }
 
@@ -175,7 +176,7 @@ end }
 
 OPS.orgRoleSet = { 'write', function(src, data)
     local grade = tonumber(data.grade)
-    if not grade then return false, Org.ERR.INVALID, 'Give the role\'s grade.' end
+    if not grade then return false, Org.ERR.INVALID, L('org_staff_ops.give_the_roles_grade') end
     local org = Org.current()
     if not org then return off() end
     if not org.roles[grade] then
@@ -233,7 +234,7 @@ OPS.orgMemberOverride = { 'write', function(src, data)
         return said(Org.memberStaff(staff(src), cid, { locked = bool(data.locked),
             codename = (data.codename == false or type(data.codename) == 'string') and data.codename or nil }))
     end
-    return true, nil, 'Done.'
+    return true, nil, L('org_staff_ops.done')
 end }
 
 -- Boss permissions ----------------------------------------------------------
@@ -245,34 +246,34 @@ OPS.bossPermsSet = { 'write', function(src, data)
     if not org then return off() end
     local who = staff(src)
     local cells = type(data.cells) == 'table' and data.cells or { data }
-    if #cells == 0 or #cells > 200 then return false, Org.ERR.INVALID, 'Between 1 and 200 cells at once.' end
+    if #cells == 0 or #cells > 200 then return false, Org.ERR.INVALID, L('org_staff_ops.between_1_and_200_cells_at') end
     local plan = {}
     for i, cell in ipairs(cells) do
-        if type(cell) ~= 'table' then return false, Org.ERR.INVALID, 'Cell ' .. i .. ' is not a cell.' end
+        if type(cell) ~= 'table' then return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.is_not_a_cell') end
         local subject = cell.subject
         local id
         if subject == 'role' then
             id = tonumber(cell.id)
-            if not id or not org.roles[id] then return false, Org.ERR.NOT_FOUND, 'Cell ' .. i .. ': no such role.' end
+            if not id or not org.roles[id] then return false, Org.ERR.NOT_FOUND, 'Cell ' .. i .. L('org_staff_ops.no_such_role') end
             if cell.state ~= 'allow' and cell.state ~= 'off' then
-                return false, Org.ERR.INVALID, 'Cell ' .. i .. ': a role cell is allow or off.'
+                return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.a_role_cell_is_allow_or')
             end
         elseif subject == 'member' then
             id = Org.fromRef(who.cid, cell.id)
             if not id or not org.members[id] then
-                return false, Org.ERR.NOT_FOUND, 'Cell ' .. i .. ': that member handle is out of date.'
+                return false, Org.ERR.NOT_FOUND, 'Cell ' .. i .. L('org_staff_ops.that_member_handle_is_out_of')
             end
             if cell.state ~= 'allow' and cell.state ~= 'deny' and cell.state ~= 'inherit' then
-                return false, Org.ERR.INVALID, 'Cell ' .. i .. ': a member cell is allow, deny or inherit.'
+                return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.a_member_cell_is_allow_deny')
             end
         else
-            return false, Org.ERR.INVALID, 'Cell ' .. i .. ': a role or a member.'
+            return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.a_role_or_a_member')
         end
-        if not Org.Powers.resolve(cell.power) then return false, Org.ERR.INVALID, 'Cell ' .. i .. ': no such power.' end
+        if not Org.Powers.resolve(cell.power) then return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.no_such_power') end
         plan[#plan + 1] = { subject, id, cell.power, cell.state }
     end
     for _, p in ipairs(plan) do Org.setCeiling(who, p[1], p[2], p[3], p[4]) end
-    return true, nil, ('%d cell(s) saved.'):format(#plan)
+    return true, nil, (L('org_staff_ops.cell_saved')):format(#plan)
 end }
 
 --- Revoke every power from one column at once.
@@ -292,7 +293,7 @@ OPS.bossPermsRevokeAll = { 'write', function(src, data)
     local codes = {}
     for code in pairs(cells or {}) do codes[#codes + 1] = code end
     for _, code in ipairs(codes) do Org.setCeiling(who, subject, id, code, subject == 'role' and 'off' or 'inherit') end
-    return true, nil, ('%d power(s) revoked.'):format(#codes)
+    return true, nil, (L('org_staff_ops.power_revoked')):format(#codes)
 end }
 
 OPS.bossLimits = { 'write', function(src, data)
@@ -311,7 +312,7 @@ OPS.orgCuts = { 'write', function(src, data)
     if kind == 'role' then target = tonumber(data.grade) end
     if kind == 'member' then target = memberCid(src, data) end
     local percent = data.percent
-    if percent ~= false and type(percent) ~= 'number' then return false, Org.ERR.INVALID, 'A whole percent, 0-100.' end
+    if percent ~= false and type(percent) ~= 'number' then return false, Org.ERR.INVALID, L('org_staff_ops.a_whole_percent_0_100') end
     return said(Org.setCut(staff(src), kind, target, percent))
 end }
 
@@ -327,7 +328,7 @@ OPS.orgFundsMove = { 'write', function(src, data)
     elseif data.direction == 'bonus' then
         return said(Org.bonus(who, memberCid(src, data), data.amount, reason, data.nonce))
     end
-    return false, Org.ERR.INVALID, 'Deposit, withdraw or bonus.'
+    return false, Org.ERR.INVALID, L('org_staff_ops.deposit_withdraw_or_bonus')
 end }
 
 --- Keep the funds in the other backend: { backend = 'internal' | 'bank',
@@ -335,11 +336,11 @@ end }
 --- balance is carried across in two ledger rows.
 OPS.orgFundsBackend = { 'write', function(src, data)
     local to = data.backend
-    if to ~= 'internal' and to ~= 'bank' then return false, Org.ERR.INVALID, 'internal or bank.' end
+    if to ~= 'internal' and to ~= 'bank' then return false, Org.ERR.INVALID, L('org_staff_ops.internal_or_bank') end
     local ok, err, extra, message = Org.fundsBackend(staff(src), to, data.abandon == true)
     if not ok then return said(ok, err, extra, message) end
-    return true, nil, ('The funds are kept in %s now; %d carried across.'):format(
-        to == 'bank' and 'Renewed-Banking' or 'the ledger', extra.carried or 0), extra
+    return true, nil, (L('org_staff_ops.the_funds_are_kept_in_now')):format(
+        to == 'bank' and 'Renewed-Banking' or L('org_staff_ops.the_ledger'), extra.carried or 0), extra
 end }
 
 -- Payroll ------------------------------------------------------------------------
@@ -349,7 +350,7 @@ OPS.orgSalary = { 'write', function(src, data)
     local grade = tonumber(data.grade)
     if data.max ~= nil then
         if data.max ~= false and type(data.max) ~= 'number' then
-            return false, Org.ERR.INVALID, 'A whole number of dollars, or false to clear it.'
+            return false, Org.ERR.INVALID, L('org_staff_ops.a_whole_number_of_dollars_or')
         end
         return said(Org.setSalaryMax(staff(src), grade, data.max))
     end
@@ -541,7 +542,7 @@ function StaffOps.scoped(fn)
         local org = Org.byId(wanted)
         if not org then
             if not Feature.on('Organisation') then return off() end
-            return false, Org.ERR.NOT_FOUND, 'No such organisation: refresh the page.'
+            return false, Org.ERR.NOT_FOUND, L('org_staff_ops.no_such_organisation_refresh_the_page')
         end
         return Org.within(org, fn, src, data, ...)
     end
@@ -554,7 +555,7 @@ OPS.orgCreate = { 'write', function(src, data)
     local ok, err, extra, message = Org.create(staff(src), { job = Text.field(data.job, 32),
         label = Text.field(data.label, 128) })
     if not ok then return said(ok, err, extra, message) end
-    return true, nil, ('Organisation %s added, with its own job %s.'):format(extra.label, extra.id), extra
+    return true, nil, (L('org_staff_ops.organisation_added_with_its_own_job')):format(extra.label, extra.id), extra
 end }
 
 --- Take one off the list (data.id): no members, empty funds, nothing held.

@@ -21,6 +21,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Payout = CrimsonBoot.require('server.payout')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Roleplay.ProofOfIntent'
@@ -148,8 +149,7 @@ function Intent.proof(contract, hitmanCid, fulfilment, claiming)
     if sent >= want then return true end
     if closedFor(contract, claiming) then return false, nil, true end
     local left = want - sent
-    return false, ('%d more message%s to the person who placed it in the contract thread, '
-        .. 'a live handover, or a meeting point set'):format(left, left == 1 and '' or 's')
+    return false, (L('rp_intent.more_message_to_the_person_who')):format(left, left == 1 and '' or 's')
 end
 
 --- A claim is about to release a payout to this hitman (Contracts.claimSlot,
@@ -212,9 +212,9 @@ local function release(key, why)
     Audit.financial('intent_hold_released', row.hitman_cid, row.contract_id, { why = why })
     if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(row.hitman_cid, true) end
     if Notify and Notify.tellOrKeep then
-        pcall(Notify.tellOrKeep, row.hitman_cid, 'Payout released',
-            why == 'proof' and 'You showed intent on the contract: your held payout is being handed over.'
-                or 'Your held payout is being handed over.', { bypassBudget = true }, row.contract_id)
+        pcall(Notify.tellOrKeep, row.hitman_cid, L('rp_intent.payout_released'),
+            why == 'proof' and L('rp_intent.you_showed_intent_on_the_contract')
+                or L('rp_intent.your_held_payout_is_being_handed'), { bypassBudget = true }, row.contract_id)
     end
 end
 

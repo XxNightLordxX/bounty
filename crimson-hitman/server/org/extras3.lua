@@ -59,6 +59,7 @@ local Geo = CrimsonBoot.requireShared('geo')
 local Window = CrimsonBoot.require('server.lib.window')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Extras3 = {}
 
@@ -114,14 +115,14 @@ end
 local function tell(cid, text)
     local d = deps()
     if d.notify and d.notify.toCitizen and d.identity.byCitizenId(cid) then
-        pcall(d.notify.toCitizen, cid, (O.current() and O.current().label) or 'Organisation', text)
+        pcall(d.notify.toCitizen, cid, (O.current() and O.current().label) or L('org_extras3.organisation'), text)
     end
 end
 
 local function shownName(org, cid)
     local m = org.members[cid]
-    if not m then return 'A former member' end
-    return (O.codenamesOn() and m.codename) or m.name or 'A member'
+    if not m then return L('org_extras3.a_former_member') end
+    return (O.codenamesOn() and m.codename) or m.name or L('org_extras3.a_member')
 end
 
 local function mayActOn(org, who, cid)
@@ -147,15 +148,15 @@ end
 
 --- What the log keeps of a boss's or staff's write (Org.record), by action.
 local LOGGED = {
-    org_member_hired = 'Hired', org_member_fired = 'Fired', org_member_role = 'Role changed',
-    org_member_suspended = 'Suspended', org_role_power = 'Role power set', org_member_grant = 'Member grant set',
-    org_grant = 'Boss permission set by staff', org_funds_deposit = 'Deposit to funds',
-    org_funds_withdraw = 'Withdrawal from funds', org_funds_staff_deposit = 'Deposit to funds', org_bonus = 'Bonus paid',
-    org_armory_deposit = 'Armory: put in', org_armory_withdraw = 'Armory: taken out',
-    org_contract_assigned = 'Contract assigned', org_contract_reassigned = 'Contract reassigned',
-    org_strike = 'Strike given', org_warning = 'Warning given', org_payout_method = 'Payout method set',
-    org_vehicle_out = 'Vehicle taken out', org_vehicle_returned = 'Vehicle returned',
-    accepted = 'Contract accepted', completed = 'Contract completed', failed = 'Contract failed',
+    org_member_hired = L('org_extras3.hired'), org_member_fired = L('org_extras3.fired'), org_member_role = L('org_extras3.role_changed'),
+    org_member_suspended = L('org_extras3.suspended'), org_role_power = L('org_extras3.role_power_set'), org_member_grant = L('org_extras3.member_grant_set'),
+    org_grant = L('org_extras3.boss_permission_set_by_staff'), org_funds_deposit = L('org_extras3.deposit_to_funds'),
+    org_funds_withdraw = L('org_extras3.withdrawal_from_funds'), org_funds_staff_deposit = L('org_extras3.deposit_to_funds'), org_bonus = L('org_extras3.bonus_paid'),
+    org_armory_deposit = L('org_extras3.armory_put_in'), org_armory_withdraw = L('org_extras3.armory_taken_out'),
+    org_contract_assigned = L('org_extras3.contract_assigned'), org_contract_reassigned = L('org_extras3.contract_reassigned'),
+    org_strike = L('org_extras3.strike_given'), org_warning = L('org_extras3.warning_given'), org_payout_method = L('org_extras3.payout_method_set'),
+    org_vehicle_out = L('org_extras3.vehicle_taken_out'), org_vehicle_returned = L('org_extras3.vehicle_returned'),
+    accepted = L('org_extras3.contract_accepted'), completed = L('org_extras3.contract_completed'), failed = L('org_extras3.contract_failed'),
 }
 
 --- The detail fields the log keeps, and nothing else (never a citizen id
@@ -206,8 +207,8 @@ function Org.activity(who, limit)
     local log, rows = org.settings.activity, {}
     for i = #log, math.max(1, #log - limit + 1), -1 do
         local e = log[i]
-        local row = { at = e.at, what = LOGGED[e.a] or 'Done', action = e.a,
-            by = e.by == 'staff' and 'Staff' or shownName(org, e.by),
+        local row = { at = e.at, what = LOGGED[e.a] or L('org_extras3.done'), action = e.a,
+            by = e.by == 'staff' and L('org_extras3.staff') or shownName(org, e.by),
             member = e.m and shownName(org, e.m) or nil }
         for k in pairs(KEPT) do row[k] = e[k] end
         rows[#rows + 1] = row
@@ -311,10 +312,10 @@ function Org.repAdjust(who, points, reason)
     if not on('Reputation') then return fail(ERR.FEATURE_OFF) end
     points = tonumber(points)
     if not points or points ~= math.floor(points) or points == 0 or math.abs(points) > 100000 then
-        return fail(ERR.INVALID, { message = 'A whole number of points, up to 100000 either way.' })
+        return fail(ERR.INVALID, { message = L('org_extras3.a_whole_number_of_points_up') })
     end
     reason = O.Extras.plain(reason, 200)
-    if not reason then return fail(ERR.INVALID, { message = 'Give a reason.' }) end
+    if not reason then return fail(ERR.INVALID, { message = L('org_extras3.give_a_reason') }) end
     local rep = org.settings.rep
     local before = math.floor(tonumber(rep.points) or 0)
     rep.points = math.max(0, before + points)
@@ -340,7 +341,7 @@ function Org.setPayoutMethod(who, method)
     if err then return fail(err) end
     if method ~= 'bank' and method ~= 'deaddrop' then return fail(ERR.INVALID) end
     if method == 'deaddrop' and not spotOf(org, 'deaddrop') then
-        return fail(ERR.RULE, { message = 'Staff have not set a dead drop for the organisation yet (Locations).' })
+        return fail(ERR.RULE, { message = L('org_extras3.staff_have_not_set_a_dead') })
     end
     if (org.settings.payoutMethod or 'bank') == method then return fail(ERR.ALREADY) end
     org.settings.payoutMethod = method
@@ -365,8 +366,8 @@ local function onClaim(contract, hitmanCid)
     Drops[key] = org.id
     O.within(org, kit.save)
     deps().audit.financial('org_drop_left', hitmanCid, contract.id, { org = org.id, minutes = wait })
-    O.within(org, tell, hitmanCid, ('Your payout is left at the dead drop (%s). Collect it there within %d minutes.')
-        :format(spot.label or 'dead drop', wait))
+    O.within(org, tell, hitmanCid, (L('org_extras3.your_payout_is_left_at_the'))
+        :format(spot.label or L('org_extras3.dead_drop'), wait))
     return nil
 end
 
@@ -439,8 +440,8 @@ local function collect(org, actor, loc)
     for _, key in ipairs(keys) do
         if finish(org, key, 'collected') then n = n + 1 end
     end
-    tell(actor.cid, n > 0 and ('You collected %d payout(s) from the dead drop.'):format(n)
-        or 'Nothing is waiting for you at this dead drop.')
+    tell(actor.cid, n > 0 and (L('org_extras3.you_collected_payout_from_the_dead')):format(n)
+        or L('org_extras3.nothing_is_waiting_for_you_at'))
     return n
 end
 
@@ -507,7 +508,7 @@ function Org.territoryClaim(contractId, targetCid)
                 for cid in pairs(org.members) do
                     if O.Engine.holds(org, cid, 'K4') then
                         O.within(org, tell, cid,
-                            ('A contract was sent to the organisation. Assign it within %d minutes.'):format(wait))
+                            (L('org_extras3.a_contract_was_sent_to_the')):format(wait))
                     end
                 end
                 return org.id
@@ -613,23 +614,23 @@ function Org.garageTake(who, model)
     local member = org.members[who.cid]
     if not member then return fail(ERR.NOT_MEMBER) end
     local g = garage()
-    if not g then return fail(ERR.RULE, { message = 'The garage needs a vehicle adapter (Config.Integrations.Garage).' }) end
+    if not g then return fail(ERR.RULE, { message = L('org_extras3.the_garage_needs_a_vehicle_adapter') }) end
     if type(model) ~= 'string' then return fail(ERR.INVALID) end
     local fine = false
     for _, m in ipairs(offered(org)) do if m == model then fine = true end end
     if not fine then return fail(ERR.NOT_FOUND) end
     if member.suspended_until and member.suspended_until > now() then
-        return fail(ERR.RULE, { message = 'A suspended member takes nothing out.' })
+        return fail(ERR.RULE, { message = L('org_extras3.a_suspended_member_takes_nothing_out') })
     end
-    if Vehicles[who.cid] then return fail(ERR.ALREADY, { message = 'You have one out already: return it first.' }) end
+    if Vehicles[who.cid] then return fail(ERR.ALREADY, { message = L('org_extras3.you_have_one_out_already_return') }) end
     if outCount(org) >= whole('GarageMaxOut', 3, 1, 50) then return fail(ERR.LIMIT) end
     if Moves.count(who.cid, now()) >= 10 then return fail(ERR.COOLDOWN) end
     local there, spot = atGarage(org, who.source, 3.0)
-    if there == nil then return fail(ERR.RULE, { message = 'Staff have not set a garage spot (Locations).' }) end
-    if not there then return fail(ERR.RULE, { message = 'Stand at the organisation\'s garage spot first.' }) end
+    if there == nil then return fail(ERR.RULE, { message = L('org_extras3.staff_have_not_set_a_garage') }) end
+    if not there then return fail(ERR.RULE, { message = L('org_extras3.stand_at_the_organisations_garage_spot') }) end
     local ok, entity = pcall(g.spawn, model, { x = spot.x, y = spot.y, z = spot.z, h = spot.h or 0.0 })
     if not ok or not entity or entity == 0 then
-        return fail(ERR.REFUSED, { message = 'The vehicle could not be made; nothing was taken.' })
+        return fail(ERR.REFUSED, { message = L('org_extras3.the_vehicle_could_not_be_made') })
     end
     local p = plate()
     pcall(g.prepare, entity, p, who.source)
@@ -656,7 +657,7 @@ function Org.garageReturn(who)
         local okC, at = pcall(g.coords, v.entity)
         local exists = select(2, pcall(g.exists, v.entity))
         if exists and (not okC or not Geo.near(at, spot, reach)) then
-            return fail(ERR.RULE, { message = ('Bring it within %d m of the garage spot first.'):format(reach) })
+            return fail(ERR.RULE, { message = (L('org_extras3.bring_it_within_m_of_the')):format(reach) })
         end
     end
     removeVehicle(who.cid)
@@ -724,10 +725,10 @@ function Org.internalRequest(who, cid, spec)
     if why then return fail(why) end
     if type(spec) ~= 'table' then return fail(ERR.INVALID) end
     local reason = O.Extras.plain(spec.reason, 200)
-    if not reason then return fail(ERR.INVALID, { message = 'Say why, in plain words.' }) end
+    if not reason then return fail(ERR.INVALID, { message = L('org_extras3.say_why_in_plain_words') }) end
     local amount = tonumber(spec.amount)
     if not amount or amount ~= math.floor(amount) or amount < 1 or amount > 100000000 then
-        return fail(ERR.INVALID, { message = 'A whole number of dollars for the reward.' })
+        return fail(ERR.INVALID, { message = L('org_extras3.a_whole_number_of_dollars_for') })
     end
     local open = 0
     for _, r in pairs(org.settings.internal) do
@@ -764,19 +765,18 @@ function Org.internalDecide(who, id, approve)
         r.state, r.decided = 'declined', now()
         kit.save()
         kit.record('org_internal_decided', who, { member = r.target, state = 'declined' })
-        tell(r.by, 'Staff declined your request for an internal contract.')
+        tell(r.by, L('org_extras3.staff_declined_your_request_for_an'))
         return true, nil, { state = 'declined' }
     end
     local d = deps()
     local boss = d.identity.byCitizenId(r.by)
     if not boss then
-        return fail(ERR.RULE, { message = 'The boss who asked is not in the city: it is placed in their name, '
-            .. 'with their money, so they must be. Try again when they are.' })
+        return fail(ERR.RULE, { message = L('org_extras3.the_boss_who_asked_is_not') })
     end
     if not org.members[r.target] then
         r.state, r.decided = 'declined', now()
         kit.save()
-        return fail(ERR.RULE, { message = 'They are no longer a member; the request is closed.' })
+        return fail(ERR.RULE, { message = L('org_extras3.they_are_no_longer_a_member') })
     end
     local okC, contract, cerr, refusal = pcall(d.contracts.create, boss, { targetCid = r.target,
         reason = 'Internal: ' .. r.reason, mode = CH.MODE.COMPETITIVE,
@@ -784,13 +784,12 @@ function Org.internalDecide(who, id, approve)
     if not okC or not contract then
         local code = okC and cerr or 'server_error'
         kit.record('org_internal_decided', who, { member = r.target, state = 'refused', kind = tostring(code) })
-        return fail(ERR.RULE, { message = ('Approved, but the contract could not be placed (%s). Nothing was taken; '
-            .. 'the request stays open.'):format(tostring(code)), refusal = refusal })
+        return fail(ERR.RULE, { message = (L('org_extras3.approved_but_the_contract_could_not')):format(tostring(code)), refusal = refusal })
     end
     r.state, r.decided, r.contract = 'placed', now(), contract.id
     kit.save()
     kit.record('org_internal_decided', who, { member = r.target, state = 'placed' }, contract.id)
-    tell(r.by, 'Staff approved your request: the internal contract is placed.')
+    tell(r.by, L('org_extras3.staff_approved_your_request_the_internal'))
     return true, nil, { state = 'placed', contract = contract.id }
 end
 
@@ -831,12 +830,12 @@ local function handler(org, actor)
     end
     if mineId then
         local entry = org.settings.orgContracts[mineId]
-        lines[#lines + 1] = 'You have a contract assigned: take it from the board.'
+        lines[#lines + 1] = L('org_extras3.you_have_a_contract_assigned_take')
         if entry.dossier and type(entry.dossier.notes) == 'string' then
             lines[#lines + 1] = 'Briefing: ' .. entry.dossier.notes:sub(1, 300)
         end
     else
-        lines[#lines + 1] = 'Nothing for you right now.'
+        lines[#lines + 1] = L('org_extras3.nothing_for_you_right_now')
     end
     if org.settings.notice and org.settings.notice.text then
         lines[#lines + 1] = 'Notice: ' .. tostring(org.settings.notice.text):sub(1, 200)
@@ -853,8 +852,8 @@ function Extras3.useSpot(org, actor, loc)
         return true
     end
     if loc.kind == 'garage' and on('Garage') and org.members[actor.cid] then
-        tell(actor.cid, Vehicles[actor.cid] and 'Return your vehicle in the app\'s Organisation tab, Garage.'
-            or 'Take a vehicle out in the app\'s Organisation tab, Garage.')
+        tell(actor.cid, Vehicles[actor.cid] and L('org_extras3.return_your_vehicle_in_the_apps')
+            or L('org_extras3.take_a_vehicle_out_in_the'))
         return true
     end
     if loc.kind == 'npc' and on('Handler') and org.members[actor.cid] then
@@ -972,8 +971,8 @@ function Extras3.tick(org, at)
             local drop = org.settings.drops[key]
             finish(org, key, on('DeadDrops') and rule or 'pay')
             tell(drop.cid, rule == 'refund' and on('DeadDrops')
-                and 'You did not collect your payout from the dead drop in time: it went back to the placer.'
-                or 'Your payout at the dead drop was handed over the usual way.')
+                and L('org_extras3.you_did_not_collect_your_payout')
+                or L('org_extras3.your_payout_at_the_dead_drop'))
         end
     end
     if next(Vehicles) then
@@ -1043,14 +1042,14 @@ Extras3.CHECKS = {
     RepFailure = { kind = 'number', integer = true, min = 0, max = 100000 },
     RepHeat = { kind = 'number', integer = true, min = 0, max = 1000 },
     RepTiers = { kind = 'list', pattern = '^%s*%d+%s*,%s*[^,<>]+,%s*%d+%s*$', max = 80, most = 20,
-        says = "a list of 'points, label, most an accept is worth ($, 0 = no cap)'" },
+        says = L('org_extras3.a_list_of_points_label_most') },
     DeadDrops = { kind = 'switch' }, DeadDropMinutes = { kind = 'number', integer = true, min = 1, max = 10080 },
     DeadDropUnclaimed = { kind = 'choice', choices = { 'pay', 'refund' } },
     Territory = { kind = 'switch' }, TerritoryMinutes = { kind = 'number', integer = true, min = 1, max = 60 },
     TerritorySightMetres = { kind = 'number', min = 5, max = 500 },
     Garage = { kind = 'switch' },
     GarageVehicles = { kind = 'list', pattern = '^[%w_]+$', max = 32, most = 50,
-        says = 'a list of vehicle model names (letters, digits and _)' },
+        says = L('org_extras3.a_list_of_vehicle_model_names') },
     GarageMaxOut = { kind = 'number', integer = true, min = 1, max = 50 },
     GarageKeepMinutes = { kind = 'number', integer = true, min = 5, max = 1440 },
     GarageReturnMetres = { kind = 'number', min = 2, max = 200 },

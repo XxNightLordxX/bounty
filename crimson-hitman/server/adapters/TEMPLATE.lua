@@ -19,9 +19,10 @@
 --- callers keep their pcall, and a raise turns the call into "not filed",
 --- said once a minute in the console.
 
+local L = CrimsonBoot.requireShared('locale').t
 local Adapter = {
     resource = 'my-dispatch',          -- the resource 'auto' checks is started
-    label = 'My dispatch',             -- shown in the diagnosis and the panel
+    label = L('adapters_TEMPLATE.my_dispatch'),             -- shown in the diagnosis and the panel
 }
 
 --- File one alert. `alert` carries title, message, coords, street, caller,

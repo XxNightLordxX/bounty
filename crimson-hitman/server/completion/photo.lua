@@ -21,6 +21,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Phone() return Integrations.get('phone') end
@@ -104,8 +105,7 @@ end
 --- was refused.
 ---
 --- What the start says of a host server that allows no upload host.
-local NO_HOSTS = 'warning: no photo upload host is allowed, so every kill photo will be refused. '
-    .. 'Add your phone\'s image host to Config.Completion.ExtraPhotoHosts (for Fivemanage: '
+local NO_HOSTS = L('completion_photo.warning_no_photo_upload_host_is')
     .. '\'fivemanage.com\', \'fmfile.com\').'
 
 --- The warning that no upload host is allowed, taken back: kill photos

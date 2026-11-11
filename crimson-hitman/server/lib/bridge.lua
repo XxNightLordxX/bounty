@@ -8,6 +8,7 @@
 --- configuration problem (Log.problem). It never raises itself.
 
 local Log = CrimsonBoot.requireShared('log')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Bridge = {}
 
@@ -42,7 +43,7 @@ end
 ---@return boolean ok false when it is not started or the call raised
 ---@return any ... the export's answers, or the reason ('not started', the raise)
 function Bridge.call(resource, export, ...)
-    if not Bridge.started(resource) then return false, 'not started' end
+    if not Bridge.started(resource) then return false, L('lib_bridge.not_started') end
     return Bridge.invoke(resource .. ' ' .. tostring(export), function(...)
         local api = exports[resource]
         return api[export](api, ...)

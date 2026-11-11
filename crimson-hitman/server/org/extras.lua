@@ -51,6 +51,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Window = CrimsonBoot.require('server.lib.window')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Extras = {}
 
@@ -110,7 +111,7 @@ end
 local function tell(cid, text)
     local d = deps()
     if d.notify and d.notify.toCitizen and d.identity.byCitizenId(cid) then
-        pcall(d.notify.toCitizen, cid, (O.current() and O.current().label) or 'Organisation', text)
+        pcall(d.notify.toCitizen, cid, (O.current() and O.current().label) or L('org_extras.organisation'), text)
     end
 end
 
@@ -199,7 +200,7 @@ function Org.receiveContract(contractId, placerCid)
     -- Every boss online who may assign it, told there is one; never by whom.
     for cid in pairs(org.members) do
         if O.Engine.holds(org, cid, 'K4') then
-            tell(cid, ('A contract was sent to the organisation. Assign it within %d minutes.'):format(wait))
+            tell(cid, (L('org_extras.a_contract_was_sent_to_the')):format(wait))
         end
     end
     return true
@@ -221,9 +222,9 @@ function Org.assignContract(who, contractId, cid)
     if not member then return fail(ERR.NOT_FOUND) end
     if entry.cid == cid then return fail(ERR.ALREADY) end
     if member.suspended_until and member.suspended_until > now() then
-        return fail(ERR.RULE, { message = 'That member is suspended from contracts.' })
+        return fail(ERR.RULE, { message = L('org_extras.that_member_is_suspended_from_contracts') })
     end
-    if on('Duty') and not OnDuty[cid] then return fail(ERR.OFF_DUTY, { message = 'That member is not on duty.' }) end
+    if on('Duty') and not OnDuty[cid] then return fail(ERR.OFF_DUTY, { message = L('org_extras.that_member_is_not_on_duty') }) end
     local wait = minutes('AssignMinutes', 30, 1440)
     local from = entry.cid
     entry.state, entry.cid, entry.by, entry.assignedAt = 'assigned', cid, who.staff and 'staff' or who.cid, now()
@@ -232,8 +233,8 @@ function Org.assignContract(who, contractId, cid)
     rebuild()
     kit.record(from and 'org_contract_reassigned' or 'org_contract_assigned', who, { member = cid, from = from },
         contractId)
-    tell(cid, ('A contract was assigned to you. Take it from the board within %d minutes.'):format(wait))
-    if from then tell(from, 'A contract assigned to you was given to somebody else.') end
+    tell(cid, (L('org_extras.a_contract_was_assigned_to_you')):format(wait))
+    if from then tell(from, L('org_extras.a_contract_assigned_to_you_was')) end
     return true, nil, { expiresIn = wait * 60 }
 end
 
@@ -244,14 +245,14 @@ local function release(org, contractId, reason)
     org.settings.orgContracts[contractId] = nil
     kit.save()
     rebuild()
-    if entry.cid and entry.state == 'assigned' then tell(entry.cid, 'A contract assigned to you went on the open board.') end
+    if entry.cid and entry.state == 'assigned' then tell(entry.cid, L('org_extras.a_contract_assigned_to_you_went')) end
     -- The placer told it is on the open board now, never who had it. A
     -- territory hold (server/org/extras3.lua) says nothing: the placer never
     -- learns it was held, which would say where the target was.
     if reason ~= 'ended' and not entry.territory then
         local contract = deps().storage.readContract(contractId)
         if contract and contract.creator_cid then
-            tell(contract.creator_cid, 'Your contract sent to an organisation is on the open board now.')
+            tell(contract.creator_cid, L('org_extras.your_contract_sent_to_an_organisation'))
         end
     end
     return entry
@@ -282,7 +283,7 @@ function Extras.reservedRefusal(org, actor, contractId, opts)
     if not entry or (type(opts) == 'table' and opts.staffAssigned) then return nil end
     if entry.cid ~= actor.cid then return 'org_reserved', { message = O.message('org_reserved') } end
     if on('Duty') and not OnDuty[actor.cid] then
-        return O.ERR.OFF_DUTY, { message = 'Go on duty to take a contract the organisation assigned you.' }
+        return O.ERR.OFF_DUTY, { message = L('org_extras.go_on_duty_to_take_a') }
     end
     return nil
 end
@@ -329,7 +330,7 @@ function Extras.probation(org, member, write)
         row.passed, row.passedAt = 'record', now()
         kit.save()
         deps().audit.action('org_probation_passed', member.cid, nil, { org = org.id, by = 'record', done = done })
-        tell(member.cid, 'Your probation is over: you may take any contract your role allows.')
+        tell(member.cid, L('org_extras.your_probation_is_over_you_may'))
         return nil
     end
     return { done = done, need = need }
@@ -353,10 +354,10 @@ function Org.setProbation(who, cid, passed)
     if passed then
         if not Extras.probation(org, member, false) then return fail(ERR.ALREADY) end
         org.settings.probation[cid] = { passed = who.staff and 'staff' or 'boss', passedAt = now() }
-        tell(cid, 'Your probation is over: you may take any contract your role allows.')
+        tell(cid, L('org_extras.your_probation_is_over_you_may'))
     else
         org.settings.probation[cid] = { base = completed(cid), at = now() }
-        tell(cid, 'Staff put you on probation again.')
+        tell(cid, L('org_extras.staff_put_you_on_probation_again'))
     end
     kit.save()
     kit.record('org_probation', who, { member = cid, passed = passed })
@@ -396,11 +397,10 @@ function Extras.probationGate(org, member, actor, contractId, contract, opts, ga
     if onProbation and not staffAssigned then
         local most = math.floor(tonumber(Config.Organisation.ProbationMaxReward) or 0)
         if value() > most then
-            return 'org_probation', { message = ('On probation you take contracts worth up to $%d (%d of %d '
-                .. 'completions done).'):format(most, onProbation.done, onProbation.need) }
+            return 'org_probation', { message = (L('org_extras.on_probation_you_take_contracts_worth')):format(most, onProbation.done, onProbation.need) }
         end
         if Config.Organisation.ProbationNoStake ~= false and contract and (tonumber(contract.penalty_amount) or 0) > 0 then
-            return 'org_probation', { message = 'On probation you take no contract with a stake.' }
+            return 'org_probation', { message = L('org_extras.on_probation_you_take_no_contract') }
         end
     end
     if gate then gate.probation = onProbation and true or nil end
@@ -448,7 +448,7 @@ function Extras.approvalGate(org, member, actor, contractId, opts, gate)
     d.audit.action('org_accept_requested', actor.cid, contractId, { org = org.id, worth = value() })
     for cid in pairs(org.members) do
         if cid ~= actor.cid and O.Engine.holds(org, cid, 'K6') then
-            tell(cid, 'A member asks to take a contract: approve or refuse it in the app.')
+            tell(cid, L('org_extras.a_member_asks_to_take_a'))
         end
     end
     return 'org_approval', { message = O.message('org_approval'), pending = true, expiresIn = wait * 60 }
@@ -484,13 +484,13 @@ function Org.decideAccept(who, id, approve)
     Pending[k] = nil
     if not approve then
         kit.record('org_accept_refused', who, { member = p.cid }, p.contractId)
-        tell(p.cid, 'A boss refused your accept. Nothing was taken.')
+        tell(p.cid, L('org_extras.a_boss_refused_your_accept_nothing'))
         return true, nil, { approved = false }
     end
     local d = deps()
     local actor = d.identity.byCitizenId(p.cid)
     if not actor then
-        return fail(ERR.RULE, { message = 'They are not in the city now; it is dropped and nothing was taken.' })
+        return fail(ERR.RULE, { message = L('org_extras.they_are_not_in_the_city') })
     end
     Approved[k] = true
     local ran, ok, refusal = pcall(d.contracts.accept, actor, p.contractId, p.anonymous, Util.copy(p.opts))
@@ -498,12 +498,12 @@ function Org.decideAccept(who, id, approve)
     if not ran or not ok then
         local code = ran and refusal or 'server_error'
         kit.record('org_accept_approved', who, { member = p.cid, refused = tostring(code) }, p.contractId)
-        tell(p.cid, 'Your accept was approved, but the contract would not take it now. Nothing was taken.')
-        return fail(ERR.RULE, { message = 'Approved, but the contract would not take it now (' .. tostring(code)
-            .. '). Nothing was taken.' })
+        tell(p.cid, L('org_extras.your_accept_was_approved_but_the'))
+        return fail(ERR.RULE, { message = L('org_extras.approved_but_the_contract_would_not') .. tostring(code)
+            .. L('org_extras.nothing_was_taken') })
     end
     kit.record('org_accept_approved', who, { member = p.cid }, p.contractId)
-    tell(p.cid, 'A boss approved your accept: the contract is yours.')
+    tell(p.cid, L('org_extras.a_boss_approved_your_accept_the'))
     return true, nil, { approved = true }
 end
 
@@ -543,7 +543,7 @@ function Org.setDuty(actor, value)
     if type(value) ~= 'boolean' then return fail(ERR.INVALID) end
     if (OnDuty[actor.cid] ~= nil) == value then return fail(ERR.ALREADY) end
     if value and Config.Organisation.DutyAtOffice == true and not O.inOffice(org, actor.source) then
-        return fail(ERR.OFFICE, { message = 'You go on duty at the boss office.' })
+        return fail(ERR.OFFICE, { message = L('org_extras.you_go_on_duty_at_the') })
     end
     OnDuty[actor.cid] = value and now() or nil
     tellFramework(actor.source, value)
@@ -570,7 +570,7 @@ function Org.forceOffDuty(who, cid)
     if actor then tellFramework(actor.source, false) end
     rebuild()
     kit.record('org_duty_forced', who, { member = cid })
-    tell(cid, 'A boss sent you off duty.')
+    tell(cid, L('org_extras.a_boss_sent_you_off_duty'))
     return true
 end
 
@@ -645,25 +645,25 @@ function Org.channelPost(who, text)
     local max = math.max(1, math.min(1000, math.floor(tonumber(Config.Organisation.ChannelMaxLength) or 300)))
     local body = plain(text, max)
     if not body then
-        return fail(ERR.INVALID, { message = ('Plain text, up to %d characters, no links.'):format(max) })
+        return fail(ERR.INVALID, { message = (L('org_extras.plain_text_up_to_characters_no')):format(max) })
     end
     if member then
         local muted = muteOf(org, who.cid)
         if muted then
-            return fail(ERR.LOCKED, { message = 'A boss muted you in the channel for now.', untilAt = muted })
+            return fail(ERR.LOCKED, { message = L('org_extras.a_boss_muted_you_in_the'), untilAt = muted })
         end
         local most = math.max(1, math.floor(tonumber(Config.Organisation.ChannelPerMinute) or 6))
         if not Sent.take(who.cid, most, now()) then return fail(ERR.COOLDOWN) end
     end
     local list = messages(org)
     MessageSeq = MessageSeq + 1
-    local from = who.staff and 'Staff' or ((O.codenamesOn() and member.codename)
+    local from = who.staff and L('org_extras.staff') or ((O.codenamesOn() and member.codename)
         and O.codenameLabel(member.codename) or member.name)
     local row = { id = ('msg:%s:%d:%d'):format(org.id, now(), MessageSeq):sub(1, 64), org_id = org.id,
-        cid = who.staff and 'staff' or who.cid, name = tostring(from or 'A member'):sub(1, 64), body = body,
+        cid = who.staff and 'staff' or who.cid, name = tostring(from or L('org_extras.a_member')):sub(1, 64), body = body,
         created_at = now() }
     local ok = pcall(deps().storage.writeOrgRow, 'messages', row)
-    if not ok then return fail(ERR.REFUSED, { message = 'The message could not be kept; try again.' }) end
+    if not ok then return fail(ERR.REFUSED, { message = L('org_extras.the_message_could_not_be_kept') }) end
     list[#list + 1] = row
     while #list > KEEP do table.remove(list, 1) end
     -- The record keeps who and how long, never the words.
@@ -744,8 +744,8 @@ function Org.channelMute(who, cid, hours)
     org.settings.channelMutes[cid] = hours > 0 and (now() + hours * 3600) or nil
     kit.save()
     kit.record('org_channel_mute', who, { member = cid, hours = hours })
-    tell(cid, hours > 0 and ('A boss muted you in the organisation channel for %d hour(s).'):format(hours)
-        or 'You may write in the organisation channel again.')
+    tell(cid, hours > 0 and (L('org_extras.a_boss_muted_you_in_the_2')):format(hours)
+        or L('org_extras.you_may_write_in_the_organisation'))
     return true
 end
 
@@ -753,8 +753,8 @@ end
 --                              R8: DOSSIERS
 -- ============================================================================
 
-Extras.RULES = { discreet = 'Discreet: no witnesses, nothing in public', clean = 'Clean: the target only',
-    open = 'Open: whatever it takes' }
+Extras.RULES = { discreet = L('org_extras.discreet_no_witnesses_nothing_in_public'), clean = L('org_extras.clean_the_target_only'),
+    open = L('org_extras.open_whatever_it_takes') }
 
 --- Attach a briefing to an assigned organisation contract (K7), or clear
 --- it (spec false). notes (plain text, DossierMaxLength), spot (one of the
@@ -768,7 +768,7 @@ function Org.writeDossier(who, contractId, spec)
     if err then return fail(err) end
     local entry = type(contractId) == 'string' and org.settings.orgContracts[contractId]
     if not entry or entry.state == 'waiting' then
-        return fail(ERR.NOT_FOUND, { message = 'Only a contract assigned to a member takes a dossier.' })
+        return fail(ERR.NOT_FOUND, { message = L('org_extras.only_a_contract_assigned_to_a') })
     end
     if spec == false then
         entry.dossier = nil
@@ -782,7 +782,7 @@ function Org.writeDossier(who, contractId, spec)
         local max = math.max(1, math.min(2000, math.floor(tonumber(Config.Organisation.DossierMaxLength) or 600)))
         local notes = plain(spec.notes, max)
         if not notes then
-            return fail(ERR.INVALID, { message = ('Plain text, up to %d characters, no links.'):format(max) })
+            return fail(ERR.INVALID, { message = (L('org_extras.plain_text_up_to_characters_no')):format(max) })
         end
         -- Nothing a hitman is not already shown: never a citizen id of the
         -- contract's parties.
@@ -790,7 +790,7 @@ function Org.writeDossier(who, contractId, spec)
         local lower = notes:lower()
         for _, cid in ipairs({ contract and contract.target_cid, contract and contract.creator_cid }) do
             if type(cid) == 'string' and #cid > 2 and lower:find(cid:lower(), 1, true) then
-                return fail(ERR.RULE, { message = 'A dossier never carries a citizen id.' })
+                return fail(ERR.RULE, { message = L('org_extras.a_dossier_never_carries_a_citizen') })
             end
         end
         dossier.notes = notes
@@ -798,7 +798,7 @@ function Org.writeDossier(who, contractId, spec)
     if spec.spot ~= nil and spec.spot ~= false then
         local spot = type(spec.spot) == 'string' and org.locations[spec.spot]
         if not spot or spot.kind ~= 'meeting' or spot.enabled == false then
-            return fail(ERR.NOT_FOUND, { message = 'Pick one of the organisation\'s meeting spots.' })
+            return fail(ERR.NOT_FOUND, { message = L('org_extras.pick_one_of_the_organisations_meeting') })
         end
         dossier.spot = spec.spot
     end
@@ -806,13 +806,13 @@ function Org.writeDossier(who, contractId, spec)
         if type(spec.rules) ~= 'string' or not Extras.RULES[spec.rules] then return fail(ERR.INVALID) end
         dossier.rules = spec.rules
     end
-    if not next(dossier) then return fail(ERR.INVALID, { message = 'Write notes, or pick a spot or the rules.' }) end
+    if not next(dossier) then return fail(ERR.INVALID, { message = L('org_extras.write_notes_or_pick_a_spot') }) end
     dossier.by, dossier.at = who.staff and 'staff' or 'boss', now()
     entry.dossier = dossier
     kit.save()
     kit.record('org_dossier', who, { notes = dossier.notes and #dossier.notes or nil, spot = dossier.spot,
         rules = dossier.rules, member = entry.cid }, contractId)
-    if entry.cid then tell(entry.cid, 'A boss attached a dossier to a contract assigned to you.') end
+    if entry.cid then tell(entry.cid, L('org_extras.a_boss_attached_a_dossier_to')) end
     return true
 end
 
@@ -821,7 +821,7 @@ local function dossierView(org, dossier)
     if type(dossier) ~= 'table' or not on('Dossiers') then return nil end
     local spot = dossier.spot and org.locations[dossier.spot]
     return { notes = dossier.notes, rules = dossier.rules, rulesText = dossier.rules and Extras.RULES[dossier.rules],
-        spot = spot and { id = spot.id, label = spot.label or 'Meeting spot' } or nil, at = dossier.at }
+        spot = spot and { id = spot.id, label = spot.label or L('org_extras.meeting_spot') } or nil, at = dossier.at }
 end
 
 -- ============================================================================
@@ -888,7 +888,7 @@ function Org.work(who)
             out.spots, out.rules = {}, {}
             for id, l in pairs(org.locations) do
                 if l.kind == 'meeting' and l.enabled ~= false then
-                    out.spots[#out.spots + 1] = { id = id, label = l.label or 'Meeting spot' }
+                    out.spots[#out.spots + 1] = { id = id, label = l.label or L('org_extras.meeting_spot') }
                 end
             end
             table.sort(out.spots, function(a, b) return a.id < b.id end)
@@ -1053,7 +1053,7 @@ tickOne = function(org, at, prune)
         if (p.org == nil or p.org == org.id) and (p.expires <= at or not on('AcceptApproval')) then
             Pending[k] = nil
             d.audit.action('org_accept_expired', p.cid, p.contractId, { org = org.id })
-            tell(p.cid, 'Nobody approved your accept in time. Nothing was taken.')
+            tell(p.cid, L('org_extras.nobody_approved_your_accept_in_time'))
         end
     end
     local changed = false

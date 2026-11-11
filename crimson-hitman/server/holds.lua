@@ -57,6 +57,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Text = CrimsonBoot.requireShared('text')
 local Lock = CrimsonBoot.require('server.lib.lock')
 local Db = CrimsonBoot.require('server.lib.db')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Holds = {}
 
@@ -124,17 +125,17 @@ local LIVE = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true }
 
 --- What players are told. Plain, and never which party.
 Holds.TEXT = {
-    title        = 'On hold',
-    held         = 'This contract is on hold by staff.',
-    released     = 'This contract is no longer on hold.',
-    you          = 'Staff have put your contracts on hold.',
-    youReleased  = 'Your contracts are no longer on hold.',
-    restartTitle = 'Server restart',
-    restart      = 'Contracts are paused until the server restart.',
-    restartOver  = 'Contracts are no longer paused for the server restart.',
-    pausedTitle  = 'Paused',
-    paused       = 'Contracts are paused by staff.',
-    resumed      = 'Contracts are no longer paused.',
+    title        = L('holds.on_hold'),
+    held         = L('holds.this_contract_is_on_hold_by'),
+    released     = L('holds.this_contract_is_no_longer_on'),
+    you          = L('holds.staff_have_put_your_contracts_on'),
+    youReleased  = L('holds.your_contracts_are_no_longer_on'),
+    restartTitle = L('holds.server_restart'),
+    restart      = L('holds.contracts_are_paused_until_the_server'),
+    restartOver  = L('holds.contracts_are_no_longer_paused_for'),
+    pausedTitle  = L('holds.paused'),
+    paused       = L('holds.contracts_are_paused_by_staff'),
+    resumed      = L('holds.contracts_are_no_longer_paused'),
 }
 
 --- The kinds a contract is held by, as Holds.on / Holds.since take them.
@@ -387,11 +388,11 @@ function Holds.shown(contract, hitmen, canIdentify)
             -- The store's freezes could not be read: every live contract is
             -- held alike, through nobody. Said as that with IdentityAce, and
             -- to everybody else as held, which names nobody either.
-            out[#out + 1] = canIdentify and 'store unreadable' or 'held'
+            out[#out + 1] = canIdentify and L('holds.store_unreadable') or 'held'
         elseif canIdentify or not party.anonymous then
-            out[#out + 1] = party.role == 'target' and 'the target'
-                or party.role == 'client' and 'the placer'
-                or ('operative %s'):format(tostring(aliases[party.cid] or '?'))
+            out[#out + 1] = party.role == 'target' and L('holds.the_target')
+                or party.role == 'client' and L('holds.the_placer')
+                or (L('holds.operative')):format(tostring(aliases[party.cid] or '?'))
         end
     end
     table.sort(out)
@@ -848,7 +849,7 @@ releaseRestartNow = function(why, quiet)
     -- Everybody told at the start is told it is over: open pages kept
     -- "paused for the server restart" and its buttons off until the player
     -- went elsewhere. Not when a new hold takes its place at once.
-    endEveryLive('restart hold', since, now,
+    endEveryLive(L('holds.restart_hold'), since, now,
         not quiet and Holds.TEXT.restartTitle or nil, Holds.TEXT.restartOver)
     Log.always(('the restart hold on contracts has ended (%s): their clocks run again where '
         .. 'nothing else stops them'):format(tostring(why)))
@@ -893,7 +894,7 @@ local function endAppPause()
     -- in the write finds it off, and gives nothing back a second time.
     appPause = nil
     Db.try('the end of the app pause could not be kept by the store (%s)', Storage.writeStaffMeta, PAUSE_META, 0)
-    endEveryLive('app pause', since, now, Holds.TEXT.pausedTitle, Holds.TEXT.resumed)
+    endEveryLive(L('holds.app_pause'), since, now, Holds.TEXT.pausedTitle, Holds.TEXT.resumed)
     Log.always('staff ended the app pause: contracts run again where nothing else stops them')
 end
 

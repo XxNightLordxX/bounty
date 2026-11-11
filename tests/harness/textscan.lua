@@ -21,6 +21,11 @@ TextScan.CONSOLE = {
     ['CrimsonLog.always'] = true, ['CrimsonLog.debug'] = true, ['CrimsonLog.problem'] = true,
     ['print'] = true, ['error'] = true, ['assert'] = true, ['Db.quiet'] = true, ['DebugPrint'] = true,
     ['CrimsonBoot.require'] = true, ['CrimsonBoot.requireShared'] = true, ['require'] = true,
+    -- The label of a list of steps, said only in the console line a raise
+    -- prints (server/lib/lifecycle.lua).
+    ['Lifecycle.run'] = true,
+    -- The line a store call that raised prints (server/lib/db.lua).
+    ['Db.try'] = true,
 }
 
 local function isNameChar(c) return c:match('[%w_]') ~= nil end

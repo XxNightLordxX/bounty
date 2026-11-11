@@ -8,6 +8,7 @@ local Audit = {}
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Discord = CrimsonBoot.require('server.discord')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Storage
 local queue = {}
@@ -312,16 +313,16 @@ local function mirrorBatch(rows)
             hits = hits + 1
         elseif kind then
             if #lines < MAX_LINES then
-                lines[#lines + 1] = ('`%s` · %s · contract %s'):format(
+                lines[#lines + 1] = (L('audit.contract')):format(
                     entry.kind, entry.action, entry.contract_id or 'n/a')
             else
                 more = more + 1
             end
         end
     end
-    if more > 0 then lines[#lines + 1] = ('…and %d more'):format(more) end
-    if noise > 0 then lines[#lines + 1] = ('%d refused request(s)'):format(noise) end
-    if hits > 0 then lines[#lines + 1] = ('%d hit(s) on targets not confirmed'):format(hits) end
+    if more > 0 then lines[#lines + 1] = (L('audit.and_more')):format(more) end
+    if noise > 0 then lines[#lines + 1] = (L('audit.refused_request')):format(noise) end
+    if hits > 0 then lines[#lines + 1] = (L('audit.hit_on_targets_not_confirmed')):format(hits) end
     if #lines == 0 then return false end
 
     return (Discord.post('staff', table.concat(lines, '\n'), { tries = 1, done = function() end }))

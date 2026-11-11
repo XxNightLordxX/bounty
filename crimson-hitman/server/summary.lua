@@ -17,6 +17,7 @@
 local Words = CrimsonBoot.requireShared('words')
 local Db = CrimsonBoot.require('server.lib.db')
 local Discord = CrimsonBoot.require('server.discord')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Summary = {}
 
@@ -105,19 +106,19 @@ function Summary.text(counts, day)
     local e = counts.escrow
     local total = e.cash + e.bank + e.dirty
     return table.concat({
-        ('**Crimson Hitman: daily summary** (%04d-%02d-%02d, the last 24 hours)')
+        (L('summary.crimson_hitman_daily_summary_04d_02d'))
             :format(day // 10000, (day // 100) % 100, day % 100),
-        ('- Contracts placed: %d'):format(counts.placed),
-        ('- Contracts completed: %d'):format(counts.completed),
-        ('- Contracts refunded (cancelled, expired or voided): %d'):format(counts.refunded),
-        ('- Money in escrow: %s (cash %s, bank %s, dirty %s), and %d goods line(s)')
+        (L('summary.contracts_placed')):format(counts.placed),
+        (L('summary.contracts_completed')):format(counts.completed),
+        (L('summary.contracts_refunded_cancelled_expired_or_voided')):format(counts.refunded),
+        (L('summary.money_in_escrow_cash_bank_dirty'))
             :format(Words.dollars(total), Words.dollars(e.cash), Words.dollars(e.bank), Words.dollars(e.dirty),
                 e.goods),
-        ('- Open review items: %d'):format(counts.reviews),
-        counts.frozen and ('- Frozen players: %d'):format(counts.frozen)
-            or '- Frozen players: unknown (the store\'s freezes could not be read)',
-        counts.suspended and ('- Suspended players: %d'):format(counts.suspended)
-            or '- Suspended players: not tracked on this server',
+        (L('summary.open_review_items')):format(counts.reviews),
+        counts.frozen and (L('summary.frozen_players')):format(counts.frozen)
+            or L('summary.frozen_players_unknown_the_stores_freezes'),
+        counts.suspended and (L('summary.suspended_players')):format(counts.suspended)
+            or L('summary.suspended_players_not_tracked_on_this'),
     }, '\n')
 end
 

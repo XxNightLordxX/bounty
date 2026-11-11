@@ -6,6 +6,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Storage
 local modules = {}
@@ -491,7 +492,7 @@ local function applyConfigDefaults(quiet)
                 -- pass then had nothing left to fall back to, which is the
                 -- opposite of what this function is for.
                 Config[section] = copyOf(shipped)
-                filled[#filled + 1] = section .. ' (whole section)'
+                filled[#filled + 1] = section .. L('main.whole_section')
             end
         end
     end
@@ -569,9 +570,7 @@ local function checkPhotoAddress(warn)
     if publicUrl ~= nil and publicUrl ~= '' and Config.Completion.KillPhotos == true then
         local checked = CrimsonBoot.require('server.photos').checkBase(publicUrl)
         if not checked then
-            warn[#warn + 1] = ('Completion.PhotoPublicUrl is %s; it has to be an https:// '
-                .. 'address such as \'https://photos.example.com/crimson-hitman\', with no '
-                .. 'query. Ignoring it.'):format(type(publicUrl) == 'string'
+            warn[#warn + 1] = (L('main.completion_photopublicurl_is_it_has_to')):format(type(publicUrl) == 'string'
                     and ('"' .. publicUrl .. '"') or tostring(publicUrl))
             Config.Completion.PhotoPublicUrl = nil
         else
@@ -600,8 +599,7 @@ local function validateConfig(quiet)
     -- its one line by Integrations.report.
     local framework = Integrations.choice('framework')
     if framework == 'none' or not Integrations.valid('framework', framework) then
-        warn[#warn + 1] = ("Config.Integrations.Framework is '%s', but players, jobs and money are read "
-            .. "through it: there is no 'none'. Using 'auto'."):format(tostring(framework))
+        warn[#warn + 1] = (L('main.config_integrations_framework_is_but_players')):format(tostring(framework))
         if type(Config.Integrations) ~= 'table' then Config.Integrations = {} end
         Config.Integrations.Framework = 'auto'
     end
@@ -680,11 +678,9 @@ local function validateConfig(quiet)
         local block = Config
         for part in section:gmatch('[^%.]+') do block = type(block) == 'table' and block[part] or nil end
         if type(block) ~= 'table' then
-            fatal[#fatal + 1] = ('Config.%s is missing entirely'):format(section)
+            fatal[#fatal + 1] = (L('main.config_is_missing_entirely')):format(section)
         elseif type(block[key]) ~= 'number' then
-            fatal[#fatal + 1] = ('Config.%s.%s is %s; it has to be a number, and is used '
-                .. 'in arithmetic that would otherwise throw at the first player who '
-                .. 'reached it'):format(section, key, type(block[key]))
+            fatal[#fatal + 1] = (L('main.config_is_it_has_to_be')):format(section, key, type(block[key]))
         end
     end
 
@@ -715,8 +711,7 @@ local function validateConfig(quiet)
         local value = type(block) == 'table' and block[chance[2]] or nil
         if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
             or math.floor(value) ~= value or value < 0 or value > 100) then
-            warn[#warn + 1] = ('Config.Intel.%s.%s is %s; it has to be a whole number from 0 to 100. '
-                .. 'Using %d.'):format(chance[1], chance[2], tostring(value), chance[3])
+            warn[#warn + 1] = (L('main.config_intel_is_it_has_to')):format(chance[1], chance[2], tostring(value), chance[3])
             block[chance[2]] = chance[3]
         end
     end
@@ -734,8 +729,7 @@ local function validateConfig(quiet)
         local value = type(block) == 'table' and block[bound[1]] or nil
         if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
             or math.floor(value) ~= value or value < bound[2] or value > bound[3]) then
-            warn[#warn + 1] = ('Config.Holds.%s is %s; it has to be a whole number from %d to %d. '
-                .. 'Using %d.'):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
+            warn[#warn + 1] = (L('main.config_holds_is_it_has_to')):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
             block[bound[1]] = bound[4]
         end
     end
@@ -754,15 +748,14 @@ local function validateConfig(quiet)
         local value = type(block) == 'table' and block[bound[1]] or nil
         if type(block) == 'table' and (type(value) ~= 'number' or value ~= value
             or math.floor(value) ~= value or value < bound[2] or value > bound[3]) then
-            warn[#warn + 1] = ('Config.Staff.%s is %s; it has to be a whole number from %d to %d. '
-                .. 'Using %d.'):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
+            warn[#warn + 1] = (L('main.config_staff_is_it_has_to')):format(bound[1], tostring(value), bound[2], bound[3], bound[4])
             block[bound[1]] = bound[4]
         end
     end
     for _, switch in ipairs({ { 'Holds', 'AppPaused' }, { 'Staff', 'DailySummary' } }) do
         local block = Config[switch[1]]
         if type(block) == 'table' and type(block[switch[2]]) ~= 'boolean' then
-            warn[#warn + 1] = ('Config.%s.%s is %s; it has to be true or false. Using false.')
+            warn[#warn + 1] = (L('main.config_is_it_has_to_be_2'))
                 :format(switch[1], switch[2], tostring(block[switch[2]]))
             block[switch[2]] = false
         end
@@ -805,7 +798,7 @@ local function validateConfig(quiet)
 
     local mode = Config.Database.Mode
     if mode ~= 'mysql' and mode ~= 'json' and mode ~= 'memory' then
-        fatal[#fatal + 1] = ('Config.Database.Mode is "%s"; expected mysql, json or memory'):format(tostring(mode))
+        fatal[#fatal + 1] = (L('main.config_database_mode_is_expected_mysql')):format(tostring(mode))
     end
 
     -- mysql keeps every amount in an INT column, which holds at most
@@ -829,22 +822,20 @@ local function validateConfig(quiet)
             local key = path[#path]
             local value = type(holder) == 'table' and tonumber(holder[key]) or nil
             if value and value > INT_MAX then
-                warn[#warn + 1] = ('Config.%s is %s; mysql mode keeps money in INT columns, which '
-                    .. 'hold at most 2147483647. Using 2147483647.')
+                warn[#warn + 1] = (L('main.config_is_mysql_mode_keeps_money'))
                     :format(table.concat(path, '.'), value == math.huge and 'infinite'
                         or ('%.0f'):format(value))
                 holder[key] = INT_MAX
             end
         end
         for _, text in ipairs({
-            { section = 'Reason', columns = 'crimson_contracts.reason and crimson_ledger.reason' },
+            { section = 'Reason', columns = L('main.crimson_contracts_reason_and_crimson_ledger') },
             { section = 'Relay', columns = 'crimson_messages.body' },
         }) do
             local block = Config[text.section]
             local length = type(block) == 'table' and tonumber(block.MaxLength) or nil
             if length and length > 255 then
-                warn[#warn + 1] = ('Config.%s.MaxLength is %s; mysql mode keeps that text in %s, '
-                    .. 'which hold at most 255 characters. Using 255.')
+                warn[#warn + 1] = (L('main.config_maxlength_is_mysql_mode_keeps'))
                     :format(text.section, tostring(block.MaxLength), text.columns)
                 block.MaxLength = 255
             end
@@ -855,20 +846,18 @@ local function validateConfig(quiet)
     -- refusal, which is the safe way to misread it; said so here.
     local allowSwitch = Config.Database.AllowModeSwitch
     if allowSwitch ~= nil and type(allowSwitch) ~= 'boolean' then
-        warn[#warn + 1] = ('Config.Database.AllowModeSwitch is %s, not true or false; it is read '
-            .. 'as false'):format(tostring(allowSwitch))
+        warn[#warn + 1] = (L('main.config_database_allowmodeswitch_is_not_true')):format(tostring(allowSwitch))
     end
     -- How long one mysql statement may go unanswered (server/storage/mysql.lua).
     -- Not a number, or below 0, is the shipped 10; over 12, the phone's own
     -- 15 s wait can run out first.
     local answerLimit = Config.Database.QueryTimeoutSeconds
     if type(answerLimit) ~= 'number' or answerLimit ~= answerLimit or answerLimit < 0 then
-        warn[#warn + 1] = ('Config.Database.QueryTimeoutSeconds is %s; expected 0 or more seconds. '
+        warn[#warn + 1] = (L('main.config_database_querytimeoutseconds_is_expected_0')
             .. 'Using 10.'):format(tostring(answerLimit))
         Config.Database.QueryTimeoutSeconds = 10
     elseif answerLimit > 12 then
-        warn[#warn + 1] = ('Config.Database.QueryTimeoutSeconds is %s; the phone gives up after '
-            .. '15 s, so a player may be told "no answer yet" before the server answers')
+        warn[#warn + 1] = (L('main.config_database_querytimeoutseconds_is_the_phone'))
             :format(tostring(answerLimit))
     end
     -- Read by every player's game, not here, as a plain `== true`: a
@@ -877,13 +866,12 @@ local function validateConfig(quiet)
     -- is the shipped false on both sides.
     local installed = Config.App and Config.App.DefaultInstalled
     if installed ~= nil and type(installed) ~= 'boolean' then
-        warn[#warn + 1] = ('Config.App.DefaultInstalled is %s, not true or false; players\' '
-            .. 'phones read it as false and the app stays in the App Store')
+        warn[#warn + 1] = (L('main.config_app_defaultinstalled_is_not_true'))
             :format(tostring(installed))
     end
 
     if Config.Bailout.MinMultiplier > Config.Bailout.MaxMultiplier then
-        fatal[#fatal + 1] = 'Bailout MinMultiplier is above MaxMultiplier; no premium could ever be valid'
+        fatal[#fatal + 1] = L('main.bailout_minmultiplier_is_above_maxmultiplier_no')
     end
 
     -- How many times one contract can be collected: 1, 2 or 3. Anything
@@ -894,8 +882,7 @@ local function validateConfig(quiet)
     if not slots or slots ~= slots or slots < 1 or slots > 3 or math.floor(slots) ~= slots then
         local nearest = (not slots or slots ~= slots) and 1
             or math.max(1, math.min(3, math.floor(slots + 0.5)))
-        warn[#warn + 1] = ('Limits.MaxPayoutSlots is %s; it has to be 1, 2 or 3 (how many '
-            .. 'times one contract can be collected). Using %d.')
+        warn[#warn + 1] = (L('main.limits_maxpayoutslots_is_it_has_to'))
             :format(type(Config.Limits.MaxPayoutSlots) == 'string'
                 and ('"' .. Config.Limits.MaxPayoutSlots .. '"')
                 or tostring(Config.Limits.MaxPayoutSlots), nearest)
@@ -904,7 +891,7 @@ local function validateConfig(quiet)
     Config.Limits.MaxPayoutSlots = math.tointeger(slots) or slots
 
     if Config.Ledger.Depth > Config.Ledger.MaxDepthHardCap then
-        warn[#warn + 1] = ('Ledger.Depth (%d) exceeds the hard cap (%d); the cap wins')
+        warn[#warn + 1] = (L('main.ledger_depth_exceeds_the_hard_cap'))
             :format(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
     end
 
@@ -912,9 +899,7 @@ local function validateConfig(quiet)
     -- ends on its lifetime instead, and a lifetime ending hands the stake
     -- back, so the penalty a hitman agreed to could never be taken.
     if Config.Limits.DefaultDeadlineSeconds > Config.Limits.ContractLifetimeSeconds then
-        warn[#warn + 1] = ('Limits.DefaultDeadlineSeconds (%d) is longer than '
-            .. 'ContractLifetimeSeconds (%d); a contract would end on its lifetime '
-            .. 'before its deadline and no stake could ever be forfeited. Using the lifetime.')
+        warn[#warn + 1] = (L('main.limits_defaultdeadlineseconds_is_longer_than_contractlifetimeseconds'))
             :format(Config.Limits.DefaultDeadlineSeconds, Config.Limits.ContractLifetimeSeconds)
         Config.Limits.DefaultDeadlineSeconds = Config.Limits.ContractLifetimeSeconds
     end
@@ -923,12 +908,11 @@ local function validateConfig(quiet)
     -- flush: at 0 the tick, a database prune included, ran every frame.
     local flushMs = tonumber(Config.Audit.FlushIntervalMs)
     if not flushMs then
-        warn[#warn + 1] = ('Audit.FlushIntervalMs is %s, not a number of milliseconds; '
+        warn[#warn + 1] = (L('main.audit_flushintervalms_is_not_a_number')
             .. 'using 10000.'):format(tostring(Config.Audit.FlushIntervalMs))
         Config.Audit.FlushIntervalMs = 10000
     elseif flushMs < 1000 then
-        warn[#warn + 1] = ('Audit.FlushIntervalMs is %s; it paces every maintenance job '
-            .. 'including the database prune, so it is held to at least 1000.')
+        warn[#warn + 1] = (L('main.audit_flushintervalms_is_it_paces_every'))
             :format(tostring(Config.Audit.FlushIntervalMs))
         Config.Audit.FlushIntervalMs = 1000
     else
@@ -941,8 +925,7 @@ local function validateConfig(quiet)
     -- off.
     local fulfilment = Config.Completion.Fulfilment
     if fulfilment ~= CH.FULFILMENT_RULE.ALIVE and fulfilment ~= CH.FULFILMENT_RULE.EITHER then
-        warn[#warn + 1] = ('Completion.Fulfilment is %s; it has to be \'alive\' or '
-            .. '\'either\'. Using \'alive\': contracts are completed only by a live handover.')
+        warn[#warn + 1] = (L('main.completion_fulfilment_is_it_has_to'))
             :format(type(fulfilment) == 'string' and ('"' .. fulfilment .. '"') or tostring(fulfilment))
         Config.Completion.Fulfilment = CH.FULFILMENT_RULE.ALIVE
     end
@@ -953,63 +936,63 @@ local function validateConfig(quiet)
     -- nothing: a string 'true' is not an owner who chose to keep pictures.
     for _, switch in ipairs({
         { section = 'Completion', key = 'KillPhotos',
-          off = 'no kill photo is taken or kept, and Verify kill completes at the scene' },
-        { section = 'Mugshot', key = 'Enabled', off = 'no target headshot is asked for or shown' },
+          off = L('main.no_kill_photo_is_taken_or') },
+        { section = 'Mugshot', key = 'Enabled', off = L('main.no_target_headshot_is_asked_for') },
         -- Off is the app closed to whitelisted jobs, as before the view:
         -- the side that shows them least.
         { section = 'WhitelistedView', key = 'Enabled',
-          off = 'players on a whitelisted job get no screen in the app, as before the view' },
+          off = L('main.players_on_a_whitelisted_job_get') },
         -- Off is nothing sent to a phone about the view.
         { section = 'WhitelistedView', key = 'Alerts',
-          off = 'nobody on the whitelisted-job view can turn on Notify me, and none is sent' },
+          off = L('main.nobody_on_the_whitelisted_job_view') },
         -- Off is nothing sent outside the server.
         { section = 'Alerts', key = 'ToDiscord',
-          off = 'no alert is posted to Discord; the admin panel still lists every one' },
+          off = L('main.no_alert_is_posted_to_discord') },
         -- Off is the side that shows a hitman nothing of where the placer is.
         { section = 'Kidnap', key = 'MeetingPoint',
-          off = 'nobody can set a meeting point for a handover, and none is shown' },
+          off = L('main.nobody_can_set_a_meeting_point') },
         -- Off is the side that sells nobody a target's rough area.
         { section = 'Intel', sub = 'LocationTip', key = 'Enabled',
-          off = 'no informant tip is sold; one already bought stays on its buyer\'s map' },
+          off = L('main.no_informant_tip_is_sold_one') },
         -- The two informants, read as plain truths the same way: a string
         -- 'false' was a look-up the server sold while the page hid it.
         { section = 'Intel', sub = 'Informant', key = 'Enabled',
-          off = 'no target may buy a look-up on who is after them; names found stay shown' },
+          off = L('main.no_target_may_buy_a_look') },
         { section = 'Intel', sub = 'PlacerInformant', key = 'Enabled',
-          off = 'no placer may buy a look-up on who took it; names found stay shown' },
+          off = L('main.no_placer_may_buy_a_look') },
         -- The rules per target class (Config.TargetClasses, Util.targetRule),
         -- each class's the same way. Off is the side that offers nobody
         -- anonymity (placed and taken under their names, nothing charged;
         -- never retroactive), names nobody to the target, names a placer to
         -- the contract's own parties only, and sells nothing.
         { section = 'TargetClasses', sub = 'default', key = 'AllowAnonymousPlacer',
-          off = 'no contract can be placed anonymously; ones placed so stay anonymous' },
+          off = L('main.no_contract_can_be_placed_anonymously') },
         { section = 'TargetClasses', sub = 'default', key = 'AllowAnonymousHitman',
-          off = 'no contract can be accepted anonymously; operatives already so stay anonymous' },
+          off = L('main.no_contract_can_be_accepted_anonymously') },
         { section = 'TargetClasses', sub = 'default', key = 'ShowOperativeNames',
-          off = 'the target sees every operative by alias only, named or not' },
+          off = L('main.the_target_sees_every_operative_by') },
         { section = 'TargetClasses', sub = 'default', key = 'ShowPlacerOnBoard',
-          off = 'a named placer is named to the contract\'s parties only, never on the board' },
+          off = L('main.a_named_placer_is_named_to') },
         { section = 'TargetClasses', sub = 'default', key = 'Informant',
-          off = 'no target may buy the target\'s informant' },
+          off = L('main.no_target_may_buy_the_targets') },
         { section = 'TargetClasses', sub = 'default', key = 'PlacerInformant',
-          off = 'no placer of a contract may buy the placer\'s informant' },
+          off = L('main.no_placer_of_a_contract_may') },
         { section = 'TargetClasses', sub = 'default', key = 'LocationTip',
-          off = 'no informant tip is sold on a contract' },
+          off = L('main.no_informant_tip_is_sold_on') },
         { section = 'TargetClasses', sub = 'whitelisted', key = 'AllowAnonymousPlacer',
-          off = 'no contract on a whitelisted job can be placed anonymously; ones placed so stay anonymous' },
+          off = L('main.no_contract_on_a_whitelisted_job') },
         { section = 'TargetClasses', sub = 'whitelisted', key = 'AllowAnonymousHitman',
-          off = 'no contract on a whitelisted job can be accepted anonymously; operatives already so stay anonymous' },
+          off = L('main.no_contract_on_a_whitelisted_job_2') },
         { section = 'TargetClasses', sub = 'whitelisted', key = 'ShowOperativeNames',
-          off = 'a target on a whitelisted job sees every operative by alias only, named or not' },
+          off = L('main.a_target_on_a_whitelisted_job') },
         { section = 'TargetClasses', sub = 'whitelisted', key = 'ShowPlacerOnBoard',
-          off = 'a named placer on a whitelisted job is named to the contract\'s parties only, never on the board' },
+          off = L('main.a_named_placer_on_a_whitelisted') },
         { section = 'TargetClasses', sub = 'whitelisted', key = 'Informant',
-          off = 'no target on a whitelisted job may buy the target\'s informant' },
+          off = L('main.no_target_on_a_whitelisted_job') },
         { section = 'TargetClasses', sub = 'whitelisted', key = 'PlacerInformant',
-          off = 'no placer of a contract on a whitelisted job may buy the placer\'s informant' },
+          off = L('main.no_placer_of_a_contract_on') },
         { section = 'TargetClasses', sub = 'whitelisted', key = 'LocationTip',
-          off = 'no informant tip is sold on a contract on a whitelisted job' },
+          off = L('main.no_informant_tip_is_sold_on_2') },
     }) do
         local block = Config[switch.section]
         local name = switch.section
@@ -1021,7 +1004,7 @@ local function validateConfig(quiet)
         end
         local value = block[switch.key]
         if type(value) ~= 'boolean' then
-            warn[#warn + 1] = ('%s.%s is %s, not true or false; it is read as false: %s.')
+            warn[#warn + 1] = (L('main.is_not_true_or_false_it'))
                 :format(name, switch.key, type(value) == 'string'
                     and ('"' .. value .. '"') or tostring(value), switch.off)
             block[switch.key] = false
@@ -1031,8 +1014,7 @@ local function validateConfig(quiet)
     -- The master switch over the three informant features (Intel.on).
     -- Off is the side that sells nothing, as each of theirs is.
     if type(Config.Intel.Enabled) ~= 'boolean' then
-        warn[#warn + 1] = ('Intel.Enabled is %s, not true or false; it is read as false: '
-            .. 'no informant feature is offered (the target\'s, the placer\'s or the tip).')
+        warn[#warn + 1] = (L('main.intel_enabled_is_not_true_or'))
             :format(type(Config.Intel.Enabled) == 'string'
                 and ('"' .. Config.Intel.Enabled .. '"') or tostring(Config.Intel.Enabled))
         Config.Intel.Enabled = false
@@ -1045,8 +1027,7 @@ local function validateConfig(quiet)
     -- no time is nothing, and a most of none sells nothing.
     local tip = Config.Intel.LocationTip
     if type(tip.NotifyTarget) ~= 'boolean' then
-        warn[#warn + 1] = ('Intel.LocationTip.NotifyTarget is %s, not true or false; it is read as '
-            .. 'true: the target is told someone knows their rough area.')
+        warn[#warn + 1] = (L('main.intel_locationtip_notifytarget_is_not_true'))
             :format(type(tip.NotifyTarget) == 'string' and ('"' .. tip.NotifyTarget .. '"')
                 or tostring(tip.NotifyTarget))
         tip.NotifyTarget = true
@@ -1060,8 +1041,7 @@ local function validateConfig(quiet)
     }) do
         local value = tonumber(tip[rule.key])
         if not value or value ~= value or value < rule.floor or value > rule.ceiling then
-            warn[#warn + 1] = ('Intel.LocationTip.%s is %s; it has to be a number from %d to %d. '
-                .. 'Using %d.'):format(rule.key, tostring(tip[rule.key]), rule.floor,
+            warn[#warn + 1] = (L('main.intel_locationtip_is_it_has_to')):format(rule.key, tostring(tip[rule.key]), rule.floor,
                     rule.ceiling, rule.default)
             value = rule.default
         end
@@ -1073,7 +1053,7 @@ local function validateConfig(quiet)
     -- first time somebody photographs a body.
     local photoStorage = Config.Completion.PhotoStorage
     if photoStorage ~= 'server' and photoStorage ~= 'host' then
-        warn[#warn + 1] = ('Completion.PhotoStorage is %s; it has to be \'server\' or '
+        warn[#warn + 1] = (L('main.completion_photostorage_is_it_has_to')
             .. '\'host\'. Using \'server\'.'):format(type(photoStorage) == 'string'
                 and ('"' .. photoStorage .. '"') or tostring(photoStorage))
         Config.Completion.PhotoStorage = 'server'
@@ -1091,8 +1071,7 @@ local function validateConfig(quiet)
     local function photoLimit(key, default, floor, ceiling)
         local value = tonumber(Config.Completion[key])
         if not value or value ~= value or value < floor or value > ceiling then
-            warn[#warn + 1] = ('Completion.%s is %s; it has to be a number from %d to %d. '
-                .. 'Using %d.'):format(key, tostring(Config.Completion[key]), floor, ceiling, default)
+            warn[#warn + 1] = (L('main.completion_is_it_has_to_be')):format(key, tostring(Config.Completion[key]), floor, ceiling, default)
             value = default
         end
         Config.Completion[key] = math.floor(value)
@@ -1104,7 +1083,7 @@ local function validateConfig(quiet)
     -- tick; zero or less would delete a photo the moment it was opened.
     local openFor = tonumber(Config.Completion.PhotoOpenSeconds)
     if not openFor or openFor <= 0 then
-        warn[#warn + 1] = ('Completion.PhotoOpenSeconds is %s, not a number of seconds above '
+        warn[#warn + 1] = (L('main.completion_photoopenseconds_is_not_a_number')
             .. 'zero; using 600.'):format(tostring(Config.Completion.PhotoOpenSeconds))
         Config.Completion.PhotoOpenSeconds = 600
     else
@@ -1124,8 +1103,7 @@ local function validateConfig(quiet)
     if keptDays ~= nil then
         local days = tonumber(keptDays)
         if not days or days ~= days or days <= 0 then
-            warn[#warn + 1] = ('Completion.KeptPhotoDays is %s, not a number of days above '
-                .. 'zero; photos kept in the app are kept until their owner deletes them.')
+            warn[#warn + 1] = (L('main.completion_keptphotodays_is_not_a_number'))
                 :format(tostring(keptDays))
             Config.Completion.KeptPhotoDays = nil
         else
@@ -1140,15 +1118,14 @@ local function validateConfig(quiet)
     -- placed, so it is held to that.
     local minReward = tonumber(Config.Limits.MinContractReward)
     if not minReward or minReward ~= minReward or minReward < 0 or minReward == math.huge then
-        warn[#warn + 1] = ('Limits.MinContractReward is %s, not a number of dollars (0 for no '
+        warn[#warn + 1] = (L('main.limits_mincontractreward_is_not_a_number')
             .. 'minimum); using 1000.'):format(tostring(Config.Limits.MinContractReward))
         minReward = 1000
     end
     minReward = math.floor(minReward)
     local maxValue = tonumber(Config.MaxContractValue)
     if maxValue and minReward > maxValue then
-        warn[#warn + 1] = ('Limits.MinContractReward (%d) is above MaxContractValue (%d), so no '
-            .. 'contract could ever be placed; using %d.'):format(minReward, maxValue,
+        warn[#warn + 1] = (L('main.limits_mincontractreward_is_above_maxcontractvalue_so')):format(minReward, maxValue,
                 math.floor(maxValue))
         minReward = math.floor(maxValue)
     end
@@ -1159,8 +1136,7 @@ local function validateConfig(quiet)
     -- is read as the shipped figure and said so, never as no cap at all.
     local payMax = tonumber(Config.Staff and Config.Staff.ManualPaymentMax)
     if not payMax or payMax ~= payMax or payMax < 0 or payMax == math.huge then
-        warn[#warn + 1] = ('Staff.ManualPaymentMax is %s, not a number of dollars (0 turns manual '
-            .. 'payments off); using 100000.'):format(tostring(Config.Staff and Config.Staff.ManualPaymentMax))
+        warn[#warn + 1] = (L('main.staff_manualpaymentmax_is_not_a_number')):format(tostring(Config.Staff and Config.Staff.ManualPaymentMax))
         payMax = 100000
     end
     if type(Config.Staff) ~= 'table' then Config.Staff = {} end
@@ -1170,8 +1146,7 @@ local function validateConfig(quiet)
     -- 0 turns the warning off; /ch-diag still lists the slowest jobs.
     local slowMs = tonumber(Config.Diagnostics.SlowJobMs)
     if not slowMs or slowMs ~= slowMs or slowMs < 0 then
-        warn[#warn + 1] = ('Diagnostics.SlowJobMs is %s, not a number of milliseconds (0 for '
-            .. 'no warning); using 25.'):format(tostring(Config.Diagnostics.SlowJobMs))
+        warn[#warn + 1] = (L('main.diagnostics_slowjobms_is_not_a_number')):format(tostring(Config.Diagnostics.SlowJobMs))
         slowMs = 25
     end
     Config.Diagnostics.SlowJobMs = slowMs
@@ -1182,17 +1157,15 @@ local function validateConfig(quiet)
     -- or 'unlimited' it stopped every one of them for good.
     local retries = Config.PendingEscrow.MaxRetriesPerLogin
     if retries ~= retries or retries < 1 then
-        warn[#warn + 1] = ('PendingEscrow.MaxRetriesPerLogin is %s; it is how many owed payouts '
-            .. 'every retry pass tries (at login, and every 30 seconds for a player still '
-            .. 'online), so below 1 none would ever be delivered. Using 1.'):format(tostring(retries))
+        warn[#warn + 1] = (L('main.pendingescrow_maxretriesperlogin_is_it_is_how')):format(tostring(retries))
         Config.PendingEscrow.MaxRetriesPerLogin = 1
     end
 
     if Config.Audit.MaxQueueSize < 1 then
-        warn[#warn + 1] = 'Audit.MaxQueueSize is below 1; the queue holds at least one row.'
+        warn[#warn + 1] = L('main.audit_maxqueuesize_is_below_1_the')
     end
     if Config.Audit.RetentionDays < 0 then
-        warn[#warn + 1] = 'Audit.RetentionDays is negative; the audit log is kept forever.'
+        warn[#warn + 1] = L('main.audit_retentiondays_is_negative_the_audit')
     end
 
     -- Every rate-limit rule is a table of a positive `per` and a `burst` of
@@ -1204,8 +1177,7 @@ local function validateConfig(quiet)
             and type(rule.per) == 'number' and rule.per > 0
             and type(rule.burst) == 'number' and rule.burst >= 1
         if not good then
-            warn[#warn + 1] = ('Cooldowns.%s is not { per = <seconds above 0>, burst = <1 or '
-                .. 'more> }; using the fallback rule for it.'):format(tostring(name))
+            warn[#warn + 1] = (L('main.cooldowns_is_not_per_seconds_above')):format(tostring(name))
             Config.Cooldowns[name] = { per = 10, burst = 10 }
         end
     end
@@ -1229,10 +1201,7 @@ local function validateConfig(quiet)
         local value = holder and holder[named.key]
         if holder and value ~= nil and not CH.MONEY_ACCOUNTS[value] then
             holder[named.key] = 'bank'
-            warn[#warn + 1] = ('%s is "%s", which is not an account this '
-                .. 'framework can charge (only cash and bank are; dirty money is '
-                .. 'an inventory item). Using bank instead — set it to cash or '
-                .. 'bank to choose')
+            warn[#warn + 1] = (L('main.is_which_is_not_an_account'))
                 :format(named.label, tostring(value))
         end
     end
@@ -1248,18 +1217,13 @@ local function validateConfig(quiet)
     -- full-path read to a key the shipped config defines.
     local audit = Config.Audit
     if type(audit.Webhook) == 'string' and audit.Webhook ~= '' then
-        warn[#warn + 1] = 'Audit.Webhook is set in config/config.lua, which every '
-            .. 'player\'s game downloads, so that URL is exposed and is not used. '
-            .. 'Delete or regenerate the webhook in Discord, remove it from '
-            .. 'config.lua, and put the new one in server.cfg as: set '
-            .. 'crimson_hitman_webhook "<url>" (set, never setr: setr sends it to '
-            .. 'every player too)'
+        warn[#warn + 1] = L('main.audit_webhook_is_set_in_config')
     end
 
     -- A note: memory mode is chosen on purpose, for testing, and the
     -- diagnosis's first lines say which storage is in use.
     if mode == 'memory' then
-        notes[#notes + 1] = 'Database.Mode is "memory": contracts and escrow will NOT survive a restart'
+        notes[#notes + 1] = L('main.database_mode_is_memory_contracts_and')
     end
 
     -- A rule that cannot be evaluated is worse than one that is off, because
@@ -1279,11 +1243,8 @@ local function validateConfig(quiet)
     if provider ~= nil and not (type(provider) == 'table'
         and type(provider.resource) == 'string' and provider.resource ~= ''
         and type(provider.export) == 'string' and provider.export ~= '') then
-        warn[#warn + 1] = ('Immunity.PlaytimeProvider has to be { resource = '
-            .. '\'<resource>\', export = \'<function>\' }, an export returning total '
-            .. 'minutes played; it is %s, so it is ignored and playtime is read '
-            .. 'from QBox metadata, or else counted by this resource'):format(type(provider) == 'table'
-                and 'missing its resource or export' or ('a ' .. type(provider)))
+        warn[#warn + 1] = (L('main.immunity_playtimeprovider_has_to_be_resource')):format(type(provider) == 'table'
+                and L('main.missing_its_resource_or_export') or ('a ' .. type(provider)))
         Config.Immunity.PlaytimeProvider = nil
     end
 
@@ -1299,8 +1260,7 @@ local function validateConfig(quiet)
         and restraint.resource ~= '' then
         Config.Kidnap.RestraintProvider = restraint.resource
     elseif restraint ~= nil and not (type(restraint) == 'string' and restraint ~= '') then
-        warn[#warn + 1] = ('Kidnap.RestraintProvider has to be the name of a resource '
-            .. 'exposing IsRestrained(playerId); it is %s, so it is ignored')
+        warn[#warn + 1] = (L('main.kidnap_restraintprovider_has_to_be_the'))
             :format(type(restraint) == 'string' and 'empty' or ('a ' .. type(restraint)))
         Config.Kidnap.RestraintProvider = nil
     end
@@ -1309,7 +1269,7 @@ local function validateConfig(quiet)
     -- players table cannot be (server/playtime.lua). Days, 0 or more.
     local grace = Config.Immunity.GrandfatherDays
     if type(grace) ~= 'number' or grace ~= grace or grace < 0 or grace == math.huge then
-        warn[#warn + 1] = ('Immunity.GrandfatherDays is %s; expected 0 or more days. Using 3.')
+        warn[#warn + 1] = (L('main.immunity_grandfatherdays_is_expected_0_or'))
             :format(tostring(grace))
         Config.Immunity.GrandfatherDays = 3
     end
@@ -1328,9 +1288,7 @@ local function validateConfig(quiet)
     local coercion = Config.Kidnap.Coercion
     if Config.Kidnap.RequireCoercion and type(coercion) == 'table' and not coercion.handcuffed
         and not coercion.passengerOfHitman and not Config.Kidnap.RestraintProvider then
-        warn[#warn + 1] = 'Kidnap.RequireCoercion is on, but neither Kidnap.Coercion.handcuffed nor '
-            .. 'Kidnap.Coercion.passengerOfHitman counts as restraint and no Kidnap.RestraintProvider '
-            .. 'is set, so no handover could ever complete. Using Kidnap.Coercion.handcuffed = true.'
+        warn[#warn + 1] = L('main.kidnap_requirecoercion_is_on_but_neither')
         coercion.handcuffed = true
     end
     -- Two releases with two switches. Turning the idle one off leaves the
@@ -1338,29 +1296,23 @@ local function validateConfig(quiet)
     -- would not expect.
     if (Config.Limits.ExclusiveIdleReleaseSeconds or 0) <= 0
         and (Config.Limits.ExclusiveAttemptWindowSeconds or 0) > 0 then
-        warn[#warn + 1] = ('Limits.ExclusiveIdleReleaseSeconds is off, but a hitman who holds an '
-            .. 'exclusive contract without an attempt is still released after %d s '
-            .. '(Limits.ExclusiveAttemptWindowSeconds; 0 turns that off too)')
+        warn[#warn + 1] = (L('main.limits_exclusiveidlereleaseseconds_is_off_but_a'))
             :format(Config.Limits.ExclusiveAttemptWindowSeconds)
     end
     -- Shipped on until it was found to name anonymous parties, so a config
     -- taken before then still has it on, and an operator who has never read
     -- the comment has no reason to look.
     if Config.Targeting.AllowNearby == true then
-        warn[#warn + 1] = ('Targeting.AllowNearby is on: any player with the app can list the names '
-            .. 'of the unmasked people within %s m of them, through walls. Read its comment in '
-            .. 'config.lua before leaving it on'):format(tostring(Config.Targeting.NearbyRadius))
+        warn[#warn + 1] = (L('main.targeting_allownearby_is_on_any_player')):format(tostring(Config.Targeting.NearbyRadius))
     end
     if Config.Relay.RequireMaskingForAnonymous == false then
-        warn[#warn + 1] = 'Relay.RequireMaskingForAnonymous is off: on a phone that cannot hide '
-            .. 'caller id, an anonymous party\'s calls are placed from their own number'
+        warn[#warn + 1] = L('main.relay_requiremaskingforanonymous_is_off_on_a')
     end
 
     if Config.Advisory.Enabled
         and not next(Config.Advisory.RecipientJobTypes or {})
         and not next(Config.Advisory.RecipientJobNames or {}) then
-        warn[#warn + 1] = 'Advisory.Enabled is on but nobody is configured to receive it '
-            .. '(Advisory.RecipientJobTypes and RecipientJobNames are both empty)'
+        warn[#warn + 1] = L('main.advisory_enabled_is_on_but_nobody')
     end
 
     -- A job barred from the app that does not count as law enforcement
@@ -1384,10 +1336,7 @@ local function validateConfig(quiet)
     end
     if #unprotected > 0 then
         table.sort(unprotected)
-        warn[#warn + 1] = ('barred from the app but not law enforcement to the advisory: %s. A '
-            .. 'contract on them raises no advisory and no listing flag, and the whitelisted-job '
-            .. 'view does not list it, unless qbx_core gives the job a type in '
-            .. 'Advisory.TriggerJobTypes. Add each to Advisory.TriggerJobNames (or TriggerJobTypes)')
+        warn[#warn + 1] = (L('main.barred_from_the_app_but_not'))
             :format(table.concat(unprotected, ', '))
     end
 
@@ -1397,9 +1346,7 @@ local function validateConfig(quiet)
     -- refresh moves to its new name, and the panel keeps /hitmanadmin.
     local commands = Config.Admin.Commands
     if type(commands) == 'table' and commands.panel ~= nil and commands.refresh == commands.panel then
-        warn[#warn + 1] = ('Admin.Commands.refresh is \'%s\', which is the admin panel\'s '
-            .. 'command (Admin.Commands.panel). Using \'ch-refresh\' for the timer refresh; set '
-            .. 'Admin.Commands.refresh = \'ch-refresh\' in config.lua.'):format(tostring(commands.panel))
+        warn[#warn + 1] = (L('main.admin_commands_refresh_is_which_is')):format(tostring(commands.panel))
         commands.refresh = 'ch-refresh'
     end
 
@@ -1418,9 +1365,7 @@ local function validateConfig(quiet)
             if type(name) ~= 'string' or name == '' then return end
             local lower = name:lower()
             if named[lower] then
-                fatal[#fatal + 1] = ('%s and %s are both the command \'%s\'; two commands under one '
-                    .. 'name is whichever registered last, so the other could not be used. Give '
-                    .. 'each its own name'):format(named[lower], what, name)
+                fatal[#fatal + 1] = (L('main.and_are_both_the_command_two')):format(named[lower], what, name)
             else
                 named[lower] = what
             end
@@ -1428,7 +1373,7 @@ local function validateConfig(quiet)
         for _, key in ipairs(keys) do claim(commands[key], 'Admin.Commands.' .. key) end
         claim(type(Config.Bailout) == 'table' and Config.Bailout.Command or nil, 'Bailout.Command')
         if type(commands.panel) == 'string' and commands.panel ~= '' then
-            claim(commands.panel .. '-close', 'the panel\'s way out (Admin.Commands.panel and -close)')
+            claim(commands.panel .. '-close', L('main.the_panels_way_out_admin_commands'))
         end
     end
 
@@ -1539,9 +1484,9 @@ local function heldLine(entry, mode)
             amounts[source] = (amounts[source] or 0) + (tonumber(line.amount) or 0)
         end
         if line.owed_to ~= nil then
-            local role = (contract and line.owed_to == contract.creator_cid and 'the placer')
-                or (contract and line.owed_to == contract.target_cid and 'the target')
-                or ((entry.hitmen or {})[line.owed_to] and 'an operative') or 'a player'
+            local role = (contract and line.owed_to == contract.creator_cid and L('main.the_placer'))
+                or (contract and line.owed_to == contract.target_cid and L('main.the_target'))
+                or ((entry.hitmen or {})[line.owed_to] and L('main.an_operative')) or L('main.a_player')
             if not owed[role] then
                 owed[role] = true
                 owedOrder[#owedOrder + 1] = role
@@ -1557,27 +1502,26 @@ local function heldLine(entry, mode)
     local held = {}
     for _, source in ipairs(order) do
         held[#held + 1] = ('%d %s'):format(math.floor(amounts[source]),
-            source == CH.SOURCE.DIRTY and 'dirty money' or source)
+            source == CH.SOURCE.DIRTY and L('main.dirty_money') or source)
     end
-    if goods > 0 then held[#held + 1] = ('%d item(s) or weapon(s)'):format(goods) end
+    if goods > 0 then held[#held + 1] = (L('main.item_or_weapon')):format(goods) end
     local what = table.concat(held, ', ')
-    if #owedOrder > 0 then what = what .. ' owed to ' .. table.concat(owedOrder, ' and ') end
+    if #owedOrder > 0 then what = what .. L('main.owed_to') .. table.concat(owedOrder, ' and ') end
 
     local commands = Config.Admin.Commands
     local clears
     if staff then
-        clears = ('left for staff: /%s lists it, /%s settles it'):format(commands.stuck, commands.settle)
+        clears = (L('main.left_for_staff_lists_it_settles')):format(commands.stuck, commands.settle)
     elseif not CH.TERMINAL[contract.state] then
-        clears = ('running: let it finish, the placer can cancel it in the app while nobody has '
-            .. 'taken it, or staff can void it (/%s)'):format(commands.void)
+        clears = (L('main.running_let_it_finish_the_placer')):format(commands.void)
     elseif #owedOrder > 0 then
-        clears = 'owed to a player who is away: handed over at their next login'
+        clears = L('main.owed_to_a_player_who_is')
     else
-        clears = ('finished with money not yet handed back: the next start in %s mode hands it '
+        clears = (L('main.finished_with_money_not_yet_handed')
             .. 'back'):format(mode)
     end
     return ('%s (%s): %s; %s'):format(tostring(entry.id),
-        contract and tostring(contract.state) or 'no contract row', what, clears)
+        contract and tostring(contract.state) or L('main.no_contract_row'), what, clears)
 end
 
 --- The contracts holding money, up to SWITCH_LISTED of them, one a line.
@@ -1588,9 +1532,9 @@ local function heldList(holding, mode, more)
     end
     local beyond = more or (#(holding or {}) - SWITCH_LISTED)
     if beyond == true then
-        out[#out + 1] = '  - and more not listed'
+        out[#out + 1] = L('main.and_more_not_listed')
     elseif beyond > 0 then
-        out[#out + 1] = ('  - and %d more contract(s) not listed'):format(beyond)
+        out[#out + 1] = (L('main.and_more_contract_not_listed')):format(beyond)
     end
     return out
 end
@@ -1611,19 +1555,19 @@ local function reviewLines(reviews, mode, more)
             what[#what + 1] = ('%d%s'):format(math.floor(r.money), r.account and (' ' .. r.account) or '')
         end
         if (tonumber(r.goods) or 0) > 0 then
-            what[#what + 1] = ('%d item(s) or weapon(s)'):format(r.goods)
+            what[#what + 1] = (L('main.item_or_weapon')):format(r.goods)
         end
-        out[#out + 1] = ('  - review %s (%s) on contract %s: %s; %s, resolved with /%s in %s mode')
+        out[#out + 1] = (L('main.review_on_contract_resolved_with_in'))
             :format(tostring(r.id), tostring(r.kind), tostring(r.contract_id),
-                #what > 0 and table.concat(what, ', ') or 'no money recorded',
-                r.state == 'resolving' and 'being resolved' or 'waiting for staff',
+                #what > 0 and table.concat(what, ', ') or L('main.no_money_recorded'),
+                r.state == 'resolving' and L('main.being_resolved') or L('main.waiting_for_staff'),
                 tostring(Config.Admin.Commands.review), mode)
     end
     local beyond = more or (#reviews - SWITCH_LISTED)
     if beyond == true then
-        out[#out + 1] = '  - and more review items not listed'
+        out[#out + 1] = L('main.and_more_review_items_not_listed')
     elseif beyond > 0 then
-        out[#out + 1] = ('  - and %d more review item(s) not listed'):format(beyond)
+        out[#out + 1] = (L('main.and_more_review_item_not_listed')):format(beyond)
     end
     return out
 end
@@ -1662,22 +1606,21 @@ local function refuseModeSwitch()
             local reviews = held.reviews or {}
             if held.lines > 0 or held.owed > 0 or #unreadable > 0 or #reviews > 0 then
                 if held.lines > 0 or held.owed > 0 then
-                    found[#found + 1] = ('json mode: %d escrow line(s) and %d payout(s) owed, in %s/')
+                    found[#found + 1] = (L('main.json_mode_escrow_line_and_payout'))
                         :format(held.lines, held.owed, folder)
                 end
                 -- Money waiting for staff: an item is the only record of a
                 -- payment no rule could settle, and this mode's queue would
                 -- start without it (W155).
                 if #reviews > 0 then
-                    found[#found + 1] = ('json mode: %d review item(s) waiting for staff, in %s/')
+                    found[#found + 1] = (L('main.json_mode_review_item_waiting_for'))
                         :format(#reviews, folder)
                     for _, text in ipairs(reviewLines(reviews, 'json')) do listed[#listed + 1] = text end
                 end
                 if #unreadable > 0 then
                     local files = {}
                     for i = 1, #unreadable do files[i] = tostring(unreadable[i].file) end
-                    found[#found + 1] = ('json mode: %d file(s) that cannot be read and may hold '
-                        .. 'money (%s); restore them from a backup'):format(#files, table.concat(files, ', '))
+                    found[#found + 1] = (L('main.json_mode_file_that_cannot_be')):format(#files, table.concat(files, ', '))
                 end
                 for _, text in ipairs(heldList(held.holding, 'json')) do listed[#listed + 1] = text end
             elseif held.contracts > 0 then
@@ -1701,12 +1644,12 @@ local function refuseModeSwitch()
         local reviews = ok and held and held.reviews or {}
         if ok and held and (held.lines > 0 or held.owed > 0 or #reviews > 0) then
             if held.lines > 0 or held.owed > 0 then
-                found[#found + 1] = ('mysql mode: %d escrow line(s) and %d payout(s) owed, in the '
+                found[#found + 1] = (L('main.mysql_mode_escrow_line_and_payout')
                     .. 'crimson_* tables'):format(held.lines, held.owed)
             end
             if #reviews > 0 then
-                found[#found + 1] = ('mysql mode: %d%s review item(s) waiting for staff, in '
-                    .. 'crimson_review'):format(#reviews, held.moreReviews and ' or more' or '')
+                found[#found + 1] = (L('main.mysql_mode_review_item_waiting_for')
+                    .. 'crimson_review'):format(#reviews, held.moreReviews and L('main.or_more') or '')
                 for _, text in ipairs(reviewLines(reviews, 'mysql', held.moreReviews)) do
                     listed[#listed + 1] = text
                 end
@@ -1726,16 +1669,15 @@ local function refuseModeSwitch()
     for keptMode in pairs(kept) do modes[#modes + 1] = keptMode end
     table.sort(modes)
     for _, keptMode in ipairs(modes) do
-        found[#found + 1] = ('%d payment(s) kept on this machine for %s mode')
+        found[#found + 1] = (L('main.payment_kept_on_this_machine_for'))
             :format(#kept[keptMode], keptMode)
         for i, item in ipairs(kept[keptMode]) do
             if i > SWITCH_LISTED then
-                listed[#listed + 1] = ('  - and %d more kept on this machine not listed')
+                listed[#listed + 1] = (L('main.and_more_kept_on_this_machine'))
                     :format(#kept[keptMode] - SWITCH_LISTED)
                 break
             end
-            listed[#listed + 1] = ('  - review %s (%s) on contract %s: kept on this machine; a start '
-                .. 'in %s mode settles it or lists it for staff'):format(tostring(item.id),
+            listed[#listed + 1] = (L('main.review_on_contract_kept_on_this')):format(tostring(item.id),
                 tostring(item.kind), tostring(item.contract_id), keptMode)
         end
     end
@@ -2675,7 +2617,7 @@ function StartTick()
             -- buyouts and the flush with it. Said whatever Config.Debug
             -- says, at most once every few minutes (sayFailure).
             local ok, err = pcall(Tick)
-            if not ok then sayFailure('tick', 'maintenance tick error: ' .. tostring(err)) end
+            if not ok then sayFailure('tick', L('main.maintenance_tick_error') .. tostring(err)) end
         end
     end)
 end
@@ -2760,7 +2702,7 @@ local function job(name, fn, ...)
     end
     local ok, err = modules.timing.run(name, fn, ...)
     if not ok then
-        local text = ('maintenance job %q failed: %s'):format(name, tostring(err))
+        local text = (L('main.maintenance_job_q_failed')):format(name, tostring(err))
         -- The database not answering (mysql) fails every job that asks it,
         -- every tick, and the store says when that starts and when it ends:
         -- with Debug on only, so those two lines bracket the outage.

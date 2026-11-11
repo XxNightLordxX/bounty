@@ -41,6 +41,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
 local Words = CrimsonBoot.requireShared('words')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- This feature's block of config (server/lib/feature.lua reads it).
 local BLOCK = 'Improvements.ContractDecay'
@@ -186,7 +187,7 @@ end
 local function stop(row, contract, why, text)
     row.stopped = why
     write(row)
-    Notify.toCitizen(contract.creator_cid, 'Contract reward', text)
+    Notify.toCitizen(contract.creator_cid, L('imp_decay.contract_reward'), text)
     Audit.action('imp_decay_stopped', contract.creator_cid, contract.id, { why = why })
 end
 
@@ -200,7 +201,7 @@ local function rise(cfg, row, contract, now)
     local cap = math.floor(base * num(cfg.MaxIncreasePercent) / 100)
     local amount = math.min(math.floor(base * num(cfg.Percent) / 100), cap - (row.added or 0))
     if amount <= 0 then
-        return stop(row, contract, 'cap', 'Your untaken contract\'s reward has risen as far as it will.')
+        return stop(row, contract, 'cap', L('imp_decay.your_untaken_contracts_reward_has_risen'))
     end
     -- Only a placer in the city can be charged; the step waits for them.
     local placer = Identity.byCitizenId(contract.creator_cid)
@@ -235,8 +236,8 @@ local function rise(cfg, row, contract, now)
         end
     end
     if ran and ok then
-        Notify.toCitizen(contract.creator_cid, 'Contract reward',
-            ('Nobody has taken your contract yet, so its reward rose by %s, taken from your %s.')
+        Notify.toCitizen(contract.creator_cid, L('imp_decay.contract_reward'),
+            (L('imp_decay.nobody_has_taken_your_contract_yet'))
                 :format(Words.dollars(amount), account))
         Audit.financial('imp_decay_rose', contract.creator_cid, contract.id,
             { amount = amount, account = account, step = row.steps, added = row.added })
@@ -261,8 +262,7 @@ local function rise(cfg, row, contract, now)
     -- Ended or taken since it was read: nothing to do.
     if err == CH.ERR.BAD_STATE or err == CH.ERR.NOT_FOUND then return write(row) end
     stop(row, contract, tostring(err),
-        ('Your untaken contract\'s reward could not rise by %s from your %s, so it will not rise '
-            .. 'any more.'):format(Words.dollars(amount), account))
+        (L('imp_decay.your_untaken_contracts_reward_could_not')):format(Words.dollars(amount), account))
 end
 
 --- One 'shorten' step on one contract.
@@ -278,15 +278,15 @@ local function shorten(cfg, row, contract, now)
     if not moved then
         if err == CH.ERR.INVALID_INPUT then
             return stop(row, contract, 'shortest',
-                'Nobody has taken your contract, and it is as close to running out as it can be brought.')
+                L('imp_decay.nobody_has_taken_your_contract_and'))
         end
         row.last_at = now
         return write(row)
     end
     row.steps, row.last_at = (row.steps or 0) + 1, now
     write(row)
-    Notify.toCitizen(contract.creator_cid, 'Contract time',
-        'Nobody has taken your contract yet, so it will run out sooner.')
+    Notify.toCitizen(contract.creator_cid, L('imp_decay.contract_time'),
+        L('imp_decay.nobody_has_taken_your_contract_yet_2'))
     Audit.action('imp_decay_shortened', contract.creator_cid, contract.id, { step = row.steps })
 end
 

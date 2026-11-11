@@ -8,6 +8,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Phone() return Integrations.get('phone') end
@@ -118,7 +119,7 @@ end
 --- or a call. Never "Client": a player new to the app did not know who that
 --- was, on the one rule this server runs on (the target is brought to this
 --- person, alive).
-local PLACER_ALIAS = 'The person who placed it'
+local PLACER_ALIAS = L('comms.the_person_who_placed_it')
 Comms.PLACER_ALIAS = PLACER_ALIAS
 
 --- The alias messages were signed with before, still on stored rows.
@@ -254,7 +255,7 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     -- That budget is the relay's own: a conversation, muted or not, no
     -- longer uses up the one contract notices are sent from.
     local muted = Storage.readMute(ctx.threadId, recipient) == true
-    Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body),
+    Notify.toCitizen(recipient, L('comms.contract_message'), ('%s: %s'):format(ctx.alias, body),
         { relay = true, muted = muted })
     -- Away, the ring went nowhere and nothing waited for them: a client
     -- told by the hitman where to meet had no sign a message had come. One
@@ -488,16 +489,16 @@ function Comms.requestCall(actor, contractId, threadHandle)
         -- The person who placed it is named as that, with what "it" is: a
         -- hitman told "Client is calling you" did not know who that was.
         local caller = ctx.role == 'creator'
-            and 'The person who placed a contract you took' or ctx.alias
+            and L('comms.the_person_who_placed_a_contract') or ctx.alias
         -- On the relay budget, which muted messages spend too: its answer
         -- reads the same whether the thread was muted or not.
         local told = Notify.toCitizen(recipient,
-            placed and 'Incoming call' or 'Call request',
+            placed and L('comms.incoming_call') or L('comms.call_request'),
             placed
-                and ('%s is calling you about %s.'):format(caller,
-                    ctx.role == 'creator' and 'it' or 'a contract')
-                or  ('%s wants to speak with you about %s.'):format(caller,
-                    ctx.role == 'creator' and 'it' or 'a contract'),
+                and (L('comms.is_calling_you_about')):format(caller,
+                    ctx.role == 'creator' and 'it' or L('comms.a_contract'))
+                or  (L('comms.wants_to_speak_with_you_about')):format(caller,
+                    ctx.role == 'creator' and 'it' or L('comms.a_contract')),
             { relay = true })
 
         -- A named party who was not told either: logged off, or past their
@@ -601,7 +602,7 @@ local function lbPhonePlacer()
         local phone = Phone()
         if not (phone and type(phone.canCall) == 'function' and phone.canCall()) then return false end
         local ok, callId = pcall(phone.CreateCall,
-            { source = actor.source, phoneNumber = alias or 'Unknown' },
+            { source = actor.source, phoneNumber = alias or L('comms.unknown') },
             number,
             { requirePhone = true, hideNumber = anonymous == true })
         return ok and callId ~= nil and callId ~= false

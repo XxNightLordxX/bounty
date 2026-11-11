@@ -155,25 +155,35 @@ On an escrowed build (FiveM Asset Escrow) everything you edit stays readable
 are never escrowed, as only Lua is.
 
 **Translations.** The words players and staff read are in language files, by
-key: `locales/en.lua` (the game and the server: every notice a player gets,
-the police advisories, staff alerts and their Discord posts, staff notices,
-the app's name on the phone, the map markers and target options, and every
-answer and refusal the admin panel's requests give) and
-`locales/en.json` (the phone app and the admin panel: every refusal by its
-code, `errors` and `panel_errors`). `Config.Locale` (`'en'`) names the
-language. To translate, copy both to `locales/<language>.lua` and `.json`
-(say `de`), change `CrimsonLocales.en` to `CrimsonLocales.de` at the top of
-the Lua file, translate the texts and keep every `%s` and `%d` in its order;
-set `Config.Locale = 'de'` and restart. A key your file leaves out reads in
-English, and the console says so once. Still written in their own files, and
-moving there in later steps: the phone app's and the panel's other labels,
-help lines and buttons (`ui/app.js`, `ui/admin.js`), the server's refusal
-sentences and staff command answers (`server/admin.lua`, its diagnosis
-included, `server/bridges.lua` and the feature modules, `server/org/`), and the
-panel's setting labels (`server/settings.lua`, `server/org/settings_catalogue.lua`).
-Console lines stay English. Labels a server owner sets are in
-`config/config.lua` (titles of advisories, bulletins and the city news, the
-command names).
+key. `locales/en.lua` holds the game's and the server's: every notice a
+player gets, the police advisories, staff alerts and their Discord posts,
+staff notices, the app's name on the phone, the map markers and target
+options, every answer and refusal of the admin panel's requests, the staff
+commands and the diagnosis (`/ch-diag`, Run the diagnosis), the buyout
+command, every feature's refusals and notices, the organisation's, and the
+panel's setting labels, help lines and group names. `locales/en.json` holds
+the phone app's and the admin panel's refusals by code (`errors`,
+`panel_errors`). `Config.Locale` (`'en'`) names the language.
+
+To add a language (say German, `de`):
+1. Copy `locales/en.lua` to `locales/de.lua` and `locales/en.json` to
+   `locales/de.json`.
+2. In `de.lua`, change `CrimsonLocales.en` to `CrimsonLocales.de` (twice: the
+   table and the `return` at the end).
+3. Translate the texts on the right. Keep every `%s` and `%d` in its order
+   (names, numbers and amounts go there) and the keys on the left as they
+   are. Leading spaces and a leading `->` in a diagnosis line are layout:
+   keep them.
+4. Set `Config.Locale = 'de'` in `config/config.lua` and restart.
+
+A key your file leaves out reads in English, and the console says so once;
+you can translate a few screens and leave the rest. Still written in their
+own files, and moving there in the next steps: the phone app's and the
+panel's labels, help lines and buttons (`ui/app.js`, `ui/admin.js`).
+Console lines stay English, and so do the files that only ever print to the
+console (the stores, `server/boot.lua`, `server/versioncheck.lua`). Labels a
+server owner sets are in `config/config.lua` (titles of advisories, bulletins
+and the city news, the command names).
 
 ### Changing storage mode
 
@@ -2040,7 +2050,7 @@ The audit log records every money movement and every refused attempt:
 - **Your own presets**: Game rules, Presets keeps up to 20 presets of the server's own (the settings changed from the panel, under a name), previewed and applied like the shipped ones, deleted with two clicks, audited.
 - **Config check**: `/ch-diag config` (and Developer, Health, **Check the config**) lists every value out of range, missing script, missing ACE and risky combination, each with its fix. See Troubleshooting and /ch-diag.
 - **Version check** (`Config.VersionCheck`, off as shipped, no address): one HTTPS GET at start, sending nothing of this server's, and one console line when a newer version is out. See Updating.
-- **Translations**: the notices players get, police advisories, staff alerts and their Discord posts, everything the game shows, and every refusal on the phone and in the panel are read from language files (`locales/en.lua`, `locales/en.json`) in the language `Config.Locale` names; a missing key reads in English. See Updating, Escrow, and where the words live.
+- **Translations**: every word the server and the game show (notices, police advisories, staff alerts and their Discord posts, the staff commands and the diagnosis, every feature's refusals, the organisation's, the panel's answers and its setting labels and help) and every refusal on the phone and in the panel are read from language files (`locales/en.lua`, `locales/en.json`) in the language `Config.Locale` names; a missing key reads in English. See Updating, Escrow, and where the words live.
 
 - **Organisation extras 3**, each off as shipped: **several organisations** (rival crews, each its own job, roles, funds and places), **reputation and tiers**, **dead drops**, **territory**, the **garage**, **internal contracts** on rogue members, the **handler** NPC and the boss's **activity log**. See Optional features, Organisation extras 3.
 

@@ -52,6 +52,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Window = CrimsonBoot.require('server.lib.window')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Extras2 = {}
 
@@ -104,7 +105,7 @@ end
 local function tell(cid, text)
     local d = deps()
     if d.notify and d.notify.toCitizen and d.identity.byCitizenId(cid) then
-        pcall(d.notify.toCitizen, cid, (O.current() and O.current().label) or 'Organisation', text)
+        pcall(d.notify.toCitizen, cid, (O.current() and O.current().label) or L('org_extras2.organisation'), text)
     end
 end
 
@@ -162,7 +163,7 @@ end
 local function ensureStash(org)
     local inv = inventory()
     if not (inv and inv.RegisterStash) then return false end
-    local ok = Integrations.call('inventory', 'RegisterStash', stashId(org), (org.label or 'Organisation') .. ' armory',
+    local ok = Integrations.call('inventory', 'RegisterStash', stashId(org), (org.label or L('org_extras2.organisation')) .. ' armory',
         whole('ArmorySlots', 50, 1, 500), whole('ArmoryWeight', 100000, 1000, 10000000), false,
         { [Extras2.LOCKED_GROUP] = 0 })
     return ok == true
@@ -207,10 +208,10 @@ local function armoryRefusal(org)
     local ERR = O.ERR
     if not on('Armory') then return ERR.FEATURE_OFF end
     if not inventory() then
-        return ERR.RULE, { message = 'The armory needs an inventory script (Config.Integrations.Inventory).' }
+        return ERR.RULE, { message = L('org_extras2.the_armory_needs_an_inventory_script') }
     end
     if not ensureStash(org) then
-        return ERR.RULE, { message = 'The inventory script would not open the armory; try again later.' }
+        return ERR.RULE, { message = L('org_extras2.the_inventory_script_would_not_open') }
     end
     return nil
 end
@@ -219,10 +220,10 @@ end
 local function atArmory(org, actor)
     if Config.Organisation.ArmoryAtOffice == false then return nil end
     if not O.hasOffice(org) then
-        return O.ERR.OFFICE, { message = 'The armory is at the boss office, and staff have not set one yet.' }
+        return O.ERR.OFFICE, { message = L('org_extras2.the_armory_is_at_the_boss') }
     end
     if not O.inOffice(org, actor.source) then
-        return O.ERR.OFFICE, { message = 'The armory is at the boss office: go there first.' }
+        return O.ERR.OFFICE, { message = L('org_extras2.the_armory_is_at_the_boss_2') }
     end
     return nil
 end
@@ -275,7 +276,7 @@ function Org.armoryView(who)
             local e = org.settings.armory.log[i]
             local m = org.members[e.cid]
             out.log[#out.log + 1] = { at = e.at, dir = e.dir, item = e.item, count = e.count,
-                who = e.cid == 'staff' and 'Staff' or (m and shownName(m)) or 'A former member',
+                who = e.cid == 'staff' and L('org_extras2.staff') or (m and shownName(m)) or L('org_extras2.a_former_member'),
                 member = (who.staff and m and O.refFor(viewer, e.cid)) or nil }
         end
     end
@@ -305,17 +306,17 @@ function Org.armoryDeposit(actor, slot, n)
     local s = slotAt(slotsOf(actor.source), slot)
     if not s then return fail(ERR.NOT_FOUND) end
     if not allowed()[s.name:lower()] then
-        return fail(ERR.RULE, { message = 'Staff do not allow that item in the armory.' })
+        return fail(ERR.RULE, { message = L('org_extras2.staff_do_not_allow_that_item') })
     end
     if n > s.count then return fail(ERR.BOUNDS) end
     local stash = stashId(org)
     local _, room = Integrations.call('inventory', 'CanCarryItem', stash, s.name, n, s.metadata)
-    if not room then return fail(ERR.LIMIT, { message = 'The armory has no room for that.' }) end
+    if not room then return fail(ERR.LIMIT, { message = L('org_extras2.the_armory_has_no_room_for') }) end
     Busy = true
     local okOut, removed = Integrations.call('inventory', 'RemoveItem', actor.source, s.name, n, s.metadata, slot)
     if not (okOut and removed) then
         Busy = false
-        return fail(ERR.REFUSED, { message = 'The inventory would not take it from you; nothing moved.' })
+        return fail(ERR.REFUSED, { message = L('org_extras2.the_inventory_would_not_take_it') })
     end
     local okIn, added = Integrations.call('inventory', 'AddItem', stash, s.name, n, s.metadata)
     if not (okIn and added) then
@@ -326,7 +327,7 @@ function Org.armoryDeposit(actor, slot, n)
             deps().audit.financial('org_armory_refund_failed', actor.cid, nil, { org = org.id, item = s.name,
                 count = n, dir = 'in' })
         end
-        return fail(ERR.REFUSED, { message = 'The armory would not take it; it is back with you.' })
+        return fail(ERR.REFUSED, { message = L('org_extras2.the_armory_would_not_take_it') })
     end
     Busy = false
     logMove(org, { at = now(), dir = 'in', item = s.name, count = n, cid = actor.cid })
@@ -349,7 +350,7 @@ function Org.armoryWithdraw(who, slot, n)
     slot, n = tonumber(slot), count(n)
     if not slot or slot ~= math.floor(slot) or not n then return fail(ERR.INVALID) end
     if member.suspended_until and member.suspended_until > now() then
-        return fail(ERR.RULE, { message = 'Suspended members take nothing from the armory.' })
+        return fail(ERR.RULE, { message = L('org_extras2.suspended_members_take_nothing_from_the') })
     end
     err, data = atArmory(org, who)
     if err then return fail(err, data) end
@@ -360,7 +361,7 @@ function Org.armoryWithdraw(who, slot, n)
         -- needs it), within what A1 leaves today.
         local noA1 = O.authorize(org, who, 'A1')
         if noA1 or beyond > manage then
-            return fail(ERR.LIMIT, { message = ('You may take %d more today.'):format(left + (noA1 and 0 or manage)),
+            return fail(ERR.LIMIT, { message = (L('org_extras2.you_may_take_more_today')):format(left + (noA1 and 0 or manage)),
                 left = left })
         end
     end
@@ -370,12 +371,12 @@ function Org.armoryWithdraw(who, slot, n)
     if not s then return fail(ERR.NOT_FOUND) end
     if n > s.count then return fail(ERR.BOUNDS) end
     local _, room = Integrations.call('inventory', 'CanCarryItem', who.source, s.name, n, s.metadata)
-    if not room then return fail(ERR.LIMIT, { message = 'You cannot carry that.' }) end
+    if not room then return fail(ERR.LIMIT, { message = L('org_extras2.you_cannot_carry_that') }) end
     Busy = true
     local okOut, removed = Integrations.call('inventory', 'RemoveItem', stash, s.name, n, s.metadata, slot)
     if not (okOut and removed) then
         Busy = false
-        return fail(ERR.REFUSED, { message = 'The armory would not give it; nothing moved.' })
+        return fail(ERR.REFUSED, { message = L('org_extras2.the_armory_would_not_give_it') })
     end
     local okIn, added = Integrations.call('inventory', 'AddItem', who.source, s.name, n, s.metadata)
     if not (okIn and added) then
@@ -385,7 +386,7 @@ function Org.armoryWithdraw(who, slot, n)
             deps().audit.financial('org_armory_refund_failed', who.cid, nil, { org = org.id, item = s.name,
                 count = n, dir = 'out' })
         end
-        return fail(ERR.REFUSED, { message = 'You could not take it; it is back in the armory.' })
+        return fail(ERR.REFUSED, { message = L('org_extras2.you_could_not_take_it_it') })
     end
     Busy = false
     local t = now()
@@ -439,12 +440,12 @@ function Org.armoryStaff(who, dir, spec)
     if dir == 'in' then
         local name = type(spec.item) == 'string' and spec.item:lower() or nil
         if not name or not allowed()[name] then
-            return fail(ERR.RULE, { message = 'Only an item in the armory\'s allow-list (Config.Organisation.ArmoryItems).' })
+            return fail(ERR.RULE, { message = L('org_extras2.only_an_item_in_the_armorys') })
         end
         local _, room = Integrations.call('inventory', 'CanCarryItem', stash, name, n)
-        if not room then return fail(ERR.LIMIT, { message = 'The armory has no room for that (or no such item).' }) end
+        if not room then return fail(ERR.LIMIT, { message = L('org_extras2.the_armory_has_no_room_for_2') }) end
         local ok, added = Integrations.call('inventory', 'AddItem', stash, name, n)
-        if not (ok and added) then return fail(ERR.REFUSED, { message = 'The inventory would not add it.' }) end
+        if not (ok and added) then return fail(ERR.REFUSED, { message = L('org_extras2.the_inventory_would_not_add_it') }) end
         logMove(org, { at = now(), dir = 'in', item = name, count = n, cid = 'staff' })
         kit.save()
         kit.record('org_armory_stocked', who, { item = name, count = n })
@@ -455,7 +456,7 @@ function Org.armoryStaff(who, dir, spec)
         if not s then return fail(ERR.NOT_FOUND) end
         if n > s.count then return fail(ERR.BOUNDS) end
         local ok, removed = Integrations.call('inventory', 'RemoveItem', stash, s.name, n, s.metadata, slot)
-        if not (ok and removed) then return fail(ERR.REFUSED, { message = 'The inventory would not remove it.' }) end
+        if not (ok and removed) then return fail(ERR.REFUSED, { message = L('org_extras2.the_inventory_would_not_remove_it') }) end
         logMove(org, { at = now(), dir = 'out', item = s.name, count = n, cid = 'staff' })
         kit.save()
         kit.record('org_armory_removed', who, { item = s.name, count = n })
@@ -480,7 +481,7 @@ local function bandEdges()
 end
 
 local function minutesText(m)
-    if m < 60 or m % 60 ~= 0 then return ('%d min'):format(m) end
+    if m < 60 or m % 60 ~= 0 then return (L('org_extras2.min')):format(m) end
     return ('%d h'):format(m // 60)
 end
 
@@ -561,7 +562,7 @@ function Org.leaderboard(who)
     if not who.staff and not member then return fail(ERR.NOT_MEMBER) end
     local full = who.staff or O.Engine.holds(org, who.cid, 'M10')
     if not full and Config.Organisation.StatsLeaderboard == false then
-        return fail(ERR.NO_POWER, { message = 'Staff show the leaderboard only to bosses.' })
+        return fail(ERR.NO_POWER, { message = L('org_extras2.staff_show_the_leaderboard_only_to') })
     end
     local viewer = who.staff and (who.cid or 'staff') or who.cid
     local rows = {}
@@ -638,7 +639,7 @@ local function entriesView(org, cid, staffView)
         out[#out + 1] = { id = e.id, kind = e.kind, reason = e.reason, at = e.at,
             expiresAt = e.kind == 'strike' and not e.overturned and (e.at + decay) or nil,
             active = active(e) or nil, overturned = e.overturned and true or nil,
-            overturnReason = e.overturnReason, by = e.by == 'staff' and 'Staff' or 'A boss',
+            overturnReason = e.overturnReason, by = e.by == 'staff' and L('org_extras2.staff') or L('org_extras2.a_boss'),
             consequence = e.consequence, byCid = staffView and e.byCid or nil }
     end
     return out
@@ -658,7 +659,7 @@ local function consequences(org, member, entry)
             member.suspended_until = untilAt
             kit.saveMember(member)
             org.settings.strikeSuspended[member.cid] = untilAt
-            said[#said + 1] = ('suspended %d h'):format(hours)
+            said[#said + 1] = (L('org_extras2.suspended_h')):format(hours)
         end
     end
     if demoteAt > 0 and n == demoteAt then
@@ -684,7 +685,7 @@ function Org.discipline(who, cid, kind, reason)
     if not member then return fail(ERR.NOT_FOUND) end
     if type(kind) ~= 'string' or not KINDS[kind] then return fail(ERR.INVALID) end
     reason = plain(reason, 200)
-    if not reason then return fail(ERR.INVALID, { message = 'A reason: plain text, up to 200 characters.' }) end
+    if not reason then return fail(ERR.INVALID, { message = L('org_extras2.a_reason_plain_text_up_to') }) end
     local why = mayActOn(org, who, cid)
     if why then return fail(why) end
     if not who.staff and not Issued.take(who.cid, O.Powers.limit(org, 'StrikesPerDay'), now()) then
@@ -704,7 +705,7 @@ function Org.discipline(who, cid, kind, reason)
     kit.save()
     kit.record(kind == 'strike' and 'org_strike' or 'org_warning', who, { member = cid, id = entry.id,
         strikes = Extras2.strikes(org, cid), consequence = entry.consequence })
-    tell(cid, (kind == 'strike' and 'You were given a strike: ' or 'You were given a written warning: ') .. reason
+    tell(cid, (kind == 'strike' and L('org_extras2.you_were_given_a_strike') or L('org_extras2.you_were_given_a_written_warning')) .. reason
         .. (entry.consequence and (' (' .. entry.consequence .. ')') or ''))
     return true, nil, { id = entry.id, strikes = Extras2.strikes(org, cid), consequence = entry.consequence }
 end
@@ -721,7 +722,7 @@ function Org.overturn(who, cid, id, reason)
     local member = type(cid) == 'string' and org.members[cid]
     if not member then return fail(ERR.NOT_FOUND) end
     reason = plain(reason, 200)
-    if not reason then return fail(ERR.INVALID, { message = 'A reason: plain text, up to 200 characters.' }) end
+    if not reason then return fail(ERR.INVALID, { message = L('org_extras2.a_reason_plain_text_up_to') }) end
     local entry
     for _, e in ipairs(recordOf(org, cid)) do if e.id == id then entry = e end end
     if not entry then return fail(ERR.NOT_FOUND) end
@@ -741,8 +742,8 @@ function Org.overturn(who, cid, id, reason)
     kit.save()
     kit.record('org_discipline_overturned', who, { member = cid, id = id, kind = entry.kind, reason = reason,
         lifted = lifted })
-    tell(cid, 'Staff overturned a ' .. (entry.kind == 'strike' and 'strike' or 'written warning')
-        .. ' on your record' .. (lifted and '; your suspension is lifted.' or '.'))
+    tell(cid, L('org_extras2.staff_overturned_a') .. (entry.kind == 'strike' and 'strike' or L('org_extras2.written_warning'))
+        .. L('org_extras2.on_your_record') .. (lifted and L('org_extras2.your_suspension_is_lifted') or '.'))
     return true, nil, { lifted = lifted }
 end
 
@@ -791,11 +792,11 @@ function Org.recruitForm(who, list)
     if err then return fail(err) end
     if type(list) ~= 'table' then return fail(ERR.INVALID) end
     local most = whole('RecruitQuestions', 5, 0, 20)
-    if #list > most then return fail(ERR.BOUNDS, { message = ('At most %d questions.'):format(most) }) end
+    if #list > most then return fail(ERR.BOUNDS, { message = (L('org_extras2.at_most_questions')):format(most) }) end
     local out = {}
     for i = 1, #list do
         local q = plain(list[i], 200)
-        if not q then return fail(ERR.INVALID, { message = 'Each question: plain text, up to 200 characters.' }) end
+        if not q then return fail(ERR.INVALID, { message = L('org_extras2.each_question_plain_text_up_to') }) end
         out[#out + 1] = q
     end
     for k in pairs(list) do
@@ -817,7 +818,7 @@ function Extras2.applyBody(org, actor, text, answers)
     local ERR = O.ERR
     local untilAt = tonumber(org.settings.recruit.cooldowns[actor.cid])
     if untilAt and untilAt > now() then
-        return nil, ERR.COOLDOWN, { message = 'Your last application was declined. You may apply again later.',
+        return nil, ERR.COOLDOWN, { message = L('org_extras2.your_last_application_was_declined_you'),
             retryAfter = untilAt - now() }
     end
     local qs = questions(org)
@@ -825,18 +826,18 @@ function Extras2.applyBody(org, actor, text, answers)
     local form = {}
     if #qs > 0 then
         if type(answers) ~= 'table' or #answers ~= #qs then
-            return nil, ERR.INVALID, { message = 'Answer every question on the form.' }
+            return nil, ERR.INVALID, { message = L('org_extras2.answer_every_question_on_the_form') }
         end
         for i, q in ipairs(qs) do
             local a = plain(answers[i], max)
             if not a then
-                return nil, ERR.INVALID, { message = ('Each answer: plain text, up to %d characters, no links.'):format(max) }
+                return nil, ERR.INVALID, { message = (L('org_extras2.each_answer_plain_text_up_to')):format(max) }
             end
             form[#form + 1] = { q = q, a = a }
         end
     end
     if not Applied.take(org.id, whole('RecruitPerHour', 10, 1, 1000), now()) then
-        return nil, ERR.COOLDOWN, { message = 'The organisation takes no more applications this hour. Try later.' }
+        return nil, ERR.COOLDOWN, { message = L('org_extras2.the_organisation_takes_no_more_applications') }
     end
     if #form == 0 then return text, nil end
     local ok, encoded = pcall(json.encode, { form = form, text = text })
@@ -874,8 +875,8 @@ function Org.interviewNote(who, id, text)
         org.settings.recruit.notes[id] = nil
     else
         local note = plain(text, whole('RecruitNoteMax', 500, 1, 2000))
-        if not note then return fail(ERR.INVALID, { message = 'Plain text, no links.' }) end
-        org.settings.recruit.notes[id] = { text = note, at = now(), by = who.staff and 'Staff' or 'A boss' }
+        if not note then return fail(ERR.INVALID, { message = L('org_extras2.plain_text_no_links') }) end
+        org.settings.recruit.notes[id] = { text = note, at = now(), by = who.staff and L('org_extras2.staff') or L('org_extras2.a_boss') }
     end
     kit.save()
     kit.record('org_interview_note', who, { member = row.cid, cleared = text == false or nil })
@@ -911,8 +912,8 @@ function Extras2.decided(org, row, accept)
     end
     if changed then kit.save() end
     if on('Recruitment') then
-        tell(row.cid, accept and 'Your application was accepted: welcome to the organisation.'
-            or 'Your application was declined.')
+        tell(row.cid, accept and L('org_extras2.your_application_was_accepted_welcome_to')
+            or L('org_extras2.your_application_was_declined'))
     end
 end
 
@@ -1039,7 +1040,7 @@ end
 Extras2.CHECKS = {
     Armory = { kind = 'switch' }, ArmoryAtOffice = { kind = 'switch' },
     ArmoryItems = { kind = 'list', pattern = '^[%w_%-]+$', max = 64, most = 200,
-        says = 'a list of item names (letters, digits, - and _)' },
+        says = L('org_extras2.a_list_of_item_names_letters') },
     ArmorySlots = { kind = 'number', integer = true, min = 1, max = 500 },
     ArmoryWeight = { kind = 'number', integer = true, min = 1000, max = 10000000 },
     Stats = { kind = 'switch' }, StatsLeaderboard = { kind = 'switch' },

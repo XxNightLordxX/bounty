@@ -31,6 +31,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 --- The named-area parser both roleplay area lists share.
 local Places = CrimsonBoot.require('server.rp_places')
 local Police = CrimsonBoot.require('server.police')
@@ -76,9 +77,9 @@ local RULES = {
         MinWitnesses = { kind = 'number', integer = true, min = 1, max = 50 },
         FuzzMeters = { kind = 'number', min = 0, max = 1000 },
         DispatchPriority = { kind = 'number', integer = true, min = 1, max = 5 },
-        Title = { kind = 'text', pattern = TEXT, max = 60, says = 'text up to 60 characters, no < or >' },
+        Title = { kind = 'text', pattern = TEXT, max = 60, says = L('rp_consequences.text_up_to_60_characters_no') },
         Phrases = { kind = 'list', pattern = TEXT, max = 60 },
-        Areas = { kind = 'list', each = Places.parseArea, says = "a list of areas, each 'Name@x,y'" },
+        Areas = { kind = 'list', each = Places.parseArea, says = L('rp_consequences.a_list_of_areas_each_name') },
     },
     EmsRelisting = {
         Enabled = { kind = 'switch' }, RequireEMS = { kind = 'switch' },
@@ -89,9 +90,9 @@ local RULES = {
         Enabled = { kind = 'switch' }, AllTargets = { kind = 'switch' }, NameTarget = { kind = 'switch' },
         App = { kind = 'choice', choices = { 'birdy', 'event' } },
         Account = { kind = 'text', pattern = '^[%w_%-%.]+$', max = 32 },
-        Event = { kind = 'text', pattern = '^[%w_%-%.:]+$', max = 64, says = 'an event name' },
+        Event = { kind = 'text', pattern = '^[%w_%-%.:]+$', max = 64, says = L('rp_consequences.an_event_name') },
         Templates = { kind = 'list', pattern = TEXT, max = 160,
-            says = 'a list of sentences up to 160 characters, no < or >' },
+            says = L('rp_consequences.a_list_of_sentences_up_to') },
     },
     DirtyPayouts = {
         Enabled = { kind = 'switch' },
@@ -181,7 +182,7 @@ function RpConsequences.areaOf(at)
             if not bestD or d < bestD then best, bestD = area.name, d end
         end
     end
-    return best or 'the city'
+    return best or L('rp_consequences.the_city')
 end
 
 local function pick(list)
@@ -246,10 +247,10 @@ local function witnessAlert(contract, hitmanCid, slot)
     if seen < (tonumber(cfg.MinWitnesses) or 1) and cfg.AlwaysAlert ~= true then return false end
 
     local area = RpConsequences.areaOf(at)
-    local phrase = pick(cfg.Phrases) or 'a person was seen leaving {direction}'
+    local phrase = pick(cfg.Phrases) or L('rp_consequences.a_person_was_seen_leaving_direction')
     local said = phrase:gsub('{direction}', RpConsequences.directionOf(hitman.source))
-    said = clean(('%s%s near %s.'):format(said:sub(1, 1):upper(), said:sub(2), area), 200)
-    local title = clean(cfg.Title or 'Witness report', 60)
+    said = clean((L('rp_consequences.near')):format(said:sub(1, 1):upper(), said:sub(2), area), 200)
+    local title = clean(cfg.Title or L('rp_consequences.witness_report'), 60)
 
     local parties = partiesOf(contract)
     local told = Police.tell(title, said, function(actor) return parties[actor.cid] end)
@@ -266,7 +267,7 @@ local function witnessAlert(contract, hitmanCid, slot)
         end
         dispatched = Police.dispatch({
             title = title, message = said, coords = coords, street = clean(area, 100),
-            caller = 'Witness', priority = math.floor(tonumber(cfg.DispatchPriority) or 2),
+            caller = L('rp_consequences.witness'), priority = math.floor(tonumber(cfg.DispatchPriority) or 2),
             unique_id = ('ch-wit-%s-%s'):format(tostring(contract.id), tostring(slot or 1)),
         })
     end
@@ -426,7 +427,7 @@ function RpConsequences.newsText(contract, hitmanCid)
     -- where the hitman went next. Nobody in the city: 'the city'.
     local target = Identity.byCitizenId(contract.target_cid)
     local at = target and coordsOf(target.source) or nil
-    local name = cfg.NameTarget == true and contract.target_name or 'a resident'
+    local name = cfg.NameTarget == true and contract.target_name or L('rp_consequences.a_resident')
     local text = pick(cfg.Templates)
     if not text then return nil end
     local fill = { job = job, zone = RpConsequences.areaOf(at), time = os.date('%H:%M'), name = tostring(name) }

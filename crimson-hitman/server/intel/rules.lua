@@ -34,6 +34,7 @@ local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 -- The one purchase engine (server/intel/engine.lua): going dark is bought
 -- through it, and every notice here sent through it.
 local Intel = CrimsonBoot.require('server.intel.engine')
@@ -53,8 +54,8 @@ IntelRules.ROUND_SECONDS = 300
 
 --- What a hitman is told: the target in a safe zone (never which, nor that
 --- it is one), and the target gone dark.
-IntelRules.CANT_PLACE = "Your informant can't place them right now."
-IntelRules.NOT_FOUND = "Your informant couldn't find them."
+IntelRules.CANT_PLACE = L('intel_rules.your_informant_cant_place_them_right')
+IntelRules.NOT_FOUND = L('intel_rules.your_informant_couldnt_find_them')
 
 --- The pending warnings, [tip id] = row { id, kind, contract_id, tip_id,
 --- due_at }, and the timers sending them.
@@ -136,7 +137,7 @@ IntelRules.RULES = {
     },
     SafeZones = {
         Enabled = { kind = 'switch' },
-        Zones = { kind = 'list', each = IntelRules.parseZone, says = "a list of 'x, y, radius, name'" },
+        Zones = { kind = 'list', each = IntelRules.parseZone, says = L('intel_rules.a_list_of_x_y_radius') },
     },
     GoDark = {
         Enabled = { kind = 'switch' },
@@ -160,7 +161,7 @@ function IntelRules.validate(warn)
     end
     local delay = Config.Intel.WarningDelay
     if delay.MinSeconds > delay.MaxSeconds then
-        warn[#warn + 1] = 'Intel.WarningDelay.MinSeconds is above MaxSeconds. Using MaxSeconds for both.'
+        warn[#warn + 1] = L('intel_rules.intel_warningdelay_minseconds_is_above_maxseconds')
         delay.MinSeconds = delay.MaxSeconds
     end
 end

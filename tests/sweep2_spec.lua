@@ -122,8 +122,9 @@ describe('sweep 2 fix 1: the restart hold stops hits', function()
 
     it('words the refusal on /cleanse', function()
         local source = read_file('crimson-hitman/server/bridges.lua')
-        truthy(source:find("[CH.ERR.RESTART_HOLD] = 'contracts are paused until the server restart.'", 1, true),
-            'the buyout command says why')
+        local key = source:match("%[CH%.ERR%.RESTART_HOLD%] = L%('([%w_%.]+)'%)")
+        truthy(key, 'the buyout command says why, by key')
+        eq(CrimsonBoot.requireShared('locale').t(key), 'contracts are paused until the server restart.')
     end)
 end)
 

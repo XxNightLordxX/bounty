@@ -24,6 +24,7 @@
 
 local Util = CrimsonBoot.requireShared('util')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Setup = {}
 
@@ -111,7 +112,7 @@ function Setup.view(permissions)
     local aces = {}
     for _, p in ipairs(permissions or {}) do
         aces[#aces + 1] = { name = p.name, ace = p.ace, held = p.held == true,
-                            line = ('add_ace group.admin %s allow'):format(tostring(p.ace)) }
+                            line = (L('setup.add_ace_group_admin_allow')):format(tostring(p.ace)) }
     end
     local mode = tostring(Config.Database and Config.Database.Mode or 'mysql')
     return {
@@ -143,7 +144,7 @@ function Setup.preview(values)
         local entry = allowed[key] and Settings.entry(key) or nil
         local label = entry and entry.label or key
         if not entry or entry.readonly then
-            out.refused[#out.refused + 1] = { key = key, label = label, why = 'not one the setup changes' }
+            out.refused[#out.refused + 1] = { key = key, label = label, why = L('setup.not_one_the_setup_changes') }
         else
             local value, _, why = Settings.check(key, Util.copy(values[key]))
             if value == nil then
@@ -170,7 +171,7 @@ end
 ---@return table|string detail { applied = keys, refused = { { key, why } } } or the reason
 function Setup.apply(values, staff, actorCid)
     local Storage = deps and deps.storage
-    if not (Storage and Storage.writeRpRow) then return false, 'store_failed', 'The store is not answering.' end
+    if not (Storage and Storage.writeRpRow) then return false, 'store_failed', L('setup.the_store_is_not_answering') end
     local preview = Setup.preview(values)
     local applied, refused = {}, {}
     for _, change in ipairs(preview.changes) do
@@ -186,8 +187,7 @@ function Setup.apply(values, staff, actorCid)
     pcall(deps.audit.staff, 'admin_setup_applied', actorCid, nil,
         { keys = applied, refused = #refused, by = staff, saved = ok or nil })
     if not ok then
-        return false, 'store_failed', 'The changes were made, but the setup could not be marked as done: '
-            .. 'it will show again next time.'
+        return false, 'store_failed', L('setup.the_changes_were_made_but_the')
     end
     return true, nil, { applied = applied, refused = refused }
 end

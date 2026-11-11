@@ -22,6 +22,7 @@ end
 
 local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
+local L = CrimsonBoot.requireShared('locale').t
 -- Whether each paid look-up is sold (server/intel/engine.lua, Intel.on).
 local Intel = CrimsonBoot.require('server.intel.engine')
 -- Proof items (Config.Improvements.ProofItems), for the page's settings.
@@ -1195,14 +1196,13 @@ function Projection.rewardLines(contractId, viewerCid)
     -- rule is holding it, not left to guess.
     local editable, why = true, nil
     if CH.TERMINAL[contract.state] then
-        editable, why = false, 'This contract is closed.'
+        editable, why = false, L('projection.this_contract_is_closed')
     else
         local hitmen = Storage.readHitmen(contractId)
         for i = 1, #hitmen do
             if hitmen[i].state == 'active' then
                 editable = false
-                why = 'A hitman is working this. You can add to the reward, '
-                    .. 'but not take from it.'
+                why = L('projection.a_hitman_is_working_this_you')
                 break
             end
         end

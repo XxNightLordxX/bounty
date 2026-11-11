@@ -21,6 +21,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Words = CrimsonBoot.requireShared('words')
 local Text = CrimsonBoot.requireShared('text')
 local Lock = CrimsonBoot.require('server.lib.lock')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Payments = {}
 
@@ -95,9 +96,9 @@ payUnlocked = function(staffCid, cid, amount, account, reason, name)
                          amount = amount, account = account })
     end
     local words = Words.dollars(amount, 'before')
-    Notify.tellOrKeep(cid, 'Payment from staff', paid
-        and ('Staff paid you %s in %s: %s'):format(words, account, reason)
-        or ('Staff paid you %s in %s: %s. It is handed over when you can take it.')
+    Notify.tellOrKeep(cid, L('payments.payment_from_staff'), paid
+        and (L('payments.staff_paid_you_in')):format(words, account, reason)
+        or (L('payments.staff_paid_you_in_it_is'))
             :format(words, account, reason), { bypassBudget = true })
     return true, { paid = paid == true, owed = not paid, line = not paid and id or nil, payment = id }
 end

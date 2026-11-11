@@ -23,6 +23,7 @@ local Holds = CrimsonBoot.require('server.holds')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Markers = CrimsonBoot.require('server.lib.markers')
+local L = CrimsonBoot.requireShared('locale').t
 -- The one purchase engine (server/intel/engine.lua): the check, the charge,
 -- the refund and the notices; this module keeps the tips and their area.
 local Intel = CrimsonBoot.require('server.intel.engine')
@@ -38,9 +39,8 @@ local Storage, Identity, Audit, Notify, Contracts, Review
 LocationTip.OFFSET_SHARE = 0.75
 
 --- What the target's phone says, through the notice budget.
-LocationTip.TARGET_TITLE = 'Informant tip'
-LocationTip.TARGET_TEXT = 'Someone has been tipped off about your rough location. They know '
-    .. 'the area you were in, not exactly where you are.'
+LocationTip.TARGET_TITLE = L('intel_tip.informant_tip')
+LocationTip.TARGET_TEXT = L('intel_tip.someone_has_been_tipped_off_about')
 
 --- Every tip bought on a contract, as the store holds them: [contractId] =
 --- rows, oldest first. Read from the store once per contract per process

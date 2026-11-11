@@ -26,6 +26,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Settings = {}
 
@@ -69,72 +70,59 @@ end
 
 --- Shared wording for in-flight behaviour, so every entry says the same
 --- thing the same way.
-local NEW_ONLY = 'Things already under way finish under the rules they started with; only '
-    .. 'new actions are refused while it is off.'
-local AT_USE = 'Read each time it is used, so it applies to the next check, including on '
-    .. 'contracts already placed.'
-local CAP = 'Lowering it below what is in use now never cancels anything: it only refuses '
-    .. 'new ones over it.'
-local RESTART = 'Read once at start: kept now, and in force after the next restart.'
+local NEW_ONLY = L('settings.things_already_under_way_finish_under')
+local AT_USE = L('settings.read_each_time_it_is_used')
+local CAP = L('settings.lowering_it_below_what_is_in')
+local RESTART = L('settings.read_once_at_start_kept_now')
 
 --- Never changed from the panel, whatever a page sends: shown read-only with
 --- why, and refused by Settings.check before anything else. Secrets (secret
 --- = true) are shown only as set or not set, never their value; a key here
 --- that config.lua does not hold (a convar, a key nil by default) is listed
 --- all the same. [key] = { why, secret, convar }
-local EDIT_IN_CONFIG = ' Edit it in config.lua.'
+local EDIT_IN_CONFIG = L('settings.edit_it_in_config_lua')
 local DENY = {
-    ['Locale'] = { label = 'Language',
-        why = 'The language players and staff see, from locales/<language>.lua and .json: the phone '
-        .. 'app, the panel and the game take it as they load, so it is changed in config.lua and '
-        .. 'in force after a restart.' .. EDIT_IN_CONFIG },
-    ['VersionCheck.Url'] = { label = 'Version check address',
-        why = 'An address the server asks once at start; it is asked only with nothing after a ? '
-        .. 'or #, so the address itself carries nothing of this server\'s.' .. EDIT_IN_CONFIG },
-    ['Database.Mode'] = { label = 'Storage mode',
-        why = 'Changing it needs the money in the old mode settled and a restart '
-        .. '(README, Changing storage mode).' .. EDIT_IN_CONFIG },
-    ['Database.Json.Directory'] = { label = 'json store folder',
-        why = 'Where the json store lives on disk: moved from here, the '
-        .. 'next start would open an empty store.' .. EDIT_IN_CONFIG },
-    ['Admin.Ace'] = { label = 'Staff panel ACE',
-        why = 'Who may use this panel. An ACE renamed from here could grant or lock '
-        .. 'out staff.' .. EDIT_IN_CONFIG },
-    ['Admin.IdentityAce'] = { label = 'Identity ACE (unmask anonymous parties)',
-        why = 'Who may unmask anonymous parties. An ACE renamed from here could '
-        .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
-    ['Admin.DeveloperAce'] = { label = 'Developer section ACE',
-        why = 'Who sees the Developer section. An ACE renamed from here could '
-        .. 'grant it to anyone.' .. EDIT_IN_CONFIG },
-    ['Admin.ModeratorAce'] = { label = 'Moderator ACE',
-        why = 'Who may freeze, suspend, protect and void from this panel. An ACE '
-        .. 'renamed from here could grant it to anyone.' .. EDIT_IN_CONFIG },
-    ['Admin.ExtraAces'] = { label = 'Extra ACEs that may read the staff tools',
-        why = 'ACEs that may read the staff tools. Changed from here, staff could '
-        .. 'grant themselves access.' .. EDIT_IN_CONFIG },
-    ['Reason.PatternDenylist'] = { label = 'Patterns a reason may not contain',
-        why = 'Lua patterns: a malformed one raises in every reason check.'
+    ['Locale'] = { label = L('settings.language'),
+        why = L('settings.the_language_players_and_staff_see') .. EDIT_IN_CONFIG },
+    ['VersionCheck.Url'] = { label = L('settings.version_check_address'),
+        why = L('settings.an_address_the_server_asks_once') .. EDIT_IN_CONFIG },
+    ['Database.Mode'] = { label = L('settings.storage_mode'),
+        why = L('settings.changing_it_needs_the_money_in') .. EDIT_IN_CONFIG },
+    ['Database.Json.Directory'] = { label = L('settings.json_store_folder'),
+        why = L('settings.where_the_json_store_lives_on') .. EDIT_IN_CONFIG },
+    ['Admin.Ace'] = { label = L('settings.staff_panel_ace'),
+        why = L('settings.who_may_use_this_panel_an') .. EDIT_IN_CONFIG },
+    ['Admin.IdentityAce'] = { label = L('settings.identity_ace_unmask_anonymous_parties'),
+        why = L('settings.who_may_unmask_anonymous_parties_an') .. EDIT_IN_CONFIG },
+    ['Admin.DeveloperAce'] = { label = L('settings.developer_section_ace'),
+        why = L('settings.who_sees_the_developer_section_an') .. EDIT_IN_CONFIG },
+    ['Admin.ModeratorAce'] = { label = L('settings.moderator_ace'),
+        why = L('settings.who_may_freeze_suspend_protect_and') .. EDIT_IN_CONFIG },
+    ['Admin.ExtraAces'] = { label = L('settings.extra_aces_that_may_read_the'),
+        why = L('settings.aces_that_may_read_the_staff') .. EDIT_IN_CONFIG },
+    ['Reason.PatternDenylist'] = { label = L('settings.patterns_a_reason_may_not_contain'),
+        why = L('settings.lua_patterns_a_malformed_one_raises')
         .. EDIT_IN_CONFIG },
-    ['Completion.PhotoPublicUrl'] = { label = 'Address photos are served from',
-        why = 'The address photos are served from.' .. EDIT_IN_CONFIG },
-    ['Completion.KeptPhotoDays'] = { label = 'Days a saved photo is kept',
-        why = 'nil keeps a saved photo until deleted.' .. EDIT_IN_CONFIG },
-    ['Disposal.VehicleSpawn'] = { label = 'Disposal vehicle spawn spot',
-        why = 'A place: set it with the panel\'s disposal spots (Use my position), which win over this.'
+    ['Completion.PhotoPublicUrl'] = { label = L('settings.address_photos_are_served_from'),
+        why = L('settings.the_address_photos_are_served_from') .. EDIT_IN_CONFIG },
+    ['Completion.KeptPhotoDays'] = { label = L('settings.days_a_saved_photo_is_kept'),
+        why = L('settings.nil_keeps_a_saved_photo_until') .. EDIT_IN_CONFIG },
+    ['Disposal.VehicleSpawn'] = { label = L('settings.disposal_vehicle_spawn_spot'),
+        why = L('settings.a_place_set_it_with_the')
         .. EDIT_IN_CONFIG },
-    ['Disposal.DropOff'] = { label = 'Disposal drop-off',
-        why = 'A place: set it with the panel\'s disposal spots (Use my position), which win over this.'
+    ['Disposal.DropOff'] = { label = L('settings.disposal_drop_off'),
+        why = L('settings.a_place_set_it_with_the')
         .. EDIT_IN_CONFIG },
-    ['Kidnap.RestraintProvider'] = { label = 'Restraint export',
-        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
-    ['Immunity.PlaytimeProvider'] = { label = 'Playtime export',
-        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
-    ['Relay.CallExport'] = { label = 'Phone call export',
-        why = 'A resource export, called by name.' .. EDIT_IN_CONFIG },
+    ['Kidnap.RestraintProvider'] = { label = L('settings.restraint_export'),
+        why = L('settings.a_resource_export_called_by_name') .. EDIT_IN_CONFIG },
+    ['Immunity.PlaytimeProvider'] = { label = L('settings.playtime_export'),
+        why = L('settings.a_resource_export_called_by_name') .. EDIT_IN_CONFIG },
+    ['Relay.CallExport'] = { label = L('settings.phone_call_export'),
+        why = L('settings.a_resource_export_called_by_name') .. EDIT_IN_CONFIG },
     ['convar:crimson_hitman_webhook'] = { secret = true, convar = 'crimson_hitman_webhook',
-        why = 'The Discord webhook for the log: a secret, set in server.cfg with set (never setr).' },
+        why = L('settings.the_discord_webhook_for_the_log') },
     ['convar:crimson_hitman_alert_webhook'] = { secret = true, convar = 'crimson_hitman_alert_webhook',
-        why = 'The Discord webhook for alerts: a secret, set in server.cfg with set (never setr).' },
+        why = L('settings.the_discord_webhook_for_alerts_a') },
 }
 Settings.DENY = DENY
 
@@ -173,37 +161,23 @@ Settings.MONEY = MONEY
 --- no contract could complete, and each ran to its deadline with its
 --- hitman's stake forfeited. The start turns handcuffs back on; this
 --- refuses the click that would do it, in the start's words.
-local ONE_RESTRAINT = 'While Target must be restrained is on, one of the two restraints (or a '
-    .. 'restraint resource, Config.Kidnap.RestraintProvider) has to count: with neither, no '
-    .. 'handover could ever complete, so the last one is not turned off from here.'
+local ONE_RESTRAINT = L('settings.while_target_must_be_restrained_is')
 
 --- What the panel says beside a key whose `unless` switch is on.
 local UNLESS_ON = {
-    ['WhitelistedView.Enabled'] = 'Does not apply while the whitelisted-job view is on '
-        .. '(WhitelistedView.Enabled): barred jobs have the app, showing them its one '
-        .. 'read-only screen, so this changes nothing until the view is off.',
+    ['WhitelistedView.Enabled'] = L('settings.does_not_apply_while_the_whitelisted'),
 }
 
 --- What the panel says beside a key whose `needs` switch is off.
 local NEEDS_OFF = {
-    ['Completion.KillPhotos'] = 'Does not apply while kill photos are off (Completion.KillPhotos): '
-        .. 'no kill photo is taken or kept, so this changes nothing until they are on again.',
-    ['Mugshot.Enabled'] = 'Does not apply while target headshots are off (Mugshot.Enabled): '
-        .. 'none is rendered, so this changes nothing until they are on again.',
-    ['WhitelistedView.Enabled'] = 'Does not apply while the whitelisted-job view is off '
-        .. '(WhitelistedView.Enabled): nobody has the view, so this changes nothing until it is '
-        .. 'on again.',
-    ['Intel.Enabled'] = 'Does not apply while every informant feature is off '
-        .. '(Intel.Enabled): none is offered, so this changes nothing until it is on again.',
-    ['Intel.Informant.Enabled'] = 'Does not apply while the target\'s informant is off '
-        .. '(Intel.Informant.Enabled): it is sold to nobody, so this changes nothing until it is on again.',
-    ['Intel.PlacerInformant.Enabled'] = 'Does not apply while the placer\'s informant is off '
-        .. '(Intel.PlacerInformant.Enabled): it is sold to nobody, so this changes nothing until it is on again.',
-    ['Intel.LocationTip.Enabled'] = 'Does not apply while the informant tip is off '
-        .. '(Intel.LocationTip.Enabled): it is sold to nobody, so this changes nothing until it is on again.',
-    ['Kidnap.RequireCoercion'] = 'Does not apply while Target must be restrained is off '
-        .. '(Kidnap.RequireCoercion): a handover needs no restraint, so this changes nothing '
-        .. 'until it is on again.',
+    ['Completion.KillPhotos'] = L('settings.does_not_apply_while_kill_photos'),
+    ['Mugshot.Enabled'] = L('settings.does_not_apply_while_target_headshots'),
+    ['WhitelistedView.Enabled'] = L('settings.does_not_apply_while_the_whitelisted_2'),
+    ['Intel.Enabled'] = L('settings.does_not_apply_while_every_informant'),
+    ['Intel.Informant.Enabled'] = L('settings.does_not_apply_while_the_targets'),
+    ['Intel.PlacerInformant.Enabled'] = L('settings.does_not_apply_while_the_placers'),
+    ['Intel.LocationTip.Enabled'] = L('settings.does_not_apply_while_the_informant'),
+    ['Kidnap.RequireCoercion'] = L('settings.does_not_apply_while_target_must'),
 }
 
 --- Every key the panel may show, in the order it shows them.
@@ -225,335 +199,267 @@ local NEEDS_OFF = {
 local CATALOGUE = {
     -- Features ------------------------------------------------------------
     { key = 'BlockOffDuty', section = 'features', category = 'features', group = 'Access', kind = 'switch',
-      label = 'Bar off-duty officers',
-      about = 'Barred jobs stay barred from the app while off duty.',
-      inflight = AT_USE .. ' Who may see the app is checked again at once.' },
+      label = L('settings.bar_off_duty_officers'),
+      about = L('settings.barred_jobs_stay_barred_from_the'),
+      inflight = AT_USE .. L('settings.who_may_see_the_app_is') },
     { key = 'HideAppFromBlockedJobs', section = 'features', category = 'features', group = 'Access', kind = 'switch',
       unless = 'WhitelistedView.Enabled',
-      label = 'Hide the app from barred jobs',
-      about = 'Keeps the app off a barred player\'s phone instead of showing one that answers nothing.',
-      inflight = 'Every phone is told at once; barred jobs are refused either way.' },
+      label = L('settings.hide_the_app_from_barred_jobs'),
+      about = L('settings.keeps_the_app_off_a_barred'),
+      inflight = L('settings.every_phone_is_told_at_once') },
     { key = 'WhitelistedView.Enabled', section = 'features', category = 'features', group = 'Access', kind = 'switch',
-      label = 'Whitelisted-job view',
-      about = 'Barred jobs (police, EMS, DOJ, lawyers and the rest) open the app to one read-only '
-          .. 'screen: the contracts on them and on other whitelisted-job members, with no more '
-          .. 'than the law enforcement advisory says, and the buyout on a contract on them. '
-          .. 'Off: the app is closed to them, as Hide the app from barred jobs says.',
-      inflight = 'Every phone is told at once, and an open app changes screen at once. A buyout '
-          .. 'already paid still closes after its delay either way.' },
+      label = L('settings.whitelisted_job_view'),
+      about = L('settings.barred_jobs_police_ems_doj_lawyers'),
+      inflight = L('settings.every_phone_is_told_at_once_2') },
     { key = 'WhitelistedView.Alerts', section = 'features', category = 'features', group = 'Access', kind = 'switch',
       needs = 'WhitelistedView.Enabled',
-      label = 'Notify me on the whitelisted-job view',
-      about = 'A player on the whitelisted-job view may turn on Notify me (off until they do, for '
-          .. 'each character): a phone notice when a new entry appears on their view. One on '
-          .. 'them after the same wait as their own alert; one on another whitelisted-job member '
-          .. 'as the advisory bulletin for it goes out. It says only who the contract is on and '
-          .. 'their job, within the notice budget.',
-      inflight = 'Read at every use, with no restart. Off hides the toggle and sends nothing, '
-          .. 'notices still waiting included; each player\'s choice is kept, and applies again '
-          .. 'when this is turned back on.' },
+      label = L('settings.notify_me_on_the_whitelisted_job'),
+      about = L('settings.a_player_on_the_whitelisted_job'),
+      inflight = L('settings.read_at_every_use_with_no') },
     { key = 'App.DefaultInstalled', section = 'features', category = 'features', group = 'The app', kind = 'switch',
-      label = 'Put the app on every home screen', client = true, live = false,
-      about = 'Installs the app on eligible phones instead of leaving it in the App Store.',
-      inflight = 'Applies after restart: read when the app is added to a phone, at the next '
-          .. 'start of this resource or lb-phone, or when a player next joins.' },
+      label = L('settings.put_the_app_on_every_home'), client = true, live = false,
+      about = L('settings.installs_the_app_on_eligible_phones'),
+      inflight = L('settings.applies_after_restart_read_when_the') },
 
     { key = 'Sources.cash.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
-      label = 'Cash rewards', about = 'Cash may be put up as a reward.', inflight = NEW_ONLY
-          .. ' Cash already held in escrow is paid out or returned as before.' },
+      label = L('settings.cash_rewards'), about = L('settings.cash_may_be_put_up_as'), inflight = NEW_ONLY
+          .. L('settings.cash_already_held_in_escrow_is') },
     { key = 'Sources.bank.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
-      label = 'Bank rewards', about = 'Bank money may be put up as a reward.', inflight = NEW_ONLY
-          .. ' Money already held in escrow is paid out or returned as before.' },
+      label = L('settings.bank_rewards'), about = L('settings.bank_money_may_be_put_up'), inflight = NEW_ONLY
+          .. L('settings.money_already_held_in_escrow_is') },
     { key = 'Sources.dirty.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
-      label = 'Dirty money rewards', about = 'Dirty money may be put up as a reward.',
-      inflight = NEW_ONLY .. ' Money already held in escrow is paid out or returned as before.' },
+      label = L('settings.dirty_money_rewards'), about = L('settings.dirty_money_may_be_put_up'),
+      inflight = NEW_ONLY .. L('settings.money_already_held_in_escrow_is') },
     { key = 'Sources.item.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
-      label = 'Item rewards', about = 'Items may be put up as a reward.', inflight = NEW_ONLY
-          .. ' Items already held in escrow are paid out or returned as before.' },
+      label = L('settings.item_rewards'), about = L('settings.items_may_be_put_up_as'), inflight = NEW_ONLY
+          .. L('settings.items_already_held_in_escrow_are') },
     { key = 'Sources.weapon.enabled', section = 'features', category = 'features', group = 'Rewards', kind = 'switch',
-      label = 'Weapon rewards', about = 'Weapons may be put up as a reward.', inflight = NEW_ONLY
-          .. ' Weapons already held in escrow are paid out or returned as before.' },
+      label = L('settings.weapon_rewards'), about = L('settings.weapons_may_be_put_up_as'), inflight = NEW_ONLY
+          .. L('settings.weapons_already_held_in_escrow_are') },
 
     { key = 'Completion.Fulfilment', section = 'features', group = 'Completion', kind = 'choice',
       category = 'rules-limits',
-      choices = { 'alive', 'either' }, label = 'How contracts are completed',
+      choices = { 'alive', 'either' }, label = L('settings.how_contracts_are_completed'),
       -- Who the target is handed to, said here as everywhere a player reads
       -- it; and no photograph, which under KillPhotos off is never taken.
-      about = '\'alive\': live transfer only. The target has to be brought alive to the '
-          .. 'person who placed the contract, who has to be there for the handover; a kill '
-          .. 'never completes one. \'either\': a verified kill, or that handover.',
-      inflight = 'Each contract keeps the rule it was placed under; this changes new contracts only.' },
+      about = L('settings.alive_live_transfer_only_the_target'),
+      inflight = L('settings.each_contract_keeps_the_rule_it') },
     { key = 'Completion.KillPhotos', section = 'features', category = 'features', group = 'Completion', kind = 'switch',
-      label = 'Kill photos',
-      about = 'Off: no kill photo is ever taken, uploaded, kept or served, and no image host is '
-          .. 'asked anything. Under \'either\', Verify kill completes at the scene on the '
-          .. 'server\'s own checks.',
-      inflight = 'Read at the next Verify kill, with no restart. A photo already kept stays until '
-          .. 'it expires as usual, and its client can still open it once; off, links to photos '
-          .. 'saved to a phone\'s Photos stop loading. While it is off, the photos kept from '
-          .. 'before can be removed all at once here.' },
+      label = L('settings.kill_photos'),
+      about = L('settings.off_no_kill_photo_is_ever'),
+      inflight = L('settings.read_at_the_next_verify_kill') },
     { key = 'Completion.PhotoStorage', section = 'features', group = 'Completion', kind = 'choice',
       category = 'developer',
       needs = 'Completion.KillPhotos',
-      choices = { 'server', 'host' }, label = 'Where kill photos are kept',
-      about = '\'server\': in this resource\'s data folder. \'host\': lb-phone\'s image host.',
-      inflight = 'Photos already kept stay where they are and open as before; a photo token '
-          .. 'asked for before the change is used the way it was issued.' },
+      choices = { 'server', 'host' }, label = L('settings.where_kill_photos_are_kept'),
+      about = L('settings.server_in_this_resources_data_folder'),
+      inflight = L('settings.photos_already_kept_stay_where_they') },
     { key = 'Completion.RequireObservedDamage', section = 'features', category = 'features', group = 'Completion',
-      kind = 'switch', label = 'Kills need damage the server saw',
-      about = 'The killer a victim names must also be in the server\'s own damage log.',
+      kind = 'switch', label = L('settings.kills_need_damage_the_server_saw'),
+      about = L('settings.the_killer_a_victim_names_must'),
       inflight = AT_USE },
     { key = 'Ledger.StorePhotos', section = 'features', category = 'features', group = 'Completion', kind = 'switch',
       needs = 'Completion.KillPhotos',
-      label = 'Keep kill photos for the placer',
-      about = 'The placer who placed the contract can open its kill photo once.',
-      inflight = 'Photos already kept stay openable; kills verified while it is off keep none.' },
+      label = L('settings.keep_kill_photos_for_the_placer'),
+      about = L('settings.the_placer_who_placed_the_contract'),
+      inflight = L('settings.photos_already_kept_stay_openable_kills') },
 
     { key = 'Kidnap.RequireConscious', section = 'features', group = 'Handovers', kind = 'switch',
       category = 'features',
-      label = 'Target must be conscious', about = 'Not dead, not downed, above the health floor.',
-      inflight = AT_USE .. ' A contract placed under \'alive\' always checks it.' },
+      label = L('settings.target_must_be_conscious'), about = L('settings.not_dead_not_downed_above_the'),
+      inflight = AT_USE .. L('settings.a_contract_placed_under_alive_always') },
     { key = 'Kidnap.RejectDead', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
-      label = 'Refuse a dead target', about = 'A body is never handed over.',
-      inflight = AT_USE .. ' A contract placed under \'alive\' always checks it.' },
+      label = L('settings.refuse_a_dead_target'), about = L('settings.a_body_is_never_handed_over'),
+      inflight = AT_USE .. L('settings.a_contract_placed_under_alive_always') },
     { key = 'Kidnap.RejectLastStand', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
-      label = 'Refuse a downed target', about = 'A target in last stand cannot be handed over.',
+      label = L('settings.refuse_a_downed_target'), about = L('settings.a_target_in_last_stand_cannot'),
       inflight = AT_USE },
     { key = 'Kidnap.RequireCoercion', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
-      label = 'Target must be restrained',
-      about = 'Off (as shipped): the target only has to be alive, conscious, not downed and with '
-          .. 'the hitman, within the handover radius of the person who placed the contract, for '
-          .. 'the whole countdown. On: they also have to be cuffed, or in the hitman\'s own '
-          .. 'vehicle, the whole time.',
-      inflight = AT_USE .. ' A countdown already running is checked by it on its next sample.' },
+      label = L('settings.target_must_be_restrained'),
+      about = L('settings.off_as_shipped_the_target_only'),
+      inflight = AT_USE .. L('settings.a_countdown_already_running_is_checked') },
     { key = 'Kidnap.Coercion.handcuffed', section = 'features', group = 'Handovers', kind = 'switch',
       category = 'features',
-      label = 'Handcuffs count as restraint', about = 'QBox \'ishandcuffed\' metadata. ' .. ONE_RESTRAINT,
+      label = L('settings.handcuffs_count_as_restraint'), about = 'QBox \'ishandcuffed\' metadata. ' .. ONE_RESTRAINT,
       needs = 'Kidnap.RequireCoercion', inflight = AT_USE },
     { key = 'Kidnap.Coercion.passengerOfHitman', section = 'features', category = 'features', group = 'Handovers',
-      kind = 'switch', label = 'The hitman\'s vehicle counts as restraint',
-      about = 'The target riding in the hitman\'s vehicle. ' .. ONE_RESTRAINT,
+      kind = 'switch', label = L('settings.the_hitmans_vehicle_counts_as_restraint'),
+      about = L('settings.the_target_riding_in_the_hitmans') .. ONE_RESTRAINT,
       needs = 'Kidnap.RequireCoercion', inflight = AT_USE },
     { key = 'Kidnap.MeetingPoint', section = 'features', category = 'features', group = 'Handovers', kind = 'switch',
-      label = 'Meeting point for the handover',
-      about = 'On an alive-only contract a hitman holds, the person who placed it can set a '
-          .. 'meeting point where they stand, and clear it. Only the hitmen on that contract '
-          .. 'see it, on their GPS: not the board, the target, the whitelisted-job view or the '
-          .. 'advisory, and staff only with the identity ACE.',
-      inflight = 'Read at every use, with no restart. Off hides the controls and refuses changes; '
-          .. 'points already set are kept, and shown again when it is turned back on.' },
+      label = L('settings.meeting_point_for_the_handover'),
+      about = L('settings.on_an_alive_only_contract_a'),
+      inflight = L('settings.read_at_every_use_with_no_2') },
     { key = 'Kidnap.PlacerConfirms', section = 'features', category = 'features', group = 'Handovers',
-      kind = 'switch', label = 'The placer confirms the handover',
-      about = 'Once a handover has been held for its countdown, the person who placed the contract '
-          .. 'taps Confirm handover on their card (twice) before it pays. A decline pays nothing; '
-          .. 'the contract stays open and the hitman may arm it again after the usual wait.',
-      inflight = 'A handover keeps the rule it was armed under; the next one armed reads it.' },
+      kind = 'switch', label = L('settings.the_placer_confirms_the_handover'),
+      about = L('settings.once_a_handover_has_been_held'),
+      inflight = L('settings.a_handover_keeps_the_rule_it') },
     { key = 'Kidnap.ConfirmSeconds', section = 'limits', category = 'rules-timers', group = 'Handovers',
       kind = 'number', integer = true, min = 10, max = 600, needs = 'Kidnap.PlacerConfirms',
-      label = 'Time the placer has to confirm (s)',
-      about = 'From the end of the countdown. Stands still on the restart hold and while the app is paused.',
-      inflight = 'A window already open keeps its length; the next one opened reads it.' },
+      label = L('settings.time_the_placer_has_to_confirm'),
+      about = L('settings.from_the_end_of_the_countdown'),
+      inflight = L('settings.a_window_already_open_keeps_its') },
     { key = 'Kidnap.ConfirmMissed', section = 'limits', category = 'rules-timers', group = 'Handovers',
       kind = 'choice', choices = { 'rearm', 'pay' }, needs = 'Kidnap.PlacerConfirms',
-      label = 'When the placer does not answer in time',
-      about = '\'rearm\': nothing is paid and the hitman may arm again. \'pay\': paid as if confirmed.',
+      label = L('settings.when_the_placer_does_not_answer'),
+      about = L('settings.rearm_nothing_is_paid_and_the'),
       inflight = AT_USE },
     { key = 'Kidnap.MaxDeclines', section = 'limits', category = 'rules-limits', group = 'Handovers',
       kind = 'number', integer = true, min = 0, max = 20, needs = 'Kidnap.PlacerConfirms',
-      label = 'Declines a contract\'s placer gets (0 no limit)',
-      about = 'Declines, and windows left to run out under \'rearm\', counted per contract. Past this the '
-          .. 'next handover held for its countdown pays without asking the placer.',
+      label = L('settings.declines_a_contracts_placer_gets_0'),
+      about = L('settings.declines_and_windows_left_to_run'),
       inflight = AT_USE },
 
     { key = 'Penalty.RequireDisclosureOnAccept', section = 'features', category = 'features', group = 'Stakes',
-      kind = 'switch', label = 'Accept must echo the stake shown',
-      about = 'A page showing a stale stake is refused rather than charged a new one.',
+      kind = 'switch', label = L('settings.accept_must_echo_the_stake_shown'),
+      about = L('settings.a_page_showing_a_stale_stake'),
       inflight = AT_USE },
 
     { key = 'Bailout.Enabled', section = 'features', category = 'features', group = 'Buyouts', kind = 'switch',
-      label = 'Buyouts',
-      about = 'A target may pay to close a contract on them, in the app or with the buyout '
-          .. 'command for players the app is closed to.',
-      inflight = 'A buyout already paid still closes the contract after its delay; new ones are '
-          .. 'refused while it is off, and contracts placed meanwhile carry no buyout price. '
-          .. 'A price already set is kept: only taking part of the reward back lowers it, '
-          .. 'with the reward.' },
+      label = L('settings.buyouts'),
+      about = L('settings.a_target_may_pay_to_close'),
+      inflight = L('settings.a_buyout_already_paid_still_closes') },
     { key = 'Bailout.BlockWhileIncapacitated', section = 'features', category = 'features', group = 'Buyouts',
-      kind = 'switch', label = 'No buyout from the floor',
-      about = 'A dead or downed target cannot buy out.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.no_buyout_from_the_floor'),
+      about = L('settings.a_dead_or_downed_target_cannot'), inflight = AT_USE },
 
     { key = 'Targeting.AllowBrowseAll', section = 'features', group = 'Targeting', kind = 'switch',
       category = 'features',
-      label = 'Browse everyone online', about = 'Pick a target from a list of everyone online.',
-      inflight = 'Placed contracts are untouched; the list is empty while it is off.' },
+      label = L('settings.browse_everyone_online'), about = L('settings.pick_a_target_from_a_list'),
+      inflight = L('settings.placed_contracts_are_untouched_the_list') },
     { key = 'Targeting.AllowNearby', section = 'features', category = 'features', group = 'Targeting', kind = 'switch',
-      label = 'List the people nearby', client = true,
-      about = 'Names unmasked players within the nearby radius. Read its config comment first.',
-      inflight = 'The list is empty while it is off, and players\' games stop reporting masks.' },
+      label = L('settings.list_the_people_nearby'), client = true,
+      about = L('settings.names_unmasked_players_within_the_nearby'),
+      inflight = L('settings.the_list_is_empty_while_it') },
     { key = 'Targeting.AllowProtectedJobTargets', section = 'features', category = 'features', group = 'Targeting',
-      kind = 'switch', label = 'Law enforcement may be targeted',
-      about = 'Off refuses new contracts on protected jobs.',
-      inflight = 'Contracts already on protected targets run on; only new ones are refused.' },
+      kind = 'switch', label = L('settings.law_enforcement_may_be_targeted'),
+      about = L('settings.off_refuses_new_contracts_on_protected'),
+      inflight = L('settings.contracts_already_on_protected_targets_run') },
     { key = 'Mugshot.Enabled', section = 'features', category = 'features', group = 'Targeting', kind = 'switch',
-      label = 'Target headshots', client = true,
-      about = 'Faces on the board, rendered by each target\'s own game. Off: none is asked for, '
-          .. 'one sent anyway is refused unread, and cards show the placeholder.',
-      inflight = 'Read at the next card drawn, with no restart: turned off, the headshots kept '
-          .. 'are forgotten at once.' },
+      label = L('settings.target_headshots'), client = true,
+      about = L('settings.faces_on_the_board_rendered_by'),
+      inflight = L('settings.read_at_the_next_card_drawn') },
     { key = 'Mugshot.RemoveBackground', section = 'features', group = 'Targeting', kind = 'switch',
       category = 'features',
       needs = 'Mugshot.Enabled',
-      label = 'Cut the background out of headshots', client = true,
-      about = 'Loads a segmentation model into the target\'s game for each render.',
-      inflight = 'Headshots already cached keep the background they were made with.' },
+      label = L('settings.cut_the_background_out_of_headshots'), client = true,
+      about = L('settings.loads_a_segmentation_model_into_the'),
+      inflight = L('settings.headshots_already_cached_keep_the_background') },
 
     { key = 'Advisory.Enabled', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'Advisories', about = 'Law enforcement is told about contracts on officers.',
-      inflight = 'Bulletins already sent stand; none is sent while it is off.' },
+      kind = 'switch', label = L('settings.advisories'), about = L('settings.law_enforcement_is_told_about_contracts'),
+      inflight = L('settings.bulletins_already_sent_stand_none_is') },
     { key = 'Advisory.UseDispatch', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'Through sc-dispatch', about = 'Raise a dispatch entry as well.',
+      kind = 'switch', label = L('settings.through_sc_dispatch'), about = L('settings.raise_a_dispatch_entry_as_well'),
       inflight = AT_USE },
     { key = 'Advisory.AlwaysAlertTarget', section = 'features', group = 'Law enforcement advisory',
       category = 'features',
-      kind = 'switch', label = 'Always tell the officer', about = 'The targeted officer is told.',
+      kind = 'switch', label = L('settings.always_tell_the_officer'), about = L('settings.the_targeted_officer_is_told'),
       inflight = AT_USE },
     { key = 'Advisory.OnCreate', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'When posted', about = 'A bulletin when the contract is posted.',
+      kind = 'switch', label = L('settings.when_posted'), about = L('settings.a_bulletin_when_the_contract_is'),
       inflight = AT_USE },
     { key = 'Advisory.OnAccept', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'When accepted', about = 'A bulletin when an operative accepts.',
+      kind = 'switch', label = L('settings.when_accepted'), about = L('settings.a_bulletin_when_an_operative_accepts'),
       inflight = AT_USE },
     { key = 'Advisory.OnLocationTip', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'When a tip is bought',
-      about = 'A bulletin when a hitman buys an informant tip on the officer.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.when_a_tip_is_bought'),
+      about = L('settings.a_bulletin_when_a_hitman_buys'), inflight = AT_USE },
     { key = 'Advisory.OnCancel', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'When called off',
-      about = 'A bulletin when a contract on an officer is cancelled or voided with a refund.',
+      kind = 'switch', label = L('settings.when_called_off'),
+      about = L('settings.a_bulletin_when_a_contract_on'),
       inflight = AT_USE },
     { key = 'Advisory.WarnCreator', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'Warn the placer', about = 'Before escrow is taken.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.warn_the_placer'), about = L('settings.before_escrow_is_taken'), inflight = AT_USE },
     { key = 'Advisory.WarnHitman', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'Warn the hitman', about = 'Before they accept.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.warn_the_hitman'), about = L('settings.before_they_accept'), inflight = AT_USE },
     { key = 'Advisory.FlagListing', section = 'features', category = 'features', group = 'Law enforcement advisory',
-      kind = 'switch', label = 'Flag the listing', about = 'The board marks an officer target.',
+      kind = 'switch', label = L('settings.flag_the_listing'), about = L('settings.the_board_marks_an_officer_target'),
       inflight = AT_USE },
 
     { key = 'Relay.Enabled', section = 'features', category = 'features', group = 'Messages and calls', kind = 'switch',
-      label = 'Messages', about = 'The masked relay between the parties of a contract.',
-      inflight = 'Threads are kept and come back when it is on again; nothing can be read or '
-          .. 'sent while it is off.' },
+      label = L('settings.messages'), about = L('settings.the_masked_relay_between_the_parties'),
+      inflight = L('settings.threads_are_kept_and_come_back') },
     { key = 'Relay.AllowMaskedCalls', section = 'features', category = 'features', group = 'Messages and calls',
-      kind = 'switch', label = 'Calls', about = 'Calls between the parties through lb-phone.',
-      inflight = 'A call already ringing is left alone, and its caller can still hang it up '
-          .. 'from the app; new ones are refused.' },
+      kind = 'switch', label = L('settings.calls'), about = L('settings.calls_between_the_parties_through_lb'),
+      inflight = L('settings.a_call_already_ringing_is_left') },
     { key = 'Relay.RequireMaskingForAnonymous', section = 'features', group = 'Messages and calls',
       category = 'features',
-      kind = 'switch', label = 'Never unmask a caller',
-      about = 'No call to or from an anonymous party on a phone that cannot hide the number.',
+      kind = 'switch', label = L('settings.never_unmask_a_caller'),
+      about = L('settings.no_call_to_or_from_an'),
       inflight = AT_USE },
 
     { key = 'TargetClasses.default.AllowAnonymousPlacer', section = 'features', category = 'features', group = 'Anonymity',
-      kind = 'switch', label = 'Placing anonymously',
-      about = 'A contract may be placed anonymously. Off, the Place form has no such option and '
-          .. 'the server refuses one, charging nothing.',
-      inflight = 'Read at every placing, with no restart. Contracts already placed anonymously '
-          .. 'stay anonymous: it is not retroactive.' },
+      kind = 'switch', label = L('settings.placing_anonymously'),
+      about = L('settings.a_contract_may_be_placed_anonymously'),
+      inflight = L('settings.read_at_every_placing_with_no') },
     { key = 'TargetClasses.default.AllowAnonymousHitman', section = 'features', category = 'features', group = 'Anonymity',
-      kind = 'switch', label = 'Accepting anonymously',
-      about = 'A contract may be accepted anonymously. Off, Accept has no such option and the '
-          .. 'server refuses one, charging nothing: every new operative is named to the person '
-          .. 'who placed the contract.',
-      inflight = 'Read at every acceptance, with no restart. Operatives already anonymous stay '
-          .. 'anonymous, and one coming back to a contract they held anonymously comes back '
-          .. 'under the same alias.' },
+      kind = 'switch', label = L('settings.accepting_anonymously'),
+      about = L('settings.a_contract_may_be_accepted_anonymously'),
+      inflight = L('settings.read_at_every_acceptance_with_no') },
     { key = 'TargetClasses.default.ShowOperativeNames', section = 'features', category = 'features', group = 'Anonymity',
-      kind = 'switch', label = 'Operative names shown to the target',
-      about = 'An operative who accepted under their name is shown by it to the contract\'s '
-          .. 'target too (On me, and the informant\'s list), not only to the person who placed '
-          .. 'it. Off, the target sees every operative as an alias. Never to the board, other '
-          .. 'hitmen, law enforcement or Discord.',
-      inflight = 'Read at every view, with no restart. Operatives who accepted anonymously keep '
-          .. 'their alias either way.' },
+      kind = 'switch', label = L('settings.operative_names_shown_to_the_target'),
+      about = L('settings.an_operative_who_accepted_under_their'),
+      inflight = L('settings.read_at_every_view_with_no') },
     { key = 'TargetClasses.default.ShowPlacerOnBoard', section = 'features', category = 'features', group = 'Anonymity',
-      kind = 'switch', label = 'Placer names shown on the board',
-      about = 'A placer who put their name to a contract is named to everybody browsing the '
-          .. 'board. Off, only the contract\'s parties see the name: the placer, the operatives '
-          .. 'on it and its target.',
-      inflight = 'Read at every view, with no restart. Contracts placed anonymously are never '
-          .. 'named either way.' },
+      kind = 'switch', label = L('settings.placer_names_shown_on_the_board'),
+      about = L('settings.a_placer_who_put_their_name'),
+      inflight = L('settings.read_at_every_view_with_no_2') },
 
     -- The same four for the other target class (Config.TargetClasses), on a
     -- contract whose target is on a whitelisted job (as the contract records
     -- it, like the advisory).
     { key = 'TargetClasses.whitelisted.AllowAnonymousPlacer', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
-      label = 'Placing anonymously',
-      about = 'A contract on a member of a whitelisted job may be placed anonymously. Applies '
-          .. 'there in place of the general switch; off, the server refuses one, charging '
-          .. 'nothing.',
-      inflight = 'Read at every placing, with no restart. Not retroactive.' },
+      label = L('settings.placing_anonymously'),
+      about = L('settings.a_contract_on_a_member_of'),
+      inflight = L('settings.read_at_every_placing_with_no_2') },
     { key = 'TargetClasses.whitelisted.AllowAnonymousHitman', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
-      label = 'Accepting anonymously',
-      about = 'A contract on a member of a whitelisted job may be accepted anonymously. Applies '
-          .. 'there in place of the general switch; off, the server refuses one, charging '
-          .. 'nothing.',
-      inflight = 'Read at every acceptance, with no restart. Operatives already anonymous stay '
-          .. 'anonymous.' },
+      label = L('settings.accepting_anonymously'),
+      about = L('settings.a_contract_on_a_member_of_2'),
+      inflight = L('settings.read_at_every_acceptance_with_no_2') },
     { key = 'TargetClasses.whitelisted.ShowOperativeNames', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
-      label = 'Operative names shown to the target',
-      about = 'A member of a whitelisted job sees an operative who accepted under their name by '
-          .. 'it. Applies there in place of the general switch. Never to anybody else.',
-      inflight = 'Read at every view, with no restart. Operatives who accepted anonymously keep '
-          .. 'their alias either way.' },
+      label = L('settings.operative_names_shown_to_the_target'),
+      about = L('settings.a_member_of_a_whitelisted_job'),
+      inflight = L('settings.read_at_every_view_with_no') },
     { key = 'TargetClasses.whitelisted.ShowPlacerOnBoard', section = 'features', category = 'features',
       group = 'Anonymity (whitelisted-job targets)', kind = 'switch',
-      label = 'Placer names shown on the board',
-      about = 'A placer who put their name to a contract on a member of a whitelisted job is '
-          .. 'named to everybody browsing the board. Applies there in place of the general '
-          .. 'switch; off, only the contract\'s parties see the name.',
-      inflight = 'Read at every view, with no restart. Contracts placed anonymously are never '
-          .. 'named either way.' },
+      label = L('settings.placer_names_shown_on_the_board'),
+      about = L('settings.a_placer_who_put_their_name_2'),
+      inflight = L('settings.read_at_every_view_with_no_2') },
 
     { key = 'Amendments.Enabled', section = 'features', category = 'features', group = 'Proposals', kind = 'switch',
-      label = 'Proposals', about = 'Changes to a contract that need the other side\'s agreement.',
-      inflight = 'Proposals already open can still be answered and run out as before; new ones '
-          .. 'are refused while it is off.' },
+      label = L('settings.proposals'), about = L('settings.changes_to_a_contract_that_need'),
+      inflight = L('settings.proposals_already_open_can_still_be') },
 
     { key = 'Intel.Enabled', section = 'features', category = 'features', group = 'Intel: Informants', kind = 'switch',
-      label = 'Every informant feature',
-      about = 'The master switch over the target\'s informant, the placer\'s informant and the '
-          .. 'informant tip. Off turns all three off at once, whatever their own switches say.',
-      inflight = 'Names already found stay shown, and a tip already bought stays on its buyer\'s '
-          .. 'map until it runs out; new look-ups and tips are refused, and their buttons are '
-          .. 'gone, while it is off.' },
+      label = L('settings.every_informant_feature'),
+      about = L('settings.the_master_switch_over_the_targets'),
+      inflight = L('settings.names_already_found_stay_shown_and') },
     { key = 'Intel.Informant.Enabled', section = 'features', category = 'features', group = 'Intel: Informants', kind = 'switch',
       needs = 'Intel.Enabled',
-      label = 'Target\'s informant',
-      about = 'A target may pay for a chance to find out who is after them: for each class of '
-          .. 'target its switch allows (every other target, a whitelisted job\'s).',
-      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+      label = L('settings.targets_informant'),
+      about = L('settings.a_target_may_pay_for_a'),
+      inflight = L('settings.names_already_found_stay_shown_new') },
     { key = 'Intel.PlacerInformant.Enabled', section = 'features', group = 'Intel: Informants', kind = 'switch',
       category = 'features',
       needs = 'Intel.Enabled',
-      label = 'Placer\'s informant',
-      about = 'The person who placed a contract may pay for a chance to find out who took it: '
-          .. 'on contracts on each class of target its switch allows.',
-      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+      label = L('settings.placers_informant'),
+      about = L('settings.the_person_who_placed_a_contract'),
+      inflight = L('settings.names_already_found_stay_shown_new') },
 
     { key = 'Intel.LocationTip.Enabled', section = 'features', group = 'Intel: Informant tip', kind = 'switch',
       category = 'features',
       needs = 'Intel.Enabled',
-      label = 'Intel: Informant tip',
-      about = 'A hitman on a contract may pay for the rough area the target was in: on '
-          .. 'contracts on each class of target its switch allows.',
-      inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
-          .. 'are refused while it is off.' },
+      label = L('settings.intel_informant_tip'),
+      about = L('settings.a_hitman_on_a_contract_may'),
+      inflight = L('settings.a_tip_already_bought_stays_on') },
     { key = 'Intel.LocationTip.NotifyTarget', section = 'features', category = 'features', group = 'Intel: Informant tip',
-      kind = 'switch', label = 'Tell the target',
-      about = 'The target is told someone knows their rough area, never who or where.',
-      inflight = 'Read when a tip is bought; a target already told stays told.' },
+      kind = 'switch', label = L('settings.tell_the_target'),
+      about = L('settings.the_target_is_told_someone_knows'),
+      inflight = L('settings.read_when_a_tip_is_bought') },
 
     -- Whom each of the three above is sold to, by the target's class
     -- (Config.TargetClasses): every other target, and a target on a
@@ -561,706 +467,664 @@ local CATALOGUE = {
     -- it). The master switch and the feature's own still turn each off.
     { key = 'TargetClasses.default.Informant', section = 'features', category = 'features',
       group = 'Intel: Every other target', kind = 'switch',
-      needs = 'Intel.Informant.Enabled', label = 'Target\'s informant',
-      about = 'A target not on a whitelisted job may pay for a chance to find out who is after '
-          .. 'them, while the target\'s informant is on.',
-      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+      needs = 'Intel.Informant.Enabled', label = L('settings.targets_informant'),
+      about = L('settings.a_target_not_on_a_whitelisted'),
+      inflight = L('settings.names_already_found_stay_shown_new') },
     { key = 'TargetClasses.default.PlacerInformant', section = 'features', category = 'features',
       group = 'Intel: Every other target', kind = 'switch',
-      needs = 'Intel.PlacerInformant.Enabled', label = 'Placer\'s informant',
-      about = 'The person who placed a contract on anybody not on a whitelisted job may pay for '
-          .. 'a chance to find out who took it, while the placer\'s informant is on.',
-      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+      needs = 'Intel.PlacerInformant.Enabled', label = L('settings.placers_informant'),
+      about = L('settings.the_person_who_placed_a_contract_2'),
+      inflight = L('settings.names_already_found_stay_shown_new') },
     { key = 'TargetClasses.default.LocationTip', section = 'features', category = 'features',
       group = 'Intel: Every other target', kind = 'switch',
-      needs = 'Intel.LocationTip.Enabled', label = 'Intel: Informant tip',
-      about = 'A hitman on a contract on anybody not on a whitelisted job may pay for the rough '
-          .. 'area the target was in, while the informant tip is on.',
-      inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
-          .. 'are refused while it is off.' },
+      needs = 'Intel.LocationTip.Enabled', label = L('settings.intel_informant_tip'),
+      about = L('settings.a_hitman_on_a_contract_on'),
+      inflight = L('settings.a_tip_already_bought_stays_on') },
     { key = 'TargetClasses.whitelisted.Informant', section = 'features', category = 'features',
       group = 'Intel: Whitelisted-job targets', kind = 'switch',
-      needs = 'Intel.Informant.Enabled', label = 'Target\'s informant',
-      about = 'A target on a whitelisted job may pay for a chance to find out who is after '
-          .. 'them, while the target\'s informant is on. Off, it is refused as before '
-          .. '(informant_protected), charging nothing.',
-      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+      needs = 'Intel.Informant.Enabled', label = L('settings.targets_informant'),
+      about = L('settings.a_target_on_a_whitelisted_job'),
+      inflight = L('settings.names_already_found_stay_shown_new') },
     { key = 'TargetClasses.whitelisted.PlacerInformant', section = 'features', category = 'features',
       group = 'Intel: Whitelisted-job targets', kind = 'switch',
-      needs = 'Intel.PlacerInformant.Enabled', label = 'Placer\'s informant',
-      about = 'The person who placed a contract on a member of a whitelisted job may pay for a '
-          .. 'chance to find out who took it.',
-      inflight = 'Names already found stay shown; new look-ups are refused while it is off.' },
+      needs = 'Intel.PlacerInformant.Enabled', label = L('settings.placers_informant'),
+      about = L('settings.the_person_who_placed_a_contract_3'),
+      inflight = L('settings.names_already_found_stay_shown_new') },
     { key = 'TargetClasses.whitelisted.LocationTip', section = 'features', category = 'features',
       group = 'Intel: Whitelisted-job targets', kind = 'switch',
-      needs = 'Intel.LocationTip.Enabled', label = 'Intel: Informant tip',
-      about = 'A hitman on a contract on a member of a whitelisted job may pay for the rough '
-          .. 'area the target was in.',
-      inflight = 'A tip already bought stays on its buyer\'s map until it runs out; new ones '
-          .. 'are refused while it is off.' },
+      needs = 'Intel.LocationTip.Enabled', label = L('settings.intel_informant_tip'),
+      about = L('settings.a_hitman_on_a_contract_on_2'),
+      inflight = L('settings.a_tip_already_bought_stays_on') },
 
     { key = 'Notifications.ParanoidAlert', section = 'features', category = 'features', group = 'Notifications',
-      kind = 'switch', label = 'Tell the target', about = 'The target\'s phone says a price is on them.',
-      inflight = 'Alerts already sent stand; alerts still waiting are checked when they fall due.' },
+      kind = 'switch', label = L('settings.tell_the_target'), about = L('settings.the_targets_phone_says_a_price'),
+      inflight = L('settings.alerts_already_sent_stand_alerts_still') },
     { key = 'Notifications.PushEnabled', section = 'features', category = 'features', group = 'Notifications',
-      kind = 'switch', label = 'Refresh open apps', about = 'Nudge an open app when its contract changes.',
+      kind = 'switch', label = L('settings.refresh_open_apps'), about = L('settings.nudge_an_open_app_when_its'),
       inflight = AT_USE },
 
     { key = 'Limits.PauseWhileTargetJailed', section = 'features', category = 'features', group = 'The clock',
-      kind = 'switch', label = 'Pause while the target is jailed',
-      about = 'A target serving time stops the deadline, as one offline does.',
-      inflight = 'Checked by the next expiry pass: a pause it began ends, with the time banked.' },
+      kind = 'switch', label = L('settings.pause_while_the_target_is_jailed'),
+      about = L('settings.a_target_serving_time_stops_the'),
+      inflight = L('settings.checked_by_the_next_expiry_pass') },
 
     { key = 'AntiCollusion.BlockSameAccount', section = 'features', category = 'features', group = 'Anti-collusion',
-      kind = 'switch', label = 'Refuse your own account',
-      about = 'No contract between characters of one account.',
-      inflight = 'Contracts already placed run on; new ones and acceptances are checked.' },
+      kind = 'switch', label = L('settings.refuse_your_own_account'),
+      about = L('settings.no_contract_between_characters_of_one'),
+      inflight = L('settings.contracts_already_placed_run_on_new') },
 
     { key = 'Audit.LogAllActions', section = 'features', group = 'Audit and debug', kind = 'switch',
       category = 'features',
-      label = 'Log player conduct', about = 'Every creation, acceptance and refusal, not only money.',
-      inflight = 'Money, staff actions and refusals are always logged whatever this says.' },
+      label = L('settings.log_player_conduct'), about = L('settings.every_creation_acceptance_and_refusal_not'),
+      inflight = L('settings.money_staff_actions_and_refusals_are') },
     { key = 'Audit.LogReasonText', section = 'features', group = 'Audit and debug', kind = 'switch',
       category = 'features',
-      label = 'Log contract reasons', about = 'The reason text goes into the log.', inflight = AT_USE },
+      label = L('settings.log_contract_reasons'), about = L('settings.the_reason_text_goes_into_the'), inflight = AT_USE },
     { key = 'Alerts.ToDiscord', section = 'features', category = 'features', group = 'Audit and debug', kind = 'switch',
-      label = 'Post alerts to Discord',
-      about = 'Every alert in the Alerts section is posted to the webhook set in server.cfg '
-          .. '(crimson_hitman_alert_webhook, or else crimson_hitman_webhook), scrubbed of every '
-          .. 'identity, at most one post every 10 seconds. Off: nothing is posted; the Alerts '
-          .. 'section still lists every one.',
-      inflight = 'Read at the next post, with no restart: turned off, alerts waiting to be posted '
-          .. 'are dropped, and nothing said while it is off is posted later.' },
+      label = L('settings.post_alerts_to_discord'),
+      about = L('settings.every_alert_in_the_alerts_section'),
+      inflight = L('settings.read_at_the_next_post_with') },
     { key = 'Holds.AppPaused', section = 'features', category = 'features', group = 'Staff tools',
-      kind = 'switch', label = 'Pause the whole app',
-      about = 'For an event: no contract is placed or accepted anywhere, and every live contract '
-          .. 'keeps both its clocks stopped, as the restart hold stops them. Players are told '
-          .. '"Contracts are paused by staff." Off again, each clock runs where nothing else '
-          .. '(a freeze, the restart hold, somebody away) still stops it, and the lifetime is '
-          .. 'given back the time it was paused.',
-      inflight = 'At once, with no restart, and kept across one. Payouts, handovers and buyouts '
-          .. 'already under way finish as they began.' },
+      kind = 'switch', label = L('settings.pause_the_whole_app'),
+      about = L('settings.for_an_event_no_contract_is'),
+      inflight = L('settings.at_once_with_no_restart_and') },
     { key = 'Staff.DailySummary', section = 'features', category = 'features', group = 'Staff tools',
-      kind = 'switch', label = 'Daily summary to Discord',
-      about = 'Once a day, at the hour under Rules > Timers, a post to the alert webhook '
-          .. '(crimson_hitman_alert_webhook, or else crimson_hitman_webhook) with counts only: '
-          .. 'contracts placed, completed and refunded in the last day, money in escrow, open '
-          .. 'review items, frozen and suspended players. It never names anybody.',
-      inflight = 'Read at the hour. At most once a day, a restart included.' },
+      kind = 'switch', label = L('settings.daily_summary_to_discord'),
+      about = L('settings.once_a_day_at_the_hour'),
+      inflight = L('settings.read_at_the_hour_at_most') },
     { key = 'VersionCheck.Enabled', section = 'features', category = 'developer', group = 'Audit and debug',
-      kind = 'switch', label = 'Check for a newer version at start',
-      about = 'Off as shipped. On, with an address in Config.VersionCheck.Url (empty as shipped, '
-          .. 'which asks nothing), the server asks that address once at start, with a plain GET '
-          .. 'that sends no data of this server\'s, and says in the console when a newer version '
-          .. 'is out. Nothing else changes.',
-      inflight = 'Asked once, as the server starts: turned on now, the address is asked at the next '
-          .. 'start; turned off, the next start asks nothing.' },
-    { key = 'Debug', section = 'features', category = 'developer', group = 'Audit and debug', kind = 'switch',
-      label = 'Debug output in the server console',
-      about = 'Off: the server console prints only what needs you (refusing to start, money '
-          .. 'left for staff, a write that failed) and one line for every setting that needs '
-          .. 'attention. On: everything, each setting problem in full and page faults with their '
-          .. 'stack. The diagnosis lists all of it either way.',
-      inflight = 'Read at every line printed, with no restart. The lines of a start before the '
-          .. 'panel\'s settings are applied (the store opening, its migrations) follow config.lua; '
-          .. 'the diagnosis lists them either way.' },
+      kind = 'switch', label = L('settings.check_for_a_newer_version_at'),
+      about = L('settings.off_as_shipped_on_with_an'),
+      inflight = L('settings.asked_once_as_the_server_starts') },
+    { key = L('settings.debug'), section = 'features', category = 'developer', group = 'Audit and debug', kind = 'switch',
+      label = L('settings.debug_output_in_the_server_console'),
+      about = L('settings.off_the_server_console_prints_only'),
+      inflight = L('settings.read_at_every_line_printed_with') },
 
 
     -- Read only, with the reason -----------------------------------------
     { key = 'Admin.Enabled', section = 'readonly', category = 'developer', group = 'Staff', kind = 'switch',
-      label = 'Staff tools',
-      readonly = 'Turning the staff tools off from the staff tools would lock you out of turning '
-          .. 'them back on. Set it in config.lua.' },
+      label = L('settings.staff_tools'),
+      readonly = L('settings.turning_the_staff_tools_off_from') },
     { key = 'Admin.Ace', section = 'readonly', category = 'developer', group = 'Staff', kind = 'text',
-      label = 'Staff ACE', readonly = 'Who may use this panel. Set it in config.lua, so a slip '
-          .. 'here cannot lock staff out.' },
+      label = L('settings.staff_ace'), readonly = L('settings.who_may_use_this_panel_set') },
     { key = 'Admin.IdentityAce', section = 'readonly', category = 'developer', group = 'Staff', kind = 'text',
-      label = 'Identity ACE', readonly = 'Who may unmask anonymous parties. Set it in config.lua.' },
+      label = L('settings.identity_ace'), readonly = L('settings.who_may_unmask_anonymous_parties_set') },
     { key = 'Database.Mode', section = 'readonly', category = 'developer', group = 'Storage', kind = 'text',
-      label = 'Storage mode', readonly = 'Changing it needs the money in the old mode settled and '
-          .. 'a restart (README, Changing storage mode).' },
+      label = L('settings.storage_mode'), readonly = L('settings.changing_it_needs_the_money_in') },
     { key = 'Database.AllowModeSwitch', section = 'readonly', group = 'Storage', kind = 'switch',
       category = 'developer',
-      label = 'Start over money in another mode',
-      readonly = 'Read once at start, and only safe on a server that settled the old mode by hand.' },
+      label = L('settings.start_over_money_in_another_mode'),
+      readonly = L('settings.read_once_at_start_and_only') },
     { key = 'Database.Json.SyncOnFinancialWrite', section = 'readonly', category = 'developer', group = 'Storage',
-      kind = 'switch', label = 'Write money to disk as it moves',
-      readonly = 'Off, a crash could lose money that had moved. Set it in config.lua.' },
+      kind = 'switch', label = L('settings.write_money_to_disk_as_it'),
+      readonly = L('settings.off_a_crash_could_lose_money') },
     { key = 'Database.QueryTimeoutSeconds', section = 'readonly', category = 'developer', group = 'Storage',
-      kind = 'number', label = 'Database answer limit (s)',
-      readonly = 'mysql only. Set it in config.lua; it takes effect at the next start.' },
+      kind = 'number', label = L('settings.database_answer_limit'),
+      readonly = L('settings.mysql_only_set_it_in_config') },
     -- Shown, not switched: turned off it changed nothing. A target only in
     -- last stand never reads as dead to the server, the sampler or the
     -- photo checks, whatever it says; it only removes one a death provider
     -- reports as dead and in last stand at once.
     { key = 'Completion.RejectLastStand', section = 'readonly', category = 'developer', group = 'Completion',
-      kind = 'switch', label = 'A downed target is not a kill',
-      readonly = 'Only matters for a death provider that reports dead and last stand at once; '
-          .. 'a downed target is never a kill here.' },
+      kind = 'switch', label = L('settings.a_downed_target_is_not_a'),
+      readonly = L('settings.only_matters_for_a_death_provider') },
 
     -- Limits and settings -------------------------------------------------
     { key = 'Limits.MaxActiveContractsPerCreator', section = 'limits', group = 'Contract limits',
       category = 'rules-limits',
-      kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts a client may have out',
+      kind = 'number', integer = true, min = 1, max = 50, label = L('settings.contracts_a_client_may_have_out'),
       inflight = CAP },
     { key = 'Limits.MaxAcceptedPerHitman', section = 'limits', category = 'rules-limits', group = 'Contract limits',
-      kind = 'number', integer = true, min = 1, max = 50, label = 'Contracts a hitman may hold',
+      kind = 'number', integer = true, min = 1, max = 50, label = L('settings.contracts_a_hitman_may_hold'),
       inflight = CAP },
     -- Target limits (the panel's own section, server/targetlimits.lua): how
     -- often one person may have a contract placed on them. A job's or a
     -- player's override is set there too, over these.
     { key = 'Limits.MaxActiveContractsPerTarget', section = 'limits', group = 'Target limits',
       category = 'target-limits',
-      kind = 'number', integer = true, min = 1, max = 50, label = 'Live contracts on one person at once',
+      kind = 'number', integer = true, min = 1, max = 50, label = L('settings.live_contracts_on_one_person_at'),
       inflight = CAP },
     { key = 'Limits.MaxContractsPerTargetPerDay', section = 'limits', group = 'Target limits',
       category = 'target-limits',
       kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Contracts placed on one person in a rolling 24 hours (0 = off)',
-      about = 'Every contract placed on them counts, whatever became of it, but one staff voided.',
+      label = L('settings.contracts_placed_on_one_person_in'),
+      about = L('settings.every_contract_placed_on_them_counts'),
       inflight = CAP },
     { key = 'Limits.MaxContractsPerTargetPerWeek', section = 'limits', group = 'Target limits',
       category = 'target-limits',
       kind = 'number', integer = true, min = 0, max = 500,
-      label = 'Contracts placed on one person in a rolling 7 days (0 = off)',
-      about = 'Every contract placed on them counts, whatever became of it, but one staff voided.',
+      label = L('settings.contracts_placed_on_one_person_in_2'),
+      about = L('settings.every_contract_placed_on_them_counts'),
       inflight = CAP },
     -- Never above the most a contract may be worth (Config.MaxContractValue,
     -- config.lua's only): offered up to 100,000,000, anything over that was
     -- refused, in words that said the start would use the ceiling instead.
     { key = 'Limits.MinContractReward', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 0, max = 100000000, ceiling = 'MaxContractValue',
-      label = 'Least a reward may be worth ($, 0 off)', inflight = CAP },
+      label = L('settings.least_a_reward_may_be_worth'), inflight = CAP },
     { key = 'Limits.MaxHitmenPerContract', section = 'limits', category = 'rules-limits', group = 'Contract limits',
-      kind = 'number', integer = true, min = 1, max = 50, label = 'Operatives on one contract',
+      kind = 'number', integer = true, min = 1, max = 50, label = L('settings.operatives_on_one_contract'),
       inflight = CAP },
     { key = 'Limits.MaxPayoutSlots', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 3,
-      label = 'Times one contract can be collected (1 to 3)',
-      inflight = 'New contracts only: each contract keeps the number it was placed with. At 1 the '
-          .. 'Place form shows no extra collections.' },
+      label = L('settings.times_one_contract_can_be_collected'),
+      inflight = L('settings.new_contracts_only_each_contract_keeps') },
     { key = 'Limits.MaxEscrowLines', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
-      kind = 'number', integer = true, min = 1, max = 500, label = 'Escrow lines in one contract',
+      kind = 'number', integer = true, min = 1, max = 500, label = L('settings.escrow_lines_in_one_contract'),
       inflight = CAP },
     { key = 'Limits.MaxDeadlineSkipSeconds', section = 'limits', category = 'developer', group = 'Contract limits',
       kind = 'number', integer = true, min = 10, max = 3600,
-      label = 'Longest the expiry pass sleeps (s)', inflight = AT_USE },
+      label = L('settings.longest_the_expiry_pass_sleeps'), inflight = AT_USE },
     { key = 'Limits.SlotCooldownSeconds', section = 'limits', category = 'rules-rewards', group = 'Contract limits',
       kind = 'number', integer = true, min = 0, max = 86400,
-      label = 'Wait between one hitman\'s payouts (s)', inflight = AT_USE },
+      label = L('settings.wait_between_one_hitmans_payouts'), inflight = AT_USE },
     { key = 'Limits.TargetCooldownAfterResolveSeconds', section = 'limits', group = 'Target limits',
       category = 'target-limits',
       kind = 'number', integer = true, min = 0, max = 604800,
-      label = 'Wait after a contract on a person ends before anybody names them again (seconds)',
+      label = L('settings.wait_after_a_contract_on_a'),
       inflight = AT_USE },
     { key = 'Limits.SameCreatorSameTargetCooldownSeconds', section = 'limits', category = 'target-limits',
       group = 'Target limits', kind = 'number', integer = true, min = 0, max = 604800,
-      label = 'Wait before the same placer names the same person again (seconds)', inflight = AT_USE },
+      label = L('settings.wait_before_the_same_placer_names'), inflight = AT_USE },
     { key = 'Limits.ContractLifetimeSeconds', section = 'limits', category = 'rules-timers', group = 'Contract limits',
       kind = 'number', integer = true, min = 600, max = 2592000,
-      label = 'Longest a contract may run (s)',
-      inflight = 'New contracts only: each contract keeps the lifetime it was placed with.' },
+      label = L('settings.longest_a_contract_may_run'),
+      inflight = L('settings.new_contracts_only_each_contract_keeps_2') },
     { key = 'Limits.DefaultDeadlineSeconds', section = 'limits', category = 'rules-timers', group = 'Contract limits',
       kind = 'number', integer = true, min = 300, max = 2592000,
-      label = 'Deadline a new contract gets (s)',
-      inflight = 'New contracts only: each contract keeps the deadline it was given.' },
+      label = L('settings.deadline_a_new_contract_gets'),
+      inflight = L('settings.new_contracts_only_each_contract_keeps_3') },
     { key = 'Limits.StaffDeadlineMaxAdjustSeconds', section = 'limits', category = 'rules-timers',
       group = 'Contract limits', kind = 'number', integer = true, min = 60, max = 2592000,
-      label = 'Most staff may extend or shorten a deadline by (s)', inflight = AT_USE },
+      label = L('settings.most_staff_may_extend_or_shorten'), inflight = AT_USE },
     { key = 'Limits.StaffDeadlineMinLeftSeconds', section = 'limits', category = 'rules-timers',
       group = 'Contract limits', kind = 'number', integer = true, min = 0, max = 86400,
-      label = 'Least time a staff shortening leaves (s)', inflight = AT_USE },
+      label = L('settings.least_time_a_staff_shortening_leaves'), inflight = AT_USE },
     -- Config.Staff (Staff and permissions in config.lua): the most one
     -- manual payment from Players may be. Shown with the limits.
     { key = 'Staff.ManualPaymentMax', section = 'limits', category = 'rules-limits', group = 'Staff',
       kind = 'number', integer = true, min = 0, max = 100000000,
-      label = 'Most one manual staff payment may be ($, 0 off)',
-      about = 'Players, Pay: cash or bank paid to one player by staff with the staff ACE.',
+      label = L('settings.most_one_manual_staff_payment_may'),
+      about = L('settings.players_pay_cash_or_bank_paid'),
       inflight = AT_USE },
     { key = 'Staff.RewardChangeMax', section = 'limits', category = 'rules-limits', group = 'Staff',
       kind = 'number', integer = true, min = 0, max = 100000000,
-      label = 'Most staff may change a reward by at once ($, 0 off)',
-      about = 'A contract\'s Change reward: raised (added by staff, or charged to the placer) or '
-          .. 'lowered (the difference back to whoever funded it), by staff with the staff ACE.',
+      label = L('settings.most_staff_may_change_a_reward'),
+      about = L('settings.a_contracts_change_reward_raised_added'),
       inflight = AT_USE },
     { key = 'Staff.ReassignStake', section = 'limits', category = 'rules-limits', group = 'Staff',
       kind = 'choice', choices = { 'waive', 'charge' },
-      label = 'Stake of a hitman staff assign',
-      about = 'A contract\'s Reassign: \'waive\' puts no stake up for them; \'charge\' stakes them '
-          .. 'as their own Accept would.',
+      label = L('settings.stake_of_a_hitman_staff_assign'),
+      about = L('settings.a_contracts_reassign_waive_puts_no'),
       inflight = AT_USE },
     { key = 'Limits.ExclusiveIdleReleaseSeconds', section = 'limits', group = 'Contract limits',
       category = 'rules-timers',
       kind = 'number', integer = true, min = 0, max = 604800,
-      label = 'Release an idle exclusive hold after (s, 0 off)', inflight = AT_USE },
+      label = L('settings.release_an_idle_exclusive_hold_after'), inflight = AT_USE },
     { key = 'Limits.ExclusiveAttemptWindowSeconds', section = 'limits', group = 'Contract limits',
       category = 'rules-timers',
       kind = 'number', integer = true, min = 0, max = 604800,
-      label = 'Release a hold with no attempt after (s, 0 off)', inflight = AT_USE },
+      label = L('settings.release_a_hold_with_no_attempt'), inflight = AT_USE },
     { key = 'Limits.JailZone.radius', place = 'jail',
       section = 'limits', category = 'rules-limits', group = 'Contract limits',
-      kind = 'number', min = 10, max = 5000, label = 'Prison grounds radius (m)', inflight = AT_USE },
+      kind = 'number', min = 10, max = 5000, label = L('settings.prison_grounds_radius_m'), inflight = AT_USE },
 
     { key = 'Penalty.MaxAmount', section = 'limits', category = 'rules-rewards', group = 'Stakes', kind = 'number',
-      integer = true, min = 0, max = 100000000, label = 'Largest stake ($)',
-      inflight = 'New contracts only: a stake is fixed when the contract is placed.' },
+      integer = true, min = 0, max = 100000000, label = L('settings.largest_stake'),
+      inflight = L('settings.new_contracts_only_a_stake_is') },
     { key = 'Penalty.MaxFractionOfEscrow', section = 'limits', group = 'Stakes', kind = 'number',
       category = 'rules-rewards',
-      min = 0, max = 10, label = 'Largest stake, as a share of the reward',
-      inflight = 'New contracts only: a stake is fixed when the contract is placed.' },
+      min = 0, max = 10, label = L('settings.largest_stake_as_a_share_of'),
+      inflight = L('settings.new_contracts_only_a_stake_is') },
     { key = 'Penalty.MinWindowMinutes', section = 'limits', group = 'Stakes', kind = 'number',
       category = 'rules-timers',
-      integer = true, min = 0, max = 1440, label = 'Least time left to stake on (min)',
+      integer = true, min = 0, max = 1440, label = L('settings.least_time_left_to_stake_on'),
       inflight = AT_USE },
 
     { key = 'Anonymity.CreatorFee', section = 'limits', category = 'rules-rewards', group = 'Anonymity',
       kind = 'number',
-      integer = true, min = 0, max = 10000000, label = 'Fee to place anonymously ($)',
-      inflight = 'Charged when a contract is placed; a fee refunded is always the one charged.' },
+      integer = true, min = 0, max = 10000000, label = L('settings.fee_to_place_anonymously'),
+      inflight = L('settings.charged_when_a_contract_is_placed') },
     { key = 'Anonymity.HitmanFee', section = 'limits', category = 'rules-rewards', group = 'Anonymity', kind = 'number',
-      integer = true, min = 0, max = 10000000, label = 'Fee to accept anonymously ($)',
-      inflight = 'Charged when a contract is accepted.' },
+      integer = true, min = 0, max = 10000000, label = L('settings.fee_to_accept_anonymously'),
+      inflight = L('settings.charged_when_a_contract_is_accepted') },
     { key = 'Anonymity.FeeAccount', section = 'limits', category = 'rules-rewards', group = 'Anonymity',
       kind = 'choice',
-      choices = { 'bank', 'cash' }, label = 'Account the fees are charged to',
-      inflight = 'A fee refunded goes back to the account it was taken from.' },
+      choices = { 'bank', 'cash' }, label = L('settings.account_the_fees_are_charged_to'),
+      inflight = L('settings.a_fee_refunded_goes_back_to') },
 
     { key = 'Intel.Informant.Cost', section = 'limits', category = 'rules-rewards', group = 'Intel: Informants', kind = 'number',
-      integer = true, min = 0, max = 10000000, label = 'Target\'s look-up price ($)',
+      integer = true, min = 0, max = 10000000, label = L('settings.targets_look_up_price'),
       inflight = AT_USE },
     { key = 'Intel.Informant.RevealChancePercent', section = 'limits', category = 'rules-limits', group = 'Intel: Informants',
       kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Target\'s chance a look-up finds out (%)', inflight = AT_USE },
+      label = L('settings.targets_chance_a_look_up_finds'), inflight = AT_USE },
     { key = 'Intel.PlacerInformant.Cost', section = 'limits', category = 'rules-rewards', group = 'Intel: Informants',
       kind = 'number',
-      integer = true, min = 0, max = 10000000, label = 'Placer\'s look-up price ($)',
+      integer = true, min = 0, max = 10000000, label = L('settings.placers_look_up_price'),
       inflight = AT_USE },
     { key = 'Intel.PlacerInformant.RevealChancePercent', section = 'limits', category = 'rules-limits', group = 'Intel: Informants',
       kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Placer\'s chance a look-up finds out (%)', inflight = AT_USE },
+      label = L('settings.placers_chance_a_look_up_finds'), inflight = AT_USE },
     { key = 'Intel.PlacerInformant.AlertChancePercent', section = 'limits', category = 'rules-limits', group = 'Intel: Informants',
       kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Chance the operative found out is told (%)', inflight = AT_USE },
+      label = L('settings.chance_the_operative_found_out_is'), inflight = AT_USE },
     { key = 'Intel.PlacerInformant.MaxPurchasesPerContract', section = 'limits', group = 'Intel: Informants',
       category = 'rules-limits',
       kind = 'number', integer = true, min = 0, max = 20,
-      label = 'Placer\'s look-ups per contract',
-      inflight = 'Look-ups already made count against the new figure.' },
+      label = L('settings.placers_look_ups_per_contract'),
+      inflight = L('settings.look_ups_already_made_count_against') },
     { key = 'Intel.PlacerInformant.CooldownMinutes', section = 'limits', category = 'rules-timers', group = 'Intel: Informants',
       kind = 'number', integer = true, min = 0, max = 1440,
-      label = 'Placer\'s wait between look-ups (min)', inflight = AT_USE },
+      label = L('settings.placers_wait_between_look_ups_min'), inflight = AT_USE },
 
     { key = 'Intel.LocationTip.Cost', section = 'limits', category = 'rules-rewards', group = 'Intel: Informant tip',
       kind = 'number',
-      integer = true, min = 0, max = 10000000, label = 'Price of a tip ($)', inflight = AT_USE },
+      integer = true, min = 0, max = 10000000, label = L('settings.price_of_a_tip'), inflight = AT_USE },
     { key = 'Intel.LocationTip.RadiusMeters', section = 'limits', category = 'rules-limits', group = 'Intel: Informant tip',
       kind = 'number', integer = true, min = 100, max = 2000,
-      label = 'Radius of the area (m; shown twice this across)',
-      inflight = 'Tips already bought keep the area they were shown.' },
+      label = L('settings.radius_of_the_area_m_shown'),
+      inflight = L('settings.tips_already_bought_keep_the_area') },
     { key = 'Intel.LocationTip.ShowMinutes', section = 'limits', category = 'rules-timers', group = 'Intel: Informant tip',
-      kind = 'number', integer = true, min = 1, max = 120, label = 'Minutes a tip is shown',
-      inflight = 'Tips already bought keep the time they were sold with.' },
+      kind = 'number', integer = true, min = 1, max = 120, label = L('settings.minutes_a_tip_is_shown'),
+      inflight = L('settings.tips_already_bought_keep_the_time') },
     { key = 'Intel.LocationTip.CooldownMinutes', section = 'limits', category = 'rules-timers', group = 'Intel: Informant tip',
       kind = 'number', integer = true, min = 0, max = 1440,
-      label = 'Minutes between two tips on a contract', inflight = AT_USE },
+      label = L('settings.minutes_between_two_tips_on_a'), inflight = AT_USE },
     { key = 'Intel.LocationTip.MaxPurchasesPerContract', section = 'limits', group = 'Intel: Informant tip',
       category = 'rules-limits',
       kind = 'number', integer = true, min = 1, max = 50,
-      label = 'Tips per contract, all its hitmen together', inflight = AT_USE },
+      label = L('settings.tips_per_contract_all_its_hitmen'), inflight = AT_USE },
 
     { key = 'Holds.RestartPauseBeforeSeconds', section = 'limits', category = 'rules-timers', group = 'Server restart',
       kind = 'number', integer = true, min = 0, max = 3600,
-      label = 'Pause contracts this long before a txAdmin restart (s, 0 = off)',
-      inflight = 'A pause already on stays until the restart, a skip or its longest.' },
+      label = L('settings.pause_contracts_this_long_before_a'),
+      inflight = L('settings.a_pause_already_on_stays_until') },
     { key = 'Holds.RestartMaxHoldMinutes', section = 'limits', category = 'rules-timers', group = 'Server restart',
       kind = 'number', integer = true, min = 1, max = 240,
-      label = 'Longest the pause lasts with no restart (min)',
-      inflight = 'A pause already on ends at the new length.' },
+      label = L('settings.longest_the_pause_lasts_with_no'),
+      inflight = L('settings.a_pause_already_on_ends_at') },
 
     { key = 'Staff.DailySummaryHour', section = 'limits', category = 'rules-timers', group = 'Staff tools',
       kind = 'number', integer = true, min = 0, max = 23,
-      label = 'Hour the daily summary is posted (server time, 0-23)',
-      inflight = 'Read every tick: a summary already posted today is not posted again.' },
+      label = L('settings.hour_the_daily_summary_is_posted'),
+      inflight = L('settings.read_every_tick_a_summary_already') },
     { key = 'Staff.AlertPlacedPerHour', section = 'limits', category = 'rules-limits', group = 'Staff alerts',
       kind = 'number', integer = true, min = 0, max = 1000,
-      label = 'Alert past this many contracts placed by one player in an hour (0 = off)',
+      label = L('settings.alert_past_this_many_contracts_placed'),
       inflight = AT_USE },
     { key = 'Staff.AlertTargetPerDay', section = 'limits', category = 'rules-limits', group = 'Staff alerts',
       kind = 'number', integer = true, min = 0, max = 1000,
-      label = 'Alert past this many contracts on one target in a day (0 = off)',
+      label = L('settings.alert_past_this_many_contracts_on'),
       inflight = AT_USE },
     { key = 'Staff.AlertRefusalsPer10Min', section = 'limits', category = 'rules-limits', group = 'Staff alerts',
       kind = 'number', integer = true, min = 0, max = 10000,
-      label = 'Alert past this many refusals to one player in 10 minutes (0 = off)',
+      label = L('settings.alert_past_this_many_refusals_to'),
       inflight = AT_USE },
 
     { key = 'Kidnap.CountdownSeconds', section = 'limits', group = 'Handovers', kind = 'number',
       category = 'rules-timers',
-      integer = true, min = 5, max = 600, label = 'Handover countdown (s)', inflight = AT_USE
-          .. ' A countdown already running finishes at the new length.' },
+      integer = true, min = 5, max = 600, label = L('settings.handover_countdown'), inflight = AT_USE
+          .. L('settings.a_countdown_already_running_finishes_at') },
     { key = 'Kidnap.Radius', section = 'limits', category = 'rules-limits', group = 'Handovers', kind = 'number',
-      min = 2, max = 100, label = 'Handover radius (m)',
-      inflight = 'A countdown already running keeps the radius it was armed with.' },
+      min = 2, max = 100, label = L('settings.handover_radius_m'),
+      inflight = L('settings.a_countdown_already_running_keeps_the') },
     { key = 'Kidnap.MinTargetHealthPercent', section = 'limits', category = 'rules-limits', group = 'Handovers',
       kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Least health to hand a target over (%)', inflight = AT_USE },
+      label = L('settings.least_health_to_hand_a_target'), inflight = AT_USE },
 
     { key = 'Bailout.MinMultiplier', section = 'limits', group = 'Buyout pricing', kind = 'number',
       category = 'rules-rewards',
-      min = 0, max = 20, label = 'Least buyout, times the reward',
-      inflight = 'New contracts only: a buyout price is fixed when the contract is placed.' },
+      min = 0, max = 20, label = L('settings.least_buyout_times_the_reward'),
+      inflight = L('settings.new_contracts_only_a_buyout_price') },
     { key = 'Bailout.MaxMultiplier', section = 'limits', group = 'Buyout pricing', kind = 'number',
       category = 'rules-rewards',
-      min = 0, max = 20, label = 'Most buyout, times the reward',
-      inflight = 'New contracts only: a buyout price is fixed when the contract is placed, '
-          .. 'and only comes down, to this many times what is left, when part of the reward '
-          .. 'is taken back.' },
+      min = 0, max = 20, label = L('settings.most_buyout_times_the_reward'),
+      inflight = L('settings.new_contracts_only_a_buyout_price_2') },
     { key = 'Bailout.AbsoluteMax', section = 'limits', group = 'Buyout pricing', kind = 'number',
       category = 'rules-rewards',
-      integer = true, min = 0, max = 100000000, label = 'Most buyout ($)',
-      inflight = 'New contracts only: a buyout price is fixed when the contract is placed, '
-          .. 'and lowering this never re-prices one.' },
+      integer = true, min = 0, max = 100000000, label = L('settings.most_buyout'),
+      inflight = L('settings.new_contracts_only_a_buyout_price_3') },
 
     { key = 'Targeting.NearbyRadius', section = 'limits', group = 'Targeting', kind = 'number',
       category = 'rules-targeting',
-      min = 5, max = 200, label = 'Nearby list radius (m)', inflight = AT_USE },
+      min = 5, max = 200, label = L('settings.nearby_list_radius_m'), inflight = AT_USE },
     { key = 'Targeting.MaxNearby', section = 'limits', group = 'Targeting', kind = 'number',
       category = 'rules-targeting',
-      integer = true, min = 1, max = 50, label = 'Names on the nearby list', inflight = AT_USE },
+      integer = true, min = 1, max = 50, label = L('settings.names_on_the_nearby_list'), inflight = AT_USE },
     { key = 'Targeting.NearbyClosedAfterSeconds', section = 'limits', category = 'rules-targeting', group = 'Targeting',
       kind = 'number', integer = true, min = 0, max = 86400,
-      label = 'Nearby list closed after a contract (s)', inflight = AT_USE },
+      label = L('settings.nearby_list_closed_after_a_contract'), inflight = AT_USE },
     { key = 'Targeting.BrowsePageSize', section = 'limits', group = 'Targeting', kind = 'number',
       category = 'rules-targeting',
-      integer = true, min = 5, max = 100, label = 'Names per page when browsing', inflight = AT_USE },
+      integer = true, min = 5, max = 100, label = L('settings.names_per_page_when_browsing'), inflight = AT_USE },
     { key = 'Targeting.MinQueryLength', section = 'limits', group = 'Targeting', kind = 'number',
       category = 'rules-targeting',
-      integer = true, min = 1, max = 10, label = 'Shortest name search', inflight = AT_USE },
+      integer = true, min = 1, max = 10, label = L('settings.shortest_name_search'), inflight = AT_USE },
     { key = 'Targeting.MaxResults', section = 'limits', group = 'Targeting', kind = 'number',
       category = 'rules-targeting',
-      integer = true, min = 1, max = 50, label = 'Results of a name search', inflight = AT_USE },
+      integer = true, min = 1, max = 50, label = L('settings.results_of_a_name_search'), inflight = AT_USE },
 
     { key = 'Ledger.PhotoRetentionDays', section = 'limits', group = 'Ledger', kind = 'number',
       category = 'rules-timers',
-      integer = true, min = 0, max = 365, label = 'Days an unopened kill photo is kept (0 forever)',
-      inflight = 'Looked at every ten minutes: photos already past a shorter age go then.',
-      destroys = 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the '
-          .. 'next sweep, for good.' },
+      integer = true, min = 0, max = 365, label = L('settings.days_an_unopened_kill_photo_is'),
+      inflight = L('settings.looked_at_every_ten_minutes_photos'),
+      destroys = L('settings.lowered_to_every_unopened_kill_photo') },
 
     { key = 'Advisory.TriggerJobTypes', section = 'limits', category = 'rules-targeting', group = 'Advisory job lists',
-      kind = 'list', label = 'Job types that raise an advisory', inflight = AT_USE },
+      kind = 'list', label = L('settings.job_types_that_raise_an_advisory'), inflight = AT_USE },
     { key = 'Advisory.TriggerJobNames', section = 'limits', category = 'rules-targeting', group = 'Advisory job lists',
-      kind = 'list', label = 'Job names that raise an advisory', inflight = AT_USE },
+      kind = 'list', label = L('settings.job_names_that_raise_an_advisory'), inflight = AT_USE },
     { key = 'Advisory.RecipientJobTypes', section = 'limits', group = 'Advisory job lists',
       category = 'rules-targeting',
-      kind = 'list', label = 'Job types that receive advisories', inflight = AT_USE },
+      kind = 'list', label = L('settings.job_types_that_receive_advisories'), inflight = AT_USE },
     { key = 'Advisory.RecipientJobNames', section = 'limits', group = 'Advisory job lists',
       category = 'rules-targeting',
-      kind = 'list', label = 'Job names that receive advisories', inflight = AT_USE },
+      kind = 'list', label = L('settings.job_names_that_receive_advisories'), inflight = AT_USE },
     -- Every other setting in config.lua ------------------------------------
     -- Added so (close to) every setting is changed from the panel. Each is
     -- checked by the start-up checks like the rest (fits); a key that is
     -- read once at start says so (live = false) and is kept for the next one.
     { key = 'MaxContractValue', section = 'limits', category = 'rules-rewards', group = 'Rewards',
       kind = 'number', integer = true, min = 1, max = 100000000,
-      label = 'Most a contract may hold ($)', about = 'The money a reward, its bonus and additions may '
-          .. 'add up to.', inflight = CAP },
+      label = L('settings.most_a_contract_may_hold'), about = L('settings.the_money_a_reward_its_bonus'), inflight = CAP },
     { key = 'Sources.cash.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'number', integer = true, min = 0, max = 100000000, label = 'Most cash in a reward ($)',
-      about = 'The cash one reward may hold.', inflight = CAP },
+      kind = 'number', integer = true, min = 0, max = 100000000, label = L('settings.most_cash_in_a_reward'),
+      about = L('settings.the_cash_one_reward_may_hold'), inflight = CAP },
     { key = 'Sources.bank.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'number', integer = true, min = 0, max = 100000000, label = 'Most bank money in a reward ($)',
-      about = 'The bank money one reward may hold.', inflight = CAP },
+      kind = 'number', integer = true, min = 0, max = 100000000, label = L('settings.most_bank_money_in_a_reward'),
+      about = L('settings.the_bank_money_one_reward_may'), inflight = CAP },
     { key = 'Sources.dirty.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'number', integer = true, min = 0, max = 100000000, label = 'Most dirty money in a reward ($)',
-      about = 'The dirty money one reward may hold.', inflight = CAP },
+      kind = 'number', integer = true, min = 0, max = 100000000, label = L('settings.most_dirty_money_in_a_reward'),
+      about = L('settings.the_dirty_money_one_reward_may'), inflight = CAP },
     { key = 'Sources.dirty.item', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Dirty money item',
-      about = 'The ox_inventory item dirty money is paid in.',
-      inflight = 'Read at each payment: lines already in escrow keep the item they were taken as.' },
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.dirty_money_item'),
+      about = L('settings.the_ox_inventory_item_dirty_money'),
+      inflight = L('settings.read_at_each_payment_lines_already') },
     { key = 'Sources.item.maxStacks', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'number', integer = true, min = 0, max = 100, label = 'Item stacks in a reward',
-      about = 'How many stacks of items one reward may hold.', inflight = CAP },
+      kind = 'number', integer = true, min = 0, max = 100, label = L('settings.item_stacks_in_a_reward'),
+      about = L('settings.how_many_stacks_of_items_one'), inflight = CAP },
     { key = 'Sources.item.maxPerStack', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'number', integer = true, min = 1, max = 100000, label = 'Items in one stack',
-      about = 'The count one stack of a reward may hold.', inflight = CAP },
+      kind = 'number', integer = true, min = 1, max = 100000, label = L('settings.items_in_one_stack'),
+      about = L('settings.the_count_one_stack_of_a'), inflight = CAP },
     { key = 'Sources.weapon.max', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'number', integer = true, min = 0, max = 50, label = 'Weapons in a reward',
-      about = 'How many weapons one reward may hold.', inflight = CAP },
+      kind = 'number', integer = true, min = 0, max = 50, label = L('settings.weapons_in_a_reward'),
+      about = L('settings.how_many_weapons_one_reward_may'), inflight = CAP },
     { key = 'Bonus.maxPercent', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'number', integer = true, min = 0, max = 1000, label = 'Most a kidnapping bonus adds (%)',
-      about = 'Under \'either\', the most a live-handover bonus may add to the reward.',
-      inflight = 'Contracts keep the bonus they were placed with; new ones are held to it.' },
+      kind = 'number', integer = true, min = 0, max = 1000, label = L('settings.most_a_kidnapping_bonus_adds'),
+      about = L('settings.under_either_the_most_a_live'),
+      inflight = L('settings.contracts_keep_the_bonus_they_were') },
     { key = 'EscrowBlacklist', section = 'limits', category = 'rules-rewards', group = 'Rewards',
-      kind = 'list', names = 'item', label = 'Items never put in a reward',
-      about = 'ox_inventory item names a reward may not hold.',
-      inflight = 'Items already in escrow are paid out or returned as before; new ones are refused.' },
+      kind = 'list', names = 'item', label = L('settings.items_never_put_in_a_reward'),
+      about = L('settings.ox_inventory_item_names_a_reward'),
+      inflight = L('settings.items_already_in_escrow_are_paid') },
     { key = 'PendingEscrow.MaxRetriesPerLogin', section = 'limits', category = 'rules-rewards',
       group = 'Payouts', kind = 'number', integer = true, min = 1, max = 100,
-      label = 'Owed payouts tried at each login',
-      about = 'How many payouts owed to a player one pass tries when they log in.', inflight = AT_USE },
+      label = L('settings.owed_payouts_tried_at_each_login'),
+      about = L('settings.how_many_payouts_owed_to_a'), inflight = AT_USE },
     { key = 'PendingEscrow.LoginRetryDelayMs', section = 'limits', category = 'rules-rewards',
       group = 'Payouts', kind = 'number', integer = true, min = 0, max = 600000,
-      label = 'Wait after login before paying (ms)',
-      about = 'How long after a login what is owed is paid, so the inventory is loaded first.',
+      label = L('settings.wait_after_login_before_paying_ms'),
+      about = L('settings.how_long_after_a_login_what'),
       inflight = AT_USE },
     { key = 'Bailout.ProcessingDelaySeconds', section = 'limits', category = 'rules-rewards',
       group = 'Buyouts', kind = 'number', integer = true, min = 0, max = 86400,
-      label = 'Hitman\'s head start on a buyout (s)',
-      about = 'A held contract\'s hitman gets this long to finish before a buyout closes it.',
-      inflight = 'A buyout already queued keeps the time it was queued at.' },
+      label = L('settings.hitmans_head_start_on_a_buyout'),
+      about = L('settings.a_held_contracts_hitman_gets_this'),
+      inflight = L('settings.a_buyout_already_queued_keeps_the') },
     { key = 'Intel.Informant.Account', section = 'limits', category = 'rules-rewards', group = 'Intel prices',
-      kind = 'choice', choices = { 'bank', 'cash' }, label = 'Account the target\'s look-up is paid from',
-      about = 'Where the target\'s informant price is taken from.', inflight = AT_USE },
+      kind = 'choice', choices = { 'bank', 'cash' }, label = L('settings.account_the_targets_look_up_is'),
+      about = L('settings.where_the_targets_informant_price_is'), inflight = AT_USE },
     { key = 'Intel.PlacerInformant.Account', section = 'limits', category = 'rules-rewards',
       group = 'Intel prices', kind = 'choice', choices = { 'bank', 'cash' },
-      label = 'Account the placer\'s look-up is paid from',
-      about = 'Where the placer\'s informant price is taken from.', inflight = AT_USE },
+      label = L('settings.account_the_placers_look_up_is'),
+      about = L('settings.where_the_placers_informant_price_is'), inflight = AT_USE },
     { key = 'Intel.LocationTip.Account', section = 'limits', category = 'rules-rewards',
       group = 'Intel prices', kind = 'choice', choices = { 'bank', 'cash' },
-      label = 'Account a tip is paid from', about = 'Where the price of an informant tip is taken from.',
+      label = L('settings.account_a_tip_is_paid_from'), about = L('settings.where_the_price_of_an_informant'),
       inflight = AT_USE },
 
     { key = 'Completion.ProofWindowSeconds', section = 'limits', category = 'rules-timers',
       group = 'Completion', kind = 'number', integer = true, min = 0, max = 3600,
-      label = 'Kill verifies this long after death (s)',
-      about = 'A kill still verifies this long after the target died, even once they are back up.',
+      label = L('settings.kill_verifies_this_long_after_death'),
+      about = L('settings.a_kill_still_verifies_this_long'),
       inflight = AT_USE },
     { key = 'Completion.PhotoTokenLifetimeSeconds', section = 'limits', category = 'rules-timers',
       group = 'Completion', kind = 'number', integer = true, min = 10, max = 3600, client = true,
-      label = 'Time to verify a kill (s)', about = 'How long a kill waits to be verified.',
-      inflight = 'Applies to the next kill; one already waiting keeps its time.' },
+      label = L('settings.time_to_verify_a_kill'), about = L('settings.how_long_a_kill_waits_to'),
+      inflight = L('settings.applies_to_the_next_kill_one') },
     { key = 'Completion.PhotoOpenSeconds', section = 'limits', category = 'rules-timers',
       group = 'Completion', kind = 'number', integer = true, min = 10, max = 86400,
-      label = 'Time the placer may view a photo (s)', about = 'After this the opened photo is deleted.',
+      label = L('settings.time_the_placer_may_view_a'), about = L('settings.after_this_the_opened_photo_is'),
       inflight = AT_USE },
     { key = 'Kidnap.RearmCooldownSeconds', section = 'limits', category = 'rules-timers',
       group = 'Handovers', kind = 'number', integer = true, min = 0, max = 3600,
-      label = 'Wait after a failed handover (s)', about = 'Before a handover can be armed again.',
+      label = L('settings.wait_after_a_failed_handover'), about = L('settings.before_a_handover_can_be_armed'),
       inflight = AT_USE },
     { key = 'Amendments.ProposalExpirySeconds', section = 'limits', category = 'rules-timers',
       group = 'Proposals', kind = 'number', integer = true, min = 30, max = 86400,
-      label = 'A proposal lapses after (s)', about = 'Open proposals between placer and hitman lapse.',
-      inflight = 'Proposals already open keep the time they were given.' },
+      label = L('settings.a_proposal_lapses_after'), about = L('settings.open_proposals_between_placer_and_hitman'),
+      inflight = L('settings.proposals_already_open_keep_the_time') },
     { key = 'Amendments.CancelCooldownSeconds', section = 'limits', category = 'rules-timers',
       group = 'Proposals', kind = 'number', integer = true, min = 0, max = 86400,
-      label = 'Wait after calling a contract off (s)',
-      about = 'Before the same placer may place another on that target.', inflight = AT_USE },
+      label = L('settings.wait_after_calling_a_contract_off'),
+      about = L('settings.before_the_same_placer_may_place'), inflight = AT_USE },
     { key = 'Intel.Informant.RerollLockMinutes', section = 'limits', category = 'rules-timers',
       group = 'Intel: Informants', kind = 'number', integer = true, min = 0, max = 1440,
-      label = 'Same pick repeats its answer for (min)',
-      about = 'The same look-up again this soon repeats the answer, free.', inflight = AT_USE },
+      label = L('settings.same_pick_repeats_its_answer_for'),
+      about = L('settings.the_same_look_up_again_this'), inflight = AT_USE },
     { key = 'Immunity.PostRespawnSeconds', section = 'limits', category = 'rules-timers',
       group = 'Immunity', kind = 'number', integer = true, min = 0, max = 86400,
-      label = 'Protected after a respawn (s)', about = 'Nobody may be targeted this long after a respawn.',
+      label = L('settings.protected_after_a_respawn'), about = L('settings.nobody_may_be_targeted_this_long'),
       inflight = AT_USE },
     { key = 'Immunity.AfterBailoutSeconds', section = 'limits', category = 'rules-timers',
       group = 'Immunity', kind = 'number', integer = true, min = 0, max = 604800,
-      label = 'Protected after a buyout (s)', about = 'Nobody may target them again this long after a buyout.',
+      label = L('settings.protected_after_a_buyout'), about = L('settings.nobody_may_target_them_again_this'),
       inflight = AT_USE },
     { key = 'Notifications.ParanoidAlertJitter', section = 'limits', category = 'rules-timers',
       group = 'Notifications', kind = 'range', integer = true, min = 0, max = 86400,
-      label = 'Wait before "eyes on you" (s, from-to)',
-      about = 'The target\'s alert waits a random time between these two.', inflight = AT_USE },
+      label = L('settings.wait_before_eyes_on_you_from'),
+      about = L('settings.the_targets_alert_waits_a_random'), inflight = AT_USE },
     { key = 'Notifications.ParanoidCooldownMinutes', section = 'limits', category = 'rules-timers',
       group = 'Notifications', kind = 'number', integer = true, min = 0, max = 1440,
-      label = 'One "eyes on you" per target per (min)', about = 'At most one such alert in this long.',
+      label = L('settings.one_eyes_on_you_per_target'), about = L('settings.at_most_one_such_alert_in'),
       inflight = AT_USE },
     { key = 'Mugshot.MinRefreshMinutes', section = 'limits', category = 'rules-timers',
       group = 'Targeting', kind = 'number', integer = true, min = 0, max = 1440,
-      label = 'Least time between two headshots (min)', about = 'Of one target.', inflight = AT_USE },
+      label = L('settings.least_time_between_two_headshots_min'), about = L('settings.of_one_target'), inflight = AT_USE },
 
     { key = 'Completion.PhotoRadius', section = 'limits', category = 'rules-limits', group = 'Completion',
-      kind = 'number', min = 1, max = 100, label = 'Distance to the body to verify (m)',
-      about = 'How close the hitman must be to verify a kill.', inflight = AT_USE },
+      kind = 'number', min = 1, max = 100, label = L('settings.distance_to_the_body_to_verify'),
+      about = L('settings.how_close_the_hitman_must_be'), inflight = AT_USE },
     { key = 'Completion.MaxWeaponRange', section = 'limits', category = 'rules-limits',
-      group = 'Completion', kind = 'number', min = 10, max = 2000, label = 'Range a hit is believed from (m)',
-      about = 'A hit reported from further than this is not counted.', inflight = AT_USE },
+      group = 'Completion', kind = 'number', min = 10, max = 2000, label = L('settings.range_a_hit_is_believed_from'),
+      about = L('settings.a_hit_reported_from_further_than'), inflight = AT_USE },
     { key = 'Completion.MedicJobs', section = 'limits', category = 'rules-limits', group = 'Completion',
-      kind = 'list', label = 'Medic jobs', about = 'Jobs whose revive counts, as sc-ambulance\'s RequireEMS.',
+      kind = 'list', label = L('settings.medic_jobs'), about = L('settings.jobs_whose_revive_counts_as_sc'),
       inflight = AT_USE },
     { key = 'Completion.DefibItem', section = 'limits', category = 'rules-limits', group = 'Completion',
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Defibrillator item',
-      about = 'As sc-ambulance\'s Defib.Item.', inflight = AT_USE },
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.defibrillator_item'),
+      about = L('settings.as_sc_ambulances_defib_item'), inflight = AT_USE },
     { key = 'Completion.DefibRange', section = 'limits', category = 'rules-limits', group = 'Completion',
-      kind = 'number', min = 0.5, max = 20, label = 'Defibrillator range (m)',
-      about = 'As sc-ambulance\'s Defib.Distance.', inflight = AT_USE },
+      kind = 'number', min = 0.5, max = 20, label = L('settings.defibrillator_range_m'),
+      about = L('settings.as_sc_ambulances_defib_distance'), inflight = AT_USE },
     { key = 'Kidnap.MaxConcurrentCountdowns', section = 'limits', category = 'rules-limits',
       group = 'Handovers', kind = 'number', integer = true, min = 1, max = 500,
-      label = 'Handovers counting at once', about = 'Server-wide.', inflight = CAP },
+      label = L('settings.handovers_counting_at_once'), about = L('settings.server_wide'), inflight = CAP },
     { key = 'Amendments.MaxOpenPerContract', section = 'limits', category = 'rules-limits',
       group = 'Proposals', kind = 'number', integer = true, min = 1, max = 10,
-      label = 'Proposals open at once', about = 'On one contract.', inflight = CAP },
+      label = L('settings.proposals_open_at_once'), about = L('settings.on_one_contract'), inflight = CAP },
     { key = 'Intel.Informant.RevealMode', section = 'limits', category = 'rules-limits', group = 'Intel: Informants',
-      kind = 'choice', choices = { 'name', 'description' }, label = 'What the target\'s look-up reveals',
-      about = '\'name\': the hitman\'s name. \'description\': what they look like.', inflight = AT_USE },
+      kind = 'choice', choices = { 'name', 'description' }, label = L('settings.what_the_targets_look_up_reveals'),
+      about = L('settings.name_the_hitmans_name_description_what'), inflight = AT_USE },
     { key = 'Intel.Informant.ProximityRadius', section = 'limits', category = 'rules-limits', group = 'Intel: Informants',
-      kind = 'number', min = 5, max = 2000, label = 'Distance that counts as near (m)',
-      about = 'For an idle exclusive hold\'s clock.', inflight = AT_USE },
+      kind = 'number', min = 5, max = 2000, label = L('settings.distance_that_counts_as_near_m'),
+      about = L('settings.for_an_idle_exclusive_holds_clock'), inflight = AT_USE },
     { key = 'Intel.Informant.MaxPurchasesPerContract', section = 'limits', category = 'rules-limits',
       group = 'Intel: Informants', kind = 'number', integer = true, min = 0, max = 50,
-      label = 'Target\'s look-ups per contract', about = 'Both kinds together.', inflight = AT_USE },
+      label = L('settings.targets_look_ups_per_contract'), about = L('settings.both_kinds_together'), inflight = AT_USE },
     { key = 'Intel.PlacerInformant.RevealMode', section = 'limits', category = 'rules-limits',
       group = 'Intel: Informants', kind = 'choice', choices = { 'name', 'description' },
-      label = 'What the placer\'s look-up reveals',
-      about = '\'name\': the operative\'s name. \'description\': what they look like.', inflight = AT_USE },
+      label = L('settings.what_the_placers_look_up_reveals'),
+      about = L('settings.name_the_operatives_name_description_what'), inflight = AT_USE },
     { key = 'Reason.Mode', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
-      kind = 'choice', choices = { 'preset', 'freetext', 'off' }, label = 'How a reason is given',
-      about = '\'preset\': picked from the list. \'freetext\': typed. \'off\': none.',
-      inflight = 'Contracts keep the reason they were placed with.' },
+      kind = 'choice', choices = { 'preset', 'freetext', 'off' }, label = L('settings.how_a_reason_is_given'),
+      about = L('settings.preset_picked_from_the_list_freetext'),
+      inflight = L('settings.contracts_keep_the_reason_they_were') },
     { key = 'Reason.MaxLength', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
-      kind = 'number', integer = true, min = 10, max = 255, label = 'Longest reason (characters)',
-      about = '255 at most on mysql.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 10, max = 255, label = L('settings.longest_reason_characters'),
+      about = L('settings.255_at_most_on_mysql'), inflight = AT_USE },
     { key = 'Reason.MaxDigits', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
-      kind = 'number', integer = true, min = 0, max = 50, label = 'Digits a reason may hold',
-      about = 'Kept low so no phone number is posted.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 50, label = L('settings.digits_a_reason_may_hold'),
+      about = L('settings.kept_low_so_no_phone_number'), inflight = AT_USE },
     { key = 'Reason.Presets', section = 'limits', category = 'rules-limits', group = 'Contract reasons',
-      kind = 'list', array = true, names = 'phrase', label = 'Reasons to pick from',
-      about = 'The choices in \'preset\' mode, in order.', inflight = AT_USE },
+      kind = 'list', array = true, names = 'phrase', label = L('settings.reasons_to_pick_from'),
+      about = L('settings.the_choices_in_preset_mode_in'), inflight = AT_USE },
     { key = 'Notifications.MaxPerRecipientPerMinute', section = 'limits', category = 'rules-limits',
       group = 'Notifications', kind = 'number', integer = true, min = 1, max = 100,
-      label = 'Notices a player may get a minute', about = 'Above it, notices are dropped.',
+      label = L('settings.notices_a_player_may_get_a'), about = L('settings.above_it_notices_are_dropped'),
       inflight = AT_USE },
     { key = 'Notifications.MaxPerRecipientPerHour', section = 'limits', category = 'rules-limits',
       group = 'Notifications', kind = 'number', integer = true, min = 1, max = 1000,
-      label = 'Notices a player may get an hour', about = 'Above it, notices are dropped.',
+      label = L('settings.notices_a_player_may_get_an'), about = L('settings.above_it_notices_are_dropped'),
       inflight = AT_USE },
     { key = 'Advisory.DispatchPriority', section = 'limits', category = 'rules-limits',
       group = 'Law enforcement advisory', kind = 'number', integer = true, min = 1, max = 3,
-      label = 'Dispatch priority', about = 'The sc-dispatch priority of an advisory.', inflight = AT_USE },
+      label = L('settings.dispatch_priority'), about = L('settings.the_sc_dispatch_priority_of_an'), inflight = AT_USE },
     { key = 'Relay.MaxLength', section = 'limits', category = 'rules-limits', group = 'Messages and calls',
-      kind = 'number', integer = true, min = 10, max = 255, label = 'Longest message (characters)',
-      about = '255 at most on mysql.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 10, max = 255, label = L('settings.longest_message_characters'),
+      about = L('settings.255_at_most_on_mysql'), inflight = AT_USE },
     { key = 'Relay.MaxMessagesPerThread', section = 'limits', category = 'rules-limits',
       group = 'Messages and calls', kind = 'number', integer = true, min = 10, max = 1000,
-      label = 'Messages a thread keeps', about = 'The newest are kept.', inflight = AT_USE },
+      label = L('settings.messages_a_thread_keeps'), about = L('settings.the_newest_are_kept'), inflight = AT_USE },
     { key = 'Ledger.Depth', section = 'limits', category = 'rules-limits', group = 'Ledger',
       kind = 'number', integer = true, min = 1, max = 100, ceiling = 'Ledger.MaxDepthHardCap',
-      label = 'Ledger rows per player', about = 'At most the hard cap below.', inflight = AT_USE },
+      label = L('settings.ledger_rows_per_player'), about = L('settings.at_most_the_hard_cap_below'), inflight = AT_USE },
     { key = 'Ledger.MaxDepthHardCap', section = 'limits', category = 'rules-limits', group = 'Ledger',
-      kind = 'number', integer = true, min = 1, max = 100, label = 'Ledger rows hard cap',
-      about = 'The ceiling on Ledger rows per player.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 1, max = 100, label = L('settings.ledger_rows_hard_cap'),
+      about = L('settings.the_ceiling_on_ledger_rows_per'), inflight = AT_USE },
     { key = 'Listing.PageSize', section = 'limits', category = 'rules-limits', group = 'The app',
-      kind = 'number', integer = true, min = 5, max = 100, label = 'Contracts per board page',
-      about = 'On the app\'s board.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 5, max = 100, label = L('settings.contracts_per_board_page'),
+      about = L('settings.on_the_apps_board'), inflight = AT_USE },
     { key = 'Limits.JailZone.x', place = 'jail',
       section = 'limits', category = 'rules-limits', group = 'Contract limits',
-      kind = 'number', min = -10000, max = 10000, label = 'Prison grounds centre, x',
-      about = 'Where the prison grounds are.', inflight = AT_USE },
+      kind = 'number', min = -10000, max = 10000, label = L('settings.prison_grounds_centre_x'),
+      about = L('settings.where_the_prison_grounds_are'), inflight = AT_USE },
     { key = 'Limits.JailZone.y', place = 'jail',
       section = 'limits', category = 'rules-limits', group = 'Contract limits',
-      kind = 'number', min = -10000, max = 10000, label = 'Prison grounds centre, y',
-      about = 'Where the prison grounds are.', inflight = AT_USE },
+      kind = 'number', min = -10000, max = 10000, label = L('settings.prison_grounds_centre_y'),
+      about = L('settings.where_the_prison_grounds_are'), inflight = AT_USE },
     { key = 'Bailout.Command', section = 'limits', category = 'rules-limits', group = 'Buyouts',
       kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, live = false,
-      label = 'Buyout command', about = 'For players who cannot open the app.', inflight = RESTART },
+      label = L('settings.buyout_command'), about = L('settings.for_players_who_cannot_open_the'), inflight = RESTART },
 
     { key = 'BlockedJobTypes', section = 'limits', category = 'rules-targeting', group = 'Barred jobs',
-      kind = 'list', label = 'Job types barred from the app',
-      about = 'Players on these job types cannot use the app.',
-      inflight = AT_USE .. ' Who may see the app is checked again at once.' },
+      kind = 'list', label = L('settings.job_types_barred_from_the_app'),
+      about = L('settings.players_on_these_job_types_cannot'),
+      inflight = AT_USE .. L('settings.who_may_see_the_app_is') },
     { key = 'BlockedJobNames', section = 'limits', category = 'rules-targeting', group = 'Barred jobs',
-      kind = 'list', label = 'Job names barred from the app',
-      about = 'Players on these jobs cannot use the app, besides the types.',
-      inflight = AT_USE .. ' Who may see the app is checked again at once.' },
+      kind = 'list', label = L('settings.job_names_barred_from_the_app'),
+      about = L('settings.players_on_these_jobs_cannot_use'),
+      inflight = AT_USE .. L('settings.who_may_see_the_app_is') },
     { key = 'Immunity.MinTargetPlaytimeHours', section = 'limits', category = 'rules-targeting',
       group = 'Immunity', kind = 'number', min = 0, max = 10000,
-      label = 'Hours played before being a target (0 off)', about = 'New players are protected.',
+      label = L('settings.hours_played_before_being_a_target'), about = L('settings.new_players_are_protected'),
       inflight = AT_USE },
     { key = 'Immunity.MinTargetSessionMinutes', section = 'limits', category = 'rules-targeting',
       group = 'Immunity', kind = 'number', integer = true, min = 0, max = 1440,
-      label = 'Minutes in the city this session', about = 'Before anyone may target them.',
+      label = L('settings.minutes_in_the_city_this_session'), about = L('settings.before_anyone_may_target_them'),
       inflight = AT_USE },
     { key = 'Immunity.GrandfatherDays', section = 'limits', category = 'rules-targeting',
       group = 'Immunity', kind = 'number', integer = true, min = 0, max = 365,
-      label = 'Days of grandfathering', about = 'Only without qbx_core\'s players table.',
+      label = L('settings.days_of_grandfathering'), about = L('settings.only_without_qbx_cores_players_table'),
       inflight = AT_USE },
 
     { key = 'Database.Json.WarnContractCount', section = 'limits', category = 'developer', group = 'Storage',
-      kind = 'number', integer = true, min = 100, max = 1000000, label = 'json: warn above this many contracts',
-      about = 'A console warning past it.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 100, max = 1000000, label = L('settings.json_warn_above_this_many_contracts'),
+      about = L('settings.a_console_warning_past_it'), inflight = AT_USE },
     { key = 'Database.Json.MaxDirtyShardsPerFlush', section = 'limits', category = 'developer',
       group = 'Storage', kind = 'number', integer = true, min = 1, max = 1000,
-      label = 'json: contract files one flush writes', about = 'The rest wait for the next flush.',
+      label = L('settings.json_contract_files_one_flush_writes'), about = L('settings.the_rest_wait_for_the_next'),
       inflight = AT_USE },
     { key = 'Audit.FlushIntervalMs', section = 'limits', category = 'developer', group = 'Audit and debug',
-      kind = 'number', integer = true, min = 1000, max = 600000, label = 'Audit flush interval (ms)',
-      about = 'How often queued log rows are written; it paces every maintenance job.',
-      inflight = 'Read at the next flush.' },
+      kind = 'number', integer = true, min = 1000, max = 600000, label = L('settings.audit_flush_interval_ms'),
+      about = L('settings.how_often_queued_log_rows_are'),
+      inflight = L('settings.read_at_the_next_flush') },
     { key = 'Audit.MaxQueueSize', section = 'limits', category = 'developer', group = 'Audit and debug',
-      kind = 'number', integer = true, min = 100, max = 100000, label = 'Log rows queued at most',
-      about = 'Past it, the oldest are written at once.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 100, max = 100000, label = L('settings.log_rows_queued_at_most'),
+      about = L('settings.past_it_the_oldest_are_written'), inflight = AT_USE },
     { key = 'Audit.RetentionDays', section = 'limits', category = 'developer', group = 'Audit and debug',
-      kind = 'number', integer = true, min = 0, max = 3650, label = 'Days the log is kept (0 forever)',
-      about = 'Older rows are deleted by the next sweep.',
-      destroys = 'Lowering it to %s deletes every log row older than that at the next sweep, for good.',
-      inflight = 'Read at the next sweep.' },
+      kind = 'number', integer = true, min = 0, max = 3650, label = L('settings.days_the_log_is_kept_0'),
+      about = L('settings.older_rows_are_deleted_by_the'),
+      destroys = L('settings.lowering_it_to_deletes_every_log'),
+      inflight = L('settings.read_at_the_next_sweep') },
     { key = 'Audit.ContractRetentionDays', section = 'limits', category = 'developer',
       group = 'Audit and debug', kind = 'number', integer = true, min = 0, max = 3650,
-      label = 'Days a finished contract is kept (0 forever)',
-      about = 'Finished contracts older than this are deleted by the next sweep.',
-      destroys = 'Lowering it to %s deletes every finished contract older than that, for good.',
-      inflight = 'Read at the next sweep.' },
+      label = L('settings.days_a_finished_contract_is_kept'),
+      about = L('settings.finished_contracts_older_than_this_are'),
+      destroys = L('settings.lowering_it_to_deletes_every_finished'),
+      inflight = L('settings.read_at_the_next_sweep') },
     { key = 'Audit.ContractsPrunedPerTick', section = 'limits', category = 'developer',
       group = 'Audit and debug', kind = 'number', integer = true, min = 1, max = 10000,
-      label = 'Finished contracts removed per sweep', about = 'Paces the sweep.', inflight = AT_USE },
+      label = L('settings.finished_contracts_removed_per_sweep'), about = L('settings.paces_the_sweep'), inflight = AT_USE },
     { key = 'Diagnostics.SlowJobMs', section = 'limits', category = 'developer', group = 'Diagnostics',
-      kind = 'number', integer = true, min = 0, max = 60000, label = 'Slow job threshold (ms, 0 never)',
-      about = 'A maintenance job slower than this prints a Debug line.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 60000, label = L('settings.slow_job_threshold_ms_0_never'),
+      about = L('settings.a_maintenance_job_slower_than_this'), inflight = AT_USE },
     { key = 'Kidnap.MaxTotalGraceMs', section = 'limits', category = 'developer', group = 'Handovers',
-      kind = 'number', integer = true, min = 0, max = 60000, label = 'Handover break allowed (ms)',
-      about = 'In all, before a handover fails.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 60000, label = L('settings.handover_break_allowed_ms'),
+      about = L('settings.in_all_before_a_handover_fails'), inflight = AT_USE },
     { key = 'Kidnap.TickMs', section = 'limits', category = 'developer', group = 'Handovers',
-      kind = 'number', integer = true, min = 250, max = 5000, label = 'Handover check interval (ms)',
-      about = 'How often a running handover is checked.', inflight = 'Read at the next check.' },
+      kind = 'number', integer = true, min = 250, max = 5000, label = L('settings.handover_check_interval_ms'),
+      about = L('settings.how_often_a_running_handover_is'), inflight = L('settings.read_at_the_next_check') },
     { key = 'Completion.DeathReportWindowMs', section = 'limits', category = 'developer',
       group = 'Completion', kind = 'number', integer = true, min = 1000, max = 600000,
-      label = 'A hit counts this long before a death (ms)', about = 'For the damage log.',
+      label = L('settings.a_hit_counts_this_long_before'), about = L('settings.for_the_damage_log'),
       inflight = AT_USE },
     { key = 'Completion.ConditionSampleMs', section = 'limits', category = 'developer',
       group = 'Completion', kind = 'number', integer = true, min = 250, max = 10000,
-      label = 'Targets\' health sampled every (ms)', about = 'Server-wide.', inflight = 'Read at the next sample.' },
+      label = L('settings.targets_health_sampled_every_ms'), about = L('settings.server_wide'), inflight = L('settings.read_at_the_next_sample') },
     { key = 'Completion.PhotoMaxSide', section = 'limits', category = 'developer', group = 'Completion',
-      kind = 'number', integer = true, min = 320, max = 4096, label = 'Photo longest side (px)',
-      about = '\'server\' storage.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 320, max = 4096, label = L('settings.photo_longest_side_px'),
+      about = L('settings.server_storage'), inflight = AT_USE },
     { key = 'Completion.PhotoMaxBytes', section = 'limits', category = 'developer', group = 'Completion',
-      kind = 'number', integer = true, min = 10000, max = 10000000, label = 'Largest photo (bytes)',
-      about = '\'server\' storage.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 10000, max = 10000000, label = L('settings.largest_photo_bytes'),
+      about = L('settings.server_storage'), inflight = AT_USE },
     { key = 'Completion.PhotoHostRefreshSeconds', section = 'limits', category = 'developer',
       group = 'Completion', kind = 'number', integer = true, min = 30, max = 86400,
-      label = 'Re-read lb-phone\'s image hosts every (s)', about = '\'host\' storage.',
-      inflight = 'Read at the next re-read.' },
+      label = L('settings.re_read_lb_phones_image_hosts'), about = L('settings.host_storage'),
+      inflight = L('settings.read_at_the_next_re_read') },
     { key = 'Completion.ExtraPhotoHosts', section = 'limits', category = 'developer', group = 'Completion',
-      kind = 'list', array = true, names = 'host', label = 'Image hosts allowed besides lb-phone\'s',
-      about = '\'host\' storage: host names, such as fivemanage.com.', inflight = AT_USE },
+      kind = 'list', array = true, names = 'host', label = L('settings.image_hosts_allowed_besides_lb_phones'),
+      about = L('settings.host_storage_host_names_such_as'), inflight = AT_USE },
     { key = 'Mugshot.RenderTimeoutMs', section = 'limits', category = 'developer', group = 'Targeting',
-      kind = 'number', integer = true, min = 1000, max = 60000, label = 'Time a headshot may take (ms)',
-      about = 'On the target\'s game.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 1000, max = 60000, label = L('settings.time_a_headshot_may_take_ms'),
+      about = L('settings.on_the_targets_game'), inflight = AT_USE },
     { key = 'Mugshot.MaxImageBytes', section = 'limits', category = 'developer', group = 'Targeting',
-      kind = 'number', integer = true, min = 4096, max = 1048576, label = 'Largest headshot (bytes)',
-      about = 'A larger one is refused.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 4096, max = 1048576, label = L('settings.largest_headshot_bytes'),
+      about = L('settings.a_larger_one_is_refused'), inflight = AT_USE },
     { key = 'Mugshot.AllowedMime', section = 'limits', category = 'developer', group = 'Targeting',
-      kind = 'list', names = 'mime', label = 'Headshot image types accepted',
-      about = 'Such as image/png.', inflight = AT_USE },
+      kind = 'list', names = 'mime', label = L('settings.headshot_image_types_accepted'),
+      about = L('settings.such_as_image_png'), inflight = AT_USE },
     { key = 'Bailout.MaxSettleAttempts', section = 'limits', category = 'developer', group = 'Buyouts',
-      kind = 'number', integer = true, min = 1, max = 100, label = 'Ticks a buyout waits on a stuck claim',
-      about = 'Then it is left for staff.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 1, max = 100, label = L('settings.ticks_a_buyout_waits_on_a'),
+      about = L('settings.then_it_is_left_for_staff'), inflight = AT_USE },
     { key = 'Notifications.PushMinIntervalSeconds', section = 'limits', category = 'developer',
       group = 'Notifications', kind = 'number', integer = true, min = 1, max = 60,
-      label = 'Least time between two app refreshes (s)', about = 'Per open app.', inflight = AT_USE },
+      label = L('settings.least_time_between_two_app_refreshes'), about = L('settings.per_open_app'), inflight = AT_USE },
     { key = 'Admin.PanelPageSize', section = 'limits', category = 'developer', group = 'Staff',
-      kind = 'number', integer = true, min = 5, max = 100, label = 'Rows per page in this panel',
-      about = 'Its lists.', inflight = 'Read at the next page asked for.' },
+      kind = 'number', integer = true, min = 5, max = 100, label = L('settings.rows_per_page_in_this_panel'),
+      about = L('settings.its_lists'), inflight = L('settings.read_at_the_next_page_asked') },
     { key = 'Admin.PanelRefreshSeconds', section = 'limits', category = 'developer', group = 'Staff',
-      kind = 'number', integer = true, min = 2, max = 300, label = 'Overview refresh (s)',
-      about = 'How often this panel\'s overview refreshes.', inflight = 'Read when the panel is opened.' },
+      kind = 'number', integer = true, min = 2, max = 300, label = L('settings.overview_refresh'),
+      about = L('settings.how_often_this_panels_overview_refreshes'), inflight = L('settings.read_when_the_panel_is_opened') },
     { key = 'Admin.TimelineRows', section = 'limits', category = 'developer', group = 'Staff',
-      kind = 'number', integer = true, min = 10, max = 2000, label = 'Log rows read for one timeline',
-      about = 'A contract\'s history.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 10, max = 2000, label = L('settings.log_rows_read_for_one_timeline'),
+      about = L('settings.a_contracts_history'), inflight = AT_USE },
     { key = 'RateLimit.Key', section = 'limits', category = 'developer', group = 'Rate limits',
-      kind = 'choice', choices = { 'license', 'citizenid' }, label = 'Rate limits counted per',
-      about = '\'license\': per account. \'citizenid\': per character.',
-      inflight = 'Read at each request: allowances start fresh under the new key.' },
+      kind = 'choice', choices = { 'license', 'citizenid' }, label = L('settings.rate_limits_counted_per'),
+      about = L('settings.license_per_account_citizenid_per_character'),
+      inflight = L('settings.read_at_each_request_allowances_start') },
 }
 
 --- The other scripts this resource works with (Config.Integrations,
@@ -1269,8 +1133,8 @@ local CATALOGUE = {
 --- typed in here, so nothing can be made to call an export it was not
 --- written for.
 local INTEGRATION_ABOUT = {
-    Framework = 'Players, jobs and money. Required, so there is no \'none\'.',
-    Banking = 'Where the organisation\'s funds are kept. \'none\': this resource\'s own ledger.',
+    Framework = L('settings.players_jobs_and_money_required_so'),
+    Banking = L('settings.where_the_organisations_funds_are_kept'),
 }
 for _, spec in ipairs(Integrations.KINDS) do
     local choices = { 'auto' }
@@ -1281,17 +1145,16 @@ for _, spec in ipairs(Integrations.KINDS) do
     if spec.required then
         inflight = RESTART
     elseif spec.kind == 'banking' then
-        inflight = 'Read for the first choice of where the funds are kept, which is then kept: staff move '
-            .. 'them with the funds backend switch.'
+        inflight = L('settings.read_for_the_first_choice_of')
     elseif client then
-        inflight = 'Sent to every player\'s game at once; what is already drawn stays until it is drawn again.'
+        inflight = L('settings.sent_to_every_players_game_at')
     end
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Integrations.' .. spec.key, section = 'limits', category = 'developer', group = 'Other scripts',
+        key = L('settings.integrations') .. spec.key, section = 'limits', category = 'developer', group = 'Other scripts',
         kind = 'choice', choices = choices, client = client or nil, live = spec.required and false or nil,
-        label = 'Other scripts: ' .. spec.kind,
+        label = L('settings.other_scripts') .. spec.kind,
         about = (INTEGRATION_ABOUT[spec.key] or '') .. (INTEGRATION_ABOUT[spec.key] and ' ' or '')
-            .. '\'auto\': the first installed and started. Without one: ' .. spec.without .. '.',
+            .. L('settings.auto_the_first_installed_and_started') .. spec.without .. '.',
         inflight = inflight,
     }
 end
@@ -1301,9 +1164,9 @@ end
 for _, name in ipairs({ 'timeline', 'void', 'stuck', 'settle', 'whois', 'contracts', 'diagnose',
     'refresh', 'review', 'panel' }) do
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Admin.Commands.' .. name, section = 'limits', category = 'developer', group = 'Staff commands',
+        key = L('settings.admin_commands') .. name, section = 'limits', category = 'developer', group = 'Staff commands',
         kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, live = false,
-        label = 'Command name: ' .. name, about = 'Without the slash.', inflight = RESTART,
+        label = L('settings.command_name') .. name, about = L('settings.without_the_slash'), inflight = RESTART,
     }
 end
 
@@ -1321,43 +1184,30 @@ local BUCKETS = {
 --- of 'load' from 20 to 1 refused every Board, Mine and Ledger read for an
 --- hour. The background ones are refused without a word to anybody.
 local BUCKET_ABOUT = {
-    load = 'Every read the app makes of its own state: Board, Mine, On me, the Ledger, proposals, '
-        .. 'threads and the whitelisted-job view, and the buyout command\'s list. Opening the app '
-        .. 'is four of these at once, and every refresh two more.',
-    search = 'Browsing and searching names on the Place form.',
-    wallet = 'Reading what the placer carries, once per Place form.',
-    create = 'Placing a contract.',
-    accept = 'Accepting, abandoning and cancelling a contract, and arming a handover.',
-    amend = 'Proposals and the answers to them, revising, improving and adding to a reward, and '
-        .. 'taking part of it back.',
-    informant = 'A target\'s look-up from the informant.',
-    placerInformant = 'A placer\'s look-up from the informant on an operative.',
-    locationTip = 'Buying an informant tip on a target\'s rough area.',
-    bailout = 'Buying out a contract, in the app and with the buyout command.',
-    photo = 'Asking to photograph a kill, and Verify kill.',
-    photoSubmit = 'Sending a kill photo.',
-    photoView = 'Opening a kill photo from the Ledger.',
-    photoDecide = 'Saving or deleting a kill photo just opened.',
-    message = 'Placing and ending a call, muting a thread, and turning Notify me on the '
-        .. 'whitelisted-job view on or off.',
-    progress = 'In the background: the handover countdown the app asks for once a second while a '
-        .. 'handover runs. Refused without a word: the countdown stops moving on the page.',
-    death = 'In the background: death and revive reports from players\' games. Refused without a '
-        .. 'word: a death or a revive not recorded, so a target just up can be listed at once.',
-    mugshot = 'In the background: the headshots players\' games send, and their word that a face '
-        .. 'changed. Refused without a word to the player (the log keeps one row a minute): '
-        .. 'faces on the board stay old or missing.',
-    image = 'Fetching a headshot the board was given a reference to.',
-    diagnostic = 'Fault reports players\' apps send. The log staff ask for with the diagnosis '
-        .. 'never spends it.',
-    report = 'Reporting a contract or a message thread to staff (the Report button). Each one '
-        .. 'is an item in the review queue.',
-    org = 'Reading the hitman organisation in the app: the Organisation tab, its roster, roles, funds '
-        .. 'and applications.',
-    orgWrite = 'What a boss or member changes in the hitman organisation from the app: hiring, roles, '
-        .. 'cuts, money, places, notices and applications.',
-    disposal = 'Loading a body and dropping it off (Config.Disposal). Refused without a word: the '
-        .. 'hitman tries again a moment later.',
+    load = L('settings.every_read_the_app_makes_of'),
+    search = L('settings.browsing_and_searching_names_on_the'),
+    wallet = L('settings.reading_what_the_placer_carries_once'),
+    create = L('settings.placing_a_contract'),
+    accept = L('settings.accepting_abandoning_and_cancelling_a_contract'),
+    amend = L('settings.proposals_and_the_answers_to_them'),
+    informant = L('settings.a_targets_look_up_from_the'),
+    placerInformant = L('settings.a_placers_look_up_from_the'),
+    locationTip = L('settings.buying_an_informant_tip_on_a'),
+    bailout = L('settings.buying_out_a_contract_in_the'),
+    photo = L('settings.asking_to_photograph_a_kill_and'),
+    photoSubmit = L('settings.sending_a_kill_photo'),
+    photoView = L('settings.opening_a_kill_photo_from_the'),
+    photoDecide = L('settings.saving_or_deleting_a_kill_photo'),
+    message = L('settings.placing_and_ending_a_call_muting'),
+    progress = L('settings.in_the_background_the_handover_countdown'),
+    death = L('settings.in_the_background_death_and_revive'),
+    mugshot = L('settings.in_the_background_the_headshots_players'),
+    image = L('settings.fetching_a_headshot_the_board_was'),
+    diagnostic = L('settings.fault_reports_players_apps_send_the'),
+    report = L('settings.reporting_a_contract_or_a_message'),
+    org = L('settings.reading_the_hitman_organisation_in_the'),
+    orgWrite = L('settings.what_a_boss_or_member_changes'),
+    disposal = L('settings.loading_a_body_and_dropping_it'),
 }
 
 --- The least the buckets the app cannot work without may be set to from
@@ -1366,18 +1216,16 @@ local BUCKET_ABOUT = {
 --- running, for everyone at once.
 local BUCKET_FLOORS = {
     load = { burst = 6, rate = 1 / 5,
-             needs = 'at least 6 requests held and a refill of at least one every 5 seconds',
-             why = 'opening the app sends four reads at once (the board, Mine, the Ledger and the '
-                 .. 'view), so below that the app cannot open' },
-    progress = { rate = 1, needs = 'a refill of at least one a second',
-                 why = 'a running handover asks for its countdown once a second' },
-    death = { burst = 2, needs = 'at least 2 requests held',
-              why = 'a death and the revive after it are a report each' },
+             needs = L('settings.at_least_6_requests_held_and'),
+             why = L('settings.opening_the_app_sends_four_reads') },
+    progress = { rate = 1, needs = L('settings.a_refill_of_at_least_one'),
+                 why = L('settings.a_running_handover_asks_for_its') },
+    death = { burst = 2, needs = L('settings.at_least_2_requests_held'),
+              why = L('settings.a_death_and_the_revive_after') },
 }
 
 --- What a stricter value does, said beside the second click: %s the value.
-local BUCKET_STRICTER = '%s: players are refused sooner, and wait longer for it to refill. '
-    .. 'What this gates (above) answers "slow down" until it does.'
+local BUCKET_STRICTER = L('settings.players_are_refused_sooner_and_wait')
 
 --- The panel's own buckets, which every request it makes spends (Panel.handle).
 --- Changeable here, one request an hour was accepted, kept and applied at
@@ -1385,9 +1233,7 @@ local BUCKET_STRICTER = '%s: players are refused sooner, and wait longer for it 
 --- would have put it back was refused with the rest, and only an edit of the
 --- store by hand let staff in again.
 local PANEL_BUCKETS = { admin = true, adminWrite = true }
-local PANEL_BUCKET_READONLY = 'The staff panel\'s own allowance, which every request it makes '
-    .. 'spends: set too low from here it would refuse the very request that puts it back, at '
-    .. 'every start. Set it in config.lua.'
+local PANEL_BUCKET_READONLY = L('settings.the_staff_panels_own_allowance_which')
 
 --- Each bucket's two rows. `stricter` is the way a value refuses players
 --- sooner (a longer refill window, fewer requests held), which takes two
@@ -1396,21 +1242,19 @@ for _, bucket in ipairs(BUCKETS) do
     local panel = PANEL_BUCKETS[bucket]
     local gates = BUCKET_ABOUT[bucket]
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Cooldowns.' .. bucket .. '.per', section = panel and 'readonly' or 'limits', category = 'developer',
-        group = panel and 'Staff' or 'Rate limits',
-        kind = 'number', min = 0.5, max = 3600, label = bucket .. ': refill window (s)',
-        about = gates and (gates .. ' A full allowance refills over this many seconds: '
-            .. 'longer is stricter.') or nil,
+        key = L('settings.cooldowns') .. bucket .. '.per', section = panel and 'readonly' or 'limits', category = 'developer',
+        group = panel and L('settings.staff') or L('settings.rate_limits'),
+        kind = 'number', min = 0.5, max = 3600, label = bucket .. L('settings.refill_window'),
+        about = gates and (gates .. L('settings.a_full_allowance_refills_over_this')) or nil,
         stricter = not panel and 'up' or nil,
-        strict = not panel and ('A refill window of ' .. BUCKET_STRICTER) or nil,
+        strict = not panel and (L('settings.a_refill_window_of') .. BUCKET_STRICTER) or nil,
         inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Cooldowns.' .. bucket .. '.burst', section = panel and 'readonly' or 'limits', category = 'developer',
-        group = panel and 'Staff' or 'Rate limits',
-        kind = 'number', integer = true, min = 1, max = 200, label = bucket .. ': requests held',
-        about = gates and (gates .. ' How many it allows at once. It also sets the refill rate '
-            .. '(this many per refill window), so fewer is stricter both ways.') or nil,
+        key = L('settings.cooldowns') .. bucket .. '.burst', section = panel and 'readonly' or 'limits', category = 'developer',
+        group = panel and L('settings.staff') or L('settings.rate_limits'),
+        kind = 'number', integer = true, min = 1, max = 200, label = bucket .. L('settings.requests_held'),
+        about = gates and (gates .. L('settings.how_many_it_allows_at_once')) or nil,
         stricter = not panel and 'down' or nil,
         strict = not panel and ('Holding ' .. BUCKET_STRICTER) or nil,
         inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
@@ -1421,110 +1265,98 @@ end
 --- features): each switch under Features, the rest under the Rules view it
 --- belongs to. `whole` lists take each line as typed, spaces and commas
 --- included (a phrase, a template, an area), rather than as names.
-local RP_TEXT = 'letters, digits, spaces and punctuation, no < or >'
+local RP_TEXT = L('settings.letters_digits_spaces_and_punctuation_no')
 for _, entry in ipairs({
     -- Witness heat
     { key = 'Roleplay.WitnessHeat.Enabled', category = 'features', group = 'Roleplay: Witness heat',
-      kind = 'switch', label = 'Witness heat',
-      about = 'A completion seen by bystanders (players near the hitman who are no party to the '
-          .. 'contract) sends the police a vague witness report on their phones and to sc-dispatch. '
-          .. 'It never names the hitman or the placer.',
-      inflight = 'At the next completion, with no restart.' },
+      kind = 'switch', label = L('settings.witness_heat'),
+      about = L('settings.a_completion_seen_by_bystanders_players'),
+      inflight = L('settings.at_the_next_completion_with_no') },
     { key = 'Roleplay.WitnessHeat.AlwaysAlert', category = 'features', group = 'Roleplay: Witness heat',
-      kind = 'switch', label = 'Witness heat: alert on every completion',
-      about = 'A report on every completion, whether anybody saw it or not.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.witness_heat_alert_on_every_completion'),
+      about = L('settings.a_report_on_every_completion_whether'), inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.SendCoords', category = 'features', group = 'Roleplay: Witness heat',
-      kind = 'switch', label = 'Witness heat: give dispatch a position',
-      about = 'Off: only the area is named. On: a position, moved by up to the fuzz distance.',
+      kind = 'switch', label = L('settings.witness_heat_give_dispatch_a_position'),
+      about = L('settings.off_only_the_area_is_named'),
       inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.WitnessRadius', category = 'rules-limits', group = 'Roleplay: Witness heat',
-      kind = 'number', min = 1, max = 500, label = 'Metres a bystander sees a completion from',
-      about = 'Measured from the hitman, on the server.', inflight = AT_USE },
+      kind = 'number', min = 1, max = 500, label = L('settings.metres_a_bystander_sees_a_completion'),
+      about = L('settings.measured_from_the_hitman_on_the'), inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.MinWitnesses', category = 'rules-limits', group = 'Roleplay: Witness heat',
-      kind = 'number', integer = true, min = 1, max = 50, label = 'Bystanders it takes to raise a report',
+      kind = 'number', integer = true, min = 1, max = 50, label = L('settings.bystanders_it_takes_to_raise_a'),
       inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.FuzzMeters', category = 'rules-limits', group = 'Roleplay: Witness heat',
-      kind = 'number', min = 0, max = 1000, label = 'Metres the position may be off by',
+      kind = 'number', min = 0, max = 1000, label = L('settings.metres_the_position_may_be_off'),
       inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.DispatchPriority', category = 'rules-limits', group = 'Roleplay: Witness heat',
-      kind = 'number', integer = true, min = 1, max = 5, label = 'sc-dispatch priority of a report',
+      kind = 'number', integer = true, min = 1, max = 5, label = L('settings.sc_dispatch_priority_of_a_report'),
       inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.Title', category = 'rules-limits', group = 'Roleplay: Witness heat',
       kind = 'text', pattern = '^[^%c<>]+$', maxLength = 60, says = RP_TEXT,
-      label = 'Title of a witness report', inflight = AT_USE },
+      label = L('settings.title_of_a_witness_report'), inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.Phrases', category = 'rules-limits', group = 'Roleplay: Witness heat',
-      kind = 'list', array = true, whole = true, names = 'phrase', label = 'What a witness says',
-      about = 'One is picked. {direction} is where they went (north, south-west, ...).',
+      kind = 'list', array = true, whole = true, names = 'phrase', label = L('settings.what_a_witness_says'),
+      about = L('settings.one_is_picked_direction_is_where'),
       inflight = AT_USE },
     { key = 'Roleplay.WitnessHeat.Areas', place = 'area', category = 'rules-limits', group = 'Roleplay: Witness heat',
-      kind = 'list', array = true, whole = true, names = 'area', label = 'Areas, as Name@x,y',
-      about = 'The nearest centre names the area of a report and of a news post.', inflight = AT_USE },
+      kind = 'list', array = true, whole = true, names = 'area', label = L('settings.areas_as_name_x_y'),
+      about = L('settings.the_nearest_centre_names_the_area'), inflight = AT_USE },
     -- EMS before re-listing
     { key = 'Roleplay.EmsRelisting.Enabled', category = 'features', group = 'Roleplay: EMS before re-listing',
-      kind = 'switch', label = 'EMS before re-listing',
-      about = 'After a contract on somebody completes by a kill, a new contract on them is refused '
-          .. '("They are still recovering.") until they have been up, neither dead nor downed, for '
-          .. 'the minutes under Rules > Timers. On top of the usual cooldowns.',
-      inflight = 'At the next contract placed, with no restart.' },
+      kind = 'switch', label = L('settings.ems_before_re_listing'),
+      about = L('settings.after_a_contract_on_somebody_completes'),
+      inflight = L('settings.at_the_next_contract_placed_with') },
     { key = 'Roleplay.EmsRelisting.RequireEMS', category = 'features', group = 'Roleplay: EMS before re-listing',
-      kind = 'switch', label = 'EMS before re-listing: a medic\'s revive is needed',
-      about = 'Instead of the minutes up: an on-duty medic\'s defibrillator on them (sc-ambulance\'s '
-          .. 'own event, checked as the kill logic checks it). A kill from before a restart falls '
-          .. 'back to the minutes up.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.ems_before_re_listing_a_medics'),
+      about = L('settings.instead_of_the_minutes_up_an'), inflight = AT_USE },
     { key = 'Roleplay.EmsRelisting.TreatedMinutes', category = 'rules-timers', group = 'Roleplay: EMS before re-listing',
-      kind = 'number', integer = true, min = 0, max = 240, label = 'Minutes up that count as treated',
+      kind = 'number', integer = true, min = 0, max = 240, label = L('settings.minutes_up_that_count_as_treated'),
       inflight = AT_USE },
     { key = 'Roleplay.EmsRelisting.MaxHoldMinutes', category = 'rules-timers', group = 'Roleplay: EMS before re-listing',
-      kind = 'number', integer = true, min = 1, max = 1440, label = 'Longest the rule holds after a kill (min)',
-      about = 'Past it, the target may be listed again whatever was seen.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 1, max = 1440, label = L('settings.longest_the_rule_holds_after_a'),
+      about = L('settings.past_it_the_target_may_be'), inflight = AT_USE },
     -- City news
     { key = 'Roleplay.CityNews.Enabled', category = 'features', group = 'Roleplay: City news',
-      kind = 'switch', label = 'City news',
-      about = 'A completed contract on a whitelisted-job target posts an anonymous news item, on '
-          .. 'lb-phone\'s Birdy or through a server event. It names the job, the area and the time, '
-          .. 'never the hitman or the placer.',
-      inflight = 'At the next completion, with no restart.' },
+      kind = 'switch', label = L('settings.city_news'),
+      about = L('settings.a_completed_contract_on_a_whitelisted'),
+      inflight = L('settings.at_the_next_completion_with_no') },
     { key = 'Roleplay.CityNews.AllTargets', category = 'features', group = 'Roleplay: City news',
-      kind = 'switch', label = 'City news: on every target',
-      about = 'Off: whitelisted-job targets only.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.city_news_on_every_target'),
+      about = L('settings.off_whitelisted_job_targets_only'), inflight = AT_USE },
     { key = 'Roleplay.CityNews.NameTarget', category = 'features', group = 'Roleplay: City news',
-      kind = 'switch', label = 'City news: name the target',
-      about = 'On, {name} in a template is the target\'s name; off, it is "a resident". Nothing '
-          .. 'else names anybody.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.city_news_name_the_target'),
+      about = L('settings.on_name_in_a_template_is'), inflight = AT_USE },
     { key = 'Roleplay.CityNews.App', category = 'rules-limits', group = 'Roleplay: City news',
-      kind = 'choice', choices = { 'birdy', 'event' }, label = 'Where news is posted',
-      about = '\'birdy\': lb-phone\'s PostBirdy export. \'event\': a server event another resource '
-          .. 'posts from (lb-phone\'s News app has no server export).', inflight = AT_USE },
+      kind = 'choice', choices = { 'birdy', 'event' }, label = L('settings.where_news_is_posted'),
+      about = L('settings.birdy_lb_phones_postbirdy_export_event'), inflight = AT_USE },
     { key = 'Roleplay.CityNews.Account', category = 'rules-limits', group = 'Roleplay: City news',
-      kind = 'text', pattern = '^[%w_%-%.]+$', maxLength = 32, label = 'Birdy account news is posted from',
-      about = 'It must exist in lb-phone.', inflight = AT_USE },
+      kind = 'text', pattern = '^[%w_%-%.]+$', maxLength = 32, label = L('settings.birdy_account_news_is_posted_from'),
+      about = L('settings.it_must_exist_in_lb_phone'), inflight = AT_USE },
     { key = 'Roleplay.CityNews.Event', category = 'rules-limits', group = 'Roleplay: City news',
-      kind = 'text', pattern = '^[%w_%-%.:]+$', maxLength = 64, says = 'an event name: letters, digits, - _ . and :',
-      label = 'Server event news is fired as (\'event\')',
-      about = 'Fired on the server only, with { account, text }.', inflight = AT_USE },
+      kind = 'text', pattern = '^[%w_%-%.:]+$', maxLength = 64, says = L('settings.an_event_name_letters_digits_and'),
+      label = L('settings.server_event_news_is_fired_as'),
+      about = L('settings.fired_on_the_server_only_with'), inflight = AT_USE },
     { key = 'Roleplay.CityNews.Templates', category = 'rules-limits', group = 'Roleplay: City news',
-      kind = 'list', array = true, whole = true, names = 'sentence', label = 'News templates',
-      about = 'One is picked: {job}, {zone}, {time} and {name}.', inflight = AT_USE },
+      kind = 'list', array = true, whole = true, names = 'sentence', label = L('settings.news_templates'),
+      about = L('settings.one_is_picked_job_zone_time'), inflight = AT_USE },
     -- Dirty money payouts
     { key = 'Roleplay.DirtyPayouts.Enabled', category = 'features', group = 'Roleplay: Dirty money payouts',
-      kind = 'switch', label = 'Dirty money payouts',
-      about = 'A hitman\'s cash or bank payout is handed over as a dirty money item instead, at a '
-          .. 'rate that loses nothing. Escrow keeps the money it took; a refund goes back as it was '
-          .. 'taken; a payout that does not fit is owed, as any other.',
-      inflight = 'At the next payout, owed ones included, with no restart.' },
+      kind = 'switch', label = L('settings.dirty_money_payouts'),
+      about = L('settings.a_hitmans_cash_or_bank_payout'),
+      inflight = L('settings.at_the_next_payout_owed_ones') },
     { key = 'Roleplay.DirtyPayouts.Item', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Item a payout is paid as',
-      about = 'An ox_inventory item: black_money, or markedbills with the \'worth\' mode.',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.item_a_payout_is_paid_as'),
+      about = L('settings.an_ox_inventory_item_black_money'),
       inflight = AT_USE },
     { key = 'Roleplay.DirtyPayouts.Mode', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
-      kind = 'choice', choices = { 'count', 'worth' }, label = 'How the item holds the money',
-      about = '\'count\': items by the rate. \'worth\': one item, its value in its metadata.',
+      kind = 'choice', choices = { 'count', 'worth' }, label = L('settings.how_the_item_holds_the_money'),
+      about = L('settings.count_items_by_the_rate_worth'),
       inflight = AT_USE },
     { key = 'Roleplay.DirtyPayouts.WorthKey', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, label = 'Metadata key of its value (\'worth\')',
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, label = L('settings.metadata_key_of_its_value_worth'),
       inflight = AT_USE },
     { key = 'Roleplay.DirtyPayouts.Rate', category = 'rules-rewards', group = 'Roleplay: Dirty money payouts',
-      kind = 'number', integer = true, min = 1, max = 100, label = 'Items paid for each dollar (\'count\')',
+      kind = 'number', integer = true, min = 1, max = 100, label = L('settings.items_paid_for_each_dollar_count'),
       inflight = AT_USE },
 }) do
     entry.section = entry.category == 'features' and 'features' or 'limits'
@@ -1538,50 +1370,45 @@ end
 --- Roleplay (group rpC, README, Optional features): proof of intent,
 --- bodyguards and the hit on the hitman. Each switch under
 --- Features, each figure under Rules; all read at use, with no restart.
-local RP_INTENT = 'Roleplay: Proof of intent'
-local RP_PROTECTION, RP_HIT = 'Roleplay: Bodyguards', 'Roleplay: Hit on the hitman'
+local RP_INTENT = L('settings.roleplay_proof_of_intent')
+local RP_PROTECTION, RP_HIT = 'Roleplay: Bodyguards', L('settings.roleplay_hit_on_the_hitman')
 for _, entry in ipairs({
     { key = 'Roleplay.ProofOfIntent.Enabled', section = 'features', category = 'features', group = RP_INTENT,
-      kind = 'switch', label = 'Proof of intent before a payout',
-      about = 'A payout waits until the hitman sent enough messages to the placer in the thread, or the '
-          .. 'contract had a live handover or a meeting point; released anyway after the hold time.',
-      inflight = 'Read at every give. Turned off, every held payout is handed over at its next try.' },
+      kind = 'switch', label = L('settings.proof_of_intent_before_a_payout'),
+      about = L('settings.a_payout_waits_until_the_hitman'),
+      inflight = L('settings.read_at_every_give_turned_off') },
     { key = 'Roleplay.ProofOfIntent.MinMessages', section = 'limits', category = 'rules-limits', group = RP_INTENT,
       kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Messages to the placer that count as intent (0 = none needed)', inflight = AT_USE },
+      label = L('settings.messages_to_the_placer_that_count'), inflight = AT_USE },
     { key = 'Roleplay.ProofOfIntent.HoldMaxMinutes', section = 'limits', category = 'rules-timers', group = RP_INTENT,
       kind = 'number', integer = true, min = 1, max = 10080,
-      label = 'Longest a payout is held for proof of intent (min)',
-      inflight = 'Read at every give: a hold already on ends at the new length.' },
+      label = L('settings.longest_a_payout_is_held_for'),
+      inflight = L('settings.read_at_every_give_a_hold') },
 
     { key = 'Roleplay.Protection.Enabled', section = 'features', category = 'features', group = RP_PROTECTION,
-      kind = 'switch', label = 'Bodyguard contracts',
-      about = 'A target may post an anonymous protection job from On me, its reward taken at once; another '
-          .. 'player takes it from the board\'s Protection tab and gets the target\'s name and meeting pin, '
-          .. 'never who placed the hit or who is on it. Paid when the contract ends without a completion.',
-      inflight = 'Turned off, no job is posted or taken; jobs already posted are still paid or refunded '
-          .. 'when their contract ends.' },
+      kind = 'switch', label = L('settings.bodyguard_contracts'),
+      about = L('settings.a_target_may_post_an_anonymous'),
+      inflight = L('settings.turned_off_no_job_is_posted') },
     { key = 'Roleplay.Protection.Account', section = 'limits', category = 'rules-rewards', group = RP_PROTECTION,
-      kind = 'choice', choices = { 'cash', 'bank' }, label = 'Bodyguard reward paid from',
-      inflight = 'New jobs only: a job is paid out from the account it was taken from.' },
+      kind = 'choice', choices = { 'cash', 'bank' }, label = L('settings.bodyguard_reward_paid_from'),
+      inflight = L('settings.new_jobs_only_a_job_is') },
     { key = 'Roleplay.Protection.MinReward', section = 'limits', category = 'rules-rewards', group = RP_PROTECTION,
-      kind = 'number', integer = true, min = 1, max = 10000000, label = 'Least bodyguard reward ($)',
-      inflight = 'New jobs only.' },
+      kind = 'number', integer = true, min = 1, max = 10000000, label = L('settings.least_bodyguard_reward'),
+      inflight = L('settings.new_jobs_only') },
     { key = 'Roleplay.Protection.MaxReward', section = 'limits', category = 'rules-rewards', group = RP_PROTECTION,
-      kind = 'number', integer = true, min = 1, max = 10000000, label = 'Most bodyguard reward ($)',
-      inflight = 'New jobs only.' },
+      kind = 'number', integer = true, min = 1, max = 10000000, label = L('settings.most_bodyguard_reward'),
+      inflight = L('settings.new_jobs_only') },
     { key = 'Roleplay.Protection.PayOnCompletionPercent', section = 'limits', category = 'rules-rewards',
       group = RP_PROTECTION, kind = 'number', integer = true, min = 0, max = 100,
-      label = 'Guard\'s share if the contract completes anyway (%)',
-      inflight = 'Read when the contract ends.' },
+      label = L('settings.guards_share_if_the_contract_completes'),
+      inflight = L('settings.read_when_the_contract_ends') },
     { key = 'Roleplay.Protection.MaxJobsPerGuard', section = 'limits', category = 'rules-limits', group = RP_PROTECTION,
-      kind = 'number', integer = true, min = 1, max = 20, label = 'Protection jobs one guard holds at once',
+      kind = 'number', integer = true, min = 1, max = 20, label = L('settings.protection_jobs_one_guard_holds_at'),
       inflight = CAP },
 
     { key = 'Roleplay.HitOnHitman.Enabled', section = 'features', category = 'features', group = RP_HIT,
-      kind = 'switch', label = 'Hit on the hitman',
-      about = 'A target whose informant found out an operative\'s name may place a contract on them from '
-          .. 'that card: the Place form opens with them chosen, and every rule of placing applies.',
+      kind = 'switch', label = L('settings.hit_on_the_hitman'),
+      about = L('settings.a_target_whose_informant_found_out'),
       inflight = AT_USE },
 }) do
     CATALOGUE[#CATALOGUE + 1] = entry
@@ -1595,124 +1422,119 @@ MONEY['Roleplay.Protection.PayOnCompletionPercent'] = 'Payouts'
 --- shipped: the switch under Features, the rest under the rules they are.
 --- `whole` on a list: what is typed is one entry, spaces and commas kept
 --- (a place, a phrase), not names split at each.
-local INTEL_RUMOURS, RP_BURNER = 'Intel: Rumours and broker', 'Roleplay: Burner phone'
-local INTEL_IN_PERSON, RP_REASON = 'Intel: Informant in person', 'Roleplay: Reason quality'
-local PLACES = 'Each place is x, y, z, heading. The NPC stands at one at a time.'
-local NPC_MOVES = 'Every game is told at once, and draws the NPC in its new place.'
+local INTEL_RUMOURS, RP_BURNER = L('settings.intel_rumours_and_broker'), L('settings.roleplay_burner_phone')
+local INTEL_IN_PERSON, RP_REASON = L('settings.intel_informant_in_person'), L('settings.roleplay_reason_quality')
+local PLACES = L('settings.each_place_is_x_y_z')
+local NPC_MOVES = L('settings.every_game_is_told_at_once')
 for _, entry in ipairs({
     { key = 'Intel.Rumours.Enabled', section = 'features', category = 'features', group = INTEL_RUMOURS,
-      kind = 'switch', label = 'Rumours and the broker',
-      about = 'The board shows a new contract only as a rumour (an area and a reward band) until '
-          .. 'the broker briefs the hitman.',
-      inflight = 'Read at every board read and Accept: on, hitmen not yet briefed see rumours at '
-          .. 'once; contracts already held are untouched.' },
+      kind = 'switch', label = L('settings.rumours_and_the_broker'),
+      about = L('settings.the_board_shows_a_new_contract'),
+      inflight = L('settings.read_at_every_board_read_and') },
     { key = 'Intel.Rumours.AreaMode', section = 'limits', category = 'rules-targeting', group = INTEL_RUMOURS,
-      kind = 'choice', choices = { 'district', 'zones' }, label = 'What area a rumour names',
-      about = '"district": the nearest of Districts to where the target was. "zones": a name '
-          .. 'from Zones.', inflight = 'Rumours already told keep the area they named.' },
+      kind = 'choice', choices = { 'district', 'zones' }, label = L('settings.what_area_a_rumour_names'),
+      about = L('settings.district_the_nearest_of_districts_to'), inflight = L('settings.rumours_already_told_keep_the_area') },
     { key = 'Intel.Rumours.Zones', place = 'name',
       section = 'limits', category = 'rules-targeting', group = INTEL_RUMOURS,
-      kind = 'list', array = true, whole = true, names = 'phrase', label = 'Zone names',
-      about = 'Vague area names a rumour picks from.', inflight = AT_USE },
+      kind = 'list', array = true, whole = true, names = 'phrase', label = L('settings.zone_names'),
+      about = L('settings.vague_area_names_a_rumour_picks'), inflight = AT_USE },
     { key = 'Intel.Rumours.Districts', place = 'district', section = 'limits', category = 'rules-targeting',
       group = INTEL_RUMOURS, kind = 'list', array = true, whole = true, names = 'area',
-      label = 'Districts (x, y, name)', about = 'The nearest one to the target names the area.',
-      inflight = 'Rumours already told keep the area they named.' },
+      label = L('settings.districts_x_y_name'), about = L('settings.the_nearest_one_to_the_target'),
+      inflight = L('settings.rumours_already_told_keep_the_area') },
     { key = 'Intel.Rumours.BandPercent', section = 'limits', category = 'rules-limits', group = INTEL_RUMOURS,
-      kind = 'number', integer = true, min = 0, max = 100, label = 'Reward band either side (%)',
-      about = 'A rumour gives the reward as a range this many percent either side.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 100, label = L('settings.reward_band_either_side'),
+      about = L('settings.a_rumour_gives_the_reward_as'), inflight = AT_USE },
     { key = 'Intel.Rumours.Radius', section = 'limits', category = 'rules-limits', group = INTEL_RUMOURS,
-      kind = 'number', min = 1, max = 100, label = 'Distance to the broker (m)',
-      about = 'How close the hitman stands to the broker NPC, or to a broker player.', inflight = AT_USE },
+      kind = 'number', min = 1, max = 100, label = L('settings.distance_to_the_broker_m'),
+      about = L('settings.how_close_the_hitman_stands_to'), inflight = AT_USE },
     { key = 'Intel.Rumours.BriefValidMinutes', section = 'limits', category = 'rules-timers',
       group = INTEL_RUMOURS, kind = 'number', integer = true, min = 1, max = 1440,
-      label = 'A briefing lasts (min)', about = 'How long a briefing unlocks a contract for.',
-      inflight = 'Briefings already given keep their time.' },
+      label = L('settings.a_briefing_lasts_min'), about = L('settings.how_long_a_briefing_unlocks_a'),
+      inflight = L('settings.briefings_already_given_keep_their_time') },
     { key = 'Intel.Rumours.Locations', place = 'point',
       section = 'limits', category = 'rules-limits', group = INTEL_RUMOURS,
-      kind = 'list', array = true, whole = true, names = 'point', label = 'Broker NPC places',
+      kind = 'list', array = true, whole = true, names = 'point', label = L('settings.broker_npc_places'),
       about = PLACES, inflight = NPC_MOVES },
     { key = 'Intel.Rumours.RotateHours', section = 'limits', category = 'rules-timers', group = INTEL_RUMOURS,
-      kind = 'number', integer = true, min = 1, max = 168, label = 'Broker moves every (h)',
-      about = 'The broker NPC moves to its next place this often.', inflight = NPC_MOVES },
+      kind = 'number', integer = true, min = 1, max = 168, label = L('settings.broker_moves_every_h'),
+      about = L('settings.the_broker_npc_moves_to_its'), inflight = NPC_MOVES },
     { key = 'Intel.Rumours.Model', section = 'limits', category = 'rules-limits', group = INTEL_RUMOURS,
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Broker NPC model',
-      about = 'A GTA ped model name.', inflight = NPC_MOVES },
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.broker_npc_model'),
+      about = L('settings.a_gta_ped_model_name'), inflight = NPC_MOVES },
     { key = 'Intel.Rumours.Scenario', section = 'limits', category = 'rules-limits', group = INTEL_RUMOURS,
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Broker NPC scenario',
-      about = 'What the NPC does while it stands there.', inflight = NPC_MOVES },
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.broker_npc_scenario'),
+      about = L('settings.what_the_npc_does_while_it'), inflight = NPC_MOVES },
     { key = 'Intel.Rumours.Blip', section = 'features', category = 'features', group = INTEL_RUMOURS,
-      kind = 'switch', label = 'Broker on the map', about = 'A map blip where the broker NPC stands.',
+      kind = 'switch', label = L('settings.broker_on_the_map'), about = L('settings.a_map_blip_where_the_broker'),
       inflight = NPC_MOVES },
     { key = 'Intel.Rumours.BrokerJobs', section = 'limits', category = 'rules-targeting',
-      group = INTEL_RUMOURS, kind = 'list', label = 'Broker jobs',
-      about = 'Players on these jobs brief a hitman standing near them from their own app.',
+      group = INTEL_RUMOURS, kind = 'list', label = L('settings.broker_jobs'),
+      about = L('settings.players_on_these_jobs_brief_a'),
       inflight = AT_USE },
 
     { key = 'Roleplay.BurnerPhone.Enabled', section = 'features', category = 'features', group = RP_BURNER,
-      kind = 'switch', label = 'Burner phone required',
-      about = 'Placing, accepting and every contract action need the burner phone item.',
-      inflight = 'Checked at every action: live contracts stay as they are; only the next action '
-          .. 'needs the item.' },
+      kind = 'switch', label = L('settings.burner_phone_required'),
+      about = L('settings.placing_accepting_and_every_contract_action'),
+      inflight = L('settings.checked_at_every_action_live_contracts') },
     { key = 'Roleplay.BurnerPhone.ConsumeOnPlace', section = 'features', category = 'features',
-      group = RP_BURNER, kind = 'switch', label = 'Use one up on placing',
-      about = 'One burner is used up when a contract is placed.', inflight = AT_USE },
+      group = RP_BURNER, kind = 'switch', label = L('settings.use_one_up_on_placing'),
+      about = L('settings.one_burner_is_used_up_when'), inflight = AT_USE },
     { key = 'Roleplay.BurnerPhone.ConsumeOnAccept', section = 'features', category = 'features',
-      group = RP_BURNER, kind = 'switch', label = 'Use one up on accepting',
-      about = 'One burner is used up when a contract is accepted.', inflight = AT_USE },
+      group = RP_BURNER, kind = 'switch', label = L('settings.use_one_up_on_accepting'),
+      about = L('settings.one_burner_is_used_up_when_2'), inflight = AT_USE },
     { key = 'Roleplay.BurnerPhone.RequireToOpen', section = 'features', category = 'features',
-      group = RP_BURNER, kind = 'switch', label = 'No burner, no contract tabs',
-      about = 'Without one the Board and the contract half of Mine show nothing.', inflight = AT_USE },
+      group = RP_BURNER, kind = 'switch', label = L('settings.no_burner_no_contract_tabs'),
+      about = L('settings.without_one_the_board_and_the'), inflight = AT_USE },
     { key = 'Roleplay.BurnerPhone.Item', section = 'limits', category = 'rules-limits', group = RP_BURNER,
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Burner phone item',
-      about = 'The ox_inventory item name.', inflight = AT_USE },
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.burner_phone_item'),
+      about = L('settings.the_ox_inventory_item_name'), inflight = AT_USE },
 
     { key = 'Intel.InPerson.Enabled', section = 'features', category = 'features', group = INTEL_IN_PERSON,
-      kind = 'switch', label = 'Informant in person',
-      about = 'Every informant purchase needs the buyer beside the informant NPC.',
-      inflight = 'Checked at every purchase; nothing already bought changes.' },
+      kind = 'switch', label = L('settings.informant_in_person'),
+      about = L('settings.every_informant_purchase_needs_the_buyer'),
+      inflight = L('settings.checked_at_every_purchase_nothing_already') },
     { key = 'Intel.InPerson.Radius', section = 'limits', category = 'rules-limits', group = INTEL_IN_PERSON,
-      kind = 'number', min = 1, max = 100, label = 'Distance to the informant (m)',
-      about = 'How close the buyer stands to the informant NPC.', inflight = AT_USE },
+      kind = 'number', min = 1, max = 100, label = L('settings.distance_to_the_informant_m'),
+      about = L('settings.how_close_the_buyer_stands_to'), inflight = AT_USE },
     { key = 'Intel.InPerson.Locations', place = 'point', section = 'limits', category = 'rules-limits',
       group = INTEL_IN_PERSON, kind = 'list', array = true, whole = true, names = 'point',
-      label = 'Informant NPC places', about = PLACES, inflight = NPC_MOVES },
+      label = L('settings.informant_npc_places'), about = PLACES, inflight = NPC_MOVES },
     { key = 'Intel.InPerson.RotateHours', section = 'limits', category = 'rules-timers',
       group = INTEL_IN_PERSON, kind = 'number', integer = true, min = 1, max = 168,
-      label = 'Informant moves every (h)', about = 'The informant NPC moves to its next place this often.',
+      label = L('settings.informant_moves_every_h'), about = L('settings.the_informant_npc_moves_to_its'),
       inflight = NPC_MOVES },
     { key = 'Intel.InPerson.Model', section = 'limits', category = 'rules-limits', group = INTEL_IN_PERSON,
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Informant NPC model',
-      about = 'A GTA ped model name.', inflight = NPC_MOVES },
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.informant_npc_model'),
+      about = L('settings.a_gta_ped_model_name'), inflight = NPC_MOVES },
     { key = 'Intel.InPerson.Scenario', section = 'limits', category = 'rules-limits',
       group = INTEL_IN_PERSON, kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64,
-      label = 'Informant NPC scenario', about = 'What the NPC does while it stands there.',
+      label = L('settings.informant_npc_scenario'), about = L('settings.what_the_npc_does_while_it'),
       inflight = NPC_MOVES },
     { key = 'Intel.InPerson.Blip', section = 'features', category = 'features', group = INTEL_IN_PERSON,
-      kind = 'switch', label = 'Informant on the map', about = 'A map blip where the informant NPC stands.',
+      kind = 'switch', label = L('settings.informant_on_the_map'), about = L('settings.a_map_blip_where_the_informant'),
       inflight = NPC_MOVES },
     { key = 'Roleplay.NpcPlaces.Enabled', section = 'features', category = 'features', group = INTEL_IN_PERSON,
-      kind = 'switch', label = 'Broker and informant placed from the panel',
-      about = 'The places staff set in Locations (Use my position) are used instead of the Locations lists, '
-          .. 'which stay the defaults while none is set.', inflight = NPC_MOVES },
+      kind = 'switch', label = L('settings.broker_and_informant_placed_from_the'),
+      about = L('settings.the_places_staff_set_in_locations'), inflight = NPC_MOVES },
 
     { key = 'Roleplay.ReasonQuality.Enabled', section = 'features', category = 'features', group = RP_REASON,
-      kind = 'switch', label = 'Reason quality',
-      about = 'A typed reason needs a least length and word count, and low-effort ones are caught.',
-      inflight = 'Read at every placing and edit: contracts keep the reason they were placed with.' },
+      kind = 'switch', label = L('settings.reason_quality'),
+      about = L('settings.a_typed_reason_needs_a_least'),
+      inflight = L('settings.read_at_every_placing_and_edit') },
     { key = 'Roleplay.ReasonQuality.MinLength', section = 'limits', category = 'rules-limits',
       group = RP_REASON, kind = 'number', integer = true, min = 0, max = 255,
-      label = 'Shortest reason (characters)', about = 'At most Reason.MaxLength.', inflight = AT_USE },
+      label = L('settings.shortest_reason_characters'), about = L('settings.at_most_reason_maxlength'), inflight = AT_USE },
     { key = 'Roleplay.ReasonQuality.MinWords', section = 'limits', category = 'rules-limits',
       group = RP_REASON, kind = 'number', integer = true, min = 0, max = 50,
-      label = 'Fewest words in a reason', about = 'Words are runs of letters and digits.', inflight = AT_USE },
+      label = L('settings.fewest_words_in_a_reason'), about = L('settings.words_are_runs_of_letters_and'), inflight = AT_USE },
     { key = 'Roleplay.ReasonQuality.LowEffort', section = 'limits', category = 'rules-limits',
       group = RP_REASON, kind = 'list', array = true, whole = true, names = 'phrase',
-      label = 'Low-effort phrases', about = 'Matched as whole words, in any case.', inflight = AT_USE },
+      label = L('settings.low_effort_phrases'), about = L('settings.matched_as_whole_words_in_any'), inflight = AT_USE },
     { key = 'Roleplay.ReasonQuality.LowEffortAction', section = 'limits', category = 'rules-limits',
       group = RP_REASON, kind = 'choice', choices = { 'refuse', 'review' },
-      label = 'A low-effort reason is',
-      about = '"refuse": refused. "review": placed, and put in Needs review for staff.',
+      label = L('settings.a_low_effort_reason_is'),
+      about = L('settings.refuse_refused_review_placed_and_put'),
       inflight = AT_USE },
 }) do
     CATALOGUE[#CATALOGUE + 1] = entry
@@ -1721,82 +1543,82 @@ end
 --- The improvements (server/imp_*.lua, Config.Improvements), each off as
 --- shipped: the switch under Features, the rest under the rules they are.
 --- Informant fairness (server/intel/rules.lua), six blocks.
-local INTEL_DELAY, INTEL_LIMITS = 'Intel: Tip warning delay', 'Intel: Tip limits'
-local INTEL_HOLD, INTEL_SECOND = 'Intel: Hold before a tip', 'Intel: Informant second try'
-local INTEL_ZONES, INTEL_DARK = 'Intel: Tip safe zones', 'Intel: Go dark'
+local INTEL_DELAY, INTEL_LIMITS = L('settings.intel_tip_warning_delay'), L('settings.intel_tip_limits')
+local INTEL_HOLD, INTEL_SECOND = L('settings.intel_hold_before_a_tip'), L('settings.intel_informant_second_try')
+local INTEL_ZONES, INTEL_DARK = L('settings.intel_tip_safe_zones'), L('settings.intel_go_dark')
 MONEY['Intel.TipLimits.MaxCost'] = 'Intel prices'
 MONEY['Intel.SecondTry.SecondTryCostPercent'] = 'Intel prices'
 MONEY['Intel.GoDark.Cost'] = 'Intel prices'
 MONEY['Intel.GoDark.Account'] = 'Intel prices'
 for _, entry in ipairs({
     { key = 'Intel.WarningDelay.Enabled', section = 'features', category = 'features',
-      group = INTEL_DELAY, kind = 'switch', label = 'Delay the target\'s tip warning',
-      about = 'The target\'s "someone knows your rough area" notice waits a random while after a tip.',
-      inflight = 'Read at every tip: warnings already waiting are still sent when due.' },
+      group = INTEL_DELAY, kind = 'switch', label = L('settings.delay_the_targets_tip_warning'),
+      about = L('settings.the_targets_someone_knows_your_rough'),
+      inflight = L('settings.read_at_every_tip_warnings_already') },
     { key = 'Intel.WarningDelay.MinSeconds', section = 'limits', category = 'rules-timers',
       group = INTEL_DELAY, kind = 'number', integer = true, min = 0, max = 3600,
-      label = 'Shortest warning delay (s)', about = 'At most the longest delay.', inflight = AT_USE },
+      label = L('settings.shortest_warning_delay'), about = L('settings.at_most_the_longest_delay'), inflight = AT_USE },
     { key = 'Intel.WarningDelay.MaxSeconds', section = 'limits', category = 'rules-timers',
       group = INTEL_DELAY, kind = 'number', integer = true, min = 0, max = 3600,
-      label = 'Longest warning delay (s)', about = '0 sends the warning at once, as before.',
+      label = L('settings.longest_warning_delay'), about = L('settings.0_sends_the_warning_at_once'),
       inflight = AT_USE },
 
     { key = 'Intel.TipLimits.Enabled', section = 'features', category = 'features', group = INTEL_LIMITS,
-      kind = 'switch', label = 'Extra tip limits',
-      about = 'One tip per hitman per contract, and/or each further tip twice the last one\'s price.',
-      inflight = 'Read at every tip: tips already bought stay bought.' },
+      kind = 'switch', label = L('settings.extra_tip_limits'),
+      about = L('settings.one_tip_per_hitman_per_contract'),
+      inflight = L('settings.read_at_every_tip_tips_already') },
     { key = 'Intel.TipLimits.OnePerHitman', section = 'features', category = 'features',
-      group = INTEL_LIMITS, kind = 'switch', label = 'One tip per hitman per contract',
-      about = 'Each hitman on a contract buys one tip on it, on top of the contract\'s own limit.',
+      group = INTEL_LIMITS, kind = 'switch', label = L('settings.one_tip_per_hitman_per_contract_2'),
+      about = L('settings.each_hitman_on_a_contract_buys'),
       inflight = AT_USE },
     { key = 'Intel.TipLimits.PriceDoubling', section = 'features', category = 'features',
-      group = INTEL_LIMITS, kind = 'switch', label = 'Each further tip costs double',
-      about = 'Each tip on a contract costs twice the one before, up to the most a tip costs.',
+      group = INTEL_LIMITS, kind = 'switch', label = L('settings.each_further_tip_costs_double'),
+      about = L('settings.each_tip_on_a_contract_costs'),
       inflight = AT_USE },
     { key = 'Intel.TipLimits.MaxCost', section = 'limits', category = 'rules-rewards', group = INTEL_LIMITS,
-      kind = 'number', integer = true, min = 0, max = 10000000, label = 'Most a doubled tip costs ($)',
-      about = 'Never less than the price of a tip.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 10000000, label = L('settings.most_a_doubled_tip_costs'),
+      about = L('settings.never_less_than_the_price_of'), inflight = AT_USE },
 
     { key = 'Intel.HoldFirst.Enabled', section = 'features', category = 'features', group = INTEL_HOLD,
-      kind = 'switch', label = 'Hold a contract before a tip',
-      about = 'A hitman buys a tip only once they have held the contract a while.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.hold_a_contract_before_a_tip'),
+      about = L('settings.a_hitman_buys_a_tip_only'), inflight = AT_USE },
     { key = 'Intel.HoldFirst.MinHeldMinutes', section = 'limits', category = 'rules-timers',
       group = INTEL_HOLD, kind = 'number', integer = true, min = 0, max = 1440,
-      label = 'Hold before a tip (min)', about = 'Counted from when the hitman accepted it.',
+      label = L('settings.hold_before_a_tip_min'), about = L('settings.counted_from_when_the_hitman_accepted'),
       inflight = AT_USE },
 
     { key = 'Intel.SecondTry.Enabled', section = 'features', category = 'features',
-      group = INTEL_SECOND, kind = 'switch', label = 'Target\'s later look-ups priced apart',
-      about = 'The target\'s look-ups after the first on a contract cost a share of the price.',
+      group = INTEL_SECOND, kind = 'switch', label = L('settings.targets_later_look_ups_priced_apart'),
+      about = L('settings.the_targets_look_ups_after_the'),
       inflight = AT_USE },
     { key = 'Intel.SecondTry.SecondTryCostPercent', section = 'limits',
       category = 'rules-rewards', group = INTEL_SECOND, kind = 'number', integer = true, min = 0, max = 1000,
-      label = 'Later look-ups cost (% of the price)',
-      about = '100 is the same price; the chance stays the informant\'s.', inflight = AT_USE },
+      label = L('settings.later_look_ups_cost_of_the'),
+      about = L('settings.100_is_the_same_price_the'), inflight = AT_USE },
 
     { key = 'Intel.SafeZones.Enabled', section = 'features', category = 'features', group = INTEL_ZONES,
-      kind = 'switch', label = 'Safe zones for tips',
-      about = 'No tip is sold while the target stands in one of the zones; nothing is charged.',
+      kind = 'switch', label = L('settings.safe_zones_for_tips'),
+      about = L('settings.no_tip_is_sold_while_the'),
       inflight = AT_USE },
     { key = 'Intel.SafeZones.Zones', place = 'zone', section = 'limits', category = 'rules-targeting',
       group = INTEL_ZONES, kind = 'list', array = true, whole = true, names = 'zone',
-      label = 'Safe zones (x, y, radius, name)',
-      about = 'The hitman is told only that the informant cannot place them.', inflight = AT_USE },
+      label = L('settings.safe_zones_x_y_radius_name'),
+      about = L('settings.the_hitman_is_told_only_that'), inflight = AT_USE },
 
     { key = 'Intel.GoDark.Enabled', section = 'features', category = 'features', group = INTEL_DARK,
-      kind = 'switch', label = 'Go dark',
-      about = 'A target told of a tip may pay so that tips on them find nothing for a while.',
-      inflight = 'Read at every purchase; a target already dark stays dark to the end.' },
+      kind = 'switch', label = L('settings.go_dark'),
+      about = L('settings.a_target_told_of_a_tip'),
+      inflight = L('settings.read_at_every_purchase_a_target') },
     { key = 'Intel.GoDark.Cost', section = 'limits', category = 'rules-rewards', group = INTEL_DARK,
-      kind = 'number', integer = true, min = 0, max = 10000000, label = 'Price to go dark ($)',
+      kind = 'number', integer = true, min = 0, max = 10000000, label = L('settings.price_to_go_dark'),
       inflight = AT_USE },
     { key = 'Intel.GoDark.Account', section = 'limits', category = 'rules-rewards', group = INTEL_DARK,
-      kind = 'choice', choices = { 'bank', 'cash' }, label = 'Account going dark is paid from',
+      kind = 'choice', choices = { 'bank', 'cash' }, label = L('settings.account_going_dark_is_paid_from'),
       inflight = AT_USE },
     { key = 'Intel.GoDark.Minutes', section = 'limits', category = 'rules-timers', group = INTEL_DARK,
-      kind = 'number', integer = true, min = 1, max = 1440, label = 'Dark for (min)',
-      about = 'Tips bought on them meanwhile find nothing and are given back in full.',
-      inflight = 'A target already dark keeps the time they paid for.' },
+      kind = 'number', integer = true, min = 1, max = 1440, label = L('settings.dark_for_min'),
+      about = L('settings.tips_bought_on_them_meanwhile_find'),
+      inflight = L('settings.a_target_already_dark_keeps_the') },
 }) do
     CATALOGUE[#CATALOGUE + 1] = entry
 end
@@ -1806,102 +1628,93 @@ end
 --- part its own group in it; every switch under Features, the rest under
 --- the Rules view it belongs to; all read at use, with no restart.
 local REC_TRUST, REC_REPUTATION = 'Record: Progression', 'Record: Reputation'
-local REC_TIERS, REC_HEAT, REC_PLACER = 'Record: Tiered board', 'Record: Hitman heat', 'Record: Placer record'
+local REC_TIERS, REC_HEAT, REC_PLACER = L('settings.record_tiered_board'), L('settings.record_hitman_heat'), L('settings.record_placer_record')
 for _, entry in ipairs({
     { key = 'Record.Progression.Enabled', section = 'features', category = 'features', group = REC_TRUST,
-      kind = 'switch', label = 'Criminal progression', about = 'Completed contracts earn sc-blackmarket trust.',
-      inflight = 'Trust already given stands; completions while it is off earn none.' },
+      kind = 'switch', label = L('settings.criminal_progression'), about = L('settings.completed_contracts_earn_sc_blackmarket_trust'),
+      inflight = L('settings.trust_already_given_stands_completions_while') },
     { key = 'Record.Progression.TrustPerElimination', section = 'limits', category = 'rules-limits',
       group = REC_TRUST, kind = 'number', integer = true, min = 0, max = 10000,
-      label = 'Trust per kill', about = 'sc-blackmarket trust a completed kill earns.', inflight = AT_USE },
+      label = L('settings.trust_per_kill'), about = L('settings.sc_blackmarket_trust_a_completed_kill'), inflight = AT_USE },
     { key = 'Record.Progression.TrustPerKidnapping', section = 'limits', category = 'rules-limits',
       group = REC_TRUST, kind = 'number', integer = true, min = 0, max = 10000,
-      label = 'Trust per live handover', about = 'sc-blackmarket trust a handover earns.', inflight = AT_USE },
+      label = L('settings.trust_per_live_handover'), about = L('settings.sc_blackmarket_trust_a_handover_earns'), inflight = AT_USE },
 
     { key = 'Record.Reputation.Enabled', section = 'features', category = 'features', group = REC_REPUTATION,
-      kind = 'switch', label = 'Reputation earned in character',
-      about = 'The progression trust a completion earns is scaled: a base factor, plus bonuses for the '
-          .. 'thread used, a meeting point, a live handover and no witnesses, up to a cap. The hitman '
-          .. 'sees the breakdown on their completion notice.',
-      inflight = 'Read at each completion; trust already given stands.' },
+      kind = 'switch', label = L('settings.reputation_earned_in_character'),
+      about = L('settings.the_progression_trust_a_completion_earns'),
+      inflight = L('settings.read_at_each_completion_trust_already') },
     { key = 'Record.Reputation.BaseFactor', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Trust factor for a plain completion', inflight = AT_USE },
+      kind = 'number', min = 0, max = 10, label = L('settings.trust_factor_for_a_plain_completion'), inflight = AT_USE },
     { key = 'Record.Reputation.ThreadBonus', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Bonus: the hitman wrote in the thread', inflight = AT_USE },
+      kind = 'number', min = 0, max = 10, label = L('settings.bonus_the_hitman_wrote_in_the'), inflight = AT_USE },
     { key = 'Record.Reputation.MeetingBonus', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Bonus: a meeting point was set', inflight = AT_USE },
+      kind = 'number', min = 0, max = 10, label = L('settings.bonus_a_meeting_point_was_set'), inflight = AT_USE },
     { key = 'Record.Reputation.HandoverBonus', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Bonus: a live handover', inflight = AT_USE },
+      kind = 'number', min = 0, max = 10, label = L('settings.bonus_a_live_handover'), inflight = AT_USE },
     { key = 'Record.Reputation.WitnessFreeBonus', section = 'limits', category = 'rules-limits',
-      group = REC_REPUTATION, kind = 'number', min = 0, max = 10, label = 'Bonus: no witnesses',
+      group = REC_REPUTATION, kind = 'number', min = 0, max = 10, label = L('settings.bonus_no_witnesses'),
       inflight = AT_USE },
     { key = 'Record.Reputation.WitnessRadius', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
-      kind = 'number', min = 1, max = 500, label = 'Witness radius around the hitman (m)', inflight = AT_USE },
+      kind = 'number', min = 1, max = 500, label = L('settings.witness_radius_around_the_hitman_m'), inflight = AT_USE },
     { key = 'Record.Reputation.MaxFactor', section = 'limits', category = 'rules-limits', group = REC_REPUTATION,
-      kind = 'number', min = 0, max = 10, label = 'Most the trust factor may reach', inflight = AT_USE },
+      kind = 'number', min = 0, max = 10, label = L('settings.most_the_trust_factor_may_reach'), inflight = AT_USE },
 
     { key = 'Record.PlacerRecord.Enabled', category = 'features', group = REC_PLACER,
-      kind = 'switch', label = 'Placer record on the board',
-      about = 'A board card shows how many contracts its placer placed, had paid out and cancelled lately. '
-          .. 'Never who they are.',
-      inflight = 'At the next board read, with no restart.' },
+      kind = 'switch', label = L('settings.placer_record_on_the_board'),
+      about = L('settings.a_board_card_shows_how_many'),
+      inflight = L('settings.at_the_next_board_read_with') },
     { key = 'Record.PlacerRecord.ShowForAnonymous', category = 'features', group = REC_PLACER,
-      kind = 'switch', label = 'Placer record: anonymous placers too',
-      about = 'Off: no record on an anonymous contract. On: their anonymous contracts only, in rough '
-          .. 'bands (0, 1-4, 5-9, 10+), fixed when the card is first drawn, so two anonymous contracts '
-          .. 'cannot be tied together.', inflight = AT_USE },
+      kind = 'switch', label = L('settings.placer_record_anonymous_placers_too'),
+      about = L('settings.off_no_record_on_an_anonymous'), inflight = AT_USE },
     { key = 'Record.PlacerRecord.LookbackDays', category = 'rules-limits', group = REC_PLACER,
-      kind = 'number', integer = true, min = 1, max = 365, label = 'Days the placer record counts',
+      kind = 'number', integer = true, min = 1, max = 365, label = L('settings.days_the_placer_record_counts'),
       inflight = AT_USE },
 
     { key = 'Record.Heat.Enabled', category = 'features', group = REC_HEAT,
-      kind = 'switch', label = 'Hitman heat',
-      about = 'Completions on whitelisted-job targets and police alerts about a hitman\'s work give them '
-          .. 'heat for a while. At the threshold their targets are warned more often and police get a '
-          .. 'vague bulletin. Never a name.',
-      inflight = 'At the next completion, acceptance or tick, with no restart.' },
+      kind = 'switch', label = L('settings.hitman_heat'),
+      about = L('settings.completions_on_whitelisted_job_targets_and'),
+      inflight = L('settings.at_the_next_completion_acceptance_or') },
     { key = 'Record.Heat.ProtectedCompletionHeat', category = 'rules-limits', group = REC_HEAT,
-      kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a whitelisted-job completion',
+      kind = 'number', integer = true, min = 0, max = 100, label = L('settings.heat_for_a_whitelisted_job_completion'),
       inflight = AT_USE },
     { key = 'Record.Heat.WitnessHeat', category = 'rules-limits', group = REC_HEAT,
-      kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a witness report',
-      about = 'Needs Witness heat (Roleplay) on to send reports.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 100, label = L('settings.heat_for_a_witness_report'),
+      about = L('settings.needs_witness_heat_roleplay_on_to'), inflight = AT_USE },
     { key = 'Record.Heat.AdvisoryHeat', category = 'rules-limits', group = REC_HEAT,
-      kind = 'number', integer = true, min = 0, max = 100, label = 'Heat for a police bulletin on them',
-      about = 'An acceptance or an informant tip on a whitelisted-job target, while those bulletins go.',
+      kind = 'number', integer = true, min = 0, max = 100, label = L('settings.heat_for_a_police_bulletin_on'),
+      about = L('settings.an_acceptance_or_an_informant_tip'),
       inflight = AT_USE },
     { key = 'Record.Heat.Threshold', category = 'rules-limits', group = REC_HEAT,
-      kind = 'number', integer = true, min = 1, max = 1000, label = 'Heat at which a hitman is known',
+      kind = 'number', integer = true, min = 1, max = 1000, label = L('settings.heat_at_which_a_hitman_is'),
       inflight = AT_USE },
     { key = 'Record.Heat.WarnTargetChancePercent', category = 'rules-limits', group = REC_HEAT,
-      kind = 'number', integer = true, min = 0, max = 100, label = 'Chance a known hitman\'s target is warned (%)',
-      about = '100: the paranoid alert always goes when a known hitman takes a contract. Needs the '
-          .. 'paranoid alert on.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 100, label = L('settings.chance_a_known_hitmans_target_is'),
+      about = L('settings.100_the_paranoid_alert_always_goes'), inflight = AT_USE },
     { key = 'Record.Heat.DecayHours', category = 'rules-timers', group = REC_HEAT,
-      kind = 'number', integer = true, min = 1, max = 720, label = 'Hours heat stays',
+      kind = 'number', integer = true, min = 1, max = 720, label = L('settings.hours_heat_stays'),
       inflight = AT_USE },
     { key = 'Record.Heat.BulletinEveryMinutes', category = 'rules-timers', group = REC_HEAT,
-      kind = 'number', integer = true, min = 0, max = 1440, label = 'Least minutes between police bulletins',
-      about = '0: no bulletin.', inflight = AT_USE },
+      kind = 'number', integer = true, min = 0, max = 1440, label = L('settings.least_minutes_between_police_bulletins'),
+      about = L('settings.0_no_bulletin'), inflight = AT_USE },
     { key = 'Record.Heat.BulletinTitle', category = 'rules-limits', group = REC_HEAT,
       kind = 'text', pattern = '^[^%c<>]+$', maxLength = 60, says = RP_TEXT,
-      label = 'Title of the police bulletin', inflight = AT_USE },
+      label = L('settings.title_of_the_police_bulletin'), inflight = AT_USE },
     { key = 'Record.Heat.BulletinText', category = 'rules-limits', group = REC_HEAT,
       kind = 'text', pattern = '^[^%c<>]+$', maxLength = 160, says = RP_TEXT,
-      label = 'What the police bulletin says', about = 'Keep it vague: it must name nobody.',
+      label = L('settings.what_the_police_bulletin_says'), about = L('settings.keep_it_vague_it_must_name'),
       inflight = AT_USE },
 
     { key = 'Record.Tiers.Enabled', category = 'features', group = REC_TIERS,
-      kind = 'switch', label = 'Tiered board',
-      about = 'Contracts paying more are locked to hitmen below the tier\'s progression level. Needs '
-          .. 'Criminal progression on.', inflight = 'At the next board read and acceptance, with no restart.' },
+      kind = 'switch', label = L('settings.tiered_board'),
+      about = L('settings.contracts_paying_more_are_locked_to'), inflight = L('settings.at_the_next_board_read_and') },
     { key = 'Record.Tiers.CompletionsPerLevel', category = 'rules-limits', group = REC_TIERS,
-      kind = 'number', integer = true, min = 1, max = 1000, label = 'Completed contracts per level',
-      about = 'A hitman is level 1, plus one for each this many contracts they completed.',
+      kind = 'number', integer = true, min = 1, max = 1000, label = L('settings.completed_contracts_per_level'),
+      about = L('settings.a_hitman_is_level_1_plus'),
       inflight = AT_USE },
     { key = 'Record.Tiers.Tiers', category = 'rules-limits', group = REC_TIERS,
-      kind = 'list', array = true, whole = true, names = 'tier', label = 'Tiers, as name, least reward, level',
-      about = 'Such as Elite, 150000, 4. The highest tier a payout reaches decides.', inflight = AT_USE },
+      kind = 'list', array = true, whole = true, names = 'tier', label = L('settings.tiers_as_name_least_reward_level'),
+      about = L('settings.such_as_elite_150000_4_the'), inflight = AT_USE },
 
 }) do
     entry.section = entry.section or (entry.category == 'features' and 'features' or 'limits')
@@ -1911,28 +1724,27 @@ end
 --- Contract decay (server/imp_board.lua, README Optional features), off as
 --- shipped: the switch under Features, the rest under the Rules view it
 --- belongs to; all read at use, with no restart.
-local IMP_DECAY = 'Improvements: Contract decay'
+local IMP_DECAY = L('settings.improvements_contract_decay')
 for _, entry in ipairs({
     { key = 'Improvements.ContractDecay.Enabled', category = 'features', group = IMP_DECAY,
-      kind = 'switch', label = 'Contract decay',
-      about = 'An untaken contract\'s reward rises each step, charged to its placer, or it ends sooner. '
-          .. 'The placer is told and can turn it off for their contract.',
-      inflight = 'At the next tick, with no restart.' },
+      kind = 'switch', label = L('settings.contract_decay'),
+      about = L('settings.an_untaken_contracts_reward_rises_each'),
+      inflight = L('settings.at_the_next_tick_with_no') },
     { key = 'Improvements.ContractDecay.Mode', category = 'rules-limits', group = IMP_DECAY,
-      kind = 'choice', choices = { 'rise', 'shorten' }, label = 'What decay does',
-      about = '\'rise\': the reward goes up. \'shorten\': the deadline comes in.', inflight = AT_USE },
+      kind = 'choice', choices = { 'rise', 'shorten' }, label = L('settings.what_decay_does'),
+      about = L('settings.rise_the_reward_goes_up_shorten'), inflight = AT_USE },
     { key = 'Improvements.ContractDecay.Hours', category = 'rules-timers', group = IMP_DECAY,
-      kind = 'number', integer = true, min = 1, max = 168, label = 'Hours between decay steps',
+      kind = 'number', integer = true, min = 1, max = 168, label = L('settings.hours_between_decay_steps'),
       inflight = AT_USE },
     { key = 'Improvements.ContractDecay.Percent', category = 'rules-rewards', group = IMP_DECAY,
-      kind = 'number', integer = true, min = 1, max = 100, label = 'Decay step (%)',
-      about = 'Of the reward at the first step (\'rise\'), or of the time left (\'shorten\').',
+      kind = 'number', integer = true, min = 1, max = 100, label = L('settings.decay_step'),
+      about = L('settings.of_the_reward_at_the_first'),
       inflight = AT_USE },
     { key = 'Improvements.ContractDecay.MaxIncreasePercent', category = 'rules-rewards', group = IMP_DECAY,
-      kind = 'number', integer = true, min = 0, max = 1000, label = 'Most a reward rises in all (%)',
+      kind = 'number', integer = true, min = 0, max = 1000, label = L('settings.most_a_reward_rises_in_all'),
       inflight = AT_USE },
     { key = 'Improvements.ContractDecay.Account', category = 'rules-rewards', group = IMP_DECAY,
-      kind = 'choice', choices = { 'cash', 'bank' }, label = 'Where a rise is charged from',
+      kind = 'choice', choices = { 'cash', 'bank' }, label = L('settings.where_a_rise_is_charged_from'),
       inflight = AT_USE },
 }) do
     entry.section = entry.category == 'features' and 'features' or 'limits'
@@ -1945,52 +1757,46 @@ end
 
 --- Proof items, serial scrubbing, the weekly stats and the completion cooldown
 --- (server/imp_proof.lua, imp_scrub.lua, imp_weekly.lua, targetlimits.lua).
-local IMP_PROOF, IMP_SCRUB = 'Improvements: Proof items', 'Improvements: Serial scrubbing'
-local IMP_WEEKLY = 'Improvements: Weekly stats'
+local IMP_PROOF, IMP_SCRUB = L('settings.improvements_proof_items'), L('settings.improvements_serial_scrubbing')
+local IMP_WEEKLY = L('settings.improvements_weekly_stats')
 for _, entry in ipairs({
     { key = 'Improvements.ProofItems.Enabled', section = 'features', category = 'features', group = IMP_PROOF,
-      kind = 'switch', label = 'Proof items',
-      about = 'On a contract a kill completes, a hitman beside the placer may hand over an item '
-          .. 'taken from the target (an id card naming them) and is paid as for a verified kill.',
-      inflight = 'Read at every handover: on, the button shows on contracts already held; a '
-          .. 'payout already made is untouched.' },
+      kind = 'switch', label = L('settings.proof_items'),
+      about = L('settings.on_a_contract_a_kill_completes'),
+      inflight = L('settings.read_at_every_handover_on_the') },
     { key = 'Improvements.ProofItems.Item', section = 'limits', category = 'rules-limits', group = IMP_PROOF,
-      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = 'Proof item',
-      about = 'The ox_inventory item a hitman hands over.', inflight = AT_USE },
+      kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64, label = L('settings.proof_item'),
+      about = L('settings.the_ox_inventory_item_a_hitman'), inflight = AT_USE },
     { key = 'Improvements.ProofItems.MetadataKey', section = 'limits', category = 'rules-limits',
       group = IMP_PROOF, kind = 'text', pattern = '^[%w_%-]+$', maxLength = 64,
-      label = 'Metadata field that names the target',
-      about = 'Must hold the target\'s citizen id: citizenid on qbx_idcard\'s id_card.', inflight = AT_USE },
+      label = L('settings.metadata_field_that_names_the_target'),
+      about = L('settings.must_hold_the_targets_citizen_id'), inflight = AT_USE },
     { key = 'Improvements.ProofItems.HandoverRadius', section = 'limits', category = 'rules-limits',
-      group = IMP_PROOF, kind = 'number', min = 1, max = 50, label = 'Distance to the placer (m)',
-      about = 'How close the hitman stands to the placer to hand it over.', inflight = AT_USE },
+      group = IMP_PROOF, kind = 'number', min = 1, max = 50, label = L('settings.distance_to_the_placer_m'),
+      about = L('settings.how_close_the_hitman_stands_to_2'), inflight = AT_USE },
 
     { key = 'Improvements.SerialScrub.Enabled', section = 'features', category = 'features', group = IMP_SCRUB,
-      kind = 'switch', label = 'Weapon serial scrubbing',
-      about = 'A weapon an anonymous placer put up reaches the hitman with a new random serial; '
-          .. 'the original is kept in the log for staff with the identity ACE.',
-      inflight = 'Read at every give: weapons already handed over keep the serial they had.' },
+      kind = 'switch', label = L('settings.weapon_serial_scrubbing'),
+      about = L('settings.a_weapon_an_anonymous_placer_put'),
+      inflight = L('settings.read_at_every_give_weapons_already') },
 
     { key = 'Improvements.WeeklyStats.Enabled', section = 'features', category = 'features', group = IMP_WEEKLY,
-      kind = 'switch', label = 'Weekly stats to Discord',
-      about = 'Once a week, a post of the last seven days\' totals: contracts placed, completed '
-          .. 'and money paid out to hitmen. Counts only, never a name or a handle. To '
-          .. 'crimson_hitman_stats_webhook, or else the alert webhook.',
-      inflight = 'Read at the hour. At most once a week, a restart included.' },
+      kind = 'switch', label = L('settings.weekly_stats_to_discord'),
+      about = L('settings.once_a_week_a_post_of'),
+      inflight = L('settings.read_at_the_hour_at_most_2') },
     { key = 'Improvements.WeeklyStats.Day', section = 'limits', category = 'rules-timers', group = IMP_WEEKLY,
       kind = 'choice', choices = { 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday' },
-      label = 'Day the weekly stats are posted', about = 'Server time.',
-      inflight = 'Read every tick: a week already posted is not posted again.' },
+      label = L('settings.day_the_weekly_stats_are_posted'), about = L('settings.server_time'),
+      inflight = L('settings.read_every_tick_a_week_already') },
     { key = 'Improvements.WeeklyStats.Hour', section = 'limits', category = 'rules-timers', group = IMP_WEEKLY,
       kind = 'number', integer = true, min = 0, max = 23,
-      label = 'Hour the weekly stats are posted (server time, 0-23)',
-      inflight = 'Read every tick: a week already posted is not posted again.' },
+      label = L('settings.hour_the_weekly_stats_are_posted'),
+      inflight = L('settings.read_every_tick_a_week_already') },
 
     { key = 'Limits.TargetCooldownAfterCompletionSeconds', section = 'limits', category = 'target-limits',
       group = 'Target limits', kind = 'number', integer = true, min = 0, max = 2592000,
-      label = 'Wait after a completed contract before its target is named again (seconds, 0 = off)',
-      about = 'The longer of this and the wait after any contract. The placer is told the wait '
-          .. 'in hours, nothing else.', inflight = AT_USE },
+      label = L('settings.wait_after_a_completed_contract_before'),
+      about = L('settings.the_longer_of_this_and_the'), inflight = AT_USE },
 }) do
     CATALOGUE[#CATALOGUE + 1] = entry
 end
@@ -2133,28 +1939,28 @@ local LIST_MAX, NAME_MAX = 50, 32
 --- not given): the pattern, how long, and what the refusal says.
 local NAMES = {
     job = { pattern = '^[%w_%-]+$', max = NAME_MAX, lower = true,
-            says = 'names letters, digits, - and _ only, up to 32 long' },
-    item = { pattern = '^[%w_%-]+$', max = 64, says = 'item names letters, digits, - and _ only, up to 64 long' },
+            says = L('settings.names_letters_digits_and_only_up') },
+    item = { pattern = '^[%w_%-]+$', max = 64, says = L('settings.item_names_letters_digits_and_only') },
     mime = { pattern = '^[%w%-%.]+/[%w%-%.%+]+$', max = 64, lower = true,
-             says = 'image types such as image/png, up to 64 long' },
+             says = L('settings.image_types_such_as_image_png') },
     host = { pattern = '^[%w%-]+%.[%w%-%.]+$', max = 128, lower = true,
-             says = 'host names such as fivemanage.com, up to 128 long' },
-    phrase = { pattern = '^[^%c<>]+$', max = 60, says = 'short phrases, up to 60 characters, no < or >' },
+             says = L('settings.host_names_such_as_fivemanage_com') },
+    phrase = { pattern = '^[^%c<>]+$', max = 60, says = L('settings.short_phrases_up_to_60_characters') },
     -- The roleplay lists (server/rp_places.lua, rp_consequences.lua): an NPC's
     -- place; a news template; and a named area, in either form both lists
     -- read (Places.parseArea): 'Name@x,y' (witness heat and city news) or
     -- 'x, y, name' (the rumours' districts).
-    point = { pattern = '^[%d%s%.,%-]+$', max = 60, says = 'places as x, y, z, heading' },
-    sentence = { pattern = '^[^%c<>]+$', max = 160, says = 'sentences, up to 160 characters, no < or >' },
+    point = { pattern = '^[%d%s%.,%-]+$', max = 60, says = L('settings.places_as_x_y_z_heading') },
+    sentence = { pattern = '^[^%c<>]+$', max = 160, says = L('settings.sentences_up_to_160_characters_no') },
     area = { patterns = { '^[^%c<>@]+@%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*$',
                           '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,[^%c<>@]+$' }, max = 60,
-             says = 'areas as Name@x,y or x, y, name (such as Legion Square@195,-934), up to 60 characters' },
+             says = L('settings.areas_as_name_x_y_or') },
     -- The tiered board (Record.parseTier, server/record/): 'name, least reward, level'.
     tier = { pattern = '^[^%c<>,]+,%s*%d+%s*,%s*%d+$', max = 60,
-             says = 'tiers as name, least reward, level (such as Elite, 150000, 4), up to 60 characters' },
+             says = L('settings.tiers_as_name_least_reward_level_2') },
     -- A tip safe zone (server/intel/rules.lua, IntelRules.parseZone): 'x, y, radius, name'.
     zone = { pattern = '^%s*%-?%d+%.?%d*%s*,%s*%-?%d+%.?%d*%s*,%s*%d+%.?%d*%s*,[^%c<>]+$', max = 80,
-             says = 'zones as x, y, radius, name (such as 300, -590, 80, Pillbox), up to 80 characters' },
+             says = L('settings.zones_as_x_y_radius_name') },
 }
 
 --- Whether one typed name keeps its list's rule: its pattern, or any one of
@@ -2203,7 +2009,7 @@ end
 local function refusal(key, line, other)
     local text = tostring(line):gsub('[%.;]%s+[Uu]sing .*$', ''):gsub('[%s%.]+$', '')
     if not names(text, key) then text = key .. ' ' .. text end
-    if other and other ~= key then text = ('%s. Change %s first'):format(text, other) end
+    if other and other ~= key then text = (L('settings.change_first')):format(text, other) end
     return text
 end
 
@@ -2223,7 +2029,7 @@ local function belowFloor(changes, candidate)
             local burst = type(rule) == 'table' and tonumber(rule.burst)
             if per and burst and per > 0 and ((floor.burst and burst < floor.burst)
                 or (floor.rate and burst / per < floor.rate)) then
-                return ('%s would leave %s below what it needs, %s: %s'):format(key, bucket,
+                return (L('settings.would_leave_below_what_it_needs')):format(key, bucket,
                     floor.needs, floor.why)
             end
         end
@@ -2238,36 +2044,36 @@ end
 ---@return string|nil why
 local function normalise(entry, raw)
     if entry.kind == 'switch' then
-        if type(raw) ~= 'boolean' then return nil, 'has to be on or off' end
+        if type(raw) ~= 'boolean' then return nil, L('settings.has_to_be_on_or_off') end
         return raw
     end
     if entry.kind == 'choice' then
         for _, choice in ipairs(entry.choices) do
             if raw == choice then return raw end
         end
-        return nil, ('has to be one of: %s'):format(table.concat(entry.choices, ', '))
+        return nil, (L('settings.has_to_be_one_of')):format(table.concat(entry.choices, ', '))
     end
     if entry.kind == 'number' then
         local n = (type(raw) == 'number' or type(raw) == 'string') and tonumber(raw) or nil
         if not n or n ~= n or n == math.huge or n == -math.huge then
-            return nil, 'has to be a number'
+            return nil, L('settings.has_to_be_a_number')
         end
         if entry.integer then
-            if math.floor(n) ~= n then return nil, 'has to be a whole number' end
+            if math.floor(n) ~= n then return nil, L('settings.has_to_be_a_whole_number') end
             n = math.tointeger(n) or n
         end
         local max = Settings.maxOf(entry)
         if (entry.min and n < entry.min) or (max and n > max) then
-            return nil, ('has to be from %s to %s'):format(tostring(entry.min), tostring(max))
+            return nil, (L('settings.has_to_be_from_to')):format(tostring(entry.min), tostring(max))
         end
         return n
     end
     if entry.kind == 'list' then
         local rule = NAMES[entry.names or 'job']
-        if type(raw) ~= 'table' then return nil, 'has to be a list: ' .. rule.says end
-        if #raw > LIST_MAX then return nil, ('takes at most %d names'):format(LIST_MAX) end
+        if type(raw) ~= 'table' then return nil, L('settings.has_to_be_a_list') .. rule.says end
+        if #raw > LIST_MAX then return nil, (L('settings.takes_at_most_names')):format(LIST_MAX) end
         for k in pairs(raw) do
-            if math.type(k) ~= 'integer' or k < 1 or k > #raw then return nil, 'has to be a list' end
+            if math.type(k) ~= 'integer' or k < 1 or k > #raw then return nil, L('settings.has_to_be_a_list_2') end
         end
         local seen, out = {}, {}
         for i = 1, #raw do
@@ -2288,29 +2094,29 @@ local function normalise(entry, raw)
     if entry.kind == 'text' then
         if type(raw) ~= 'string' or #raw == 0 or #raw > (entry.maxLength or 64)
             or not raw:match(entry.pattern or '^[%w_%-]+$') then
-            return nil, ('has to be %s, up to %d long'):format(entry.says or 'letters, digits, - and _ only',
+            return nil, (L('settings.has_to_be_up_to_long')):format(entry.says or 'letters, digits, - and _ only',
                 entry.maxLength or 64)
         end
         return raw
     end
     if entry.kind == 'range' then
-        if type(raw) ~= 'table' then return nil, 'has to be a pair: from and to' end
+        if type(raw) ~= 'table' then return nil, L('settings.has_to_be_a_pair_from') end
         for k in pairs(raw) do
-            if k ~= 'min' and k ~= 'max' then return nil, 'has to be a pair: from and to' end
+            if k ~= 'min' and k ~= 'max' then return nil, L('settings.has_to_be_a_pair_from') end
         end
         local lo, hi = tonumber(raw.min), tonumber(raw.max)
-        if not lo or not hi or lo ~= lo or hi ~= hi then return nil, 'has to be two numbers' end
+        if not lo or not hi or lo ~= lo or hi ~= hi then return nil, L('settings.has_to_be_two_numbers') end
         if entry.integer and (math.floor(lo) ~= lo or math.floor(hi) ~= hi) then
-            return nil, 'has to be whole numbers'
+            return nil, L('settings.has_to_be_whole_numbers')
         end
         if lo < (entry.min or -math.huge) or hi > (entry.max or math.huge) then
-            return nil, ('has to be within %s to %s'):format(tostring(entry.min), tostring(entry.max))
+            return nil, (L('settings.has_to_be_within_to')):format(tostring(entry.min), tostring(entry.max))
         end
-        if lo > hi then return nil, 'has its from above its to' end
+        if lo > hi then return nil, L('settings.has_its_from_above_its_to') end
         if entry.integer then lo, hi = math.tointeger(lo) or lo, math.tointeger(hi) or hi end
         return { min = lo, max = hi }
     end
-    return nil, 'cannot be changed here'
+    return nil, L('settings.cannot_be_changed_here')
 end
 
 --- Whether a set of changes passes the start-up checks, run against a copy
@@ -2343,7 +2149,7 @@ local function fits(changes)
     local ok, fatal, warn = Check(candidate)
     fatal, warn = fatal or {}, warn or {}
     if not ok or #fatal > 0 then
-        local line = tostring(fatal[1] or 'the start-up checks refuse it')
+        local line = tostring(fatal[1] or L('settings.the_start_up_checks_refuse_it'))
         -- Another key the line names, to change first.
         local other
         for _, entry in ipairs(CATALOGUE) do
@@ -2363,7 +2169,7 @@ local function fits(changes)
                 for _, line in ipairs(warn) do
                     if names(line, entry.key) then return false, line, nil, entry.key end
                 end
-                return false, ('would make the start-up checks change Config.%s'):format(entry.key),
+                return false, (L('settings.would_make_the_start_up_checks')):format(entry.key),
                     nil, entry.key
             end
         end
@@ -2379,7 +2185,7 @@ end
 function Settings.configWarnings()
     if not Check then return {}, {} end
     local called, okOrErr, fatal, warn = pcall(Check, copyOf(Config))
-    if not called then return { 'the start-up checks raised: ' .. tostring(okOrErr) }, {} end
+    if not called then return { L('settings.the_start_up_checks_raised') .. tostring(okOrErr) }, {} end
     return fatal or {}, warn or {}
 end
 
@@ -2394,7 +2200,7 @@ end
 function Settings.check(key, raw)
     if type(key) == 'string' and DENY[key] then return nil, 'read_only', DENY[key].why end
     local entry = type(key) == 'string' and byKey[key] or nil
-    if not entry then return nil, 'not_allowed', 'not a setting the panel may change' end
+    if not entry then return nil, 'not_allowed', L('settings.not_a_setting_the_panel_may') end
     if entry.readonly then return nil, 'read_only', entry.readonly end
     local value, why = normalise(entry, raw)
     if value == nil then return nil, 'invalid_value', refusal(key, why) end
@@ -2420,7 +2226,7 @@ end
 --- pair the start-up checks call fatal, which the next start then dropped
 --- one of. The second is refused as busy, and staff ask again.
 --- One key for every change (Lock), so only one runs at a time.
-local SaveLock = Lock.new({ busy = function() return 'another change to the settings is being saved' end })
+local SaveLock = Lock.new({ busy = function() return L('settings.another_change_to_the_settings_is') end })
 local SAVING = 'settings'
 
 --- Moved by every init: what each catalogue entry says of itself, and the
@@ -2614,11 +2420,11 @@ local function resetKey(key, staff, actorCid)
     local entry = type(key) == 'string' and byKey[key] or nil
     local stray = type(key) == 'string' and not entry and (ignored[key] or unknown[key]) ~= nil
     if not entry and not stray then
-        return false, 'not_allowed', 'not a setting the panel may change'
+        return false, 'not_allowed', L('settings.not_a_setting_the_panel_may')
     end
     if entry and entry.readonly and not ignored[key] then return false, 'read_only', entry.readonly end
     if not overrides[key] and not ignored[key] and not unknown[key] then
-        return false, 'not_overridden', 'it is what config.lua says already'
+        return false, 'not_overridden', L('settings.it_is_what_config_lua_says')
     end
     -- What config.lua says passed the start-up checks on its own, but not
     -- necessarily beside the other overrides still in force: a least
@@ -2709,7 +2515,7 @@ local function resetEvery(staff, actorCid)
         end
     end
     if kept > 0 then
-        return false, 'store_failed', ('%s; %d were reset, and %d are still kept and in force')
+        return false, 'store_failed', (L('settings.were_reset_and_are_still_kept'))
             :format(Util.dbError(writeErr), #done, kept)
     end
     return true, nil, { keys = #done }
@@ -2772,7 +2578,7 @@ function Settings.boot()
         local raw = rowOf(key).value
         local value, why
         if not entry then
-            why = 'not a setting the panel may change'
+            why = L('settings.not_a_setting_the_panel_may')
         elseif entry.readonly then
             why = entry.readonly
         else
@@ -2810,7 +2616,7 @@ function Settings.boot()
             local candidate = copyOf(applied)
             candidate[key] = wanted[key]
             local _, reason = fits(candidate)
-            notApplied(key, reason or 'the start-up checks refuse it')
+            notApplied(key, reason or L('settings.the_start_up_checks_refuse_it'))
         end
     end
 
@@ -2890,6 +2696,96 @@ local AREA_OF_GROUP = {
 }
 Settings.AREA_OF_GROUP = AREA_OF_GROUP
 
+--- Each group's label, by key: a group is named in English in the catalogue
+--- (its id, read by AREA_OF_GROUP, MONEY and the page's own checks), and
+--- shown in the language Config.Locale names (Settings.view's groupLabel),
+--- looked up each time it is read. [group] = locale key
+local GROUP_LABEL = {
+    ['Access'] = 'settings_group.access',
+    ['Advisory job lists'] = 'settings_group.advisory_job_lists',
+    ['Anonymity (whitelisted-job targets)'] = 'settings_group.anonymity_whitelisted_job_targets',
+    ['Anonymity'] = 'settings_group.anonymity',
+    ['Anti-collusion'] = 'settings_group.anti_collusion',
+    ['Audit and debug'] = 'settings_group.audit_and_debug',
+    ['Barred jobs'] = 'settings_group.barred_jobs',
+    ['Body disposal'] = 'settings_group.body_disposal',
+    ['Buyout pricing'] = 'settings_group.buyout_pricing',
+    ['Buyouts'] = 'settings_group.buyouts',
+    ['Completion'] = 'settings_group.completion',
+    ['Contract limits'] = 'settings_group.contract_limits',
+    ['Contract reasons'] = 'settings_group.contract_reasons',
+    ['Diagnostics'] = 'settings_group.diagnostics',
+    ['Edit in config.lua'] = 'settings_group.edit_in_config_lua',
+    ['Handovers'] = 'settings_group.handovers',
+    ['Immunity'] = 'settings_group.immunity',
+    ['Improvements: Contract decay'] = 'settings_group.improvements_contract_decay',
+    ['Improvements: Proof items'] = 'settings_group.improvements_proof_items',
+    ['Improvements: Serial scrubbing'] = 'settings_group.improvements_serial_scrubbing',
+    ['Improvements: Weekly stats'] = 'settings_group.improvements_weekly_stats',
+    ['Intel prices'] = 'settings_group.intel_prices',
+    ['Intel: Every other target'] = 'settings_group.intel_every_other_target',
+    ['Intel: Go dark'] = 'settings_group.intel_go_dark',
+    ['Intel: Hold before a tip'] = 'settings_group.intel_hold_before_a_tip',
+    ['Intel: Informant in person'] = 'settings_group.intel_informant_in_person',
+    ['Intel: Informant second try'] = 'settings_group.intel_informant_second_try',
+    ['Intel: Informant tip'] = 'settings_group.intel_informant_tip',
+    ['Intel: Informants'] = 'settings_group.intel_informants',
+    ['Intel: Rumours and broker'] = 'settings_group.intel_rumours_and_broker',
+    ['Intel: Tip limits'] = 'settings_group.intel_tip_limits',
+    ['Intel: Tip safe zones'] = 'settings_group.intel_tip_safe_zones',
+    ['Intel: Tip warning delay'] = 'settings_group.intel_tip_warning_delay',
+    ['Intel: Whitelisted-job targets'] = 'settings_group.intel_whitelisted_job_targets',
+    ['Kept in the store, not on this list'] = 'settings_group.kept_in_the_store_not_on',
+    ['Law enforcement advisory'] = 'settings_group.law_enforcement_advisory',
+    ['Ledger'] = 'settings_group.ledger',
+    ['Messages and calls'] = 'settings_group.messages_and_calls',
+    ['Notifications'] = 'settings_group.notifications',
+    ['Organisation'] = 'settings_group.organisation',
+    ['Organisation: Boss limits'] = 'settings_group.organisation_boss_limits',
+    ['Other scripts'] = 'settings_group.other_scripts',
+    ['Payouts'] = 'settings_group.payouts',
+    ['Proposals'] = 'settings_group.proposals',
+    ['Rate limits'] = 'settings_group.rate_limits',
+    ['Record: Hitman heat'] = 'settings_group.record_hitman_heat',
+    ['Record: Placer record'] = 'settings_group.record_placer_record',
+    ['Record: Progression'] = 'settings_group.record_progression',
+    ['Record: Reputation'] = 'settings_group.record_reputation',
+    ['Record: Tiered board'] = 'settings_group.record_tiered_board',
+    ['Rewards'] = 'settings_group.rewards',
+    ['Roleplay: Bodyguards'] = 'settings_group.roleplay_bodyguards',
+    ['Roleplay: Burner phone'] = 'settings_group.roleplay_burner_phone',
+    ['Roleplay: City news'] = 'settings_group.roleplay_city_news',
+    ['Roleplay: Dirty money payouts'] = 'settings_group.roleplay_dirty_money_payouts',
+    ['Roleplay: EMS before re-listing'] = 'settings_group.roleplay_ems_before_re_listing',
+    ['Roleplay: Hit on the hitman'] = 'settings_group.roleplay_hit_on_the_hitman',
+    ['Roleplay: Proof of intent'] = 'settings_group.roleplay_proof_of_intent',
+    ['Roleplay: Reason quality'] = 'settings_group.roleplay_reason_quality',
+    ['Roleplay: Witness heat'] = 'settings_group.roleplay_witness_heat',
+    ['Server restart'] = 'settings_group.server_restart',
+    ['Staff alerts'] = 'settings_group.staff_alerts',
+    ['Staff commands'] = 'settings_group.staff_commands',
+    ['Staff tools'] = 'settings_group.staff_tools',
+    ['Staff'] = 'settings_group.staff',
+    ['Stakes'] = 'settings_group.stakes',
+    ['Step markers'] = 'settings_group.step_markers',
+    ['Storage'] = 'settings_group.storage',
+    ['Target limits'] = 'settings_group.target_limits',
+    ['Targeting'] = 'settings_group.targeting',
+    ['The app'] = 'settings_group.the_app',
+    ['The clock'] = 'settings_group.the_clock',
+    ['Anonymity fees'] = 'settings_group.anonymity_fees',
+    ['Escrow'] = 'settings_group.escrow',
+}
+
+--- A group's name as staff read it (the English one when it has none).
+---@param group string|nil
+---@return string|nil
+function Settings.groupLabel(group)
+    if group == nil then return nil end
+    return GROUP_LABEL[group] and L(GROUP_LABEL[group]) or group
+end
+Settings.GROUP_LABEL = GROUP_LABEL
+
 --- A catalogue entry's area: its own `area`, or its group's.
 ---@param entry table
 ---@return string
@@ -2912,7 +2808,8 @@ function Settings.view()
         local override = overrides[entry.key]
         local skipped = ignored[entry.key]
         local row = {
-            key = entry.key, group = entry.group, label = entry.label, about = entry.about,
+            key = entry.key, group = entry.group, groupLabel = Settings.groupLabel(entry.group),
+            label = entry.label, about = entry.about, moneyLabel = Settings.groupLabel(entry.money),
             category = entry.category, money = entry.money, area = Settings.areaOf(entry),
             shipped = shippedOf(entry), hasShipped = shippedOf(entry) ~= nil,
             kind = entry.kind, choices = entry.choices, min = entry.min, max = Settings.maxOf(entry),
@@ -2943,14 +2840,15 @@ function Settings.view()
         local value
         if rule.secret then
             local ok, got = pcall(GetConvar, rule.convar, '')
-            value = (ok and type(got) == 'string' and got ~= '') and 'set' or 'not set'
+            value = (ok and type(got) == 'string' and got ~= '') and L('settings.set') or L('settings.not_set')
         else
             value = copyOf(read(Config, key))
-            if value == nil then value = '(not set)' end
-            if type(value) == 'table' then value = json and json.encode(value) or '(a table)' end
+            if value == nil then value = L('settings.not_set_2') end
+            if type(value) == 'table' then value = json and json.encode(value) or L('settings.a_table') end
         end
         out.readonly[#out.readonly + 1] = {
-            key = key, group = 'Edit in config.lua', area = 'engine',
+            key = key, group = 'Edit in config.lua', groupLabel = Settings.groupLabel('Edit in config.lua'),
+            area = 'engine',
             label = rule.secret and ('Secret: ' .. rule.convar) or rule.label or key,
             kind = 'text', category = 'developer', readonly = rule.why, denied = true,
             secret = rule.secret or nil, value = value, source = 'config',
@@ -2965,10 +2863,10 @@ function Settings.view()
     for _, key in ipairs(strays) do
         local skipped = ignored[key] or {}
         out.readonly[#out.readonly + 1] = {
-            key = key, group = 'Kept in the store, not on this list', label = key, kind = 'text',
+            key = key, group = 'Kept in the store, not on this list',
+            groupLabel = Settings.groupLabel('Kept in the store, not on this list'), label = key, kind = 'text',
             category = 'developer', area = 'engine',
-            readonly = 'Not a setting this version lists, so nothing reads it. Reset takes its row '
-                .. 'out of the store; nothing in force changes.',
+            readonly = L('settings.not_a_setting_this_version_lists'),
             value = copyOf(skipped.value), source = 'config', by = skipped.by, at = skipped.at,
             ignored = skipped.why, unknown = unknown[key] and unknown[key].why or nil, stray = true,
         }

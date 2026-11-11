@@ -12,6 +12,7 @@ local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
@@ -308,12 +309,10 @@ function Kidnap.arm(contractId, hitmanCid)
     -- The creator has to be present for the whole countdown, so they are
     -- told the moment it starts rather than discovering it failed, and how
     -- close to stand: "Be there now" did not say where "there" ended.
-    Notify.toCitizen(contract.creator_cid, 'Handover starting',
-        ('A hitman has brought your target to you for the handover. Stay where you '
-            .. 'are, within %s m of them both, for %d seconds.%s')
+    Notify.toCitizen(contract.creator_cid, L('completion_kidnap.handover_starting'),
+        (L('completion_kidnap.a_hitman_has_brought_your_target'))
             :format(Words.metres(tonumber(radius) or Config.Kidnap.Radius), tonumber(Config.Kidnap.CountdownSeconds) or 0,
-                Config.Kidnap.PlacerConfirms == true and (' Then tap Confirm handover on your '
-                    .. 'contract under Mine to release the payment.') or ''))
+                Config.Kidnap.PlacerConfirms == true and (L('completion_kidnap.then_tap_confirm_handover_on_your')) or ''))
     -- And their card, which counts it down (Projection: handoverLeft).
     Notify.push(contract.creator_cid, 'handover', contractId)
 
@@ -367,25 +366,19 @@ end
 --- The page's own wording for each code is the fuller one; this is the phone
 --- notification, which is all that reaches a hitman who has closed the app.
 local REFUSED_WORDS = {
-    [CH.ERR.SLOT_COOLDOWN] = 'You collected on this contract too recently for '
-        .. 'another payout to count yet.',
-    [CH.ERR.ALREADY_SETTLED] = 'Every payout on this contract had already been '
-        .. 'collected by the time the handover finished.',
-    [CH.ERR.BAD_STATE] = 'The contract closed before the handover finished.',
+    [CH.ERR.SLOT_COOLDOWN] = L('completion_kidnap.you_collected_on_this_contract_too'),
+    [CH.ERR.ALREADY_SETTLED] = L('completion_kidnap.every_payout_on_this_contract_had'),
+    [CH.ERR.BAD_STATE] = L('completion_kidnap.the_contract_closed_before_the_handover'),
     -- A live delivery skips the post-respawn rule, so getting back up is
     -- never the reason here: only being new to the session or the city.
-    [CH.ERR.TARGET_JUST_ON] = 'The target had only just come into the city, '
-        .. 'so the handover does not count.',
-    [CH.ERR.TARGET_TOO_NEW] = 'The target is too new to the city to be '
-        .. 'taken yet, so the handover does not count.',
-    [CH.ERR.TARGET_PROTECTED] = 'The target was protected from contracts, '
-        .. 'so the handover does not count.',
-    [CH.ERR.NOT_PARTICIPANT] = 'You are no longer on this contract.',
-    [CH.ERR.LOCKED] = 'Another payout on this contract was being settled at '
-        .. 'the same moment, and it got there first.',
+    [CH.ERR.TARGET_JUST_ON] = L('completion_kidnap.the_target_had_only_just_come'),
+    [CH.ERR.TARGET_TOO_NEW] = L('completion_kidnap.the_target_is_too_new_to'),
+    [CH.ERR.TARGET_PROTECTED] = L('completion_kidnap.the_target_was_protected_from_contracts'),
+    [CH.ERR.NOT_PARTICIPANT] = L('completion_kidnap.you_are_no_longer_on_this'),
+    [CH.ERR.LOCKED] = L('completion_kidnap.another_payout_on_this_contract_was'),
     -- Staff put it on hold while the payout was being settled
     -- (server/holds.lua). Plain, and never which party it is about.
-    [CH.ERR.CONTRACT_FROZEN] = 'This contract is on hold by staff.',
+    [CH.ERR.CONTRACT_FROZEN] = L('completion_kidnap.this_contract_is_on_hold_by'),
 }
 
 --- The person who placed the contract, told a handover they were asked to
@@ -396,9 +389,8 @@ local REFUSED_WORDS = {
 ---@param state table the countdown
 local function tellPlacerStopped(state)
     if not state.creatorCid then return end
-    pcall(Notify.toCitizen, state.creatorCid, 'Handover stopped',
-        ('The handover did not finish, so your contract is still open and the hitman can try '
-            .. 'again. For it to count, stay within %s m of them both for the whole %d seconds.')
+    pcall(Notify.toCitizen, state.creatorCid, L('completion_kidnap.handover_stopped'),
+        (L('completion_kidnap.the_handover_did_not_finish_so'))
             :format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius), tonumber(Config.Kidnap.CountdownSeconds) or 0),
         { bypassBudget = true })
 end
@@ -474,9 +466,8 @@ function Kidnap.tick(deltaMs)
                     Audit.action('kidnap_failed', state.hitmanCid, state.contractId,
                         { reason = 'contract_locked' })
                     remember(k, { outcome = 'failed', reason = 'contract_locked' })
-                    Notify.toCitizen(state.hitmanCid, 'Handover failed',
-                        'The contract was stuck settling another payout, so the '
-                        .. 'handover could not finish. Staff can see why.',
+                    Notify.toCitizen(state.hitmanCid, L('completion_kidnap.handover_failed'),
+                        L('completion_kidnap.the_contract_was_stuck_settling_another'),
                         { bypassBudget = true })
                     tellPlacerStopped(state)
                 end
@@ -484,8 +475,8 @@ function Kidnap.tick(deltaMs)
                 active[k] = nil
                 if not contract or CH.TERMINAL[contract.state] then declines[state.contractId] = nil end
                 remember(k, { outcome = 'closed' })
-                Notify.toCitizen(state.hitmanCid, 'Handover ended',
-                    'The contract closed before the handover finished.',
+                Notify.toCitizen(state.hitmanCid, L('completion_kidnap.handover_ended'),
+                    L('completion_kidnap.the_contract_closed_before_the_handover'),
                     { bypassBudget = true })
             elseif state.confirmLeftMs then
                 -- The hold is done and waits on the placer's word
@@ -534,9 +525,8 @@ function Kidnap.tick(deltaMs)
                         state.confirmed = 'declines_used'
                         Audit.action('kidnap_declines_used', state.hitmanCid, state.contractId,
                             { declines = declines[state.contractId] })
-                        pcall(Notify.toCitizen, state.creatorCid, 'Handover paid',
-                            'You have declined this contract\'s handovers as many times as you may, so this '
-                                .. 'one was paid without asking you. Staff can see every handover on it.',
+                        pcall(Notify.toCitizen, state.creatorCid, L('completion_kidnap.handover_paid'),
+                            L('completion_kidnap.you_have_declined_this_contracts_handovers'),
                             { bypassBudget = true })
                     end
 
@@ -593,34 +583,26 @@ function Kidnap.tick(deltaMs)
                         -- words say "online and within" so as not to say which.
                         local why
                         if reason == 'party_offline' and not targetActor then
-                            why = 'The target left the city before the handover finished.'
+                            why = L('completion_kidnap.the_target_left_the_city_before')
                         elseif reason == 'party_offline' and not creatorActor then
-                            why = ('The person who placed this contract went offline before '
-                                .. 'the handover finished. They have to be online and within '
-                                .. '%s m of you and the target for it.'):format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius))
+                            why = (L('completion_kidnap.the_person_who_placed_this_contract')):format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius))
                         elseif reason == 'creator_too_far' then
-                            why = ('The person who placed this contract did not arrive in '
-                                .. 'time. They have to be online and within %s m of you and '
-                                .. 'the target for the whole handover.'):format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius))
+                            why = (L('completion_kidnap.the_person_who_placed_this_contract_2')):format(Words.metres(tonumber(state.radius) or Config.Kidnap.Radius))
                         elseif reason == 'target_not_conscious' then
-                            why = 'The target went down before the handover finished. '
-                                .. 'A handover has to be alive.'
+                            why = L('completion_kidnap.the_target_went_down_before_the')
                             -- Where nothing but a handover pays, what still does.
                             if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
-                                why = why .. ' Killing them does not count: once they are '
-                                    .. 'back on their feet, bring them in alive again.'
+                                why = why .. L('completion_kidnap.killing_them_does_not_count_once')
                             end
                         elseif reason == 'target_too_hurt' then
-                            why = 'The target got too badly hurt before the handover '
-                                .. 'finished. Get them patched up first.'
+                            why = L('completion_kidnap.the_target_got_too_badly_hurt')
                         elseif reason == 'not_together' then
-                            why = 'You and the target were not in the same place (one of '
-                                .. 'you went inside somewhere) before the handover finished.'
+                            why = L('completion_kidnap.you_and_the_target_were_not')
                         else
-                            why = 'You lost hold of the target.'
+                            why = L('completion_kidnap.you_lost_hold_of_the_target')
                         end
                         remember(k, { outcome = 'failed', reason = reason })
-                        Notify.toCitizen(state.hitmanCid, 'Handover failed', why,
+                        Notify.toCitizen(state.hitmanCid, L('completion_kidnap.handover_failed'), why,
                             { bypassBudget = true })
                         tellPlacerStopped(state)
                     end
@@ -711,9 +693,8 @@ function Kidnap.tick(deltaMs)
             Audit.rejected('kidnap_claim_failed', done.hitmanCid, done.contractId,
                 { err = err })
             remember(k, { outcome = 'refused', reason = err })
-            Notify.toCitizen(done.hitmanCid, 'Handover not paid',
-                REFUSED_WORDS[err] or 'The handover finished but the payout '
-                    .. 'could not be collected.',
+            Notify.toCitizen(done.hitmanCid, L('completion_kidnap.handover_not_paid'),
+                REFUSED_WORDS[err] or L('completion_kidnap.the_handover_finished_but_the_payout'),
                 { bypassBudget = true })
         end
         end)
@@ -745,9 +726,8 @@ function Kidnap.tick(deltaMs)
                 -- The maintenance tick finishes a claim that raised within a
                 -- minute (Contracts.retryStuckClaims): a collection it paid is
                 -- credited and receipted, and one it did not is open again.
-                pcall(Notify.toCitizen, done.hitmanCid, 'Handover not paid',
-                    'The handover finished, but the payout could not be recorded. If it was '
-                        .. 'not paid, the contract is open to you again within a minute.',
+                pcall(Notify.toCitizen, done.hitmanCid, L('completion_kidnap.handover_not_paid'),
+                    L('completion_kidnap.the_handover_finished_but_the_payout_2'),
                     { bypassBudget = true })
             end
         end
@@ -809,14 +789,12 @@ function Kidnap.awaitConfirm(state)
     state.confirmLeftMs = confirmWindow() * 1000
     state.breaking = nil
     Audit.action('kidnap_awaiting_confirm', state.hitmanCid, state.contractId, {})
-    pcall(Notify.toCitizen, state.creatorCid, 'Confirm handover',
-        ('The hold is done. Tap Confirm handover on your contract under Mine within %d seconds to '
-            .. 'release the payment, or Decline if you were not handed the target.'):format(confirmWindow()),
+    pcall(Notify.toCitizen, state.creatorCid, L('completion_kidnap.confirm_handover'),
+        (L('completion_kidnap.the_hold_is_done_tap_confirm')):format(confirmWindow()),
         { bypassBudget = true })
     pcall(Notify.push, state.creatorCid, 'handover', state.contractId)
-    pcall(Notify.toCitizen, state.hitmanCid, 'Handover held',
-        'Held long enough. The person who placed this contract now confirms the handover; it pays '
-            .. 'once they do.', { bypassBudget = true })
+    pcall(Notify.toCitizen, state.hitmanCid, L('completion_kidnap.handover_held'),
+        L('completion_kidnap.held_long_enough_the_person_who'), { bypassBudget = true })
 end
 
 --- A handover its placer declined, or did not confirm in time (and
@@ -835,12 +813,11 @@ function Kidnap.notConfirmed(k, state, why)
     Audit.action('kidnap_not_confirmed', state.hitmanCid, state.contractId,
         { reason = why, declines = declines[state.contractId] })
     remember(k, { outcome = 'failed', reason = 'not_confirmed' })
-    pcall(Notify.toCitizen, state.hitmanCid, 'Handover not confirmed',
-        'The person who placed this contract did not confirm the handover, so nothing was paid. The '
-            .. 'contract is still open: you can arm it again shortly.', { bypassBudget = true })
-    pcall(Notify.toCitizen, state.creatorCid, 'Handover not confirmed',
-        why == 'declined' and 'You declined the handover. Nothing was paid, and your contract stays open.'
-            or 'The handover was not confirmed in time. Nothing was paid, and your contract stays open.',
+    pcall(Notify.toCitizen, state.hitmanCid, L('completion_kidnap.handover_not_confirmed'),
+        L('completion_kidnap.the_person_who_placed_this_contract_3'), { bypassBudget = true })
+    pcall(Notify.toCitizen, state.creatorCid, L('completion_kidnap.handover_not_confirmed'),
+        why == 'declined' and L('completion_kidnap.you_declined_the_handover_nothing_was')
+            or L('completion_kidnap.the_handover_was_not_confirmed_in'),
         { bypassBudget = true })
     pcall(Notify.push, state.creatorCid, 'handover', state.contractId)
 end
@@ -1019,8 +996,8 @@ function Kidnap.clearContract(contractId)
             -- else. The hitman holding the target is the one person who
             -- needs to know, and was told nothing.
             remember(k, { outcome = 'closed' })
-            Notify.toCitizen(state.hitmanCid, 'Handover ended',
-                'The contract closed before the handover finished.',
+            Notify.toCitizen(state.hitmanCid, L('completion_kidnap.handover_ended'),
+                L('completion_kidnap.the_contract_closed_before_the_handover'),
                 { bypassBudget = true })
         end
     end

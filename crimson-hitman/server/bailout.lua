@@ -9,6 +9,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Holds = CrimsonBoot.require('server.holds')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Bailout = {}
 
@@ -376,8 +377,8 @@ buyUnlocked = function(actor, contractId, shown)
             return false, refusedRecord(contract.id)
         end
 
-        Notify.toCitizen(contract.creator_cid, 'Contract challenged',
-            'Your target is buying out the contract. It closes shortly.')
+        Notify.toCitizen(contract.creator_cid, L('bailout.contract_challenged'),
+            L('bailout.your_target_is_buying_out_the'))
         -- And the operatives, whom the delay is for.
         Notify.buyoutQueued(contract, engagedCids, Config.Bailout.ProcessingDelaySeconds)
         -- Said to the page, which told the target "Paid. The contract
@@ -495,25 +496,21 @@ local function tellCreatorClosed(contract, amount)
     local owed, parked = 0, 0
     if Contracts.owedTo then owed, parked = Contracts.owedTo(contract.id, contract.creator_cid) end
     local premium = Words.dollars(amount, 'before')
-    local body = 'Your target bought out the contract. '
+    local body = L('bailout.your_target_bought_out_the_contract')
     if owed > 0 or parked > 0 then
-        body = body .. ('Your escrow and the %s buyout are yours, but not all of it is in your '
-            .. 'hands yet.'):format(premium)
+        body = body .. (L('bailout.your_escrow_and_the_buyout_are')):format(premium)
         if owed > 0 then
             body = body .. (Identity.byCitizenId(contract.creator_cid)
-                and ' %d thing(s) would not fit and are waiting for you — they arrive when you '
-                    .. 'next have room.'
-                or  ' %d thing(s) could not be handed over yet and arrive as soon as you can '
-                    .. 'take them.'):format(owed)
+                and L('bailout.thing_would_not_fit_and_are')
+                or  L('bailout.thing_could_not_be_handed_over')):format(owed)
         end
         if parked > 0 then
-            body = body .. (' %d thing(s) could not be confirmed as handed back; staff have been '
-                .. 'asked to check.'):format(parked)
+            body = body .. (L('bailout.thing_could_not_be_confirmed_as')):format(parked)
         end
     else
-        body = body .. ('Your escrow is back and the %s buyout was paid to you.'):format(premium)
+        body = body .. (L('bailout.your_escrow_is_back_and_the')):format(premium)
     end
-    Notify.tellOrKeep(contract.creator_cid, 'Contract closed', body, { bypassBudget = true },
+    Notify.tellOrKeep(contract.creator_cid, L('bailout.contract_closed'), body, { bypassBudget = true },
         contract.id)
 end
 
@@ -529,23 +526,23 @@ local function tellRefunded(contractId, payer, amount, lineId, why)
     local lead = why
     if not lead then
         if now and now.state == CH.STATE.COMPLETED then
-            lead = 'A hitman finished the contract on you before your buyout closed it'
+            lead = L('bailout.a_hitman_finished_the_contract_on')
         elseif now and CH.TERMINAL[now.state] then
-            lead = 'The contract on you closed another way before your buyout went through'
+            lead = L('bailout.the_contract_on_you_closed_another')
         else
-            lead = 'Your buyout could not be completed'
+            lead = L('bailout.your_buyout_could_not_be_completed')
         end
     end
     local where
     if line and line.state == CH.ESCROW_STATE.SETTLED then
-        where = 'is back'
+        where = L('bailout.is_back')
     elseif line and Escrow and Escrow.parked(line) then
-        where = 'could not be confirmed as handed back; staff have been asked to check it'
+        where = L('bailout.could_not_be_confirmed_as_handed')
     else
-        where = 'is on its way: it arrives as soon as you can take it'
+        where = L('bailout.is_on_its_way_it_arrives')
     end
-    Notify.tellOrKeep(payer, 'Buyout refunded',
-        ('%s, so your %s %s.'):format(lead, Words.dollars(amount, 'before'), where),
+    Notify.tellOrKeep(payer, L('bailout.buyout_refunded'),
+        (L('bailout.so_your')):format(lead, Words.dollars(amount, 'before'), where),
         { bypassBudget = true }, contractId)
 end
 
@@ -649,7 +646,7 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
         -- close another way, it is on hold, and said so.
         local frozen = err == CH.ERR.CONTRACT_FROZEN
         tellRefunded(contractId, targetCid, amount, refundId,
-            frozen and 'Staff put the contract on hold before your buyout went through' or nil)
+            frozen and L('bailout.staff_put_the_contract_on_hold') or nil)
         -- And the reply says the premium came back (failText).
         return false, err, frozen and { refunded = true } or nil
     end
@@ -676,8 +673,8 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
     tellCreatorClosed(contract, amount)
     -- And the target who paid, told nothing when a queued buyout closed: an
     -- officer using /cleanse cannot open the app to see it.
-    Notify.tellOrKeep(targetCid, 'Buyout complete',
-        'Your buyout went through; the contract on you is closed.', { bypassBudget = true },
+    Notify.tellOrKeep(targetCid, L('bailout.buyout_complete'),
+        L('bailout.your_buyout_went_through_the_contract'), { bypassBudget = true },
         contractId)
 
     Bailout.clearQueue(contractId, contract.bailout_queued_at)
@@ -836,7 +833,7 @@ local function refundBuyout(contract, fields, why)
     Audit.financial('bailout_refunded', payer, contract.id,
         { amount = fields.bailout_paid_amount, reason = why })
     tellRefunded(contract.id, payer, fields.bailout_paid_amount, refundId,
-        'Your buyout could not be completed')
+        L('bailout.your_buyout_could_not_be_completed'))
 end
 
 --- Whether this buyout's premium was paid: the premium line exists and says
@@ -854,28 +851,27 @@ local function decideUnlocked(item, fields)
     local contractId = item.contract_id
     if Storage.recordBailout(contractId, fields) then
         -- Recorded, or it was already: it settles as any buyout does.
-        Notify.toCitizen(fields.bailout_paid_by, 'Buyout recorded',
-            'Your buyout payment is on record now, and the contract closes once it settles. If '
-            .. 'it ends another way first, the payment comes back to you.', { bypassBudget = true })
-        return 'done', 'recorded: it settles as any buyout does'
+        Notify.toCitizen(fields.bailout_paid_by, L('bailout.buyout_recorded'),
+            L('bailout.your_buyout_payment_is_on_record'), { bypassBudget = true })
+        return 'done', L('bailout.recorded_it_settles_as_any_buyout')
     end
     local contract = Storage.readContract(contractId)
     if contract and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED
         or contract.state == CH.STATE.COMPLETING) then
         -- Another buyout holds the queue, or a claim the contract: this
         -- record may still land, so it is asked again on the next tick.
-        return 'wait', 'its contract is still open'
+        return 'wait', L('bailout.its_contract_is_still_open')
     end
     -- Closed: a terminal contract's compare-and-set never matches again, so
     -- nothing lands after this.
     local paid = premiumPaid(contractId, fields.bailout_queued_at)
-    if paid then return 'done', 'it was settled: the contract was bought out by it' end
+    if paid then return 'done', L('bailout.it_was_settled_the_contract_was') end
     if paid == nil and contract and contract.state == CH.STATE.BAILED_OUT then
-        return 'staff', 'its contract was bought out, and the premium paid does not say by which '
+        return 'staff', L('bailout.its_contract_was_bought_out_and')
             .. 'buyout'
     end
     refundBuyout(contract or { id = contractId }, fields, 'unrecorded')
-    return 'done', 'its contract ended without it, so the premium was refunded to the payer'
+    return 'done', L('bailout.its_contract_ended_without_it_so')
 end
 
 --- bailout_unrecorded, settled by the server from the record the item
@@ -890,11 +886,11 @@ function Bailout.decideUnrecorded(item)
     local contractId = item.contract_id
     if type(fields) ~= 'table' or not fields.bailout_queued_at or not fields.bailout_paid_by
         or not contractId then
-        return 'staff', 'it does not carry the buyout\'s record'
+        return 'staff', L('bailout.it_does_not_carry_the_buyouts')
     end
     local out = table.pack(Contracts.serialized({ 'contract:' .. contractId, 'settle:' .. contractId },
         decideUnlocked, item, fields))
-    if out[1] == false and out[2] == CH.ERR.BUSY then return 'wait', 'its contract is busy' end
+    if out[1] == false and out[2] == CH.ERR.BUSY then return 'wait', L('bailout.its_contract_is_busy') end
     return table.unpack(out, 1, out.n)
 end
 

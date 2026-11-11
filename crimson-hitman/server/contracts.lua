@@ -9,6 +9,7 @@ local Bridge = CrimsonBoot.require('server.lib.bridge')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Lock = CrimsonBoot.require('server.lib.lock')
+local L = CrimsonBoot.requireShared('locale').t
 -- The completion cooldown (Config.Limits.TargetCooldownAfterCompletionSeconds).
 local TargetLimits = CrimsonBoot.require('server.targetlimits')
 
@@ -2056,9 +2057,8 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         Audit.financial('anonymity_fee', actor.cid, contractId,
             { amount = fee, role = 'hitman' })
     elseif renamed then
-        Notify.toCitizen(actor.cid, 'Not anonymous',
-            'The person who placed this contract already knows you by name on it, so '
-            .. 'you are back on it under your name. You were not charged for anonymity.')
+        Notify.toCitizen(actor.cid, L('contracts.not_anonymous'),
+            L('contracts.the_person_who_placed_this_contract'))
     end
 
     -- Start watching the target's health now, so damage claimed against
@@ -2290,8 +2290,8 @@ function Contracts.retryStuckCreates()
         -- One with a line missing is the server's to settle (its decider).
         if ran and stuck.review and Review and Review.settleWhenStored then
             Review.settleWhenStored(stuck.review, ran == 'returned'
-                and 'never placed: every line it names was found in the store and handed back'
-                or 'placed after all: every line it names is the contract\'s escrow')
+                and L('contracts.never_placed_every_line_it_names')
+                or L('contracts.placed_after_all_every_line_it'))
         end
         if ran then
             stuckCreates[contractId] = nil
@@ -2339,9 +2339,8 @@ local function handTakeBack(contractId, lines)
             moved = moved + 1
             if result.settled > 0 and not told[owner] then
                 told[owner] = true
-                Notify.toCitizen(owner, 'Payment returned',
-                    'Something you put up while the server\'s records were not answering did '
-                    .. 'not go through, and it has been given back to you.', { bypassBudget = true })
+                Notify.toCitizen(owner, L('contracts.payment_returned'),
+                    L('contracts.something_you_put_up_while_the'), { bypassBudget = true })
             end
         else
             -- Not moved here: settled already, or being given by something
@@ -2351,11 +2350,10 @@ local function handTakeBack(contractId, lines)
             if now and now.state ~= CH.ESCROW_STATE.SETTLED then left = left + 1 end
         end
     end
-    local note = moved > 0 and ('%d line(s) it took handed back to whom they came from'):format(moved)
-        or 'nothing it took was left to hand back'
+    local note = moved > 0 and (L('contracts.line_it_took_handed_back_to')):format(moved)
+        or L('contracts.nothing_it_took_was_left_to')
     if left > 0 then
-        note = note .. ('; %d line(s) are being given or left for staff (/%s), not the server\'s to '
-            .. 'hand back now'):format(left, tostring(Config.Admin.Commands.stuck))
+        note = note .. (L('contracts.line_are_being_given_or_left')):format(left, tostring(Config.Admin.Commands.stuck))
     end
     return 'done', note
 end
@@ -2365,14 +2363,14 @@ decideTake = function(item)
     local known = type(item.known) == 'table' and item.known or {}
     local lines, contractId = known.lines, item.contract_id
     if type(lines) ~= 'table' or #lines == 0 or not contractId then
-        return 'staff', 'it does not carry the lines it took'
+        return 'staff', L('contracts.it_does_not_carry_the_lines')
     end
     if Escrow.claimRunning(contractId) then
-        return 'wait', 'a claim, an ending or a create is running on its contract'
+        return 'wait', L('contracts.a_claim_an_ending_or_a')
     end
     local out = table.pack(Contracts.serialized({ 'contract:' .. contractId },
         Escrow.whileClaiming, contractId, handTakeBack, contractId, lines))
-    if out[1] == false and out[2] == CH.ERR.BUSY then return 'wait', 'its contract is busy' end
+    if out[1] == false and out[2] == CH.ERR.BUSY then return 'wait', L('contracts.its_contract_is_busy') end
     return table.unpack(out, 1, out.n)
 end
 
@@ -2385,14 +2383,14 @@ local function placeLate(item, copy)
     local found = Storage.readContract(id)
     if not found then
         if wrote or not refusedForGood(err) then
-            return 'wait', 'the database has not stored the contract yet'
+            return 'wait', L('contracts.the_database_has_not_stored_the')
         end
         -- Refused, and the same statement is refused again: nothing can
         -- land, so its escrow comes back.
         Escrow.release(id, copy.creator_cid, nil, 'contract_write_failed')
         Audit.financial('contract_never_placed', copy.creator_cid, id,
             { review = item.id, error = Util.dbError(err) })
-        return 'done', 'the database refused the contract, so its escrow was handed back to the placer'
+        return 'done', L('contracts.the_database_refused_the_contract_so')
     end
 
     local note
@@ -2406,16 +2404,15 @@ local function placeLate(item, copy)
         if Record then Record.onContractPlaced(copy.creator_cid) end
         Notify.contractCreated(found, Identity.byCitizenId(found.target_cid))
         if Contracts.onChanged then Contracts.onChanged() end
-        Notify.toCitizen(copy.creator_cid, 'Contract placed',
-            ('Your contract on %s, placed while the server\'s records were not answering, is on '
-                .. 'the board now. You can withdraw it from Mine while nobody has taken it.')
-                :format(tostring(found.target_name or 'your target')), { bypassBudget = true })
-        note = 'placed late: the contract is on the board with its escrow, and the placer was told'
+        Notify.toCitizen(copy.creator_cid, L('contracts.contract_placed'),
+            (L('contracts.your_contract_on_placed_while_the'))
+                :format(tostring(found.target_name or L('contracts.your_target'))), { bypassBudget = true })
+        note = L('contracts.placed_late_the_contract_is_on')
     else
         -- It landed and has been closed since: its ending settled it.
         Audit.action('contract_created', copy.creator_cid, id,
             { late = true, review = item.id, state = found.state })
-        note = ('it was stored after all and is %s now'):format(tostring(found.state))
+        note = (L('contracts.it_was_stored_after_all_and')):format(tostring(found.state))
     end
     -- Not charged: the fee is charged only by the create that placed it.
     local due = type(item.known) == 'table' and item.known.fee_not_charged or nil
@@ -2431,11 +2428,11 @@ decidePlacement = function(item)
     local known = type(item.known) == 'table' and item.known or {}
     local copy, contractId = known.contract, item.contract_id
     if type(copy) ~= 'table' or not contractId or copy.id ~= contractId then
-        return 'staff', 'it does not carry the contract'
+        return 'staff', L('contracts.it_does_not_carry_the_contract')
     end
     local out = table.pack(Contracts.serialized({ 'contract:' .. contractId },
         placeLate, item, Util.copy(copy)))
-    if out[1] == false and out[2] == CH.ERR.BUSY then return 'wait', 'its contract is busy' end
+    if out[1] == false and out[2] == CH.ERR.BUSY then return 'wait', L('contracts.its_contract_is_busy') end
     return table.unpack(out, 1, out.n)
 end
 
@@ -2942,21 +2939,20 @@ local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     -- away, so the usual release is of somebody asleep, who came back to a
     -- contract gone from Mine and nothing to say why. The stake only where
     -- there was one.
-    local target = contract.target_name or 'your target'
+    local target = contract.target_name or L('contracts.your_target')
     local minutes = math.floor(idleSeconds / 60)
-    Notify.tellOrKeep(current.hitman_cid, 'Taken off a contract',
-        ('You held the contract on %s for %d minutes without %s, so it has gone back '
-            .. 'on the board.'):format(target, minutes,
-            why == 'no_attempt' and 'making an attempt on them' or 'going near them')
-        .. (given > 0 and (' Your %s stake went to the person who placed it.')
+    Notify.tellOrKeep(current.hitman_cid, L('contracts.taken_off_a_contract'),
+        (L('contracts.you_held_the_contract_on_for')):format(target, minutes,
+            why == 'no_attempt' and L('contracts.making_an_attempt_on_them') or L('contracts.going_near_them'))
+        .. (given > 0 and (L('contracts.your_stake_went_to_the_person'))
                 :format(Words.dollars(given, 'before'))
             or ''),
         { bypassBudget = true }, contractId)
-    Notify.tellOrKeep(contract.creator_cid, 'Contract back on the board',
-        ('The operative holding your contract on %s was not working it, so %s'):format(target,
-            remaining == 0 and 'it is back on the board.'
-                or 'their place on it is open to another operative.')
-        .. (given > 0 and (' Their %s stake is yours.'):format(Words.dollars(given, 'before')) or ''),
+    Notify.tellOrKeep(contract.creator_cid, L('contracts.contract_back_on_the_board'),
+        (L('contracts.the_operative_holding_your_contract_on')):format(target,
+            remaining == 0 and L('contracts.it_is_back_on_the_board')
+                or L('contracts.their_place_on_it_is_open'))
+        .. (given > 0 and (L('contracts.their_stake_is_yours')):format(Words.dollars(given, 'before')) or ''),
         { bypassBudget = given > 0 }, contractId)
     others[#others + 1] = current.hitman_cid
     Notify.pushParties(Storage.readContract(contractId) or contract, others, 'released')
@@ -3772,31 +3768,28 @@ local function cancelUnlocked(actor, contractId)
     -- "they arrive when you next have room" was untrue of it.
     local owed, parked = owedTo(contractId, actor.cid)
 
-    local lead = taken and 'The operative who took it walked away' or 'Nobody had taken it'
+    local lead = taken and L('contracts.the_operative_who_took_it_walked') or L('contracts.nobody_had_taken_it')
     local everyone = math.ceil((Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60)
     -- A payout already collected on it did not come back, and is said: "everything
     -- you put up has been returned" after one was paid was short by that one.
     local collected = Notify.collectedPhrase and Notify.collectedPhrase(contract)
     local body
     if owed > 0 or parked > 0 then
-        body = lead .. '. ' .. (collected and (collected .. '; most of the rest of what you put '
-            .. 'up is back.') or 'Most of what you put up is back.')
+        body = lead .. '. ' .. (collected and (collected .. L('contracts.most_of_the_rest_of_what')) or L('contracts.most_of_what_you_put_up'))
         if owed > 0 then
-            body = body .. (' %d thing(s) would not fit and are waiting for you — they '
-                .. 'arrive when you next have room.'):format(owed)
+            body = body .. (L('contracts.thing_would_not_fit_and_are')):format(owed)
         end
         if parked > 0 then
-            body = body .. (' %d thing(s) could not be confirmed as handed back; staff have '
-                .. 'been asked to check.'):format(parked)
+            body = body .. (L('contracts.thing_could_not_be_confirmed_as')):format(parked)
         end
     elseif collected then
-        body = lead .. '. ' .. collected .. '; the rest of what you put up has been returned.'
+        body = lead .. '. ' .. collected .. L('contracts.the_rest_of_what_you_put')
     else
-        body = lead .. ', so everything you put up has been returned.'
+        body = lead .. L('contracts.so_everything_you_put_up_has')
     end
-    Notify.toCitizen(actor.cid, 'Contract withdrawn', body
+    Notify.toCitizen(actor.cid, L('contracts.contract_withdrawn'), body
         .. ((taken and everyone > 0)
-            and (' Nobody can place a contract on %s for %d minute%s now.'):format(
+            and (L('contracts.nobody_can_place_a_contract_on')):format(
                 contract.target_name or 'them', everyone, everyone == 1 and '' or 's')
             or ''),
         { bypassBudget = true })
@@ -4267,10 +4260,8 @@ local function withdrawRewardUnlocked(actor, contractId, lineIds)
         local hitmen = Storage.readHitmen(contractId)
         for i = 1, #hitmen do
             if hitmen[i].state == 'active' then
-                Notify.toCitizen(hitmen[i].hitman_cid, 'Reward changed',
-                    'The person who placed this contract was reducing the reward as '
-                    .. 'you accepted it. Part of it was already withdrawn. Check what '
-                    .. 'it pays now before you go to work.',
+                Notify.toCitizen(hitmen[i].hitman_cid, L('contracts.reward_changed'),
+                    L('contracts.the_person_who_placed_this_contract_2'),
                     { bypassBudget = true })
             end
         end
@@ -4403,9 +4394,8 @@ function Contracts.reclampToEscrow(contractId, actorCid)
             Audit.financial('bailout_reclamped', actorCid, contractId,
                 { to = clamped, from = was, reason = noClean and 'no_clean_money' or nil })
             if noClean then
-                Notify.toCitizen(contract.creator_cid, 'Buyout removed',
-                    ('No cash or bank money is left in your contract on %s, so its target can no '
-                        .. 'longer buy their way out of it.'):format(contract.target_name or 'your target'),
+                Notify.toCitizen(contract.creator_cid, L('contracts.buyout_removed'),
+                    (L('contracts.no_cash_or_bank_money_is')):format(contract.target_name or L('contracts.your_target')),
                     { bypassBudget = true, contractId = contractId })
             end
         end
@@ -5000,11 +4990,8 @@ end
 --- contract back with nothing paid. A collection the tick found paid is
 --- told by its receipt instead (creditRecovered).
 local REOPENED_WORDS = {
-    [CH.FULFILMENT.KIDNAPPING] = 'Your payout could not be recorded and nothing was paid. '
-        .. 'The contract is open to you again: deliver again to collect.',
-    [CH.FULFILMENT.ELIMINATION] = 'Your payout could not be recorded and nothing was paid. '
-        .. 'The contract is open to you again: verify the kill again to collect, while it '
-        .. 'still stands.',
+    [CH.FULFILMENT.KIDNAPPING] = L('contracts.your_payout_could_not_be_recorded'),
+    [CH.FULFILMENT.ELIMINATION] = L('contracts.your_payout_could_not_be_recorded_2'),
 }
 
 --- Finish claims that raised part-way on the running server, as the next
@@ -5071,7 +5058,7 @@ function Contracts.retryStuckClaims()
                     Log.always(('contract %s: a claim raised part-way; finished as the next '
                         .. 'start would (%s)'):format(tostring(contractId), how))
                     if how == 'reopened' then
-                        Notify.tellOrKeep(stuck.hitman, 'Payout not recorded',
+                        Notify.tellOrKeep(stuck.hitman, L('contracts.payout_not_recorded'),
                             REOPENED_WORDS[stuck.fulfilment]
                                 or REOPENED_WORDS[CH.FULFILMENT.KIDNAPPING],
                             { bypassBudget = true }, contractId)

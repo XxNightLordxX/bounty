@@ -19,6 +19,7 @@
 --- check (tests/feature_spec.lua holds the two to agree).
 
 local Util = CrimsonBoot.requireShared('util')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Feature = {}
 
@@ -132,24 +133,24 @@ Feature.fits = fits
 local function says(rule)
     if rule.says then return rule.says end
     local kind = rule.kind
-    if kind == 'switch' then return 'true or false' end
+    if kind == 'switch' then return L('lib_feature.true_or_false') end
     if kind == 'number' then
-        return ('a %s from %s to %s'):format(rule.integer and 'whole number' or 'number',
+        return (L('lib_feature.a_from_to')):format(rule.integer and L('lib_feature.whole_number') or 'number',
             tostring(rule.min), tostring(rule.max))
     end
-    if kind == 'text' then return 'a name of letters, digits, - and _' end
+    if kind == 'text' then return L('lib_feature.a_name_of_letters_digits_and') end
     if kind == 'choice' then
         local names = {}
         for i, choice in ipairs(rule.choices) do names[i] = tostring(choice) end
-        return 'one of ' .. table.concat(names, ', ')
+        return L('lib_feature.one_of') .. table.concat(names, ', ')
     end
-    if kind == 'set' then return 'a set of job names, each = true' end
-    return 'a list of short phrases, no < or >'
+    if kind == 'set' then return L('lib_feature.a_set_of_job_names_each') end
+    return L('lib_feature.a_list_of_short_phrases_no')
 end
 
 local function describe(value)
     if type(value) == 'string' then return ("'%s'"):format(value) end
-    if type(value) == 'table' then return 'a list with an entry that does not read' end
+    if type(value) == 'table' then return L('lib_feature.a_list_with_an_entry_that') end
     return tostring(value)
 end
 
@@ -187,7 +188,7 @@ function Feature.check(path, rules, warn, filled)
     local shipped = type(shippedBlock) == 'table' and shippedBlock or {}
     if type(parent[name]) ~= 'table' then
         parent[name] = Util.copy(shipped)
-        if filled then filled[#filled + 1] = path .. ' (whole block)' end
+        if filled then filled[#filled + 1] = path .. L('lib_feature.whole_block') end
     end
     local block = parent[name]
     local fields = {}
@@ -202,9 +203,9 @@ function Feature.check(path, rules, warn, filled)
             if value == nil then
                 if filled then filled[#filled + 1] = path .. '.' .. field end
             else
-                warn[#warn + 1] = ('%s.%s is %s; it has to be %s. Using %s.'):format(path, field,
+                warn[#warn + 1] = (L('lib_feature.is_it_has_to_be_using')):format(path, field,
                     describe(value), says(rule),
-                    type(fallback) == 'table' and 'the shipped list' or describe(fallback))
+                    type(fallback) == 'table' and L('lib_feature.the_shipped_list') or describe(fallback))
             end
             block[field] = Util.copy(fallback)
         end

@@ -18,6 +18,7 @@
 --- which is only ever paid to be anonymous. Without IdentityAce no name of
 --- anybody is shown, and who acted on a staff record is left out.
 
+local L = CrimsonBoot.requireShared('locale').t
 local History = {}
 
 --- Recent contracts listed on the card, newest first.
@@ -29,13 +30,13 @@ local AUDIT_ROWS = 500
 --- which way it went, the kind it is listed under, and the field the figure
 --- is in.
 local AUDIT_MONEY = {
-    bailout_paid            = { way = 'out', kind = 'buyouts paid', field = 'amount' },
-    bailout_refunded        = { way = 'in', kind = 'buyouts refunded', field = 'amount' },
+    bailout_paid            = { way = 'out', kind = L('history.buyouts_paid'), field = 'amount' },
+    bailout_refunded        = { way = 'in', kind = L('history.buyouts_refunded'), field = 'amount' },
     informant_purchased     = { way = 'out', kind = 'informants', field = 'cost', informant = 'informant' },
     placer_informant_bought = { way = 'out', kind = 'informants', field = 'amount', informant = 'placerInformant' },
     location_tip_bought     = { way = 'out', kind = 'informants', field = 'amount', informant = 'locationTip' },
-    location_tip_refunded   = { way = 'in', kind = 'informant refunds', field = 'amount' },
-    anonymity_fee           = { way = 'out', kind = 'anonymity fees', field = 'amount', identityOnly = true },
+    location_tip_refunded   = { way = 'in', kind = L('history.informant_refunds'), field = 'amount' },
+    anonymity_fee           = { way = 'out', kind = L('history.anonymity_fees'), field = 'amount', identityOnly = true },
 }
 
 local MONEY = { cash = true, bank = true, dirty = true }
@@ -55,21 +56,21 @@ local function lineMoney(line, cid)
     local out = {}
     local portion = line.portion
     if portion == CH.PORTION.STAKE then
-        if line.staker == cid then out[#out + 1] = { 'out', 'stakes put up', amount } end
+        if line.staker == cid then out[#out + 1] = { 'out', L('history.stakes_put_up'), amount } end
         if line.state == CH.ESCROW_STATE.SETTLED and line.settled_to == cid then
-            out[#out + 1] = { 'in', line.staker == cid and 'stakes returned' or 'stakes won', amount }
+            out[#out + 1] = { 'in', line.staker == cid and L('history.stakes_returned') or L('history.stakes_won'), amount }
         end
     elseif portion == CH.PORTION.OWED then
         if line.state == CH.ESCROW_STATE.SETTLED and line.settled_to == cid then
             local id = tostring(line.id or '')
-            local kind = id:find('^prem:') and 'buyout premiums'
-                or id:find('^refund:') and 'buyouts refunded' or 'owed and paid'
+            local kind = id:find('^prem:') and L('history.buyout_premiums')
+                or id:find('^refund:') and L('history.buyouts_refunded') or L('history.owed_and_paid')
             out[#out + 1] = { 'in', kind, amount }
         end
     else
-        if line.taken_from == cid then out[#out + 1] = { 'out', 'rewards put up', amount } end
+        if line.taken_from == cid then out[#out + 1] = { 'out', L('history.rewards_put_up'), amount } end
         if line.state == CH.ESCROW_STATE.SETTLED and line.settled_to == cid then
-            out[#out + 1] = { 'in', line.taken_from == cid and 'rewards returned' or 'payouts', amount }
+            out[#out + 1] = { 'in', line.taken_from == cid and L('history.rewards_returned') or 'payouts', amount }
         end
     end
     return out
@@ -202,7 +203,7 @@ function History.build(deps, cid, canIdentify)
     local now = os.time()
     for _, row in ipairs(deps.sanctions and deps.sanctions.recordsOf(cid) or {}) do
         if row.kind == 'payment' then
-            add(moneyIn, 'staff payments', row.amount)
+            add(moneyIn, L('history.staff_payments'), row.amount)
         else
             local state
             if row.ended_at then
@@ -210,7 +211,7 @@ function History.build(deps, cid, canIdentify)
             elseif row.until_at and now >= row.until_at then
                 state = 'ended'
             else
-                state = 'in force'
+                state = L('history.in_force')
             end
             if row.kind == 'freeze' and not row.ended_at then frozenNoted = true end
             measures[#measures + 1] = {
@@ -224,7 +225,7 @@ function History.build(deps, cid, canIdentify)
     end
     local frozen = deps.holds and deps.holds.of(cid)
     if frozen and not frozenNoted then
-        measures[#measures + 1] = { kind = 'freeze', from = frozen.frozen_at, state = 'in force',
+        measures[#measures + 1] = { kind = 'freeze', from = frozen.frozen_at, state = L('history.in_force'),
             reason = frozen.reason, by = canIdentify and frozen.by_cid or nil }
     end
     table.sort(measures, function(a, b) return (a.from or 0) > (b.from or 0) end)

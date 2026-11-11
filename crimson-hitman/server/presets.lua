@@ -28,6 +28,7 @@
 --- admin_preset_applied, naming the preset and the keys it changed.
 
 local Util = CrimsonBoot.requireShared('util')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Presets = {}
 
@@ -46,8 +47,7 @@ Presets.BYTES_MAX = 60000
 Presets.BUILT_IN = {
     {
         name = 'Strict',
-        about = 'Fewer contracts at once, longer waits between contracts on one person, bigger least '
-            .. 'rewards and reasons that must say something.',
+        about = L('presets.fewer_contracts_at_once_longer_waits'),
         values = {
             ['Limits.MaxAcceptedPerHitman'] = 2,
             ['Limits.MaxActiveContractsPerTarget'] = 1,
@@ -59,8 +59,7 @@ Presets.BUILT_IN = {
     },
     {
         name = 'Relaxed',
-        about = 'More contracts at once, short waits between contracts on one person and small least '
-            .. 'rewards: a busy board.',
+        about = L('presets.more_contracts_at_once_short_waits'),
         values = {
             ['Limits.MaxAcceptedPerHitman'] = 5,
             ['Limits.MaxActiveContractsPerTarget'] = 3,
@@ -72,8 +71,7 @@ Presets.BUILT_IN = {
     },
     {
         name = 'Roleplay-heavy',
-        about = 'Contracts that ask for roleplay: proof of intent before a payout, witnesses who talk, '
-            .. 'reasons that must say something, meeting points for handovers and longer deadlines.',
+        about = L('presets.contracts_that_ask_for_roleplay_proof'),
         values = {
             ['Roleplay.ProofOfIntent.Enabled'] = true,
             ['Roleplay.WitnessHeat.Enabled'] = true,
@@ -150,13 +148,13 @@ local function find(name)
         local row = readCurrent()
         if row then
             return { name = Presets.CURRENT, values = row.values, at = row.at, by = row.by,
-                     about = 'The values these settings had when Current was last saved.' }
+                     about = L('presets.the_values_these_settings_had_when') }
         end
     end
     for _, row in ipairs(readOwn()) do
         if row.name == name then
             return { name = row.name, values = row.values, at = row.at, by = row.by, own = true,
-                     about = ('Saved by %s: the settings changed from the panel then.')
+                     about = (L('presets.saved_by_the_settings_changed_from'))
                          :format(tostring(row.by or 'staff')) }
         end
     end
@@ -220,16 +218,16 @@ end
 ---@return string|nil
 ---@return string|nil why
 function Presets.ownName(name)
-    if type(name) ~= 'string' then return nil, 'Name the preset.' end
+    if type(name) ~= 'string' then return nil, L('presets.name_the_preset') end
     name = name:gsub('^%s+', ''):gsub('%s+$', ''):gsub('%s+', ' ')
-    if name == '' then return nil, 'Name the preset.' end
+    if name == '' then return nil, L('presets.name_the_preset') end
     if #name > Presets.NAME_MAX then
-        return nil, ('A preset\'s name is at most %d characters.'):format(Presets.NAME_MAX)
+        return nil, (L('presets.a_presets_name_is_at_most')):format(Presets.NAME_MAX)
     end
     if not name:match('^[%w][%w %-_\']*$') then
-        return nil, 'A preset\'s name takes letters, digits, spaces, - _ and \' only.'
+        return nil, L('presets.a_presets_name_takes_letters_digits')
     end
-    if isBuiltIn(name) then return nil, ('%s is a shipped preset\'s name: pick another.'):format(name) end
+    if isBuiltIn(name) then return nil, (L('presets.is_a_shipped_presets_name_pick')):format(name) end
     return name
 end
 
@@ -243,15 +241,15 @@ end
 ---@return string message
 function Presets.saveOwn(name, staff, actorCid)
     local Storage = deps and deps.storage
-    if not (Storage and Storage.writeRpRow) then return false, 'store_failed', 'The store would not take it.' end
+    if not (Storage and Storage.writeRpRow) then return false, 'store_failed', L('presets.the_store_would_not_take_it') end
     local clean, why = Presets.ownName(name)
     if not clean then return false, 'invalid_input', why end
     local rows = readRows()
-    if not rows then return false, 'store_failed', 'The store did not answer. Nothing was saved.' end
+    if not rows then return false, 'store_failed', L('presets.the_store_did_not_answer_nothing') end
     local own, replacing = readOwn(), false
     for _, row in ipairs(own) do if row.name == clean then replacing = true end end
     if not replacing and #own >= Presets.OWN_MAX then
-        return false, 'limit_reached', ('This server keeps %d presets of its own: delete one first.')
+        return false, 'limit_reached', (L('presets.this_server_keeps_presets_of_its'))
             :format(Presets.OWN_MAX)
     end
     local values, count = {}, 0
@@ -263,19 +261,19 @@ function Presets.saveOwn(name, staff, actorCid)
         end
     end
     if count == 0 then
-        return false, 'unchanged', 'Nothing to save: no setting is changed from the panel now.'
+        return false, 'unchanged', L('presets.nothing_to_save_no_setting_is')
     end
     local okSize, encoded = pcall(json.encode, values)
     if not okSize or type(encoded) ~= 'string' or #encoded > Presets.BYTES_MAX then
-        return false, 'invalid_value', 'Those settings are too many to keep as one preset.'
+        return false, 'invalid_value', L('presets.those_settings_are_too_many_to')
     end
     local ok = pcall(Storage.writeRpRow, { id = 'preset:own:' .. clean, kind = Presets.STORE_KIND,
         name = clean, values = values, own = true, by = staff, at = os.time() })
-    if not ok then return false, 'store_failed', 'The store would not take it. Nothing was saved.' end
+    if not ok then return false, 'store_failed', L('presets.the_store_would_not_take_it_2') end
     pcall(deps.audit.staff, 'admin_preset_saved', actorCid, nil,
         { preset = clean, own = true, keys = count, replaced = replacing or nil, by = staff })
-    return true, nil, ('Saved: %s holds the %d setting%s changed from the panel now.%s')
-        :format(clean, count, count == 1 and '' or 's', replacing and ' The one saved under that name before is replaced.' or '')
+    return true, nil, (L('presets.saved_holds_the_setting_changed_from'))
+        :format(clean, count, count == 1 and '' or 's', replacing and L('presets.the_one_saved_under_that_name') or '')
 end
 
 --- The own presets as the settings export carries them (server/settingsio.lua):
@@ -315,13 +313,13 @@ function Presets.importable(name, values)
     local clean, why = Presets.ownName(name)
     if not clean then return false, why end
     for _, row in ipairs(readOwn()) do
-        if row.name:lower() == clean:lower() then return false, 'A preset of that name is here already: kept as it is.' end
+        if row.name:lower() == clean:lower() then return false, L('presets.a_preset_of_that_name_is') end
     end
     if #readOwn() >= Presets.OWN_MAX then
-        return false, ('This server keeps %d presets of its own already.'):format(Presets.OWN_MAX)
+        return false, (L('presets.this_server_keeps_presets_of_its_2')):format(Presets.OWN_MAX)
     end
     local _, count = importValues(values)
-    if count == 0 then return false, 'None of its settings is one this server takes.' end
+    if count == 0 then return false, L('presets.none_of_its_settings_is_one') end
     return true
 end
 
@@ -352,13 +350,13 @@ function Presets.deleteOwn(name, staff, actorCid)
     local Storage = deps and deps.storage
     local preset = type(name) == 'string' and find(name) or nil
     if not preset or not preset.own then
-        return false, 'not_found', 'There is no preset of this server\'s own by that name.'
+        return false, 'not_found', L('presets.there_is_no_preset_of_this')
     end
-    if not (Storage and Storage.deleteRpRow) then return false, 'store_failed', 'The store would not take it.' end
+    if not (Storage and Storage.deleteRpRow) then return false, 'store_failed', L('presets.the_store_would_not_take_it') end
     local ok = pcall(Storage.deleteRpRow, 'preset:own:' .. preset.name)
-    if not ok then return false, 'store_failed', 'The store would not take it. Nothing was deleted.' end
+    if not ok then return false, 'store_failed', L('presets.the_store_would_not_take_it_3') end
     pcall(deps.audit.staff, 'admin_preset_deleted', actorCid, nil, { preset = preset.name, by = staff })
-    return true, nil, ('Deleted %s. Nothing else changed.'):format(preset.name)
+    return true, nil, (L('presets.deleted_nothing_else_changed')):format(preset.name)
 end
 
 --- Keep the values in force now of every key a preset names, as Current.
@@ -389,15 +387,15 @@ end
 ---@return table|string detail { applied = { keys }, refused = { { key, why } } } or the reason
 function Presets.apply(name, staff, actorCid)
     local preset = type(name) == 'string' and find(name) or nil
-    if not preset then return false, 'not_found', 'There is no preset by that name.' end
+    if not preset then return false, 'not_found', L('presets.there_is_no_preset_by_that') end
     local preview = previewOf(preset)
     if #preview.changes == 0 then
-        return false, 'unchanged', ('Nothing to change: the settings are %s already.'):format(preset.name)
+        return false, 'unchanged', (L('presets.nothing_to_change_the_settings_are')):format(preset.name)
     end
     if preset.name ~= Presets.CURRENT then
         local saved = Presets.saveCurrent(staff)
         if not saved then
-            return false, 'store_failed', 'Current could not be saved first, so nothing was changed. Try again.'
+            return false, 'store_failed', L('presets.current_could_not_be_saved_first')
         end
     end
     local applied, refused = {}, {}

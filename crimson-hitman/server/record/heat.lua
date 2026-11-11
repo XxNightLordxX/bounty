@@ -27,6 +27,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Police = CrimsonBoot.require('server.police')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- This part's block of config (server/lib/feature.lua reads it; the
 --- record's start-up check, Record.validate, holds it to Record.RULES.Heat).
@@ -203,7 +204,7 @@ function Heat.bulletin(now)
     end
     if not any then return false end
     lastBulletin = now
-    local title = Util.sanitizeText(tostring(cfg.BulletinTitle or 'Intelligence bulletin'), 60)
+    local title = Util.sanitizeText(tostring(cfg.BulletinTitle or L('record_heat.intelligence_bulletin')), 60)
     local text = Util.sanitizeText(tostring(cfg.BulletinText or ''), 160)
     -- To every officer alike, a known hitman who holds a police job too:
     -- sc-dispatch shows it them anyway, and leaving them out of the phone
@@ -212,7 +213,7 @@ function Heat.bulletin(now)
     local dispatched = false
     if Config.Advisory and Config.Advisory.UseDispatch ~= false then
         dispatched = Police.dispatch({
-            title = title, message = text, caller = 'Criminal Intelligence',
+            title = title, message = text, caller = L('record_heat.criminal_intelligence'),
             priority = math.floor(num(Config.Advisory.DispatchPriority, 2)),
             unique_id = ('ch-heat-%d'):format(now),
         })

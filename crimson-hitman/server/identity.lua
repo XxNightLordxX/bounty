@@ -8,6 +8,7 @@
 local Util = CrimsonBoot.requireShared('util')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local Bridge = CrimsonBoot.require('server.lib.bridge')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
@@ -184,7 +185,7 @@ local function nameOf(data)
     -- 64 to match the column. sanitizeText also drops control characters and
     -- anything a utf8mb4 column would refuse, including the half of a
     -- character its own cap would otherwise leave behind.
-    return Util.sanitizeText(whole, 64) or 'Unknown'
+    return Util.sanitizeText(whole, 64) or L('identity.unknown')
 end
 
 --- The actor for a player record qbx_core has already handed back.

@@ -39,6 +39,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Geo = CrimsonBoot.requireShared('geo')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local L = CrimsonBoot.requireShared('locale').t
 
 
 local Funds = {}
@@ -385,43 +386,42 @@ function Funds.decideInterrupted(item)
     local ref, amount = known_.ref, Funds.amount(known_.amount)
     local org = type(known_.org) == 'table' and known_.org.id and known_.org.job and known_.org or nil
     if type(ref) ~= 'string' or not org or (not amount and known_.how ~= 'mark') then
-        return 'staff', 'it does not carry the movement\'s record'
+        return 'staff', L('org_funds.it_does_not_carry_the_movements')
     end
-    if Storage.readOrgRow('funds', ref) then return 'done', 'the ledger has it' end
+    if Storage.readOrgRow('funds', ref) then return 'done', L('org_funds.the_ledger_has_it') end
     if known_.how == 'mark' and type(known_.mark) == 'table' then
         if not Funds.mark(org, ref, known_.mark) then
             -- What it marks happened all the same: nothing pays it again
             -- meanwhile (Funds.markWaiting).
             markWaiting[ref] = true
-            return 'wait', 'the marker could not be written yet'
+            return 'wait', L('org_funds.the_marker_could_not_be_written')
         end
         markWaiting[ref] = nil
-        return 'done', 'what it marks happened, so its marker was written'
+        return 'done', L('org_funds.what_it_marks_happened_so_its')
     end
     local row = type(known_.row) == 'table' and known_.row or {}
     if known_.how == 'debit' then
         if not Bank() then
-            return 'staff', ('Renewed-Banking is not started: check the %s account, and put back %d if '
-                .. 'it left without a ledger row (%s)'):format(org.job, amount, ref)
+            return 'staff', (L('org_funds.renewed_banking_is_not_started_check')):format(org.job, amount, ref)
         end
         local ok, added = pcall(function() return Bank().addAccountMoney(org.job, amount) end)
-        if not ok or not added then return 'staff', 'Renewed-Banking would not take the debit back' end
+        if not ok or not added then return 'staff', L('org_funds.renewed_banking_would_not_take_the') end
         letGo(item)
         Audit.financial('org_funds_put_back', row.actor, row.contract_id, { ref = ref, amount = amount })
-        return 'done', 'the debit had no ledger row, so the money was put back'
+        return 'done', L('org_funds.the_debit_had_no_ledger_row')
     elseif known_.how == 'credit' and row.id == ref then
         Storage.insertOrgRowOnce('funds', row)
         known[ref], absent[ref] = row, nil
         Audit.financial('org_funds_recorded', row.actor, row.contract_id, { ref = ref, amount = amount })
-        return 'done', 'the account had it, so its ledger row was written'
+        return 'done', L('org_funds.the_account_had_it_so_its')
     elseif known_.how == 'deposit' then
         local ok, err, repeated = Funds.credit(org, amount, { ref = ref, kind = 'deposit',
-            actor = known_.payer, reason = known_.account, title = 'Member deposit' })
-        if ok or repeated then return 'done', 'the member\'s deposit was made' end
-        if err == 'busy' or err == 'bank_down' then return 'wait', 'the funds cannot move now' end
-        return 'staff', 'the funds refused the member\'s deposit: refund the member'
+            actor = known_.payer, reason = known_.account, title = L('org_funds.member_deposit') })
+        if ok or repeated then return 'done', L('org_funds.the_members_deposit_was_made') end
+        if err == 'busy' or err == 'bank_down' then return 'wait', L('org_funds.the_funds_cannot_move_now') end
+        return 'staff', L('org_funds.the_funds_refused_the_members_deposit')
     end
-    return 'staff', 'it does not carry the movement\'s record'
+    return 'staff', L('org_funds.it_does_not_carry_the_movements')
 end
 
 --- A member was charged for a deposit (Org.deposit): kept before anything
@@ -509,7 +509,7 @@ function Funds.credit(org, amount, spec)
     end
     letGo(item)
     if bank then
-        history(org, spec.title or 'Organisation', amount, spec.actor, spec.kind)
+        history(org, spec.title or L('org_funds.organisation'), amount, spec.actor, spec.kind)
     else
         balances[org.id] = (balances[org.id] or 0) + amount
     end
@@ -584,7 +584,7 @@ function Funds.debit(org, amount, spec)
         local ok, removed = pcall(function() return Bank().removeAccountMoney(org.job, amount) end)
         if not ok or not removed then return done(false, ok and 'short' or 'refused') end
         item = intent({ how = 'debit', ref = ref, amount = amount, row = row, org = orgRef(org) })
-        history(org, spec.title or 'Organisation', -amount, spec.actor, spec.kind)
+        history(org, spec.title or L('org_funds.organisation'), -amount, spec.actor, spec.kind)
     end
     local wrote, inserted = pcall(Storage.insertOrgRowOnce, 'funds', row)
     if not wrote or not inserted then
@@ -650,14 +650,14 @@ function Funds.switch(org, to, spec)
             end
             balances[org.id] = (balances[org.id] or 0) - carried
             write('in', 'bank', carried)
-            history(org, 'Moved from the ledger', carried, spec.actor, 'switch')
+            history(org, L('org_funds.moved_from_the_ledger'), carried, spec.actor, 'switch')
         end
     elseif not abandoned then
         carried = math.max(0, bankBalance(org) or 0)
         if carried > 0 then
             local ok, removed = pcall(function() return Bank().removeAccountMoney(org.job, carried) end)
             if not ok or not removed then return finish(false, 'refused') end
-            history(org, 'Moved to the ledger', -carried, spec.actor, 'switch')
+            history(org, L('org_funds.moved_to_the_ledger'), -carried, spec.actor, 'switch')
             write('out', 'bank', -carried)
             local wrote, inserted = write('in', 'internal', carried)
             if not wrote or not inserted then

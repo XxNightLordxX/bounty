@@ -27,6 +27,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Text = CrimsonBoot.requireShared('text')
 local Lock = CrimsonBoot.require('server.lib.lock')
 local Db = CrimsonBoot.require('server.lib.db')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Sanctions = {}
 
@@ -56,9 +57,9 @@ Sanctions.MAX_PROTECT_HOURS = 24 * 365
 
 --- What a suspended player is told. Never who set it.
 Sanctions.TEXT = {
-    title  = 'Suspended',
-    lifted = 'Your suspension from contracts has been lifted.',
-    ended  = 'Your suspension from contracts has ended.',
+    title  = L('sanctions.suspended'),
+    lifted = L('sanctions.your_suspension_from_contracts_has_been'),
+    ended  = L('sanctions.your_suspension_from_contracts_has_ended'),
 }
 
 local function recount()
@@ -174,9 +175,9 @@ end
 ---@param row table
 ---@return string
 function Sanctions.suspendedText(row)
-    local untilText = row.until_at and os.date('%Y-%m-%d %H:%M', row.until_at) or 'staff lift it'
-    return ('You are suspended from contracts until %s: %s'):format(untilText,
-        tostring(row.reason or 'no reason given'))
+    local untilText = row.until_at and os.date('%Y-%m-%d %H:%M', row.until_at) or L('sanctions.staff_lift_it')
+    return (L('sanctions.you_are_suspended_from_contracts_until')):format(untilText,
+        tostring(row.reason or L('sanctions.no_reason_given')))
 end
 
 --- What a refusal for a suspension carries to the player's page.

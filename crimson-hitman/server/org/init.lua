@@ -31,6 +31,7 @@ local Integrations = CrimsonBoot.require('server.adapters.init')
 local Extras = CrimsonBoot.require('server.org.extras')
 local Extras2 = CrimsonBoot.require('server.org.extras2')
 local Extras3 = CrimsonBoot.require('server.org.extras3')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
@@ -123,44 +124,44 @@ Org.ERR = {
 local ERR = Org.ERR
 
 local MESSAGES = {
-    org_off = 'The organisation is switched off.',
-    org_not_member = 'Not a member of the organisation.',
-    org_no_power = 'Staff have not given you this.',
-    org_office = 'That needs the boss office: go there first.',
-    org_rank = 'Only below your own rank.',
-    org_self = 'Not on yourself.',
-    org_locked = 'Staff have locked that.',
-    org_last_boss = 'The organisation would be left with nobody in its top boss role.',
-    org_bounds = 'Outside the bounds staff set.',
-    org_cooldown = 'Too soon: wait a while first.',
-    org_limit = 'At the limit staff set.',
-    org_not_found = 'Not found. Refresh and try again.',
-    org_refused = 'qbx_core refused it; nothing was changed.',
-    org_short = 'The funds do not hold that much.',
-    org_busy = 'Already being done. Try again in a moment.',
-    org_members_only = 'Only members of the organisation may accept contracts.',
-    org_rule = 'The organisation does not let your role take this contract.',
-    org_already = 'Already so.',
-    org_off_duty = 'Go on duty first.',
-    org_not_held = 'You can only pass on a power you hold yourself.',
-    org_bank_down = 'The organisation\'s bank account cannot be reached right now; nothing was moved.',
-    org_name_taken = 'Another member already goes by that codename.',
-    org_name_blocked = 'That codename is not allowed. Pick another.',
-    org_feature_off = 'Staff have not switched that on for the organisation.',
-    org_reserved = 'That contract is held for the organisation.',
-    org_approval = 'Sent to a boss for approval. Nothing is taken until it is approved; you are told the answer.',
-    org_probation = 'On probation you may not take that contract yet.',
-    org_other_org = 'They are a member of another organisation already.',
-    org_tier = 'The organisation\'s reputation does not unlock contracts worth that much yet.',
-    invalid_input = 'Check what was entered.',
+    org_off = L('org.the_organisation_is_switched_off'),
+    org_not_member = L('org.not_a_member_of_the_organisation'),
+    org_no_power = L('org.staff_have_not_given_you_this'),
+    org_office = L('org.that_needs_the_boss_office_go'),
+    org_rank = L('org.only_below_your_own_rank'),
+    org_self = L('org.not_on_yourself'),
+    org_locked = L('org.staff_have_locked_that'),
+    org_last_boss = L('org.the_organisation_would_be_left_with'),
+    org_bounds = L('org.outside_the_bounds_staff_set'),
+    org_cooldown = L('org.too_soon_wait_a_while_first'),
+    org_limit = L('org.at_the_limit_staff_set'),
+    org_not_found = L('org.not_found_refresh_and_try_again'),
+    org_refused = L('org.qbx_core_refused_it_nothing_was'),
+    org_short = L('org.the_funds_do_not_hold_that'),
+    org_busy = L('org.already_being_done_try_again_in'),
+    org_members_only = L('org.only_members_of_the_organisation_may'),
+    org_rule = L('org.the_organisation_does_not_let_your'),
+    org_already = L('org.already_so'),
+    org_off_duty = L('org.go_on_duty_first'),
+    org_not_held = L('org.you_can_only_pass_on_a'),
+    org_bank_down = L('org.the_organisations_bank_account_cannot_be'),
+    org_name_taken = L('org.another_member_already_goes_by_that'),
+    org_name_blocked = L('org.that_codename_is_not_allowed_pick'),
+    org_feature_off = L('org.staff_have_not_switched_that_on'),
+    org_reserved = L('org.that_contract_is_held_for_the'),
+    org_approval = L('org.sent_to_a_boss_for_approval'),
+    org_probation = L('org.on_probation_you_may_not_take'),
+    org_other_org = L('org.they_are_a_member_of_another'),
+    org_tier = L('org.the_organisations_reputation_does_not_unlock'),
+    invalid_input = L('org.check_what_was_entered'),
 }
 
 ---@param err string
 ---@return string
-function Org.message(err) return MESSAGES[err] or 'Not done.' end
+function Org.message(err) return MESSAGES[err] or L('org.not_done') end
 
 local function fail(err, extra)
-    return false, err, extra, MESSAGES[err] or 'Not done.'
+    return false, err, extra, MESSAGES[err] or L('org.not_done')
 end
 
 -- ============================================================================
@@ -427,7 +428,7 @@ function Org.init(d)
         local wanted = type(data) == 'table' and data.org or nil
         if wanted == nil then return fn() end
         local org = Org.byId(wanted)
-        if not org then return false, ERR.NOT_FOUND, 'No such organisation: refresh the page.' end
+        if not org then return false, ERR.NOT_FOUND, L('org.no_such_organisation_refresh_the_page') end
         return Org.within(org, fn)
     end
     registerSpots()
@@ -516,45 +517,45 @@ function Org.validate(warn)
     end
     local cfg = Config.Organisation
     local function back(key, why)
-        warn[#warn + 1] = ('Organisation.%s %s; using %s'):format(key, why, tostring(shipped[key]))
+        warn[#warn + 1] = (L('org.organisation_using')):format(key, why, tostring(shipped[key]))
         cfg[key] = Util.copy(shipped[key])
     end
     for _, key in ipairs({ 'Enabled', 'RequireJobToAccept', 'AcceptNeedsPower', 'OnDutyOnly', 'DefaultDuty',
         'SetPrimaryOnHire', 'QbxBossFlag', 'ApplyAtSignupOnly' }) do
-        if type(cfg[key]) ~= 'boolean' then back(key, 'is not true or false') end
+        if type(cfg[key]) ~= 'boolean' then back(key, L('org.is_not_true_or_false')) end
     end
     if type(cfg.JobName) ~= 'string' or not cfg.JobName:match('^[a-z][a-z0-9_]*$') or #cfg.JobName > 32 then
-        back('JobName', 'must be a lower-case qbx_core job name')
+        back('JobName', L('org.must_be_a_lower_case_qbx'))
     end
     for _, key in ipairs({ 'JobLabel', 'JobType' }) do
-        if type(cfg[key]) ~= 'string' or cfg[key] == '' or #cfg[key] > 64 then back(key, 'must be a short text') end
+        if type(cfg[key]) ~= 'string' or cfg[key] == '' or #cfg[key] > 64 then back(key, L('org.must_be_a_short_text')) end
     end
     if cfg.ExternalChanges ~= 'adopt' and cfg.ExternalChanges ~= 'revert' then
         back('ExternalChanges', "is 'adopt' or 'revert'")
     end
     for _, key in ipairs({ 'OfficeRadius', 'DrawMetres' }) do
         local n = tonumber(cfg[key])
-        if not n or n <= 0 or n > 500 then back(key, 'must be a distance above 0 and at most 500') end
+        if not n or n <= 0 or n > 500 then back(key, L('org.must_be_a_distance_above_0')) end
     end
-    if type(cfg.Roles) ~= 'table' then back('Roles', 'must be a list') end
+    if type(cfg.Roles) ~= 'table' then back('Roles', L('org.must_be_a_list')) end
     for _, text in ipairs(type(cfg.Roles) == 'table' and cfg.Roles or {}) do
         if not parseRole(text) then
-            back('Roles', ("has a line that is not 'grade, name, label, pay, yes|no' (%s)"):format(tostring(text)))
+            back('Roles', (L('org.has_a_line_that_is_not')):format(tostring(text)))
             break
         end
     end
-    if type(cfg.NpcModel) ~= 'string' or not cfg.NpcModel:match('^[%w_]+$') then back('NpcModel', 'must be a ped model name') end
+    if type(cfg.NpcModel) ~= 'string' or not cfg.NpcModel:match('^[%w_]+$') then back('NpcModel', L('org.must_be_a_ped_model_name')) end
     Extras.validate(warn)
     Extras2.validate(warn)
     Extras3.validate(warn)
     Feature.check('Organisation', Org.CHECKS, warn)
     if type(cfg.Limits) ~= 'table' then
-        back('Limits', 'must be a table')
+        back('Limits', L('org.must_be_a_table'))
     else
         for key, spec in pairs(Powers.LIMIT_KEYS) do
             local n = tonumber(cfg.Limits[key])
             if cfg.Limits[key] ~= nil and (not n or n < spec.min or n > spec.max or (not spec.float and n ~= math.floor(n))) then
-                warn[#warn + 1] = ('Organisation.Limits.%s must be %s to %s; using %s'):format(key, spec.min, spec.max,
+                warn[#warn + 1] = (L('org.organisation_limits_must_be_to_using')):format(key, spec.min, spec.max,
                     tostring(shipped.Limits and shipped.Limits[key]))
                 cfg.Limits[key] = shipped.Limits and shipped.Limits[key]
             end
@@ -898,7 +899,7 @@ function Org.hire(who, target, grade)
     local b = a and Geo.position(target.source)
     if not b or GetPlayerRoutingBucket(who.source) ~= GetPlayerRoutingBucket(target.source)
         or not Geo.near(a, b, radius) then
-        return fail(ERR.RULE, { message = ('They must be in the city and standing beside you (within %s m).')
+        return fail(ERR.RULE, { message = (L('org.they_must_be_in_the_city'))
             :format(tostring(radius)) })
     end
     if inviteOf(target.cid) then return fail(ERR.ALREADY) end
@@ -911,9 +912,9 @@ function Org.hire(who, target, grade)
     -- The organisation and the role, never who asked.
     if deps.notify and deps.notify.toCitizen then
         local role = org.roles[grade]
-        pcall(deps.notify.toCitizen, target.cid, org.label or 'Organisation',
-            ('You are invited to join as %s. Open the app to accept or decline within %d minutes.')
-                :format(role and role.label or 'a member', minutes))
+        pcall(deps.notify.toCitizen, target.cid, org.label or L('org.organisation'),
+            (L('org.you_are_invited_to_join_as'))
+                :format(role and role.label or L('org.a_member'), minutes))
     end
     return true, nil, { invited = true, grade = grade, expiresAt = invite.expires }
 end
@@ -1826,7 +1827,7 @@ function Org.cutFor(recipientCid, line)
     local cut = math.floor(amount * pct / 100)
     if cut <= 0 then return 0 end
     local ok, ferr = Funds.credit(org, cut, { ref = 'cut:' .. line.id, kind = 'cut', actor = recipientCid,
-        contract = line.contract_id, reason = kind, title = 'Contract cut' })
+        contract = line.contract_id, reason = kind, title = L('org.contract_cut') })
     if not ok then
         -- The bank chosen and not started: the member is paid whole rather
         -- than kept waiting on another resource, and it is on the record.
@@ -1873,7 +1874,7 @@ function Org.acceptGate(actor, contractId, opts, out)
         return nil
     end
     if cfg.RequireJobToAccept and cfg.AcceptNeedsPower and not Engine.holds(org, actor.cid, Powers.TAKE) then
-        return ERR.RULE, { message = 'Your role may not take contracts.' }
+        return ERR.RULE, { message = L('org.your_role_may_not_take_contracts') }
     end
     if cfg.OnDutyOnly then
         local job = actor.job
@@ -2058,7 +2059,7 @@ function Org.deposit(who, amount, account, nonce)
     -- makes the deposit at the next start (Funds.decideInterrupted).
     local charged = Funds.charged(org, ref, amount, account, who.cid)
     local ok, ferr = Funds.credit(org, amount, { ref = ref, kind = 'deposit', actor = who.cid,
-        reason = account, title = 'Member deposit', charged = charged })
+        reason = account, title = L('org.member_deposit'), charged = charged })
     if not ok then
         Util.credit(actor.player, account, amount)
         Funds.settled(charged)
@@ -2092,13 +2093,13 @@ function Org.withdraw(who, amount, reason, nonce)
     local actor = not who.staff and deps.identity.resolve(who.source) or nil
     if not who.staff and (not actor or actor.cid ~= who.cid) then return fail(ERR.NOT_MEMBER) end
     local ok, ferr = Funds.debit(org, amount, { ref = ref, kind = 'withdraw', actor = who.cid, reason = reason,
-        title = 'Organisation withdrawal', cap = cap })
+        title = L('org.organisation_withdrawal'), cap = cap })
     if not ok then return fail(fundsErr(ferr)) end
     if actor then
         local paid = Util.credit(actor.player, 'cash', amount)
         if not paid then
             Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = who.cid,
-                reason = 'withdrawal not paid', title = 'Withdrawal returned' })
+                reason = L('org.withdrawal_not_paid'), title = L('org.withdrawal_returned') })
             return fail(ERR.REFUSED)
         end
     end
@@ -2116,7 +2117,7 @@ function Org.staffDeposit(who, amount, reason, nonce)
     local ref = nonceRef('sdep', who, nonce)
     if not amount or not reason or not ref then return fail(ERR.INVALID) end
     local ok, ferr, repeated = Funds.credit(org, amount, { ref = ref, kind = 'staff', actor = who.cid,
-        reason = reason, title = 'Staff deposit' })
+        reason = reason, title = L('org.staff_deposit') })
     if not ok then return fail(fundsErr(ferr)) end
     if not repeated then record('org_funds_staff_deposit', who, { amount = amount, reason = reason }) end
     return true, nil, { amount = amount, repeated = repeated }
@@ -2143,14 +2144,14 @@ function Org.bonus(who, cid, amount, reason, nonce)
         cap = { limit = Powers.limit(org, 'BonusPerDay'), since = now() - 86400 }
     end
     local ok, ferr = Funds.debit(org, amount, { ref = ref, kind = 'bonus', actor = who.cid, reason = reason,
-        title = 'Bonus', cap = cap })
+        title = L('org.bonus'), cap = cap })
     if not ok then return fail(fundsErr(ferr)) end
     local paidOk, paid = pcall(function()
-        return Framework().AddMoney(cid, 'bank', amount, 'crimson-hitman organisation bonus')
+        return Framework().AddMoney(cid, 'bank', amount, L('org.crimson_hitman_organisation_bonus'))
     end)
     if not paidOk or not paid then
         Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = who.cid,
-            reason = 'bonus not paid', title = 'Bonus returned' })
+            reason = L('org.bonus_not_paid'), title = L('org.bonus_returned') })
         return fail(ERR.REFUSED)
     end
     record('org_bonus', who, { member = cid, amount = amount, reason = reason })
@@ -2298,7 +2299,7 @@ end
 
 local function tell(cid, text)
     if deps.notify and deps.notify.toCitizen and deps.identity.byCitizenId(cid) then
-        pcall(deps.notify.toCitizen, cid, (Cur() and Cur().label) or 'Organisation', text)
+        pcall(deps.notify.toCitizen, cid, (Cur() and Cur().label) or L('org.organisation'), text)
     end
 end
 
@@ -2308,11 +2309,11 @@ end
 --- between is marked at the next start rather than left for staff.
 local function payMember(org, member, amount, period, ref)
     local paidOk, paid = pcall(function()
-        return Framework().AddMoney(member.cid, 'bank', amount, 'crimson-hitman organisation salary')
+        return Framework().AddMoney(member.cid, 'bank', amount, L('org.crimson_hitman_organisation_salary'))
     end)
     if not paidOk or not paid then
         local back, berr = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,
-            reason = 'salary not paid', title = 'Salary returned' })
+            reason = L('org.salary_not_paid'), title = L('org.salary_returned') })
         if not back then
             -- Kept with the settings and tried again every tick (Org.payrollTick).
             org.settings.payroll.refunds[ref] = { cid = member.cid, amount = amount, period = period }
@@ -2322,7 +2323,7 @@ local function payMember(org, member, amount, period, ref)
         end
         return 'failed', 'bank'
     end
-    local mark = { kind = 'salary_paid', actor = member.cid, reason = 'paid to bank' }
+    local mark = { kind = 'salary_paid', actor = member.cid, reason = L('org.paid_to_bank') }
     local kept = Funds.willMark(org, ref .. ':paid', mark)
     if not Funds.mark(org, ref .. ':paid', mark) then
         PaidHere[ref] = true
@@ -2361,7 +2362,7 @@ local function settleRepeat(org, member, amount, period, ref)
             amount = debited, account = 'bank', known = { org = org.id, ref = ref, period = period } })
     end
     Funds.mark(org, ref .. ':review', { kind = 'salary_review', actor = member.cid,
-        reason = 'left for staff: not known whether the bank took it' })
+        reason = L('org.left_for_staff_not_known_whether') })
     return 'unconfirmed', nil, debited
 end
 
@@ -2374,7 +2375,7 @@ local function payOne(org, member, amount, period)
     if Paying[ref] then return 'repeat' end
     Paying[ref] = true
     local ok, ferr, repeated = Funds.debit(org, amount, { ref = ref, kind = 'salary', actor = member.cid,
-        reason = 'grade ' .. tostring(member.grade), title = 'Salary' })
+        reason = 'grade ' .. tostring(member.grade), title = L('org.salary') })
     if repeated then
         local how, why, debited = settleRepeat(org, member, amount, period, ref)
         Paying[ref] = nil
@@ -2401,7 +2402,7 @@ local function retryRefunds(org)
             pay.refunds[ref], changed = nil, true
         else
             local ok, _, repeated = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund',
-                actor = r.cid, reason = 'salary not paid', title = 'Salary returned' })
+                actor = r.cid, reason = L('org.salary_not_paid'), title = L('org.salary_returned') })
             if ok or repeated then
                 pay.refunds[ref], changed = nil, true
                 deps.audit.financial('org_payroll_refunded', r.cid, nil, { org = org.id, amount = amount,
@@ -2471,17 +2472,16 @@ function Org.payrollTick(at)
         local amount = Org.salaryOf(org, m.grade)
         if amount > 0 then
             if not paySuspended and m.suspended_until and m.suspended_until > ts then
-                skip(m, amount, 'suspended', ('Pay day: your salary of $%d was not paid while you are suspended.')
+                skip(m, amount, 'suspended', (L('org.pay_day_your_salary_of_was'))
                     :format(amount))
             elseif cap > 0 and spent + amount > cap then
-                skip(m, amount, 'cap', ('Pay day: your salary of $%d was not paid; this pay day\'s salaries '
-                    .. 'reached the limit staff set.'):format(amount))
+                skip(m, amount, 'cap', (L('org.pay_day_your_salary_of_was_2')):format(amount))
             else
                 local result, why, debited = payOne(org, m, amount, due)
                 if result == 'paid' then
                     spent = spent + amount
                     out.paid, out.total = out.paid + 1, out.total + amount
-                    tell(m.cid, ('Pay day: your salary of $%d was paid to your bank.'):format(amount))
+                    tell(m.cid, (L('org.pay_day_your_salary_of_was_3')):format(amount))
                 elseif result == 'repeat' then
                     -- Paid (or given back) before a restart: counts toward the cap.
                     spent = spent + amount
@@ -2489,8 +2489,7 @@ function Org.payrollTick(at)
                     spent = spent + (debited or amount)
                     out.unconfirmed = out.unconfirmed + 1
                 elseif result == 'skipped' then
-                    skip(m, amount, 'short', ('Pay day: your salary of $%d was not paid; the organisation\'s '
-                        .. 'funds were short.'):format(amount))
+                    skip(m, amount, 'short', (L('org.pay_day_your_salary_of_was_4')):format(amount))
                 elseif result == 'failed' then
                     out.failed = out.failed + 1
                     deps.audit.financial('org_payroll_skipped', m.cid, nil, { org = org.id, amount = amount,
@@ -2513,7 +2512,7 @@ function Org.payrollTick(at)
         -- Those who can see the funds hear that some were not paid.
         for cid in pairs(org.members) do
             if Engine.holds(org, cid, 'C8') then
-                tell(cid, ('Pay day: %d salary(ies) could not be paid.'):format(out.skipped + out.unconfirmed))
+                tell(cid, (L('org.pay_day_salary_ies_could_not')):format(out.skipped + out.unconfirmed))
             end
         end
     end
@@ -2530,23 +2529,23 @@ end
 --- and checks what is set; the rules below stay the organisation's.
 Org.SPOTS = {
     office = { power = 'L1', max = function() return 1 end, everyone = false,
-        label = 'Boss office', one = 'boss office', icon = 'building' },
+        label = L('org.boss_office'), one = L('org.boss_office_2'), icon = 'building' },
     signup = { power = 'L2', max = function(org) return Powers.limit(org, 'MaxSignupSpots') end, everyone = true,
-        label = 'Sign-up spots', one = 'sign-up spot', icon = 'clipboard' },
+        label = L('org.sign_up_spots'), one = L('org.sign_up_spot'), icon = 'clipboard' },
     meeting = { power = 'L3', max = function(org) return Powers.limit(org, 'MaxMeetingSpots') end, everyone = false,
-        label = 'Meeting and handover spots', one = 'meeting spot', icon = 'handshake' },
+        label = L('org.meeting_and_handover_spots'), one = L('org.meeting_spot'), icon = 'handshake' },
     npc = { power = nil, max = function() return 20 end, everyone = false,
-        label = 'NPC spots', one = 'NPC spot', icon = 'user-tie' },
+        label = L('org.npc_spots'), one = L('org.npc_spot'), icon = 'user-tie' },
     place = { power = nil, max = function() return 50 end, everyone = false,
-        label = 'Other organisation places', one = 'place', icon = 'location-dot' },
+        label = L('org.other_organisation_places'), one = 'place', icon = 'location-dot' },
     -- Organisation extras 3 (server/org/extras3.lua): staff only. A
     -- territory is never sent to any game (hidden).
     deaddrop = { power = nil, max = function() return 3 end, everyone = false,
-        label = 'Dead drops', one = 'dead drop', icon = 'box-archive' },
+        label = L('org.dead_drops'), one = L('org.dead_drop'), icon = 'box-archive' },
     garage = { power = nil, max = function() return 1 end, everyone = false,
-        label = 'Garage', one = 'garage spot', icon = 'warehouse' },
+        label = L('org.garage'), one = L('org.garage_spot'), icon = 'warehouse' },
     territory = { power = nil, max = function() return 10 end, everyone = false, hidden = true,
-        label = 'Territory', one = 'territory', icon = 'map', radius = { min = 10, max = 1000, default = 150 } },
+        label = L('org.territory'), one = 'territory', icon = 'map', radius = { min = 10, max = 1000, default = 150 } },
 }
 Org.SPOT_ORDER = { 'office', 'signup', 'meeting', 'npc', 'place', 'deaddrop', 'garage', 'territory' }
 
@@ -2585,7 +2584,7 @@ registerSpots = function()
         local def = Org.SPOTS[kind]
         local says = {}
         for code, err in pairs(FROM_PLACES) do says[code] = MESSAGES[err] end
-        says.no_position = 'The server cannot see where you stand right now.'
+        says.no_position = L('org.the_server_cannot_see_where_you')
         for code, text in pairs(MESSAGES) do says[code] = text end
         Places.kind(kind, {
             group = 'org', label = def.label, one = def.one, icon = def.icon,
@@ -2596,10 +2595,9 @@ registerSpots = function()
             ready = function()
                 if Org.current() then return nil end
                 if Feature.on('Organisation') then
-                    return ERR.OFF, { message = 'The organisation is on and not read yet: Hitman organisation, Setup.' }
+                    return ERR.OFF, { message = L('org.the_organisation_is_on_and_not') }
                 end
-                return ERR.OFF, { message = 'Its places (boss office, sign-up and meeting spots) are set here once '
-                    .. 'the organisation is on.' }
+                return ERR.OFF, { message = L('org.its_places_boss_office_sign_up') }
             end,
             allow = function(who)
                 if who.staff then return nil end
@@ -2613,7 +2611,7 @@ registerSpots = function()
             rules = function(who, at, existing)
                 if who.staff then return nil end
                 if inSafeZone(at.x, at.y) then
-                    return ERR.RULE, { message = 'Not here: this is a safe zone staff keep clear of organisation spots.' }
+                    return ERR.RULE, { message = L('org.not_here_this_is_a_safe') }
                 end
                 local moved = Cur().settings.moves[kind .. ':' .. who.cid]
                 if moved and now() - moved < Powers.limit(Cur(), 'LocationCooldownMinutes') * 60 then
@@ -2667,7 +2665,7 @@ function Org.placeSpot(who, spec)
     local ok, err, row, extra = Places.set(who, spec.kind, spec)
     if not ok then
         if err == 'no_position' then
-            return fail(ERR.RULE, { message = 'The server cannot see where you stand right now.' })
+            return fail(ERR.RULE, { message = L('org.the_server_cannot_see_where_you') })
         end
         return fromPlaces(false, err, nil, extra)
     end
@@ -2735,14 +2733,14 @@ function Org.useSpot(src, id)
     if Extras3.useSpot(org, actor, loc) then return end
     local text
     if loc.kind == 'signup' then
-        text = member and 'You are already a member.' or 'Apply in the app\'s Organisation tab while you stand here.'
+        text = member and L('org.you_are_already_a_member') or L('org.apply_in_the_apps_organisation_tab')
     elseif loc.kind == 'office' and member then
-        text = 'The boss office: powers that need it work while you are here.'
+        text = L('org.the_boss_office_powers_that_need')
     elseif member then
         text = loc.label
     end
     if text and deps.notify and deps.notify.toCitizen then
-        pcall(deps.notify.toCitizen, actor.cid, org.label or 'Organisation', text)
+        pcall(deps.notify.toCitizen, actor.cid, org.label or L('org.organisation'), text)
     end
 end
 
@@ -2782,7 +2780,7 @@ function Org.notice(who, text, broadcast)
     record('org_notice', who, { length = text and #text or 0, broadcast = broadcast == true or nil })
     if text and broadcast == true and deps.notify and deps.notify.toCitizen then
         for cid in pairs(org.members) do
-            if deps.identity.byCitizenId(cid) then pcall(deps.notify.toCitizen, cid, org.label or 'Organisation', text) end
+            if deps.identity.byCitizenId(cid) then pcall(deps.notify.toCitizen, cid, org.label or L('org.organisation'), text) end
         end
     end
     return true
@@ -2795,14 +2793,14 @@ function Org.apply(actor, text, answers)
     if not org then return fail(ERR.OFF) end
     if org.members[actor.cid] then return fail(ERR.ALREADY) end
     if memberElsewhere(actor.cid, org) then
-        return fail(ERR.OTHER_ORG, { message = 'You are a member of another organisation already.' })
+        return fail(ERR.OTHER_ORG, { message = L('org.you_are_a_member_of_another') })
     end
     for _, a in pairs(org.applications) do if a.cid == actor.cid then return fail(ERR.ALREADY) end end
     if text ~= nil and type(text) ~= 'string' then return fail(ERR.INVALID) end
     text = text and Util.toValidUtf8(text):gsub('%c', ' '):sub(1, 255) or nil
     if text and text:find('[<>]') then return fail(ERR.INVALID) end
     if Config.Organisation.ApplyAtSignupOnly ~= false and not atSignup(org, actor.source) then
-        return fail(ERR.RULE, { message = 'Applications are taken only at a sign-up spot: stand at one, then apply.' })
+        return fail(ERR.RULE, { message = L('org.applications_are_taken_only_at_a') })
     end
     -- The form's answers, the cooldown and the hourly cap
     -- (Config.Organisation.Recruitment): one comparison while it is off.
@@ -2977,7 +2975,7 @@ Org.memberView = memberView
 --- Every power's name and area, by code, and Take contracts.
 ---@return table [code] = { label, area }
 function Org.powerNames()
-    local out = { [Powers.TAKE] = { label = 'Take contracts', area = 'contracts' } }
+    local out = { [Powers.TAKE] = { label = L('org.take_contracts'), area = 'contracts' } }
     for _, p in ipairs(Powers.LIST) do out[p.code] = { label = p.label, area = p.area, feature = p.feature } end
     return out
 end
@@ -3238,25 +3236,25 @@ function Org.create(who, spec)
     if type(spec) ~= 'table' then return fail(ERR.INVALID) end
     local job = type(spec.job) == 'string' and spec.job:lower() or nil
     if not job or #job < 2 or #job > 32 or not job:match('^[a-z][a-z0-9_]+$') then
-        return fail(ERR.INVALID, { message = 'A job name: 2-32 lower-case letters, digits or _, starting with a letter.' })
+        return fail(ERR.INVALID, { message = L('org.a_job_name_2_32_lower') })
     end
     local label = cleanName(spec.label, 64)
-    if not label then return fail(ERR.INVALID, { message = 'A label of 1-64 characters, no < or >.' }) end
+    if not label then return fail(ERR.INVALID, { message = L('org.a_label_of_1_64_characters') }) end
     if #Order >= Org.maxOrgs() then
-        return fail(ERR.LIMIT, { message = ('At the most organisations staff set (%d, Config.Organisation.'
+        return fail(ERR.LIMIT, { message = (L('org.at_the_most_organisations_staff_set')
             .. 'MaxOrganisations).'):format(Org.maxOrgs()) })
     end
     for _, o in pairs(Orgs) do
         if o.id == job or o.job == job then
-            return fail(ERR.ALREADY, { message = 'Another organisation already uses that job name.' })
+            return fail(ERR.ALREADY, { message = L('org.another_organisation_already_uses_that_job') })
         end
     end
     local ok, org = pcall(load, job, { job = job, label = label, jobType = Config.Organisation.JobType })
     if not ok or not org then
-        return fail(ERR.REFUSED, { message = 'The store would not take it; nothing was added.' })
+        return fail(ERR.REFUSED, { message = L('org.the_store_would_not_take_it') })
     end
     if org.job ~= job then
-        return fail(ERR.ALREADY, { message = 'That id is kept for another job; pick another job name.' })
+        return fail(ERR.ALREADY, { message = L('org.that_id_is_kept_for_another') })
     end
     Orgs[job] = org
     Order[#Order + 1] = job
@@ -3280,11 +3278,11 @@ function Org.removeOrg(who, id)
     if not Org.severalOn() then return fail(ERR.FEATURE_OFF) end
     local org = Org.byId(id)
     if not org then return fail(ERR.NOT_FOUND) end
-    if org.id == Order[1] then return fail(ERR.RULE, { message = 'The first organisation (config.lua) stays.' }) end
-    if next(org.members) then return fail(ERR.RULE, { message = 'It still has members: fire them first.' }) end
-    if Funds.balance(org) ~= 0 then return fail(ERR.RULE, { message = 'Its funds are not empty: withdraw them first.' }) end
+    if org.id == Order[1] then return fail(ERR.RULE, { message = L('org.the_first_organisation_config_lua_stays') }) end
+    if next(org.members) then return fail(ERR.RULE, { message = L('org.it_still_has_members_fire_them') }) end
+    if Funds.balance(org) ~= 0 then return fail(ERR.RULE, { message = L('org.its_funds_are_not_empty_withdraw') }) end
     if next(org.settings.orgContracts) then
-        return fail(ERR.RULE, { message = 'A contract is still held for it: release it first.' })
+        return fail(ERR.RULE, { message = L('org.a_contract_is_still_held_for') })
     end
     local first = Orgs[Order[1]]
     for i = #first.settings.others, 1, -1 do

@@ -38,6 +38,7 @@ local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Markers = CrimsonBoot.require('server.lib.markers')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Meeting = {}
 
@@ -154,45 +155,35 @@ end
 function Meeting.steps(role)
     local kidnap = Config.Kidnap or {}
     local seconds = tonumber(kidnap.CountdownSeconds) or 0
-    local hold = seconds > 0 and ('%d seconds'):format(math.floor(seconds)) or 'until it finishes'
+    local hold = seconds > 0 and (L('meeting.seconds')):format(math.floor(seconds)) or L('meeting.until_it_finishes')
     -- With the placer's Confirm handover on (Config.Kidnap.PlacerConfirms),
     -- the hold is followed by their tap, within the window.
     local confirms = kidnap.PlacerConfirms == true
     local window = math.max(10, math.floor(tonumber(kidnap.ConfirmSeconds) or 60))
     if role == 'placer' then
         if confirms then
-            return ('Be at the meeting point marked on your map. When the hitman arrives with the '
-                .. 'target, stay within %s m of them both and keep still while the hitman taps '
-                .. 'Deliver alive: the hold takes %s. Then, on your contract under Mine, tap Confirm '
-                .. 'handover (twice) within %d seconds to release the payment; nothing is paid '
-                .. 'until you do.'):format(Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold, window)
+            return (L('meeting.be_at_the_meeting_point_marked')):format(Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold, window)
         end
-        return ('Be at the meeting point marked on your map. When the hitman arrives with the '
-            .. 'target, stay within %s m of them both and keep still while the hitman taps '
-            .. 'Deliver alive: the handover takes %s. Open the app on your phone to follow it '
-            .. 'on your contract under Mine; you have nothing to tap.'):format(Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold)
+        return (L('meeting.be_at_the_meeting_point_marked_2')):format(Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold)
     end
-    return ('Bring the target alive to the meeting point marked on your map%s. Get within %s m '
-        .. 'of the person who placed the contract, open the app on your phone, tap Deliver '
-        .. 'alive on the contract under Mine and hold for %s.%s Killing the target does not '
-        .. 'count.'):format(kidnap.RequireCoercion and ', cuffed or in your vehicle' or '',
-        Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold, confirms and ' Then the person who placed it confirms the handover, '
-            .. 'and it pays once they do.' or '')
+    return (L('meeting.bring_the_target_alive_to_the')
+        .. 'count.'):format(kidnap.RequireCoercion and L('meeting.cuffed_or_in_your_vehicle') or '',
+        Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold, confirms and L('meeting.then_the_person_who_placed_it') or '')
 end
 
 --- Tell one party, on their phone, that a point was set or moved and what
 --- to do. The hitman's words never say who placed it.
 local function tell(cid, role, contract, moved)
-    local target = contract.target_name or 'your target'
+    local target = contract.target_name or L('meeting.your_target')
     local intro
     if role == 'placer' then
-        intro = ('Your meeting point for the contract on %s is %s.'):format(target,
+        intro = (L('meeting.your_meeting_point_for_the_contract')):format(target,
             moved and 'moved' or 'set')
     else
-        intro = ('The person who placed your contract on %s %s the meeting point for the '
+        intro = (L('meeting.the_person_who_placed_your_contract')
             .. 'handover.'):format(target, moved and 'moved' or 'set')
     end
-    Notify.toCitizen(cid, moved and 'Meeting point moved' or 'Meeting point set',
+    Notify.toCitizen(cid, moved and L('meeting.meeting_point_moved') or L('meeting.meeting_point_set'),
         intro .. ' ' .. Meeting.steps(role), { contractId = contract.id })
 end
 

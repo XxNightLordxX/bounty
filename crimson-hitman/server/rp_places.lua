@@ -14,6 +14,7 @@
 local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Registry = CrimsonBoot.require('server.places')
+local L = CrimsonBoot.requireShared('locale').t
 
 local Places = {}
 
@@ -161,7 +162,7 @@ end
 local function registerKinds()
     for _, npc in ipairs({ 'broker', 'informant' }) do
         local spec = Places.NPCS[npc]
-        local name = npc == 'broker' and 'Broker' or 'Informant'
+        local name = npc == 'broker' and L('rp_places.broker') or L('rp_places.informant')
         Registry.kind(npc, {
             group = 'npc', label = name .. ' NPC', one = npc .. ' place', icon = 'user-secret',
             fields = { label = true, enabled = true }, labelMax = 40, defaultLabel = name, labelOptional = true,
@@ -169,9 +170,9 @@ local function registerKinds()
             max = function() return Places.MAX_PER_NPC end,
             ready = function() if not panelOn() then return 'feature_off' end end,
             says = {
-                feature_off = 'Turn on Roleplay.NpcPlaces (Switches) to place the broker and informant from here.',
-                invalid_input = 'Give the NPC (broker or informant), a point on the map and a short name.',
-                limit_reached = ('At most %d places for one NPC.'):format(Places.MAX_PER_NPC),
+                feature_off = L('rp_places.turn_on_roleplay_npcplaces_switches_to'),
+                invalid_input = L('rp_places.give_the_npc_broker_or_informant'),
+                limit_reached = (L('rp_places.at_most_places_for_one_npc')):format(Places.MAX_PER_NPC),
             },
             after = function(who, row, existing)
                 if deps.audit then

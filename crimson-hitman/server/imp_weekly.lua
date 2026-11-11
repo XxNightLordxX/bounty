@@ -24,6 +24,7 @@ local Words = CrimsonBoot.requireShared('words')
 local Db = CrimsonBoot.require('server.lib.db')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Discord = CrimsonBoot.require('server.discord')
+local L = CrimsonBoot.requireShared('locale').t
 
 --- This feature's block of config (server/lib/feature.lua reads and checks it).
 local BLOCK = 'Improvements.WeeklyStats'
@@ -145,11 +146,11 @@ end
 ---@return string
 function Weekly.text(totals, day)
     return table.concat({
-        ('**Crimson Hitman: the week in numbers** (seven days to %04d-%02d-%02d)')
+        (L('imp_weekly.crimson_hitman_the_week_in_numbers'))
             :format(day // 10000, (day // 100) % 100, day % 100),
-        ('- Contracts placed: %d'):format(totals.placed),
-        ('- Contracts completed: %d'):format(totals.completed),
-        ('- Paid out to hitmen: %s'):format(Words.dollars(totals.paid)),
+        (L('imp_weekly.contracts_placed')):format(totals.placed),
+        (L('imp_weekly.contracts_completed')):format(totals.completed),
+        (L('imp_weekly.paid_out_to_hitmen')):format(Words.dollars(totals.paid)),
     }, '\n')
 end
 
