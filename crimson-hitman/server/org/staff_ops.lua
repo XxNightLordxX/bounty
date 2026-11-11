@@ -81,16 +81,21 @@ local function off()
     return false, Org.ERR.OFF, L('org_staff_ops.the_organisation_is_switched_off_config')
 end
 
+--- Whether this staff member may see who is behind an anonymous party.
+local function identifies(src)
+    return deps.panel.identifies and deps.panel.identifies(src) or false
+end
+
 local OPS = {}
 
 -- Reads ------------------------------------------------------------------
 
 OPS.orgGet = { 'read', function(src)
-    return true, nil, nil, Org.staffView(staff(src).cid)
+    return true, nil, nil, Org.staffView(staff(src).cid, identifies(src))
 end }
 
 OPS.bossPermsGet = { 'read', function(src)
-    local view = Org.staffView(staff(src).cid)
+    local view = Org.staffView(staff(src).cid, identifies(src))
     if not view.loaded then return off() end
     return true, nil, nil, { powers = view.powers, roles = view.roles, ceiling = view.ceiling,
         members = view.members, limits = view.limits, officeStaff = view.officeStaff }
@@ -114,7 +119,7 @@ local function orgLog(src, data)
         end
     end
     table.sort(rows, function(a, b) return (a.ts or 0) > (b.ts or 0) end)
-    local canIdentify = deps.panel.identifies and deps.panel.identifies(src)
+    local canIdentify = identifies(src)
     -- Several organisations: only the one picked (data.org; the first by default).
     if Org.severalOn() then
         local here, kept = Org.current().id, {}
@@ -155,7 +160,7 @@ OPS.orgSetup = { 'write', function(src)
     local ok = Org.boot(false)
     if not ok then return false, Org.ERR.REFUSED, L('org_staff_ops.the_organisation_could_not_be_read') end
     Org.record('org_setup', staff(src), {})
-    return true, nil, L('org_staff_ops.the_job_is_registered_and_every'), Org.staffView(staff(src).cid)
+    return true, nil, L('org_staff_ops.the_job_is_registered_and_every'), Org.staffView(staff(src).cid, identifies(src))
 end }
 
 OPS.orgRename = { 'write', function(src, data)
@@ -494,9 +499,9 @@ OPS.orgPayoutMethod = { 'write', function(src, data)
     return said(Org.setPayoutMethod(staff(src), Text.field(data.method, 12)))
 end }
 
---- Settle a dead drop now (data.key): data.how 'release' or 'refund'.
+--- Settle a dead drop now (data.handle, from orgGet's rows): data.how 'release' or 'refund'.
 OPS.orgDropSettle = { 'write', function(src, data)
-    return said(Org.dropSettle(staff(src), Text.field(data.key, 120), Text.field(data.how, 8)))
+    return said(Org.dropSettle(staff(src), Text.field(data.handle, 32), Text.field(data.how, 8)))
 end }
 
 --- Which approved models the organisation offers (data.models, a list).

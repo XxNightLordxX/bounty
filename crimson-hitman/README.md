@@ -1096,7 +1096,7 @@ clicks, naming what it sets.
 | `orgRemove` | write | Take one off the list (`id`): no members, empty funds, nothing held |
 | `orgRepAdjust` | write | Move the reputation by `points` (either way), with a `reason` |
 | `orgPayoutMethod` | write | Payouts the usual way or at the dead drop (`method`: `bank` or `deaddrop`) |
-| `orgDropSettle` | write | Settle a dead drop now (`key`; `how`: `release` or `refund`) |
+| `orgDropSettle` | write | Settle a dead drop now (`handle`, from the drop's row in `orgGet`; `how`: `release` or `refund`) |
 | `orgGarageOffer` | write | Which approved models the organisation offers (`models`, a list) |
 | `orgGarageRemove` | write | Take a member's garage vehicle away (`member`) |
 | `orgInternalDecide` | write | Approve (placed by the boss who asked) or decline an internal contract request (`id`, `approve`) |

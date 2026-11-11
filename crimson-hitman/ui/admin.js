@@ -9483,7 +9483,7 @@
         orgAnswer('paymethod'),
         drops.length ? h('div.table-wrap', h('table.grid', h('thead', h('tr', h('th', t('admin.member')), h('th', t('admin.left')),
           h('th', t('admin.runs_out_2')), h('th', ''))), h('tbody', drops.map(function (row) {
-          var key = String(row.key);
+          var key = String(row.handle);
           return h('tr', h('td', String(row.name)), h('td', row.at ? ago(row.at) : '—'),
             h('td', row.expires ? ago(row.expires) : '—'),
             h('td', h('div.btn-row', writeBtn('.ghost', 'org-drop-settle', { 'data-id': key, 'data-value': 'release' },
@@ -10683,7 +10683,7 @@
   ACTIONS['org-drop-settle'] = function (node) {
     var key = node.getAttribute('data-id');
     if (!armed(node)) return;
-    orgWrite('orgDropSettle', { key: key, how: node.getAttribute('data-value') }, 'drop:' + key, node);
+    orgWrite('orgDropSettle', { handle: key, how: node.getAttribute('data-value') }, 'drop:' + key, node);
   };
   ACTIONS['org-garage-toggle'] = function (node) {
     disarm();

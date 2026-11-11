@@ -494,11 +494,17 @@ local function listedFor(contract, viewerCid)
 
     -- Held for the hitman organisation (Config.Organisation.OrgContracts,
     -- server/org/extras.lua): shown only to the member it is assigned to.
-    -- nil while none is held.
+    -- nil while none is held. A territory hold ({ cid, territory }) is also
+    -- shown to its own placer, whose board would otherwise tell them the
+    -- target stood in a territory beside a member.
     local held = Projection.reserved
     if held then
         local holder = held[contract.id]
-        if holder ~= nil and holder ~= viewerCid then return false end
+        if type(holder) == 'table' then
+            if holder.cid ~= viewerCid and contract.creator_cid ~= viewerCid then return false end
+        elseif holder ~= nil and holder ~= viewerCid then
+            return false
+        end
     end
 
     return true

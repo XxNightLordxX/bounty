@@ -91,7 +91,8 @@ end
 
 --- Told of each outcome, where something listens (the organisation's
 --- own record, server/org/extras2.lua, sets it): observer(kind, cid, info)
---- with kind 'completed' or 'failed'. It is asked in a pcall: whatever it
+--- with kind 'completed' or 'failed'; info.anonymous says the hitman held
+--- the contract anonymously. It is asked in a pcall: whatever it
 --- does never touches the counters or a payout.
 Record.observer = nil
 
@@ -109,7 +110,7 @@ end
 ---@param cid string
 ---@param fulfilment string
 ---@param factor number|nil the reputation factor (Record.factorFor), when on
----@param info table|nil { contractId, earned, seconds } for the observer
+---@param info table|nil { contractId, earned, seconds, anonymous } for the observer
 function Record.onCompleted(cid, fulfilment, factor, info)
     Storage.bumpStat(cid, 'completed')
     observe('completed', cid, info)
@@ -143,7 +144,7 @@ function Record.onCompleted(cid, fulfilment, factor, info)
     end
 end
 
----@param info table|nil { contractId } for the observer
+---@param info table|nil { contractId, anonymous } for the observer
 function Record.onFailed(cid, info)
     Storage.bumpStat(cid, 'failed')
     observe('failed', cid, info)

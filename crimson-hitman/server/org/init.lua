@@ -1759,7 +1759,7 @@ function Org.afterAccept(actor, contractId, gate)
     if not org or type(actor) ~= 'table' then return end
     -- An organisation contract taken (Config.Organisation.OrgContracts).
     Extras.afterAccept(org, actor, contractId)
-    Extras3.accepted(org, actor)
+    Extras3.accepted(org, actor, gate)
     LastAccept[actor.cid] = now()
     local terms
     if type(gate) == 'table' then
@@ -2726,9 +2726,13 @@ function Org.useSpot(src, id)
     local loc = org.locations[id:sub(1, 48)]
     local actor = deps.identity.resolve(src)
     if not loc or not actor then return end
+    -- Only a spot this player is sent (Org.spotsFor): a hidden one (a
+    -- territory) answering from inside it would say where it is.
+    local member = org.members[actor.cid]
+    local def = Org.SPOTS[loc.kind]
+    if not def or def.hidden or loc.enabled == false or not (def.everyone or member) then return end
     local at = Org.positionOf(src)
     if not at or not Geo.near(at, loc, (loc.radius or 2.0) + 2.0) then return end
-    local member = org.members[actor.cid]
     -- The dead drop, the garage and the handler (server/org/extras3.lua).
     if Extras3.useSpot(org, actor, loc) then return end
     local text
@@ -3123,7 +3127,8 @@ function Org.roles(who)
 end
 
 --- Everything, for staff (orgGet).
-function Org.staffView(viewer)
+---@param canIdentify boolean|nil the viewer holds IdentityAce
+function Org.staffView(viewer, canIdentify)
     if not Feature.on('Organisation') then
         return { enabled = false, job = orgId() }
     end
@@ -3171,7 +3176,7 @@ function Org.staffView(viewer)
     -- Organisation extras (server/org/extras.lua), each only while on.
     Extras.staffView(org, viewer, view)
     Extras2.staffView(org, viewer, view)
-    Extras3.staffView(org, viewer, view)
+    Extras3.staffView(org, viewer, view, canIdentify == true)
     return view
 end
 

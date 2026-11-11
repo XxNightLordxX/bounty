@@ -10,10 +10,11 @@
 ---
 --- Five kinds of finding, each one line in plain words and a line with the
 --- fix:
----   setting      a value out of range or invalid: what the start-up checks
----                said at this start (Log.view().problems, the values as
----                config.lua and the panel gave them), and what they say of
----                the settings in force now (Settings.configWarnings)
+---   setting      a value out of range or invalid: what the checks say of
+---                the settings in force now (Settings.configWarnings). Not
+---                the console's problem lines (Log.view().problems): those
+---                carry other scripts' error text, and are the Developer
+---                console's, scrubbed there
 ---   script       another script a switched-on feature needs and that does
 ---                not answer (Config.Integrations; Integrations.offLine)
 ---   permission   a staff ACE nobody in group.admin holds, or a staff command
@@ -24,7 +25,6 @@
 --- Nothing found reads "nothing to fix". The check is never on the
 --- request path: it runs when staff ask for it.
 
-local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local L = CrimsonBoot.requireShared('locale').t
 
@@ -103,9 +103,7 @@ function ConfigCheck.findings()
         out[#out + 1] = { kind = kind, text = text, fix = fix }
     end
 
-    -- Values: what this start found, and what the checks say now.
-    local view = Log.view()
-    for _, line in ipairs(view.problems or {}) do add('setting', line, settingFix(line)) end
+    -- Values: what the checks say of the settings in force now.
     if Settings and Settings.configWarnings then
         local fatal, warn = Settings.configWarnings()
         for _, line in ipairs(fatal or {}) do add('setting', line, settingFix(line)) end

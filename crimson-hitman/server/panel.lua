@@ -2369,9 +2369,32 @@ end
 
 --- Every preset, each with the changes it would make now and what the
 --- server would refuse: nothing changes by reading them.
-H.presets = function()
+--- Who saved an own preset is their citizen id with IdentityAce, and 'a
+--- staff member' without it, as Change history says it; the Developer
+--- section's keys (and the deny list) only for staff who may open it,
+--- counted as `hidden` otherwise.
+H.presets = function(src)
     if not deps.presets then return false, 'unavailable', L('panel.presets_are_not_running_on_this') end
-    return true, nil, nil, { presets = deps.presets.list() }
+    local list = deps.presets.list()
+    local canIdentify, isDeveloper = identifies(src), developer(src)
+    for _, preset in ipairs(list) do
+        if preset.own and not canIdentify then
+            preset.by = L('panel.a_staff_member')
+            preset.about = L('presets.saved_by_the_settings_changed_from'):format(preset.by)
+        end
+        if not isDeveloper then
+            local hidden = 0
+            for _, field in ipairs({ 'changes', 'refused' }) do
+                local kept = {}
+                for _, row in ipairs(preset[field] or {}) do
+                    if developerKey(row.key) then hidden = hidden + 1 else kept[#kept + 1] = row end
+                end
+                preset[field] = kept
+            end
+            preset.hidden = hidden > 0 and hidden or nil
+        end
+    end
+    return true, nil, nil, { presets = list }
 end
 
 --- Apply one preset by name (two clicks on the page, naming how many
@@ -2393,7 +2416,12 @@ end
 --- the panel command and the key switches, each at the value in force.
 H.setup = function(src)
     if not deps.setup then return false, 'unavailable', L('panel.the_setup_is_not_running_on') end
-    return true, nil, nil, deps.setup.view(permissionsFor(src))
+    local view = deps.setup.view(permissionsFor(src))
+    -- Who saved it, as Change history names them.
+    if type(view) == 'table' and view.savedBy ~= nil and not identifies(src) then
+        view.savedBy = L('panel.a_staff_member')
+    end
+    return true, nil, nil, view
 end
 
 --- The values the setup page chose, as a table of at most 64 keys, or nil.

@@ -146,8 +146,10 @@ Extras.plain = plain
 -- ============================================================================
 
 --- The board's filter (Projection.reserved): [contractId] = the one member
---- shown it, or false for nobody. nil while none is held, so the board pays
---- nothing for it.
+--- shown it, or false for nobody; a territory hold (server/org/extras3.lua)
+--- is { cid = that or false, territory = true }, so its own placer still
+--- sees it (a contract gone from their board would tell them where the
+--- target was). nil while none is held, so the board pays nothing for it.
 local function rebuild()
     local d = deps()
     if not d.projection then return end
@@ -167,6 +169,7 @@ local function rebuild()
             else
                 map[id] = entry.cid or false
             end
+            if entry.territory then map[id] = { cid = map[id], territory = true } end
             any = true
         end
     end

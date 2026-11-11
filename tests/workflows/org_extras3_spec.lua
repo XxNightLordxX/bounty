@@ -126,7 +126,13 @@ describe('organisation extras 3 from the phone and the panel', function()
         local took = W.nui('crimson:accept', { id = c2.id, shown = { orgCut = 0 } })
         truthy(took and took.ok, 'accepted: ' .. tostring(took and took.err))
         truthy(W.s.contracts.claimSlot(c2.id, C.hitman.cid, CH.FULFILMENT.KIDNAPPING))
-        W.opOk(staff, 'orgDropSettle', { key = c2.id .. ':' .. C.hitman.cid, how = 'release' }, 'staff hand it over')
+        -- By the handle the panel's row carries, as the page sends it.
+        local handle
+        for _, row in ipairs(W.opOk(staff, 'orgGet', {}, 'the drops').extras3.deadDrops.rows) do
+            if row.contract == c2.id then handle = row.handle end
+        end
+        truthy(handle, 'the drop on the panel')
+        W.opOk(staff, 'orgDropSettle', { handle = handle, how = 'release' }, 'staff hand it over')
         -- The garage: offered, taken out, returned, taken away by staff.
         W.client(BOSS)
         tap('orgGarageOffer', { models = { 'sultan' } })

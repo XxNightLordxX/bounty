@@ -2749,6 +2749,7 @@ CrimsonLocales.en = {
     ['org_extras3.organisation'] = 'Organisation',
     ['org_extras3.a_former_member'] = 'A former member',
     ['org_extras3.a_member'] = 'A member',
+    ['org_extras3.a_boss'] = 'A boss',
     ['org_extras3.hired'] = 'Hired',
     ['org_extras3.fired'] = 'Fired',
     ['org_extras3.role_changed'] = 'Role changed',

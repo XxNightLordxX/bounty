@@ -2109,8 +2109,12 @@ function Contracts.accept(actor, contractId, anonymous, opts)
                 if refused then return false, refused, data end
             end
             local result = table.pack(acceptUnlocked(actor, contractId, anonymous, opts))
-            -- And a member's cut frozen on it (Org.afterAccept).
-            if result[1] and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId, gate) end
+            -- And a member's cut frozen on it (Org.afterAccept), told
+            -- whether it was taken anonymously (gate.anon, as the row says).
+            if result[1] and Contracts.afterAccept then
+                gate.anon = type(result[3]) == 'table' and result[3].anon == true
+                pcall(Contracts.afterAccept, actor, contractId, gate)
+            end
             return table.unpack(result, 1, result.n)
         end))
     -- An operative on it may start its clock: with nobody holding it, it
@@ -2148,7 +2152,10 @@ function Contracts.acceptHeld(actor, contractId, anonymous, opts)
             if refused then return false, refused, data end
         end
         local result = table.pack(acceptUnlocked(actor, contractId, anonymous, opts))
-        if result[1] and not dry and Contracts.afterAccept then pcall(Contracts.afterAccept, actor, contractId, gate) end
+        if result[1] and not dry and Contracts.afterAccept then
+            gate.anon = type(result[3]) == 'table' and result[3].anon == true
+            pcall(Contracts.afterAccept, actor, contractId, gate)
+        end
         return table.unpack(result, 1, result.n)
     end))
     if dry then return table.unpack(out, 1, out.n) end
@@ -2553,7 +2560,11 @@ local function walkAway(actor, contractId, opts)
     if active == 0 then dropMeeting(contractId) end
 
     -- Not a failure of theirs when staff took them off it.
-    if Record and not opts.staff then Record.onFailed(actor.cid, { contractId = contractId }) end
+    -- Whether they held it anonymously, so the organisation's stats, standing
+    -- and log leave it out (an outcome counted there would name them).
+    if Record and not opts.staff then
+        Record.onFailed(actor.cid, { contractId = contractId, anonymous = hitman.anon == true })
+    end
 
     -- Anything holding state for this hitman on this contract is told.
     -- A handover they had armed is the one that matters: it does not pay
@@ -3589,7 +3600,8 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
         -- With what it paid them and how long they held it, for the
         -- organisation's record (Config.Organisation.Stats).
         Record.onCompleted(hitmanCid, fulfilment, reputation and reputation.factor or nil, { contractId = contractId,
-            earned = money, seconds = hitman.accepted_at and math.max(0, os.time() - hitman.accepted_at) or nil })
+            earned = money, seconds = hitman.accepted_at and math.max(0, os.time() - hitman.accepted_at) or nil,
+            anonymous = hitman.anon == true })
     end
     creditedClaims[contractId .. ':' .. slot] = true
 
@@ -4726,7 +4738,8 @@ local function creditRecovered(contract, slot, stakes)
             payee = payee or line.owed_to or line.settled_to
         end
     end
-    if not payee or not Storage.readHitman(contract.id, payee) then return nil end
+    local payeeRow = payee and Storage.readHitman(contract.id, payee)
+    if not payeeRow then return nil end
     local stake
     for _, outcome in ipairs(stakes or {}) do
         if outcome.cid == payee then stake = outcome end
@@ -4760,7 +4773,9 @@ local function creditRecovered(contract, slot, stakes)
 
     -- Not where the claim itself counted it before it raised (this process).
     local key = contract.id .. ':' .. slot
-    if Record and not creditedClaims[key] then Record.onCompleted(payee, fulfilment) end
+    if Record and not creditedClaims[key] then
+        Record.onCompleted(payee, fulfilment, nil, { contractId = contract.id, anonymous = payeeRow.anon == true })
+    end
     creditedClaims[key] = nil
     Audit.financial('claim_recovered', payee, contract.id, { slot = slot, fulfilment = fulfilment })
     local result = {

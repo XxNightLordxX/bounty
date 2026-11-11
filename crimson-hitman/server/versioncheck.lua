@@ -28,14 +28,17 @@ VersionCheck.MAX_BODY = 65536
 --- Whether the one ask was made this run (it is made once).
 local asked = false
 
---- A version's three numbers: '1.2.0' -> { 1, 2, 0 }; nil for none.
+--- A version's three numbers: '1.2.0' -> { 1, 2, 0 }; nil for none, and
+--- for a part longer than nine digits (no version is, and a longer one is
+--- no integer Lua can print with %d).
 ---@param text any
 ---@return integer[]|nil
 function VersionCheck.parse(text)
     if type(text) ~= 'string' then return nil end
     local a, b, c = text:sub(1, VersionCheck.MAX_BODY):match('(%d+)%.(%d+)%.?(%d*)')
     if not a then return nil end
-    return { tonumber(a), tonumber(b), tonumber(c) or 0 }
+    if #a > 9 or #b > 9 or #c > 9 then return nil end
+    return { math.tointeger(tonumber(a)), math.tointeger(tonumber(b)), math.tointeger(tonumber(c)) or 0 }
 end
 
 --- Whether `latest` is newer than `mine`.
@@ -92,7 +95,8 @@ function VersionCheck.run()
     end
     asked = true
     local current = mine()
-    local sent = pcall(PerformHttpRequest, url, function(status, body)
+    -- Whatever the host answers is a line at most: never a script error.
+    local function answered(status, body)
         local latest = tonumber(status) == 200 and VersionCheck.parse(body) or nil
         local have = VersionCheck.parse(current) or { 0, 0, 0 }
         if latest and VersionCheck.newer(have, latest) then
@@ -102,6 +106,10 @@ function VersionCheck.run()
             Log.debug(('version check: %s, answered %s'):format(latest and 'up to date' or 'no version read',
                 tostring(status)))
         end
+    end
+    local sent = pcall(PerformHttpRequest, url, function(status, body)
+        local okA, err = pcall(answered, status, body)
+        if not okA then Log.debug('version check: the answer could not be read: ' .. tostring(err)) end
     end, 'GET', '', {})
     if not sent then Log.debug('version check: the request could not be made') end
     return 'asked'

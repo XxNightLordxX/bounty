@@ -7216,7 +7216,7 @@ async function main() {
       reputation: { points: 120, earned: 130, heat: 10, completed: 13, failed: 0, tier: { label: 'Known ' + XSS,
         points: 100, max: 75000 }, next: { label: 'Trusted', points: 300 }, tiers: [{ points: 0, label: 'Unknown',
         max: 25000 }, { points: 100, label: 'Known ' + XSS, max: 75000 }] },
-      deadDrops: { method: 'bank', spot: true, unclaimed: 'pay', rows: [{ key: 'ct1:HIT', name: XSS, at: NOW - 60,
+      deadDrops: { method: 'bank', spot: true, unclaimed: 'pay', rows: [{ handle: 'ddk3v9q2m7x1a', name: XSS, at: NOW - 60,
         expires: NOW + 600 }] },
       territory: { zones: 2 },
       garage: { ready: true, hasSpot: true, max: 3, all: [{ model: 'sultan', offered: true }, { model: 'baller' }],
@@ -7280,7 +7280,7 @@ async function main() {
       eq(repAfterOne, 0);
       eq(rep.data, { points: -15, reason: 'Sloppy work' });
       eq(method.data, { method: 'deaddrop' });
-      eq(settled1.data, { key: 'ct1:HIT', how: 'refund' });
+      eq(settled1.data, { handle: 'ddk3v9q2m7x1a', how: 'refund' });
       eq(offer.data, { models: ['sultan', 'baller'] });
       eq(removed.data, { member: 'm1_1111' });
       eq(icAfterOne, 0);

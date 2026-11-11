@@ -521,10 +521,13 @@ local function numbers(org, cid)
 end
 
 --- An outcome on the record (Record.observer): counted for a member of
---- the organisation while Stats is on. kind 'completed' | 'failed'.
----@param info table|nil { earned, seconds }
+--- the organisation while Stats is on. kind 'completed' | 'failed'. Not one
+--- they held anonymously: every member reads the leaderboard, and a count
+--- that moved as an anonymous contract ended would name its operative.
+---@param info table|nil { earned, seconds, anonymous }
 function Extras2.observe(kind, cid, info)
     if not on('Stats') then return end
+    if type(info) == 'table' and info.anonymous == true then return end
     local org = O.current()
     if not org or type(cid) ~= 'string' or not org.members[cid] then return end
     local s = statsOf(org, cid)

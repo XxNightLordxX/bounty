@@ -58,6 +58,7 @@
 local Geo = CrimsonBoot.requireShared('geo')
 local Window = CrimsonBoot.require('server.lib.window')
 local Feature = CrimsonBoot.require('server.lib.feature')
+local Util = CrimsonBoot.requireShared('util')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local L = CrimsonBoot.requireShared('locale').t
 
@@ -164,11 +165,18 @@ local LOGGED = {
 local KEPT = { amount = true, grade = true, power = true, kind = true, to = true, from = true, model = true,
     method = true, count = true, state = true }
 
+--- Detail fields that are a member's citizen id (the previous holder of a
+--- reassigned contract): kept as a member key, read back as their name.
+local MEMBER_DETAIL = { org_contract_reassigned = { from = 'mf' } }
+
 local function keep(org, action, by, member, detail)
     local log = org.settings.activity
     local entry = { at = now(), a = action, by = by, m = member }
+    local asMember = MEMBER_DETAIL[action] or {}
     for k, v in pairs(type(detail) == 'table' and detail or {}) do
-        if KEPT[k] and (type(v) == 'number' or type(v) == 'string' or type(v) == 'boolean') then
+        if asMember[k] then
+            if type(v) == 'string' then entry[asMember[k]] = v end
+        elseif KEPT[k] and (type(v) == 'number' or type(v) == 'string' or type(v) == 'boolean') then
             entry[k] = type(v) == 'string' and v:sub(1, 40) or v
         end
     end
@@ -188,9 +196,12 @@ function Extras3.logAction(action, who, detail)
     kit.save()
 end
 
---- An accept by a member (Org.afterAccept).
-function Extras3.accepted(org, actor)
+--- An accept by a member (Org.afterAccept). Not an anonymous one: the
+--- log's name and time beside the placer's own contract would name them.
+---@param gate table|nil what the accept kept: { anon } as it was taken
+function Extras3.accepted(org, actor, gate)
     if not on('ActivityLog') or not org.members[actor.cid] then return end
+    if type(gate) == 'table' and gate.anon == true then return end
     keep(org, 'accepted', actor.cid, nil, nil)
     kit.save()
 end
@@ -211,6 +222,9 @@ function Org.activity(who, limit)
             by = e.by == 'staff' and L('org_extras3.staff') or shownName(org, e.by),
             member = e.m and shownName(org, e.m) or nil }
         for k in pairs(KEPT) do row[k] = e[k] end
+        for k, stored in pairs(MEMBER_DETAIL[e.a] or {}) do
+            row[k] = e[stored] and shownName(org, e[stored]) or nil
+        end
         rows[#rows + 1] = row
     end
     return true, nil, { rows = rows }
@@ -280,9 +294,11 @@ function Extras3.tierGate(org, member, contractId)
 end
 
 --- An outcome on the record (Record.observer), for the organisation the
---- member is in: reputation, and the activity log.
+--- member is in: reputation, and the activity log. Not one they held
+--- anonymously (info.anonymous), which either would tie to them.
 function Extras3.observe(kind, cid, info)
     if not (on('Reputation') or on('ActivityLog')) then return end
+    if type(info) == 'table' and info.anonymous == true then return end
     local org = O.current()
     if not org or type(cid) ~= 'string' or not org.members[cid] then return end
     if kind ~= 'completed' and kind ~= 'failed' then return end
@@ -361,8 +377,12 @@ local function onClaim(contract, hitmanCid)
     local key = dropKey(contract.id, hitmanCid)
     if org.settings.drops[key] then return nil end
     local wait = whole('DeadDropMinutes', 60, 1, 10080)
+    -- Whether they hold it anonymously: staff without IdentityAce are then
+    -- not told whose drop it is.
+    local okH, row = pcall(deps().storage.readHitman, contract.id, hitmanCid)
     org.settings.drops[key] = { contract = contract.id, cid = hitmanCid, creator = contract.creator_cid,
-        spot = spot.id, at = now(), expires = now() + wait * 60 }
+        spot = spot.id, at = now(), expires = now() + wait * 60, handle = Util.randomId('dd'),
+        anon = (okH and type(row) == 'table' and row.anon == true) or nil }
     Drops[key] = org.id
     O.within(org, kit.save)
     deps().audit.financial('org_drop_left', hitmanCid, contract.id, { org = org.id, minutes = wait })
@@ -446,12 +466,18 @@ local function collect(org, actor, loc)
 end
 
 --- Staff settle a drop now: 'release' (handed over) or 'refund'.
-function Org.dropSettle(who, key, how)
+function Org.dropSettle(who, handle, how)
     local org = O.current()
     local ERR = O.ERR
     if not org then return fail(ERR.OFF) end
     if not who.staff then return fail(ERR.NO_POWER) end
-    if type(key) ~= 'string' or not org.settings.drops[key] then return fail(ERR.NOT_FOUND) end
+    local key
+    if type(handle) == 'string' then
+        for k, drop in pairs(org.settings.drops) do
+            if drop.handle == handle then key = k end
+        end
+    end
+    if not key then return fail(ERR.NOT_FOUND) end
     if how ~= 'release' and how ~= 'refund' then return fail(ERR.INVALID) end
     local drop = org.settings.drops[key]
     finish(org, key, how == 'refund' and 'refund' or 'staff')
@@ -778,8 +804,11 @@ function Org.internalDecide(who, id, approve)
         kit.save()
         return fail(ERR.RULE, { message = L('org_extras3.they_are_no_longer_a_member') })
     end
+    -- The boss's reason as given: a marker in it would tell every card the
+    -- target's own organisation placed it (staff see that it is internal
+    -- from org_internal_decided and the request's row).
     local okC, contract, cerr, refusal = pcall(d.contracts.create, boss, { targetCid = r.target,
-        reason = 'Internal: ' .. r.reason, mode = CH.MODE.COMPETITIVE,
+        reason = r.reason, mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = r.amount } }, anonymous = r.anonymous == true })
     if not okC or not contract then
         local code = okC and cerr or 'server_error'
@@ -904,7 +933,9 @@ function Extras3.mine(org, member, out)
 end
 
 --- What the panel's orgGet adds: each feature on, and its state.
-function Extras3.staffView(org, viewer, out)
+--- `canIdentify` (IdentityAce): who is behind an anonymous drop or
+--- internal contract; without it, 'a member' and 'a boss'.
+function Extras3.staffView(org, viewer, out, canIdentify)
     local view, any = {}, false
     for _, name in ipairs({ 'Reputation', 'DeadDrops', 'Territory', 'Garage', 'InternalContracts', 'Handler',
         'ActivityLog' }) do
@@ -920,10 +951,17 @@ function Extras3.staffView(org, viewer, out)
     end
     if on('DeadDrops') then
         local rows = {}
-        for key, drop in pairs(org.settings.drops) do
-            rows[#rows + 1] = { key = key, name = shownName(org, drop.cid), contract = drop.contract,
-                expires = drop.expires, at = drop.at }
+        -- Each by an opaque handle (orgDropSettle), never its key, which is
+        -- the contract and the operative's citizen id; whose an anonymous
+        -- one is only with IdentityAce.
+        local fresh = false
+        for _, drop in pairs(org.settings.drops) do
+            if type(drop.handle) ~= 'string' then drop.handle, fresh = Util.randomId('dd'), true end
+            local hide = drop.anon and not canIdentify
+            rows[#rows + 1] = { handle = drop.handle, name = hide and L('org_extras3.a_member') or shownName(org, drop.cid),
+                contract = not hide and drop.contract or nil, expires = drop.expires, at = drop.at }
         end
+        if fresh then kit.save() end
         table.sort(rows, function(a, b) return a.at < b.at end)
         view.deadDrops = { method = org.settings.payoutMethod or 'bank', rows = rows,
             spot = spotOf(org, 'deaddrop') ~= nil or nil, unclaimed = Config.Organisation.DeadDropUnclaimed }
@@ -940,7 +978,8 @@ function Extras3.staffView(org, viewer, out)
     if on('InternalContracts') then
         local rows = {}
         for _, r in pairs(org.settings.internal) do
-            rows[#rows + 1] = { id = r.id, name = shownName(org, r.target), by = shownName(org, r.by),
+            rows[#rows + 1] = { id = r.id, name = shownName(org, r.target),
+                by = (r.anonymous and not canIdentify) and L('org_extras3.a_boss') or shownName(org, r.by),
                 reason = r.reason, amount = r.amount, anonymous = r.anonymous, state = r.state, at = r.at,
                 contract = r.contract }
         end

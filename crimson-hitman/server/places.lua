@@ -314,8 +314,11 @@ function Places.set(who, name, spec)
     end
     local id = existing and existing.id
     if not id then
+        -- Random, with the counter so two in one run never meet: a time
+        -- and a sequence let a player who is sent one spot's id guess the
+        -- id of a spot they are not sent (a territory).
         Seq = Seq + 1
-        id = ('%s:%s:%d_%d'):format(owner ~= '' and owner or 'place', name, os.time(), Seq):sub(1, 48)
+        id = ('%s:%s:%s%d'):format(owner ~= '' and owner or 'place', name, Util.randomId(''), Seq):sub(1, 48)
     end
     local row = {
         id = id, kind = name, owner = owner, label = label,

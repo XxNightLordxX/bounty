@@ -252,11 +252,17 @@ describe('R15: dead drops', function()
         local c = W.place(s, f.creator)
         truthy(s.contracts.accept(recruit, c.id))
         truthy(s.contracts.claimSlot(c.id, 'RECRUIT1', CH.FULFILMENT.KIDNAPPING))
-        for _, bad in ipairs({ 'nope', 42, {}, ('k'):rep(200) }) do
-            falsy(W.ask(6, 'orgDropSettle', { key = bad, how = 'release' }).ok)
+        -- By the opaque handle orgGet gives, never the drop's own key.
+        local rows = W.ask(6, 'orgGet', {}).data.extras3.deadDrops.rows
+        eq(#rows, 1)
+        local handle = rows[1].handle
+        truthy(type(handle) == 'string' and not handle:find('RECRUIT1', 1, true), 'opaque')
+        eq(rows[1].key, nil, 'no key')
+        for _, bad in ipairs({ 'nope', 42, {}, ('k'):rep(200), c.id .. ':RECRUIT1' }) do
+            falsy(W.ask(6, 'orgDropSettle', { handle = bad, how = 'release' }).ok)
         end
-        falsy(W.ask(6, 'orgDropSettle', { key = c.id .. ':RECRUIT1', how = 'burn' }).ok)
-        truthy(W.ask(6, 'orgDropSettle', { key = c.id .. ':RECRUIT1', how = 'release' }).ok)
+        falsy(W.ask(6, 'orgDropSettle', { handle = handle, how = 'burn' }).ok)
+        truthy(W.ask(6, 'orgDropSettle', { handle = handle, how = 'release' }).ok)
         eq(W.wealth(13) - before, 5000)
     end)
 

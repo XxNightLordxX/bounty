@@ -772,6 +772,7 @@ local suites = {
     'org_extras2_spec',
     'org_several_spec',
     'org_extras3_spec',
+    'security_sweep8_spec',
     'capability_inventory_spec',
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
     'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'payout_checks_spec', 'lib_players_spec',
