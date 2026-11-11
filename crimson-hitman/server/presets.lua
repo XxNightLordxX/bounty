@@ -12,6 +12,13 @@
 --- by itself just before any other preset is applied, so going back is one
 --- more apply.
 ---
+--- Staff also keep presets of their own (X5): a name and the settings
+--- changed from the panel at the moment it is saved (every override in
+--- force, Settings.active), in the same store (kind 'settings_preset', id
+--- 'preset:own:<name>'), listed after the shipped ones, previewed and
+--- applied the same way, and deleted with two clicks. Saving and deleting
+--- one is on the audit log (admin_preset_saved, admin_preset_deleted).
+---
 --- Nothing changes until a preset is applied (rule 7). Its preview lists
 --- every change it would make (from, to) and every value the server would
 --- refuse (and why), read against the settings in force now. Applying one
@@ -27,6 +34,12 @@ local Presets = {}
 Presets.STORE_KIND = 'settings_preset'
 --- The one preset staff save (and every apply saves first).
 Presets.CURRENT = 'Current'
+--- Own presets: how many a server keeps, and the longest name.
+Presets.OWN_MAX = 20
+Presets.NAME_MAX = 32
+--- The most a preset's values may take, encoded (the store's row is a TEXT
+--- of 64 KB on mysql).
+Presets.BYTES_MAX = 60000
 
 --- The shipped presets, in the order the panel lists them. Each value is
 --- what the panel's own Save would take for that key.
@@ -90,19 +103,45 @@ local function trackedKeys()
     return out
 end
 
---- The saved Current, or nil (never saved, or the store did not answer).
-local function readCurrent()
+--- Every saved row (Current and the own presets), or nil when the store
+--- did not answer.
+local function readRows()
     local Storage = deps and deps.storage
     if not (Storage and Storage.readRpRows) then return nil end
     local ok, rows = pcall(Storage.readRpRows, Presets.STORE_KIND)
     if not ok or type(rows) ~= 'table' then return nil end
-    for _, row in ipairs(rows) do
-        if row.name == Presets.CURRENT and type(row.values) == 'table' then return row end
+    return rows
+end
+
+--- The saved Current, or nil (never saved, or the store did not answer).
+local function readCurrent()
+    for _, row in ipairs(readRows() or {}) do
+        if row.name == Presets.CURRENT and row.own ~= true and type(row.values) == 'table' then return row end
     end
     return nil
 end
 
---- A preset by name: a shipped one, or the saved Current.
+--- The own presets, by name, sorted.
+local function readOwn()
+    local out = {}
+    for _, row in ipairs(readRows() or {}) do
+        if row.own == true and type(row.name) == 'string' and type(row.values) == 'table' then
+            out[#out + 1] = row
+        end
+    end
+    table.sort(out, function(a, b) return a.name:lower() < b.name:lower() end)
+    return out
+end
+
+local function isBuiltIn(name)
+    if tostring(name):lower() == Presets.CURRENT:lower() then return true end
+    for _, preset in ipairs(Presets.BUILT_IN) do
+        if preset.name:lower() == tostring(name):lower() then return true end
+    end
+    return false
+end
+
+--- A preset by name: a shipped one, the saved Current, or an own one.
 local function find(name)
     for _, preset in ipairs(Presets.BUILT_IN) do
         if preset.name == name then return preset end
@@ -112,6 +151,13 @@ local function find(name)
         if row then
             return { name = Presets.CURRENT, values = row.values, at = row.at, by = row.by,
                      about = 'The values these settings had when Current was last saved.' }
+        end
+    end
+    for _, row in ipairs(readOwn()) do
+        if row.name == name then
+            return { name = row.name, values = row.values, at = row.at, by = row.by, own = true,
+                     about = ('Saved by %s: the settings changed from the panel then.')
+                         :format(tostring(row.by or 'staff')) }
         end
     end
     return nil
@@ -158,7 +204,98 @@ function Presets.list()
     for _, preset in ipairs(Presets.BUILT_IN) do add(preset, true) end
     local current = find(Presets.CURRENT)
     if current then add(current, false) end
+    for _, row in ipairs(readOwn()) do
+        local preset = find(row.name)
+        if preset then
+            add(preset, false)
+            out[#out].own, out[#out].by = true, preset.by
+        end
+    end
     return out
+end
+
+--- A name for an own preset, or nil and why: 1 to 32 letters, digits,
+--- spaces, - _ and ', not a shipped one's.
+---@param name any
+---@return string|nil
+---@return string|nil why
+function Presets.ownName(name)
+    if type(name) ~= 'string' then return nil, 'Name the preset.' end
+    name = name:gsub('^%s+', ''):gsub('%s+$', ''):gsub('%s+', ' ')
+    if name == '' then return nil, 'Name the preset.' end
+    if #name > Presets.NAME_MAX then
+        return nil, ('A preset\'s name is at most %d characters.'):format(Presets.NAME_MAX)
+    end
+    if not name:match('^[%w][%w %-_\']*$') then
+        return nil, 'A preset\'s name takes letters, digits, spaces, - _ and \' only.'
+    end
+    if isBuiltIn(name) then return nil, ('%s is a shipped preset\'s name: pick another.'):format(name) end
+    return name
+end
+
+--- Save the settings changed from the panel now as an own preset, under a
+--- name (one already saved under it is replaced).
+---@param name any
+---@param staff string|nil
+---@param actorCid string|nil
+---@return boolean ok
+---@return string|nil err
+---@return string message
+function Presets.saveOwn(name, staff, actorCid)
+    local Storage = deps and deps.storage
+    if not (Storage and Storage.writeRpRow) then return false, 'store_failed', 'The store would not take it.' end
+    local clean, why = Presets.ownName(name)
+    if not clean then return false, 'invalid_input', why end
+    local rows = readRows()
+    if not rows then return false, 'store_failed', 'The store did not answer. Nothing was saved.' end
+    local own, replacing = readOwn(), false
+    for _, row in ipairs(own) do if row.name == clean then replacing = true end end
+    if not replacing and #own >= Presets.OWN_MAX then
+        return false, 'limit_reached', ('This server keeps %d presets of its own: delete one first.')
+            :format(Presets.OWN_MAX)
+    end
+    local values, count = {}, 0
+    for _, row in ipairs(deps.settings.active()) do
+        local entry = row.applied and deps.settings.entry(row.key) or nil
+        if entry and not entry.readonly and not deps.settings.secretKey(row.key) then
+            values[row.key] = Util.copy(row.value)
+            count = count + 1
+        end
+    end
+    if count == 0 then
+        return false, 'unchanged', 'Nothing to save: no setting is changed from the panel now.'
+    end
+    local okSize, encoded = pcall(json.encode, values)
+    if not okSize or type(encoded) ~= 'string' or #encoded > Presets.BYTES_MAX then
+        return false, 'invalid_value', 'Those settings are too many to keep as one preset.'
+    end
+    local ok = pcall(Storage.writeRpRow, { id = 'preset:own:' .. clean, kind = Presets.STORE_KIND,
+        name = clean, values = values, own = true, by = staff, at = os.time() })
+    if not ok then return false, 'store_failed', 'The store would not take it. Nothing was saved.' end
+    pcall(deps.audit.staff, 'admin_preset_saved', actorCid, nil,
+        { preset = clean, own = true, keys = count, replaced = replacing or nil, by = staff })
+    return true, nil, ('Saved: %s holds the %d setting%s changed from the panel now.%s')
+        :format(clean, count, count == 1 and '' or 's', replacing and ' The one saved under that name before is replaced.' or '')
+end
+
+--- Delete an own preset.
+---@param name any
+---@param staff string|nil
+---@param actorCid string|nil
+---@return boolean ok
+---@return string|nil err
+---@return string message
+function Presets.deleteOwn(name, staff, actorCid)
+    local Storage = deps and deps.storage
+    local preset = type(name) == 'string' and find(name) or nil
+    if not preset or not preset.own then
+        return false, 'not_found', 'There is no preset of this server\'s own by that name.'
+    end
+    if not (Storage and Storage.deleteRpRow) then return false, 'store_failed', 'The store would not take it.' end
+    local ok = pcall(Storage.deleteRpRow, 'preset:own:' .. preset.name)
+    if not ok then return false, 'store_failed', 'The store would not take it. Nothing was deleted.' end
+    pcall(deps.audit.staff, 'admin_preset_deleted', actorCid, nil, { preset = preset.name, by = staff })
+    return true, nil, ('Deleted %s. Nothing else changed.'):format(preset.name)
 end
 
 --- Keep the values in force now of every key a preset names, as Current.

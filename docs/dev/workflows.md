@@ -52,7 +52,7 @@ when an item in scope is driven by nothing and not listed below with why.
 | netevent.client | yes | 18 | 18 |
 | netevent.server | yes | 11 | 11 |
 | nui | yes | 123 | 123 |
-| op | yes | 125 | 125 |
+| op | yes | 127 | 127 |
 | screen | yes | 78 | 78 |
 | setting | counted | 572 | 0 |
 | switch | yes | 157 | 157 |
@@ -503,7 +503,9 @@ None.
 | `player` | panel: players > looks a player up, views them, their history, and every measure on them; panel: target limits > reads the limits, overrides one player, extends, resets, and sets a job's; workflow matrix: shipped > staff on memory: clean |
 | `playerView` | panel: players > looks a player up, views them, their history, and every measure on them |
 | `presetApply` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
+| `presetDelete` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
 | `presetSave` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
+| `presetSaveOwn` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
 | `presets` | panel: game rules > changes a setting, undoes it, resets it, applies a preset, runs the first-start setup |
 | `protect` | panel: players > looks a player up, views them, their history, and every measure on them |
 | `reassignHitman` | workflow matrix: shipped > staff on memory: clean; workflow matrix: shipped > staff on memory: the creator leaves before place; workflow matrix: shipped > staff on memory: the target leaves before accept |

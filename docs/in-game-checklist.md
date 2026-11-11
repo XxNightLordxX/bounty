@@ -768,6 +768,12 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Set `Config.Integrations.Dispatch = 'nonesuch'` with the advisory on: the check names the dispatch script and says to set `'auto'`
 - [ ] In the panel, Developer, Health, **Check the config** draws the same lines
 
+## Your own presets (X5)
+
+- [ ] Change two settings in the panel, type a name under Game rules, Presets and click **Save the panel's changes as a preset** twice: a card with your name and *yours* appears after the shipped ones, its preview empty (the settings are as it says)
+- [ ] Reset both settings, open Presets again: your card lists the two changes; **Apply** (two clicks) puts them back, each in Change history with Undo
+- [ ] **Delete** on your card (two clicks) removes it; `restart crimson-hitman` keeps the presets that were not deleted
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

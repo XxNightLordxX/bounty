@@ -5,6 +5,14 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Your own presets**
+- Game rules, Presets: name and save the settings changed from the panel as
+  a preset of your own (up to 20; the same name replaces it), listed after
+  the shipped ones as *yours*, previewed and applied with two clicks like
+  them, and deleted with two clicks. Stored with the settings; audited
+  (`admin_preset_saved`, `admin_preset_deleted`). Panel ops `presetSaveOwn`,
+  `presetDelete`.
+
 **Config check**
 - `/ch-diag config`, and **Check the config** under Developer, Health: every
   value out of range or invalid, every script a switched-on feature needs

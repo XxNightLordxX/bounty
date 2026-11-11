@@ -5733,10 +5733,15 @@ async function main() {
           { key: 'Limits.MinContractReward', label: 'Least reward ' + XSS, from: '1000', to: '5000' }],
         refused: [{ key: 'Roleplay.ReasonQuality.Enabled', label: 'Reason quality', why: 'Needs its word list first.' }] },
       { name: 'Relaxed', builtIn: true, about: 'A busy board.', changes: [], refused: [], same: 6 },
-      { name: 'Current', builtIn: false, about: 'As they were.', changes: [], refused: [], same: 7 }] } };
+      { name: 'Current', builtIn: false, about: 'As they were.', changes: [], refused: [], same: 7 },
+      { name: 'Event ' + XSS, builtIn: false, own: true, about: 'Saved by Staff.', same: 0,
+        changes: [{ key: 'Limits.MaxAcceptedPerHitman', label: 'Contracts a hitman may hold', from: '3', to: '4' }],
+        refused: [] }] } };
     const app = boot(standardServer({ presets: PRESETS,
       presetApply: { ok: true, message: 'Strict applied: 2 settings changed.', data: { applied: ['a', 'b'], refused: [] } },
-      presetSave: { ok: true, message: 'Saved: Current holds the settings the presets name, as they are now.' } }));
+      presetSave: { ok: true, message: 'Saved: Current holds the settings the presets name, as they are now.' },
+      presetSaveOwn: { ok: true, message: 'Saved: Night holds the 1 setting changed from the panel now.' },
+      presetDelete: { ok: true, message: 'Deleted. Nothing else changed.' } }));
     app.open(ADMIN);
     await settled();
     app.nav('presets');
@@ -5773,6 +5778,39 @@ async function main() {
     app.click(save);
     await settled();
     it('Save as Current takes two clicks too', function () { eq(app.requests('presetSave').length, 1); });
+    app.click(app.button('Save the panel\'s changes as a preset'));
+    await settled();
+    it('your own preset needs a name first, and asks nothing without one', function () {
+      eq(app.requests('presetSaveOwn').length, 0);
+      has(app.main(), 'Name the preset first.');
+    });
+    app.type(app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'ps.name'; })[0], 'Night');
+    app.click(app.button('Save the panel\'s changes as a preset'));
+    await settled();
+    it('saving your own preset takes two clicks', function () {
+      eq(app.requests('presetSaveOwn').length, 0, 'armed by the first');
+    });
+    app.click(app.button('Save the panel\'s changes as a preset'));
+    await settled();
+    it('the second saves it under that name', function () {
+      eq(app.last('presetSaveOwn').data, { name: 'Night' });
+      has(app.main(), 'Saved: Night holds the 1 setting');
+    });
+    it('your own preset is marked yours, previewed like the shipped ones, escaped, with Delete', function () {
+      has(app.main(), 'yours');
+      has(app.main(), 'Contracts a hitman may hold: 3 → 4');
+      eq(app.body.querySelectorAll('img').length, 0, 'escaped');
+      eq(app.$$('[data-act="ps-delete"]').length, 1, 'Delete on your own preset only');
+    });
+    const del = app.$$('[data-act="ps-delete"]')[0];
+    app.click(del);
+    await settled();
+    it('Delete takes two clicks', function () { eq(app.requests('presetDelete').length, 0); });
+    app.click(del);
+    await settled();
+    it('and the second deletes it by name', function () {
+      eq(app.last('presetDelete').data, { name: 'Event ' + XSS });
+    });
     clean(app, 'presets');
   })();
 

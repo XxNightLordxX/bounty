@@ -194,6 +194,11 @@ describe('panel: game rules', function()
         name = type(name) == 'table' and (name.name or name.id) or name
         truthy(name, 'a preset to apply')
         click('presetApply', { name = name })
+        -- A preset of the server's own (X5): saved under a name, then deleted.
+        click('setSetting', { key = 'Limits.TargetCooldownAfterResolveSeconds', value = 700 })
+        click('presetSaveOwn', { name = 'Event night' })
+        click('presetDelete', { name = 'Event night' })
+        audited('admin_preset_deleted')
         click('setup')
         local values = { ['Limits.TargetCooldownAfterResolveSeconds'] = 1200 }
         local preview = click('setupPreview', { values = values })

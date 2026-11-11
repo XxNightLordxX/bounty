@@ -401,7 +401,7 @@
     tlplayer: 'One target\'s cooldown and counts, exactly, with Reset, Extend and Exempt.',
     rules: 'Every game rule by the area it is about; pick an area or a type of setting.',
     changed: 'The settings changed from this panel, each with Reset to config.lua.',
-    presets: 'Named bundles of settings: see every change one makes, then apply it with two clicks.',
+    presets: 'Named bundles of settings, shipped and your own: see every change one makes, then apply it with two clicks.',
     orgsetup: 'The hitman organisation\'s switch, its job and how it runs.',
     orgroles: 'The organisation\'s roles, their rank and their pay.',
     orgmembers: 'Who is in the organisation, their role and duty.',
@@ -4507,6 +4507,10 @@
     return frag(answerBox(S.presets.answer),
       h('div.btn-row', writeBtn('.ghost.is-small', 'ps-save', {}, 'Save the settings now as Current',
         'Click again: save as Current', 'floppy-disk')),
+      h('div.btn-row', field('ps.name', { placeholder: 'Name for a preset of your own', maxlength: '32',
+        'aria-label': 'Name for a preset of your own' }),
+        writeBtn('.is-small', 'ps-own', {}, 'Save the panel\'s changes as a preset',
+          'Click again: save them under that name', 'box-archive')),
       h('div.cards-grid', list.map(function (p) {
         var changes = asList(p.changes), refused = asList(p.refused);
         var n = changes.length;
@@ -4521,8 +4525,10 @@
           })) : null,
           Number(p.same) > 0 ? h('p.sub', num(p.same) + ' more already as this preset says.') : null,
           h('div.btn-row', writeBtn('.primary.is-small', 'ps-apply', { 'data-value': String(p.name), disabled: !n || null },
-            'Apply ' + String(p.name), 'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's'), 'check'))),
-          '.ps-card', h('span.chip' + (p.builtIn ? '' : '.is-panel'), p.builtIn ? 'shipped' : 'saved'));
+            'Apply ' + String(p.name), 'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's'), 'check'),
+            p.own ? writeBtn('.danger.is-small', 'ps-delete', { 'data-value': String(p.name) },
+              'Delete', 'Click again: delete ' + String(p.name), 'trash') : null)),
+          '.ps-card', h('span.chip' + (p.builtIn ? '' : '.is-panel'), p.builtIn ? 'shipped' : p.own ? 'yours' : 'saved'));
       })));
   }
 
@@ -4617,6 +4623,29 @@
       S.presets.answer = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
       if (reply.ok) loadSettings();
+      loadPresets();
+    });
+  };
+  /* A preset of the server's own (server/presets.lua, X5): the settings
+     changed from the panel now, under the name typed; and deleting one. */
+  ACTIONS['ps-own'] = function (node) {
+    var name = trim(S.forms['ps.name']);
+    if (!name) { S.presets.answer = { ok: false, text: 'Name the preset first.' }; drawPresets(); return; }
+    if (!confirmed(node)) return;
+    write('presetSaveOwn', { name: name }, 'preset', node).then(function (reply) {
+      if (!reply) return;
+      S.presets.answer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (reply.ok) S.forms['ps.name'] = '';
+      loadPresets();
+    });
+  };
+  ACTIONS['ps-delete'] = function (node) {
+    if (!confirmed(node)) return;
+    write('presetDelete', { name: node.getAttribute('data-value') }, 'preset', node).then(function (reply) {
+      if (!reply) return;
+      S.presets.answer = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
       loadPresets();
     });
   };

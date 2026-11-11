@@ -82,6 +82,8 @@ local OPS = {
     announce = WRITE, undoSetting = WRITE,
     -- Presets: named bundles of settings, previewed, then applied (server/presets.lua).
     presets = READ, presetApply = WRITE, presetSave = WRITE,
+    -- Presets of the server's own (X5): saved under a name, and deleted.
+    presetSaveOwn = WRITE, presetDelete = WRITE,
     -- The first-start setup (server/setup.lua): it shows the ACE lines and
     -- changes settings, so the staff ACE's alone.
     setup = WRITE, setupPreview = WRITE, setupApply = WRITE,
@@ -165,6 +167,7 @@ local WAITS_FOR_RECOVERY = {
     removeHitman = true, editText = true,
     suspend = true, unsuspend = true, protect = true, unprotect = true, manualPay = true,
     undoSetting = true, presetApply = true, presetSave = true, setupApply = true,
+    presetSaveOwn = true, presetDelete = true,
     targetJobSet = true, targetJobRemove = true, targetReset = true, targetExtend = true,
     targetCounts = true, targetOverride = true, targetOverrideClear = true, targetJobAction = true,
 }
@@ -2467,6 +2470,25 @@ H.presetSave = function(src)
     if not ok then return false, err, 'The store did not take it; nothing was saved. Try again.' end
     deps.audit.staff('admin_preset_saved', cid, nil, { preset = 'Current', by = who })
     return true, nil, 'Saved: Current holds the settings the presets name, as they are now.'
+end
+
+--- Save the settings changed from the panel now as a preset of the
+--- server's own, under a name (two clicks on the page).
+H.presetSaveOwn = function(src, data)
+    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    local cid, who = staffOf(src)
+    local name = type(data.name) == 'string' and data.name:sub(1, 64) or nil
+    local ok, err, message = deps.presets.saveOwn(name, who, cid)
+    return ok, err, message
+end
+
+--- Delete a preset of the server's own (two clicks on the page).
+H.presetDelete = function(src, data)
+    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    local cid, who = staffOf(src)
+    local name = type(data.name) == 'string' and data.name:sub(1, 64) or nil
+    local ok, err, message = deps.presets.deleteOwn(name, who, cid)
+    return ok, err, message
 end
 
 H.resetSettings = function(src)
