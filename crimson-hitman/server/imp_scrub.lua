@@ -1,4 +1,4 @@
---- Weapon serial scrubbing (Config.Improvements.SerialScrub, README
+CrimsonBoot.define('server.imp_scrub', function() --- Weapon serial scrubbing (Config.Improvements.SerialScrub, README
 --- Optional features). Off as shipped, and off it changes nothing.
 ---
 --- On, a weapon an anonymous placer put up reaches anybody but that placer
@@ -195,3 +195,4 @@ function Scrub.scrub(recipientCid, line, meta)
 end
 
 return Scrub
+end)

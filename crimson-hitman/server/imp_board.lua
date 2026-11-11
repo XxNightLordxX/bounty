@@ -1,4 +1,4 @@
---- Board improvements (README, Optional features), group impB: contract
+CrimsonBoot.define('server.imp_board', function() --- Board improvements (README, Optional features), group impB: contract
 --- decay (server/imp_decay.lua), its block of Config.Improvements, off as
 --- shipped: an untaken contract's reward rises, charged to its placer, or
 --- it ends sooner. With it off nothing here reads, writes or sends anything.
@@ -60,3 +60,4 @@ function ImpBoard.tick()
 end
 
 return ImpBoard
+end)

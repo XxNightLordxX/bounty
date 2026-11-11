@@ -1,4 +1,4 @@
---- Per-citizen token buckets (§9.5, §14.27).
+CrimsonBoot.define('server.ratelimit', function() --- Per-citizen token buckets (§9.5, §14.27).
 --- Keyed on the resolved citizen id, never on anything from a payload, so
 --- rotating a field in the request cannot buy extra attempts.
 
@@ -191,3 +191,4 @@ function RateLimit.count()
 end
 
 return RateLimit
+end)

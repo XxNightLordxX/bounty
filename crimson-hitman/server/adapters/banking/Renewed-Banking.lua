@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.banking.Renewed-Banking', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║       crimson-hitman - server/adapters/banking/Renewed-Banking.lua        ║
     ║                     banking adapter: Renewed-Banking                      ║
@@ -31,3 +31,4 @@ function Adapter.removeAccountMoney(...) return exports['Renewed-Banking']:remov
 function Adapter.handleTransaction(...) return exports['Renewed-Banking']:handleTransaction(...) end
 
 return Adapter
+end)

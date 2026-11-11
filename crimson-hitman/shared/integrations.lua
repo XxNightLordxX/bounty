@@ -1,4 +1,4 @@
---- Crimson Hitman System — the other scripts this resource can work with,
+CrimsonBoot.define('shared.integrations', function() --- Crimson Hitman System — the other scripts this resource can work with,
 --- one adapter per kind (docs/dev/adapters.md).
 ---
 --- Loaded on both sides: the server through CrimsonBoot.requireShared, the
@@ -286,3 +286,4 @@ end
 CrimsonIntegrations = Integrations
 
 return Integrations
+end)

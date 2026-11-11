@@ -1,4 +1,4 @@
---- Settings staff change from the admin panel, kept over config.lua.
+CrimsonBoot.define('server.settings', function() --- Settings staff change from the admin panel, kept over config.lua.
 ---
 --- The owner wanted every feature switchable, and the limits changeable,
 --- from inside the game, with every change surviving a restart. config.lua
@@ -2993,3 +2993,4 @@ function Settings.history(cursor, limit)
 end
 
 return Settings
+end)

@@ -1,4 +1,4 @@
---- Counts inside a sliding window (the last hour, the last day): the one
+CrimsonBoot.define('server.lib.window', function() --- Counts inside a sliding window (the last hour, the last day): the one
 --- per-day counter every cap and alert uses.
 ---
 --- Each count is read and written in one go, with no yield in between, so
@@ -122,3 +122,4 @@ function Window.new(seconds)
 end
 
 return Window
+end)

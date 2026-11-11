@@ -1,4 +1,4 @@
---- The network surface (§14.1, §14.27).
+CrimsonBoot.define('server.app', function() --- The network surface (§14.1, §14.27).
 ---
 --- Every handler in this file is registered through `handler()`, which
 --- resolves the actor from `source`, re-checks the job blacklist and applies
@@ -2328,3 +2328,4 @@ function App.clearPlayerHandles(cid)
 end
 
 return App
+end)

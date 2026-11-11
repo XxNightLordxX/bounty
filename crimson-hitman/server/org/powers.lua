@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.powers', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/org/powers.lua                   ║
     ║          The organisation's boss powers, their areas and defaults         ║
@@ -206,3 +206,4 @@ function Powers.limit(org, key)
 end
 
 return Powers
+end)

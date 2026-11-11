@@ -1,4 +1,4 @@
---- Crimson Hitman System — the words players and staff read, by key.
+CrimsonBoot.define('shared.locale', function() --- Crimson Hitman System — the words players and staff read, by key.
 ---
 --- Every notice, refusal and label is looked up here by its key, in the
 --- language Config.Locale names ('en' as shipped): locales/<language>.lua
@@ -26,10 +26,6 @@ local said = {}
 --- [language] = true once the first missing key was said whatever Debug says.
 local first = {}
 
---- The server's module loader (server/boot.lua); the client has none, and
---- reads the language files the manifest loaded (CrimsonLocales).
-local function boot() return rawget(_G, 'CrimsonBoot') end
-
 local function console(text, always)
     -- shared/log.lua's CrimsonLog, which both sides load before anything
     -- asks for a word.
@@ -38,8 +34,9 @@ local function console(text, always)
     if always then Console.always(text) else Console.debug(text) end
 end
 
---- A language's table: published by its file or loaded by name on the
---- server. false when none. The game's own words (client.*) are a file of
+--- A language's table, as its file published it (fxmanifest.lua loads
+--- every language file on the server, and locales/client/ in the game).
+--- false when none. The game's own words (client.*) are a file of
 --- their own, locales/client/<language>.lua (CrimsonClientLocales), the
 --- only language file the manifest sends every player: the rest of
 --- locales/<language>.lua (staff, Discord, the panel) stays on the server.
@@ -51,11 +48,6 @@ local function tableOf(lang, game)
     if tables[slot] ~= nil then return tables[slot] end
     local published = game and rawget(_G, 'CrimsonClientLocales') or rawget(_G, 'CrimsonLocales')
     local found = type(published) == 'table' and published[lang] or nil
-    if type(found) ~= 'table' and type(lang) == 'string' and lang:match('^[%a_%-]+$')
-        and boot() and boot().require then
-        local ok, mod = pcall(boot().require, (game and 'locales.client.' or 'locales.') .. lang)
-        found = ok and mod or nil
-    end
     tables[slot] = type(found) == 'table' and found or false
     return tables[slot]
 end
@@ -108,3 +100,4 @@ end
 CrimsonLocale = Locale
 
 return Locale
+end)

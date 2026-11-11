@@ -1,4 +1,4 @@
---- Hitman heat (Config.Record.Heat, README, A hitman's record), the part
+CrimsonBoot.define('server.record.heat', function() --- Hitman heat (Config.Record.Heat, README, A hitman's record), the part
 --- of a character's record (server/record/init.lua) the police can feel.
 --- Off as shipped.
 ---
@@ -269,3 +269,4 @@ function Heat.init(deps)
 end
 
 return Heat
+end)

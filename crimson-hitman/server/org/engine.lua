@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.engine', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/org/engine.lua                   ║
     ║      Who holds which power, and what a boss may do to whom (the rules)    ║
@@ -214,3 +214,4 @@ function Engine.needsOffice(org, code)
 end
 
 return Engine
+end)

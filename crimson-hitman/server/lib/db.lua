@@ -1,4 +1,4 @@
---- Store calls that may raise: the one wrapper for "try it, and say so if
+CrimsonBoot.define('server.lib.db', function() --- Store calls that may raise: the one wrapper for "try it, and say so if
 --- the database would not".
 ---
 --- A store call raises on mysql when the database refuses (a lost
@@ -39,3 +39,4 @@ function Db.quiet(said, fn, ...)
 end
 
 return Db
+end)

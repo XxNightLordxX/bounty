@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.jobs', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                   crimson-hitman - server/org/jobs.lua                    ║
     ║        The organisation as a qbx_core job: registered and kept in step    ║
@@ -233,3 +233,4 @@ function Jobs.checkStartOrder(org)
 end
 
 return Jobs
+end)

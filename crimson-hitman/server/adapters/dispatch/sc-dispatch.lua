@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.dispatch.sc-dispatch', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║         crimson-hitman - server/adapters/dispatch/sc-dispatch.lua         ║
     ║                       dispatch adapter: sc-dispatch                       ║
@@ -19,3 +19,4 @@ function Adapter.AddNotification(...) return exports['sc-dispatch']:AddNotificat
 function Adapter.ClearNotification(...) return exports['sc-dispatch']:ClearNotification(...) end
 
 return Adapter
+end)

@@ -1,4 +1,4 @@
---- Identity resolution and access control.
+CrimsonBoot.define('server.identity', function() --- Identity resolution and access control.
 ---
 --- This is the only module that may read `source`. Every other server module
 --- receives an already-resolved actor table. No handler anywhere reads an
@@ -855,3 +855,4 @@ function Identity.isAliveAndConscious(source, strict)
 end
 
 return Identity
+end)

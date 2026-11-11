@@ -1,4 +1,4 @@
---- Target counterplay (README, Optional features): bodyguard contracts
+CrimsonBoot.define('server.rp_protection', function() --- Target counterplay (README, Optional features): bodyguard contracts
 --- (Config.Roleplay.Protection) and the hit on the hitman
 --- (Config.Roleplay.HitOnHitman). Both off as shipped.
 ---
@@ -918,3 +918,4 @@ function Protection.validate(warn, filled)
 end
 
 return Protection
+end)

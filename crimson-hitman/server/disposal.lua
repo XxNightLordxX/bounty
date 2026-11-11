@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.disposal', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                   crimson-hitman - server/disposal.lua                    ║
     ║      Body disposal: a verified kill pays once the body is dropped off     ║
@@ -1067,3 +1067,4 @@ function Disposal.init(deps)
 end
 
 return Disposal
+end)

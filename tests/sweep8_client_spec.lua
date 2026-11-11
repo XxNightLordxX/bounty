@@ -67,6 +67,7 @@ local function game()
         GetCurrentResourceName = function() return 'crimson-hitman' end,
         CreateThread = function(fn) t.threads[#t.threads + 1] = coroutine.create(fn) end,
     }, { __index = _G })
+    assert(loadfile('crimson-hitman/client/boot.lua', 't', env))()
     assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
     assert(loadfile('crimson-hitman/locales/client/en.lua', 't', env))()
     assert(loadfile('crimson-hitman/shared/locale.lua', 't', env))()

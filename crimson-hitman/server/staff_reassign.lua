@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.staff_reassign', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                 crimson-hitman - server/staff_reassign.lua                ║
     ║          Staff give a live contract to another hitman, from the panel     ║
@@ -460,3 +460,4 @@ function StaffReassign.validate(warn)
 end
 
 return StaffReassign
+end)

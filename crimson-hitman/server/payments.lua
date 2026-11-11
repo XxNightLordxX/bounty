@@ -1,4 +1,4 @@
---- Manual staff payments, from Players in the admin panel.
+CrimsonBoot.define('server.payments', function() --- Manual staff payments, from Players in the admin panel.
 ---
 --- Staff with the staff ACE pay one player an amount of cash or bank, with
 --- a reason, on the two-click confirm. At most Config.Staff.ManualPaymentMax
@@ -104,3 +104,4 @@ payUnlocked = function(staffCid, cid, amount, account, reason, name)
 end
 
 return Payments
+end)

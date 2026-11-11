@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.progression.sc-blackmarket', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║      crimson-hitman - server/adapters/progression/sc-blackmarket.lua      ║
     ║                    progression adapter: sc-blackmarket                    ║
@@ -14,3 +14,4 @@ local Adapter = { resource = 'sc-blackmarket', label = 'sc-blackmarket' }
 function Adapter.AddTrust(...) return exports['sc-blackmarket']:AddTrust(...) end
 
 return Adapter
+end)

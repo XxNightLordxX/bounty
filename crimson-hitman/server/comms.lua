@@ -1,4 +1,4 @@
---- Masked relay between creator and hitmen (§11).
+CrimsonBoot.define('server.comms', function() --- Masked relay between creator and hitmen (§11).
 ---
 --- Messages are relayed server-side and rendered under a per-contract alias.
 --- No phone number, character name, citizen id or source ever crosses to the
@@ -714,3 +714,4 @@ function Comms.resetMaskingCache()
 end
 
 return Comms
+end)

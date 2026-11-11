@@ -1,4 +1,4 @@
---- Counter-Intelligence — the two informants (§6.1, §14.29).
+CrimsonBoot.define('server.intel.informants', function() --- Counter-Intelligence — the two informants (§6.1, §14.29).
 ---
 --- The target's (Config.Intel.Informant): a target picks one operative on a
 --- contract on them, or the person who placed it, and pays for one look-up.
@@ -824,3 +824,4 @@ function Informant.clearContract(contractId)
 end
 
 return Informant
+end)

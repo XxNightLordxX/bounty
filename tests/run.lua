@@ -10,14 +10,10 @@ local Env = Natives.env
 Natives.install()
 
 -- Module loader used by the server files: server/boot.lua's namespace
--- table, standing in for the one LoadResourceFile builds on a live server.
--- Both go through the global require at call time rather than capturing it
--- here, so a wrapper installed around it (tests/invariants.lua) still sees
--- every module a server file asks for.
-_G.CrimsonBoot = {
-    require = function(path) return require(path) end,
-    requireShared = function(name) return require('crimson-hitman.shared.' .. name) end,
-}
+-- table, with each module's CrimsonBoot.define read as the live loader
+-- reads it (tests/harness/modules.lua). The real loader itself is
+-- boot_spec's, and a whole start through it escrow_boot_spec's.
+require('tests.harness.modules').install()
 
 -- The resource's own loader (server/boot.lua) resolves 'server.escrow'
 -- against the resource root. Teaching the harness the same shape is what
@@ -32,6 +28,14 @@ _G.CH = require('crimson-hitman.shared.constants')
 -- be testing a program that cannot.
 _G.ConfigDefaults = require('crimson-hitman.config.defaults')
 _G.Config = require('crimson-hitman.config.config')
+-- And the words, every language file the manifest lists for the server:
+-- each publishes its table (CrimsonLocales, CrimsonClientLocales), which
+-- is the only way shared/locale.lua finds one.
+for _, file in ipairs(require('tests.harness.manifest').files('server_scripts')) do
+    if file:match('^locales/.+%.lua$') then
+        require('crimson-hitman.' .. file:gsub('%.lua$', ''):gsub('/', '.'))
+    end
+end
 
 -- os.time is driven by the harness clock so tests can advance time.
 local realTime = os.time
@@ -780,6 +784,7 @@ local suites = {
     'lib_feature_spec',
     'adapters_spec',
     'locale_spec',
+    'escrow_boot_spec',
     'versioncheck_spec',
     'configcheck_spec', 'settingsio_spec',
     'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.org_extras2_spec', 'workflows.org_extras3_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',

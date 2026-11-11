@@ -1,4 +1,4 @@
---- The adapters, loaded and registered (shared/integrations.lua), and the
+CrimsonBoot.define('server.adapters.init', function() --- The adapters, loaded and registered (shared/integrations.lua), and the
 --- one line said for each kind left without one.
 ---
 --- Every server module that calls another resource asks here:
@@ -91,3 +91,4 @@ function Integrations.watches(resource)
 end
 
 return Integrations
+end)

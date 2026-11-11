@@ -152,9 +152,9 @@ end
 --------------------------------------------------------------------------
 --
 -- The test harness resolves modules through package.path; the resource
--- resolves them through LoadResourceFile in server/boot.lua. A path that is
--- wrong for the second but right for the first would pass every test and
--- fail on the first start.
+-- by the name each file gives CrimsonBoot.define (server/boot.lua), which
+-- tests/escrow_boot_spec.lua holds to the file's path and the manifest. A
+-- name with no file behind it fails here.
 --
 -- And every server file loads through that loader's namespace table
 -- (CrimsonBoot.require / CrimsonBoot.requireShared), never the runtime's

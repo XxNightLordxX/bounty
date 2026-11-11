@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.inventory.ox_inventory', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║        crimson-hitman - server/adapters/inventory/ox_inventory.lua        ║
     ║                      inventory adapter: ox_inventory                      ║
@@ -34,3 +34,4 @@ function Adapter.GetInventory(...) return exports.ox_inventory:GetInventory(...)
 function Adapter.RegisterStash(...) return exports.ox_inventory:RegisterStash(...) end
 
 return Adapter
+end)

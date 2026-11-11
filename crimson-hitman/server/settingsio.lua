@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.settingsio', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                   crimson-hitman - server/settingsio.lua                  ║
     ║      Settings export and import: one JSON text, previewed, then applied   ║
@@ -199,3 +199,4 @@ function SettingsIO.apply(text, expect, staff, actorCid)
 end
 
 return SettingsIO
+end)

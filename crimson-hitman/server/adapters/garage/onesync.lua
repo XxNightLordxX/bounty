@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.garage.onesync', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║             crimson-hitman - server/adapters/garage/onesync.lua           ║
     ║        garage adapter: server-made vehicles through OneSync natives       ║
@@ -52,3 +52,4 @@ end
 function Adapter.remove(vehicle) DeleteEntity(vehicle) end
 
 return Adapter
+end)

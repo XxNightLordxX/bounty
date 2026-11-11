@@ -1,4 +1,4 @@
---- The Hitman's Ledger (§6.3, §14.43).
+CrimsonBoot.define('server.ledger', function() --- The Hitman's Ledger (§6.3, §14.43).
 --- Keeps the last N completed contracts per participant. Bounded by config
 --- so the footprint stays small.
 ---
@@ -249,3 +249,4 @@ function Ledger.entries(cid)
 end
 
 return Ledger
+end)

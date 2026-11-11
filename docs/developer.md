@@ -29,6 +29,19 @@ after this resource, and the client adds the app whenever lb-phone starts.
 `server/boot.lua` waits for the dependencies and loads the modules through
 one loader (`CrimsonBoot.require`); `server/main.lua` wires them (each
 module's `init(deps)`), runs boot recovery, and owns the maintenance tick.
+Every module (each `server/**` file but `boot.lua` and `main.lua`, and each
+`shared/**` file but `constants.lua`) is listed in `fxmanifest.lua`'s
+`server_scripts`, between `boot.lua` and `main.lua`. Its first line,
+`CrimsonBoot.define('server.escrow', function() `, opens its body under its
+path, and its last line, `end)`, closes it: the manifest running the file
+only stores the body, and `CrimsonBoot.require` runs it once, when it is
+first asked for. Nothing reads a module with `LoadResourceFile`, which hands
+an escrowed file back still encrypted. On the client, `client/boot.lua`'s
+`CrimsonBoot.define` runs a shared file's body at once. The language files
+are plain scripts that publish their table (every one on the server,
+`locales/client/` in the game). The tests load modules the same way (`tests/harness/modules.lua`),
+and `tests/escrow_boot_spec.lua` starts the whole resource with every
+`.lua` sealed to `LoadResourceFile`.
 Every server file's public functions take an actor already resolved by
 `identity.lua`; nothing but `identity.lua` and the handlers in `app.lua` /
 `panel.lua` reads `source`.

@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.staff_ops', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                 crimson-hitman - server/org/staff_ops.lua                 ║
     ║    The admin panel's requests for the organisation and Boss permissions   ║
@@ -586,3 +586,4 @@ function StaffOps.register(d)
 end
 
 return StaffOps
+end)

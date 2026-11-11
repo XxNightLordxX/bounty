@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.presets', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                    crimson-hitman - server/presets.lua                    ║
     ║          Named bundles of settings, previewed before they apply           ║
@@ -414,3 +414,4 @@ function Presets.apply(name, staff, actorCid)
 end
 
 return Presets
+end)

@@ -1,4 +1,4 @@
---- The adapters this build has, by kind, in the order 'auto' tries them
+CrimsonBoot.define('server.adapters.list', function() --- The adapters this build has, by kind, in the order 'auto' tries them
 --- (docs/dev/adapters.md). A server that writes its own adds its name here,
 --- in front of the shipped one to be tried first, and its file beside the
 --- others: server/adapters/<kind>/<name>.lua for a server kind, or
@@ -20,3 +20,4 @@ return {
     clothing    = { 'qb-clothing', 'illenium-appearance', 'rcore_clothing' },  -- client
     progression = { 'sc-blackmarket' },
 }
+end)

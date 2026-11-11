@@ -1,4 +1,4 @@
---- Intel (Config.Intel, README "Intel"): every paid look-up sold in this
+CrimsonBoot.define('server.intel.engine', function() --- Intel (Config.Intel, README "Intel"): every paid look-up sold in this
 --- resource runs through this one engine.
 ---
 --- The products, each its own module for what it finds and keeps:
@@ -522,3 +522,4 @@ function Intel.validate(warn)
 end
 
 return Intel
+end)

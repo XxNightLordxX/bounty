@@ -5,6 +5,12 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Escrowed builds start**
+- Every Lua file the server runs is listed in `fxmanifest.lua` and loaded by
+  FiveM's script loader, the only one that decrypts an escrowed file; the
+  module loader no longer reads files itself. A server adapter of your own
+  names its path on its first line (`server/adapters/TEMPLATE.lua`).
+
 **Settings export and import**
 - Developer, Export & import: every setting changed from the panel and your
   own presets as one JSON text, to copy (not the map places, not the target

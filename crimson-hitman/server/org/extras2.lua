@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.extras2', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/org/extras2.lua                  ║
     ║   Organisation extras 2: the armory, the record and leaderboard,          ║
@@ -1130,3 +1130,4 @@ function Extras2.validate(warn)
 end
 
 return Extras2
+end)

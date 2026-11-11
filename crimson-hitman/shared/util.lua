@@ -1,4 +1,4 @@
---- Crimson Hitman System — pure helpers.
+CrimsonBoot.define('shared.util', function() --- Crimson Hitman System — pure helpers.
 --- Nothing in here touches game state, so every function is directly unit-testable.
 
 local Util = {}
@@ -725,7 +725,7 @@ Util.MONEY_REASON = 'crimson-hitman'
 --- below runs.
 local function Framework()
     -- The server's loader (server/boot.lua): this file is shared, and the
-    -- client has none.
+    -- client's CrimsonBoot (client/boot.lua) has no require.
     local boot = rawget(_G, 'CrimsonBoot')
     return boot.require('server.adapters.init').get('framework')
 end
@@ -894,10 +894,12 @@ function Util.payoutPortion(line)
 end
 
 --- The client has no module loader — server/boot.lua's
---- CrimsonBoot.requireShared is a server-side stand-in for one — so the
---- client half reaches these helpers through a global. The file is listed
+--- CrimsonBoot.requireShared is a server-side stand-in for one, and
+--- client/boot.lua only runs each shared file's body — so the client half
+--- reaches these helpers through a global. The file is listed
 --- in client_scripts and loaded exactly once on each side, so there is still
 --- only one clock per process.
 CrimsonUtil = Util
 
 return Util
+end)

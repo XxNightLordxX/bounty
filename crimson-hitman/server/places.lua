@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.places', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                    crimson-hitman - server/places.lua                     ║
     ║       The one registry of the map spots staff (and bosses) set            ║
@@ -500,3 +500,4 @@ function Places.addOps(panel)
 end
 
 return Places
+end)

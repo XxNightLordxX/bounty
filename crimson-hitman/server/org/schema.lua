@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.schema', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/org/schema.lua                   ║
     ║       The organisation's tables: one shape for all three storage modes    ║
@@ -289,3 +289,4 @@ Schema.CREATE = {
 Schema.NAMES = { 'orgs', 'roles', 'members', 'grants', 'funds', 'splits', 'applications', 'messages' }
 
 return Schema
+end)

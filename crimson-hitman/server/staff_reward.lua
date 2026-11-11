@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.staff_reward', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/staff_reward.lua                 ║
     ║       Staff raise or lower the reward on a live contract, through escrow  ║
@@ -461,3 +461,4 @@ function StaffReward.validate(warn)
 end
 
 return StaffReward
+end)

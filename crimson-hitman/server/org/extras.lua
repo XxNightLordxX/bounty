@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.extras', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/org/extras.lua                   ║
     ║   Organisation extras 1: contracts to the org, approval, probation,       ║
@@ -1178,3 +1178,4 @@ function Extras.validate(warn)
 end
 
 return Extras
+end)

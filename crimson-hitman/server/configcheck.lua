@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.configcheck', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/configcheck.lua                  ║
     ║       The config check: what is wrong or risky, each with its fix         ║
@@ -186,3 +186,4 @@ function ConfigCheck.lines()
 end
 
 return ConfigCheck
+end)

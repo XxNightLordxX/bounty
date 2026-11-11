@@ -21,6 +21,9 @@ client_scripts {
     -- death watcher reads the medical metadata from it rather than asking
     -- the GetPlayerData export for the whole record every second.
     '@qbx_core/modules/playerdata.lua',
+    -- The client's CrimsonBoot.define, which runs each shared file's body at
+    -- once (the server's loader is server/boot.lua), before the shared files.
+    'client/boot.lua',
     -- The client needs Util.monotonicMs: GetGameTimer wraps every ~24.8 days
     -- and the mugshot floor is an elapsed subtraction against it. The server
     -- loads this same file through CrimsonBoot.requireShared instead.
@@ -65,7 +68,98 @@ server_scripts {
     -- oxmysql must be present and started in every mode. qbx_core already
     -- requires it.
     '@oxmysql/lib/MySQL.lua',
+    -- The module loader first (CrimsonBoot.define, CrimsonBoot.require).
+    -- Every module file below only hands its body to CrimsonBoot.define, so
+    -- their order does not matter; server/main.lua, last, is the one that
+    -- asks for them, in the order the start needs. A module the server
+    -- loads must be listed here: on an escrowed build only this list is
+    -- decrypted (README, "Escrow, and where the words live").
     'server/boot.lua',
+    -- The words, every language: each file publishes its table
+    -- (CrimsonLocales, CrimsonClientLocales) for shared/locale.lua.
+    'locales/*.lua',
+    'locales/client/*.lua',
+    -- The shared modules, on the server through CrimsonBoot.requireShared.
+    -- shared/constants.lua is a shared script above, not a module.
+    'shared/util.lua',
+    'shared/geo.lua',
+    'shared/log.lua',
+    'shared/locale.lua',
+    'shared/integrations.lua',
+    'shared/text.lua',
+    'shared/words.lua',
+    -- The adapters: the registry, the list, and one file per kind and name
+    -- (docs/dev/adapters.md). TEMPLATE.lua is never loaded.
+    'server/adapters/init.lua',
+    'server/adapters/list.lua',
+    'server/adapters/*/*.lua',
+    'server/completion/*.lua',
+    'server/intel/*.lua',
+    'server/lib/*.lua',
+    'server/org/*.lua',
+    'server/record/*.lua',
+    'server/storage/*.lua',
+    'server/admin.lua',
+    'server/alerts.lua',
+    'server/amendments.lua',
+    'server/announce.lua',
+    'server/app.lua',
+    'server/audit.lua',
+    'server/bailout.lua',
+    'server/bridges.lua',
+    'server/comms.lua',
+    'server/configcheck.lua',
+    'server/contracts.lua',
+    'server/discord.lua',
+    'server/disposal.lua',
+    'server/escrow.lua',
+    'server/handover_confirm.lua',
+    'server/history.lua',
+    'server/holds.lua',
+    'server/identity.lua',
+    'server/imp_board.lua',
+    'server/imp_decay.lua',
+    'server/imp_proof.lua',
+    'server/imp_scrub.lua',
+    'server/imp_weekly.lua',
+    'server/ledger.lua',
+    'server/measures.lua',
+    'server/meeting.lua',
+    'server/missionsteps.lua',
+    'server/mugshot.lua',
+    'server/notify.lua',
+    'server/panel.lua',
+    'server/payments.lua',
+    'server/payout.lua',
+    'server/photos.lua',
+    'server/places.lua',
+    'server/playtime.lua',
+    'server/police.lua',
+    'server/presets.lua',
+    'server/projection.lua',
+    'server/ratelimit.lua',
+    'server/reports.lua',
+    'server/review.lua',
+    'server/rp_burner.lua',
+    'server/rp_consequences.lua',
+    'server/rp_intent.lua',
+    'server/rp_places.lua',
+    'server/rp_protection.lua',
+    'server/rp_reason.lua',
+    'server/sanctions.lua',
+    'server/settings.lua',
+    'server/settingsio.lua',
+    'server/setup.lua',
+    'server/staff_reassign.lua',
+    'server/staff_reward.lua',
+    'server/staffcontract.lua',
+    'server/summary.lua',
+    'server/targetlimits.lua',
+    'server/thresholds.lua',
+    'server/timing.lua',
+    'server/versioncheck.lua',
+    -- The start: wires every module, then boot.lua's wait calls
+    -- StartCrimsonHitman once the framework is up.
     'server/main.lua',
 }
 

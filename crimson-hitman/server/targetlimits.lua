@@ -1,4 +1,4 @@
---- Target limits: how often one person may have a contract placed on them.
+CrimsonBoot.define('server.targetlimits', function() --- Target limits: how often one person may have a contract placed on them.
 ---
 --- Three layers, the most specific winning for each limit on its own:
 ---
@@ -695,3 +695,4 @@ function TargetLimits.prune()
 end
 
 return TargetLimits
+end)

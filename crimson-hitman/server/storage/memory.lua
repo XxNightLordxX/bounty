@@ -1,4 +1,4 @@
---- In-process storage. The reference implementation of the storage interface:
+CrimsonBoot.define('server.storage.memory', function() --- In-process storage. The reference implementation of the storage interface:
 --- the mysql and json backends must behave identically to this one.
 ---
 --- Holds no durable escrow, so main.lua refunds everything on resource stop
@@ -2083,3 +2083,4 @@ function Memory.close() return true end
 function Memory._raw() return db end
 
 return Memory
+end)

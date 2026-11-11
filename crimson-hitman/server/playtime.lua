@@ -1,4 +1,4 @@
---- The built-in playtime tracker: how long each character has been in the
+CrimsonBoot.define('server.playtime', function() --- The built-in playtime tracker: how long each character has been in the
 --- city, for the new-player rule (Config.Immunity.MinTargetPlaytimeHours).
 ---
 --- The rule asks Identity.playtimeHours, which asks, in order: the export a
@@ -448,3 +448,4 @@ function Playtime.init(d)
 end
 
 return Playtime
+end)

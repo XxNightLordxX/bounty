@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.phone.lb-phone', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║            crimson-hitman - server/adapters/phone/lb-phone.lua            ║
     ║                   phone adapter: lb-phone (server half)                   ║
@@ -33,3 +33,4 @@ end
 function Adapter.CreateCall(...) return exports['lb-phone']:CreateCall(...) end
 
 return Adapter
+end)

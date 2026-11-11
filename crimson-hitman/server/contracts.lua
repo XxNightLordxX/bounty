@@ -1,4 +1,4 @@
---- Contract lifecycle: creation, acceptance, state machine, limits.
+CrimsonBoot.define('server.contracts', function() --- Contract lifecycle: creation, acceptance, state machine, limits.
 ---
 --- Every transition goes through Contracts.transition, which is a guarded
 --- compare-and-set against the stored state (§9.7, §9.10). Two actions racing
@@ -5100,3 +5100,4 @@ function Contracts.retryStuckClaims()
 end
 
 return Contracts
+end)

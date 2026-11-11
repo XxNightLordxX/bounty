@@ -1,4 +1,4 @@
---- Crimson Hitman System — numbers as players and staff read them.
+CrimsonBoot.define('shared.words', function() --- Crimson Hitman System — numbers as players and staff read them.
 ---
 --- Money, hours, waits and distances, in the words every notice, command
 --- answer and panel line uses. Pure: nothing here reads game state.
@@ -76,3 +76,4 @@ function Words.metres(metres)
 end
 
 return Words
+end)

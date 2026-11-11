@@ -1,4 +1,4 @@
---- The placer's record on a board card (Config.Record.PlacerRecord, README,
+CrimsonBoot.define('server.record.placer', function() --- The placer's record on a board card (Config.Record.PlacerRecord, README,
 --- A hitman's record), the part of a character's record (server/record/
 --- init.lua) a hitman sees of the one who placed a contract. Off as shipped.
 ---
@@ -155,3 +155,4 @@ function Placer.init(deps)
 end
 
 return Placer
+end)

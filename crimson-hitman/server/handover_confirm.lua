@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.handover_confirm', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                crimson-hitman - server/handover_confirm.lua               ║
     ║           The placer's Confirm handover on a live handover (option)       ║
@@ -59,3 +59,4 @@ function HandoverConfirm.validate(warn)
 end
 
 return HandoverConfirm
+end)

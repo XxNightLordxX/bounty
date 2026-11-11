@@ -99,9 +99,11 @@ the console lines), `server/adapters/list.lua` (which adapters exist, in
 1. Copy the template: `server/adapters/TEMPLATE.lua` to
    `server/adapters/<kind>/<your-resource>.lua` (a server kind), or
    `client/adapters/TEMPLATE.lua` to
-   `client/adapters/<kind>/<your-resource>.lua` (a client kind; the manifest
-   loads every `client/adapters/*/*.lua`). For phone and ambulance, which
-   are on both sides, write both.
+   `client/adapters/<kind>/<your-resource>.lua` (a client kind). The
+   manifest loads every `server/adapters/*/*.lua` and `client/adapters/*/*.lua`.
+   For phone and ambulance, which are on both sides, write both. In a server
+   copy, change the name on its first line to the copy's path:
+   `CrimsonBoot.define('server.adapters.<kind>.<your-resource>', function()`.
 2. Fill in each function from **your script's own documentation or source**.
    Never guess an export: one that does not exist raises, and the feature is
    off with a line a minute in the console.

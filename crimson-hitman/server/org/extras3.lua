@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.extras3', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/org/extras3.lua                  ║
     ║   Reputation, dead drops, territory, garage, internal contracts, more     ║
@@ -1107,3 +1107,4 @@ function Extras3.validate(warn)
 end
 
 return Extras3
+end)

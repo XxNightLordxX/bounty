@@ -1,4 +1,4 @@
---- The Intel rules (Config.Intel, README "Intel"): five rules over the
+CrimsonBoot.define('server.intel.rules', function() --- The Intel rules (Config.Intel, README "Intel"): five rules over the
 --- informant tip (server/intel/tip.lua) and the target's informant
 --- (server/intel/informants.lua), and going dark, the counter-product sold
 --- through the engine (server/intel/engine.lua). Each is its own block in
@@ -648,3 +648,4 @@ function IntelRules.targetDark(targetCid)
 end
 
 return IntelRules
+end)

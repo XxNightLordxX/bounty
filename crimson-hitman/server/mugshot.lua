@@ -1,4 +1,4 @@
---- Live target mugshots (§7.2, §14.26).
+CrimsonBoot.define('server.mugshot', function() --- Live target mugshots (§7.2, §14.26).
 ---
 --- A headshot can only be rendered by a client whose game has the ped, so
 --- the *target's own* client renders it and the server caches the result.
@@ -253,3 +253,4 @@ function Mugshot.count()
 end
 
 return Mugshot
+end)

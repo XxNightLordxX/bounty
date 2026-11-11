@@ -1,4 +1,4 @@
---- Staff tools on one contract, from the admin panel's contract view
+CrimsonBoot.define('server.staffcontract', function() --- Staff tools on one contract, from the admin panel's contract view
 --- (server/panel.lua answers the page; this does the work).
 ---
 ---   * Notes: private notes on any contract ('ticket #42, waiting on clip'),
@@ -364,3 +364,4 @@ function StaffContract.editText(staff, contractId, field, text, why)
 end
 
 return StaffContract
+end)

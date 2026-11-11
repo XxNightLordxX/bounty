@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.setup', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                     crimson-hitman - server/setup.lua                     ║
     ║        The first-start setup: one screen, previewed, two clicks           ║
@@ -193,3 +193,4 @@ function Setup.apply(values, staff, actorCid)
 end
 
 return Setup
+end)

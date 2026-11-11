@@ -1,4 +1,4 @@
---- Escrow: the single source of truth for what a contract is worth (§9.1).
+CrimsonBoot.define('server.escrow', function() --- Escrow: the single source of truth for what a contract is worth (§9.1).
 ---
 --- Two rules govern this file and nothing may bypass them:
 ---   1. Funds and items move in the same operation that writes the record.
@@ -2960,3 +2960,4 @@ function Escrow.retryWaiting(isOnline)
 end
 
 return Escrow
+end)

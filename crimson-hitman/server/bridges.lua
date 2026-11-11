@@ -1,4 +1,4 @@
---- FiveM event bridges.
+CrimsonBoot.define('server.bridges', function() --- FiveM event bridges.
 ---
 --- Every engine event this resource listens to is registered here, in one
 --- place, through a function the test suite calls too. A producer that is
@@ -1916,3 +1916,4 @@ function Bridges.installBuyoutCommand(modules)
 end
 
 return Bridges
+end)

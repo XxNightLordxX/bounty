@@ -1,4 +1,4 @@
---- One way to read and check an optional feature's block of config
+CrimsonBoot.define('server.lib.feature', function() --- One way to read and check an optional feature's block of config
 --- (Config.Intel.Rumours, Config.Improvements.ProofItems,
 --- Config.Organisation, ...): whether it is on, the block itself, and the
 --- start-up check that holds every field to its rule.
@@ -214,3 +214,4 @@ function Feature.check(path, rules, warn, filled)
 end
 
 return Feature
+end)

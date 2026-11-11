@@ -1,4 +1,4 @@
---- One player's history, for the read-only card under Players in the admin
+CrimsonBoot.define('server.history', function() --- One player's history, for the read-only card under Players in the admin
 --- panel: the contracts they placed, took, completed and cancelled, the
 --- buyouts, the informant purchases, the money in and out by kind, and every
 --- freeze, suspension and protection with its dates.
@@ -253,3 +253,4 @@ function History.build(deps, cid, canIdentify)
 end
 
 return History
+end)

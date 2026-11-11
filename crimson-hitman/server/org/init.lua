@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.init', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                   crimson-hitman - server/org/init.lua                    ║
     ║   The hitman organisation: state, the job, cuts, the accept gate, places  ║
@@ -3678,3 +3678,4 @@ do
 end
 
 return Org
+end)

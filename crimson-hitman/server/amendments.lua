@@ -1,4 +1,4 @@
---- Contract amendments (§12).
+CrimsonBoot.define('server.amendments', function() --- Contract amendments (§12).
 ---
 --- Additive changes apply immediately because they can only benefit the
 --- hitman. Anything that could disadvantage the other side is a proposal
@@ -1395,3 +1395,4 @@ function Amendments.recoverApplying()
 end
 
 return Amendments
+end)

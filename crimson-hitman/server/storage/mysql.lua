@@ -1,4 +1,4 @@
---- MySQL backend (§10).
+CrimsonBoot.define('server.storage.mysql', function() --- MySQL backend (§10).
 ---
 --- Every statement is parameterized. There is no string concatenation into
 --- SQL anywhere in this file, and no table or column name comes from config
@@ -3886,3 +3886,4 @@ function MySQLStore.flush() return true end
 function MySQLStore.close() return true end
 
 return MySQLStore
+end)

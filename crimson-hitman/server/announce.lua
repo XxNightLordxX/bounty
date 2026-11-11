@@ -1,4 +1,4 @@
---- A notice from staff to every hitman (Staff actions > Announce).
+CrimsonBoot.define('server.announce', function() --- A notice from staff to every hitman (Staff actions > Announce).
 ---
 --- One phone notice, the same words to everybody, to every player in the
 --- city holding a contract (an active operative on a live one), or, chosen
@@ -99,3 +99,4 @@ function Announce.send(staffCid, raw, scope)
 end
 
 return Announce
+end)

@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.framework.qbx_core', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║          crimson-hitman - server/adapters/framework/qbx_core.lua          ║
     ║                        framework adapter: qbx_core                        ║
@@ -50,3 +50,4 @@ function Adapter.RemovePlayerFromJob(...) return exports.qbx_core:RemovePlayerFr
 function Adapter.SetJobDuty(...) return exports.qbx_core:SetJobDuty(...) end
 
 return Adapter
+end)

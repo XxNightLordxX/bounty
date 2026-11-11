@@ -1,4 +1,4 @@
---- Outbound player notifications (§7.3) and the law enforcement threat
+CrimsonBoot.define('server.notify', function() --- Outbound player notifications (§7.3) and the law enforcement threat
 --- advisory (§7.5).
 ---
 --- Every send passes a per-recipient budget so a contract storm cannot be
@@ -1835,3 +1835,4 @@ function Notify.clearContract(contractId, contract)
 end
 
 return Notify
+end)

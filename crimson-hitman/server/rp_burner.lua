@@ -1,4 +1,4 @@
---- The burner phone (Config.Roleplay.BurnerPhone, README, Optional
+CrimsonBoot.define('server.rp_burner', function() --- The burner phone (Config.Roleplay.BurnerPhone, README, Optional
 --- features). Off as shipped, and off it changes nothing.
 ---
 --- On, every contract action in the app needs the item (Item, an
@@ -126,3 +126,4 @@ function Burner.validate(warn)
 end
 
 return Burner
+end)

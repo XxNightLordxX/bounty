@@ -1,4 +1,4 @@
---- Staff alert thresholds (Config.Staff, under Staff & permissions).
+CrimsonBoot.define('server.thresholds', function() --- Staff alert thresholds (Config.Staff, under Staff & permissions).
 ---
 --- Three counts, each kept in memory per player over a sliding window, and
 --- a staff Alert (server/alerts.lua, so Discord too where it is on) the
@@ -113,3 +113,4 @@ function Thresholds.sweep()
 end
 
 return Thresholds
+end)

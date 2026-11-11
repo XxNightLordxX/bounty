@@ -1,4 +1,4 @@
---- Flat-file backend (§10.2).
+CrimsonBoot.define('server.storage.json', function() --- Flat-file backend (§10.2).
 ---
 --- For servers that do not want to run MySQL. Financial transitions bypass
 --- the debounce, and a malformed data file halts the resource rather than
@@ -3937,3 +3937,4 @@ end
 function JsonStore._raw() return db end
 
 return JsonStore
+end)

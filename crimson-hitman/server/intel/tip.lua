@@ -1,4 +1,4 @@
---- Informant tip (Config.Intel.LocationTip): a hitman pays to learn the rough area
+CrimsonBoot.define('server.intel.tip', function() --- Informant tip (Config.Intel.LocationTip): a hitman pays to learn the rough area
 --- the target of their contract was in.
 ---
 --- Not Config.Intel.Informant, which sells a target the name of a hitman. This one
@@ -609,3 +609,4 @@ function LocationTip.hitmanLeft(contractId, cid)
 end
 
 return LocationTip
+end)

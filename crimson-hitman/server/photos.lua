@@ -1,4 +1,4 @@
---- The kill photo kept for a contract's client, and the one look they get
+CrimsonBoot.define('server.photos', function() --- The kill photo kept for a contract's client, and the one look they get
 --- at it (§7.4, §14.43).
 ---
 --- A kill photo is the most sensitive thing this resource holds: a picture
@@ -1368,3 +1368,4 @@ function Photos.sweepFiles()
 end
 
 return Photos
+end)

@@ -1,4 +1,4 @@
---- The roleplay features' shared helpers (Config.Roleplay, README, Optional
+CrimsonBoot.define('server.rp_places', function() --- The roleplay features' shared helpers (Config.Roleplay, README, Optional
 --- features): where the broker and the informant NPC stand now, whether a
 --- player is beside one. Each feature's block is read and checked through
 --- server/lib/feature.lua.
@@ -282,3 +282,4 @@ end
 -- thread of its own. Idle with both NPCs off, it compares two short strings.
 
 return Places
+end)

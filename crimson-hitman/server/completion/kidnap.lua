@@ -1,4 +1,4 @@
---- Kidnapping fulfilment (§7.4, §14.23–§14.25).
+CrimsonBoot.define('server.completion.kidnap', function() --- Kidnapping fulfilment (§7.4, §14.23–§14.25).
 ---
 --- One shared tick drives every armed countdown, so cost scales with the
 --- number of deliveries actually in progress rather than with the number of
@@ -1056,3 +1056,4 @@ function Kidnap.start()
 end
 
 return Kidnap
+end)

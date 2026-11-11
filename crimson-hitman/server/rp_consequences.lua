@@ -1,4 +1,4 @@
---- Roleplay consequences of a completed contract (README, Optional features).
+CrimsonBoot.define('server.rp_consequences', function() --- Roleplay consequences of a completed contract (README, Optional features).
 ---
 --- Four features, each off as shipped and each its own block of
 --- Config.Roleplay, all of them changed live from the admin panel:
@@ -524,3 +524,4 @@ function RpConsequences.init(deps)
 end
 
 return RpConsequences
+end)

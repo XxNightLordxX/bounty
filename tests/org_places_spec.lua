@@ -284,6 +284,7 @@ describe('client/org.lua', function()
         }, { __index = _G })
         -- As the manifest loads them: CrimsonGeo, CrimsonMarkers and CrimsonNpc
         -- before client/org.lua.
+        assert(loadfile('crimson-hitman/client/boot.lua', 't', env))()
         assert(loadfile('crimson-hitman/shared/geo.lua', 't', env))()
         require('tests.harness.client_adapters')(env)
         assert(loadfile('crimson-hitman/client/missionsteps.lua', 't', env))()

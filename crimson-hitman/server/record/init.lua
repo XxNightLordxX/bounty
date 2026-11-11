@@ -1,4 +1,4 @@
---- A character's record (Config.Record, README, A hitman's record): the one
+CrimsonBoot.define('server.record.init', function() --- A character's record (Config.Record, README, A hitman's record): the one
 --- place that keeps and reads where a player stands.
 ---
 ---   * The counters (Storage.bumpStat / readStats): contracts placed,
@@ -435,3 +435,4 @@ function Record.tick()
 end
 
 return Record
+end)

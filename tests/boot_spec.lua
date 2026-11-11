@@ -903,7 +903,8 @@ describe('the loader and the wait in front of it', function()
         local boot = _G.CrimsonBoot
         local global = {}
         for key, value in pairs(boot) do global[key] = value end
-        global.require, global.requireShared = harness.require, harness.requireShared
+        global.define, global.require, global.requireShared =
+            harness.define, harness.require, harness.requireShared
         _G.CrimsonBoot = global
         return boot
     end
@@ -925,23 +926,58 @@ describe('the loader and the wait in front of it', function()
     --- The loader itself. Every one of these is a message somebody reads
     --- while trying to find out why the resource will not start, so the
     --- message being right is the whole value.
-    it('loads a module once and hands back the same table', function()
+    it('runs a defined module once and hands back the same table', function()
         local boot = loadBoot()
-        Natives.files['server/thing.lua'] = 'ThingLoads = (ThingLoads or 0) + 1 return { n = 1 }'
         _G.ThingLoads = nil
+        boot.define('server.thing', function()
+            ThingLoads = (ThingLoads or 0) + 1
+            return { n = 1 }
+        end)
+        eq(_G.ThingLoads, nil, 'defining only stores the body')
 
         local first = boot.require('server.thing')
         local again = boot.require('server.thing')
         eq(first, again, 'the same table, not a second load')
-        eq(_G.ThingLoads, 1, 'and the file ran once')
+        eq(_G.ThingLoads, 1, 'and the body ran once')
     end)
 
-    it('names the file when a module is missing', function()
+    it('reads no file: an escrowed file through LoadResourceFile is encrypted bytes', function()
+        -- Only the manifest's script loader decrypts an escrowed file;
+        -- LoadResourceFile hands back what is on disk. The loader used to
+        -- load() that, so an escrowed build could not start.
+        local boot = loadBoot()
+        local reads = 0
+        local real = _G.LoadResourceFile
+        _G.LoadResourceFile = function() reads = reads + 1 return '\27FXAP not lua' end
+        boot.define('server.sealed', function() return { sealed = true } end)
+        local ok, module = pcall(boot.require, 'server.sealed')
+        local missingOk = pcall(boot.require, 'server.nothere')
+        _G.LoadResourceFile = real
+        truthy(ok and module.sealed, tostring(module))
+        falsy(missingOk)
+        eq(reads, 0, 'no module, found or missing, is read from disk')
+    end)
+
+    it('names the file and the manifest when a module is missing', function()
         local boot = loadBoot()
         local ok, err = pcall(boot.require, 'server.nothere')
         falsy(ok)
         truthy(tostring(err):find('server/nothere.lua', 1, true),
             'the error has to name the file: ' .. tostring(err))
+        truthy(tostring(err):find('fxmanifest.lua', 1, true),
+            'and where it has to be listed: ' .. tostring(err))
+        truthy(tostring(err):find("CrimsonBoot.define('server.nothere'", 1, true),
+            'and the first line it has to start with: ' .. tostring(err))
+    end)
+
+    it('refuses a module defined twice, and a define that is not a name and a body', function()
+        local boot = loadBoot()
+        boot.define('server.twice', function() return {} end)
+        local ok, err = pcall(boot.define, 'server.twice', function() return {} end)
+        falsy(ok)
+        truthy(tostring(err):find('server.twice is defined twice', 1, true), tostring(err))
+        falsy((pcall(boot.define, 'server.nobody')))
+        falsy((pcall(boot.define, nil, function() return {} end)))
     end)
 
     it('reports the real error on a second attempt, not a circular require', function()
@@ -950,7 +986,7 @@ describe('the loader and the wait in front of it', function()
         -- — a made-up diagnosis in place of the real error, at exactly the
         -- moment somebody is trying to find out what is wrong.
         local boot = loadBoot()
-        Natives.files['server/broken.lua'] = 'error("the real problem")'
+        boot.define('server.broken', function() error('the real problem') end)
 
         local firstOk, firstErr = pcall(boot.require, 'server.broken')
         falsy(firstOk)
@@ -967,18 +1003,9 @@ describe('the loader and the wait in front of it', function()
 
     it('still catches a genuine circular require', function()
         local boot = loadBoot()
-        Natives.files['server/a.lua'] = 'CrimsonBoot.require("server.b") return {}'
-        Natives.files['server/b.lua'] = 'CrimsonBoot.require("server.a") return {}'
-
-        -- A module reaches its own loader through the global namespace
-        -- table, so this one test has to install it — and put the suite's
-        -- back afterwards whatever happens, because everything after it
-        -- loads through that.
-        local real = _G.CrimsonBoot
-        _G.CrimsonBoot = boot
+        boot.define('server.a', function() boot.require('server.b') return {} end)
+        boot.define('server.b', function() boot.require('server.a') return {} end)
         local ok, err = pcall(boot.require, 'server.a')
-        _G.CrimsonBoot = real
-
         falsy(ok)
         truthy(tostring(err):find('circular require', 1, true), tostring(err))
     end)
@@ -993,7 +1020,7 @@ describe('the loader and the wait in front of it', function()
         eq(_G.require, before, 'the runtime require is not replaced')
         eq(rawget(_G, 'require_shared'), nil, 'and no lowercase global is added')
 
-        Natives.files['shared/thing.lua'] = 'return { shared = true }'
+        boot.define('shared.thing', function() return { shared = true } end)
         truthy(boot.requireShared('thing').shared,
             'shared modules load through the namespace table')
         eq(boot.requireShared('thing'), boot.require('shared.thing'),
@@ -1005,7 +1032,7 @@ describe('the loader and the wait in front of it', function()
         -- caller a boolean where a table was expected and the failure
         -- surfaced somewhere else entirely.
         local boot = loadBoot()
-        Natives.files['server/empty.lua'] = 'local x = 1'
+        boot.define('server.empty', function() local x = 1 end)
         local ok, err = pcall(boot.require, 'server.empty')
         falsy(ok)
         truthy(tostring(err):find('server/empty.lua', 1, true), tostring(err))

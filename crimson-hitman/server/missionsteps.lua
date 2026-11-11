@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.missionsteps', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                 crimson-hitman - server/missionsteps.lua                  ║
     ║      Map markers for each step of a contract, to the party who acts       ║
@@ -437,3 +437,4 @@ MissionSteps.CATALOGUE = {
 }
 
 return MissionSteps
+end)

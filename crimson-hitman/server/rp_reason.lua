@@ -1,4 +1,4 @@
---- Reason quality (Config.Roleplay.ReasonQuality, README, Optional
+CrimsonBoot.define('server.rp_reason', function() --- Reason quality (Config.Roleplay.ReasonQuality, README, Optional
 --- features). Off as shipped, and off it changes nothing.
 ---
 --- On, a free-text reason (Config.Reason.Mode 'freetext') must be at least
@@ -112,3 +112,4 @@ function Reason.validate(warn)
 end
 
 return Reason
+end)

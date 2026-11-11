@@ -1,4 +1,4 @@
---- Death attribution (§7.4, §14.2).
+CrimsonBoot.define('server.completion.death', function() --- Death attribution (§7.4, §14.2).
 ---
 --- Two independent signals must agree before a pending completion opens:
 ---   1. A damage record the server observed itself, via weaponDamageEvent.
@@ -1823,3 +1823,4 @@ function Death.clearPlayer(cid)
 end
 
 return Death
+end)

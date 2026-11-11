@@ -1,4 +1,4 @@
---- Weekly stats to Discord (Config.Improvements.WeeklyStats, README
+CrimsonBoot.define('server.imp_weekly', function() --- Weekly stats to Discord (Config.Improvements.WeeklyStats, README
 --- Optional features). Off as shipped, and off it posts nothing.
 ---
 --- On, once a week, on Day at Hour (server time), one post of the last
@@ -213,3 +213,4 @@ function Weekly.tick()
 end
 
 return Weekly
+end)

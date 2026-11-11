@@ -1,4 +1,4 @@
---- Staff commands (README, Admin panel).
+CrimsonBoot.define('server.admin', function() --- Staff commands (README, Admin panel).
 ---
 --- The audit log records everything and nothing surfaced it in game, so a
 --- staff member handling "the script ate my gun" needed database access.
@@ -3196,3 +3196,4 @@ function Admin.refreshTimers(src)
 end
 
 return Admin
+end)

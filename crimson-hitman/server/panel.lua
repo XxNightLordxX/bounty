@@ -1,4 +1,4 @@
---- The admin panel's server side (/hitmanadmin, Config.Admin.Commands.panel).
+CrimsonBoot.define('server.panel', function() --- The admin panel's server side (/hitmanadmin, Config.Admin.Commands.panel).
 ---
 --- The page (ui/admin.html) asks for everything through one net event,
 --- crimson-hitman:admin, with an `op` and its `data`, and is answered on
@@ -3928,3 +3928,4 @@ function Panel.push(src, data)
 end
 
 return Panel
+end)

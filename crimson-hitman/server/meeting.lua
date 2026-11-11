@@ -1,4 +1,4 @@
---- The handover's meeting point (Config.Kidnap.MeetingPoint).
+CrimsonBoot.define('server.meeting', function() --- The handover's meeting point (Config.Kidnap.MeetingPoint).
 ---
 --- On a contract only a live handover completes, the person who placed it
 --- can drop a point on the map for the hitmen on it to bring the target to:
@@ -463,3 +463,4 @@ function Meeting.waypoint(actor, payload)
 end
 
 return Meeting
+end)

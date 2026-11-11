@@ -1,4 +1,4 @@
---- Per-recipient payload building (§14.4).
+CrimsonBoot.define('server.projection', function() --- Per-recipient payload building (§14.4).
 ---
 --- Anonymity is enforced by omission, not by masking: an anonymous creator's
 --- identity is never placed in the payload at all, so there is nothing for a
@@ -1672,3 +1672,4 @@ Projection.ALLOWED_KEYS = {
 }
 
 return Projection
+end)

@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.measures', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                   crimson-hitman - server/measures.lua                    ║
     ║   Staff measures on a player: freeze, suspend, protect, own target limits ║
@@ -213,3 +213,4 @@ function Measures.lift(kind, staffCid, cid, reason, name)
 end
 
 return Measures
+end)

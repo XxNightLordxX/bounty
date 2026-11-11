@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.funds', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                   crimson-hitman - server/org/funds.lua                   ║
     ║     The organisation's money: Renewed-Banking's account, or a ledger      ║
@@ -884,3 +884,4 @@ end
 Funds.copy = Util.copy
 
 return Funds
+end)

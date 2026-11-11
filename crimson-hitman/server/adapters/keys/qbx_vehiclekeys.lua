@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.keys.qbx_vehiclekeys', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║         crimson-hitman - server/adapters/keys/qbx_vehiclekeys.lua         ║
     ║                   vehicle keys adapter: qbx_vehiclekeys                   ║
@@ -14,3 +14,4 @@ local Adapter = { resource = 'qbx_vehiclekeys', label = 'qbx_vehiclekeys' }
 function Adapter.GiveKeys(...) return exports.qbx_vehiclekeys:GiveKeys(...) end
 
 return Adapter
+end)

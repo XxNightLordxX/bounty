@@ -138,10 +138,7 @@ local function settingKeys(add)
     if not _G.CrimsonBoot then
         package.path = './?.lua;./?/init.lua;./crimson-hitman/?.lua;' .. package.path
         require('tests.harness.natives').install()
-        _G.CrimsonBoot = {
-            require = function(path) return require(path) end,
-            requireShared = function(name) return require('crimson-hitman.shared.' .. name) end,
-        }
+        require('tests.harness.modules').install()
         _G.CH = _G.CH or require('crimson-hitman.shared.constants')
         _G.ConfigDefaults = _G.ConfigDefaults or require('crimson-hitman.config.defaults')
         _G.Config = _G.Config or require('crimson-hitman.config.config')

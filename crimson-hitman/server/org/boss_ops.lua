@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.boss_ops', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                 crimson-hitman - server/org/boss_ops.lua                  ║
     ║        The phone's requests for the organisation: members and bosses      ║
@@ -346,3 +346,4 @@ function BossOps.register(deps)
 end
 
 return BossOps
+end)

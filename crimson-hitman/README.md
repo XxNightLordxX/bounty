@@ -152,7 +152,10 @@ On an escrowed build (FiveM Asset Escrow) everything you edit stays readable
 (`escrow_ignore` in `fxmanifest.lua`): `config/`, the language files
 (`locales/`), the adapters (`server/adapters/`, `client/adapters/`, see
 `docs/dev/adapters.md`). The page files (`ui/`), `install/sql/` and `data/`
-are never escrowed, as only Lua is.
+are never escrowed, as only Lua is. The escrowed build starts like the open
+one: every Lua file the resource runs is listed in `fxmanifest.lua`, the only
+way FiveM decrypts one, so a Lua file you add (an adapter, a language) has to
+be in a folder the manifest lists, as those are.
 
 **Translations.** The words players and staff read are in language files, by
 key. `locales/en.lua` holds the server's: every notice a

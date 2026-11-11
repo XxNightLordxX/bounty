@@ -1,4 +1,4 @@
---- Financial and conduct logging (§9.8, §14.31).
+CrimsonBoot.define('server.audit', function() --- Financial and conduct logging (§9.8, §14.31).
 --- Writes are queued and flushed on a timer so no log write sits on a payout
 --- path. Identity is recorded in full here regardless of anonymity — the log
 --- is for staff, and anonymity was never meant to survive a dispute.
@@ -544,3 +544,4 @@ function Audit.droppedCount() return dropped end
 function Audit.unconfirmed() return unconfirmed end
 
 return Audit
+end)

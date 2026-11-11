@@ -1,4 +1,4 @@
---- Verification photo (§7.4, §14.20, §14.35).
+CrimsonBoot.define('server.completion.photo', function() --- Verification photo (§7.4, §14.20, §14.35).
 ---
 --- The photo authenticates a claim that the server already believes: a
 --- pending completion must exist before a token is issued, and the token is
@@ -870,3 +870,4 @@ function Photo.tokenCount()
 end
 
 return Photo
+end)

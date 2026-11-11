@@ -1,4 +1,4 @@
---- Every post this resource makes to Discord, through one sender: the
+CrimsonBoot.define('server.discord', function() --- Every post this resource makes to Discord, through one sender: the
 --- alerts (server/alerts.lua), the audit mirror (server/audit.lua), the
 --- daily summary (server/summary.lua) and the weekly stats
 --- (server/imp_weekly.lua).
@@ -158,3 +158,4 @@ function Discord.post(channel, content, opts)
 end
 
 return Discord
+end)

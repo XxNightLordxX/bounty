@@ -1,4 +1,4 @@
---- The admin panel's Alerts, and the same alerts posted to Discord.
+CrimsonBoot.define('server.alerts', function() --- The admin panel's Alerts, and the same alerts posted to Discord.
 ---
 --- Every line the console prints whatever Config.Debug says (shared/log.lua:
 --- Log.always, and each Log.problem, a setting found wrong at start) is kept
@@ -607,3 +607,4 @@ function Alerts.init(d)
 end
 
 return Alerts
+end)

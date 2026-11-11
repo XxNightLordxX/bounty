@@ -1,4 +1,4 @@
---- Safe calls into other resources: the one way this resource asks another
+CrimsonBoot.define('server.lib.bridge', function() --- Safe calls into other resources: the one way this resource asks another
 --- script for anything.
 ---
 --- Every other script is optional at the call (rule: a missing script turns
@@ -86,3 +86,4 @@ function Bridge.reset()
 end
 
 return Bridge
+end)

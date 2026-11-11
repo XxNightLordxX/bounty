@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.org.settings_catalogue', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║             crimson-hitman - server/org/settings_catalogue.lua            ║
     ║      The organisation's admin panel settings (category Organisation)      ║
@@ -368,3 +368,4 @@ for _, key in ipairs(keys) do
 end
 
 return list
+end)

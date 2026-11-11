@@ -1,4 +1,4 @@
---- The review queue: money no rule here can settle by itself.
+CrimsonBoot.define('server.review', function() --- The review queue: money no rule here can settle by itself.
 ---
 --- Some money events end in a question nothing can answer safely without a
 --- person looking: a buyout charged whose record the store would neither
@@ -1039,3 +1039,4 @@ function Review.recover()
 end
 
 return Review
+end)

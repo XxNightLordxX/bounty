@@ -1,4 +1,4 @@
---- Cleanup lists: what each module forgets when a player leaves, a contract
+CrimsonBoot.define('server.lib.lifecycle', function() --- Cleanup lists: what each module forgets when a player leaves, a contract
 --- ends or a hitman steps off one.
 ---
 --- A list is the steps in the order they run, each a module's key in the
@@ -39,3 +39,4 @@ function Lifecycle.run(label, modules, steps, ...)
 end
 
 return Lifecycle
+end)

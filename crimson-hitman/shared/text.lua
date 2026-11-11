@@ -1,4 +1,4 @@
---- Crimson Hitman System — cleaning text a player or staff member typed.
+CrimsonBoot.define('shared.text', function() --- Crimson Hitman System — cleaning text a player or staff member typed.
 ---
 --- Over Util.sanitizeText, which does the work (one line, no control
 --- characters, cut by characters and never through one). These are the
@@ -35,3 +35,4 @@ function Text.field(value, max)
 end
 
 return Text
+end)

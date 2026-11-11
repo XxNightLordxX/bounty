@@ -1,4 +1,4 @@
---- Rumours and the broker (Config.Intel.Rumours, README, Intel). Off as
+CrimsonBoot.define('server.intel.rumours', function() --- Rumours and the broker (Config.Intel.Rumours, README, Intel). Off as
 --- shipped, and off it changes nothing.
 ---
 --- On, the board shows a contract to a hitman who is not party to it only
@@ -344,3 +344,4 @@ function Rumours.validate(warn)
 end
 
 return Rumours
+end)

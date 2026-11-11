@@ -1,4 +1,4 @@
---- Contract decay (Config.Improvements.ContractDecay, README, Optional
+CrimsonBoot.define('server.imp_decay', function() --- Contract decay (Config.Improvements.ContractDecay, README, Optional
 --- features). Off as shipped.
 ---
 --- A contract nobody has taken yet (state 'active') changes every Hours it
@@ -553,3 +553,4 @@ function Decay.init(deps)
 end
 
 return Decay
+end)

@@ -1,4 +1,4 @@
---- Crimson Hitman System — positions and distances.
+CrimsonBoot.define('shared.geo', function() --- Crimson Hitman System — positions and distances.
 ---
 --- Loaded on both sides: the server through CrimsonBoot.requireShared, the
 --- client from client_scripts as CrimsonGeo. Geo.position reads a player's
@@ -63,3 +63,4 @@ end
 CrimsonGeo = Geo
 
 return Geo
+end)

@@ -1,4 +1,4 @@
---- Crimson Hitman System — the one way to the console.
+CrimsonBoot.define('shared.log', function() --- Crimson Hitman System — the one way to the console.
 ---
 --- With Config.Debug = false (as shipped) the server console stays quiet: a
 --- normal start on a sound config, and normal play, print nothing at all.
@@ -375,3 +375,4 @@ end
 CrimsonLog = Log
 
 return Log
+end)

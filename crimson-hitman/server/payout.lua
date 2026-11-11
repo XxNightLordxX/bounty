@@ -1,4 +1,4 @@
---- Payout checks: the one ordered list of what may hold a payout once a
+CrimsonBoot.define('server.payout', function() --- Payout checks: the one ordered list of what may hold a payout once a
 --- completion has gone through, over the one hold the escrow already has.
 ---
 --- A completion is proven its own way (a verified kill, a live handover,
@@ -119,3 +119,4 @@ function Payout.add(name, check, deps)
 end
 
 return Payout
+end)

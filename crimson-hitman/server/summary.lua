@@ -1,4 +1,4 @@
---- The daily summary to the staff Discord (Config.Staff.DailySummary).
+CrimsonBoot.define('server.summary', function() --- The daily summary to the staff Discord (Config.Staff.DailySummary).
 ---
 --- One post a day, at Config.Staff.DailySummaryHour (server time), through
 --- the one Discord sender, on the alerts' webhook convars (Discord.post
@@ -152,3 +152,4 @@ function Summary.tick()
 end
 
 return Summary
+end)

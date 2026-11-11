@@ -1,4 +1,4 @@
---- One at a time per key: the one serialiser every module uses.
+CrimsonBoot.define('server.lib.lock', function() --- One at a time per key: the one serialiser every module uses.
 ---
 --- Every store call yields on mysql, and each request runs in its own
 --- coroutine, so two requests about one thing run side by side unless
@@ -77,3 +77,4 @@ function Lock.new(opts)
 end
 
 return Lock
+end)

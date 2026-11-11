@@ -1,4 +1,4 @@
---- How long each maintenance job takes, measured by the job itself.
+CrimsonBoot.define('server.timing', function() --- How long each maintenance job takes, measured by the job itself.
 ---
 --- The tick runs some twenty jobs one after another on the server's main
 --- thread, and the death sampler runs every second on its own. Every
@@ -168,3 +168,4 @@ function Timing.slowest(count)
 end
 
 return Timing
+end)

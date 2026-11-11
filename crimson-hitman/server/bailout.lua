@@ -1,4 +1,4 @@
---- Contract Cleanse — the target buys out their own contract (§5, §14.17).
+CrimsonBoot.define('server.bailout', function() --- Contract Cleanse — the target buys out their own contract (§5, §14.17).
 ---
 --- The premium is charged before anything else happens, and the contract
 --- resolves through the normal path so the creator's escrow returns exactly
@@ -1020,3 +1020,4 @@ function Bailout.payOrOwe(cid, lineOwner, amount, account, reason)
 end
 
 return Bailout
+end)

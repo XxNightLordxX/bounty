@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.dispatch.my-dispatch', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║               crimson-hitman - server/adapters/TEMPLATE.lua               ║
     ║            A server adapter of your own: copy, rename, fill in            ║
@@ -11,8 +11,12 @@
 ---   2. Write each function the kind needs (the list is in the shipped
 ---      adapter of the kind, and in docs/dev/adapters.md), calling your
 ---      script the way ITS documentation says. Never guess an export.
----   3. Add '<your-resource>' to server/adapters/list.lua under the kind.
----   4. Set Config.Integrations.<Kind> = '<your-resource>' (or leave 'auto').
+---   3. Change the name on the first line to the copy's own path, dots for
+---      slashes and no .lua: 'server.adapters.dispatch.my-dispatch'. The
+---      manifest loads every file in server/adapters/<kind>/, and the loader
+---      finds the adapter by that name.
+---   4. Add '<your-resource>' to server/adapters/list.lua under the kind.
+---   5. Set Config.Integrations.<Kind> = '<your-resource>' (or leave 'auto').
 --- This file itself is never loaded: only the names in list.lua are.
 ---
 --- The example below is a dispatch adapter. Every function may raise; the
@@ -44,3 +48,4 @@ function Adapter.ClearNotification(uniqueId, jobs)
 end
 
 return Adapter
+end)

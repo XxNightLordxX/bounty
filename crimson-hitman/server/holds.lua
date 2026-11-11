@@ -1,4 +1,4 @@
---- Holds: every reason a live contract stands still, in one service.
+CrimsonBoot.define('server.holds', function() --- Holds: every reason a live contract stands still, in one service.
 ---
 --- A contract is "on hold" when its clocks stand still. Under a staff
 --- freeze or the restart hold nothing on it may move either: nothing
@@ -1045,3 +1045,4 @@ function Holds.tick()
 end
 
 return Holds
+end)

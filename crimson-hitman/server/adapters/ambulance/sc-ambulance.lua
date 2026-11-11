@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.ambulance.sc-ambulance', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║        crimson-hitman - server/adapters/ambulance/sc-ambulance.lua        ║
     ║                      ambulance adapter: sc-ambulance                      ║
@@ -23,3 +23,4 @@ function Adapter.deathState(src)
 end
 
 return Adapter
+end)

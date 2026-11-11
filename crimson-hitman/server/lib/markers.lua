@@ -1,4 +1,4 @@
---- The one way a map marker reaches a player's game (client/missionsteps.lua,
+CrimsonBoot.define('server.lib.markers', function() --- The one way a map marker reaches a player's game (client/missionsteps.lua,
 --- CrimsonMarkers): a marker drawn or moved, and one taken off, each sent to
 --- that player's game alone, never to everybody and never to the page.
 ---
@@ -41,3 +41,4 @@ function Markers.clear(src, key)
 end
 
 return Markers
+end)

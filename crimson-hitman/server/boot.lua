@@ -1,8 +1,20 @@
 --- Module loader, and the wait for everything this resource stands on.
 ---
---- FiveM has no package system, so CrimsonBoot.require and a small module
---- registry stand in. Every server file returns a table and is loaded exactly
---- once, in dependency order, by server/main.lua.
+--- FiveM has no package system, so CrimsonBoot.define, CrimsonBoot.require
+--- and a small module registry stand in. Every module file (server/**, and
+--- shared/** on the server) is a manifest script, listed in fxmanifest.lua
+--- after this file and before server/main.lua. Its first line hands its body
+--- to CrimsonBoot.define under its path ('server.escrow' for
+--- server/escrow.lua) and its last line closes it: loading the file only
+--- stores the body. CrimsonBoot.require runs a body the first time it is
+--- asked for, and hands back the table it returns from then on, in the order
+--- server/main.lua asks.
+---
+--- Through the manifest, not LoadResourceFile and load(): on an escrowed
+--- build (FiveM Asset Escrow) only the manifest's script loader decrypts a
+--- file, and LoadResourceFile hands back the encrypted bytes, which no
+--- load() can compile. So nothing here reads a file, and no name can reach
+--- code the manifest did not list.
 ---
 --- The loader lives in this resource's one server namespace table rather
 --- than as bare globals. It used to replace the runtime's own `require`
@@ -12,8 +24,25 @@
 
 CrimsonBoot = {}
 
+local factories = {}
 local loaded = {}
 local loading = {}
+
+--- Store a module's body, to run when it is first required. Called once, by
+--- the module's own file, as the manifest loads it.
+---@param path string the file's path from the resource root, without .lua, dots for slashes
+---@param factory function the file's body; returns the module table
+function CrimsonBoot.define(path, factory)
+    if type(path) ~= 'string' or type(factory) ~= 'function' then
+        error(('[crimson-hitman] CrimsonBoot.define needs a module name and a function, got %s and %s')
+            :format(type(path), type(factory)), 2)
+    end
+    if factories[path] then
+        error(('[crimson-hitman] module %s is defined twice: two files in fxmanifest.lua name it')
+            :format(path), 2)
+    end
+    factories[path] = factory
+end
 
 --- Load a module by path relative to the resource root, without the .lua.
 ---@param path string e.g. 'server.escrow'
@@ -37,20 +66,18 @@ function CrimsonBoot.require(path)
         return value
     end
 
-    local file = path:gsub('%.', '/') .. '.lua'
-    local source = LoadResourceFile(GetCurrentResourceName(), file)
-    if not source then
+    local file = tostring(path):gsub('%.', '/') .. '.lua'
+    local factory = factories[path]
+    if not factory then
         done()
-        error(('[crimson-hitman] missing module file: %s'):format(file))
+        -- A file that would not compile is said by FiveM itself, above, as
+        -- the manifest loads it; this is the line that names what it cost.
+        error(('[crimson-hitman] missing module %s: %s is not listed in fxmanifest.lua, '
+            .. 'did not load (see the error above), or does not start with '
+            .. "CrimsonBoot.define('%s', function()"):format(path, file, path))
     end
 
-    local chunk, err = load(source, '@' .. file)
-    if not chunk then
-        done()
-        error(('[crimson-hitman] failed to compile %s: %s'):format(file, err))
-    end
-
-    local ok, module = pcall(chunk)
+    local ok, module = pcall(factory)
     if not ok then
         done()
         error(module, 0)

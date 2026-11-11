@@ -1,4 +1,4 @@
---- A player's report to staff: the Report button on a contract card and on
+CrimsonBoot.define('server.reports', function() --- A player's report to staff: the Report button on a contract card and on
 --- a message thread in the app.
 ---
 --- Each report is an item in the review queue (server/review.lua, kind
@@ -115,3 +115,4 @@ function Reports.file(actor, payload)
 end
 
 return Reports
+end)

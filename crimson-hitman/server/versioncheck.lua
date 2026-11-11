@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.versioncheck', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║                  crimson-hitman - server/versioncheck.lua                 ║
     ║          Whether a newer version is out: one ask at start, if on          ║
@@ -121,3 +121,4 @@ function VersionCheck.reset()
 end
 
 return VersionCheck
+end)

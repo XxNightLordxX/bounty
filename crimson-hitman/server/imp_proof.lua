@@ -1,4 +1,4 @@
---- Proof items (Config.Improvements.ProofItems, README, Optional
+CrimsonBoot.define('server.imp_proof', function() --- Proof items (Config.Improvements.ProofItems, README, Optional
 --- features). Off as shipped, and off it changes nothing.
 ---
 --- On, a hitman may finish a contract a kill completes (Fulfilment 'either')
@@ -214,3 +214,4 @@ function Proof.handover(actor, rawId)
 end
 
 return Proof
+end)

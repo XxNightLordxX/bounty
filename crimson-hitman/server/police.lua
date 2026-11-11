@@ -1,4 +1,4 @@
---- Police & press: everything this resource tells the police or the city.
+CrimsonBoot.define('server.police', function() --- Police & press: everything this resource tells the police or the city.
 ---
 --- The threat advisories (posted, accepted, tip, cancelled: Notify.advisory,
 --- tipAdvisory, cancelAdvisory), the hitman heat bulletin
@@ -130,3 +130,4 @@ function Police.init(d)
 end
 
 return Police
+end)

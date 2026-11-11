@@ -1,4 +1,4 @@
---- Staff suspensions and protections, from Players in the admin panel.
+CrimsonBoot.define('server.sanctions', function() --- Staff suspensions and protections, from Players in the admin panel.
 ---
 --- A suspension bars one player from placing or accepting a contract for a
 --- number of days, or until staff lift it, with a reason. They are told
@@ -380,3 +380,4 @@ function Sanctions.noteUnfreeze(staffCid, cid)
 end
 
 return Sanctions
+end)

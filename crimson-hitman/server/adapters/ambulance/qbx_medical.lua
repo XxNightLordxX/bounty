@@ -1,4 +1,4 @@
---[[
+CrimsonBoot.define('server.adapters.ambulance.qbx_medical', function() --[[
     ╔═══════════════════════════════════════════════════════════════════════════╗
     ║        crimson-hitman - server/adapters/ambulance/qbx_medical.lua         ║
     ║                      ambulance adapter: qbx_medical                       ║
@@ -15,3 +15,4 @@
 local Adapter = { resource = 'qbx_medical', label = 'qbx_medical' }
 
 return Adapter
+end)
