@@ -110,11 +110,12 @@ describe('what the tab is told', function()
         for _, code in pairs(Org.ERR) do
             truthy(Org.message(code) ~= 'Not done.', code .. ' has words')
         end
-        local app = io.open('crimson-hitman/ui/app.js'):read('a')
-        local errors = app:match('var ERRORS%s*=%s*(%b{})') or ''
+        -- The phone's words for each: locales/en.json, "errors".
+        local words = io.open('crimson-hitman/locales/en.json'):read('a')
+        local errors = words:match('"errors"%s*:%s*(%b{})') or ''
         for _, code in pairs(Org.ERR) do
             if code:sub(1, 4) == 'org_' then
-                truthy(errors:find(code .. ':', 1, true), 'the page words ' .. code)
+                truthy(errors:find('"' .. code .. '":', 1, true), 'the page words ' .. code)
             end
         end
     end)

@@ -341,8 +341,8 @@ describe('bug sweep M4: a guard may not take the hit on the person they guard', 
         falsy(ok, 'refused')
         eq(err, CH.ERR.PROTECTION_GUARDING)
         eq(s.storage.readHitman(c.id, 'GUARD001'), nil, 'not on it')
-        local app = read_file('crimson-hitman/ui/app.js')
-        truthy(app:find("protection_guarding: '", 1, true), 'the app words the refusal')
+        local words = read_file('crimson-hitman/locales/en.json')
+        truthy(words:find('"protection_guarding": "', 1, true), 'the app words the refusal')
     end)
 
     it('pays a guard who got on the contract anyway nothing of the job', function()

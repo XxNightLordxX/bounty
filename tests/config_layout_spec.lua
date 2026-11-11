@@ -40,6 +40,8 @@ local CHANGED = {
 --- Settings added since the rewrite, by the path the comparison reports
 --- them under (a whole new section or record), with what they ship as.
 local ADDED = {
+    -- The language players and staff read (Translations, X1), English.
+    ['Locale'] = 'en',
     -- The step markers, on, and body disposal, off (server/missionsteps.lua,
     -- server/disposal.lua), with its rate-limit bucket.
     ['StepMarkers'] = { Enabled = true, KillScene = true, Handover = true, Protection = true },
@@ -457,7 +459,7 @@ describe('the configuration as one short file', function()
         for path, pair in pairs(differences(was, now)) do
             -- And settings added since, each new and shipped as ADDED says.
             local addedSince = pair[1] == nil and type(pair[2]) ~= 'table' and ADDED[path] == pair[2]
-                and (path:match('^Limits%.StaffDeadline') ~= nil or path == 'Admin.ModeratorAce')
+                and (path:match('^Limits%.StaffDeadline') ~= nil or path == 'Admin.ModeratorAce' or path == 'Locale')
             -- The Staff section and the report bucket, new and whole, as
             -- ADDED says.
             if pair[1] == nil and (path == 'Staff' or path == 'Cooldowns.report' or path == 'Organisation'

@@ -220,4 +220,22 @@ function makeDocument() {
   return doc;
 }
 
-module.exports = { Node: Node, makeDocument: makeDocument };
+/** The XMLHttpRequest both pages read their words with (locales/<lang>.json,
+ * synchronously, as the page loads), answering from the resource's own
+ * files on disk as FiveM serves them. A language with no file answers 404. */
+function localeXhr() {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname, '..', '..', 'crimson-hitman', 'locales');
+  function Xhr() { this.status = 0; this.responseText = ''; }
+  Xhr.prototype.open = function (method, url) { this.url = String(url); };
+  Xhr.prototype.send = function () {
+    const m = /^\.\.\/locales\/([A-Za-z_-]+\.json)$/.exec(this.url);
+    const file = m && path.join(dir, m[1]);
+    if (file && fs.existsSync(file)) { this.status = 200; this.responseText = fs.readFileSync(file, 'utf8'); }
+    else { this.status = 404; this.responseText = ''; }
+  };
+  return Xhr;
+}
+
+module.exports = { Node: Node, makeDocument: makeDocument, localeXhr: localeXhr };

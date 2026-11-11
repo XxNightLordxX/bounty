@@ -30,6 +30,10 @@ client_scripts {
     -- The one way to the console (CrimsonLog): with Config.Debug off the
     -- client prints nothing to F8 but a staff command's own answer.
     'shared/log.lua',
+    -- The words players read, by key (CrimsonLocales, CrimsonLocale.t): every
+    -- language file, then the lookup, in the language Config.Locale names.
+    'locales/*.lua',
+    'shared/locale.lua',
     -- The other scripts this resource works with (CrimsonIntegrations), and
     -- the client's adapters for them, one file per kind and name
     -- (docs/dev/adapters.md), before anything that calls one.
@@ -92,6 +96,8 @@ files {
     'ui/admin.html',
     'ui/admin.css',
     'ui/admin.js',
+    -- The words both pages read, by key, in each language (Config.Locale).
+    'locales/*.json',
 }
 
 -- Left readable on an escrowed build (FiveM Asset Escrow): every file a
@@ -99,6 +105,8 @@ files {
 -- is escrowed. README, "Escrow, and where the words live".
 escrow_ignore {
     'config/*.lua',
+    -- The words players and staff read, in every language (README, Translations).
+    'locales/*.lua',
     'server/adapters/*.lua',
     'server/adapters/*/*.lua',
     'client/adapters/*.lua',

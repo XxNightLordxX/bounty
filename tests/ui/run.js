@@ -18,9 +18,13 @@ function band(seconds) {
 
 const fs = require('fs');
 const path = require('path');
-const { makeDocument } = require('./dom.js');
+const { makeDocument, localeXhr } = require('./dom.js');
 
 const APP = path.join(__dirname, '..', '..', 'crimson-hitman', 'ui', 'app.js');
+/* What each refusal code reads as on the phone (locales/en.json, "errors"). */
+const LOCALE_EN = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman',
+  'locales', 'en.json'), 'utf8'));
+const ERRORS_EN = LOCALE_EN.errors;
 
 let passed = 0;
 const failures = [];
@@ -222,7 +226,9 @@ function boot(responses, windowExtras) {
     clearInterval: function (id) { clearTimer(id); },
     clearTimeout: function (id) { clearTimer(id); },
     Promise: Promise, JSON: JSON, Math: Math, Number: Number, String: String,
-    Array: Array, Object: Object, console: console
+    Array: Array, Object: Object, console: console,
+    // The page reads its words (locales/en.json) as it loads.
+    XMLHttpRequest: localeXhr()
   };
   sandbox.window.document = document;
   // What lb-phone itself puts on the page's window before it runs
@@ -553,6 +559,9 @@ async function main() {
      no nil, no escrow. */
   (function plainWords() {
     function grab(file, name) {
+      // The phone's refusals live in locales/en.json now (README, Translations).
+      if (file === 'app.js' && name === 'ERRORS') return ERRORS_EN;
+      if (file === 'admin.js' && name === 'WORDS') return LOCALE_EN.panel_errors;
       const src = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'ui', file), 'utf8');
       const at = src.indexOf('var ' + name + ' = {');
       const open = src.indexOf('{', at);
@@ -10089,8 +10098,7 @@ async function main() {
       falsy(onMe.indexOf('Lapses in') !== -1, 'the target\'s clock counts down on hold: ' + onMe);
     });
     it('words a refusal on hold plainly', function () {
-      const source = require('fs').readFileSync(APP, 'utf8');
-      truthy(/contract_frozen: 'This contract is on hold by staff\. '/.test(source), 'the page has words for it');
+      truthy(/^This contract is on hold by staff\. /.test(ERRORS_EN.contract_frozen || ''), 'the page has words for it');
     });
   })();
 
@@ -13005,9 +13013,8 @@ async function main() {
       accept: { ok: false, err: 'app_paused' }
     });
     await settle(); await settle();
-    const source = fs.readFileSync(APP, 'utf8');
     it('has words for the app paused by staff', function () {
-      truthy(/app_paused: 'Contracts are paused by staff\. /.test(source), 'the page has words for it');
+      truthy(/^Contracts are paused by staff\. /.test(ERRORS_EN.app_paused || ''), 'the page has words for it');
     });
     const accept = app.view.all().filter(function (n) {
       return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
@@ -15381,11 +15388,9 @@ async function main() {
       const lua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'org', 'init.lua'), 'utf8');
       const codes = {};
       (lua.match(/'org_[a-z_]+'/g) || []).forEach(function (c) { codes[c.slice(1, -1)] = true; });
-      const page = fs.readFileSync(APP, 'utf8');
-      const map = page.slice(page.indexOf('var ERRORS = {'), page.indexOf('};', page.indexOf('var ERRORS = {')));
       const missing = Object.keys(codes).filter(function (c) {
         return c.indexOf('org_') === 0 && !/^org_(split|cut|member|role|grant|limits|office_rule|access|pick|funds|bonus|location|notice|applied|application|renamed|layout|external|setup|invite|codename|salary|payroll|created|added|removed)/.test(c)
-          && map.indexOf(c + ':') === -1;
+          && !Object.prototype.hasOwnProperty.call(ERRORS_EN, c);
       });
       truthy(Object.keys(codes).length > 20, 'read the codes');
       eq(missing.join(','), '', 'unworded');

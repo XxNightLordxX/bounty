@@ -716,7 +716,9 @@ const REASON_LONG = 'Event tonight at the pier: no contracts there until midnigh
   + 'stays clear of the square while it runs.';
 
 async function main() {
-  const browser = await chromium.launch();
+  // The pages read their words (locales/en.json) from the resource's own
+  // files, as FiveM serves them; file:// needs leave for that.
+  const browser = await chromium.launch({ args: ['--allow-file-access-from-files'] });
 
   /* ---- closed: nothing over the game ---- */
   const closed = await openAt(browser, 1920, 1080);

@@ -11,6 +11,8 @@
 --- many it reached and what it said.
 
 local Util = CrimsonBoot.requireShared('util')
+--- The words players and staff read (locales/en.lua, Config.Locale).
+local L = CrimsonBoot.requireShared('locale').t
 
 local Announce = {}
 
@@ -19,7 +21,7 @@ Announce.MAX = 200
 --- Who it goes to.
 Announce.SCOPES = { active = true, online = true }
 --- What players see it as from.
-Announce.TITLE = 'Staff'
+Announce.TITLE = L('announce.staff')
 
 local deps
 

@@ -32,6 +32,70 @@
       && window.location.hostname) || '')) || [])[1]
     || (typeof GetParentResourceName === 'function' && GetParentResourceName())
     || 'crimson-hitman';
+
+  /* The words this page shows, by key: locales/en.json (README,
+     Translations), read once as the page loads from this resource's own
+     files. English first, which every key falls back to; then the language
+     the client names (Config.Locale: ?lang= on the phone's address, the
+     panel's open message), over it. A key that language lacks reads in
+     English, and the console says so once; a key English lacks too reads as
+     the key itself (tests/locale_spec.lua keeps that from shipping).
+     Text.section(name) is one section's table, kept and updated in place, so
+     a table read once (ERRORS) follows a language chosen later. */
+  var Text = (function () {
+    function load(lang) {
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '../locales/' + lang + '.json', false);
+        xhr.send(null);
+        if (xhr.status && xhr.status !== 200) { return null; }
+        var parsed = JSON.parse(xhr.responseText);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch (err) { return null; }
+    }
+    var said = {};
+    function warn(message) {
+      if (said[message]) { return; }
+      said[message] = true;
+      try { console.warn('[crimson-hitman] ' + message); } catch (err) { /* no console */ }
+    }
+    var english = load('en');
+    if (!english) {
+      english = {};
+      warn('locales/en.json could not be read: the page shows keys in place of words.');
+    }
+    var sections = {};
+    function section(name) {
+      if (!sections[name]) {
+        var out = {}, from = english[name] || {};
+        Object.keys(from).forEach(function (key) { out[key] = from[key]; });
+        sections[name] = out;
+      }
+      return sections[name];
+    }
+    function use(lang) {
+      if (typeof lang !== 'string' || !/^[A-Za-z_-]+$/.test(lang) || lang === 'en') { return; }
+      var chosen = load(lang);
+      if (!chosen) { warn('there is no locales/' + lang + '.json (Config.Locale); English is used.'); return; }
+      var missing = 0;
+      Object.keys(english).forEach(function (name) {
+        var into = section(name), from = chosen[name] || {};
+        Object.keys(english[name] || {}).forEach(function (key) {
+          if (Object.prototype.hasOwnProperty.call(from, key)) { into[key] = from[key]; } else { missing++; }
+        });
+      });
+      if (missing > 0) { warn(lang + ' lacks ' + missing + ' text(s); those read in English.'); }
+    }
+    function t(key) {
+      var at = String(key).indexOf('.');
+      var value = at > 0 ? section(key.slice(0, at))[key.slice(at + 1)] : undefined;
+      if (typeof value === 'string') { return value; }
+      warn('no text for ' + key + '; the key is shown.');
+      return String(key);
+    }
+    return { t: t, section: section, use: use };
+  })();
+  Text.use(((String((window.location && window.location.search) || '')).match(/[?&]lang=([^&]+)/) || [])[1]);
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
     // Which app this player is shown: 'full', or 'whitelisted' for a player
@@ -403,394 +467,10 @@
     });
   }
 
-  var ERRORS = {
-    /* The framework has not finished loading this character. Ordinary
-       rather than exceptional: the app fires three requests the moment it
-       opens, and somebody who opens it while still joining gets this on all
-       three. It had no message here, so it fell through to "Something went
-       wrong" — which reads as a broken app rather than as "not yet", and
-       sends the player looking for a fault that will clear on its own. */
-    no_player: 'The server is still loading your character. Give it a few '
-      + 'seconds and open this again.',
-    blacklisted_job: 'This app is not for you.',
-    // The whitelisted-job view's read, answered for somebody who left the
-    // job: the page goes back to the whole app on it rather than say this.
-    not_whitelisted: 'That screen is only for players on a whitelisted job.',
-    rate_limited: 'Slow down: wait a few seconds, then try again.',
-    // Policy waits, not throttling. Both shared rate_limited, so a creator
-    // with two hours to wait read "Slow down." — and three of this page's
-    // recovery paths treat rate_limited as a transient condition worth
-    // retrying, which these are not.
-    same_target_too_soon: 'You placed a contract on this person recently. '
-      + 'Somebody else could list them now \u2014 you have to leave it longer.',
-    cancelled_too_soon: 'You cancelled a contract recently. Placing another '
-      + 'has to wait a few minutes: cancelling and re-listing would otherwise '
-      + 'be free.',
-    // One live contract per player on one person, on any character.
-    same_target_active: 'You already have a contract out on them.',
-    // Also policy waits. slot_cooldown shared rate_limited, so a hitman
-    // photographing a body was told to wait a few seconds and try again on
-    // a wait of ten minutes; handover_cooldown shared bad_state.
-    slot_cooldown: 'You collected on this contract very recently. The next '
-      + 'payout on it has to wait \u2014 a kill or a handover now will not '
-      + 'count, so work another contract in the meantime.',
-    handover_cooldown: 'Your last handover on this contract failed a moment '
-      + 'ago. Give it a minute before you start another.',
-    self_target: 'You cannot put a price on yourself.',
-    self_accept: 'You cannot take your own contract.',
-    same_account: 'Not on your own people.',
-    already_holding: 'You are already on this contract. It is under Mine.',
-    hold_released: 'You held this one without working it and were taken off '
-      + 'it. It is not yours to take again.',
-    staff_barred: 'Staff removed you from this contract. It is not yours to take again.',
-    // Walked away from this exclusive one a moment ago. failText says how
-    // long when the server sends it.
-    retake_too_soon: 'You walked away from this contract a moment ago. It is open '
-      + 'to everybody else for a while before you can take it again.',
-    // A proposal answered after it lapsed (answerProposal says it the same way).
-    proposal_expired: 'That proposal ran out before it was answered. '
-      + 'Propose it again if you still want it.',
-    // The handover's meeting point (server/meeting.lua).
-    meeting_no_hitman: 'Nobody is on this contract now, so there is nobody to meet.',
-    meeting_not_here: 'Could not place a meeting point where you are standing. Stand still '
-      + 'for a moment and try again.',
-    meeting_too_soon: 'The meeting point was changed a moment ago. Try again shortly.',
-    no_meeting: 'No meeting point is set on this contract now.',
-    // Staff put the contract on hold (server/freeze.lua). Plain, and never
-    // which party it is about. Nothing was taken.
-    contract_frozen: 'This contract is on hold by staff. '
-      + 'It goes on when they release it; you can still message and report.',
-    // The last half hour before a scheduled restart (server/freeze.lua).
-    restart_hold: 'Contracts are paused until the server restart. Try again once it is back.',
-    // Staff suspended this player from contracts (server/sanctions.lua).
-    // failText says until when and why where the server sends them.
-    suspended: 'You are suspended from contracts. '
-      + 'The banner says until when; ask staff if you think it is wrong.',
-    // Staff paused the whole app (Config.Holds.AppPaused). Nothing was taken.
-    app_paused: 'Contracts are paused by staff. Try again once they switch them back on.',
-    // Killed on a contract and not yet treated (Config.Roleplay.EmsRelisting).
-    target_recovering: 'They are still recovering. Try again once they have been treated.',
-    // The tiered board (Config.Record.Tiers). Nothing was taken.
-    tier_locked: 'This contract is in a tier above your level. Nothing was taken. '
-      + 'Complete more contracts to reach it.',
-    // The informant tip (server/intel/tip.lua). Nothing was charged for any.
-    tip_target_away: 'The target is not in the city right now, so there is nobody to place. '
-      + 'Nothing was taken.',
-    tip_cooldown: 'You bought a tip on this contract a moment ago. Try again later. '
-      + 'Nothing was taken.',
-    no_tip: 'That informant tip is no longer on your map.',
-    relay_off: 'This server does not run messages through the app.',
-    calls_off: 'This server does not place calls through the app.',
-    // A feature staff turned off (proposals, the informant). Only new
-    // actions are refused; whatever was under way carries on.
-    feature_off: 'That is turned off by the server right now.',
-    // Placing or taking a contract anonymously, turned off by the server.
-    anonymity_off: 'This server does not allow that anonymously any more. Nothing was taken.',
-    /* The informants' refusals. Nothing was charged for any of them. A pick
-       that is not an operative on the contract now: forged, from before a
-       restart, or one who has left. */
-    operative_gone: 'That operative is no longer on this contract. Nothing was taken.',
-    // The target's informant on a placer who put their name to it.
-    placer_known: 'They placed it under their name, so you already know who it is. '
-      + 'Nothing was taken.',
-    // The target's informant on an operative already shown to them by name.
-    operative_known: 'They took it under their name, so you already know who it is. '
-      + 'Nothing was taken.',
-    already_revealed: 'You already know who that is. Nothing was taken.',
-    // A member of a whitelisted job, to whom the informant is not sold.
-    informant_protected: 'The informant does not work for members of a whitelisted job. '
-      + 'Nothing was taken.',
-    // How long is said by failText where the server sends it.
-    informant_cooldown: 'Your informant needs a while before asking again. Nothing was taken.',
-    // Whose number it would be is said by failText where the server says.
-    call_unmasked: 'They are staying anonymous, and a call from this phone '
-      + 'would show their number. Send a message instead.',
-    // On a call already (a second tap, or a call never hung up): the thread
-    // shows Hang up instead of Call.
-    already_in_call: 'You are on a call already. Hang up first.',
-    /* A reward source, or the payout ceiling, changed from the admin panel
-       while the form was open. failText names which; the Place form reads
-       what is on offer again. */
-    source_disabled: 'This server no longer takes that kind of reward. Nothing was taken. '
-      + 'Take it out of the reward and try again.',
-    slots_over: 'This server now takes fewer payouts per contract. Nothing was taken. '
-      + 'Lower the payouts and try again.',
-    // failText says which rule (reasonRefusedText).
-    reason_refused: 'This server will not take that reason. Word it differently.',
-    // The phone's word filter, or nothing left once cleaned. The draft is
-    // kept (sendMessage clears it only on success).
-    message_refused: 'A word in that message is not allowed here. Your draft is kept.',
-    limit_reached: 'You are holding too many contracts. Finish or leave one under Mine first.',
-    /* A different rule entirely, and it used to share the message above —
-       which told a hitman holding nothing that they were holding too much,
-       and sent them to cancel their own work over somebody else's contract
-       being popular. */
-    contract_full: 'This contract already has as many operatives on it as it '
-      + 'allows. Try another, or come back if one drops out.',
-    /* The stake moved between reading the board and tapping Accept. Refused
-       rather than charged, because a stake is taken on the tap and forfeits
-       to the client if the hitman later walks away — the one repricing a
-       player cannot undo by looking again. */
-    terms_changed: 'The stake or the deadline on this contract changed while you '
-      + 'were looking at it. Refreshing now — check the new terms before you take it.',
-    /* How a contract placed now is completed changed from the admin panel
-       while the Place form was open. failText says which way when the
-       server sends it. Nothing was taken. */
-    rule_changed: 'This server now places contracts differently. Nothing was taken. '
-      + 'Check the form and place it again.',
-    /* The target took a protected job after being picked, so the warning
-       was never shown. Nothing was taken; submitContract shows it now. */
-    target_now_protected: 'That target now works in a protected job. Nothing was taken. '
-      + 'Read the warning and place it again if you still want to.',
-    too_little_time: 'This contract runs out too soon to stake on. Taking it now '
-      + 'would hand your stake to the person who placed it before you could work it.',
-    target_protected: 'That target cannot be listed right now.',
+  /* What each refusal code reads as: locales/en.json, "errors". A code
+     whose text is null shows nothing of its own. */
+  var ERRORS = Text.section('errors');
 
-    /* One message covered six different rules, and a player reading it had
-       no way to tell which — or whether waiting would help. */
-    target_is_leo: 'This server does not allow contracts on law enforcement.',
-    target_has_enough: 'That target already has as many contracts on them as '
-      + 'this server allows. Wait for one of them to close.',
-    target_just_on: 'They have only just come online. Give them a few minutes.',
-    target_too_new: 'They are too new to the city to be a target yet.',
-    target_just_up: 'They have only just got back on their feet. Give it a moment.',
-    target_recently_on: 'There was a contract on them very recently. There is a '
-      + 'cooling-off period before another one.',
-    // Proof items (Config.Improvements.ProofItems). Nothing was taken.
-    proof_missing: 'You are not carrying anything that proves who the target is.',
-    proof_too_far: 'Stand right beside the person who placed this contract to hand it over.',
-    // The paths a player meets most — accept, buy out, place — word their
-    // own; this is what is left, and it at least says it is about money.
-    insufficient_funds: 'You do not have enough money for that. Lower the amount or bring more.',
-    invalid_reward: 'That reward does not add up.',
-    // Worth too little in money (Config.Limits.MinContractReward). Said with
-    // the figure where the reply or the Place form carries it (failText);
-    // this is what is left when neither does.
-    reward_too_small: 'A contract here has to be worth more in money than that: '
-      + 'cash, bank and dirty money in the reward. Items and weapons do not '
-      + 'count towards it.',
-    // Anonymous only: the item would go to the hitman with its own record
-    // of whose it is, so it is the item to take out, not the figures.
-    item_names_owner: 'One of those items carries your name or number, and '
-      + 'the hitman would be handed it as it is, which would give you away. '
-      + 'Leave it out.',
-    // mysql mode only: the item's own data is more than the escrow table
-    // holds. Refused before anything was taken.
-    item_too_large: 'One of those items carries more data than this server can hold '
-      + 'for a reward. Leave it out.',
-    invalid_input: 'Check what you entered.',
-    server_error: 'Something broke on the server, not on your end. '
-      + 'An admin can see what in the server console.',
-    /* mysql mode only: the database did not answer within the server's
-       limit. A read that timed out moved nothing; a payment being recorded
-       may still land, or is settled by the server, which says so. */
-    db_timeout: 'The server’s records did not answer in time. If you were '
-      + 'paying for something, look before you try again: it may still go through.',
-    not_participant: 'That is not yours. Open the tab again to see what is.',
-    already_settled: 'That contract is closed. It is under Ledger.',
-    // The rules are on the server and the numbers are configurable, so the
-    // words carry what the settings say rather than figures hardcoded here.
-    // "Take the target down" was said to a hitman who just had: a downed
-    // target is not a kill, and nothing told them to finish the job. The
-    // last line covers the second the server waits for the finishing shot.
-    // "A few seconds": a kill the target's own phone never reports is
-    // opened by the server alone, a few seconds after the death.
-    no_kill_to_verify: 'No kill on this contract is waiting for proof. Down is '
-      + 'not dead: if they are on the ground, finish them. Then photograph the '
-      + 'body from a few metres away, soon after the kill. If you only just '
-      + 'finished them, give it a few seconds and try again.',
-    // Their death was put down to this hitman, and nothing the server can
-    // see landed: Config.Completion.RequireObservedDamage.
-    kill_unobserved: 'They died, but no shot or blow of yours was seen landing on '
-      + 'them, so the kill pays nobody. Only gunfire and melee count: '
-      + 'explosives, fire, run-overs and falls do not.',
-    // The server restarted between the kill and Verify kill: what proved it
-    // is kept in memory only, and went with the restart.
-    kill_lost_restart: 'The server restarted and lost the proof of this kill, so it '
-      + 'cannot be verified.',
-    // Refused while the target was still protected, and the kill lapses
-    // before that protection ends, so waiting cannot make it count. The
-    // Verify kill path words which protection it was.
-    kill_too_soon: 'They were still protected when you killed them, so this kill does '
-      + 'not count.',
-    // A contract placed for a live delivery only (its fulfilment is
-    // 'alive'): a kill never completes it, so there is never one to verify.
-    // What to do instead, with the server's distance and hold, is said by
-    // failText (aliveOnlyRefusal); this is what is left when the page has
-    // not read them. "The client" is gone from every line about it: a
-    // hitman had no way to know it meant the person who placed the contract.
-    kill_not_allowed: 'This contract only pays when you bring the target, alive, to '
-      + 'the person who placed it. Killing them does not count: take them to that '
-      + 'person alive and tap Deliver alive.',
-    // The same contracts pay their whole reward for that delivery, so there
-    // is no bonus on top to set, raise or add to.
-    no_bonus: 'Contracts here only pay when the target is brought alive to the '
-      + 'person who placed the contract, and that pays the whole reward, so '
-      + 'there is no separate bonus. Add it to the reward instead.',
-    // Not a fault. The poller stops on this and says the handover ended.
-    no_handover: 'That handover is not running. Tap Deliver alive to start one.',
-    // A page that thought kill photos were off, on a server that takes
-    // them. verifyKill opens the camera on this rather than saying it.
-    photo_required: 'This server verifies a kill with a photo. Tap Verify kill again '
-      + 'to take it.',
-    // A token outlived by a newer kill, replaced by a second tap, or lost to
-    // a restart: in every case the body can still be photographed.
-    token_invalid: 'That verification is no longer valid. Take a new photo of '
-      + 'the body now.',
-    // The other side of what "expired" used to cover. A token never outlives
-    // its kill, so this one is final, and saying "take it again" was not.
-    proof_expired: 'The time to verify this kill ran out before the photo '
-      + 'arrived. Nothing was sent for it, and this kill can no longer be claimed.',
-    photo_rejected: 'The photo was not accepted. Tap Verify kill and take it again.',
-    photo_too_far: 'You are too far from the body. Stand over them and take it again.',
-    photo_revived: 'They were brought back before you sent the photo, so this is '
-      + 'not an elimination any more.',
-    photo_still_down: 'They are down, not dead. Finish them, then take the photo.',
-    photo_not_dead: 'They are not lying dead right now. If they are still down, '
-      + 'try again in a moment; if they were brought back, the kill does not count.',
-    photo_bad_host: 'That image host is not on this server\u2019s allow list. '
-      + 'An admin sets which hosts the camera may upload to.',
-    /* One answer for a photo already seen, one left open too long, and a
-       handle that was never this player's: the server will not say which,
-       so neither does the page. */
-    photo_gone: 'That photo is gone. Each one can be opened once, and it is '
-      + 'deleted unless it was saved to your Photos or kept in this app.',
-    // The phone did not take it: lb-phone's own save, the client's
-    // fallback or lb-phone's upload refused, or none of them was there.
-    save_unavailable: 'This phone could not save the photo to Photos. It is still '
-      + 'open: keep it in this app instead, or delete it.',
-    // The server has no public address to serve the photo from after all.
-    photo_no_link: 'This server could not give your phone a link to save the photo '
-      + 'with. It is still open: keep it in this app instead, or delete it.',
-    // The server opened it and it never reached this phone. The one look
-    // was spent all the same, so it is gone.
-    photo_no_answer: 'The photo did not reach your phone, and it could be '
-      + 'opened only once. It has been deleted.',
-    // The same for a photo kept in this app, which spent nothing by being
-    // opened: it is still kept, and opens again (openProof).
-    photo_kept_no_answer: 'The photo did not reach your phone. It is still kept '
-      + 'for you in this app: tap View photo to try again.',
-    /* The viewfinder's photo, which the page makes itself: the server could
-       not read it, it would not shrink to the size the server keeps, or
-       this phone could not make one at all. A new Verify kill is a new
-       token, so each says to start there. */
-    photo_bad_image: 'The photo could not be read. Tap Verify kill and take it again.',
-    photo_too_large: 'The photo was too big to send. Tap Verify kill and take it again.',
-    photo_unreadable: 'The photo could not be made. Tap Verify kill and take it again.',
-    bad_state: 'Not right now: the contract has moved on. Open it again to see where it stands.',
-
-    /* The six ways a buyout is refused. They shared bad_state — "Not right
-       now" — which is wrong for four of them: three will never work however
-       long you wait, and one of them means it IS working. This is the one
-       move a target has. */
-    bailout_off: 'This server does not offer buyouts.',
-    no_buyout_price: 'The person who placed this contract did not put a price on '
-      + 'closing it. There is nothing to pay.',
-    buyout_pending: 'You have already paid. It closes shortly — a hitman is '
-      + 'engaged, so it is not instant.',
-    incapacitated: 'Not from the floor. Get up first.',
-    handover_in_progress: 'Somebody has hold of you. You cannot buy your way '
-      + 'out of a handover already under way.',
-    locked: 'Someone got there first. Open it again to see where it stands.',
-    /* Nothing was changed: the contract was busy with something else in
-       that instant, or the server had only just started. Asking again
-       works, so it says so rather than calling it a failure. */
-    busy: 'That was busy for a moment. Try again.',
-    /* Boot recovery failed, so the server answers nothing until staff fix
-       it and restart the resource. It was "busy for a moment", beside a Try
-       again that could never work; this is what /cleanse says. Final, so
-       nothing offers to ask again (finalRefusal). */
-    recovery_failed: 'The server\u2019s contract system failed to start, and staff '
-      + 'have been told.',
-    /* A hitman took the contract while the creator was looking at it. It
-       was "Not right now." for Withdraw, Edit and Take back, and the retry
-       got the same words, with nothing saying why or what still works. */
-    contract_taken: 'Somebody has taken this contract. From now on it can '
-      + 'only be improved: add to the reward, or propose a change.',
-    deadline_at_limit: 'This contract already runs as long as this server '
-      + 'allows. The deadline cannot go any later.',
-    buyout_needs_clean: 'A buyout has to be backed by cash or bank in the '
-      + 'reward. Add some, or set the buyout to 0.',
-    not_found: 'That is gone. Open the tab again to see what is there now.',
-    // The player closed the camera themselves. They know; saying so is
-    // telling them what they just did.
-    cancelled: null,
-    // The phone has no camera this resource can drive. Nothing the hitman
-    // can do about it, so it says who can.
-    camera_unavailable: 'This phone cannot open the camera for the app. Tell '
-      + 'an admin — the server\u2019s phone resource is missing the camera '
-      + 'component this needs.',
-    // Distinct from cancelling: the camera was asked for and never came
-    // back. Before this had its own code it answered as a cancel, which the
-    // page is deliberately silent about — so two minutes after a tap that
-    // said nothing, nothing else was said either.
-    /* Not "try again". The client gives up on the camera a full proof
-       window after it opened, and the server's claim on the kill runs out
-       that long after the death, which was earlier — so by the time this is
-       said there is never a kill left to claim. "Try again" sent the hitman
-       straight into "No kill on this contract is waiting for proof". */
-    camera_no_answer: 'The camera never came back, and the time to verify '
-      + 'this kill has run out. Nothing was sent.',
-    no_token: 'Nothing to verify yet. Tap Verify kill first.',
-    // Bodyguard contracts (server/rp_protection.lua).
-    protection_amount: 'That reward is outside what this server allows for a protection job.',
-    protection_exists: 'There is already a protection job on this contract.',
-    protection_not_recorded: 'Something went wrong; your money is being returned.',
-    protection_refund_pending: 'Your money from the last protection job on this contract is still '
-      + 'being returned. Post a new one once it has arrived.',
-    protection_taken: 'Somebody else took that protection job first.',
-    protection_limit: 'You are guarding as many people as you can at once.',
-    protection_party: 'You are part of the contract on them, so you cannot guard them.',
-    protection_guarding: 'You are guarding them, so you cannot take a contract on them.',
-    timeout: 'No answer. Try again.',
-    unreachable: 'No answer. Try again.',
-    // The roleplay features (Config.Roleplay). Nothing was taken for any.
-    need_burner: 'You need a burner phone. Carry one and open this again.',
-    not_briefed: 'You only know the rumour. See the broker about this one first.',
-    find_broker: 'Find the broker first: the rumour says roughly where.',
-    not_broker: 'Only a broker can do that.',
-    broker_too_far: 'They are no longer with you. Brief someone standing beside you.',
-    find_informant: 'Find the informant first, then ask again beside them.',
-    // Informant fairness (Config.Improvements). Nothing was taken for any;
-    // a tip that found nothing was given back.
-    tip_hold: 'Your informant will not talk yet. Hold the contract a while longer.',
-    tip_cant_place: 'Your informant can\'t place them right now.',
-    tip_not_found: 'Your informant couldn\'t find them. Your money was given back.',
-    not_tipped: 'Nobody has been tipped off about you on this contract.',
-    already_dark: 'You have already gone dark.',
-    // The hitman organisation (server/org/init.lua, Org.ERR). The server
-    // sends its own words with each, which the Organisation tab shows first;
-    // these are for a reply that came without them.
-    org_off: 'The organisation is switched off.',
-    org_not_member: 'You are not a member of the organisation.',
-    org_no_power: 'Staff have not given you this.',
-    org_office: 'That needs the boss office: go there first.',
-    org_rank: 'Only below your own rank.',
-    org_self: 'Not on yourself.',
-    org_locked: 'Staff have locked that.',
-    org_last_boss: 'The organisation would be left with nobody in its top boss role.',
-    org_bounds: 'Outside the bounds staff set.',
-    org_cooldown: 'Too soon: wait a while first.',
-    org_limit: 'At the limit staff set.',
-    org_not_found: 'Not found. Refresh and try again.',
-    org_refused: 'That could not be done; nothing was changed.',
-    org_short: 'The funds do not hold that much.',
-    org_busy: 'Already being done. Try again in a moment.',
-    org_members_only: 'Only members of the organisation may accept contracts.',
-    org_rule: 'The organisation\'s rules do not allow that.',
-    org_already: 'Already so.',
-    org_off_duty: 'Go on duty first.',
-    org_not_held: 'You can only pass on a power you hold yourself.',
-    org_bank_down: 'The organisation\'s bank account cannot be reached right now; nothing was moved.',
-    org_name_taken: 'Another member already goes by that codename.',
-    org_name_blocked: 'That codename is not allowed. Pick another.',
-    org_feature_off: 'Staff have not switched that on for the organisation.',
-    org_reserved: 'That contract is held for the organisation.',
-    org_approval: 'Sent to a boss for approval. Nothing is taken until it is approved; you are told the answer.',
-    org_probation: 'On probation you may not take that contract yet.',
-    org_other_org: 'They are a member of another organisation already.',
-    org_tier: 'The organisation\'s reputation does not unlock contracts worth that much yet.'
-  };
 
   /* The requests that can move money, each a handler in server/app.lua
      (tests/static_check.lua, rule 37). One that runs out of the wait may

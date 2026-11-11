@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { makeDocument } = require('./dom.js');
+const { makeDocument, localeXhr } = require('./dom.js');
 const markup = require('./markup.js');
 
 const ROOT = path.join(__dirname, '..', '..', 'crimson-hitman', 'ui');
@@ -514,6 +514,8 @@ function boot(server, opts) {
   const sandbox = {
     document: document,
     window: window,
+    // The page reads its words (locales/en.json) as it loads.
+    XMLHttpRequest: localeXhr(),
     // FiveM's NUI page has it, and the page is to post to whatever it says.
     GetParentResourceName: function () { return 'crimson-hitman-renamed'; },
     fetch: function (url, options) {
@@ -5653,6 +5655,18 @@ async function main() {
     });
     app.nav('announce');
     await settled();
+    it('Translations: the refusals read from locales/en.json, and a language with no file reads English', function () {
+      eq(app.window.CH_ADMIN_WORDS({ ok: false, err: 'not_allowed' }), 'Not authorised.');
+      eq(app.window.CH_ADMIN_WORDS({ ok: true }), 'Done.');
+      const warned = [];
+      const realWarn = console.warn;
+      console.warn = function (m) { warned.push(m); };
+      app.message({ type: 'open', access: FULL, locale: 'zz' });
+      console.warn = realWarn;
+      eq(app.window.CH_ADMIN_WORDS({ ok: false, err: 'not_allowed' }), 'Not authorised.');
+      eq(warned.length, 1, 'said once: ' + warned.join(' | '));
+      has(warned[0], 'no locales/zz.json');
+    });
     it('a refusal with no words of its own shows no internal code', function () {
       const words = app.window.CH_ADMIN_WORDS({ ok: false, err: 'some_internal_code' });
       lacks(words, 'some_internal_code');

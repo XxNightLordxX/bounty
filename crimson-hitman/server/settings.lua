@@ -84,6 +84,10 @@ local RESTART = 'Read once at start: kept now, and in force after the next resta
 --- all the same. [key] = { why, secret, convar }
 local EDIT_IN_CONFIG = ' Edit it in config.lua.'
 local DENY = {
+    ['Locale'] = { label = 'Language',
+        why = 'The language players and staff see, from locales/<language>.lua and .json: the phone '
+        .. 'app, the panel and the game take it as they load, so it is changed in config.lua and '
+        .. 'in force after a restart.' .. EDIT_IN_CONFIG },
     ['Database.Mode'] = { label = 'Storage mode',
         why = 'Changing it needs the money in the old mode settled and a restart '
         .. '(README, Changing storage mode).' .. EDIT_IN_CONFIG },

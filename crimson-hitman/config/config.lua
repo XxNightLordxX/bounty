@@ -24,6 +24,8 @@ Config = Config or {}
 
 Config.Debug = true  -- debug lines in the console and F8; false = only what needs you
 
+Config.Locale = 'en'  -- the language players and staff read: the locales/ file of that name
+
 Config.Database = {
     Mode                = 'mysql', -- 'json' | 'mysql' | 'memory' (testing only)
     AllowModeSwitch     = false,   -- start even though the old mode still holds money

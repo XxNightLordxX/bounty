@@ -7,6 +7,9 @@
 
 local App = {}
 
+--- The words players read (locales/en.lua, Config.Locale; shared/locale.lua).
+local L = CrimsonLocale.t
+
 --- Outstanding requests, keyed by a per-request id rather than by event
 --- name: two searches in flight at once would otherwise resolve into each
 --- other's callbacks and show the wrong results.
@@ -148,9 +151,9 @@ local function registerApp()
             -- What the player reads on their home screen. The identifier
             -- above is the key everything else is registered under and does
             -- not follow it.
-            name        = 'Crimson-Hitman',
-            description = 'Contracts, quietly arranged.',
-            developer   = 'Crimson',
+            name        = L('client.crimson_hitman'),
+            description = L('client.contracts_quietly_arranged'),
+            developer   = L('client.crimson'),
             -- In the App Store for players to find, unless the owner puts
             -- it on every eligible phone (Config.App.DefaultInstalled). Read
             -- here, from this player's own copy of the config: the server
@@ -168,7 +171,10 @@ local function registerApp()
             -- had any way to tell. index.html passes this query on to
             -- app.js and app.css, so bumping the resource version is what
             -- replaces what they are running.
-            ui          = GetCurrentResourceName() .. '/ui/index.html?v=' .. App.build(),
+            -- The page reads its words in the language Config.Locale names
+            -- (locales/<lang>.json), told here as it loads.
+            ui          = GetCurrentResourceName() .. '/ui/index.html?v=' .. App.build()
+                          .. '&lang=' .. CrimsonLocale.language(),
             -- Stamped like the page and its stylesheet. This was the one
             -- asset loaded without it, so CEF kept the first icon it ever
             -- saw: an icon change shipped with a resource update reached
@@ -587,7 +593,7 @@ end)
 --- own feed ticker shows it instead.
 RegisterNetEvent('crimson-hitman:notify', function(data)
     if type(data) ~= 'table' then return end
-    local title = tostring(data.title or 'Crimson-Hitman')
+    local title = tostring(data.title or L('client.crimson_hitman'))
     local content = tostring(data.content or '')
     if not CrimsonIntegrations.has('phone') then
         BeginTextCommandThefeedPost('STRING')

@@ -293,10 +293,11 @@ describe('the README, against the code', function()
     it('gives every refusal the server can send words on the phone', function()
         local codes = {}
         for name, value in pairs(CH.ERR) do codes[value] = name end
-        local app = file('crimson-hitman/ui/app.js')
-        local map = (app:match('var ERRORS%s*=%s*(%b{})') or ''):gsub('/%*.-%*/', ' '):gsub('([^:])//[^\n]*', '%1')
+        -- The phone's words for them: locales/en.json, "errors" (ERRORS in ui/app.js).
+        local json = file('crimson-hitman/locales/en.json')
+        local map = json:match('"errors"%s*:%s*(%b{})') or ''
         local worded = {}
-        for key in map:gmatch('[{,]%s*([%w_]+)%s*:') do worded[key] = true end
+        for key in map:gmatch('[{,]%s*"([%w_]+)"%s*:') do worded[key] = true end
         local missing = {}
         for value, name in pairs(codes) do
             if not worded[value] then missing[#missing + 1] = value .. ' (CH.ERR.' .. name .. ')' end

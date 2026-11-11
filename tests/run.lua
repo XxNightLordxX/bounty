@@ -769,6 +769,7 @@ local suites = {
     'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'payout_checks_spec', 'lib_players_spec',
     'lib_feature_spec',
     'adapters_spec',
+    'locale_spec',
     'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.org_extras2_spec', 'workflows.org_extras3_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',
     'docs_spec',
 }

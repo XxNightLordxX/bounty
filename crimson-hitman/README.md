@@ -147,15 +147,29 @@ dispatch, inventory or phone), add an adapter: `docs/dev/adapters.md`.
 ### Escrow, and where the words live
 
 On an escrowed build (FiveM Asset Escrow) everything you edit stays readable
-(`escrow_ignore` in `fxmanifest.lua`): `config/`, the adapters
-(`server/adapters/`, `client/adapters/`, see `docs/dev/adapters.md`). The
-page files (`ui/`), `install/sql/` and `data/` are never escrowed, as only
-Lua is. The words players and staff read live in: `ui/app.js` (the phone
-app, its refusals by code in `ERRORS`), `ui/admin.js` (the panel), and on the
-server the feature that says them (notices mostly in `server/notify.lua`,
-refusal codes in `shared/constants.lua`). Labels and messages a server owner
-sets are in `config/config.lua` (titles of advisories, bulletins and the
-city news, the command names). There is no single locale file.
+(`escrow_ignore` in `fxmanifest.lua`): `config/`, the language files
+(`locales/`), the adapters (`server/adapters/`, `client/adapters/`, see
+`docs/dev/adapters.md`). The page files (`ui/`), `install/sql/` and `data/`
+are never escrowed, as only Lua is.
+
+**Translations.** The words players and staff read are in language files, by
+key: `locales/en.lua` (the game and the server: every notice a player gets,
+the police advisories, staff alerts and their Discord posts, staff notices,
+the app's name on the phone, the map markers and target options) and
+`locales/en.json` (the phone app and the admin panel: every refusal by its
+code, `errors` and `panel_errors`). `Config.Locale` (`'en'`) names the
+language. To translate, copy both to `locales/<language>.lua` and `.json`
+(say `de`), change `CrimsonLocales.en` to `CrimsonLocales.de` at the top of
+the Lua file, translate the texts and keep every `%s` and `%d` in its order;
+set `Config.Locale = 'de'` and restart. A key your file leaves out reads in
+English, and the console says so once. Still written in their own files, and
+moving there in later steps: the phone app's and the panel's other labels,
+help lines and buttons (`ui/app.js`, `ui/admin.js`), the server's refusal
+sentences and staff command answers (`server/panel.lua`, `server/admin.lua`,
+the feature modules), and the panel's setting labels (`server/settings.lua`).
+Console lines stay English. Labels a server owner sets are in
+`config/config.lua` (titles of advisories, bulletins and the city news, the
+command names).
 
 ### Changing storage mode
 
@@ -1235,6 +1249,7 @@ The console output, and where contracts and money are kept. Switching storage mo
 | Setting | Shipped | What it does |
 |---|---|---|
 | `Config.Debug` | `true` | debug lines in the console and F8; false = only what needs you |
+| `Config.Locale` | `'en'` | the language players and staff read: the locales/ file of that name |
 | `Config.Database.Mode` | `'mysql'` | 'json' \| 'mysql' \| 'memory' (testing only) |
 | `Config.Database.AllowModeSwitch` | `false` | start even though the old mode still holds money |
 | `Config.Database.QueryTimeoutSeconds` | `10` | mysql: seconds a statement may go unanswered; 0 = forever |
@@ -1997,6 +2012,8 @@ The audit log records every money movement and every refused attempt:
 ## What's New
 
 **1.2.0, other scripts optional, first-start setup (newest)**
+
+- **Translations**: the notices players get, police advisories, staff alerts and their Discord posts, everything the game shows, and every refusal on the phone and in the panel are read from language files (`locales/en.lua`, `locales/en.json`) in the language `Config.Locale` names; a missing key reads in English. See Updating, Escrow, and where the words live.
 
 - **Organisation extras 3**, each off as shipped: **several organisations** (rival crews, each its own job, roles, funds and places), **reputation and tiers**, **dead drops**, **territory**, the **garage**, **internal contracts** on rogue members, the **handler** NPC and the boss's **activity log**. See Optional features, Organisation extras 3.
 

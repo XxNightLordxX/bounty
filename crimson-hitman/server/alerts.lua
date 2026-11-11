@@ -45,6 +45,8 @@
 --- own: nothing that prints a line waits for a post.
 
 local Util = CrimsonBoot.requireShared('util')
+--- The words players and staff read (locales/en.lua, Config.Locale).
+local L = CrimsonBoot.requireShared('locale').t
 local Log = CrimsonBoot.requireShared('log')
 local Db = CrimsonBoot.require('server.lib.db')
 local Discord = CrimsonBoot.require('server.discord')
@@ -75,8 +77,8 @@ local HEADER_MAX, TEXT_MAX = 500, 1000
 --- characters; the heading and the line saying how many more fit in the rest).
 local LINE_MAX, CONTENT_MAX = 300, 1800
 local LEVELS = { always = true, problem = true }
-local LEVEL_WORDS = { always = 'Needs staff', problem = 'Setting', test = 'Test' }
-local TEST_TEXT = 'A test alert from the admin panel: alerts reach this channel.'
+local LEVEL_WORDS = { always = L('alerts.needs_staff'), problem = L('alerts.setting'), test = L('alerts.test') }
+local TEST_TEXT = L('alerts.a_test_alert_from_the_admin')
 
 local deps, Storage
 
@@ -309,19 +311,19 @@ local function outsideText(entry)
     local ok, text = pcall(function()
         return panel.scrubText(entry.text, false, entry.contract_id, true)
     end)
-    if not ok or type(text) ~= 'string' then return '(not shown here; see the admin panel)' end
+    if not ok or type(text) ~= 'string' then return L('alerts.not_shown_here_see_the_admin') end
     return text
 end
 
 --- One post: a heading, a line an alert, and how many more. A line that
 --- would take the post past Discord's limit is counted among the more.
 local function bodyOf(batch, more)
-    local lines = { ('**Crimson Hitman** - %d alert(s)'):format(#batch + more) }
+    local lines = { (L('alerts.crimson_hitman_alert')):format(#batch + more) }
     local length = #lines[1]
     for _, entry in ipairs(batch) do
         local text = cut((outsideText(entry):gsub('%s+', ' ')), LINE_MAX)
         -- No mention pings anybody: an @ is followed by a zero-width space.
-        local line = Discord.text(('- %s: %s%s'):format(LEVEL_WORDS[entry.level] or 'Alert', text,
+        local line = Discord.text(('- %s: %s%s'):format(LEVEL_WORDS[entry.level] or L('alerts.alert'), text,
             entry.count > 1 and (' (x%d)'):format(entry.count) or ''))
         if length + 1 + #line > CONTENT_MAX then
             more = more + 1
@@ -331,7 +333,7 @@ local function bodyOf(batch, more)
         end
     end
     if more > 0 then
-        lines[#lines + 1] = ('...and %d more; the admin panel\'s Alerts lists every one'):format(more)
+        lines[#lines + 1] = (L('alerts.and_more_the_admin_panels_alerts')):format(more)
     end
     return table.concat(lines, '\n')
 end

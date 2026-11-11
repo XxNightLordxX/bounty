@@ -22,6 +22,8 @@
 --- never sooner than Retry-After), up to opts.tries tries.
 
 local Util = CrimsonBoot.requireShared('util')
+--- The words players and staff read (locales/en.lua, Config.Locale).
+local L = CrimsonBoot.requireShared('locale').t
 local Log = CrimsonBoot.requireShared('log')
 
 local Discord = {}
@@ -68,7 +70,7 @@ local ZWSP_AT = '@\226\128\139'
 ---@param max integer|nil
 ---@return string
 function Discord.text(text, max)
-    text = tostring(text or ''):gsub(ZWSP_AT, '@'):gsub('https?://%S+', '(a link)'):gsub('@', ZWSP_AT)
+    text = tostring(text or ''):gsub(ZWSP_AT, '@'):gsub('https?://%S+', L('discord.a_link')):gsub('@', ZWSP_AT)
     if max and #text > max then text = Util.toValidUtf8(text:sub(1, max - 3)) .. '...' end
     return text
 end

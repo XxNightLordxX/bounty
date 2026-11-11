@@ -303,6 +303,9 @@ function Client.boot(opts)
     require('crimson-hitman.shared.util')
     require('crimson-hitman.shared.geo')
     require('crimson-hitman.shared.log')
+    -- The words players read (locales/*.lua, then shared/locale.lua).
+    require('crimson-hitman.locales.en')
+    require('crimson-hitman.shared.locale')
     -- CrimsonIntegrations and the client's adapters, as the manifest loads
     -- them: a registry of the client's own (on a live server the two sides
     -- are separate Lua states), so the server's stays as it was.

@@ -9,6 +9,8 @@ local Notify = {}
 local Util = CrimsonBoot.requireShared('util')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+--- The words players read (locales/en.lua, Config.Locale).
+local L = CrimsonBoot.requireShared('locale').t
 local Db = CrimsonBoot.require('server.lib.db')
 local Police = CrimsonBoot.require('server.police')
 local Integrations = CrimsonBoot.require('server.adapters.init')
@@ -593,14 +595,14 @@ end
 ---@return string content
 local function viewWords(entry, own)
     if own then
-        return 'Contract on you', 'A contract on you is now listed in this app.'
+        return L('notify.contract_on_you'), L('notify.a_contract_on_you_is_now')
     end
-    local who = tostring(entry.targetName or 'a whitelisted-job member')
+    local who = tostring(entry.targetName or L('notify.a_whitelisted_job_member'))
     if type(entry.targetJob) == 'string' and entry.targetJob ~= '' then
         who = ('%s (%s)'):format(who, entry.targetJob)
     end
-    return 'Contract on a whitelisted job',
-        ('A contract on %s is now listed in this app.'):format(who)
+    return L('notify.contract_on_a_whitelisted_job'),
+        L('notify.a_contract_on_is_now_listed'):format(who)
 end
 
 --- Send one: once per contract and viewer, through the budget, and kept
@@ -801,8 +803,8 @@ local function sendAlert(targetCid, ids)
     paranoidUntil[targetCid] = os.time()
         + math.max(0, (tonumber(Config.Notifications.ParanoidCooldownMinutes) or 0) * 60)
     for id in pairs(ids or {}) do told[id] = true end
-    Notify.tellOrKeep(targetCid, 'Unsettling',
-        'You feel eyes on you. A price has been put on your head.', { bypassBudget = true })
+    Notify.tellOrKeep(targetCid, L('notify.unsettling'),
+        L('notify.you_feel_eyes_on_you_a'), { bypassBudget = true })
     -- An open On me tab re-reads, and shows the contract as the alert
     -- arrives. Names no contract: the page learns only what On me shows.
     Notify.push(targetCid, 'alert')
@@ -936,21 +938,20 @@ function Notify.contractAccepted(contract, hitmanRecord, activeHitmen, returning
     -- contract); a first acceptance: the one about to be kept with it.
     local shown = Util.shownHitmanName(hitmanRecord.hitman_cid, hitmanRecord.hitman_name,
         returning and contract.id or nil)
-    local who = hitmanRecord.anon and 'an operative' or shown
-    local body = ('Your contract on %s has been accepted by %s. %d operative%s now active.')
-        :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and ' is' or 's are')
+    local who = hitmanRecord.anon and L('notify.an_operative') or shown
+    local body = (L('notify.your_contract_on_has_been_accepted'))
+        :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and L('notify.is') or L('notify.are'))
     -- Live transfer only: the hitman comes to the person who placed it, so
     -- this is the moment that person learns they have to be in the city to
     -- be met. The page's own card under Mine says the same (placerTakenText).
     -- A contract a kill completes too keeps its words.
     if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
-        body = ("A hitman%s took your contract on %s. They'll bring the target to you "
-            .. 'alive — stay in the city%s.%s')
+        body = (L('notify.a_hitman_took_your_contract_on'))
             :format(hitmanRecord.anon and '' or (' (' .. tostring(shown) .. ')'),
                 tostring(contract.target_name),
-                Config.Relay.Enabled == true and ' and watch your messages' or '',
+                Config.Relay.Enabled == true and L('notify.and_watch_your_messages') or '',
                 (tonumber(activeHitmen) or 0) > 1
-                    and (' %d hitmen are on it now.'):format(activeHitmen) or '')
+                    and L('notify.hitmen_are_on_it_now'):format(activeHitmen) or '')
     end
     -- Once per hitman (§14.40): one taking it, walking away and taking it
     -- again rang the client every time, and filled their notice budget at
@@ -959,7 +960,7 @@ function Notify.contractAccepted(contract, hitmanRecord, activeHitmen, returning
     local pair = tostring(contract.id) .. ':' .. tostring(hitmanRecord.hitman_cid)
     if not announced[pair] then
         announced[pair] = true
-        Notify.tellOrKeep(contract.creator_cid, 'Contract accepted', body, nil, contract.id)
+        Notify.tellOrKeep(contract.creator_cid, L('notify.contract_accepted'), body, nil, contract.id)
     end
 
     -- Every acceptance raises an advisory carrying the running count, so law
@@ -1013,8 +1014,7 @@ function Notify.contractCompleted(contract, hitmanRecord, proof, result, opts)
     if not contract then return end
     local delivered = type(proof) ~= 'table'
     local kept = not delivered and type(proof.photo) == 'string' and proof.photo ~= ''
-    local waiting = 'The photo is waiting under Ledger. You can see it once: save it to '
-        .. 'your Photos to keep it.'
+    local waiting = L('notify.the_photo_is_waiting_under_ledger')
     -- A receipt, so outside the budget (§14.40). Relay messages spend the
     -- same budget, so five from the hitman in the minute before the kill
     -- used to mean the creator never heard it had been done.
@@ -1025,29 +1025,27 @@ function Notify.contractCompleted(contract, hitmanRecord, proof, result, opts)
     -- photograph is not mentioned even to say there is none: there never is.
     local body
     if delivered and not Util.killPhotos() then
-        body = 'Your contract was fulfilled by live delivery: the target was handed over '
-            .. 'in person.'
+        body = L('notify.your_contract_was_fulfilled_by_live')
     elseif delivered then
-        body = 'Your contract was fulfilled by live delivery. There is no '
-            .. 'photograph — the target was handed over in person.'
+        body = L('notify.your_contract_was_fulfilled_by_live_2')
     elseif kept then
-        body = 'Your contract was fulfilled. ' .. waiting
+        body = L('notify.your_contract_was_fulfilled') .. waiting
     else
-        body = 'Your contract was fulfilled.'
+        body = L('notify.your_contract_was_fulfilled_2')
     end
-    local title = 'Contract fulfilled'
+    local title = L('notify.contract_fulfilled')
 
     -- One collection of several is not the contract done. Every claim
     -- came here, so the creator of a three-payout contract read "Your
     -- contract was fulfilled" after the first, with two still on offer
     -- and what pays for them still held.
     if type(result) == 'table' and result.exhausted == false then
-        title = 'Collection paid'
-        body = ('Collection %d of %d on your contract was paid%s.'):format(
+        title = L('notify.collection_paid')
+        body = L('notify.collection_of_on_your_contract_was'):format(
             tonumber(result.slot) or 1, tonumber(contract.payout_slots) or 1,
-            delivered and ' by live delivery' or '')
+            delivered and L('notify.by_live_delivery') or '')
         if kept then body = body .. ' ' .. waiting end
-        body = body .. (' It is still running, with %d more to collect.')
+        body = body .. (L('notify.it_is_still_running_with_more'))
             :format(tonumber(result.remaining) or 0)
     end
     -- Kept for a client who is away, whichever way it was paid: a kill
@@ -1125,9 +1123,9 @@ function Notify.keepMessageNotice(cid, contract)
     end
     if #list >= WAITING_CAP then table.remove(list, 1) end
     list[#list + 1] = {
-        title = 'Contract message',
-        content = ('New message about your contract on %s. Open it from Mine.')
-            :format(contract.target_name or 'your target'),
+        title = L('notify.contract_message'),
+        content = (L('notify.new_message_about_your_contract_on'))
+            :format(contract.target_name or L('notify.your_target')),
         contract_id = contract.id, message = true,
     }
     waiting[cid] = list
@@ -1225,18 +1223,18 @@ function Notify.outstandingDelivered(cid, count, summary)
         local left = math.floor(tonumber(summary.left) or 0)
         local parts = {}
         if money > 0 then parts[#parts + 1] = Words.dollars(money, 'before') end
-        if goods > 0 then parts[#parts + 1] = ('%d item(s)'):format(goods) end
+        if goods > 0 then parts[#parts + 1] = L('notify.item'):format(goods) end
         local what = table.concat(parts, ' and ')
-        if what == '' then what = ('%d payment(s)'):format(count) end
-        body = ('%s you were owed %s arrived'):format(what,
-            (money > 0 and goods == 0) and 'has' or 'have')
-            .. (left > 0 and ('; %d more %s still waiting for you.'):format(left,
-                left == 1 and 'is' or 'are') or '.')
+        if what == '' then what = L('notify.payment'):format(count) end
+        body = L('notify.you_were_owed_arrived'):format(what,
+            (money > 0 and goods == 0) and L('notify.has') or L('notify.have'))
+            .. (left > 0 and L('notify.more_still_waiting_for_you'):format(left,
+                left == 1 and L('notify.is_2') or L('notify.are_2')) or '.')
     else
-        body = ('%d outstanding item%s been delivered.')
-            :format(count, count == 1 and ' has' or 's have')
+        body = (L('notify.outstanding_item_been_delivered'))
+            :format(count, count == 1 and L('notify.has_2') or L('notify.have_2'))
     end
-    return Notify.toCitizen(cid, 'Outstanding payment', body, { bypassBudget = true })
+    return Notify.toCitizen(cid, L('notify.outstanding_payment'), body, { bypassBudget = true })
 end
 
 --- The sentence that ends a hitman's notice: where their stake went. Left
@@ -1244,20 +1242,18 @@ end
 local function stakeSentence(outcome)
     if (outcome.stake or 0) <= 0 then return '' end
     if outcome.forfeited then
-        return (' Your %s stake went to the person who placed the contract.')
+        return (L('notify.your_stake_went_to_the_person'))
             :format(Words.dollars(outcome.stake, 'before'))
     end
     -- Its give raised and what arrived could not be read: no retry gives
     -- it, so "handed back as soon as you can take it" was untrue of it.
     if outcome.parked then
-        return (' Your %s stake could not be confirmed as handed back; staff have been '
-            .. 'asked to check it.'):format(Words.dollars(outcome.stake, 'before'))
+        return L('notify.your_stake_could_not_be_confirmed'):format(Words.dollars(outcome.stake, 'before'))
     end
     if outcome.owed then
-        return (' Your %s stake is held for you and is handed back as soon as '
-            .. 'you can take it.'):format(Words.dollars(outcome.stake, 'before'))
+        return L('notify.your_stake_is_held_for_you'):format(Words.dollars(outcome.stake, 'before'))
     end
-    return (' Your %s stake has been returned.'):format(Words.dollars(outcome.stake, 'before'))
+    return L('notify.your_stake_has_been_returned'):format(Words.dollars(outcome.stake, 'before'))
 end
 
 --- The receipt a hitman is sent for a collection paid to them
@@ -1283,23 +1279,23 @@ function Notify.hitmanReceipt(contract, delivered, result)
     local goods = math.floor(tonumber(result.goods) or 0)
     local what
     if money > 0 and goods > 0 then
-        what = ('%s and %d item(s)'):format(Words.dollars(money, 'before'), goods)
+        what = L('notify.and_item'):format(Words.dollars(money, 'before'), goods)
     elseif money > 0 then
         what = Words.dollars(money, 'before')
     elseif goods > 0 then
-        what = ('%d item(s)'):format(goods)
+        what = L('notify.item'):format(goods)
     end
 
     local title, body
     if result.recovered then
-        title = 'Payout recorded'
-        body = ('Your payout on the contract on %s was recorded after a fault')
-            :format(contract.target_name or 'your target')
-            .. (what and (': ' .. what .. ' released to you.') or '.')
+        title = L('notify.payout_recorded')
+        body = (L('notify.your_payout_on_the_contract_on'))
+            :format(contract.target_name or L('notify.your_target'))
+            .. (what and (': ' .. what .. L('notify.released_to_you')) or '.')
     else
-        title = delivered and 'Handover paid' or 'Kill paid'
-        body = (delivered and 'Delivered alive' or 'Kill verified')
-            .. (what and (': ' .. what .. ' released to you.') or ': your payout was released.')
+        title = delivered and L('notify.handover_paid') or L('notify.kill_paid')
+        body = (delivered and L('notify.delivered_alive') or L('notify.kill_verified'))
+            .. (what and (': ' .. what .. L('notify.released_to_you')) or L('notify.your_payout_was_released'))
     end
 
     -- Held for proof of intent (Config.Roleplay.ProofOfIntent): not a
@@ -1309,31 +1305,30 @@ function Notify.hitmanReceipt(contract, delivered, result)
     if held and (held.closed or not held.missing) then
         -- Nothing can be done on it now: this payout closed the contract, so
         -- its thread and its meeting point went with it. Only the wait.
-        body = body .. (' Payout held: released within %d minutes.')
+        body = body .. (L('notify.payout_held_released_within_minutes'))
             :format(math.floor(tonumber(held.minutes) or 0))
     elseif held then
-        body = body .. (' Your payout is held until you show intent: %s. It is released anyway '
-            .. 'within %d minutes.'):format(tostring(held.missing or 'proof of intent'),
+        body = body .. L('notify.your_payout_is_held_until_you'):format(tostring(held.missing or L('notify.proof_of_intent')),
             math.floor(tonumber(held.minutes) or 0))
     end
     if (tonumber(result.pending) or 0) > 0 and not held then
         body = body .. (result.recovered
-            and ' Part of it is held for you and is handed over as soon as you can take it.'
-            or ' Part of it is held until you make room: make room and it is handed over.')
+            and L('notify.part_of_it_is_held_for')
+            or L('notify.part_of_it_is_held_until'))
     end
     if (tonumber(result.parked) or 0) > 0 then
-        body = body .. ' Part of it could not be confirmed; staff have been asked to check it.'
+        body = body .. L('notify.part_of_it_could_not_be')
     end
 
     if result.exhausted == false then
         local left = math.floor(tonumber(result.remaining) or 0)
-        body = body .. (' The contract is still running, with %d more to collect')
+        body = body .. (L('notify.the_contract_is_still_running_with'))
             :format(left)
         local wait = tonumber(Config.Limits.SlotCooldownSeconds) or 0
         -- Not after a recovery: whether the claim that stopped had started
         -- the wait is not known.
         if wait > 0 and not result.recovered then
-            body = body .. ('; you can collect again in %s.'):format(Words.duration(wait))
+            body = body .. L('notify.you_can_collect_again_in'):format(Words.duration(wait))
         else
             body = body .. '.'
         end
@@ -1352,30 +1347,30 @@ end
 --- What a hitman still on the contract is told, by how it ended. nil for an
 --- ending that already reaches them some other way.
 local function hitmanNotice(contract, ending, outcome)
-    local target = contract.target_name or 'your target'
+    local target = contract.target_name or L('notify.your_target')
     if ending == CH.STATE.EXPIRED then
         -- A payout they collected on it before it ran out is theirs, and said
         -- so: "the deadline passed" alone, beside a stake gone, read as the
         -- contract having paid them nothing.
         local paid = math.floor(tonumber(outcome.claims) or 0)
         local collected = paid > 0
-            and (' You were paid for %d collection%s on it.'):format(paid, paid == 1 and '' or 's')
+            and L('notify.you_were_paid_for_collection_on'):format(paid, paid == 1 and '' or 's')
             or ''
-        return 'Contract expired', (outcome.forfeited
-            and ('The deadline on your contract on %s passed.'):format(target)
-            or  ('Your contract on %s ran out before it could be finished.'):format(target))
+        return L('notify.contract_expired'), (outcome.forfeited
+            and L('notify.the_deadline_on_your_contract_on'):format(target)
+            or  L('notify.your_contract_on_ran_out_before'):format(target))
             .. collected
     elseif ending == CH.STATE.BAILED_OUT then
-        return 'Contract closed', ('%s bought their way out of your contract.'):format(target)
+        return L('notify.contract_closed'), L('notify.bought_their_way_out_of_your'):format(target)
     elseif ending == CH.STATE.VOIDED then
-        return 'Contract closed', ('Staff closed your contract on %s.'):format(target)
+        return L('notify.contract_closed'), L('notify.staff_closed_your_contract_on'):format(target)
     elseif ending == CH.STATE.COMPLETED then
-        return 'Contract closed', ('Another operative finished the contract on %s.'):format(target)
+        return L('notify.contract_closed'), L('notify.another_operative_finished_the_contract_on'):format(target)
     elseif ending == CH.STATE.CANCELLED and contract.resolution == 'cancelled_by_agreement' then
         -- With a hitman on it, only by a change everybody agreed to. Only the
         -- one who pressed the last Agree heard anything, and the one who had
         -- proposed it never learnt it went through, or where their stake went.
-        return 'Contract called off', ('The contract on %s was called off by agreement.')
+        return L('notify.contract_called_off'), (L('notify.the_contract_on_was_called_off'))
             :format(target)
     end
     return nil
@@ -1398,7 +1393,7 @@ end
 local function collectedPhrase(contract)
     local claimed = math.floor(tonumber(contract.slots_claimed) or 0)
     if claimed <= 0 then return nil end
-    return ('%d of %d payouts were collected'):format(claimed,
+    return L('notify.of_payouts_were_collected'):format(claimed,
         math.max(claimed, math.floor(tonumber(contract.payout_slots) or 1)))
 end
 Notify.collectedPhrase = collectedPhrase
@@ -1435,19 +1430,17 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     -- give raised and no retry gives it, so "they arrive" was untrue of it.
     local parked = opts.creatorParked or 0
     local staffCheck = parked > 0
-        and (' %d thing(s) could not be confirmed as handed back; staff have been asked '
-             .. 'to check.'):format(parked) or ''
+        and L('notify.thing_could_not_be_confirmed_as'):format(parked) or ''
 
     if ending == CH.STATE.CANCELLED and contract.resolution == 'cancelled_by_agreement' then
         local waits = opts.creatorOwed or 0
-        tellOrKeep(contract.creator_cid, 'Contract called off',
-            ('Your contract on %s was called off by agreement. '):format(
-                contract.target_name or 'your target')
+        tellOrKeep(contract.creator_cid, L('notify.contract_called_off'),
+            L('notify.your_contract_on_was_called_off'):format(
+                contract.target_name or L('notify.your_target'))
             .. ((waits > 0 or parked > 0)
-                and ('Most of what you put up is back.' .. (waits > 0
-                    and (' %d thing(s) would not fit and are waiting for you — they arrive '
-                         .. 'when you next have room.'):format(waits) or '') .. staffCheck)
-                or 'Everything you put up has been returned.'),
+                and (L('notify.most_of_what_you_put_up') .. (waits > 0
+                    and L('notify.thing_would_not_fit_and_are'):format(waits) or '') .. staffCheck)
+                or L('notify.everything_you_put_up_has_been')),
             { bypassBudget = true }, contract.id)
         return
     end
@@ -1458,27 +1451,25 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     -- completion each tell them already.
     local owed = opts.creatorOwed or 0
     local collected = collectedPhrase(contract)
-    local body = ('Nobody finished your contract on %s in time.')
-        :format(contract.target_name or 'your target')
+    local body = (L('notify.nobody_finished_your_contract_on_in'))
+        :format(contract.target_name or L('notify.your_target'))
     if owed > 0 then
-        body = body .. (collected and (' ' .. collected .. '; the rest of what you put up is '
-                .. 'coming back:') or ' What you put up is coming back:')
-            .. (' %d thing(s) could not be handed over yet and arrive as soon as you can '
-                .. 'take them.'):format(owed)
+        body = body .. (collected and (' ' .. collected .. L('notify.the_rest_of_what_you_put')) or L('notify.what_you_put_up_is_coming'))
+            .. L('notify.thing_could_not_be_handed_over'):format(owed)
     elseif parked == 0 then
         body = body .. (collected
-            and (' ' .. collected .. '; the rest of what you put up has been returned.')
-            or ' Everything you put up has been returned.')
+            and (' ' .. collected .. L('notify.the_rest_of_what_you_put_2'))
+            or L('notify.everything_you_put_up_has_been_2'))
     elseif collected then
         body = body .. ' ' .. collected .. '.'
     end
     body = body .. staffCheck
     if forfeitedCount == 1 then
-        body = body .. (" The operative's %s stake is yours."):format(Words.dollars(forfeitedTotal, 'before'))
+        body = body .. L('notify.the_operatives_stake_is_yours'):format(Words.dollars(forfeitedTotal, 'before'))
     elseif forfeitedCount > 1 then
-        body = body .. (" The operatives' stakes, %s in all, are yours."):format(Words.dollars(forfeitedTotal, 'before'))
+        body = body .. L('notify.the_operatives_stakes_in_all_are'):format(Words.dollars(forfeitedTotal, 'before'))
     end
-    tellOrKeep(contract.creator_cid, 'Contract expired', body, { bypassBudget = true }, contract.id)
+    tellOrKeep(contract.creator_cid, L('notify.contract_expired'), body, { bypassBudget = true }, contract.id)
 
     -- The target only when they were told there was a price on their head
     -- at all. Anyone else would learn of a contract from its ending. Worded
@@ -1487,8 +1478,8 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     -- clearContract forgets it): one that ran out inside the wait, its alert
     -- never sent, was the one notice they had of it, and dated it.
     if targetWasTold(contract) and Notify.shownToTarget(contract) then
-        Notify.toCitizen(contract.target_cid, 'Breathing room',
-            'A price on your head has lapsed.')
+        Notify.toCitizen(contract.target_cid, L('notify.breathing_room'),
+            L('notify.a_price_on_your_head_has'))
     end
 end
 
@@ -1498,20 +1489,20 @@ end
 ---@param remaining integer operatives still on it
 function Notify.hitmanLeft(contract, stake, remaining)
     if not contract then return end
-    local body = ('An operative left your contract on %s.')
-        :format(contract.target_name or 'your target')
+    local body = (L('notify.an_operative_left_your_contract_on'))
+        :format(contract.target_name or L('notify.your_target'))
     if (stake or 0) > 0 then
-        body = body .. (' Their %s stake is yours.'):format(Words.dollars(stake, 'before'))
+        body = body .. L('notify.their_stake_is_yours'):format(Words.dollars(stake, 'before'))
     end
     if remaining > 0 then
-        body = body .. (' %d operative%s still on it.')
-            :format(remaining, remaining == 1 and ' is' or 's are')
+        body = body .. (L('notify.operative_still_on_it'))
+            :format(remaining, remaining == 1 and L('notify.is') or L('notify.are'))
     elseif contract.state == CH.STATE.ACTIVE then
-        body = body .. ' It is back on the board.'
+        body = body .. L('notify.it_is_back_on_the_board')
     end
     -- A receipt only when money moved; otherwise it spends the budget like
     -- any other news.
-    tellOrKeep(contract.creator_cid, 'Operative walked away', body,
+    tellOrKeep(contract.creator_cid, L('notify.operative_walked_away'), body,
         { bypassBudget = (stake or 0) > 0 }, contract.id)
 end
 
@@ -1529,12 +1520,11 @@ function Notify.buyoutQueued(contract, hitmanCids, seconds)
     seconds = math.floor(tonumber(seconds) or 0)
     -- Never more time than they have: whole minutes from two up, rounded
     -- down, and seconds below that.
-    local wait = seconds >= 120 and ('%d minutes'):format(seconds // 60)
-        or ('%d seconds'):format(seconds)
-    local body = ('%s is buying their way out of your contract. It closes in %s '
-        .. 'unless you finish it first.'):format(contract.target_name or 'Your target', wait)
+    local wait = seconds >= 120 and L('notify.minutes'):format(seconds // 60)
+        or L('notify.seconds'):format(seconds)
+    local body = L('notify.is_buying_their_way_out_of'):format(contract.target_name or L('notify.your_target_2'), wait)
     for i = 1, #(hitmanCids or {}) do
-        tellOrKeep(hitmanCids[i], 'Contract challenged', body, { bypassBudget = true }, contract.id)
+        tellOrKeep(hitmanCids[i], L('notify.contract_challenged'), body, { bypassBudget = true }, contract.id)
     end
 end
 
@@ -1642,13 +1632,13 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     local title, content
 
     if stage == 'posted' then
-        title = 'THREAT ADVISORY'
-        content = ('A contract has been placed on %s%s.'):format(rank, contract.target_name)
+        title = L('notify.threat_advisory')
+        content = L('notify.a_contract_has_been_placed_on'):format(rank, contract.target_name)
     else
-        title = 'THREAT ADVISORY — ACTIVE'
+        title = L('notify.threat_advisory_active')
         local n = activeHitmen or 1
-        content = ('The contract on %s%s has been accepted. %d operative%s active.')
-            :format(rank, contract.target_name, n, n == 1 and ' is' or 's are')
+        content = (L('notify.the_contract_on_has_been_accepted'))
+            :format(rank, contract.target_name, n, n == 1 and L('notify.is') or L('notify.are'))
     end
 
     -- The targeted officer is skipped here: they are law enforcement and
@@ -1671,13 +1661,13 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     -- this is what they are told instead of it (Notify.advisedTarget).
     if Config.Advisory.AlwaysAlertTarget then
         local whoKnows = Identity.protectedCategory(contract.target_job) == 'law'
-            and 'Your department has been advised.' or 'Law enforcement has been advised.'
+            and L('notify.your_department_has_been_advised') or L('notify.law_enforcement_has_been_advised')
         told[contract.id] = true
         tellOrKeep(contract.target_cid, title,
             stage == 'posted'
-                and ('A contract has been placed on you. ' .. whoKnows)
-                or  ('The contract on you has been accepted. %d operative%s active.')
-                        :format(activeHitmen or 1, (activeHitmen or 1) == 1 and ' is' or 's are'),
+                and (L('notify.a_contract_has_been_placed_on_2') .. whoKnows)
+                or  (L('notify.the_contract_on_you_has_been'))
+                        :format(activeHitmen or 1, (activeHitmen or 1) == 1 and L('notify.is') or L('notify.are')),
             { bypassBudget = true }, contract.id)
     end
 
@@ -1688,7 +1678,7 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
             title = title,
             message = content,
             priority = Config.Advisory.DispatchPriority,
-            caller = 'Criminal Intelligence',
+            caller = L('notify.criminal_intelligence'),
             unique_id = 'ch-' .. contract.id .. '-' .. stage,
         })
     end
@@ -1707,8 +1697,8 @@ function Notify.tipAdvisory(contract)
     if type(contract) ~= 'table' or contract.target_protected ~= true then return 0 end
     if not Notify.advises('tip') then return 0 end
     local rank = contract.target_job and (contract.target_job:upper() .. ' ') or ''
-    local title = 'THREAT ADVISORY — TIP'
-    local content = ("A hitman has been tipped off about %s%s's location and is closing in.")
+    local title = L('notify.threat_advisory_tip')
+    local content = (L('notify.a_hitman_has_been_tipped_off'))
         :format(rank, tostring(contract.target_name))
 
     local recipients = Police.tell(title, content, notTarget(contract))
@@ -1718,7 +1708,7 @@ function Notify.tipAdvisory(contract)
             title = title,
             message = content,
             priority = Config.Advisory.DispatchPriority,
-            caller = 'Criminal Intelligence',
+            caller = L('notify.criminal_intelligence'),
             unique_id = 'ch-' .. contract.id .. '-tip',
         })
     end
@@ -1741,8 +1731,8 @@ function Notify.cancelAdvisory(contract, targetShown)
     if type(contract) ~= 'table' or contract.target_protected ~= true then return 0 end
     if not Notify.advises('cancel') then return 0 end
     local rank = contract.target_job and (contract.target_job:upper() .. ' ') or ''
-    local title = 'THREAT ADVISORY — CANCELLED'
-    local content = ('The contract on %s%s has been called off.')
+    local title = L('notify.threat_advisory_cancelled')
+    local content = (L('notify.the_contract_on_has_been_called'))
         :format(rank, tostring(contract.target_name))
 
     local recipients = Police.tell(title, content, notTarget(contract))
@@ -1750,7 +1740,7 @@ function Notify.cancelAdvisory(contract, targetShown)
     -- The officer it was on, kept for one who is away, as the advisory's
     -- own word to them is.
     if targetShown ~= false then
-        tellOrKeep(contract.target_cid, title, 'The contract on you has been called off.',
+        tellOrKeep(contract.target_cid, title, L('notify.the_contract_on_you_has_been_2'),
             { bypassBudget = true }, contract.id)
     end
 
@@ -1759,7 +1749,7 @@ function Notify.cancelAdvisory(contract, targetShown)
             title = title,
             message = content,
             priority = Config.Advisory.DispatchPriority,
-            caller = 'Criminal Intelligence',
+            caller = L('notify.criminal_intelligence'),
             unique_id = 'ch-' .. contract.id .. '-cancelled',
         })
     end

@@ -65,7 +65,7 @@ function AdminPanel.open(access)
     local already = open
     open = true
     SetNuiFocus(true, true)
-    SendNUIMessage({ type = 'open', access = access })
+    SendNUIMessage({ type = 'open', access = access, locale = CrimsonLocale.language() })
     CreateThread(function()
         for _ = 1, REFOCUS_TIMES do
             Wait(REFOCUS_MS)

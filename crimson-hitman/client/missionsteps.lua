@@ -21,25 +21,28 @@
 
 CrimsonMarkers = {}
 
+--- The words players read (locales/en.lua, Config.Locale; shared/locale.lua).
+local L = CrimsonLocale.t
+
 --- How each kind looks. Sprites and colours are GTA's blip ids (check them in
 --- game; docs/in-game-checklist.md). `area` adds a see-through circle of the
 --- marker's radius under it; `shortRange` shows it only near the player;
 --- `timed` needs the seconds it shows for; `world` stays over a logout; no
 --- `colour` keeps the sprite's own.
 local STYLES = {
-    tip              = { sprite = 1,   colour = 1,  scale = 0.8, name = 'Informant tip', area = true, alpha = 90,
+    tip              = { sprite = 1,   colour = 1,  scale = 0.8, name = L('client.informant_tip'), area = true, alpha = 90,
                          timed = true },
-    meeting          = { sprite = 162, colour = 5,  scale = 0.9, name = 'Meeting point' },
-    kill             = { sprite = 303, colour = 1,  scale = 0.9, name = 'Kill to verify' },
-    handover         = { sprite = 161, colour = 17, scale = 0.8, name = 'Handover', area = true, alpha = 80 },
-    guard            = { sprite = 487, colour = 3,  scale = 0.9, name = 'Protection meeting pin' },
-    disposal_body    = { sprite = 310, colour = 40, scale = 0.9, name = 'Body to collect' },
-    disposal_vehicle = { sprite = 67,  colour = 40, scale = 0.9, name = 'Disposal vehicle' },
-    disposal_drop    = { sprite = 274, colour = 40, scale = 1.0, name = 'Body drop-off' },
-    broker           = { sprite = 280, scale = 0.8, name = 'Broker', shortRange = true, world = true },
-    informant        = { sprite = 480, scale = 0.8, name = 'Informant', shortRange = true, world = true },
-    org_office       = { sprite = 475, scale = 0.7, name = 'Organisation office', shortRange = true },
-    org_spot         = { sprite = 280, scale = 0.7, name = 'Organisation spot', shortRange = true },
+    meeting          = { sprite = 162, colour = 5,  scale = 0.9, name = L('client.meeting_point') },
+    kill             = { sprite = 303, colour = 1,  scale = 0.9, name = L('client.kill_to_verify') },
+    handover         = { sprite = 161, colour = 17, scale = 0.8, name = L('client.handover'), area = true, alpha = 80 },
+    guard            = { sprite = 487, colour = 3,  scale = 0.9, name = L('client.protection_meeting_pin') },
+    disposal_body    = { sprite = 310, colour = 40, scale = 0.9, name = L('client.body_to_collect') },
+    disposal_vehicle = { sprite = 67,  colour = 40, scale = 0.9, name = L('client.disposal_vehicle') },
+    disposal_drop    = { sprite = 274, colour = 40, scale = 1.0, name = L('client.body_drop_off') },
+    broker           = { sprite = 280, scale = 0.8, name = L('client.broker'), shortRange = true, world = true },
+    informant        = { sprite = 480, scale = 0.8, name = L('client.informant'), shortRange = true, world = true },
+    org_office       = { sprite = 475, scale = 0.7, name = L('client.organisation_office'), shortRange = true },
+    org_spot         = { sprite = 280, scale = 0.7, name = L('client.organisation_spot'), shortRange = true },
 }
 CrimsonMarkers.STYLES = STYLES
 
@@ -51,8 +54,8 @@ local SENT_KINDS = {
 }
 
 local ACTIONS = {
-    load = { label = 'Load the body', icon = 'fa-solid fa-truck-ramp-box' },
-    drop = { label = 'Drop off the body', icon = 'fa-solid fa-dolly' },
+    load = { label = L('client.load_the_body'), icon = 'fa-solid fa-truck-ramp-box' },
+    drop = { label = L('client.drop_off_the_body'), icon = 'fa-solid fa-dolly' },
 }
 
 --- What is drawn: [key] = { x, y, z, blips = { handle, ... }, zone, gen }.

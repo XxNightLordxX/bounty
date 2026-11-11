@@ -726,6 +726,7 @@ do
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['Bridge.reset']               = 'when each raise was last said, so a test can say one again',
+        ['Locale.reset']               = 'the languages read and the keys said, so a test can try another',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
         ['OrgSpots.running']           = 'whether the organisation\'s NPC loop runs, so a test can '
             .. 'watch it stop',
@@ -1770,13 +1771,10 @@ do
         codes[value] = name
     end
 
-    -- Comments stripped first: a key pattern anchored on the preceding
-    -- comma cannot see past a comment between the two, and this map is
-    -- heavily commented.
+    -- The page's ERRORS is locales/en.json's "errors" (Translations, X1).
     local messages = {}
-    local mapBlock = (uiSrc:match('var ERRORS%s*=%s*(%b{})') or '')
-        :gsub('/%*.-%*/', ' '):gsub('([^:])//[^\n]*', '%1')
-    for key in mapBlock:gmatch("[{,]%s*([%w_]+)%s*:") do messages[key] = true end
+    local mapBlock = (read('crimson-hitman/locales/en.json') or ''):match('"errors"%s*:%s*(%b{})') or ''
+    for key in mapBlock:gmatch('[{,]%s*"([%w_]+)"%s*:') do messages[key] = true end
 
     local codeCount, messageCount = 0, 0
     for _ in pairs(codes) do codeCount = codeCount + 1 end

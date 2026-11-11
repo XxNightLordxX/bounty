@@ -5,6 +5,16 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Translations** (`Config.Locale`, `'en'` as shipped)
+- The words players and staff read are looked up by key in language files:
+  `locales/en.lua` (notices to players, police advisories, staff alerts and
+  their Discord posts, staff notices, the phone app's icon, map markers and
+  target options) and `locales/en.json` (the phone's and the panel's
+  refusals). Copy both to a language of your own and set `Config.Locale`; a
+  key it lacks reads in English, said once in the console. The wording is
+  unchanged. The pages' other labels and the server's refusal sentences
+  follow in later steps (README, Escrow, and where the words live).
+
 **Organisation extras 3** (each its own switch under `Config.Organisation`, off as shipped)
 - **Several organisations** (`SeveralOrganisations`, `MaxOrganisations`):
   staff add rival organisations in Hitman organisation, Setup; each is its

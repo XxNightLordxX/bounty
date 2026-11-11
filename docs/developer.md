@@ -237,6 +237,23 @@ outside change (`Org.external`), except a removal it cannot be believed about:
 the job kept by name only, `qbx:cleanPlayerGroups` on, or a character that
 loaded before the job was registered this process (`Org.loadedSinceRegister`).
 
+### Translations
+
+Every word players and staff read in the files moved so far is a key:
+server and client Lua call `L('area.key')` (`local L =
+CrimsonBoot.requireShared('locale').t` on the server, `CrimsonLocale.t` on the
+client), which reads `locales/<Config.Locale>.lua` and falls back to
+`locales/en.lua`; the pages call `Text.t('section.key')` or read a whole
+`Text.section(name)` from `locales/<lang>.json`, loaded synchronously as the
+page starts (the phone is told the language by `?lang=` on its address, the
+panel by its open message). Texts keep their `%s`/`%d` and are formatted by
+the caller, so the wording is the same. `tests/locale_spec.lua` checks that
+every key used exists in English and scans the moved files
+(`tests/harness/textscan.lua`) for a sentence written back into code; its
+`ALLOW` list names the literals that read as words and are not shown (a
+console reason, an lb-phone camera mode). Console lines (`Log.*`, `print`,
+`error`) are never scanned: they stay English.
+
 ### The event and handler order
 
 Every net event and callback handler, in `app.lua` and `panel.lua`, runs in

@@ -369,7 +369,9 @@ function serverStub() {
 }
 
 async function main() {
-  const browser = await chromium.launch();
+  // The pages read their words (locales/en.json) from the resource's own
+  // files, as FiveM serves them; file:// needs leave for that.
+  const browser = await chromium.launch({ args: ['--allow-file-access-from-files'] });
 
   // Roughly what lb-phone gives a page. The exact numbers matter less than
   // that it is small: a phone screen inside a game window.

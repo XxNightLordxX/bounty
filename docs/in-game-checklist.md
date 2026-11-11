@@ -750,6 +750,12 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] (step 8b) With body disposal on, the hitman quits the game while Verify kill is answering: back in the city, they still have the body to dispose of
 - [ ] (step 8b) With proof of intent on, a payout left in Stuck escrow: Pay answers "Settled as owed", the line leaves the list, and it is paid once intent is shown
 
+## Translations (X1)
+
+- [ ] With `Config.Locale = 'en'` (as shipped) every notice, map marker, target option and refusal reads exactly as before: place a contract, have it taken and paid, and try a refused action on the phone and in the panel
+- [ ] Copy `locales/en.lua` to `locales/xx.lua` (changing `CrimsonLocales.en` to `CrimsonLocales.xx`) and `locales/en.json` to `locales/xx.json`, change one text in each, set `Config.Locale = 'xx'` and restart: that text reads your words on the phone, in the panel and in the notice; the console says once that `xx` lacks no key (or names the first one it lacks)
+- [ ] With `Config.Locale = 'nonesuch'` the game, the phone and the panel read English, and the console says once that there is no such file
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

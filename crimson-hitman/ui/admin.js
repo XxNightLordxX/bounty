@@ -31,6 +31,69 @@
     || (/^cfx-nui-(.+)$/.exec(String((window.location && window.location.hostname) || '')) || [])[1]
     || 'crimson-hitman';
 
+  /* The words this page shows, by key: locales/en.json (README,
+     Translations), read once as the page loads from this resource's own
+     files. English first, which every key falls back to; then the language
+     the client names (Config.Locale: ?lang= on the phone's address, the
+     panel's open message), over it. A key that language lacks reads in
+     English, and the console says so once; a key English lacks too reads as
+     the key itself (tests/locale_spec.lua keeps that from shipping).
+     Text.section(name) is one section's table, kept and updated in place, so
+     a table read once (ERRORS) follows a language chosen later. */
+  var Text = (function () {
+    function load(lang) {
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '../locales/' + lang + '.json', false);
+        xhr.send(null);
+        if (xhr.status && xhr.status !== 200) { return null; }
+        var parsed = JSON.parse(xhr.responseText);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch (err) { return null; }
+    }
+    var said = {};
+    function warn(message) {
+      if (said[message]) { return; }
+      said[message] = true;
+      try { console.warn('[crimson-hitman] ' + message); } catch (err) { /* no console */ }
+    }
+    var english = load('en');
+    if (!english) {
+      english = {};
+      warn('locales/en.json could not be read: the page shows keys in place of words.');
+    }
+    var sections = {};
+    function section(name) {
+      if (!sections[name]) {
+        var out = {}, from = english[name] || {};
+        Object.keys(from).forEach(function (key) { out[key] = from[key]; });
+        sections[name] = out;
+      }
+      return sections[name];
+    }
+    function use(lang) {
+      if (typeof lang !== 'string' || !/^[A-Za-z_-]+$/.test(lang) || lang === 'en') { return; }
+      var chosen = load(lang);
+      if (!chosen) { warn('there is no locales/' + lang + '.json (Config.Locale); English is used.'); return; }
+      var missing = 0;
+      Object.keys(english).forEach(function (name) {
+        var into = section(name), from = chosen[name] || {};
+        Object.keys(english[name] || {}).forEach(function (key) {
+          if (Object.prototype.hasOwnProperty.call(from, key)) { into[key] = from[key]; } else { missing++; }
+        });
+      });
+      if (missing > 0) { warn(lang + ' lacks ' + missing + ' text(s); those read in English.'); }
+    }
+    function t(key) {
+      var at = String(key).indexOf('.');
+      var value = at > 0 ? section(key.slice(0, at))[key.slice(at + 1)] : undefined;
+      if (typeof value === 'string') { return value; }
+      warn('no text for ' + key + '; the key is shown.');
+      return String(key);
+    }
+    return { t: t, section: section, use: use };
+  })();
+
   /** Every interpolated string goes through this. */
   function esc(value) {
     return String(value == null ? '' : value)
@@ -493,37 +556,13 @@
   /* ---------- requests ------------------------------------------------- */
 
   /** What a refusal says, when the server gave no sentence of its own. */
-  var WORDS = {
-    no_answer: 'The game did not answer that. Try again.',
-    not_allowed: 'Not authorised.',
-    identity_required: 'That needs the identity ACE (Config.Admin.IdentityAce).',
-    rate_limited: 'Slow down: too many requests. Try again in a moment.',
-    timeout: 'The server did not answer in time. Try again.',
-    closed: 'The panel was closed.',
-    invalid_input: 'The server could not read that request.',
-    unknown_op: 'The server does not know that request: is the resource up to date?',
-    admin_off: 'The staff tools are switched off (Config.Admin.Enabled).',
-    server_error: 'That raised an error on the server. Run the diagnosis, under Developer, Health, to read it.',
-    recovering: 'Still recovering from the restart: try again in a moment.',
-    recovery_failed: 'Recovery failed at the last start: restart the resource once the cause in the console is fixed.',
-    not_found: 'Not found.',
-    read_only: 'That setting cannot be changed from the panel.',
-    invalid_value: 'That value is refused.',
-    store_failed: 'The store would not take it. Nothing changed.',
-    store_unknown: 'The store may or may not have kept it; the diagnosis lists it.',
-    not_overridden: 'That setting is what config.lua says already.',
-    busy: 'Another change is being saved right now. Try again in a moment.',
-    no_webhook: 'No Discord webhook is set in server.cfg.',
-    discord_off: 'Posting alerts to Discord is switched off (Alerts.ToDiscord).',
-    unavailable: 'Alerts are not running on this server yet.',
-    photos_on: 'Kill photos are on: turn them off first.'
-  };
+  var WORDS = Text.section('panel_errors');
 
   function words(reply) {
     if (!reply) return WORDS.no_answer;
     if (reply.message) return String(reply.message);
-    if (reply.ok) return 'Done.';
-    return WORDS[reply.err] || 'Not done: the server refused it without saying why. The audit log has the details.';
+    if (reply.ok) return Text.t('panel.done');
+    return WORDS[reply.err] || Text.t('panel.refused_without_saying');
   }
   /** For the tests. */
   window.CH_ADMIN_WORDS = words;
@@ -6958,6 +6997,8 @@
   window.addEventListener('message', function (event) {
     var message = (event && event.data) || {};
     if (message.type === 'open') {
+      // The language the client names (Config.Locale), over English.
+      Text.use(message.locale);
       open(message.access);
     } else if (message.type === 'close') {
       // Closed from the game (Escape there, the resource stopping). One the
