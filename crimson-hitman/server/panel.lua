@@ -28,6 +28,8 @@
 local Util = CrimsonBoot.requireShared('util')
 local Words = CrimsonBoot.requireShared('words')
 local Log = CrimsonBoot.requireShared('log')
+--- The words staff read (locales/en.lua, Config.Locale).
+local L = CrimsonBoot.requireShared('locale').t
 local Measures = CrimsonBoot.require('server.measures')
 
 local Panel = {}
@@ -110,23 +112,23 @@ local OPS = {
 --- a command added without an entry here fails the suite (staff_output_spec).
 Panel.COMMANDS = {
     timeline  = { ops = { 'contract' }, level = READ,
-                  button = 'a row in Contracts, or any contract id: the contract\'s view' },
+                  button = L('panel.a_row_in_contracts_or_any') },
     contracts = { ops = { 'player' }, level = READ, audit = 'admin_contracts',
-                  button = 'Players: Look up' },
+                  button = L('panel.players_look_up') },
     stuck     = { ops = { 'stuck' }, level = READ, audit = 'admin_stuck',
-                  button = 'Stuck escrow' },
-    diagnose  = { ops = { 'diag' }, level = READ, button = 'Tools: Run the diagnosis' },
+                  button = L('panel.stuck_escrow') },
+    diagnose  = { ops = { 'diag' }, level = READ, button = L('panel.tools_run_the_diagnosis') },
     -- The command needs Ace itself; the button, the moderator level too.
     void      = { ops = { 'void' }, level = WRITE, moderator = true, confirm = true, audit = 'admin_void',
-                  button = 'the contract\'s view: Void contract' },
+                  button = L('panel.the_contracts_view_void_contract') },
     settle    = { ops = { 'settle' }, level = WRITE, confirm = true, audit = 'admin_settle_line',
-                  button = 'Stuck escrow, or the contract\'s view: Pay, Pay amount, Return, Delivered' },
+                  button = L('panel.stuck_escrow_or_the_contracts_view') },
     review    = { ops = { 'reviews', 'resolve' }, level = WRITE, confirm = true,
-                  audit = 'review_resolved', button = 'Needs review: Refund, Pay, Dismiss' },
+                  audit = 'review_resolved', button = L('panel.needs_review_refund_pay_dismiss') },
     refresh   = { ops = { 'refresh' }, level = WRITE, confirm = true, audit = 'admin_timers_refreshed',
-                  button = 'Tools: Bring timers forward' },
+                  button = L('panel.tools_bring_timers_forward') },
     whois     = { ops = { 'whois' }, level = IDENTITY, audit = 'admin_identify',
-                  button = 'the contract\'s view, or Players: Whois' },
+                  button = L('panel.the_contracts_view_or_players_whois') },
 }
 Panel.LEVELS = { READ = READ, MOD = MOD, WRITE = WRITE, IDENTITY = IDENTITY, DEVELOPER = DEVELOPER }
 Panel.OPS = OPS
@@ -370,35 +372,28 @@ local function permissionsFor(src)
     local Admin = deps.admin
     local function holds(ace) return IsPlayerAceAllowed(src, ace) and true or false end
     local function grant(ace)
-        return (Admin.howToAuthorise(ace, true):gsub('^Not authorised: this needs the [^.]+ ACE%. ', ''))
+        return (Admin.howToAuthorise(ace, true):gsub(L('panel.not_authorised_this_needs_the_ace'), ''))
     end
     local out = {
-        { ace = Config.Admin.Ace, name = 'Staff ACE (Config.Admin.Ace)', held = holds(Config.Admin.Ace),
-          unlocks = 'Opens this panel and the staff commands, and changes anything: voids, settles, '
-              .. 'reviews, freezes, suspensions, protections, manual payments and every setting. Holders '
-              .. 'see the Developer section too.',
+        { ace = Config.Admin.Ace, name = L('panel.staff_ace_config_admin_ace'), held = holds(Config.Admin.Ace),
+          unlocks = L('panel.opens_this_panel_and_the_staff'),
           grant = grant(Config.Admin.Ace) },
-        { ace = moderatorAce() or 'crimson.moderator', name = 'Moderator ACE (Config.Admin.ModeratorAce)',
+        { ace = moderatorAce() or 'crimson.moderator', name = L('panel.moderator_ace_config_admin_moderatorace'),
           held = moderatorAce() ~= nil and holds(moderatorAce()) or false,
-          unlocks = 'Opens this panel to read everything the staff ACE reads, scrubbed as without the '
-              .. 'identity ACE, and to freeze and unfreeze, suspend, protect, void and move a deadline. '
-              .. 'Never settings, payments, refunds or the Developer section.',
+          unlocks = L('panel.opens_this_panel_to_read_everything'),
           grant = grant(moderatorAce() or 'crimson.moderator') },
-        { ace = Config.Admin.IdentityAce, name = 'Identity ACE (Config.Admin.IdentityAce)',
+        { ace = Config.Admin.IdentityAce, name = L('panel.identity_ace_config_admin_identityace'),
           held = holds(Config.Admin.IdentityAce),
-          unlocks = 'Shows who is behind an anonymous party, and citizen ids, everywhere in the panel; '
-              .. 'every look is on the record. Changes nothing.',
+          unlocks = L('panel.shows_who_is_behind_an_anonymous'),
           grant = grant(Config.Admin.IdentityAce) },
-        { ace = developerAce(), name = 'Developer ACE (Config.Admin.DeveloperAce)', held = holds(developerAce()),
-          unlocks = 'Opens the Developer section: the console, diagnostics, storage, debug and rate limits. '
-              .. 'Holders of the staff ACE see it as well.',
+        { ace = developerAce(), name = L('panel.developer_ace_config_admin_developerace'), held = holds(developerAce()),
+          unlocks = L('panel.opens_the_developer_section_the_console'),
           grant = grant(developerAce()) },
     }
     for _, extra in ipairs(type(Config.Admin.ExtraAces) == 'table' and Config.Admin.ExtraAces or {}) do
         if type(extra) == 'string' then
-            out[#out + 1] = { ace = extra, name = 'Extra ACE (Config.Admin.ExtraAces)', held = holds(extra),
-                unlocks = 'Opens this panel and the staff commands read-only: nothing it opens changes '
-                    .. 'anything.', grant = grant(extra) }
+            out[#out + 1] = { ace = extra, name = L('panel.extra_ace_config_admin_extraaces'), held = holds(extra),
+                unlocks = L('panel.opens_this_panel_and_the_staff_2'), grant = grant(extra) }
         end
     end
     return out
@@ -419,8 +414,7 @@ local function accessFor(src)
         developerAce = developerAce(),
         developerByAce = isDeveloper and deps.admin.allowed(src, developerAce(), true) or false,
         developerHint = isDeveloper and not deps.admin.allowed(src, developerAce(), true)
-            and deps.admin.howToAuthorise(developerAce(), true):gsub('^Not authorised: ', 'To give the '
-                .. 'Developer section to its own people: ') or nil,
+            and deps.admin.howToAuthorise(developerAce(), true):gsub('^Not authorised: ', L('panel.to_give_the_developer_section_to')) or nil,
         permissions = permissionsFor(src),
         pageSize = math.max(5, math.min(100, math.floor(tonumber(Config.Admin.PanelPageSize) or 25))),
         refreshSeconds = math.max(2, math.floor(tonumber(Config.Admin.PanelRefreshSeconds) or 10)),
@@ -471,7 +465,7 @@ local SOURCE_KEYS = { source = true, src = true, serverId = true }
 
 --- How a party's account (a licence) is shown to staff who may not see who
 --- is behind an anonymous party: it is never shown at all.
-local ACCOUNT_SHOWN = '(an account)'
+local ACCOUNT_SHOWN = L('panel.an_account')
 
 --- Every occurrence of each of `needles` in `text`, replaced with what it
 --- maps to, the longest first so one that contains another goes whole.
@@ -509,8 +503,8 @@ end
 local function redactor(canIdentify, contract, hitmen)
     local labels, hidden, needles = {}, {}, {}
     if contract then
-        if contract.target_cid then labels[contract.target_cid] = 'the target' end
-        if contract.creator_cid then labels[contract.creator_cid] = 'the placer' end
+        if contract.target_cid then labels[contract.target_cid] = L('panel.the_target') end
+        if contract.creator_cid then labels[contract.creator_cid] = L('panel.the_placer') end
         if contract.anon_creator == true and contract.creator_name then
             hidden[contract.creator_name] = true
         end
@@ -519,13 +513,13 @@ local function redactor(canIdentify, contract, hitmen)
     end
     for _, hitman in ipairs(hitmen or {}) do
         if hitman.hitman_cid and not labels[hitman.hitman_cid] then
-            labels[hitman.hitman_cid] = ('operative %s'):format(tostring(hitman.alias or '?'))
+            labels[hitman.hitman_cid] = L('panel.operative'):format(tostring(hitman.alias or '?'))
         end
         if hitman.anon == true and hitman.hitman_name then hidden[hitman.hitman_name] = true end
         if hitman.hitman_account then needles[hitman.hitman_account] = ACCOUNT_SHOWN end
     end
     for cid, label in pairs(labels) do needles[cid] = label end
-    for name in pairs(hidden) do needles[name] = 'Anonymous' end
+    for name in pairs(hidden) do needles[name] = L('panel.anonymous') end
 
     local r = { canIdentify = canIdentify }
 
@@ -533,12 +527,12 @@ local function redactor(canIdentify, contract, hitmen)
     function r.who(cid)
         if cid == nil then return nil end
         if canIdentify then return cid end
-        return labels[cid] or '(a player)'
+        return labels[cid] or L('panel.a_player')
     end
 
     --- A creator's or a hitman's name as this staff member may see it.
     function r.name(name, anonymous)
-        if anonymous and not canIdentify then return 'Anonymous' end
+        if anonymous and not canIdentify then return L('panel.anonymous') end
         return name
     end
 
@@ -551,11 +545,11 @@ local function redactor(canIdentify, contract, hitmen)
             for k, inner in pairs(v) do out[k] = value(k, inner) end
             return out
         end
-        if not canIdentify and SOURCE_KEYS[key] and type(v) == 'number' then return '(a player)' end
+        if not canIdentify and SOURCE_KEYS[key] and type(v) == 'number' then return L('panel.a_player') end
         if canIdentify or type(v) ~= 'string' then return v end
         if labels[v] then return labels[v] end
-        if hidden[v] then return 'Anonymous' end
-        if CID_KEYS[key] and v:match('^[%u%d]+$') and #v >= 3 then return '(a player)' end
+        if hidden[v] then return L('panel.anonymous') end
+        if CID_KEYS[key] and v:match('^[%u%d]+$') and #v >= 3 then return L('panel.a_player') end
         -- An error's text as Audit keeps it now: a row stored before it
         -- cleaned them still holds the statement's values.
         if key ~= nil then v = deps.audit.cleaned({ [key] = v })[key] end
@@ -612,21 +606,21 @@ function Panel.scrubText(text, canIdentify, contractId, outside, parties)
     text = redactor(false, contract, hitmen).value(nil, text)
     if outside then
         local names = {}
-        if contract and contract.creator_name then names[contract.creator_name] = 'the placer' end
-        if contract and contract.target_name then names[contract.target_name] = 'the target' end
+        if contract and contract.creator_name then names[contract.creator_name] = L('panel.the_placer') end
+        if contract and contract.target_name then names[contract.target_name] = L('panel.the_target') end
         for _, hitman in ipairs(hitmen or {}) do
             if hitman.hitman_name then
-                names[hitman.hitman_name] = ('operative %s'):format(tostring(hitman.alias or '?'))
+                names[hitman.hitman_name] = L('panel.operative'):format(tostring(hitman.alias or '?'))
             end
         end
-        text = scrubbed(text, names):gsub('https?://%S+', '(a link)')
+        text = scrubbed(text, names):gsub('https?://%S+', L('panel.a_link'))
     end
     for _, prefix in ipairs(ACCOUNT_PREFIXES) do
         text = text:gsub('%f[%w]' .. prefix .. ':[%w%.:]+', ACCOUNT_SHOWN)
     end
     return (text:gsub('%f[%w][%u%d]+%f[%W]', function(word)
         if #word >= 5 and #word <= 32 and word:find('%u') and word:find('%d') then
-            return '(a player)'
+            return L('panel.a_player')
         end
         return word
     end))
@@ -666,7 +660,7 @@ function Panel.withoutSecrets(text)
     end
     text = text:gsub('(%a[%w+.-]*://)([^%s/?#]+)([^%s]*)', function(scheme, host, rest)
         host = host:gsub('^.*@', '')
-        return scheme .. host .. (rest ~= '' and '/(path hidden)' or '')
+        return scheme .. host .. (rest ~= '' and L('panel.path_hidden') or '')
     end)
     text = text:gsub('(api/webhooks/)%S+', '%1(hidden)')
     for _, word in ipairs(PASSWORD_WORDS) do
@@ -715,17 +709,17 @@ local IDENTITY_ONLY = {
     -- server/imp_scrub.lua): it can be traced to the anonymous placer.
     weapon_serial_scrubbed = { original = true },
 }
-local IDENTITY_ONLY_SHOWN = '(identity only)'
+local IDENTITY_ONLY_SHOWN = L('panel.identity_only')
 
 --- Rows whose actor staff without IdentityAce are shown only as what they
 --- were, not as which party: an informant tip (server/intel/tip.lua) says
 --- a hitman bought one, never which operative, since an anonymous hitman's
 --- alias is the one thing that tells two of them apart.
 local ACTOR_SHOWN_AS = {
-    location_tip_bought = { actor = 'a hitman', said = 'a hitman bought an informant tip' },
-    location_tip_refunded = { actor = 'a hitman', said = 'an informant tip was given back' },
-    location_tip_refund_failed = { actor = 'a hitman',
-                                   said = 'an informant tip could not be given back' },
+    location_tip_bought = { actor = L('panel.a_hitman'), said = L('panel.a_hitman_bought_an_informant_tip') },
+    location_tip_refunded = { actor = L('panel.a_hitman'), said = L('panel.an_informant_tip_was_given_back') },
+    location_tip_refund_failed = { actor = L('panel.a_hitman'),
+                                   said = L('panel.an_informant_tip_could_not_be') },
 }
 
 --- One audit row, as the panel shows it.
@@ -816,7 +810,7 @@ local CONSOLE_ONLY = {
 local function diagWarnings()
     local ok, lines = pcall(deps.admin.diagnose, 0, nil, nil, { panel = true })
     if not ok or type(lines) ~= 'table' then
-        return { ('the diagnosis itself raised: %s'):format(Util.dbError(lines)) }
+        return { L('panel.the_diagnosis_itself_raised'):format(Util.dbError(lines)) }
     end
     local out = {}
     for _, line in ipairs(lines) do
@@ -1059,10 +1053,10 @@ end
 H.contract = function(src, data, quiet)
     local Storage = deps.storage
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_contract_id') end
     local contract = Storage.readContract(id)
     local lines = Storage.readEscrow(id) or {}
-    if not contract and #lines == 0 then return false, CH.ERR.NOT_FOUND, 'No contract has that id.' end
+    if not contract and #lines == 0 then return false, CH.ERR.NOT_FOUND, L('panel.no_contract_has_that_id') end
 
     -- The log written first, as the timeline command does: a staff member
     -- looking into something that just happened is asking about the last
@@ -1195,72 +1189,66 @@ end
 --- required, and kept in the log (staff_deadline_adjust).
 H.adjustDeadline = function(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_contract_id') end
     local maxAdjust = adjustLimits()
     local seconds = wholeNumber(data.seconds, -maxAdjust, maxAdjust)
     if not seconds or seconds == 0 then
-        return false, CH.ERR.INVALID_INPUT, ('Give a whole number of seconds, not zero, of at most %s '
-            .. 'either way (Config.Limits.StaffDeadlineMaxAdjustSeconds).'):format(exactSpan(maxAdjust))
+        return false, CH.ERR.INVALID_INPUT, L('panel.give_a_whole_number_of_seconds'):format(exactSpan(maxAdjust))
     end
     local reason = shortText(data.reason, 120)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
 
     local ok, err, detail = deps.admin.adjustDeadline(src, id, seconds, reason)
     if not ok then
         if err == 'recovering' or err == 'recovery_failed' then return false, err, deps.admin.notRecovered() end
-        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
+        if err == CH.ERR.NOT_FOUND then return false, err, L('panel.no_contract_has_that_id') end
         if err == CH.ERR.BAD_STATE then
-            return false, err, 'Only a live contract (active or accepted) has a deadline to move.'
+            return false, err, L('panel.only_a_live_contract_active_or')
         end
-        if err == 'no_deadline' then return false, err, 'That contract has no deadline to move.' end
+        if err == 'no_deadline' then return false, err, L('panel.that_contract_has_no_deadline_to') end
         if err == 'min_left' then
             if (detail.most or 0) <= 0 then
-                return false, err, ('Not shortened: it has %s left, and at least %s must remain '
-                    .. '(Config.Limits.StaffDeadlineMinLeftSeconds). It cannot be shortened now.')
+                return false, err, (L('panel.not_shortened_it_has_left_and'))
                     :format(exactSpan(detail.left), exactSpan(detail.minLeft))
             end
-            return false, err, ('Not shortened: it has %s left, and at least %s must remain '
-                .. '(Config.Limits.StaffDeadlineMinLeftSeconds). The most you can shorten it by is %s.')
+            return false, err, (L('panel.not_shortened_it_has_left_and_2'))
                 :format(exactSpan(detail.left), exactSpan(detail.minLeft), exactSpan(detail.most))
         end
         if err == 'at_limit' then
-            return false, err, ('Not extended: its lifetime is already %s from now '
-                .. '(Config.Limits.ContractLifetimeSeconds), and the deadline is at it.')
+            return false, err, (L('panel.not_extended_its_lifetime_is_already'))
                 :format(exactSpan(Config.Limits.ContractLifetimeSeconds))
         end
         if err == 'bad_adjust' then
-            return false, CH.ERR.INVALID_INPUT, ('At most %s either way '
+            return false, CH.ERR.INVALID_INPUT, (L('panel.at_most_either_way')
                 .. '(Config.Limits.StaffDeadlineMaxAdjustSeconds).'):format(exactSpan(maxAdjust))
         end
         if err == CH.ERR.LOCKED then
-            return false, err, 'The deadline was moving as you asked (a pause ending). Try again.'
+            return false, err, L('panel.the_deadline_was_moving_as_you')
         end
-        return false, err, 'Not changed: the store did not take it. Try again in a moment.'
+        return false, err, L('panel.not_changed_the_store_did_not')
     end
 
     local moved = math.abs(detail.seconds)
     local message
     if detail.seconds > 0 then
-        message = ('Extended by %s: %s left before, %s left now.')
+        message = (L('panel.extended_by_left_before_left_now'))
             :format(exactSpan(moved), exactSpan(detail.left_before), exactSpan(detail.left_after))
         if detail.lifetime == 'extended' then
-            message = message .. (' The new deadline passed its lifetime, so the lifetime was '
-                .. 'extended by %s too.'):format(exactSpan(moved))
+            message = message .. L('panel.the_new_deadline_passed_its_lifetime'):format(exactSpan(moved))
         elseif detail.lifetime == 'capped' then
-            message = message .. (' The new deadline passed its lifetime, so the lifetime was '
-                .. 'extended to its most, %s from now (Config.Limits.ContractLifetimeSeconds)%s.')
+            message = message .. (L('panel.the_new_deadline_passed_its_lifetime_2'))
                 :format(exactSpan(Config.Limits.ContractLifetimeSeconds),
-                    moved < detail.requested and (', and the deadline only as far as it: %s of the %s asked')
+                    moved < detail.requested and (L('panel.and_the_deadline_only_as_far'))
                         :format(exactSpan(moved), exactSpan(detail.requested)) or '')
         end
     else
-        message = ('Shortened by %s: %s left before, %s left now.')
+        message = (L('panel.shortened_by_left_before_left_now'))
             :format(exactSpan(moved), exactSpan(detail.left_before), exactSpan(detail.left_after))
     end
     if detail.paused then
-        message = message .. ' Its clock is stopped now; it runs down from there once it runs again.'
+        message = message .. L('panel.its_clock_is_stopped_now_it')
     end
-    message = message .. ' Every party was told its time changed, with no figures.'
+    message = message .. L('panel.every_party_was_told_its_time')
     return true, nil, message, {
         seconds = detail.seconds, leftBefore = detail.left_before, leftAfter = detail.left_after,
         deadline = detail.new_deadline, lifetime = detail.lifetime, expires = detail.new_expires,
@@ -1269,7 +1257,7 @@ end
 
 H.void = function(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_contract_id') end
     local reason = shortText(data.reason, 120)
     local ok, err, detail = deps.admin.void(src, id, reason)
     return ok, err, deps.admin.voidAnswer(id, ok, err, true, detail), { detail = detail }
@@ -1279,23 +1267,23 @@ local DISPOSITIONS = { pay = true, ['return'] = true, delivered = true }
 
 H.settle = function(src, data)
     local line = Util.toLineId(data.line)
-    if not line then return false, CH.ERR.INVALID_INPUT, 'Give an escrow line id.' end
+    if not line then return false, CH.ERR.INVALID_INPUT, L('panel.give_an_escrow_line_id') end
     local disposition = DISPOSITIONS[data.disposition] and data.disposition or nil
     if not disposition then
-        return false, CH.ERR.INVALID_INPUT, 'Say pay, return or delivered.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.say_pay_return_or_delivered')
     end
     local extra
     if disposition == 'pay' and data.amount ~= nil then
         extra = wholeNumber(data.amount, 1, 1000000000)
         if not extra then
-            return false, CH.ERR.INVALID_INPUT, 'An amount is a whole number of at least 1.'
+            return false, CH.ERR.INVALID_INPUT, L('panel.an_amount_is_a_whole_number')
         end
     elseif disposition == 'return' and data.owner ~= nil then
         -- Checked by the settle itself, as the command's is: in the form the
         -- server keeps it, and only one somebody here has
         -- (Admin.knownCitizenId).
         extra = Util.toCitizenId(data.owner)
-        if not extra then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
+        if not extra then return false, CH.ERR.INVALID_INPUT, L('panel.that_is_not_a_citizen_id') end
     end
     local ok, err, detail = deps.admin.settleLine(src, line, disposition, extra)
     return ok, err, deps.admin.settleAnswer(ok, err, detail, true), { detail = detail }
@@ -1330,9 +1318,9 @@ local REVIEW_ACTIONS = { refund = true, pay = true, dismiss = true, finish = tru
 
 H.resolve = function(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a review item id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_review_item_id') end
     local action = REVIEW_ACTIONS[data.action] and data.action or nil
-    if not action then return false, CH.ERR.INVALID_INPUT, 'Say refund, pay, dismiss or finish.' end
+    if not action then return false, CH.ERR.INVALID_INPUT, L('panel.say_refund_pay_dismiss_or_finish') end
     -- Built into the words the command takes, so it is resolved by exactly
     -- the path /ch-review resolves it by (Admin.resolveReview).
     local args = { action }
@@ -1356,7 +1344,7 @@ H.resolve = function(src, data)
             else
                 local amount = wholeNumber(data.amount, 1, 1000000000)
                 if not amount then
-                    return false, CH.ERR.INVALID_INPUT, 'An amount is a whole number of at least 1.'
+                    return false, CH.ERR.INVALID_INPUT, L('panel.an_amount_is_a_whole_number')
                 end
                 args[3] = tostring(amount)
                 if data.account ~= nil then
@@ -1402,7 +1390,7 @@ local OPEN_SEARCH_READS = 10
 H.logs = function(src, data)
     if data.area ~= nil and data.area ~= 'audit' then
         local area = type(data.area) == 'string' and LOG_AREAS[data.area] or nil
-        if not area then return false, CH.ERR.INVALID_INPUT, 'There is no such log.' end
+        if not area then return false, CH.ERR.INVALID_INPUT, L('panel.there_is_no_such_log') end
         return area(src, data)
     end
     local canIdentify = identifies(src)
@@ -1414,11 +1402,11 @@ H.logs = function(src, data)
         to = wholeNumber(data.to, 0),
     }
     if data.contract ~= nil and not filter.contract then
-        return false, CH.ERR.INVALID_INPUT, 'That is not a contract id.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.that_is_not_a_contract_id')
     end
     if data.actor ~= nil then
         filter.actor = typedCitizenId(data.actor)
-        if not filter.actor then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
+        if not filter.actor then return false, CH.ERR.INVALID_INPUT, L('panel.that_is_not_a_citizen_id') end
     end
     local openly = filter.actor ~= nil and not canIdentify
     local limit = math.min(LOG_ROWS_MAX, wholeNumber(data.limit, 1, LOG_ROWS_MAX) or pageSize())
@@ -1445,7 +1433,7 @@ H.logs = function(src, data)
         if data.cursor ~= nil then
             local page = cursor and openPages[src] and openPages[src][cursor] or nil
             if not page or page.key ~= key then
-                return false, CH.ERR.INVALID_INPUT, 'That page of the search has run out. Search again.'
+                return false, CH.ERR.INVALID_INPUT, L('panel.that_page_of_the_search_has')
             end
             for i = 1, #page.rows do kept[i] = page.rows[i] end
             raw, done = page.raw, page.done
@@ -1512,31 +1500,29 @@ end
 local function contractParty(subject, canIdentify)
     local id, role, rest = subject:match('^contract:([%w_%-]+):(%a+):?(.*)$')
     id = id and Util.toId(id)
-    if not id then return nil, CH.ERR.INVALID_INPUT, 'That is not a party to a contract.' end
+    if not id then return nil, CH.ERR.INVALID_INPUT, L('panel.that_is_not_a_party_to') end
     local contract = deps.storage.readContract(id)
-    if not contract then return nil, CH.ERR.NOT_FOUND, 'No contract has that id.' end
+    if not contract then return nil, CH.ERR.NOT_FOUND, L('panel.no_contract_has_that_id') end
     local cid
     if role == 'target' then
         cid = contract.target_cid
     elseif role == 'client' then
         if contract.anon_creator == true and not canIdentify then
-            return nil, CH.ERR.NOT_PARTICIPANT, 'The placer placed it anonymously: only staff with '
-                .. 'the identity permission may look them up.'
+            return nil, CH.ERR.NOT_PARTICIPANT, L('panel.the_placer_placed_it_anonymously_only')
         end
         cid = contract.creator_cid
     elseif role == 'op' and rest ~= '' then
         for _, hitman in ipairs(deps.storage.readHitmen(id) or {}) do
             if tostring(hitman.id) == rest then
                 if hitman.anon == true and not canIdentify then
-                    return nil, CH.ERR.NOT_PARTICIPANT, 'That operative took it anonymously: only '
-                        .. 'staff with the identity permission may look them up.'
+                    return nil, CH.ERR.NOT_PARTICIPANT, L('panel.that_operative_took_it_anonymously_only')
                 end
                 cid = hitman.hitman_cid
                 break
             end
         end
     end
-    if not cid then return nil, CH.ERR.NOT_FOUND, 'Nobody on that contract matches.' end
+    if not cid then return nil, CH.ERR.NOT_FOUND, L('panel.nobody_on_that_contract_matches') end
     return { cid = cid, actor = deps.identity.byCitizenId(cid), viaContract = true }
 end
 
@@ -1550,7 +1536,7 @@ end
 local function byName(text, canIdentify)
     -- A name has letters in it; anything else is not one.
     if not text:find('%a') then
-        return nil, CH.ERR.INVALID_INPUT, 'Give a player id, a citizen id or a name.'
+        return nil, CH.ERR.INVALID_INPUT, L('panel.give_a_player_id_a_citizen')
     end
     local needle = text:lower()
     local order, seen = {}, {}
@@ -1575,11 +1561,10 @@ local function byName(text, canIdentify)
         end
     end
     if #order == 0 then
-        return nil, CH.ERR.NOT_FOUND, 'Nobody by that name is in the city or on a contract you may see.'
+        return nil, CH.ERR.NOT_FOUND, L('panel.nobody_by_that_name_is_in')
     end
     if #order > 1 then
-        return nil, CH.ERR.INVALID_INPUT, ('%d people match that name: give more of it, or their '
-            .. 'player id.'):format(#order)
+        return nil, CH.ERR.INVALID_INPUT, L('panel.people_match_that_name_give_more'):format(#order)
     end
     local cid = order[1]
     return { cid = cid, actor = seen[cid] or deps.identity.byCitizenId(cid), byName = true }
@@ -1600,17 +1585,17 @@ local function playerSubject(subject, src)
     if serverId then
         local actor = deps.identity.resolve(serverId)
         if not actor then
-            return nil, CH.ERR.NOT_FOUND, 'Nobody with that player id is online. Give their citizen id instead.'
+            return nil, CH.ERR.NOT_FOUND, L('panel.nobody_with_that_player_id_is')
         end
         return { cid = actor.cid, actor = actor }
     end
     if type(subject) ~= 'string' then
-        return nil, CH.ERR.INVALID_INPUT, 'Give a player id, a citizen id or a name.'
+        return nil, CH.ERR.INVALID_INPUT, L('panel.give_a_player_id_a_citizen')
     end
     local canIdentify = src ~= nil and identifies(src)
     if subject:sub(1, 9) == 'contract:' then return contractParty(subject:sub(1, 96), canIdentify) end
     local text = shortText(subject, 64)
-    if not text then return nil, CH.ERR.INVALID_INPUT, 'Give a player id, a citizen id or a name.' end
+    if not text then return nil, CH.ERR.INVALID_INPUT, L('panel.give_a_player_id_a_citizen') end
     local cid = typedCitizenId(text)
     if cid then
         local actor = deps.identity.byCitizenId(cid)
@@ -1628,7 +1613,7 @@ end
 
 --- What a write says when its lookup handle is not this staff member's,
 --- has run out, or never was.
-local STALE_LOOKUP = 'That lookup is out of date, so nothing was changed. Look them up again.'
+local STALE_LOOKUP = L('panel.that_lookup_is_out_of_date')
 
 --- A handle for the character a lookup found, for this staff member only.
 --- None for a staff member with no character: a handle names who it was
@@ -1887,7 +1872,7 @@ H.contracts = function(src, data)
             rule = Util.fulfilmentRule(contract), created_at = contract.created_at,
             deadline_at = contract.deadline_at, resolved_at = contract.resolved_at,
             resolution = contract.resolution, target = contract.target_name,
-            client = (contract.anon_creator == true and not canIdentify) and 'Anonymous'
+            client = (contract.anon_creator == true and not canIdentify) and L('panel.anonymous')
                 or contract.creator_name,
             anonymous = contract.anon_creator == true,
             slots = contract.payout_slots, claimed = contract.slots_claimed,
@@ -1928,8 +1913,7 @@ local function writeSubject(data, src)
     local text = type(subject) == 'string' and shortText(subject, 64) or nil
     local cid = text and not text:match('^%d+$') and typedCitizenId(text) or nil
     if not cid then
-        return nil, CH.ERR.INVALID_INPUT, 'Look the player up first, then act from their card: a change '
-            .. 'names them by that lookup or by their exact citizen id, never by a name or a player id.'
+        return nil, CH.ERR.INVALID_INPUT, L('panel.look_the_player_up_first_then')
     end
     return { cid = cid, actor = deps.identity.byCitizenId(cid), typed = true }
 end
@@ -2064,8 +2048,7 @@ H.player = function(src, data)
         + (stats.survived or 0)) > 0
     if typedCid and not actor and not name and #contracts == 0 and #owed == 0 and pending == 0
         and notices == 0 and not recorded then
-        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and nothing you may '
-            .. 'see here names it. Check how it is spelt.'
+        return false, CH.ERR.NOT_FOUND, L('panel.nobody_in_the_city_has_that')
     end
 
     return true, nil, nil, {
@@ -2109,7 +2092,7 @@ end
 H.measures = function(src, data)
     local kind = data.kind
     if kind ~= nil and not Measures.known(kind) then
-        return false, CH.ERR.INVALID_INPUT, 'No such measure.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.no_such_measure')
     end
     return true, nil, nil, { rows = Measures.list(kind, identifies(src)), kinds = Measures.KINDS }
 end
@@ -2119,53 +2102,51 @@ end
 local function listedSubject(data, src)
     local listed, cid = Measures.fromRef(data.ref)
     if listed then
-        if not cid then return nil, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the list.' end
+        if not cid then return nil, CH.ERR.NOT_FOUND, L('panel.that_row_is_gone_refresh_the') end
         return { cid = cid, actor = deps.identity.byCitizenId(cid) }
     end
     return writeSubject(data, src)
 end
 
 H.freeze = function(src, data)
-    if not deps.holds then return false, 'unavailable', 'Freezing is not available on this server.' end
+    if not deps.holds then return false, 'unavailable', L('panel.freezing_is_not_available_on_this') end
     local reason = shortText(data.reason, 120)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
     local who, whoErr, whoMessage = writeSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local cid, actor = who.cid, who.actor
     if not actor and deps.identity.characterExists(cid) == false
         and #(deps.storage.contractsInvolving(cid) or {}) == 0 then
-        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character '
-            .. 'has it. Check how it is spelt.'
+        return false, CH.ERR.NOT_FOUND, L('panel.nobody_in_the_city_has_that_2')
     end
     local name = actor and actor.name or (who.typed and cid) or nil
     local staffCid = staffOf(src)
     local ok, err = Measures.apply('freeze', staffCid, cid, { reason = reason, name = name })
     if not ok then
-        if err == 'already_frozen' then return false, err, 'They are already frozen.' end
+        if err == 'already_frozen' then return false, err, L('panel.they_are_already_frozen') end
         if err == CH.ERR.BUSY then
-            return false, err, 'A freeze or release of them is still being saved. Try again in a moment.'
+            return false, err, L('panel.a_freeze_or_release_of_them')
         end
-        return false, err, 'Not frozen: the store did not take it. Try again in a moment.'
+        return false, err, L('panel.not_frozen_the_store_did_not')
     end
-    return true, nil, ('%s is frozen. Every live contract they are party to is on hold until you '
-        .. 'unfreeze them; nothing on those contracts moves meanwhile.')
-        :format(name or 'They'), { frozen = freezeView(cid, identifies(src)) }
+    return true, nil, (L('panel.is_frozen_every_live_contract_they'))
+        :format(name or L('panel.they')), { frozen = freezeView(cid, identifies(src)) }
 end
 
 H.unfreeze = function(src, data)
-    if not deps.holds then return false, 'unavailable', 'Freezing is not available on this server.' end
+    if not deps.holds then return false, 'unavailable', L('panel.freezing_is_not_available_on_this') end
     -- A row of the measures list ('f' handles), or the player looked up.
     local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Measures.lift('freeze', staffOf(src), who.cid, shortText(data.reason, 120))
     if not ok then
-        if err == 'not_frozen' then return false, err, 'They are not frozen.' end
+        if err == 'not_frozen' then return false, err, L('panel.they_are_not_frozen') end
         if err == CH.ERR.BUSY then
-            return false, err, 'A freeze or release of them is still being saved. Try again in a moment.'
+            return false, err, L('panel.a_freeze_or_release_of_them')
         end
-        return false, err, 'Not unfrozen: the store did not take it. Try again in a moment.'
+        return false, err, L('panel.not_unfrozen_the_store_did_not')
     end
-    return true, nil, 'Unfrozen. Their contracts run again, with the time on hold given back.'
+    return true, nil, L('panel.unfrozen_their_contracts_run_again_with')
 end
 
 --- Set or reset one character's counted playtime (Players, under the
@@ -2174,11 +2155,11 @@ end
 --- player as they looked them up, and nothing here says who they are.
 H.setPlaytime = function(src, data)
     if not deps.playtime then
-        return false, 'unavailable', 'Playtime is not counted on this server.'
+        return false, 'unavailable', L('panel.playtime_is_not_counted_on_this')
     end
     local hours = tonumber(data.hours)
     if not hours or hours ~= hours or hours < 0 or hours > 100000 then
-        return false, CH.ERR.INVALID_INPUT, 'Hours are a number from 0 to 100000.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.hours_are_a_number_from_0')
     end
     local who, whoErr, whoMessage = writeSubject(data, src)
     if not who then return false, whoErr, whoMessage end
@@ -2187,8 +2168,7 @@ H.setPlaytime = function(src, data)
     -- somebody who does not exist.
     if not actor and deps.identity.characterExists(cid) == false
         and not deps.playtime.view(cid).counted then
-        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character '
-            .. 'has it. Check how it is spelt.'
+        return false, CH.ERR.NOT_FOUND, L('panel.nobody_in_the_city_has_that_2')
     end
     -- To a tenth of an hour, as the panel shows hours, so what it says it
     -- set is what it set.
@@ -2200,33 +2180,32 @@ H.setPlaytime = function(src, data)
             :format(cid, Util.dbError(before)))
         local unanswered = deps.storage.timedOut and deps.storage.timedOut(before)
         return false, unanswered and CH.ERR.DB_TIMEOUT or CH.ERR.SERVER_ERROR,
-            'Not changed: their counted time could not be read from the store. Try again in a moment.'
+            L('panel.not_changed_their_counted_time_could')
     end
     local after = tenths / 10
     deps.audit.staff('admin_playtime_set', staffOf(src), nil,
         { subject = cid, hours = after, before = before, reset = seconds == 0 or nil })
 
     local view = playtimeView(cid, actor)
-    local name = actor and actor.name or (who.typed and cid) or 'This character'
+    local name = actor and actor.name or (who.typed and cid) or L('panel.this_character')
     local parts = {
-        seconds == 0 and ('%s\'s counted playtime is reset to 0 h (it was %s).'):format(name, Words.hours(before, true))
-            or ('%s\'s counted playtime is now %s (it was %s).'):format(name, Words.hours(after, true), Words.hours(before, true)),
+        seconds == 0 and L('panel.ss_counted_playtime_is_reset_to'):format(name, Words.hours(before, true))
+            or L('panel.ss_counted_playtime_is_now_it'):format(name, Words.hours(after, true), Words.hours(before, true)),
     }
     -- Grandfathered counts only where the tracker is what the rule reads
     -- (Identity.playtimeHours): an export or QBox metadata answering for
     -- them decides by its own hours, as /ch-diag says.
     local tracked = view and (view.from == nil or view.from == 'tracker')
     if tracked and view.grandfathered then
-        parts[#parts + 1] = 'They are grandfathered (from before the tracker), so they count as having '
-            .. 'played enough whatever their hours say.'
+        parts[#parts + 1] = L('panel.they_are_grandfathered_from_before_the')
     end
     if view and view.from == 'provider' then
-        parts[#parts + 1] = 'The playtime rule reads your playtime export for them, not these hours.'
+        parts[#parts + 1] = L('panel.the_playtime_rule_reads_your_playtime')
     elseif view and view.from == 'metadata' then
-        parts[#parts + 1] = 'The playtime rule reads their QBox metadata for them, not these hours.'
+        parts[#parts + 1] = L('panel.the_playtime_rule_reads_their_qbox')
     end
     if not written then
-        parts[#parts + 1] = 'The store did not take it yet; it is written with the next pass, within a minute.'
+        parts[#parts + 1] = L('panel.the_store_did_not_take_it')
     end
     return true, nil, table.concat(parts, ' '), { playtime = view }
 end
@@ -2234,7 +2213,7 @@ end
 H.whois = function(src, data)
     local who, err = deps.admin.identify(src, data.id)
     if not who then
-        return false, err, err == CH.ERR.NOT_FOUND and 'No contract has that id.' or 'Give a contract id.'
+        return false, err, err == CH.ERR.NOT_FOUND and L('panel.no_contract_has_that_id') or L('panel.give_a_contract_id')
     end
     return true, nil, nil, who
 end
@@ -2340,21 +2319,19 @@ end
 --- once, without the start's own correction, and says which other key to
 --- change first where one is in the way (Settings.check).
 local function settingRefusal(key, err, why)
-    if err == 'not_allowed' then return 'Not a setting the panel may change.' end
-    if err == 'read_only' then return ('Not changed: %s'):format(tostring(why)) end
-    if err == 'not_overridden' then return ('%s is what config.lua says already.'):format(key) end
+    if err == 'not_allowed' then return L('panel.not_a_setting_the_panel_may') end
+    if err == 'read_only' then return L('panel.not_changed'):format(tostring(why)) end
+    if err == 'not_overridden' then return L('panel.is_what_config_lua_says_already'):format(key) end
     if err == CH.ERR.BUSY then
-        return 'Not changed: another change to the settings is being saved. Try again in a moment.'
+        return L('panel.not_changed_another_change_to_the')
     end
     if err == 'store_failed' then
-        return ('Not changed: the store would not take it (%s). Nothing changed.'):format(tostring(why))
+        return L('panel.not_changed_the_store_would_not'):format(tostring(why))
     end
     if err == 'store_unknown' then
-        return ('Not sure it was kept: the store raised (%s), and reading it back raised too, so it '
-            .. 'may or may not hold the change; the diagnosis lists it. What was in force still is: '
-            .. 'set it again once the store answers.'):format(tostring(why))
+        return L('panel.not_sure_it_was_kept_the'):format(tostring(why))
     end
-    return ('Not changed: %s.'):format(tostring(why))
+    return L('panel.not_changed_2'):format(tostring(why))
 end
 
 --- The start's warnings about a value, said with the change: they refuse
@@ -2367,38 +2344,38 @@ end
 
 H.setSetting = function(src, data)
     local key = type(data.key) == 'string' and #data.key <= 64 and data.key or nil
-    if not key then return false, CH.ERR.INVALID_INPUT, 'Name a setting.' end
+    if not key then return false, CH.ERR.INVALID_INPUT, L('panel.name_a_setting') end
     local cid, who = staffOf(src)
     local ok, err, detail = deps.settings.set(key, data.value, who, cid)
     if not ok then return false, err, settingRefusal(key, err, detail) end
     if detail.unchanged then
-        return true, nil, ('%s is %s already; nothing changed.%s')
+        return true, nil, (L('panel.is_already_nothing_changed'))
             :format(key, deps.settings.describe(detail.value), warned(detail)), detail
     end
     local entry = deps.settings.entry(key)
-    return true, nil, ('%s is now %s%s.%s'):format(key, deps.settings.describe(detail.value),
-        detail.source == 'config' and ' (what config.lua says)'
-            or ((entry and entry.live == false) and '; applies after restart' or ''),
+    return true, nil, L('panel.is_now'):format(key, deps.settings.describe(detail.value),
+        detail.source == 'config' and L('panel.what_config_lua_says')
+            or ((entry and entry.live == false) and L('panel.applies_after_restart') or ''),
         warned(detail)), detail
 end
 
 H.resetSetting = function(src, data)
     local key = type(data.key) == 'string' and #data.key <= 64 and data.key or nil
-    if not key then return false, CH.ERR.INVALID_INPUT, 'Name a setting.' end
+    if not key then return false, CH.ERR.INVALID_INPUT, L('panel.name_a_setting') end
     local cid, who = staffOf(src)
     local ok, err, detail = deps.settings.reset(key, who, cid)
     if not ok then return false, err, settingRefusal(key, err, detail) end
     if detail.removed then
-        return true, nil, ('%s is out of the store; nothing in force changed.'):format(key), detail
+        return true, nil, L('panel.is_out_of_the_store_nothing'):format(key), detail
     end
-    return true, nil, ('%s is back to what config.lua says (%s).')
+    return true, nil, (L('panel.is_back_to_what_config_lua'))
         :format(key, deps.settings.describe(detail.value)), detail
 end
 
 --- Every preset, each with the changes it would make now and what the
 --- server would refuse: nothing changes by reading them.
 H.presets = function()
-    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    if not deps.presets then return false, 'unavailable', L('panel.presets_are_not_running_on_this') end
     return true, nil, nil, { presets = deps.presets.list() }
 end
 
@@ -2406,22 +2383,21 @@ end
 --- changes). Each change is a setting change of its own: audited, in
 --- Change history with its Undo; Current is saved first.
 H.presetApply = function(src, data)
-    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    if not deps.presets then return false, 'unavailable', L('panel.presets_are_not_running_on_this') end
     local name = shortText(data.name, 32)
-    if not name then return false, CH.ERR.INVALID_INPUT, 'Name a preset.' end
+    if not name then return false, CH.ERR.INVALID_INPUT, L('panel.name_a_preset') end
     local cid, who = staffOf(src)
     local ok, err, detail = deps.presets.apply(name, who, cid)
     if not ok then return false, err, detail end
     local refused = #detail.refused
-    return true, nil, ('%s applied: %d setting%s changed%s. Each is in Change history with Undo; '
-        .. 'Current holds what they were.'):format(name, #detail.applied, #detail.applied == 1 and '' or 's',
-        refused > 0 and (', %d left as they were (the preview says why)'):format(refused) or ''), detail
+    return true, nil, L('panel.applied_setting_changed_each_is_in'):format(name, #detail.applied, #detail.applied == 1 and '' or 's',
+        refused > 0 and L('panel.left_as_they_were_the_preview'):format(refused) or ''), detail
 end
 
 --- The first-start setup screen: storage, the other scripts, the ACE lines,
 --- the panel command and the key switches, each at the value in force.
 H.setup = function(src)
-    if not deps.setup then return false, 'unavailable', 'The setup is not running on this server.' end
+    if not deps.setup then return false, 'unavailable', L('panel.the_setup_is_not_running_on') end
     return true, nil, nil, deps.setup.view(permissionsFor(src))
 end
 
@@ -2442,9 +2418,9 @@ end
 
 --- What applying the setup's values would change: nothing changes here.
 H.setupPreview = function(_, data)
-    if not deps.setup then return false, 'unavailable', 'The setup is not running on this server.' end
+    if not deps.setup then return false, 'unavailable', L('panel.the_setup_is_not_running_on') end
     local values = setupValues(data)
-    if not values then return false, CH.ERR.INVALID_INPUT, 'The setup sent something it should not.' end
+    if not values then return false, CH.ERR.INVALID_INPUT, L('panel.the_setup_sent_something_it_should') end
     local preview = deps.setup.preview(values)
     for _, change in ipairs(preview.changes) do change.value = nil end
     return true, nil, nil, preview
@@ -2454,32 +2430,31 @@ end
 --- of its own, audited and in Change history with its Undo, and the setup
 --- saved as done.
 H.setupApply = function(src, data)
-    if not deps.setup then return false, 'unavailable', 'The setup is not running on this server.' end
+    if not deps.setup then return false, 'unavailable', L('panel.the_setup_is_not_running_on') end
     local values = setupValues(data)
-    if not values then return false, CH.ERR.INVALID_INPUT, 'The setup sent something it should not.' end
+    if not values then return false, CH.ERR.INVALID_INPUT, L('panel.the_setup_sent_something_it_should') end
     local cid, who = staffOf(src)
     local ok, err, detail = deps.setup.apply(values, who, cid)
     if not ok then return false, err, detail end
     local refused = #detail.refused
-    return true, nil, ('Setup saved: %d setting%s changed%s. Each is in Change history with Undo; it opens '
-        .. 'again from Developer, First-start setup.'):format(#detail.applied, #detail.applied == 1 and '' or 's',
-        refused > 0 and (', %d left as they were (the preview says why)'):format(refused) or ''), detail
+    return true, nil, L('panel.setup_saved_setting_changed_each_is'):format(#detail.applied, #detail.applied == 1 and '' or 's',
+        refused > 0 and L('panel.left_as_they_were_the_preview'):format(refused) or ''), detail
 end
 
 --- Keep the settings presets name, as they are now, as Current.
 H.presetSave = function(src)
-    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    if not deps.presets then return false, 'unavailable', L('panel.presets_are_not_running_on_this') end
     local cid, who = staffOf(src)
     local ok, err = deps.presets.saveCurrent(who)
-    if not ok then return false, err, 'The store did not take it; nothing was saved. Try again.' end
+    if not ok then return false, err, L('panel.the_store_did_not_take_it_2') end
     deps.audit.staff('admin_preset_saved', cid, nil, { preset = 'Current', by = who })
-    return true, nil, 'Saved: Current holds the settings the presets name, as they are now.'
+    return true, nil, L('panel.saved_current_holds_the_settings_the')
 end
 
 --- Save the settings changed from the panel now as a preset of the
 --- server's own, under a name (two clicks on the page).
 H.presetSaveOwn = function(src, data)
-    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    if not deps.presets then return false, 'unavailable', L('panel.presets_are_not_running_on_this') end
     local cid, who = staffOf(src)
     local name = type(data.name) == 'string' and data.name:sub(1, 64) or nil
     local ok, err, message = deps.presets.saveOwn(name, who, cid)
@@ -2488,7 +2463,7 @@ end
 
 --- Delete a preset of the server's own (two clicks on the page).
 H.presetDelete = function(src, data)
-    if not deps.presets then return false, 'unavailable', 'Presets are not running on this server.' end
+    if not deps.presets then return false, 'unavailable', L('panel.presets_are_not_running_on_this') end
     local cid, who = staffOf(src)
     local name = type(data.name) == 'string' and data.name:sub(1, 64) or nil
     local ok, err, message = deps.presets.deleteOwn(name, who, cid)
@@ -2498,13 +2473,13 @@ end
 --- Every setting changed from the panel and the server's own presets, as
 --- one JSON text (Developer > Export and import).
 H.settingsExport = function()
-    if not deps.settingsio then return false, 'unavailable', 'Export and import are not running.' end
+    if not deps.settingsio then return false, 'unavailable', L('panel.export_and_import_are_not_running') end
     return true, nil, nil, deps.settingsio.export()
 end
 
 --- What an exported text would change now: nothing changes.
 H.settingsImport = function(_, data)
-    if not deps.settingsio then return false, 'unavailable', 'Export and import are not running.' end
+    if not deps.settingsio then return false, 'unavailable', L('panel.export_and_import_are_not_running') end
     local preview, why = deps.settingsio.preview(data.text)
     if not preview then return false, CH.ERR.INVALID_INPUT, why end
     preview.values = nil
@@ -2515,7 +2490,7 @@ end
 --- each change through Settings.set, then its presets. The Developer
 --- section's, so its ACE as well as the staff one.
 H.settingsImportApply = function(src, data)
-    if not deps.settingsio then return false, 'unavailable', 'Export and import are not running.' end
+    if not deps.settingsio then return false, 'unavailable', L('panel.export_and_import_are_not_running') end
     if not developer(src) then
         return false, 'developer_required', deps.admin.howToAuthorise(developerAce(), true)
     end
@@ -2527,8 +2502,8 @@ end
 H.resetSettings = function(src)
     local cid, who = staffOf(src)
     local ok, err, detail = deps.settings.resetAll(who, cid)
-    if not ok then return false, err, settingRefusal('every setting', err, detail) end
-    return true, nil, ('Every setting is back to what config.lua says (%d were changed).')
+    if not ok then return false, err, settingRefusal(L('panel.every_setting'), err, detail) end
+    return true, nil, (L('panel.every_setting_is_back_to_what'))
         :format(detail.keys), detail
 end
 
@@ -2545,12 +2520,12 @@ H.diag = function(src, data)
     -- range, script missing, ACE not held and risky combination, with the
     -- fix. Names nobody, so nothing to scrub.
     if data.config == true then
-        if not deps.configcheck then return false, 'unavailable', 'The config check is not running.' end
+        if not deps.configcheck then return false, 'unavailable', L('panel.the_config_check_is_not_running') end
         return true, nil, nil, { lines = deps.configcheck.lines(), config = true }
     end
     local subject = data.subject ~= nil and wholeNumber(data.subject, 1, 65535) or nil
     if data.subject ~= nil and not subject then
-        return false, CH.ERR.INVALID_INPUT, 'Give a player id, or nothing to run it as yourself.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.give_a_player_id_or_nothing')
     end
     -- Or the player Players looked up (their lookup handle), so staff need
     -- not type the id again: run as them while they are in the city.
@@ -2558,8 +2533,7 @@ H.diag = function(src, data)
         local who, whoErr, whoMessage = fromPlayerRef(src, data.ref)
         if not who then return false, whoErr, whoMessage end
         if not who.actor then
-            return false, CH.ERR.NOT_FOUND, 'They are not in the city now: the diagnosis runs as a player '
-                .. 'who is online.'
+            return false, CH.ERR.NOT_FOUND, L('panel.they_are_not_in_the_city')
         end
         subject = who.actor.source
     end
@@ -2604,7 +2578,7 @@ end
 --- view shows whoever acted.
 H.alerts = function(src, data)
     local Alerts = deps.alerts
-    if not Alerts then return false, 'unavailable', 'Alerts are not running on this server yet.' end
+    if not Alerts then return false, 'unavailable', L('panel.alerts_are_not_running_on_this') end
     local canIdentify = identifies(src)
     local state = data.state == 'acknowledged' and 'acknowledged' or 'open'
     local list, counts = Alerts.list(state, ALERT_ROWS)
@@ -2617,7 +2591,7 @@ H.alerts = function(src, data)
             text = deps.admin.panelWords(Panel.scrubText(a.text, canIdentify, a.contract_id, false,
                 parties)),
             acknowledged_by = canIdentify and a.acknowledged_by
-                or (a.acknowledged_by ~= nil and 'a staff member' or nil),
+                or (a.acknowledged_by ~= nil and L('panel.a_staff_member') or nil),
             acknowledged_at = a.acknowledged_at,
         }
     end
@@ -2632,7 +2606,7 @@ end
 --- the log naming how many and which.
 H.ackAlerts = function(src, data)
     local Alerts = deps.alerts
-    if not Alerts then return false, 'unavailable', 'Alerts are not running on this server yet.' end
+    if not Alerts then return false, 'unavailable', L('panel.alerts_are_not_running_on_this') end
     local ids, seen = {}, {}
     if type(data.ids) == 'table' then
         for i = 1, ALERT_ROWS do
@@ -2644,7 +2618,7 @@ H.ackAlerts = function(src, data)
             end
         end
     end
-    if #ids == 0 then return false, CH.ERR.INVALID_INPUT, 'Name the alerts to acknowledge.' end
+    if #ids == 0 then return false, CH.ERR.INVALID_INPUT, L('panel.name_the_alerts_to_acknowledge') end
     local cid, who = staffOf(src)
     local done, already, missing = Alerts.acknowledge(ids, who)
     if done > 0 then
@@ -2655,12 +2629,12 @@ H.ackAlerts = function(src, data)
     end
     local message
     if done == 0 then
-        message = missing > 0 and already == 0 and 'Those alerts are gone: pruned since the list was read.'
-            or 'Those alerts were acknowledged already; nothing changed.'
+        message = missing > 0 and already == 0 and L('panel.those_alerts_are_gone_pruned_since')
+            or L('panel.those_alerts_were_acknowledged_already_nothing')
         return true, nil, message, { done = 0, already = already, missing = missing }
     end
-    message = ('Acknowledged %d alert(s).'):format(done)
-    if already > 0 then message = message .. (' %d were acknowledged already.'):format(already) end
+    message = L('panel.acknowledged_alert'):format(done)
+    if already > 0 then message = message .. L('panel.were_acknowledged_already'):format(already) end
     return true, nil, message, { done = done, already = already, missing = missing }
 end
 
@@ -2668,20 +2642,16 @@ end
 --- whether it went or not.
 H.testAlert = function(src)
     local Alerts = deps.alerts
-    if not Alerts then return false, 'unavailable', 'Alerts are not running on this server yet.' end
+    if not Alerts then return false, 'unavailable', L('panel.alerts_are_not_running_on_this') end
     local queued, err, seconds = Alerts.sendTest()
     deps.audit.staff('admin_alert_test', staffOf(src), nil, { queued = queued, why = err })
     if err == 'discord_off' then
-        return false, err, 'Not sent: posting alerts to Discord is switched off (Alerts.ToDiscord, '
-            .. 'under Features).'
+        return false, err, L('panel.not_sent_posting_alerts_to_discord')
     end
     if err == 'no_webhook' then
-        return false, err, 'Not sent: no webhook is set. Add set crimson_hitman_alert_webhook '
-            .. '"<your webhook>" to server.cfg (set, never setr), or run it in the server console, '
-            .. 'and send the test again.'
+        return false, err, L('panel.not_sent_no_webhook_is_set')
     end
-    return true, nil, ('A test alert goes to Discord in about %d second(s). This section says '
-        .. 'whether it went through.'):format(math.max(0, seconds or 0)), { seconds = seconds }
+    return true, nil, L('panel.a_test_alert_goes_to_discord'):format(math.max(0, seconds or 0)), { seconds = seconds }
 end
 
 --------------------------------------------------------------------------
@@ -2726,28 +2696,25 @@ end
 --- What a removal of the kill photos kept from before says it did.
 local function removedWords(done)
     if done.removed == 0 and done.waiting == 0 then
-        return 'No kill photos are kept from before; nothing to remove.'
+        return L('panel.no_kill_photos_are_kept_from')
     end
     local parts = {}
     if done.removed > 0 then
-        parts[#parts + 1] = ('Removed %d kill photo(s).'):format(done.removed)
+        parts[#parts + 1] = L('panel.removed_kill_photo'):format(done.removed)
     else
-        parts[#parts + 1] = 'Nothing removed yet.'
+        parts[#parts + 1] = L('panel.nothing_removed_yet')
     end
     if done.files > 0 then
-        parts[#parts + 1] = ('%d file(s) deleted from this server.'):format(done.files)
+        parts[#parts + 1] = L('panel.file_deleted_from_this_server'):format(done.files)
     end
     if done.links > 0 then
-        parts[#parts + 1] = ('%d were on lb-phone\'s image host: this server has forgotten them, '
-            .. 'and the pictures stay on the host.'):format(done.links)
+        parts[#parts + 1] = L('panel.were_on_lb_phones_image_host'):format(done.links)
     end
     if done.left > 0 then
-        parts[#parts + 1] = ('%d file(s) could not be deleted: delete what is left in '
-            .. 'data/photos/ by hand.'):format(done.left)
+        parts[#parts + 1] = L('panel.file_could_not_be_deleted_delete'):format(done.left)
     end
     if done.waiting > 0 then
-        parts[#parts + 1] = ('%d open on a phone right now: each is removed when that view '
-            .. 'closes.'):format(done.waiting)
+        parts[#parts + 1] = L('panel.open_on_a_phone_right_now'):format(done.waiting)
     end
     return table.concat(parts, ' ')
 end
@@ -2759,8 +2726,7 @@ end
 --- before. Run again, it removes what is left, or nothing.
 H.removePhotos = function(src)
     if Util.killPhotos() then
-        return false, 'photos_on', 'Not removed: kill photos are on (Completion.KillPhotos). '
-            .. 'This removes the ones kept from before they were turned off, so turn them off first.'
+        return false, 'photos_on', L('panel.not_removed_kill_photos_are_on')
     end
     local done = deps.photos.removeAll()
     deps.audit.staff('admin_photos_removed', staffOf(src), nil, {
@@ -2786,10 +2752,10 @@ H.flush = function(src)
     deps.audit.flush()
     local unsaved = ''
     if not stored then
-        unsaved = ', but the store did not save'
-            .. (file and (': ' .. file .. ' could not be written') or '')
+        unsaved = L('panel.but_the_store_did_not_save')
+            .. (file and (': ' .. file .. L('panel.could_not_be_written')) or '')
     end
-    return true, nil, ('Audit log flushed: %d row(s) written%s.')
+    return true, nil, (L('panel.audit_log_flushed_row_written'))
         :format(written, unsaved), { written = written }
 end
 
@@ -2806,9 +2772,9 @@ end
 --- How the author of a staff record on a contract is shown: their name and
 --- citizen id with IdentityAce, and 'Staff' without, as a freeze's `by` is.
 local function authorShown(row, canIdentify)
-    if not canIdentify then return 'Staff' end
+    if not canIdentify then return L('panel.staff') end
     if row.author_name and row.author_cid then return ('%s (%s)'):format(row.author_name, row.author_cid) end
-    return tostring(row.author_name or row.author_cid or 'Staff')
+    return tostring(row.author_name or row.author_cid or L('panel.staff'))
 end
 
 --- The staff records on one contract, as one staff member may read them:
@@ -2855,42 +2821,41 @@ end
 --- the contract's view and nowhere a player reads.
 H.addNote = function(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
-    if type(data.text) ~= 'string' then return false, CH.ERR.INVALID_INPUT, 'Write the note.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_contract_id') end
+    if type(data.text) ~= 'string' then return false, CH.ERR.INVALID_INPUT, L('panel.write_the_note') end
     local ok, err, detail = deps.staffContract.addNote(staffRecordOf(src), id, data.text:sub(1, 4000))
     if not ok then
-        if err == 'empty' then return false, CH.ERR.INVALID_INPUT, 'Write the note.' end
+        if err == 'empty' then return false, CH.ERR.INVALID_INPUT, L('panel.write_the_note') end
         if err == 'too_long' then
-            return false, CH.ERR.INVALID_INPUT, ('A note is at most %d characters.')
+            return false, CH.ERR.INVALID_INPUT, (L('panel.a_note_is_at_most_characters'))
                 :format(detail.max)
         end
         if err == 'too_many' then
-            return false, err, ('This contract holds %d notes already, the most one may.')
+            return false, err, (L('panel.this_contract_holds_notes_already_the'))
                 :format(detail.max)
         end
-        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
-        return false, err, 'Not added: the store did not take it. Try again in a moment.'
+        if err == CH.ERR.NOT_FOUND then return false, err, L('panel.no_contract_has_that_id') end
+        return false, err, L('panel.not_added_the_store_did_not')
     end
-    return true, nil, 'Note added.', { id = detail.id }
+    return true, nil, L('panel.note_added'), { id = detail.id }
 end
 
 --- What a refusal of a player's text says, by the rule it broke.
 local function textRefusal(rule)
     if rule == 'length' then
-        return ('At most %d characters (Config.Reason.MaxLength).'):format(tonumber(Config.Reason.MaxLength) or 0)
+        return L('panel.at_most_characters_config_reason_maxlength'):format(tonumber(Config.Reason.MaxLength) or 0)
     end
     if rule == 'digits' then
-        return ('At most %d digits (Config.Reason.MaxDigits).'):format(tonumber(Config.Reason.MaxDigits) or 0)
+        return L('panel.at_most_digits_config_reason_maxdigits'):format(tonumber(Config.Reason.MaxDigits) or 0)
     end
     if rule == 'pattern' then
-        return 'It holds something players may not write (Config.Reason.PatternDenylist): a link, an '
-            .. 'invite or a handle.'
+        return L('panel.it_holds_something_players_may_not')
     end
-    if rule == 'phone' then return 'lb-phone\'s word blacklist refuses something in it.' end
+    if rule == 'phone' then return L('panel.lb_phones_word_blacklist_refuses_something') end
     if rule == 'preset' then
-        return 'This server uses preset reasons (Config.Reason.Mode): pick one of them.'
+        return L('panel.this_server_uses_preset_reasons_config')
     end
-    return 'Type the new text.'
+    return L('panel.type_the_new_text')
 end
 
 --- Replace what a player wrote on a contract (its reason) through the same
@@ -2899,32 +2864,31 @@ end
 --- 'edited by staff'.
 H.editText = function(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_contract_id') end
     local field = data.field == nil and 'reason' or data.field
     if type(field) ~= 'string' or not deps.staffContract.FIELDS[field] then
-        return false, CH.ERR.INVALID_INPUT, 'Only a contract\'s reason is text a player wrote on it.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.only_a_contracts_reason_is_text')
     end
-    if type(data.text) ~= 'string' then return false, CH.ERR.INVALID_INPUT, 'Type the new text.' end
+    if type(data.text) ~= 'string' then return false, CH.ERR.INVALID_INPUT, L('panel.type_the_new_text') end
     local reason = shortText(data.reason, 120)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
     local ok, err, detail = deps.staffContract.editText(staffRecordOf(src), id, field,
         data.text:sub(1, 4000), reason)
     if not ok then
         if err == CH.ERR.REASON_REFUSED then
-            return false, err, 'Not replaced. ' .. textRefusal(type(detail) == 'table' and detail.rule or nil)
+            return false, err, L('panel.not_replaced') .. textRefusal(type(detail) == 'table' and detail.rule or nil)
         end
-        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
-        if err == 'unchanged' then return false, err, 'That is what it says already.' end
+        if err == CH.ERR.NOT_FOUND then return false, err, L('panel.no_contract_has_that_id') end
+        if err == 'unchanged' then return false, err, L('panel.that_is_what_it_says_already') end
         if err == 'no_text' then
-            return false, err, 'This server keeps no reason on a contract (Config.Reason.Mode is off).'
+            return false, err, L('panel.this_server_keeps_no_reason_on')
         end
         if err == CH.ERR.BUSY then
-            return false, err, 'Something else was changing this contract. Try again in a moment.'
+            return false, err, L('panel.something_else_was_changing_this_contract')
         end
-        return false, err, 'Not replaced: the store did not take it. Try again in a moment.'
+        return false, err, L('panel.not_replaced_the_store_did_not')
     end
-    return true, nil, 'Reason replaced. Players see the new text, marked "edited by staff"; '
-        .. 'the original is kept in the log.', { new = detail.new }
+    return true, nil, L('panel.reason_replaced_players_see_the_new'), { new = detail.new }
 end
 
 --- Take one operative off a live contract without ending it for anybody
@@ -2932,17 +2896,17 @@ end
 --- stake given back instead of handed to the client as a walk-away hands it.
 H.removeHitman = function(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_contract_id') end
     local hitman = Util.toId(data.hitman)
-    if not hitman then return false, CH.ERR.INVALID_INPUT, 'Pick the operative to remove.' end
+    if not hitman then return false, CH.ERR.INVALID_INPUT, L('panel.pick_the_operative_to_remove') end
     local reason = shortText(data.reason, 120)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
     local ok, err, detail = deps.staffContract.removeHitman(staffRecordOf(src), id, hitman, reason,
         { block = data.block == true, returnStake = data.returnStake == true })
     if not ok then
-        if err == CH.ERR.NOT_FOUND then return false, err, 'No contract has that id.' end
+        if err == CH.ERR.NOT_FOUND then return false, err, L('panel.no_contract_has_that_id') end
         if err == CH.ERR.BAD_STATE then
-            return false, err, 'Only a live contract (active or accepted) has operatives to remove.'
+            return false, err, L('panel.only_a_live_contract_active_or_2')
         end
         if err == CH.ERR.CONTRACT_FROZEN then
             -- Said as on hold only where this staff member's view of it says
@@ -2950,26 +2914,25 @@ H.removeHitman = function(src, data)
             -- see, the refusal says no more than the view does.
             local contract = deps.storage.readContract(id)
             if not contract or not frozenShown(contract, nil, identifies(src)) then
-                return false, 'not_removed', 'Not removed: try again in a moment.'
+                return false, 'not_removed', L('panel.not_removed_try_again_in_a')
             end
-            return false, err, 'It is on hold by staff, and nothing on it moves: unfreeze first.'
+            return false, err, L('panel.it_is_on_hold_by_staff')
         end
-        if err == 'no_operative' then return false, err, 'No operative on this contract has that id.' end
+        if err == 'no_operative' then return false, err, L('panel.no_operative_on_this_contract_has') end
         if err == 'not_active' or err == CH.ERR.NOT_PARTICIPANT then
-            return false, err, 'That operative is no longer on it.'
+            return false, err, L('panel.that_operative_is_no_longer_on')
         end
-        if err == CH.ERR.ALREADY_SETTLED then return false, err, 'It ended meanwhile.' end
-        return false, err, 'Not removed: try again in a moment.'
+        if err == CH.ERR.ALREADY_SETTLED then return false, err, L('panel.it_ended_meanwhile') end
+        return false, err, L('panel.not_removed_try_again_in_a')
     end
     local stake = ''
     if (detail.returned or 0) > 0 then
-        stake = (' Their $%d stake went back to them.'):format(detail.returned)
+        stake = L('panel.their_stake_went_back_to_them'):format(detail.returned)
     elseif (detail.forfeited or 0) > 0 then
-        stake = (' Their $%d stake went to the placer, as a walk-away hands it over.'):format(detail.forfeited)
+        stake = L('panel.their_stake_went_to_the_placer'):format(detail.forfeited)
     end
-    return true, nil, ('%s taken off the contract.%s%s They were told "%s"; the placer was told an '
-        .. 'operative left, as a walk-away says it.'):format(tostring(detail.alias or 'The operative'), stake,
-            detail.blocked and ' They may not take it again.' or '', deps.staffContract.REMOVED_TEXT),
+    return true, nil, L('panel.taken_off_the_contract_they_were'):format(tostring(detail.alias or L('panel.the_operative')), stake,
+            detail.blocked and L('panel.they_may_not_take_it_again') or '', deps.staffContract.REMOVED_TEXT),
         { stake = detail.stake or 0, returned = detail.returned or 0, forfeited = detail.forfeited or 0,
           blocked = detail.blocked == true, remaining = detail.remaining or 0 }
 end
@@ -3017,61 +2980,61 @@ local function exportText(view)
         return tostring(p.name or '-') .. (p.cid and (' [' .. p.cid .. ']') or '')
     end
     local staff = view.staff or {}
-    add(('Contract %s'):format(tostring(c.id)))
+    add(L('panel.contract'):format(tostring(c.id)))
     add('Exported: ' .. stamp(os.time()))
     if c.neverStored then
-        add('Never stored: escrow under this id has no contract record.')
+        add(L('panel.never_stored_escrow_under_this_id'))
     else
-        add(('State: %s | Mode: %s | Completes by: %s'):format(tostring(c.state), tostring(c.mode),
+        add(L('panel.state_mode_completes_by'):format(tostring(c.state), tostring(c.mode),
             tostring(c.rule)))
         add('Reason: ' .. tostring(c.reason or '-')
-            .. ((staff.text and staff.text.edited) and ' (edited by staff)' or ''))
+            .. ((staff.text and staff.text.edited) and L('panel.edited_by_staff') or ''))
         add('Client: ' .. person(c.client) .. (c.anonymous and ' (anonymous)' or ''))
-        add('Target: ' .. person(c.target) .. (c.target_protected and ' (whitelisted job)' or ''))
+        add('Target: ' .. person(c.target) .. (c.target_protected and L('panel.whitelisted_job') or ''))
         add(('Placed: %s | Deadline: %s | Expires: %s'):format(stamp(c.created_at), stamp(c.deadline_at),
             stamp(c.expires_at)))
         add('Ended: ' .. (c.resolved_at and (tostring(c.resolution or '') .. ' ' .. stamp(c.resolved_at))
-            or 'not yet'))
-        add(('Payouts: %s of %s claimed | Bonus: %s%% | Stake: $%s | Buyout price: $%s%s'):format(
+            or L('panel.not_yet')))
+        add(L('panel.payouts_of_claimed_bonus_stake_buyout'):format(
             tostring(c.claimed or 0), tostring(c.slots or 1), tostring(c.bonus_percent or 0),
             tostring(c.penalty_amount or 0), tostring(c.bailout_amount or 0),
-            c.buyout_queued and ' (a buyout is queued)' or ''))
+            c.buyout_queued and L('panel.a_buyout_is_queued') or ''))
     end
     add('')
     add('Operatives:')
     if #(view.hitmen or {}) == 0 then add('- none') end
     for _, m in ipairs(view.hitmen or {}) do
-        add(('- %s | %s%s | %s | accepted %s | left %s | claims %s | stake $%s'):format(
+        add(L('panel.accepted_left_claims_stake'):format(
             tostring(m.alias or '-'), tostring(m.name or '-'), m.cid and (' [' .. m.cid .. ']') or '',
             tostring(m.state), stamp(m.accepted_at), stamp(m.left_at), tostring(m.claims or 0),
             tostring(m.stake or 0)))
     end
     add('')
-    add('Payments (escrow lines):')
+    add(L('panel.payments_escrow_lines'))
     if #(view.escrow or {}) == 0 then add('- none') end
     for _, line in ipairs(view.escrow or {}) do
         local to = line.owed_to or line.releasing_to or line.settled_to
-        add(('- %s | payout %s %s | %s | %s%s%s'):format(tostring(line.id), tostring(line.slot or '-'),
+        add(L('panel.payout'):format(tostring(line.id), tostring(line.slot or '-'),
             tostring(line.portion or '-'), holdsText(line), tostring(line.state),
             to and (' | to ' .. tostring(to)) or '',
             line.settled_at and (' | settled ' .. stamp(line.settled_at)) or ''))
     end
     add('')
-    add('Open proposals:')
+    add(L('panel.open_proposals'))
     if #(view.amendments or {}) == 0 then add('- none') end
     for _, a in ipairs(view.amendments or {}) do
-        add(('- %s by %s | runs out %s | %s'):format(tostring(a.kind), tostring(a.proposer or '-'),
+        add(L('panel.by_runs_out'):format(tostring(a.kind), tostring(a.proposer or '-'),
             stamp(a.expires_at), flat(a.payload or {})))
     end
     add('')
-    add('Staff notes:')
+    add(L('panel.staff_notes'))
     if #(staff.notes or {}) == 0 then add('- none') end
     for _, note in ipairs(staff.notes or {}) do
         add(('- %s | %s | %s'):format(stamp(note.at), tostring(note.by), tostring(note.text)))
     end
     add('')
-    add('Timeline (oldest first: states, amendments, payments and staff actions):')
-    if #(view.timeline or {}) == 0 then add('- the log keeps nothing for it') end
+    add(L('panel.timeline_oldest_first_states_amendments_payments'))
+    if #(view.timeline or {}) == 0 then add(L('panel.the_log_keeps_nothing_for_it')) end
     for _, row in ipairs(view.timeline or {}) do
         add(('- %s | %s | %s | %s | %s'):format(stamp(row.ts), tostring(row.kind), tostring(row.action),
             tostring(row.actor or '-'), flat(row.detail or {})))
@@ -3097,14 +3060,14 @@ local VIEW_ROLES = { target = true, placer = true, hitman = true }
 --- the view is, so no anonymous party is named; with it, who the viewer is.
 H.playerView = function(src, data)
     local id = Util.toId(data.id)
-    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    if not id then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_contract_id') end
     local role = type(data.role) == 'string' and data.role or nil
     if not role or not VIEW_ROLES[role] then
-        return false, CH.ERR.INVALID_INPUT, 'Pick whose view: the target, the placer or an operative.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.pick_whose_view_the_target_the')
     end
     local Storage = deps.storage
     local contract = Storage.readContract(id)
-    if not contract then return false, CH.ERR.NOT_FOUND, 'No contract has that id.' end
+    if not contract then return false, CH.ERR.NOT_FOUND, L('panel.no_contract_has_that_id') end
     local hitmen = Storage.readHitmen(id) or {}
     local canIdentify = identifies(src)
     local r = redactor(canIdentify, contract, hitmen)
@@ -3119,16 +3082,15 @@ H.playerView = function(src, data)
         for _, row in ipairs(hitmen) do
             if row.id == wanted then operative = row end
         end
-        if not operative then return false, CH.ERR.INVALID_INPUT, 'Pick one of its operatives.' end
+        if not operative then return false, CH.ERR.INVALID_INPUT, L('panel.pick_one_of_its_operatives') end
         viewerCid = operative.hitman_cid
     end
 
     local shown, note, view, whitelisted = true, nil, nil, nil
     if CH.TERMINAL[contract.state] then
-        shown, note = false, 'Closed: it is off their phone (only their history keeps it).'
+        shown, note = false, L('panel.closed_it_is_off_their_phone')
     elseif role == 'target' and not deps.notify.shownToTarget(contract) then
-        shown, note = false, 'Not shown to the target yet: their On me tab lists it once the alert\'s '
-            .. 'wait is over.'
+        shown, note = false, L('panel.not_shown_to_the_target_yet')
     else
         view = deps.projection.contract(contract, viewerCid, { peek = true })
         if role == 'target' then
@@ -3136,11 +3098,10 @@ H.playerView = function(src, data)
             if view then view.hitmen = nil end
             if contract.target_protected == true then
                 whitelisted = deps.projection.whitelistedListing(contract, viewerCid, nil)
-                note = 'Recorded on a whitelisted job: while they work one they see the whitelisted-job '
-                    .. 'view instead, below.'
+                note = L('panel.recorded_on_a_whitelisted_job_while')
             end
         elseif role == 'hitman' and operative.state ~= 'active' then
-            note = ('No longer on it (%s): this is the card the board would show them.')
+            note = (L('panel.no_longer_on_it_this_is'))
                 :format(tostring(operative.state))
         end
     end
@@ -3180,8 +3141,7 @@ local function actionSubject(data, src)
     if not who then return nil, whoErr, whoMessage end
     if not who.actor and deps.identity.characterExists(who.cid) == false
         and #(deps.storage.contractsInvolving(who.cid) or {}) == 0 then
-        return nil, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character '
-            .. 'has it. Check how it is spelt.'
+        return nil, CH.ERR.NOT_FOUND, L('panel.nobody_in_the_city_has_that_2')
     end
     who.name = who.actor and who.actor.name or (who.typed and who.cid) or nil
     return who
@@ -3202,16 +3162,16 @@ local function sanctionRefusal(err, already, missing)
     if err == 'already' then return false, err, already end
     if err == 'not_active' then return false, err, missing end
     if err == CH.ERR.BUSY then
-        return false, err, 'A change to them is still being saved. Try again in a moment.'
+        return false, err, L('panel.a_change_to_them_is_still')
     end
-    if err == CH.ERR.INVALID_INPUT then return false, err, 'The server could not read that request.' end
-    return false, err, 'Not changed: the store did not take it. Try again in a moment.'
+    if err == CH.ERR.INVALID_INPUT then return false, err, L('panel.the_server_could_not_read_that') end
+    return false, err, L('panel.not_changed_the_store_did_not')
 end
 
 --- One player's history (server/history.lua): read-only, and scrubbed as
 --- the player view is for staff without IdentityAce.
 H.history = function(src, data)
-    if not deps.history then return false, 'unavailable', 'The history card is not available here.' end
+    if not deps.history then return false, 'unavailable', L('panel.the_history_card_is_not_available') end
     local canIdentify = identifies(src)
     local who, whoErr, whoMessage
     if data.ref ~= nil then
@@ -3232,49 +3192,47 @@ end
 --- (0 until lifted), reason }. Their live contracts are not touched.
 H.suspend = function(src, data)
     local Sanctions = deps.sanctions
-    if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
+    if not Sanctions then return false, 'unavailable', L('panel.suspensions_are_not_available_on_this') end
     local reason = shortText(data.reason, 120)
     if not reason then
-        return false, CH.ERR.INVALID_INPUT, 'Give a reason: the player is shown it, and it goes on the record.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_the_player_is')
     end
     local days = wholeNumber(data.days, 0, Sanctions.MAX_SUSPEND_DAYS)
     if not days then
-        return false, CH.ERR.INVALID_INPUT, ('Days are a whole number from 1 to %d, or 0 for until you '
-            .. 'lift it.'):format(Sanctions.MAX_SUSPEND_DAYS)
+        return false, CH.ERR.INVALID_INPUT, L('panel.days_are_a_whole_number_from'):format(Sanctions.MAX_SUSPEND_DAYS)
     end
     local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Measures.apply('suspend', staffOf(src), who.cid,
         { seconds = days > 0 and days * 86400 or nil, reason = reason, name = who.name })
     if not ok then
-        return sanctionRefusal(err, 'They are suspended already. Lift it first to set another.')
+        return sanctionRefusal(err, L('panel.they_are_suspended_already_lift_it'))
     end
-    return true, nil, ('%s is suspended from placing and accepting contracts %s. Their live '
-        .. 'contracts are not touched: freeze them for that.')
-        :format(who.name or 'They', days > 0 and ('for ' .. spanWords(days * 86400)) or 'until you lift it'),
+    return true, nil, (L('panel.is_suspended_from_placing_and_accepting'))
+        :format(who.name or L('panel.they'), days > 0 and ('for ' .. spanWords(days * 86400)) or L('panel.until_you_lift_it')),
         { suspended = Measures.view('suspend', who.cid, identifies(src)) }
 end
 
 H.unsuspend = function(src, data)
     local Sanctions = deps.sanctions
-    if not Sanctions then return false, 'unavailable', 'Suspensions are not available on this server.' end
+    if not Sanctions then return false, 'unavailable', L('panel.suspensions_are_not_available_on_this') end
     local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Measures.lift('suspend', staffOf(src), who.cid, shortText(data.reason, 120))
-    if not ok then return sanctionRefusal(err, nil, 'They are not suspended.') end
-    return true, nil, 'Suspension lifted. They may place and accept contracts again.'
+    if not ok then return sanctionRefusal(err, nil, L('panel.they_are_not_suspended')) end
+    return true, nil, L('panel.suspension_lifted_they_may_place_and')
 end
 
 --- Protect a player from new contracts: { subject, hours (0 for good),
 --- reason }. Contracts already on them are not touched.
 H.protect = function(src, data)
     local Sanctions = deps.sanctions
-    if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
+    if not Sanctions then return false, 'unavailable', L('panel.protection_is_not_available_on_this') end
     local reason = shortText(data.reason, 120)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
     local hours = wholeNumber(data.hours, 0, Sanctions.MAX_PROTECT_HOURS)
     if not hours then
-        return false, CH.ERR.INVALID_INPUT, ('Hours are a whole number from 1 to %d, or 0 for good.')
+        return false, CH.ERR.INVALID_INPUT, (L('panel.hours_are_a_whole_number_from'))
             :format(Sanctions.MAX_PROTECT_HOURS)
     end
     local who, whoErr, whoMessage = actionSubject(data, src)
@@ -3282,22 +3240,21 @@ H.protect = function(src, data)
     local ok, err = Measures.apply('protect', staffOf(src), who.cid,
         { seconds = hours > 0 and hours * 3600 or nil, reason = reason, name = who.name })
     if not ok then
-        return sanctionRefusal(err, 'They are protected already. Lift it first to set another.')
+        return sanctionRefusal(err, L('panel.they_are_protected_already_lift_it'))
     end
-    return true, nil, ('%s is protected from new contracts %s. Contracts already on them run on: '
-        .. 'freeze them to put those on hold.')
-        :format(who.name or 'They', hours > 0 and ('for ' .. spanWords(hours * 3600)) or 'for good'),
+    return true, nil, (L('panel.is_protected_from_new_contracts_contracts'))
+        :format(who.name or L('panel.they'), hours > 0 and ('for ' .. spanWords(hours * 3600)) or L('panel.for_good')),
         { protected = Measures.view('protect', who.cid, identifies(src)) }
 end
 
 H.unprotect = function(src, data)
     local Sanctions = deps.sanctions
-    if not Sanctions then return false, 'unavailable', 'Protection is not available on this server.' end
+    if not Sanctions then return false, 'unavailable', L('panel.protection_is_not_available_on_this') end
     local who, whoErr, whoMessage = listedSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Measures.lift('protect', staffOf(src), who.cid, shortText(data.reason, 120))
-    if not ok then return sanctionRefusal(err, nil, 'They are not protected.') end
-    return true, nil, 'Protection lifted. New contracts may name them again.'
+    if not ok then return sanctionRefusal(err, nil, L('panel.they_are_not_protected')) end
+    return true, nil, L('panel.protection_lifted_new_contracts_may_name')
 end
 
 --- Pay a player by hand: { subject, amount, account ('cash' | 'bank'),
@@ -3305,19 +3262,19 @@ end
 --- their next login (server/payments.lua). Audited as staff_manual_payment.
 H.manualPay = function(src, data)
     local Payments = deps.payments
-    if not Payments then return false, 'unavailable', 'Manual payments are not available on this server.' end
+    if not Payments then return false, 'unavailable', L('panel.manual_payments_are_not_available_on') end
     local max = Payments.max()
     if max <= 0 then
-        return false, 'payments_off', 'Manual payments are off (Config.Staff.ManualPaymentMax is 0).'
+        return false, 'payments_off', L('panel.manual_payments_are_off_config_staff')
     end
     local reason = shortText(data.reason, 120)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
     local account = (data.account == 'cash' or data.account == 'bank') and data.account or nil
-    if not account then return false, CH.ERR.INVALID_INPUT, 'Pay in cash or bank.' end
+    if not account then return false, CH.ERR.INVALID_INPUT, L('panel.pay_in_cash_or_bank') end
     local amount = wholeNumber(data.amount, 1)
-    if not amount then return false, CH.ERR.INVALID_INPUT, 'The amount is a whole number of dollars.' end
+    if not amount then return false, CH.ERR.INVALID_INPUT, L('panel.the_amount_is_a_whole_number') end
     if amount > max then
-        return false, 'over_max', ('Not paid: $%d is over the most one payment may be, $%d '
+        return false, 'over_max', (L('panel.not_paid_is_over_the_most')
             .. '(Config.Staff.ManualPaymentMax).'):format(amount, max)
     end
     local who, whoErr, whoMessage = actionSubject(data, src)
@@ -3325,17 +3282,16 @@ H.manualPay = function(src, data)
     local ok, result = Payments.pay(staffOf(src), who.cid, amount, account, reason, who.name)
     if not ok then
         if result == CH.ERR.BUSY then
-            return false, result, 'A payment to them is still being made. Try again in a moment.'
+            return false, result, L('panel.a_payment_to_them_is_still')
         end
-        return false, result, 'Not paid: the server could not pay or owe it. The log says why.'
+        return false, result, L('panel.not_paid_the_server_could_not')
     end
     local whom = who.name or 'them'
     if result.paid then
-        return true, nil, ('Paid $%d in %s to %s.'):format(amount, account, whom),
+        return true, nil, L('panel.paid_in_to'):format(amount, account, whom),
             { paid = true, owed = false }
     end
-    return true, nil, ('$%d in %s is owed to %s, handed over at their next login or once they have '
-        .. 'room.'):format(amount, account, whom), { paid = false, owed = true }
+    return true, nil, L('panel.in_is_owed_to_handed_over'):format(amount, account, whom), { paid = false, owed = true }
 end
 
 --------------------------------------------------------------------------
@@ -3347,31 +3303,31 @@ end
 --- write: the ACE itself and the write allowance; the page asks twice.
 --- On the record as staff_announce, by the module.
 H.announce = function(src, data)
-    if not deps.announce then return false, 'unavailable', 'Announcements are not running on this server.' end
+    if not deps.announce then return false, 'unavailable', L('panel.announcements_are_not_running_on_this') end
     if data.text ~= nil and type(data.text) ~= 'string' then
-        return false, CH.ERR.INVALID_INPUT, 'Write the notice.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.write_the_notice')
     end
     local scope = data.scope
     if scope ~= nil and scope ~= 'active' and scope ~= 'online' then
-        return false, CH.ERR.INVALID_INPUT, 'Send it to every hitman, or to everybody online with the app.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.send_it_to_every_hitman_or')
     end
     local ok, err, detail = deps.announce.send(staffOf(src), data.text, scope)
     if not ok then
         local rule = detail and detail.rule
         if rule == 'length' then
-            return false, err, ('Not sent: at most %d characters.'):format(deps.announce.MAX)
+            return false, err, L('panel.not_sent_at_most_characters'):format(deps.announce.MAX)
         elseif rule == 'pattern' then
-            return false, err, 'Not sent: no links, invites or handles in a notice to players.'
+            return false, err, L('panel.not_sent_no_links_invites_or')
         end
-        return false, err, 'Not sent: write the notice first.'
+        return false, err, L('panel.not_sent_write_the_notice_first')
     end
-    local who = detail.scope == 'online' and 'player(s) online with the app' or 'hitman/hitmen holding a contract'
+    local who = detail.scope == 'online' and L('panel.player_online_with_the_app') or L('panel.hitman_hitmen_holding_a_contract')
     if detail.sent == 0 then
-        return true, nil, ('Nobody to send it to: no %s right now. It is on the record all the same.')
-            :format(detail.scope == 'online' and 'player online with the app' or 'hitman holding a contract'),
+        return true, nil, (L('panel.nobody_to_send_it_to_no'))
+            :format(detail.scope == 'online' and L('panel.player_online_with_the_app_2') or L('panel.hitman_holding_a_contract')),
             detail
     end
-    return true, nil, ('Sent to %d %s, from Staff.'):format(detail.sent, who), detail
+    return true, nil, L('panel.sent_to_from_staff'):format(detail.sent, who), detail
 end
 
 --- The handles the history gives its rows, so Undo names a change without
@@ -3413,7 +3369,7 @@ LOG_AREAS.settings = function(src, data)
                 ts = row.ts, key = row.key, label = entry and entry.label or nil,
                 old = row.old, new = row.new, secret = row.secret,
                 reset = row.source == 'config' or nil,
-                by = canIdentify and (row.actor or row.by) or 'a staff member',
+                by = canIdentify and (row.actor or row.by) or L('panel.a_staff_member'),
                 ref = (row.undoable and canUndo) and historyRef(row.key, row.old) or nil,
             }
         end
@@ -3429,7 +3385,7 @@ end
 H.undoSetting = function(src, data)
     local ref = type(data.ref) == 'string' and data.ref:sub(1, 16) or nil
     local held = ref and historyRefs[ref] or nil
-    if not held then return false, CH.ERR.NOT_FOUND, 'That row is gone. Refresh the history.' end
+    if not held then return false, CH.ERR.NOT_FOUND, L('panel.that_row_is_gone_refresh_the_2') end
     local key = held.key
     if developerKey(key) and not developer(src) then
         return false, 'developer_required', deps.admin.howToAuthorise(developerAce(), true)
@@ -3440,10 +3396,10 @@ H.undoSetting = function(src, data)
     deps.audit.staff('admin_undo_setting', cid, nil,
         { key = key, to = detail.value, from = detail.old, unchanged = detail.unchanged or nil })
     if detail.unchanged then
-        return true, nil, ('%s is %s already; nothing changed.')
+        return true, nil, (L('panel.is_already_nothing_changed_2'))
             :format(key, deps.settings.describe(detail.value)), detail
     end
-    return true, nil, ('Undone: %s is %s again (it was %s).'):format(key,
+    return true, nil, L('panel.undone_is_again_it_was'):format(key,
         deps.settings.describe(detail.value), deps.settings.describe(detail.old)), detail
 end
 
@@ -3464,27 +3420,27 @@ local function limitsOf(value)
     return out
 end
 
-local TL_OFF = 'Target limits are not running on this server.'
+local TL_OFF = L('panel.target_limits_are_not_running_on')
 
 --- What a refused target limit write says.
 local function targetRefusal(err, detail)
     if err == CH.ERR.BUSY then
-        return false, err, 'A change to them is still being saved. Try again in a moment.'
+        return false, err, L('panel.a_change_to_them_is_still')
     end
-    if err == 'not_active' then return false, err, 'Nothing like that is set, so nothing was changed.' end
+    if err == 'not_active' then return false, err, L('panel.nothing_like_that_is_set_so') end
     if err == 'too_many' then
-        return false, err, ('At most %d jobs may have their own limits.'):format(deps.targetLimits.JOBS_MAX)
+        return false, err, L('panel.at_most_jobs_may_have_their'):format(deps.targetLimits.JOBS_MAX)
     end
     if err == CH.ERR.INVALID_INPUT then
         local why = detail and detail.why
         if why == 'job' then
-            return false, err, ('A job name is its qbx name: lower-case letters, digits and _, at most %d.')
+            return false, err, (L('panel.a_job_name_is_its_qbx'))
                 :format(deps.targetLimits.JOB_MAX)
         end
-        return false, err, 'Not changed: ' .. (why and tostring(why) or 'the server could not read that request')
+        return false, err, L('panel.not_changed_3') .. (why and tostring(why) or L('panel.the_server_could_not_read_that_2'))
             .. '.'
     end
-    return false, err, 'Not changed: the store did not take it. Try again in a moment.'
+    return false, err, L('panel.not_changed_the_store_did_not')
 end
 
 --- Every limit, as the page lists them, with the global value now.
@@ -3517,10 +3473,10 @@ H.targetJobSet = function(src, data)
     local TL = deps.targetLimits
     if not TL then return false, 'unavailable', TL_OFF end
     local limits = limitsOf(data.limits)
-    if not limits then return false, CH.ERR.INVALID_INPUT, 'Give at least one limit for the job.' end
+    if not limits then return false, CH.ERR.INVALID_INPUT, L('panel.give_at_least_one_limit_for') end
     local ok, err, detail = deps.targetLimits.setJob(staffOf(src), data.job, limits)
     if not ok then return targetRefusal(err, detail) end
-    return true, nil, ('Targets working as %s now have these limits.'):format(detail.job)
+    return true, nil, L('panel.targets_working_as_now_have_these'):format(detail.job)
 end
 
 --- Remove one job's limits: { job }.
@@ -3529,7 +3485,7 @@ H.targetJobRemove = function(src, data)
     if not TL then return false, 'unavailable', TL_OFF end
     local ok, err = deps.targetLimits.removeJob(staffOf(src), data.job)
     if not ok then return targetRefusal(err) end
-    return true, nil, 'Removed: that job\'s members have the global limits again.'
+    return true, nil, L('panel.removed_that_jobs_members_have_the')
 end
 
 --- The jobs a target holds now (the one they are working first, then every
@@ -3546,7 +3502,7 @@ local function targetJobOf(cid, actor, contracts)
             best = c
         end
     end
-    return best and tostring(best.target_job) or nil, best and 'last known' or nil
+    return best and tostring(best.target_job) or nil, best and L('panel.last_known') or nil
 end
 
 --- One player as a target, exactly: { ref } from a lookup made here, or
@@ -3584,7 +3540,7 @@ H.targetStatus = function(src, data)
         end
     end
     if who.typed and not actor and not name and deps.identity.characterExists(cid) == false then
-        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and no character has it.'
+        return false, CH.ERR.NOT_FOUND, L('panel.nobody_in_the_city_has_that_3')
     end
     deps.audit.staff('admin_panel_target_status', staffOf(src), nil, { subject = cid, typed = who.typed or nil })
     return true, nil, nil, {
@@ -3604,7 +3560,7 @@ local function targetWrite(src, data, action, args, said)
     local who, whoErr, whoMessage = fromPlayerRef(src, data.ref)
     if not who then return false, whoErr, whoMessage end
     local reason = shortText(data.reason, TL.REASON_MAX)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
     args.reason = reason
     args.name = who.actor and who.actor.name or nil
     local ok, err, detail
@@ -3622,26 +3578,23 @@ local function targetWrite(src, data, action, args, said)
 end
 
 --- What a buyout's immunity means to a staff action that leaves it.
-local BUYOUT_KEPT = 'A buyout they paid for still keeps them off the board for its hour '
-    .. '(Config.Immunity.AfterBailoutSeconds): only Reset all lifts it.'
+local BUYOUT_KEPT = L('panel.a_buyout_they_paid_for_still')
 
 H.targetReset = function(src, data)
     local all = data.all == true
     if all then
         return targetWrite(src, data, 'reset', { all = true },
-            'Every cooldown on them is cleared, the same placer\'s wait, any extension and the immunity a '
-            .. 'buyout bought them too.')
+            L('panel.every_cooldown_on_them_is_cleared'))
     end
     return targetWrite(src, data, 'reset', { all = false }, function(row)
         -- A staff extension is not a cooldown Reset clears (canCreate
         -- still refuses on it), so it is said, with the way to clear it.
         local held = deps.targetLimits.extendedUntil(row)
         if held then
-            return ('Their cooldown is cleared, but a staff extension still holds them for %s more: '
-                .. 'Reset all clears it. The same placer\'s wait still holds. %s')
+            return (L('panel.their_cooldown_is_cleared_but_a'))
                 :format(math.max(1, math.ceil((held - os.time()) / 60)) .. ' min', BUYOUT_KEPT)
         end
-        return 'Their cooldown is cleared. The same placer\'s wait still holds. ' .. BUYOUT_KEPT
+        return L('panel.their_cooldown_is_cleared_the_same') .. BUYOUT_KEPT
     end)
 end
 
@@ -3653,34 +3606,34 @@ H.targetExtend = function(src, data)
     local untilAt = wholeNumber(data.untilAt, 1)
     if not minutes and not untilAt then
         return false, CH.ERR.INVALID_INPUT,
-            ('Give the minutes to add (1 to %d) or a time to hold them until.'):format(most)
+            L('panel.give_the_minutes_to_add_1'):format(most)
     end
     if untilAt and (untilAt <= os.time() or untilAt > os.time() + most * 60) then
-        return false, CH.ERR.INVALID_INPUT, 'That time is in the past, or more than 30 days away.'
+        return false, CH.ERR.INVALID_INPUT, L('panel.that_time_is_in_the_past')
     end
     return targetWrite(src, data, 'extend', { minutes = not untilAt and minutes or nil, untilAt = untilAt },
-        'Their cooldown is extended: nobody may name them until it ends.')
+        L('panel.their_cooldown_is_extended_nobody_may'))
 end
 
 H.targetCounts = function(src, data)
-    return targetWrite(src, data, 'counts', {}, 'Their day and week counts start again from now.')
+    return targetWrite(src, data, 'counts', {}, L('panel.their_day_and_week_counts_start'))
 end
 
 H.targetOverride = function(src, data)
     local TL = deps.targetLimits
     if not TL then return false, 'unavailable', TL_OFF end
     local hours = wholeNumber(data.hours, 0, TL.OVERRIDE_MAX_HOURS)
-    if not hours then return false, CH.ERR.INVALID_INPUT, 'Hours are a whole number, or 0 for good.' end
+    if not hours then return false, CH.ERR.INVALID_INPUT, L('panel.hours_are_a_whole_number_or') end
     local exempt = data.exempt == true
     local limits = exempt and {} or limitsOf(data.limits)
-    if not limits then return false, CH.ERR.INVALID_INPUT, 'Give the limits, or choose Exempt.' end
+    if not limits then return false, CH.ERR.INVALID_INPUT, L('panel.give_the_limits_or_choose_exempt') end
     return targetWrite(src, data, 'override', { exempt = exempt, limits = limits, hours = hours },
-        exempt and ('They are exempt from the target limits. ' .. BUYOUT_KEPT) or 'Their own limits are set.')
+        exempt and (L('panel.they_are_exempt_from_the_target') .. BUYOUT_KEPT) or L('panel.their_own_limits_are_set'))
 end
 
 H.targetOverrideClear = function(src, data)
     return targetWrite(src, data, 'clear', {},
-        'Their own limits are lifted: the job\'s or the global ones apply.')
+        L('panel.their_own_limits_are_lifted_the'))
 end
 
 --- Who a job action reaches: every player in the city holding that job now,
@@ -3730,9 +3683,9 @@ H.targetJobAction = function(src, data)
     if not job then return targetRefusal(CH.ERR.INVALID_INPUT, { why = 'job' }) end
     local action = (data.action == 'reset' or data.action == 'extend' or data.action == 'counts')
         and data.action or nil
-    if not action then return false, CH.ERR.INVALID_INPUT, 'Reset, extend or reset the counts.' end
+    if not action then return false, CH.ERR.INVALID_INPUT, L('panel.reset_extend_or_reset_the_counts') end
     local reason = shortText(data.reason, TL.REASON_MAX)
-    if not reason then return false, CH.ERR.INVALID_INPUT, 'Give a reason: it goes on the record.' end
+    if not reason then return false, CH.ERR.INVALID_INPUT, L('panel.give_a_reason_it_goes_on') end
     -- A buyout's immunity is lifted one player at a time, never for a job.
     local args = { reason = reason, all = (action == 'reset' and data.all == true) or nil,
                    keepBuyout = action == 'reset' or nil }
@@ -3740,21 +3693,19 @@ H.targetJobAction = function(src, data)
         args.minutes = wholeNumber(data.minutes, 1, TL.EXTEND_MAX_MINUTES)
         if not args.minutes then
             return false, CH.ERR.INVALID_INPUT,
-                ('Give the minutes to add, 1 to %d.'):format(TL.EXTEND_MAX_MINUTES)
+                L('panel.give_the_minutes_to_add_1_2'):format(TL.EXTEND_MAX_MINUTES)
         end
     end
     local cids = jobPlayers(job)
     if #cids == 0 then
-        return false, 'nobody', ('Nobody is working as %s, or was named on a contract in the last 7 days '
-            .. 'while working it, so nothing was changed.'):format(job)
+        return false, 'nobody', L('panel.nobody_is_working_as_or_was'):format(job)
     end
     local _, _, done = deps.targetLimits.adjustMany(staffOf(src), job, cids, action, args)
-    local what = (action == 'reset' and 'cooldowns reset') or (action == 'extend' and 'cooldowns extended')
-        or 'day and week counts reset'
-    return true, nil, ('%s: %d player(s) had their %s%s.%s'):format(job, done.done, what,
-        done.failed > 0 and (', %d could not be changed'):format(done.failed) or '',
-        action == 'reset' and (' A buyout any of them paid for still holds: lift one with Reset all '
-            .. 'on that player.') or ''), done
+    local what = (action == 'reset' and L('panel.cooldowns_reset')) or (action == 'extend' and L('panel.cooldowns_extended'))
+        or L('panel.day_and_week_counts_reset')
+    return true, nil, L('panel.player_had_their'):format(job, done.done, what,
+        done.failed > 0 and L('panel.could_not_be_changed'):format(done.failed) or '',
+        action == 'reset' and (L('panel.a_buyout_any_of_them_paid')) or ''), done
 end
 
 
@@ -3789,7 +3740,7 @@ function Panel.handle(src, payload)
     end
 
     if not Config.Admin.Enabled then
-        return answer(false, 'admin_off', 'The staff tools are switched off (Config.Admin.Enabled).')
+        return answer(false, 'admin_off', L('panel.the_staff_tools_are_switched_off'))
     end
 
     -- Permission, before anything about the request is looked at. An op
@@ -3803,12 +3754,10 @@ function Panel.handle(src, payload)
         noteDenied(src, op, 'denied')
         local why = ''
         if level == MOD then
-            why = (' Freezing, suspending, protecting, voiding and moving a deadline need that ACE '
-                .. 'itself or the moderator ACE (%s); the extra ACEs only read.')
+            why = (L('panel.freezing_suspending_protecting_voiding_and_moving'))
                 :format(tostring(moderatorAce() or 'Config.Admin.ModeratorAce'))
         elseif level == WRITE then
-            why = ' Changing anything else needs that ACE itself; the moderator ACE only freezes, '
-                .. 'suspends, protects, voids and moves deadlines, and the extra ACEs only read.'
+            why = L('panel.changing_anything_else_needs_that_ace')
         end
         return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace, true) .. why)
     end
@@ -3827,7 +3776,7 @@ function Panel.handle(src, payload)
     end
     if level == IDENTITY and not identifies(src) then
         noteDenied(src, op, 'identity_denied')
-        return answer(false, 'identity_required', ('Unmasking needs %s, a separate ACE.')
+        return answer(false, 'identity_required', (L('panel.unmasking_needs_a_separate_ace'))
             :format(tostring(Config.Admin.IdentityAce)))
     end
 
@@ -3838,13 +3787,13 @@ function Panel.handle(src, payload)
         if not deps.ratelimit.check(key, bucket) then
             local wait = deps.ratelimit.retryAfter(key, bucket) or 0
             return answer(false, CH.ERR.RATE_LIMITED,
-                wait > 0 and ('Slow down. Try again in %d second(s).'):format(wait) or 'Slow down.',
+                wait > 0 and L('panel.slow_down_try_again_in_second'):format(wait) or L('panel.slow_down'),
                 { retryAfter = wait })
         end
     end
 
     if not op or not (OPS[op] or EXTRA_OPS[op]) then
-        return answer(false, 'unknown_op', 'The page asked for something this server does not do.')
+        return answer(false, 'unknown_op', L('panel.the_page_asked_for_something_this'))
     end
     local data = type(payload.data) == 'table' and payload.data or {}
 
@@ -3878,7 +3827,7 @@ function Panel.handle(src, payload)
     end
     if not ran then
         return answer(false, CH.ERR.SERVER_ERROR,
-            'That raised an error on the server. Run the diagnosis, under Tools, to read it.')
+            L('panel.that_raised_an_error_on_the'))
     end
     return answer(ok, err, message, result)
 end

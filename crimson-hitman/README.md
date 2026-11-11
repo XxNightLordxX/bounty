@@ -157,7 +157,8 @@ are never escrowed, as only Lua is.
 **Translations.** The words players and staff read are in language files, by
 key: `locales/en.lua` (the game and the server: every notice a player gets,
 the police advisories, staff alerts and their Discord posts, staff notices,
-the app's name on the phone, the map markers and target options) and
+the app's name on the phone, the map markers and target options, and every
+answer and refusal the admin panel's requests give) and
 `locales/en.json` (the phone app and the admin panel: every refusal by its
 code, `errors` and `panel_errors`). `Config.Locale` (`'en'`) names the
 language. To translate, copy both to `locales/<language>.lua` and `.json`
@@ -167,8 +168,9 @@ set `Config.Locale = 'de'` and restart. A key your file leaves out reads in
 English, and the console says so once. Still written in their own files, and
 moving there in later steps: the phone app's and the panel's other labels,
 help lines and buttons (`ui/app.js`, `ui/admin.js`), the server's refusal
-sentences and staff command answers (`server/panel.lua`, `server/admin.lua`,
-the feature modules), and the panel's setting labels (`server/settings.lua`).
+sentences and staff command answers (`server/admin.lua`, its diagnosis
+included, `server/bridges.lua` and the feature modules, `server/org/`), and the
+panel's setting labels (`server/settings.lua`, `server/org/settings_catalogue.lua`).
 Console lines stay English. Labels a server owner sets are in
 `config/config.lua` (titles of advisories, bulletins and the city news, the
 command names).

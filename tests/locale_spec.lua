@@ -8,7 +8,8 @@
 --- get (server/notify.lua), staff alerts and their Discord posts
 --- (server/alerts.lua, server/discord.lua), staff notices
 --- (server/announce.lua), the police advisories (notify.lua's dispatch
---- entries), everything the game itself shows (client/), the phone app's
+--- entries), every answer of the admin panel's requests (server/panel.lua),
+--- everything the game itself shows (client/), the phone app's
 --- refusals (ERRORS) and the panel's (WORDS). The scan below is what keeps a
 --- sentence from being written into one of those files again.
 
@@ -21,6 +22,7 @@ local Log = require('crimson-hitman.shared.log')
 local SCANNED = {
     'server/notify.lua', 'server/alerts.lua', 'server/discord.lua', 'server/announce.lua',
     'server/police.lua',
+    'server/panel.lua',
     'client/main.lua', 'client/missionsteps.lua', 'client/admin.lua', 'client/org.lua',
     'client/rp_npc.lua', 'client/npc.lua', 'client/mugshot.lua',
 }
@@ -31,6 +33,13 @@ local ALLOW = {
     -- The reason a city news post was not made, said only in the console
     -- line two lines below it.
     ['server/police.lua'] = { ['no phone adapter answers (Config.Integrations.Phone)'] = true },
+    -- Patterns matched against the diagnosis's own lines (server/admin.lua,
+    -- not moved yet), which must read as admin.lua writes them; the preset
+    -- name kept in an audit row, which is data; and a console line.
+    ['server/panel.lua'] = { ['^Not authorised: '] = true, ['name somebody who is in the city'] = true,
+        ['run from the console'] = true, ['the server-wide checks below'] = true,
+        ['name a player to test'] = true, ['Current'] = true,
+        ["the admin panel\\'s %s raised: %s"] = true },
     -- lb-phone's camera mode name (SetCameraComponent), not a word shown.
     ['client/main.lua'] = { ['Photo'] = true },
 }
