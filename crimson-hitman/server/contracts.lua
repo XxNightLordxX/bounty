@@ -3398,7 +3398,7 @@ end
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil result
----@param opts table|nil { deathAt = ms } when the claim rests on a recorded death
+---@param opts table|nil { deathAt = ms, deathCoords = vec } when the claim rests on a recorded death
 --- Whether a payout may be claimed on this contract by this hitman now, or
 --- why not: the one check of a claim's eligibility, asked before the claim
 --- takes the contract's lock and again under it (Contracts.claimSlot), in

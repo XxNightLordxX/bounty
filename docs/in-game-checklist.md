@@ -745,6 +745,10 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] A hitman accepting a competitive contract: after the start the contract shows as accepted on their phone, and they can work it and be paid
 - [ ] An informant tip bought: after the start the hitman has the tip and paid for it once, or has their money back; never both, never neither
 - [ ] The organisation with Renewed-Banking: a member deposit, a withdrawal, a pay day. After the start the society account and the organisation's funds screen agree, and each member was paid their salary once
+- [ ] (step 8b) With dirty payouts on, kill the process right after a handover payout: Stuck escrow says the line was paid as black_money; the hitman holds it, and Delivered settles it without paying again
+- [ ] (step 8b) A buyout killed right after it closes: the placer has the premium once, and Stuck escrow's check of it (or the log's `probablyDelivered`) says it arrived
+- [ ] (step 8b) With body disposal on, the hitman quits the game while Verify kill is answering: back in the city, they still have the body to dispose of
+- [ ] (step 8b) With proof of intent on, a payout left in Stuck escrow: Pay answers "Settled as owed", the line leaves the list, and it is paid once intent is shown
 
 ## If something fails
 

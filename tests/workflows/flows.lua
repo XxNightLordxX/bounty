@@ -92,12 +92,26 @@ end
 function F.staffClearsStuck()
     local list = W.op(src('staff'), 'stuck', {})
     truthy(list and list.ok, 'the stuck list opens: ' .. tostring(list and list.err))
+    -- What the list says of each line: a payout paid as an item (paidAs)
+    -- is checked in that item, as the list tells staff to.
+    local listed = {}
+    local shown = type(list.data) == 'table' and list.data.lines or {}
+    for _, e in ipairs(shown) do
+        if type(e) == 'table' and e.line then listed[e.line] = e end
+    end
     for _, l in ipairs(W.s.storage.unsettledEscrow() or {}) do
         if l.owed_to and W.s.escrow.parked and W.s.escrow.parked(l) then
             local p = W.everyone[l.owed_to]
             local arrived = false
             local before = tonumber(l.deliver_before)
-            if p and before and (l.source == 'cash' or l.source == 'bank') then
+            local as = listed[l.id] and listed[l.id].paidAs
+            if p and before and as then
+                local held = 0
+                for _, e in ipairs(p._inventory or {}) do
+                    if e.name == as then held = held + (e.count or 0) end
+                end
+                arrived = held >= before + (tonumber(l.amount) or 0)
+            elseif p and before and (l.source == 'cash' or l.source == 'bank') then
                 arrived = (p.PlayerData.money[l.source] or 0) >= before + (tonumber(l.amount) or 0)
             end
             local r = W.op(src('staff'), 'settle', { line = l.id, disposition = arrived and 'delivered' or 'pay' })

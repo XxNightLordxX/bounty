@@ -519,7 +519,7 @@ end
 ---@return table rec { fired, depth, statement }
 function W.atAwait(k, phase, fn, fault, dies)
     local s = W.s
-    local rec = { fired = false, depth = 0 }
+    local rec = { fired = false, depth = 0, statements = {} }
     if not (s.storage.timeWaitsWith and s.timing and s.timing.await) then
         fn()
         return rec
@@ -529,6 +529,7 @@ function W.atAwait(k, phase, fn, fault, dies)
     s.storage.timeWaitsWith(function(send, sql, ...)
         if coroutine.running() == co then
             rec.depth = rec.depth + 1
+            rec.statements[rec.depth] = type(sql) == 'string' and sql:gsub('%s+', ' ') or 'TRANSACTION'
             if k and rec.depth == k and not rec.fired then
                 rec.fired = true
                 rec.statement = type(sql) == 'string' and sql:gsub('%s+', ' '):sub(1, 80) or 'TRANSACTION'

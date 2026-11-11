@@ -1778,6 +1778,7 @@
       var text = entry.why === 'raised' ? 'raised ' + num(entry.raised) + ' times with nothing arriving'
         : (WHY_LONG[entry.why] || 'why is no longer in the log');
       if (Number(entry.arrived) > 0) text += '; ' + num(entry.arrived) + ' of it arrived';
+      if (entry.paidAs) text += '; paid as ' + String(entry.paidAs) + ', so check that, not their account';
       if (entry.why === 'never_given_release' && !entry.owed) {
         text += '; owed to nobody, so Return puts it back to its contract, which keeps it while it '
           + 'is live and hands it back once it is closed';

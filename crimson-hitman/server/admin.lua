@@ -248,6 +248,14 @@ local function namesNobody(line)
         and not line.taken_from and not (line.portion == CH.PORTION.STAKE and line.staker)
 end
 
+--- The item a cash or bank line's give hands over instead (Escrow.givenAs:
+--- a payout as dirty money), which its `before` counts; nil in its account.
+local function paidAs(line)
+    local to = line.releasing_to or line.owed_to
+    local as = to and Escrow.givenAs and Escrow.givenAs(to, line)
+    return as and as.item or nil
+end
+
 --- How a held line owed to somebody, neither left for staff (Escrow.parked)
 --- nor queued for anyone, waits for staff (Escrow.leftForStaff), or nil:
 --- 'stalled' for a give that stopped part-way on the running server (it
@@ -480,6 +488,7 @@ function Admin.interrupted(src, quiet)
                 portion = line.portion, intended = intended, at = parkedAt[line.id],
                 raised = tonumber(line.deliver_raises) or 0, why = parkedWhy[line.id],
                 arrived = tonumber(line.deliver_arrived), before = tonumber(line.deliver_before),
+                paidAs = paidAs(line),
             }
         end
     end
@@ -526,6 +535,7 @@ function Admin.interrupted(src, quiet)
                 why = how,
                 raised = tonumber(line.deliver_raises) or 0,
                 arrived = tonumber(line.deliver_arrived), before = tonumber(line.deliver_before),
+                paidAs = paidAs(line),
             }
         end
     end
@@ -560,6 +570,7 @@ function Admin.interrupted(src, quiet)
                 owed = unnamed and line.owed_to ~= nil or nil,
                 raised = tonumber(line.deliver_raises) or 0,
                 arrived = tonumber(line.deliver_arrived), before = tonumber(line.deliver_before),
+                paidAs = paidAs(line),
             }
         end
     end
@@ -903,6 +914,12 @@ function Admin.settleAnswer(ok, err, detail, panel)
             .. 'server finishes that ending as a restart would (a stake by why it ended, the rest '
             .. 'back to the placer), so there is nothing for you to settle. Nothing moved.')
             :format(tostring(detail))
+    end
+    if ok and err == 'intent_held' then
+        return ('Settled as owed: no longer left for staff. It is theirs and queued, held for proof '
+            .. 'of intent (releases at %s): handed over once they show intent on the contract, or at '
+            .. 'that time at the latest. Nothing more to do.')
+            :format(os.date('!%Y-%m-%d %H:%M UTC', math.floor(tonumber(detail) or 0)))
     end
     if err == 'intent_held' then
         return ('Not settled: held for proof of intent (releases at %s). The payout is theirs and '
@@ -1837,9 +1854,18 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- queued for a player who is in the city. So is one refused to a player
     -- who is in the city (pockets full, an account that would not take it).
     if settled > 0 then return true, nil end
+    -- A pay whose give waits for proof of intent (Escrow.holdBack): owed to
+    -- them and queued behind the hold, which hands it over once they show
+    -- intent or when it runs out. Taken off the stuck list, that is the
+    -- settle done, and said so (ok). Answered as "not settled, nothing to
+    -- settle", a line left for staff under a hold read as one staff could
+    -- not settle at all, though the pay had already unparked and queued it.
+    -- Only a line already queued before this settle (why 'queued': nothing
+    -- here moved it) is not settled here.
     if (result.why == 'queued' or (pending > 0 and not result.why)) and disposition == 'pay' then
         local at = intentHeldUntil(recipient, line)
-        if at then return false, 'intent_held', at end
+        if at and result.why == 'queued' then return false, 'intent_held', at end
+        if at and again == 0 then return true, 'intent_held', at end
     end
     if result.why == 'queued' then
         return false, 'already_queued', partyFor(src, contract, result.owed_to)

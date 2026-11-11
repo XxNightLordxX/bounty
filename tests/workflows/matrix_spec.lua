@@ -64,6 +64,11 @@ end
 --- A matrix cell: runs, and a failure matching a known bug is counted as
 --- such rather than failing the suite.
 local function cell(name, meta, fn)
+    -- CH_CELLS ('a|b|...') or CH_CELLS_PREFIX rerun chosen cells alone.
+    local prefix = os.getenv('CH_CELLS_PREFIX')
+    if prefix and prefix ~= '' and name:sub(1, #prefix) ~= prefix then return end
+    local only = os.getenv('CH_CELLS')
+    if only and only ~= '' and not ('|' .. only .. '|'):find('|' .. name .. '|', 1, true) then return end
     W.it(name, function()
         local ok, err = pcall(fn)
         if ok then
@@ -385,6 +390,82 @@ describe('workflow matrix: the crash-window fixes (step 8a)', function()
             2500, 'bank', 'dep-crash')
         truthy(ok and data and data.repeated, 'the member\'s retry is answered as the first')
         eq(W.world() - start, 0, 'and charges nothing')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Step 8b: the crash-matrix cells that still failed, each pinned by its
+-- flow, its fault and the statement it is cut at (found by a probe, so the
+-- repro does not drift as awaits come and go)
+--------------------------------------------------------------------------
+
+--- The step index of `stepName` in `flow`, and the index of the await whose
+--- statement is the `nth` (default 1) to contain `sql` in it, on mysql
+--- under `profile`, as F.run counts them.
+local function awaitOf(flow, profile, stepName, sql, nth)
+    W.boot('mysql', profile)
+    W.cast(W.s)
+    local ctx = { flow = flow.name }
+    if Config.Organisation.Enabled then F.joinOrg() end
+    flow.setup(ctx)
+    W.tick(1)
+    for i, step in ipairs(flow.steps) do
+        if step.name == stepName then
+            local rec = W.atAwait(nil, 'pre', function() step.run(ctx) end)
+            local seen = 0
+            for k, text in ipairs(rec.statements) do
+                if text:find(sql, 1, true) then
+                    seen = seen + 1
+                    if seen == (nth or 1) then return i, k end
+                end
+            end
+            error(('no await %d of %s in %s'):format(nth or 1, sql, stepName), 2)
+        end
+        step.run(ctx)
+    end
+    error('no step ' .. stepName, 2)
+end
+
+local SETTLE_LINE = 'UPDATE crimson_escrow SET state = ?, settled_to'
+
+describe('workflow matrix: the crash-matrix fixes (step 8b)', function()
+    W.it('a buyout settle cut before the premium is settled pays the premium once', function()
+        -- The settle that starts again re-releases the premium, left for
+        -- staff by the crash: it rewrote the line's deliver_before with the
+        -- balance the first give had already raised, and staff checking
+        -- whether it arrived read "no" and paid it again (+15,000).
+        local i, k = awaitOf(F.buyout, 'shipped', 'settle', SETTLE_LINE, 2)
+        local ctx = F.run(F.buyout, 'mysql', 'shipped', 'crash', nil, nil, { await = { step = i, k = k, phase = 'pre' } })
+        eq(W.contract(ctx.id).state, CH.STATE.BAILED_OUT, 'bought out, the premium paid once (F.run counts the money)')
+    end)
+
+    W.it('a payout paid as dirty money, cut before it is settled, is paid once', function()
+        -- Its deliver_before counted the cash it never touches: staff saw
+        -- no cash arrive and paid the black money twice.
+        local i, k = awaitOf(F.contract, 'allon', 'payout', SETTLE_LINE, 1)
+        local ctx = F.run(F.contract, 'mysql', 'allon', 'crash', nil, nil, { await = { step = i, k = k, phase = 'pre' } })
+        eq(F.wealth('hitman') - ctx.before.hitman, ctx.reward, 'the hitman was paid once')
+    end)
+
+    W.it('a reassigned hitman\'s changed reward, cut before it is settled, is paid once', function()
+        local i, k = awaitOf(F.staff, 'allon', 'handover', SETTLE_LINE, 1)
+        F.run(F.staff, 'mysql', 'allon', 'crash', nil, nil, { await = { step = i, k = k, phase = 'pre' } })
+    end)
+
+    W.it('a hitman who leaves while their kill is verified still disposes of the body', function()
+        -- Their kill was forgotten as they left (Death.clearPlayer), so the
+        -- disposal read no body and the claim paid at once.
+        local i, k = awaitOf(F.disposal, 'shipped', 'verify', 'FROM crimson_hitmen WHERE contract_id = ? AND hitman_cid = ?', 1)
+        F.run(F.disposal, 'mysql', 'shipped', 'drop', nil, 'hitman', { await = { step = i, k = k, phase = 'pre' } })
+        truthy(#W.audit('disposal_started') >= 1, 'the body step was started')
+    end)
+
+    W.it('a payout left for staff under a proof-of-intent hold is settled by Pay, and paid once', function()
+        -- Pay unparked and queued it behind the hold, and answered "not
+        -- settled, nothing to settle": staff could not clear it.
+        local i, k = awaitOf(F.disposal, 'allon', 'load', 'INSERT INTO crimson_escrow', 1)
+        F.run(F.disposal, 'mysql', 'allon', 'crash', nil, nil, { await = { step = i, k = k, phase = 'post' } })
+        eq(#W.audit('admin_settle_result'), 1, 'staff settled it, once')
     end)
 end)
 

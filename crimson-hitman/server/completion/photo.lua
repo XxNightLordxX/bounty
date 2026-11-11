@@ -600,7 +600,7 @@ function Photo.verifyAtScene(actor, rawId)
     if verifying[key] then return false, CH.ERR.BUSY end
     verifying[key] = true
     local ran, ok, claimErr, result = pcall(Contracts.claimSlot,
-        contractId, actor.cid, CH.FULFILMENT.ELIMINATION, { deathAt = record.at })
+        contractId, actor.cid, CH.FULFILMENT.ELIMINATION, { deathAt = record.at, deathCoords = record.coords })
     verifying[key] = nil
     if not ran then error(ok, 0) end
 
@@ -795,7 +795,7 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     record.claiming = true
     local ran, ok, err, result = pcall(Contracts.claimSlot,
         record.contractId, actor.cid, CH.FULFILMENT.ELIMINATION,
-        { deathAt = record.diedAt })
+        { deathAt = record.diedAt, deathCoords = record.coords })
     record.claiming = nil
     if not ran then error(ok, 0) end
 

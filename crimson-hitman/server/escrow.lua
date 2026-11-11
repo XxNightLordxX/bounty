@@ -307,6 +307,42 @@ local function accountHeld(cid, account)
     return ok and tonumber(value) or nil
 end
 
+--- The item a cash or bank give hands over instead (Escrow.payoutAs: a
+--- hitman's payout as dirty money, server/rp_consequences.lua), or nil
+--- when it is given in its own account.
+---@return table|nil spec { item, rate } or { item, worth }
+local function givenAs(cid, line)
+    if not Escrow.payoutAs or (line.source ~= 'cash' and line.source ~= 'bank') then return nil end
+    local ran, spec = pcall(Escrow.payoutAs, cid, line)
+    if ran and type(spec) == 'table' and type(spec.item) == 'string' then return spec end
+    return nil
+end
+
+--- What a player in the city holds of what a give of `line` adds to: its
+--- account, or the item it is paid as (givenAs). nil when it could not be
+--- read. With the item, the spec too, and how many of it the give adds.
+---@return number|nil held
+---@return table|nil as
+---@return integer|nil adds
+local function heldForGive(cid, line)
+    local as = givenAs(cid, line)
+    if not as then return accountHeld(cid, line.source), nil, nil end
+    local ok, value = pcall(function()
+        local player = Framework().GetPlayerByCitizenId(cid)
+        local src = player and player.PlayerData and player.PlayerData.source
+        if not src then return nil end
+        return Inventory().GetItemCount(src, as.item)
+    end)
+    local adds = 1
+    if not as.worth then
+        local part = math.max(0, math.floor(tonumber(line.deliver_part) or 0))
+        adds = Escrow.stillOwed(line) * math.max(1, math.floor(tonumber(as.rate) or 1)) - part
+    end
+    return ok and tonumber(value) or nil, as, adds
+end
+Escrow.heldForGive = heldForGive
+Escrow.givenAs = givenAs
+
 local function leaveForStaff(spec)
     if Review then Review.open(spec) end
 end
@@ -1516,6 +1552,19 @@ local function release(mine, contractId, recipientCid, filter, reason, guard)
                 letGo(mine, line.id)
                 result.refused = result.refused + 1
                 result.why, result.owed_to = refusal, line.owed_to
+            elseif Escrow.parked(line) and not (filter and filter.unpark) then
+                -- Left for staff (Escrow.parked): nothing gives it until
+                -- they have looked, so it is put back untouched. Written on
+                -- the way to a give that refuses it, the claim replaced
+                -- deliver_before, what the recipient held when the cut-off
+                -- give began, with what they hold now, the give included:
+                -- staff checking whether it arrived read "no" and paid it
+                -- again (a buyout's premium re-released by the settle a
+                -- crash repeated).
+                Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
+                letGo(mine, line.id)
+                result.pending = result.pending + 1
+                result.parked = (result.parked or 0) + 1
             elseif guard and not guard(line) then
                 -- A release the caller wanted to make conditional on
                 -- something it could only check once the line was already
@@ -1544,8 +1593,12 @@ local function release(mine, contractId, recipientCid, filter, reason, guard)
                 -- (Escrow.parkInterrupted), who had nothing to tell from
                 -- whether it had arrived, and paying one that had paid it
                 -- twice. Against this the next start can say it probably did.
+                -- Of what the give adds to: a payout paid as dirty money
+                -- (givenAs) counts that item, not the account it never
+                -- touches. Counted in cash, a give cut off after the items
+                -- arrived read as nothing arrived, and staff paid it twice.
                 if line.source == 'cash' or line.source == 'bank' then
-                    line.deliver_before = accountHeld(recipientCid, line.source) or line.deliver_before
+                    line.deliver_before = heldForGive(recipientCid, line) or line.deliver_before
                 end
                 -- A line left for staff that staff settle (Admin.settleLine,
                 -- `unpark`): its raise count starts again in this same write,
@@ -2054,22 +2107,26 @@ function Escrow.parkInterrupted(line, stopped)
     -- in the city holding at least what they held when the give began
     -- (deliver_before, written with the claim) and all of it. A hint for
     -- staff choosing delivered or pay, never acted on here.
-    local probably
+    -- Of the item, for a payout paid as one (heldForGive), as the claim
+    -- counted deliver_before.
+    local probably, as
     local before = tonumber(line.deliver_before)
     if before and (line.source == 'cash' or line.source == 'bank') then
-        local now = accountHeld(to, line.source)
-        probably = now ~= nil and now >= before + Escrow.stillOwed(line) or nil
+        local now, spec, adds = heldForGive(to, line)
+        as = spec
+        probably = now ~= nil and now >= before + (adds or Escrow.stillOwed(line)) or nil
     end
     Audit.financial('escrow_deliver_parked', to, line.contract_id, {
         line = line.id, source = line.source, item = line.item, count = line.quantity,
         amount = line.amount, raises = line.deliver_raises, unknown = true, interrupted = true,
         stopped = stopped or nil, review = true, before = before,
-        probablyDelivered = probably,
+        probablyDelivered = probably, paidAs = as and as.item or nil,
     })
     if probably then
         Log.always(('escrow line %s: a give cut off part-way probably arrived (they hold at least '
-            .. 'what they held before it and all of it); check before /%s pay')
-            :format(tostring(line.id), tostring(Config.Admin.Commands.settle)))
+            .. 'what they held before it and all of it%s); check before /%s pay')
+            :format(tostring(line.id), as and (', in ' .. tostring(as.item)) or '',
+                tostring(Config.Admin.Commands.settle)))
     end
     return true
 end

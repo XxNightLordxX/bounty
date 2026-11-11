@@ -606,8 +606,13 @@ function Disposal.onClaim(contract, hitmanCid, fulfilment, opts)
     if fulfilment ~= CH.FULFILMENT.ELIMINATION then return end
     if type(opts) == 'table' and opts.outcome ~= nil and opts.outcome ~= CH.FULFILMENT.ELIMINATION then return end
     if Util.fulfilmentRule(contract) ~= CH.FULFILMENT_RULE.EITHER then return end
+    -- Where the body lies: the kill the claim rests on, as it handed it in
+    -- (opts.deathCoords, read with the kill before the claim began). Read
+    -- again here, it was gone if the hitman left the city during the claim
+    -- (Death.clearPlayer forgets their kills): the claim went on and paid,
+    -- and the body step was never started.
     local kill = Deps.death and Deps.death.getPending and Deps.death.getPending(contract.id, hitmanCid)
-    local body = kill and Point(kill.coords)
+    local body = Point(kill and kill.coords or (type(opts) == 'table' and opts.deathCoords or nil))
     if not body then return end
     if not Load() then return end
     if not Disposal.spot('vehicle') or not Disposal.spot('drop') then

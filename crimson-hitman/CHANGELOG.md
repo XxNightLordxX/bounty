@@ -70,6 +70,16 @@ are named by their place in `config/config.lua`; the README has the details.
   row is put back (so the pay day pays once), a salary taken from the funds
   but not yet handed over is paid (it was left for staff), a deposit that
   arrived gets its row, and a member's deposit that was charged is made.
+- A payout a crash cut off and left for staff keeps what the player held
+  when its give began: a buyout settle started again no longer overwrites
+  it (staff following it paid the premium twice), and a payout paid as
+  dirty money counts that item, not their cash. Stuck escrow says
+  "paid as black_money, so check that".
+- A hitman who leaves the city while their kill is being verified still
+  has the body to dispose of; it was skipped and the kill paid at once.
+- Staff Pay on a stuck payout held for proof of intent now settles it (owed
+  and queued behind the hold, off the stuck list); it answered "nothing to
+  settle" and the line stayed stuck.
 
 **Lighter loops**
 - The condition sampler no longer runs while no contract is running; it
