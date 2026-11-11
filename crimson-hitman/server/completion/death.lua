@@ -1400,6 +1400,10 @@ end
 --- made in the minutes before it ran out under it and was lost to a
 --- restart that was then skipped. Its release gives it the time it had
 --- left (Death.carryOverRestartHold).
+--- Nor while a staff freeze holds its contract (or the freezes cannot be
+--- read): the verify is refused meanwhile (Contracts.payoutRefusal), so a
+--- kill made in time was lost to a freeze that outlasted its window. The
+--- freeze's release gives it the time it had left (Death.carryOverHold).
 local function aged(record, now)
     local ends = endsAt(record)
     if now <= ends then return false end
@@ -1408,7 +1412,42 @@ local function aged(record, now)
         local startMs = now - math.max(0, os.time() - since) * 1000
         if ends > startMs then return false end
     end
+    -- A release still giving its time back (Holds.releasing): the carry
+    -- below has not reached this kill yet.
+    if Holds.releasing() then return false end
+    local frozen, unknown = Holds.count()
+    if (frozen > 0 or unknown) and Storage and record.contractId then
+        local ok, contract = pcall(Storage.readContract, record.contractId)
+        local staff = ok and contract and Holds.since(contract, nil, 'staff') or nil
+        if staff then
+            local startMs = now - math.max(0, os.time() - staff) * 1000
+            if ends > startMs then return false end
+        end
+    end
     return true
+end
+
+--- A staff freeze on a contract has been let go (Holds.unfreeze), or the
+--- freezes could be read again (contractId nil: every contract): each kill
+--- still waiting on it when the hold began is given the time it had left
+--- then, counted from `resume` (now, or the start of another freeze still
+--- holding it, whose own release counts from there).
+---@param contractId string|nil
+---@param since integer when the hold began, os.time()
+---@param resume integer when its clock runs again, os.time()
+function Death.carryOverHold(contractId, since, resume)
+    local nowMs = Util.monotonicMs()
+    local now = os.time()
+    local startMs = nowMs - math.max(0, now - (tonumber(since) or now)) * 1000
+    local resumeMs = nowMs - math.max(0, now - (tonumber(resume) or now)) * 1000
+    for _, record in pairs(pending) do
+        if contractId == nil or record.contractId == contractId then
+            local ends = endsAt(record)
+            if ends > startMs then
+                record.heldUntil = math.max(record.heldUntil or 0, resumeMs + (ends - startMs))
+            end
+        end
+    end
 end
 
 --- The restart hold has ended without a restart (Holds.releaseRestart):

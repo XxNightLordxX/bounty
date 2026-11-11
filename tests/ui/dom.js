@@ -228,9 +228,9 @@ function localeXhr() {
   const path = require('path');
   const dir = path.join(__dirname, '..', '..', 'crimson-hitman', 'locales');
   function Xhr() { this.status = 0; this.responseText = ''; }
-  Xhr.prototype.open = function (method, url) { this.url = String(url); };
+  Xhr.prototype.open = function (method, url) { this.url = String(url); localeXhr.urls.push(this.url); };
   Xhr.prototype.send = function () {
-    const m = /^\.\.\/locales\/([A-Za-z_-]+\.json)$/.exec(this.url);
+    const m = /^\.\.\/locales\/([A-Za-z_-]+\.json)(?:\?v=[^&#]*)?$/.exec(this.url);
     const file = m && path.join(dir, m[1]);
     if (m && Object.prototype.hasOwnProperty.call(localeXhr.extra, m[1])) {
       this.status = 200; this.responseText = JSON.stringify(localeXhr.extra[m[1]]);
@@ -242,5 +242,7 @@ function localeXhr() {
 /* A language file a test makes up ([name.json] = its table), answered as if
  * it were on disk. */
 localeXhr.extra = {};
+/* Every address the pages asked for, in order. */
+localeXhr.urls = [];
 
 module.exports = { Node: Node, makeDocument: makeDocument, localeXhr: localeXhr };

@@ -155,27 +155,32 @@ On an escrowed build (FiveM Asset Escrow) everything you edit stays readable
 are never escrowed, as only Lua is.
 
 **Translations.** The words players and staff read are in language files, by
-key. `locales/en.lua` holds the game's and the server's: every notice a
+key. `locales/en.lua` holds the server's: every notice a
 player gets, the police advisories, staff alerts and their Discord posts,
-staff notices, the app's name on the phone, the map markers and target
-options, every answer and refusal of the admin panel's requests, the staff
+staff notices, every answer and refusal of the admin panel's requests, the staff
 commands and the diagnosis (`/ch-diag`, Run the diagnosis), the buyout
 command, every feature's refusals and notices, the organisation's, and the
-panel's setting labels, help lines and group names. `locales/en.json` holds
+panel's setting labels, help lines and group names. `locales/client/en.lua`
+holds the game's own (the app's name on the phone, the map markers and target
+options), the only language file sent to every player. `locales/en.json` holds
 the pages': every label, help line, button and dialog of the phone app
 (`app`, its tabs included) and of the admin panel (`admin`, its sections
 and header included), and both pages' refusals by code (`errors`,
 `panel_errors`). `Config.Locale` (`'en'`) names the language.
 
 To add a language (say German, `de`):
-1. Copy `locales/en.lua` to `locales/de.lua` and `locales/en.json` to
-   `locales/de.json`.
+1. Copy `locales/en.lua` to `locales/de.lua`, `locales/client/en.lua` to
+   `locales/client/de.lua` and `locales/en.json` to `locales/de.json`.
 2. In `de.lua`, change `CrimsonLocales.en` to `CrimsonLocales.de` (twice: the
-   table and the `return` at the end).
+   table and the `return` at the end), and in `client/de.lua`
+   `CrimsonClientLocales.en` to `CrimsonClientLocales.de` the same way.
 3. Translate the texts on the right. Keep every `%s` and `%d` in its order
    (names, numbers and amounts go there) and the keys on the left as they
    are. Leading spaces and a leading `->` in a diagnosis line are layout:
-   keep them.
+   keep them. In `de.json` a value may name its values by place (`%2$s`,
+   `%1$s`) to put them in another order, and a key ending `_one` / `_other`
+   is one text in its singular and plural (add `_few`, `_many` if German
+   needed them: the page picks the form the language's rules ask for).
 4. Set `Config.Locale = 'de'` in `config/config.lua` and restart.
 
 A key your file leaves out reads in English, and the console says so once;
@@ -1195,7 +1200,7 @@ be handed over at the kill instead (0 as shipped: all at the drop-off).
 - **The body** is a stage the server keeps on the step (at the scene, then loaded), never an ox_inventory item or a prop a player holds: nothing to drop, trade, stash or duplicate, and nothing lost to a death or full pockets.
 - **The clock** (`TimeLimitMinutes`) runs only while the hitman is in the city and nothing holds the contract: a staff freeze on any party, the app pause and the restart hold stop it, keep the vehicle where it is, and refuse loading and dropping off. The hitman is told the time left as a band (over 20 minutes, 10 to 20, 5 to 10, under 5); staff see it to the second.
 - **On timeout** (`OnTimeout`): `pay` (as shipped, so nobody can grief a hitman out of a kill), `reduced` (they keep `ReducedPercent` of the money; items are paid whole; the rest goes back to the placer) or `refund` (all of it back to the placer).
-- **The clock's ceiling** (`MaxHoldMinutes`, 120 as shipped, never below `TimeLimitMinutes`): real minutes from the kill, counted whether the hitman is in the city or not, and through restarts. Past it the step times out as `OnTimeout` says even while the hitman is away (unless staff hold it), and from then on it no longer keeps its target off the board, so a hitman logging off over a body cannot shield the target from every new contract.
+- **The clock's ceiling** (`MaxHoldMinutes`, 120 as shipped, never below `TimeLimitMinutes`): real minutes from the kill, counted whether the hitman is in the city or not, and through restarts. Past it the step no longer keeps its target off the board, held or not, so a hitman logging off over a body cannot shield the target from every new contract. It times out as `OnTimeout` says once that many minutes have stood without a staff hold (a freeze, the app pause, the restart hold), even while the hitman is away: a hold longer than the ceiling does not time the step out as it ends.
 - **The vehicle** is a server-made networked vehicle, nobody's own, with no garage row, a random plate (`CH` and six random characters, never one another step's vehicle has, so a key qbx_vehiclekeys gave for an earlier disposal vehicle opens no later one) and a `crimsonDisposal` state bag, so nothing can store or sell it. Left more than `AbandonMetres` behind for `AbandonMinutes`, lost or destroyed, it is taken away and made again at the spawn spot, at most `MaxRespawns` times. It goes when the hitman leaves the city (made again when they are back, not counted) and at every stop; every other loss counts as a respawn, a relog in between or not, so losing it and relogging does not make free vehicles.
 - **How the server keeps it** (OneSync entity rules): its orphan mode is set to keep it (`SetEntityOrphanMode(vehicle, 2)`, where the artifact has the native), since a server-made entity is otherwise deleted once nobody is in scope of it, and only this resource deletes it. It is put in the hitman's routing bucket when made, and moved with them if they change bucket, or a hitman in an instance never sees it. Population or cleanup resources that delete vehicles by plate or by distance should leave `crimsonDisposal` vehicles alone; one deleted anyway counts as lost.
 - **The target** cannot have a new contract placed on them while their body is being disposed of, whatever `Config.Roleplay.EmsRelisting` says; a revive or a respawn changes nothing about a payout already claimed.
@@ -1853,7 +1858,7 @@ Map markers for each step of a contract, to the one party who acts on it (README
 | `Config.Disposal.AbandonMetres` | `300.0` | a vehicle left this far away ... |
 | `Config.Disposal.AbandonMinutes` | `5` | ... this long is taken back to the spawn spot |
 | `Config.Disposal.MaxRespawns` | `3` | times the vehicle is made again when lost |
-| `Config.Disposal.MaxHoldMinutes` | `120` | real minutes from the kill a step may stand, away or not |
+| `Config.Disposal.MaxHoldMinutes` | `120` | real minutes from the kill a step may stand, away or not (time on a staff hold not counted) |
 | `Config.Disposal.DespawnSeconds` | `10` | seconds after the drop-off it is taken away |
 
 ### Advanced and developer
@@ -2054,7 +2059,7 @@ The audit log records every money movement and every refused attempt:
 - **Your own presets**: Game rules, Presets keeps up to 20 presets of the server's own (the settings changed from the panel, under a name), previewed and applied like the shipped ones, deleted with two clicks, audited.
 - **Config check**: `/ch-diag config` (and Developer, Health, **Check the config**) lists every value out of range, missing script, missing ACE and risky combination, each with its fix. See Troubleshooting and /ch-diag.
 - **Version check** (`Config.VersionCheck`, off as shipped, no address): one HTTPS GET at start, sending nothing of this server's, and one console line when a newer version is out. See Updating.
-- **Translations**: every word the server and the game show (notices, police advisories, staff alerts and their Discord posts, the staff commands and the diagnosis, every feature's refusals, the organisation's, the panel's answers and its setting labels and help) and every refusal on the phone and in the panel are read from language files (`locales/en.lua`, `locales/en.json`) in the language `Config.Locale` names; a missing key reads in English. See Updating, Escrow, and where the words live.
+- **Translations**: every word the server and the game show (notices, police advisories, staff alerts and their Discord posts, the staff commands and the diagnosis, every feature's refusals, the organisation's, the panel's answers and its setting labels and help) and every refusal on the phone and in the panel are read from language files (`locales/en.lua`, `locales/client/en.lua`, `locales/en.json`) in the language `Config.Locale` names; a missing key reads in English. See Updating, Escrow, and where the words live.
 
 - **Organisation extras 3**, each off as shipped: **several organisations** (rival crews, each its own job, roles, funds and places), **reputation and tiers**, **dead drops**, **territory**, the **garage**, **internal contracts** on rogue members, the **handler** NPC and the boss's **activity log**. See Optional features, Organisation extras 3.
 

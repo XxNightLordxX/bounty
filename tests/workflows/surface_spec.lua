@@ -250,6 +250,15 @@ describe('client events', function()
         W.cover('netevent.client:qbx_core:client:playerLoggedOut')
         W.cover('event:client:qbx_core:client:playerLoggedOut')
         W.clientEvent('onClientResourceStart', GetCurrentResourceName())
+        -- ox_target going and coming back: the zones are drawn again (A1).
+        W.clientEvent('onClientResourceStop', 'ox_target')
+        W.clientEvent('onClientResourceStart', 'ox_target')
+        -- The access word, which the NPC places listen to as well (P2).
+        if W.Client.handlers['crimson-hitman:access'] then
+            W.cover('event:client:crimson-hitman:access')
+            W.Client.handlers['crimson-hitman:access'](true, 'full')
+            W.pump()
+        end
         W.clientEvent('crimson-hitman:appearanceChanged')
         W.clientEvent('gameEventTriggered', 'CEventNetworkEntityDamage', { 1003, 1002, 0, 1, 453432689 })
         W.clientEvent('onResourceStop', GetCurrentResourceName())

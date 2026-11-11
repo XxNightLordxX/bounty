@@ -536,7 +536,7 @@ local CATALOGUE = {
       kind = 'switch', label = L('settings.check_for_a_newer_version_at'),
       about = L('settings.off_as_shipped_on_with_an'),
       inflight = L('settings.asked_once_as_the_server_starts') },
-    { key = L('settings.debug'), section = 'features', category = 'developer', group = 'Audit and debug', kind = 'switch',
+    { key = 'Debug', section = 'features', category = 'developer', group = 'Audit and debug', kind = 'switch',
       label = L('settings.debug_output_in_the_server_console'),
       about = L('settings.off_the_server_console_prints_only'),
       inflight = L('settings.read_at_every_line_printed_with') },
@@ -1150,7 +1150,7 @@ for _, spec in ipairs(Integrations.KINDS) do
         inflight = L('settings.sent_to_every_players_game_at')
     end
     CATALOGUE[#CATALOGUE + 1] = {
-        key = L('settings.integrations') .. spec.key, section = 'limits', category = 'developer', group = 'Other scripts',
+        key = 'Integrations.' .. spec.key, section = 'limits', category = 'developer', group = 'Other scripts',
         kind = 'choice', choices = choices, client = client or nil, live = spec.required and false or nil,
         label = L('settings.other_scripts') .. spec.kind,
         about = (INTEGRATION_ABOUT[spec.key] or '') .. (INTEGRATION_ABOUT[spec.key] and ' ' or '')
@@ -1164,7 +1164,7 @@ end
 for _, name in ipairs({ 'timeline', 'void', 'stuck', 'settle', 'whois', 'contracts', 'diagnose',
     'refresh', 'review', 'panel' }) do
     CATALOGUE[#CATALOGUE + 1] = {
-        key = L('settings.admin_commands') .. name, section = 'limits', category = 'developer', group = 'Staff commands',
+        key = 'Admin.Commands.' .. name, section = 'limits', category = 'developer', group = 'Staff commands',
         kind = 'text', pattern = '^[%w_%-]+$', maxLength = 32, live = false,
         label = L('settings.command_name') .. name, about = L('settings.without_the_slash'), inflight = RESTART,
     }
@@ -1242,7 +1242,7 @@ for _, bucket in ipairs(BUCKETS) do
     local panel = PANEL_BUCKETS[bucket]
     local gates = BUCKET_ABOUT[bucket]
     CATALOGUE[#CATALOGUE + 1] = {
-        key = L('settings.cooldowns') .. bucket .. '.per', section = panel and 'readonly' or 'limits', category = 'developer',
+        key = 'Cooldowns.' .. bucket .. '.per', section = panel and 'readonly' or 'limits', category = 'developer',
         group = panel and L('settings.staff') or L('settings.rate_limits'),
         kind = 'number', min = 0.5, max = 3600, label = bucket .. L('settings.refill_window'),
         about = gates and (gates .. L('settings.a_full_allowance_refills_over_this')) or nil,
@@ -1251,7 +1251,7 @@ for _, bucket in ipairs(BUCKETS) do
         inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
     CATALOGUE[#CATALOGUE + 1] = {
-        key = L('settings.cooldowns') .. bucket .. '.burst', section = panel and 'readonly' or 'limits', category = 'developer',
+        key = 'Cooldowns.' .. bucket .. '.burst', section = panel and 'readonly' or 'limits', category = 'developer',
         group = panel and L('settings.staff') or L('settings.rate_limits'),
         kind = 'number', integer = true, min = 1, max = 200, label = bucket .. L('settings.requests_held'),
         about = gates and (gates .. L('settings.how_many_it_allows_at_once')) or nil,

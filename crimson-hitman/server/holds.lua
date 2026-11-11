@@ -1,9 +1,13 @@
 --- Holds: every reason a live contract stands still, in one service.
 ---
---- A contract is "on hold" when nothing on it may move: nothing accepted,
---- completed, paid out, handed over, bought out, informed on, tipped,
---- amended, cancelled with a refund or expired, and nothing charged,
---- refunded or moved. Four things hold contracts, each a kind here:
+--- A contract is "on hold" when its clocks stand still. Under a staff
+--- freeze or the restart hold nothing on it may move either: nothing
+--- accepted, completed, paid out, handed over, bought out, informed on,
+--- tipped, amended, cancelled with a refund or expired, and nothing
+--- charged, refunded or moved. The app pause stops placing and accepting
+--- and holds every clock, and nothing more: a contract already taken can
+--- still be completed and paid under it (Contracts.payoutRefusal; README,
+--- "a confirm still pays"). Four things hold contracts, each a kind here:
 ---
 ---   staff    a staff freeze on a party (Players, in /hitmanadmin): every
 ---            live contract (active or accepted) they are party to, as the
@@ -18,8 +22,9 @@
 ---            resource's KVP, so the start after the restart gives its time
 ---            back.
 ---   app      staff stop the whole app for an event (Config.Holds.AppPaused,
----            a switch under Features): every live contract, and nothing is
----            placed or accepted. Its start is kept by the store
+---            a switch under Features): every live contract's clocks, and
+---            nothing is placed or accepted (a completion still pays). Its
+---            start is kept by the store
 ---            (Storage.writeStaffMeta 'staff_pause_since').
 ---   presence nobody's absence: the deadline also stops while the placer,
 ---            the target (or a target in prison, PauseWhileTargetJailed) or
@@ -87,6 +92,14 @@ local RESTART_KVP = 'crimson_hitman:restart_hold_since'
 --- across a restart (Holds.syncAppPause).
 local appPause = nil
 local PAUSE_META = 'staff_pause_since'
+--- A pause whose end the store could not keep (its start, os.time()), or
+--- nil. Its time was given back when it ended; the store still says it is
+--- on, so the next start would give it all back again, and the time since
+--- with it. Kept in the resource's KVP too, which a start reads before it
+--- believes the store, and written to the store again from Holds.tick
+--- until it takes.
+local pauseEndUnstored = nil
+local PAUSE_ENDED_KVP = 'crimson_hitman:app_pause_given_back'
 
 --- Since when the store's freezes could not be read (os.time()), or nil.
 --- Read as nobody frozen, a frozen player's contracts ran their clocks and
@@ -472,6 +485,41 @@ local function giveBackLive(since, now)
     end
 end
 
+--- Every open amendment proposal on a contract `held` seconds more: none
+--- could be answered while a staff freeze (or the freezes unread) held it,
+--- and none ran out meanwhile (Amendments.expire).
+---@param contractId string
+---@param held integer seconds
+---@param now integer
+local function extendProposals(contractId, held, now)
+    if held <= 0 or not (Storage.readOpenAmendments and Storage.writeAmendment) then return end
+    pcall(function()
+        for _, proposal in ipairs(Storage.readOpenAmendments(contractId) or {}) do
+            if proposal.expires_at then
+                proposal.expires_at = (tonumber(proposal.expires_at) or now) + held
+                Storage.writeAmendment(proposal)
+            end
+        end
+    end)
+end
+
+--- The freezes could be read again after an outage that began `since`:
+--- each live contract's lifetime given back (giveBackLive), and what else
+--- the outage stopped as a freeze would have: every open proposal the span
+--- up to the first real freeze still on it, and every kill pending a photo
+--- the window it had left (S8-STATE-7).
+local function releaseUnread(since, now)
+    giveBackLive(since, now)
+    for _, contract in ipairs(Storage.liveContracts() or {}) do
+        if LIVE[contract.state] then
+            local others = staffSince(contract)
+            local resume = math.max(since, others or now)
+            extendProposals(contract.id, resume - since, now)
+            if Death and Death.carryOverHold then pcall(Death.carryOverHold, contract.id, since, resume) end
+        end
+    end
+end
+
 --- The one release path: run `fn` with the releasing guard up, so the
 --- expiry pass leaves every contract alone until its time is given back.
 local function release(fn, ...)
@@ -688,16 +736,18 @@ unfreezeUnlocked = function(staffCid, cid, reason)
         -- nothing back, and a proposal due meanwhile ran out the moment it
         -- ended.
         local held = math.max(0, (others or now) - row.frozen_at)
-        if held > 0 and Storage.readOpenAmendments and Storage.writeAmendment then
-            pcall(function()
-                for _, proposal in ipairs(Storage.readOpenAmendments(contract.id) or {}) do
-                    if proposal.expires_at then
-                        proposal.expires_at = (tonumber(proposal.expires_at) or now) + held
-                        Storage.writeAmendment(proposal)
-                    end
-                end
-            end)
+        -- And every kill on it pending a photo the window it had left when
+        -- this freeze began (the verify was refused meanwhile): counted from
+        -- now, or from the next freeze still on it, whose release carries
+        -- it on from there.
+        if held > 0 and Death and Death.carryOverHold then
+            local carried, carryErr = pcall(Death.carryOverHold, contract.id, row.frozen_at, others or now)
+            if not carried then
+                Log.always(('contract %s: the kills waiting through a freeze could not be kept (%s)')
+                    :format(contract.id, tostring(carryErr)))
+            end
         end
+        extendProposals(contract.id, held, now)
         if not others then
             -- Banked now only where nothing else stops it: not while the
             -- restart hold is on, and not while a party is away (the expiry
@@ -761,7 +811,7 @@ function Holds.reload()
         -- Let go of the outage's hold before the first await, under the
         -- release guard, and give each contract back what it took.
         unread, unreadRetry = nil, nil
-        local gave, err = pcall(release, giveBackLive, since, now)
+        local gave, err = pcall(release, releaseUnread, since, now)
         if not gave then
             Log.always(('the lifetime the unreadable freezes took could not be given back (%s)')
                 :format(Util.dbError(err)))
@@ -867,7 +917,27 @@ local function loadAppPause()
     local ok, meta = Db.try('the app pause could not be read from the store (%s)', Storage.readStaffMeta)
     if not ok then return end
     local since = tonumber(type(meta) == 'table' and meta[PAUSE_META]) or 0
+    local kvpOk, ended = pcall(GetResourceKvpInt, PAUSE_ENDED_KVP)
+    ended = kvpOk and tonumber(ended) or 0
+    if since > 0 and ended == since then
+        -- Already ended, and its time given back: only the store's word of
+        -- the end was lost. Written again from the tick.
+        pauseEndUnstored = since
+        return
+    end
+    if ended > 0 then pcall(DeleteResourceKvp, PAUSE_ENDED_KVP) end
     if since > 0 then appPause = { since = since } end
+end
+
+--- Write the end of a pause the store did not keep, again: from the tick.
+local function storePauseEnd()
+    if not pauseEndUnstored then return end
+    local ok = Db.quiet('the end of the app pause could still not be kept by the store (%s)',
+        Storage.writeStaffMeta, PAUSE_META, 0)
+    if ok ~= false then
+        pauseEndUnstored = nil
+        pcall(DeleteResourceKvp, PAUSE_ENDED_KVP)
+    end
 end
 
 --- Start the pause: every live contract's deadline stops now, and every
@@ -877,8 +947,13 @@ local function startAppPause()
     -- Taken in this process before the first await: a second sync landing
     -- in the write (the panel's watcher and the tick) finds it on.
     appPause = { since = now }
-    Db.try('the app pause could not be kept by the store (%s); it is on until the next start',
+    local stored = Db.try('the app pause could not be kept by the store (%s); it is on until the next start',
         Storage.writeStaffMeta, PAUSE_META, now)
+    if stored ~= false and pauseEndUnstored then
+        -- This start replaced the one whose end was never stored.
+        pauseEndUnstored = nil
+        pcall(DeleteResourceKvp, PAUSE_ENDED_KVP)
+    end
     holdEveryLive(now, Holds.TEXT.pausedTitle, Holds.TEXT.paused)
     Log.always('staff paused the app: no contract is placed or accepted, and every live '
         .. 'contract\'s clocks are held until it is switched off (Holds.AppPaused)')
@@ -893,7 +968,14 @@ local function endAppPause()
     -- Taken in this process before the first await: a second sync landing
     -- in the write finds it off, and gives nothing back a second time.
     appPause = nil
-    Db.try('the end of the app pause could not be kept by the store (%s)', Storage.writeStaffMeta, PAUSE_META, 0)
+    local stored = Db.try('the end of the app pause could not be kept by the store (%s); it is written '
+        .. 'again until it takes', Storage.writeStaffMeta, PAUSE_META, 0)
+    if stored == false then
+        -- The store still says paused since `since`: a start reading that
+        -- would give the whole pause back a second time (S8-STATE-1).
+        pauseEndUnstored = since
+        pcall(SetResourceKvpInt, PAUSE_ENDED_KVP, since)
+    end
     endEveryLive(L('holds.app_pause'), since, now, Holds.TEXT.pausedTitle, Holds.TEXT.resumed)
     Log.always('staff ended the app pause: contracts run again where nothing else stops them')
 end
@@ -929,6 +1011,7 @@ function Holds.init(deps)
     presence = nil
     PlayerLock.reset()
     unread, unreadRetry = nil, nil
+    pauseEndUnstored = nil
     Holds.reload()
     -- An app pause from before the restart is still on: read before the
     -- restart hold's lifetime is given back, which leaves out what it covers.
@@ -957,6 +1040,7 @@ end
 --- the restart never came for, ended at RestartMaxHoldMinutes.
 function Holds.tick()
     if unread and (not unreadRetry or os.time() >= (unreadRetry.retryAt or 0)) then pcall(Holds.reload) end
+    if pauseEndUnstored then pcall(storePauseEnd) end
     if restartHold and os.time() >= Holds.restartHoldEnds() then Holds.releaseRestart('max_hold') end
 end
 

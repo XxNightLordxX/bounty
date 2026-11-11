@@ -46,7 +46,7 @@ when an item in scope is driven by nothing and not listed below with why.
 | command | yes | 12 | 12 |
 | config | counted | 632 | 0 |
 | err | counted | 152 | 4 |
-| event | yes | 24 | 24 |
+| event | yes | 26 | 26 |
 | ext | counted | 59 | 0 |
 | handler | yes | 122 | 122 |
 | netevent.client | yes | 18 | 18 |
@@ -97,9 +97,11 @@ None.
 | Capability | Workflow test |
 |---|---|
 | `client:QBCore:Client:OnPlayerUnload` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
+| `client:crimson-hitman:access` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
 | `client:crimson-hitman:appearanceChanged` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
 | `client:gameEventTriggered` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
 | `client:onClientResourceStart` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
+| `client:onClientResourceStop` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
 | `client:onResourceStop` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
 | `client:qbx_core:client:playerLoggedOut` | client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
 | `server:QBCore:Server:OnJobUpdate` | engine and framework events > jobs, duty, groups, jail, logging out and unloading, a resource starting |

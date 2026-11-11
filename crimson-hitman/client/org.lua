@@ -25,6 +25,9 @@ local OrgSpots = {}
 
 --- The spots last sent: [id] = { id, kind, label, at, radius, blip, npc }
 local Spots = {}
+--- What the server last sent, as sent: drawn again when the target script
+--- comes back (it forgets every zone and option at its stop).
+local Last = nil
 --- What is drawn: zones [id] = ox_target zone id, peds [id]. The blips are
 --- CrimsonMarkers' (client/missionsteps.lua), keyed 'org:<id>'.
 local Zones, Peds = {}, {}
@@ -80,6 +83,13 @@ end
 local function spawn(spot)
     local hash = Npc.loadModel(Model, MODEL_WAIT_MS, { stepMs = 100, checkValid = false })
     if not hash then return end
+    -- The load waits up to MODEL_WAIT_MS: a logout, or a push that moved or
+    -- dropped this spot, may have come meanwhile, and a ped made now would
+    -- stand there with nothing left to remove it.
+    if Spots[spot.id] ~= spot or Peds[spot.id] or not Npc.loggedIn() then
+        SetModelAsNoLongerNeeded(hash)
+        return
+    end
     local ped = Npc.spawn(hash, spot.at.x, spot.at.y, spot.at.z, spot.h or 0.0, { scriptHost = true })
     if not ped then return end
     Peds[spot.id] = ped
@@ -150,13 +160,26 @@ function OrgSpots.apply(data)
 end
 
 RegisterNetEvent('crimson-hitman:orgSpots', function(data)
+    Last = data
     OrgSpots.apply(data)
 end)
 
 -- Another character, or none: everything goes; the server sends the next
 -- character's spots when it loads.
-AddEventHandler('QBCore:Client:OnPlayerUnload', function() OrgSpots.apply(nil) end)
-AddEventHandler('qbx_core:client:playerLoggedOut', function() OrgSpots.apply(nil) end)
+AddEventHandler('QBCore:Client:OnPlayerUnload', function() Last = nil; OrgSpots.apply(nil) end)
+AddEventHandler('qbx_core:client:playerLoggedOut', function() Last = nil; OrgSpots.apply(nil) end)
+
+-- The target script (ox_target) restarted, or started after this resource:
+-- the zones and ped options it was given are gone with it, so its stop
+-- forgets them and its start draws the last spots sent again.
+AddEventHandler('onClientResourceStop', function(resource)
+    if not CrimsonIntegrations.isResourceOf('target', resource) then return end
+    Zones = {}
+end)
+AddEventHandler('onClientResourceStart', function(resource)
+    if not CrimsonIntegrations.isResourceOf('target', resource) or Last == nil then return end
+    OrgSpots.apply(Last)
+end)
 
 AddEventHandler('onResourceStop', function(resource)
     if resource == GetCurrentResourceName() then clearAll() end

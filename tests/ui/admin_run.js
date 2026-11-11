@@ -5701,13 +5701,27 @@ async function main() {
       has(nav, '\u00abHome', 'its own HTML');
       has(app.byId('panel').textContent, '\u00ab', 'what it draws');
       const missing = [];
-      (PAGE_JS.match(/\bt\('[\w]+\.[\w]+'\)/g) || []).forEach(function (call) {
+      (PAGE_JS.match(/\bt\('[\w]+\.[\w]+'[,)]/g) || []).forEach(function (call) {
         const key = call.slice(3, -2), at = key.indexOf('.');
         if (key === 'section.key') return;  // the comment that says how
         const sec = en[key.slice(0, at)];
         if (!sec || typeof sec[key.slice(at + 1)] !== 'string') missing.push(key);
       });
+      (PAGE_JS.match(/\btn\('[\w]+\.[\w]+'[,)]/g) || []).forEach(function (call) {
+        const key = call.slice(4, -2), at = key.indexOf('.');
+        if (key === 'section.key') return;
+        const sec = en[key.slice(0, at)];
+        ['_one', '_other'].forEach(function (form) {
+          if (!sec || typeof sec[key.slice(at + 1) + form] !== 'string') missing.push(key + form);
+        });
+      });
       eq(missing.join(', '), '', 'every key the panel asks for is in en.json');
+    });
+    // L3: stamped with the build, as admin.js itself is (admin.html).
+    it('Translations: the language files are asked for with the build stamp', function () {
+      const asked = localeXhr.urls.filter(function (u) { return u.indexOf('locales/') !== -1; });
+      truthy(asked.length > 0, 'the panel read its words');
+      eq(asked.filter(function (u) { return !/\.json\?v=[^&]+$/.test(u); }).join(', '), '', 'every one stamped');
     });
     clean(app, 'the panel in another language');
   })();

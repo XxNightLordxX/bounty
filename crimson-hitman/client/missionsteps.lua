@@ -172,7 +172,8 @@ function CrimsonMarkers.set(key, spec)
     blips[#blips + 1] = centre
 
     Gen = Gen + 1
-    local entry = { kind = spec.kind, x = x, y = y, z = CrimsonGeo.finite(spec.z), blips = blips, gen = Gen }
+    local entry = { kind = spec.kind, x = x, y = y, z = CrimsonGeo.finite(spec.z), blips = blips, gen = Gen,
+        act = spec.act, ref = spec.ref }
     Drawn[key] = entry
     AddZone(entry, spec)
     -- Off by itself when its time runs out, should the server's word not
@@ -213,6 +214,20 @@ AddEventHandler('qbx_core:client:playerLoggedOut', function() CrimsonMarkers.cle
 AddEventHandler('onResourceStop', function(resource)
     if resource ~= GetCurrentResourceName() then return end
     CrimsonMarkers.clearAll()
+end)
+
+-- The target script (ox_target) restarted, or started after the marker
+-- came: the zones it was given went with it. Its stop forgets them; its
+-- start adds one again for every marker that carries an action.
+AddEventHandler('onClientResourceStop', function(resource)
+    if not CrimsonIntegrations.isResourceOf('target', resource) then return end
+    for _, entry in pairs(Drawn) do entry.zone = nil end
+end)
+AddEventHandler('onClientResourceStart', function(resource)
+    if not CrimsonIntegrations.isResourceOf('target', resource) then return end
+    for _, entry in pairs(Drawn) do
+        if entry.act and entry.ref and not entry.zone then AddZone(entry, { act = entry.act, ref = entry.ref }) end
+    end
 end)
 
 return CrimsonMarkers

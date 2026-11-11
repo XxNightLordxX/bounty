@@ -184,6 +184,21 @@ function Integrations.get(kind)
     return nil
 end
 
+--- Whether `resource` is the resource behind one of a kind's adapters: an
+--- onClientResourceStart/Stop for it means that kind came or went (a
+--- restarted ox_target has forgotten every zone it was given).
+---@param kind string
+---@param resource string
+---@return boolean
+function Integrations.isResourceOf(kind, resource)
+    local r = registry[kind]
+    if not r or type(resource) ~= 'string' then return false end
+    for i = 1, #r.order do
+        if r.by[r.order[i]].resource == resource then return true end
+    end
+    return false
+end
+
 --- Whether a kind has an adapter answering now.
 ---@param kind string
 ---@return boolean

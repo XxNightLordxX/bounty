@@ -257,12 +257,20 @@ loaded before the job was registered this process (`Org.loadedSinceRegister`).
 Every word players and staff read is a key: server and client Lua call
 `L('area.key')` (`local L = CrimsonBoot.requireShared('locale').t` on the
 server, `CrimsonLocale.t` on the client), which reads
-`locales/<Config.Locale>.lua` and falls back to `locales/en.lua`; the pages
+`locales/<Config.Locale>.lua` and falls back to `locales/en.lua` (the game's
+own `client.*` keys: `locales/client/<Config.Locale>.lua`, the only language
+file the manifest sends every player; client files ask no other key and the
+server none of these, which tests/locale_spec.lua holds); the pages
 call `Text.t('section.key')` or read a whole `Text.section(name)` from
 `locales/<lang>.json`, loaded synchronously as the page starts (the phone is
 told the language by `?lang=` on its address, the panel by its open message).
 A page reads every word through its one helper, `t('section.key')` (`var t
-= Text.t`; the phone's keys are `app.*`), and its own HTML by attribute:
+= Text.t`; the phone's keys are `app.*`), with values after the key filling
+its `%s` in order (`t('app.page_of', p, pages)`; `%2$s` names one by place),
+and `tn('section.key', count)` for words that depend on a count
+(`key_one`, `key_other`, and any further form Intl.PluralRules names for the
+language). English is never joined onto a value with `+` in a page
+(tests/locale_spec.lua, PageScan.joined). Its own HTML is read by attribute:
 `data-t` (the text), `data-t-title`, `data-t-placeholder`,
 `data-t-aria-label`, applied as the page starts (the panel's keys are
 `admin.*`). `Text.later(fn)` runs `fn`

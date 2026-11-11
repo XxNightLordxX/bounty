@@ -956,7 +956,9 @@ respondUnlocked = function(actor, amendmentId, approve, keyHeld)
         -- that time was never given. A party is told it is on hold, as
         -- below; anybody else only that they are not one.
         local live = Storage.readContract(proposal.contract_id)
-        if live and not CH.TERMINAL[live.state] and Holds.on(live, nil, 'staff') then
+        -- Nor while a release is still giving its time back (Holds.releasing):
+        -- an unfreeze lets go of the freeze before it extends the proposals.
+        if live and not CH.TERMINAL[live.state] and (Holds.releasing() or Holds.on(live, nil, 'staff')) then
             if not participants(live)[actor.cid] then return false, CH.ERR.NOT_PARTICIPANT end
             return false, CH.ERR.CONTRACT_FROZEN
         end
@@ -1307,7 +1309,10 @@ function Amendments.expire()
         local held
         for j = 1, #open do
             if held == nil and now > open[j].expires_at then
-                held = Holds.on(Storage.readContract(contractId), nil, 'staff')
+                -- And while a release is giving its time back: an unfreeze
+                -- lets go of the freeze before it extends the proposals
+                -- (S8-STATE-6), and this tick runs on its own thread.
+                held = Holds.releasing() or Holds.on(Storage.readContract(contractId), nil, 'staff')
             end
             if held and now > open[j].expires_at then
                 remaining = remaining + 1

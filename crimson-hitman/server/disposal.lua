@@ -225,20 +225,38 @@ local function MaxHoldSeconds()
     return math.floor(math.max(Num('MaxHoldMinutes', 120), Num('TimeLimitMinutes', 30)) * 60)
 end
 
---- Whether a step has stood past MaxHoldMinutes of real time.
+--- Whether a step has stood past MaxHoldMinutes of real time, the wall
+--- clock from the kill: past it the step no longer keeps its target off the
+--- board, held or not.
 local function PastHold(step, now)
     local started = tonumber(step.started_at)
     return started ~= nil and (now or os.time()) - started >= MaxHoldSeconds()
 end
 
---- Whether anything holds this step's clock now: a staff freeze on one of
---- its parties, the app pause or the restart hold.
+--- The same ceiling for timing the step out, with the time staff held it
+--- left out (`held_for`): a hold longer than the ceiling timed the step out
+--- the moment it ended, against the hitman (S8-STATE-4).
+local function PastHoldUnheld(step, now)
+    local started = tonumber(step.started_at)
+    if started == nil then return false end
+    return (now or os.time()) - started - (tonumber(step.held_for) or 0) >= MaxHoldSeconds()
+end
+
+--- Whether anything holds this step's clock now: a staff freeze holding
+--- its contract (on any party to it, or every contract while the freezes
+--- cannot be read), the app pause or the restart hold.
 local function Held(step)
     if Holds.on(nil, nil, { 'restart', 'app' }) then return true end
+    local frozen, unknown = Holds.count()
+    if unknown then return true end
+    if frozen == 0 then return false end
     for _, cid in ipairs({ step.hitman_cid, step.creator_cid, step.target_cid }) do
         if cid and Holds.of(cid) then return true end
     end
-    return false
+    -- Another operative on the contract, frozen: one read, only while
+    -- somebody is.
+    local ok, contract = pcall(Deps.storage.readContract, step.contract_id)
+    return ok and contract ~= nil and Holds.on(contract, nil, 'staff') or false
 end
 Disposal.held = Held
 
@@ -749,9 +767,15 @@ function Disposal.tick()
             local actor = ActorOf(step.hitman_cid)
             local was = rt.countedAt or now
             rt.countedAt = now
+            local held = Held(step)
+            if held and now > was then
+                -- Kept on the step, so a restart in a long hold keeps it.
+                step.held_for = (tonumber(step.held_for) or 0) + (now - was)
+                if now - (rt.wroteAt or 0) >= 60 then Write(step) end
+            end
             if not Feature.on('Disposal') then
                 if Finish(step, 'switched_off') then finished = finished + 1 end
-            elseif PastHold(step, now) and not Held(step) then
+            elseif PastHoldUnheld(step, now) and not held then
                 -- Stood past MaxHoldMinutes of real time, the hitman in the
                 -- city or not: timed out as OnTimeout says.
                 Deps.audit.action('disposal_hold_capped', step.hitman_cid, step.contract_id,
@@ -763,7 +787,7 @@ function Disposal.tick()
                     RemoveVehicle(step)
                     changed = true
                 end
-            elseif Held(step) then
+            elseif held then
                 -- On hold: the clock stands, the vehicle stays where it is.
                 rt.farSince = nil
             else

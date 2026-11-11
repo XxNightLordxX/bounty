@@ -2526,11 +2526,14 @@ end
 --- saved at the next flush.
 function JsonStore.readRpRows(kind)
     local out = {}
+    -- First: its first call moves idle clocks still in records.json into
+    -- clocks.json, and a row read from both would come back twice.
+    local clocks = kind == 'idle_clock' and clocksData() or nil
     for _, row in pairs(db.rpRows or {}) do
         if row.kind == kind then out[#out + 1] = Util.copy(row) end
     end
-    if kind == 'idle_clock' then
-        for _, row in pairs(clocksData().rows) do
+    if clocks then
+        for _, row in pairs(clocks.rows) do
             if row.kind == kind then out[#out + 1] = Util.copy(row) end
         end
     end

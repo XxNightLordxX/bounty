@@ -160,22 +160,54 @@ local PAGE_ALLOW = {
     },
 }
 
+--- Joined with + and not words a player reads, by page: each with why.
+local JOINED_ALLOW = {
+    ['ui/app.js'] = {
+        -- The page's fault reports (Diag), read in the server console.
+        ['build '] = true, [' reported'] = true, [' suppressed'] = true, ['action '] = true,
+        -- A class name with its last part added.
+        ['diag-row is-'] = true,
+    },
+    ['ui/admin.js'] = {
+        -- The markup builder's own attribute, and a class name with its last part added.
+        [' class="'] = true, ['toast is-'] = true,
+        -- A config path shown as code (Config.Cooldowns.<bucket>).
+        [' = { per, burst }'] = true,
+    },
+}
+
 local function englishTable()
     package.loaded['crimson-hitman.locales.en'] = nil
     return require('crimson-hitman.locales.en')
 end
 
 describe('Translations: the language files', function()
-    it('every key the code asks for is in locales/en.lua', function()
+    it('every key the code asks for is in locales/en.lua (the game\'s in locales/client/en.lua)', function()
         local en = englishTable()
+        package.loaded['crimson-hitman.locales.client.en'] = nil
+        local game = require('crimson-hitman.locales.client.en')
         local missing, asked = {}, 0
         local files = io.popen('ls crimson-hitman/server/*.lua crimson-hitman/server/*/*.lua '
             .. 'crimson-hitman/client/*.lua crimson-hitman/shared/*.lua')
         for path in files:lines() do
+            local client = path:find('/client/', 1, true) ~= nil
             for key, line in pairs(TextScan.keysUsed(read_file(path))) do
                 asked = asked + 1
-                if type(en[key]) ~= 'string' then missing[#missing + 1] = path .. ':' .. line .. ' ' .. key end
+                -- R1: the game is sent its own words only, and the server
+                -- never reads them.
+                local isGame = key:sub(1, 7) == 'client.'
+                if client ~= isGame then
+                    missing[#missing + 1] = path .. ':' .. line .. ' ' .. key .. ' (on the wrong side)'
+                elseif type((isGame and game or en)[key]) ~= 'string' then
+                    missing[#missing + 1] = path .. ':' .. line .. ' ' .. key
+                end
             end
+        end
+        for key in pairs(en) do
+            if key:sub(1, 7) == 'client.' then missing[#missing + 1] = 'locales/en.lua ' .. key .. ' (the game\'s)' end
+        end
+        for key in pairs(game) do
+            if key:sub(1, 7) ~= 'client.' then missing[#missing + 1] = 'locales/client/en.lua ' .. key end
         end
         files:close()
         table.sort(missing)
@@ -230,6 +262,28 @@ describe('Translations: the language files', function()
         eq(table.concat(left, ', '), '', 'words still written into a page')
     end)
 
+    -- L1: one English word joined on with + (' of ', ' minute', 'Stake: ')
+    -- or a plural made in place ("? '' : 's'") is a sentence a translator
+    -- cannot reorder or put in the plural: such text is one key, with %s
+    -- for the values (t(key, ...)) and _one/_other forms (tn(key, n)).
+    it('no page joins English to its values with +, or makes a plural in place (L1)', function()
+        local classes = PageScan.classes({ src('ui/app.css'), src('ui/kit.css'), src('ui/admin.css') })
+        local left = {}
+        for _, page in ipairs(MOVED_PAGES) do
+            for _, lit in ipairs(PageScan.joined(src(page), classes, JOINED_ALLOW[page])) do
+                left[#left + 1] = ('%s:%d %q'):format(page, lit.line, lit.text)
+            end
+        end
+        eq(#left, 0, 'English joined in a page: ' .. table.concat(left, ', '))
+    end)
+
+    it('the joined scan finds a word joined on and a plural made in place, and not a key or a class', function()
+        local found = PageScan.joined("el('div', 'hint', n + ' minute' + (n === 1 ? '' : 's'));\n"
+            .. "var k = 'org:' + id + ':go'; el('div', 'notice ' + kind, t('app.x', n));\n", { notice = true })
+        eq(#found, 2, 'the word and the plural')
+        eq(found[1].text, ' minute')
+    end)
+
     it('the page scan finds a sentence written back, and not a key, a class or a console line', function()
         local found = PageScan.hardCoded("el('div', 'notice gold', 'Nothing is out on you.');\n"
             .. "console.warn('a console line'); t('app.cancel'); if (x === 'Some words') {}\n"
@@ -253,10 +307,13 @@ describe('Translations: the language files', function()
 
     it('both pages and the game load them, and an escrowed build leaves them readable', function()
         local manifest = src('fxmanifest.lua')
-        truthy(manifest:find("'locales/%*%.lua',%s*'shared/locale%.lua'"), 'the game loads the words, then the lookup')
+        truthy(manifest:find("'locales/client/%*%.lua',%s*'shared/locale%.lua'"), 'the game loads its words, then the lookup')
+        local clientScripts = manifest:match('client_scripts%s*(%b{})')
+        falsy(clientScripts:find("'locales/%*%.lua'"), 'the server\'s words are not sent to every game (R1)')
         truthy(manifest:find("'locales/%*%.json'"), 'the pages may read the json')
         local ignore = manifest:match('escrow_ignore%s*(%b{})')
         truthy(ignore and ignore:find("'locales/%*%.lua'", 1, false), 'never escrowed')
+        truthy(ignore:find("'locales/client/%*%.lua'", 1, false), 'nor the game\'s')
         eq(Config.Locale, 'en', 'English as shipped')
         truthy(src('config/defaults.lua'):find("ConfigDefaults.Locale = 'en'", 1, true))
         truthy(src('client/main.lua'):find("'&lang=' .. CrimsonLocale.language()", 1, true), 'the phone is told')
@@ -294,6 +351,42 @@ describe('Translations: words read by key, never matched by their words', functi
         for _, r in ipairs(s.settings.view().features) do
             if r.key == 'BlockOffDuty' then eq(r.groupLabel, 'Access', 'English as shipped') end
         end
+    end)
+
+    it('no setting key changes under a language with every word replaced (L2)', function()
+        -- newStack puts the shipped config back (English), so the language is
+        -- set after it and the catalogue is built again under it.
+        local function catalogue(lang)
+            newStack()
+            Locale.reset()
+            Config.Locale = lang
+            package.loaded['crimson-hitman.server.settings'] = nil
+            return require('crimson-hitman.server.settings')
+        end
+        local function keys(lang)
+            local out = {}
+            for _, e in ipairs(catalogue(lang).CATALOGUE) do out[#out + 1] = e.key end
+            return out
+        end
+        local real = Config.Locale
+        local zz = {}
+        for k in pairs(englishTable()) do zz[k] = 'ZZ ' .. k end
+        CrimsonLocales.zz = zz
+        local ok, err = pcall(function()
+            local english = keys('en')
+            local translated = keys('zz')
+            eq(table.concat(translated, ','), table.concat(english, ','), 'catalogue keys are ids, not words')
+            local S = catalogue('zz')
+            for _, key in ipairs({ 'Debug', 'Integrations.Target', 'Admin.Commands.panel', 'Cooldowns.load.per' }) do
+                truthy(S.entry(key), key .. ' found under the translation')
+            end
+        end)
+        Config.Locale = real
+        CrimsonLocales.zz = nil
+        Locale.reset()
+        package.loaded['crimson-hitman.server.settings'] = nil
+        if not ok then error(err, 0) end
+        falsy(src('ui/admin.js'):find("t('admin.cooldowns')", 1, true), 'the panel builds cooldown keys from the id')
     end)
 
     it('the panel builds its ACE answers from parts, never by cutting a sentence', function()

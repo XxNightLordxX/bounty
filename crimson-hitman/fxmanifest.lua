@@ -30,9 +30,10 @@ client_scripts {
     -- The one way to the console (CrimsonLog): with Config.Debug off the
     -- client prints nothing to F8 but a staff command's own answer.
     'shared/log.lua',
-    -- The words players read, by key (CrimsonLocales, CrimsonLocale.t): every
-    -- language file, then the lookup, in the language Config.Locale names.
-    'locales/*.lua',
+    -- The words the game shows, by key (CrimsonClientLocales, CrimsonLocale.t):
+    -- every language's locales/client/ file, then the lookup, in the language
+    -- Config.Locale names. The server's words (locales/*.lua) are not sent.
+    'locales/client/*.lua',
     'shared/locale.lua',
     -- The other scripts this resource works with (CrimsonIntegrations), and
     -- the client's adapters for them, one file per kind and name
@@ -107,6 +108,7 @@ escrow_ignore {
     'config/*.lua',
     -- The words players and staff read, in every language (README, Translations).
     'locales/*.lua',
+    'locales/client/*.lua',
     'server/adapters/*.lua',
     'server/adapters/*/*.lua',
     'client/adapters/*.lua',

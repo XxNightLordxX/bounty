@@ -46,7 +46,10 @@
     function load(lang) {
       try {
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', '../locales/' + lang + '.json', false);
+        // Stamped like every other file the page loads (index.html): CEF
+        // keeps its own copy by address, and an old en.json after an update
+        // shows the new keys in place of their words.
+        xhr.open('GET', '../locales/' + lang + '.json?v=' + encodeURIComponent(window.CH_BUILD || 'dev'), false);
         xhr.send(null);
         if (xhr.status && xhr.status !== 200) { return null; }
         var parsed = JSON.parse(xhr.responseText);
@@ -88,22 +91,57 @@
         Object.keys(english[name] || {}).forEach(function (key) {
           if (Object.prototype.hasOwnProperty.call(from, key)) { into[key] = from[key]; } else { missing++; }
         });
+        // And the plural forms English has no use for (key_few, key_many).
+        Object.keys(from).forEach(function (key) {
+          if (/_(zero|two|few|many)$/.test(key) && typeof from[key] === 'string') { into[key] = from[key]; }
+        });
       });
       if (missing > 0) { warn(lang + ' lacks ' + missing + ' text(s); those read in English.'); }
       applied = lang;
       laters.forEach(function (fn) { fn(); });
     }
+    /* The values after the key go into the text in order at %s (or %d);
+       a language that puts them in another order writes %2$s, %1$s. */
+    function fill(text, args) {
+      var next = 0;
+      return text.replace(/%(?:(\d+)\$)?[sd]/g, function (all, at) {
+        var v = at ? args[Number(at) - 1] : args[next++];
+        return v === undefined || v === null ? '' : String(v);
+      });
+    }
     function tv(key) {
       var at = String(key).indexOf('.');
       var value = at > 0 ? section(key.slice(0, at))[key.slice(at + 1)] : undefined;
-      if (typeof value === 'string') { return value; }
-      warn('no text for ' + key + '; the key is shown.');
-      return String(key);
+      if (typeof value !== 'string') {
+        warn('no text for ' + key + '; the key is shown.');
+        return String(key);
+      }
+      return arguments.length > 1 ? fill(value, Array.prototype.slice.call(arguments, 1)) : value;
     }
-    return { t: tv, section: section, use: use, later: later };
+    /* A text that depends on a count: key_one, key_other, or the other
+       forms the language has (key_few, key_many: Intl.PluralRules), with
+       key_other wherever a form is missing. The values fill it as for t();
+       with none, the count itself does. */
+    function plural(n) {
+      try {
+        if (typeof Intl !== 'undefined' && Intl.PluralRules) { return new Intl.PluralRules(applied).select(Number(n) || 0); }
+      } catch (err) { /* an unknown language tag reads as English */ }
+      return { 1: 'one' }[Number(n)] || 'other';
+    }
+    function tn(key, n) {
+      var args = arguments.length > 2 ? Array.prototype.slice.call(arguments, 2) : [n];
+      var form = key + '_' + plural(n);
+      var at = form.indexOf('.');
+      var found = at > 0 && typeof section(form.slice(0, at))[form.slice(at + 1)] === 'string';
+      return tv.apply(null, [found ? form : key + '_other'].concat(args));
+    }
+    return { t: tv, tn: tn, section: section, use: use, later: later };
   })();
-  /* The one way this page reads a word: t('section.key'). */
+  /* The one way this page reads a word: t('section.key'), with values to
+     fill in after the key; tn('section.key', count) when the words depend
+     on a count. */
   var t = Text.t;
+  var tn = Text.tn;
   /* The words the page's own HTML shows, by key like the rest: data-t (the
      text), data-t-title, data-t-placeholder and data-t-aria-label. */
   Text.later(function () {
@@ -549,9 +587,9 @@
   function retryIn(seconds) {
     var s = Math.ceil(Number(seconds) || 0);
     if (!(s > 0)) { return t('app.in_a_moment'); }
-    if (s < 60) { return 'in ' + s + ' second' + (s === 1 ? '' : 's'); }
+    if (s < 60) { return tn('app.in_seconds', s); }
     var m = Math.ceil(s / 60);
-    return t('app.in_about') + m + ' minute' + (m === 1 ? '' : 's');
+    return tn('app.in_about_minutes', m);
   }
 
   /* ---------- dialogs ----------
@@ -851,8 +889,8 @@
         if (!value || value < floor
             || (bounds.max !== undefined && value > bounds.max)) {
           consequence.textContent = bounds.max !== undefined
-            ? (t('app.enter_something_between') + floor + ' and ' + bounds.max + '.')
-            : ('Enter ' + floor + t('app.or_more'));
+            ? t('app.enter_between', floor, bounds.max)
+            : t('app.enter_or_more', floor);
           return;
         }
       }
@@ -1511,8 +1549,7 @@
     // How long until the placer's informant asks again.
     if (result.err === 'informant_cooldown' && result.data && Number(result.data.minutes) > 0) {
       var minutes = Math.ceil(Number(result.data.minutes));
-      return t('app.your_informant_can_ask_again_in') + minutes + ' minute'
-        + (minutes === 1 ? '' : 's') + t('app.nothing_was_taken');
+      return tn('app.informant_asks_again_in_minutes', minutes);
     }
 
     // Worth too little in money: the least is sent with the refusal, and
@@ -1531,8 +1568,7 @@
     // hours, and nothing else.
     if (result.err === 'target_recently_on' && result.data && Number(result.data.hours) > 0) {
       var hours = Math.ceil(Number(result.data.hours));
-      return t('app.there_is_a_cooling_off_period')
-        + hours + ' hour' + (hours === 1 ? '' : 's') + '.';
+      return tn('app.cooling_off_hours', hours);
     }
     // Too far from the placer to hand over a proof item, by the server's distance.
     if (result.err === 'proof_too_far' && result.data && Number(result.data.radius) > 0) {
@@ -1578,17 +1614,13 @@
     var d = data || {};
     function from(account) { return account === 'cash' ? t('app.your_cash') : t('app.your_bank'); }
     if (typeof d.creatorFee === 'number') {
-      return t('app.placing_anonymously_now_costs') + money(d.creatorFee) + ' from '
-        + from(d.feeAccount) + t('app.nothing_was_taken_the_form_shows')
-        + t('app.place_it_again_if_that_is');
+      return t('app.placing_anonymously_now_costs_from', money(d.creatorFee), from(d.feeAccount));
     }
     if (typeof d.fee === 'number') {
-      return t('app.taking_it_anonymously_now_costs') + money(d.fee) + ' from '
-        + from(d.feeAccount) + t('app.nothing_was_taken_check_the_new');
+      return t('app.taking_anonymously_now_costs_from', money(d.fee), from(d.feeAccount));
     }
     if (typeof d.cost === 'number') {
-      return t('app.the_informant_now_costs') + money(d.cost) + ' from ' + from(d.account)
-        + t('app.nothing_was_taken_ask_again_if');
+      return t('app.informant_now_costs_from', money(d.cost), from(d.account));
     }
     return null;
   }
@@ -1621,7 +1653,7 @@
     if (caps.dirtyEnabled !== false) { names.push(t('app.dirty_money')); }
     if (!names.length) { return 'money'; }
     return names.length === 1 ? names[0]
-      : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+      : t('app.list_and', names.slice(0, -1).join(', '), names[names.length - 1]);
   }
 
   /* ---------- actions already running ----------------------------------
@@ -1941,9 +1973,8 @@
     // server has always sent hitmenMax and the page never read it.
     function crowdChip() {
       var crowd = contract.mode === 'competitive' && contract.hitmenMax
-        ? contract.hitmenActive + ' of ' + contract.hitmenMax + ' operatives'
-        : contract.hitmenActive
-          + (contract.hitmenActive === 1 ? ' operative' : ' operatives');
+        ? t('app.operatives_of', contract.hitmenActive, contract.hitmenMax)
+        : tn('app.operatives', contract.hitmenActive);
       var full = contract.mode === 'competitive'
         && contract.hitmenMax
         && contract.hitmenActive >= contract.hitmenMax;
@@ -1988,8 +2019,8 @@
     // client nothing about how many had been collected.
     if (contract.slots > 1) {
       meta.appendChild(chip(mine
-        ? collected + ' of ' + contract.slots + t('app.payouts_collected')
-        : 'Payout ' + contract.currentSlot + ' of ' + contract.slots, 'slots', 'i-layers'));
+        ? t('app.payouts_collected_of', collected, contract.slots)
+        : t('app.payout_of', contract.currentSlot, contract.slots), 'slots', 'i-layers'));
     }
 
     if (contract.role === 'hitman') {
@@ -2004,7 +2035,7 @@
         null, 'i-user'));
       var rivals = (Number(contract.hitmenActive) || 0) - 1;
       if (rivals > 0) {
-        meta.appendChild(chip('+' + rivals + (rivals === 1 ? ' rival' : ' rivals'), 'hot', 'i-users'));
+        meta.appendChild(chip(tn('app.rivals_count', rivals), 'hot', 'i-users'));
       }
     } else if (!mine && contract.hitmenActive > 0) {
       meta.appendChild(crowdChip());
@@ -2040,7 +2071,7 @@
     // acceptance debited it anyway, so the first a hitman knew of a stake
     // was the money leaving their bank.
     if (contract.penaltyAmount > 0) {
-      meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'is-warn', 'i-coin'));
+      meta.appendChild(chip(t('app.amount_stake', money(contract.penaltyAmount)), 'is-warn', 'i-coin'));
     }
     // The buyout as the server set it, on the client's own card. The server
     // moves a price outside what the reward allows to the nearest limit, and
@@ -2048,7 +2079,7 @@
     // let them off cheaply had no way to see that they had not.
     if (mine && settings().buyouts !== false) {
       var buyout = Number(contract.bailoutAmount) || 0;
-      meta.appendChild(chip(buyout > 0 ? 'Buyout ' + money(buyout) : t('app.no_buyout'), null, 'i-exit'));
+      meta.appendChild(chip(buyout > 0 ? t('app.buyout_amount', money(buyout)) : t('app.no_buyout'), null, 'i-exit'));
     }
     // Only when there is something to say: a row carrying neither drew an
     // empty pill. On the client's own card their own name is noise, but
@@ -2087,8 +2118,7 @@
       // The rule while it can still be met, before a payout is held by it.
       var times = Number(contract.intentRule.messages);
       node.appendChild(el('div', 'hint intent-rule ico i-message',
-        t('app.payouts_here_are_held_unless_you') + times
-        + (times === 1 ? ' time' : ' times') + t('app.do_a_live_handover_or_a')));
+        tn('app.payouts_held_unless_messaged', times)));
     }
 
     // What this player's informant found out, kept by the server with the
@@ -2411,8 +2441,7 @@
     var d = r.data || {};
     function from(account) { return account === 'cash' ? t('app.your_cash') : t('app.your_bank'); }
     if (r.err === 'terms_changed' && typeof d.cost === 'number') {
-      return t('app.an_informant_tip_now_costs') + money(d.cost) + ' from ' + from(d.account)
-        + t('app.nothing_was_taken_tap_it_twice');
+      return t('app.informant_tip_now_costs_from', money(d.cost), from(d.account));
     }
     if (r.err === 'tip_cooldown' && Number(d.retryAfter) > 0) {
       return t('app.a_tip_on_this_contract_was')
@@ -2438,8 +2467,7 @@
         : t('app.your_informant_couldnt_find_them_your_2');
     }
     if (r.err === 'insufficient_funds' && typeof d.cost === 'number') {
-      return t('app.you_cannot_afford_the_tip_it') + money(d.cost) + ' from '
-        + from(d.account) + t('app.nothing_was_taken');
+      return t('app.cannot_afford_the_tip_from', money(d.cost), from(d.account));
     }
     if (r.err === 'already_settled') {
       return t('app.this_contract_has_ended_so_there');
@@ -2550,7 +2578,7 @@
      "my contract on Dana is stuck" could only be answered from the
      database. */
   function appendRef(node, id) {
-    if (id) { node.appendChild(el('div', 'ref', 'Ref ' + id)); }
+    if (id) { node.appendChild(el('div', 'ref', t('app.ref_id', id))); }
   }
 
   // Said once under a list of referenced cards rather than on every card.
@@ -2564,14 +2592,14 @@
 
     var parts = [];
     if (goods.items > 0) {
-      parts.push(goods.items + (goods.items === 1 ? ' item' : ' items'));
+      parts.push(tn('app.items_count', goods.items));
     }
     if (goods.weapons > 0) {
-      parts.push(goods.weapons + (goods.weapons === 1 ? ' weapon' : ' weapons'));
+      parts.push(tn('app.weapons_count', goods.weapons));
     }
     if (parts.length === 0) { return null; }
 
-    return parts.join(' and ')
+    return parts.join(t('app.and_sep'))
       + (goods.labels && goods.labels.length ? ' (' + goods.labels.join(', ') + ')' : '');
   }
 
@@ -2756,7 +2784,7 @@
         row.appendChild(el('div', 'hint is-warn', t('app.buyout_paid_it_closes_in')
           + (!(closesIn > 0) ? t('app.a_moment')
             : closesIn < 60 ? t('app.under_a_minute')
-              : 'under ' + durationText(Math.ceil(closesIn / 60)))
+              : t('app.under_duration', durationText(Math.ceil(closesIn / 60))))
           + t('app.unless_you_finish_it_first')));
       }
 
@@ -2996,9 +3024,8 @@
     if (!inv || typeof inv.id !== 'string') { return null; }
     var box = el('div', 'notice gold org-invite');
     var minutes = Math.max(1, Math.ceil((Number(inv.expiresIn) || 0) / 60));
-    box.appendChild(el('div', null, t('app.you_are_invited_to_join') + (inv.label || t('app.the_organisation'))
-      + (inv.role ? ' as ' + inv.role : '') + t('app.it_runs_out_in_about')
-      + durationText(minutes) + '.'));
+    box.appendChild(el('div', null, t('app.invited_to_join', inv.label || t('app.the_organisation'),
+      inv.role ? t('app.as_role', inv.role) : '', durationText(minutes))));
     var row = el('div', 'row org-invite-actions');
     var key = 'orgInvite:' + inv.id;
     function answer(accept) {
@@ -3420,7 +3447,7 @@
 
   function viewOrgHome(view, m) {
     var head = orgCard(m.label || t('app.the_organisation_2'), 'i-briefcase');
-    head.appendChild(el('div', 'target', m.codename ? m.codename + ' (codename)' : (m.role || t('app.member'))));
+    head.appendChild(el('div', 'target', m.codename ? t('app.codename_shown', m.codename) : (m.role || t('app.member'))));
     head.appendChild(el('div', 'hint', t('app.your_role') + (m.role || t('app.member'))));
     if (m.suspendedUntil) {
       head.appendChild(el('div', 'hint org-warn', suspendedText({ untilAt: m.suspendedUntil,
@@ -3439,8 +3466,8 @@
     if (m.payroll) {
       var pay = Number(m.payroll.salary) || 0;
       head.appendChild(el('div', 'hint', pay > 0
-        ? 'Salary: ' + money(pay) + t('app.every_pay_day') + (m.payroll.nextIn
-          ? t('app.the_next_in_about') + durationText(Math.max(1, Math.ceil(Number(m.payroll.nextIn) / 60))) : '') + '.'
+        ? t('app.salary_each_pay_day', money(pay), m.payroll.nextIn
+          ? t('app.the_next_in_about_x', durationText(Math.max(1, Math.ceil(Number(m.payroll.nextIn) / 60)))) : '')
         : t('app.your_role_has_no_salary')));
     }
     var limits = m.limits || {};
@@ -3559,7 +3586,7 @@
     if (m.reputation) {
       var rep = orgCard(t('app.reputation'), 'i-shield');
       var r = m.reputation;
-      rep.appendChild(el('div', 'target', (r.tier || t('app.no_tier_yet')) + ' · ' + (Number(r.points) || 0) + ' points'));
+      rep.appendChild(el('div', 'target', t('app.tier_points', r.tier || t('app.no_tier_yet'), Number(r.points) || 0)));
       rep.appendChild(el('div', 'hint', Number(r.max) > 0
         ? t('app.members_may_take_contracts_worth_up') + money(Number(r.max)) + '.'
         : t('app.no_cap_on_what_members_may')));
@@ -3657,7 +3684,7 @@
     }
     view.appendChild(mine);
     var out = orgCard(t('app.out_now'), 'i-layers');
-    out.appendChild(el('div', 'hint', asList(g.out).length + ' of ' + (Number(g.max) || 0) + t('app.out')));
+    out.appendChild(el('div', 'hint', t('app.out_of', asList(g.out).length, Number(g.max) || 0)));
     asList(g.out).forEach(function (o) { out.appendChild(el('div', 'hint', String(o.name) + ': ' + String(o.model))); });
     view.appendChild(out);
     if (g.manage) {
@@ -3721,13 +3748,12 @@
       return none;
     }
     var box = orgCard(t('app.your_record'), 'i-pencil');
-    box.appendChild(el('div', 'target', (Number(s.completed) || 0) + t('app.completed') + (Number(s.failed) || 0)
-      + ' failed'));
+    box.appendChild(el('div', 'target', t('app.completed_failed', Number(s.completed) || 0, Number(s.failed) || 0)));
     box.appendChild(el('div', 'hint', t('app.earned_in_the_organisation') + money(Number(s.earned) || 0) + '.'));
     box.appendChild(el('div', 'hint', s.rate !== undefined && s.rate !== null
-      ? 'Reliability: ' + s.rate + '%.' : t('app.reliability_too_early_to_say')));
+      ? t('app.reliability_rate', s.rate) : t('app.reliability_too_early_to_say')));
     if (s.band) { box.appendChild(el('div', 'hint', t('app.you_usually_finish_in') + String(s.band) + '.')); }
-    if (s.rank) { box.appendChild(el('div', 'hint', 'Rank ' + s.rank + (s.of ? ' of ' + s.of : '') + '.')); }
+    if (s.rank) { box.appendChild(el('div', 'hint', s.of ? t('app.rank_of', s.rank, s.of) : t('app.rank_n', s.rank))); }
     if (s.leaderboard) {
       var open = el('button', 'ghost', t('app.leaderboard'));
       open.onclick = function () {
@@ -3748,8 +3774,8 @@
     var strikes = Number(d.strikes) || 0;
     var warnings = Number(d.warnings) || 0;
     box.appendChild(el('div', 'hint', (strikes || warnings)
-      ? strikes + ' strike' + (strikes === 1 ? '' : 's') + ' standing, ' + warnings + t('app.written_warning')
-        + (warnings === 1 ? '' : 's') + t('app.a_strike_counts_for') + (Number(d.decayDays) || 30) + t('app.days')
+      ? t('app.discipline_summary', tn('app.strikes_standing', strikes), tn('app.written_warnings', warnings),
+        tn('app.days_count', Number(d.decayDays) || 30))
       : t('app.a_clean_record')));
     asList(d.rows).slice(0, 5).forEach(function (r) { box.appendChild(orgDisciplineLine(r)); });
     return box;
@@ -3761,7 +3787,7 @@
       + (r.at ? ' · ' + agoText(r.at) : '') + (r.overturned ? t('app.overturned') : r.kind === 'strike' && !r.active
         ? t('app.no_longer_counts') : '')));
     line.appendChild(el('div', 'hint', String(r.reason || '')));
-    if (r.consequence) { line.appendChild(el('div', 'hint org-warn', 'Then: ' + String(r.consequence))); }
+    if (r.consequence) { line.appendChild(el('div', 'hint org-warn', t('app.then_consequence', String(r.consequence)))); }
     return line;
   }
 
@@ -3777,9 +3803,9 @@
       var line = el('div', 'org-rank' + (r.mine ? ' is-mine' : ''));
       line.appendChild(el('div', 'target', '#' + (Number(r.rank) || 0) + ' ' + String(r.name || t('app.a_member'))
         + (r.role ? ' · ' + String(r.role) : '')));
-      var bits = [(Number(r.completed) || 0) + ' completed'];
-      if (d.full) { bits.push((Number(r.failed) || 0) + ' failed', money(Number(r.earned) || 0) + ' earned'); }
-      bits.push(r.rate !== undefined && r.rate !== null ? r.rate + '% reliable' : t('app.too_early_to_say'));
+      var bits = [t('app.n_completed', Number(r.completed) || 0)];
+      if (d.full) { bits.push(t('app.n_failed', Number(r.failed) || 0), t('app.amount_earned', money(Number(r.earned) || 0))); }
+      bits.push(r.rate !== undefined && r.rate !== null ? t('app.rate_reliable', r.rate) : t('app.too_early_to_say'));
       if (r.band) { bits.push(String(r.band)); }
       line.appendChild(el('div', 'hint', bits.join(' · ')));
       box.appendChild(line);
@@ -3796,8 +3822,8 @@
         + t('app.there_then_tap_refresh')));
     }
     var take = orgCard(t('app.in_the_armory'), 'i-box');
-    take.appendChild(el('div', 'hint', t('app.you_may_take') + (Number(a.left) || 0) + t('app.more_today')
-      + (Number(a.manageLeft) > 0 ? ', and ' + a.manageLeft + t('app.beyond_that_as_a_boss') : '') + '.'));
+    take.appendChild(el('div', 'hint', t('app.you_may_take_more_today', Number(a.left) || 0,
+      Number(a.manageLeft) > 0 ? t('app.and_beyond_that_as_a_boss', a.manageLeft) : '')));
     var items = asList(a.items);
     if (!items.length) { take.appendChild(el('div', 'hint', t('app.empty'))); }
     items.forEach(function (it) {
@@ -3839,8 +3865,8 @@
         + t('app.0_is_none')));
       orgRoles().filter(function (r) { return r.editable; }).forEach(function (r) {
         var key = 'arm:lim:' + r.grade;
-        lim.appendChild(orgField(key, String(r.label || r.name) + ' (now ' + (Number((a.limits || {})[String(r.grade)])
-          || 0) + ')', 'number', '0'));
+        lim.appendChild(orgField(key, t('app.label_now', String(r.label || r.name),
+          Number((a.limits || {})[String(r.grade)]) || 0), 'number', '0'));
         var row = orgRow();
         row.appendChild(orgTwoTap('ghost', t('app.set'), key + ':go', t('app.tap_again_to_set_it'), function () {
           var n = orgNumber(key);
@@ -3874,7 +3900,7 @@
     for (var i = 0; i < most; i += 1) {
       var key = 'form.q' + i;
       if (state.org.form[key] === undefined && current[i] !== undefined) { state.org.form[key] = String(current[i]); }
-      box.appendChild(orgField(key, 'Question ' + (i + 1), 'text', t('app.e_g_who_vouches_for_you'), 200));
+      box.appendChild(orgField(key, t('app.question_n', i + 1), 'text', t('app.e_g_who_vouches_for_you'), 200));
     }
     var row = orgRow();
     row.appendChild(orgTwoTap('primary', t('app.save_the_form'), 'form:save', t('app.tap_again_to_save_it'), function () {
@@ -3913,9 +3939,9 @@
     if (m.probation) {
       var p = m.probation;
       var pro = orgCard(t('app.probation'), 'i-shield');
-      pro.appendChild(el('div', 'hint', t('app.you_are_on_probation_contracts_worth') + money(Number(p.maxReward) || 0)
-        + (p.noStake ? t('app.none_with_a_stake') : '') + '. '
-        + (Number(p.need) > 0 ? (Number(p.done) || 0) + ' of ' + p.need + t('app.completions_done_or_a_boss_signs')
+      pro.appendChild(el('div', 'hint', t('app.on_probation_worth', money(Number(p.maxReward) || 0),
+        p.noStake ? t('app.none_with_a_stake') : '',
+        Number(p.need) > 0 ? t('app.completions_of_or_signs_off', Number(p.done) || 0, p.need)
           : t('app.a_boss_signs_you_off'))));
       view.appendChild(pro);
     }
@@ -3988,8 +4014,8 @@
         var key = 'ap:' + a.id;
         ap.appendChild(el('div', 'target', String(a.member && a.member.name || t('app.a_member')) + ' · '
           + String(a.contractId || '')));
-        ap.appendChild(el('div', 'hint', 'Worth ' + money(Number(a.worth) || 0) + (a.probation ? t('app.on_probation') : '')
-          + '. About ' + durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60))) + t('app.left')));
+        ap.appendChild(el('div', 'hint', t('app.worth_about_left', money(Number(a.worth) || 0),
+          a.probation ? t('app.on_probation') : '', durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60))))));
         if (!a.own) {
           var r = orgRow();
           r.appendChild(orgTwoTap('primary', t('app.approve'), key + ':yes', t('app.tap_again_to_approve'), function () {
@@ -4013,12 +4039,12 @@
     w.contracts.forEach(function (c) {
       var key = 'wc:' + c.id + ':';
       var box = orgCard(String(c.targetName || t('app.a_contract_2')) + ' · ' + String(c.id), 'i-crosshair');
-      box.appendChild(el('div', 'hint', 'Worth ' + money(Number(c.worth) || 0)
-        + (c.staked ? ', staked' : '') + '. '
-        + (c.state === 'waiting' ? t('app.not_assigned_yet') : c.state === 'taken'
-          ? t('app.taken_by') + String(c.member && c.member.name || t('app.a_member_2')) + '.'
-          : t('app.assigned_to') + String(c.member && c.member.name || t('app.a_member_2')) + '.')
-        + (c.expiresIn ? ' About ' + durationText(Math.max(1, Math.ceil(Number(c.expiresIn) / 60))) + t('app.left') : '')));
+      box.appendChild(el('div', 'hint', t('app.worth_state', money(Number(c.worth) || 0),
+        c.staked ? t('app.staked_suffix') : '',
+        c.state === 'waiting' ? t('app.not_assigned_yet') : c.state === 'taken'
+          ? t('app.taken_by_x', String(c.member && c.member.name || t('app.a_member_2')))
+          : t('app.assigned_to_x', String(c.member && c.member.name || t('app.a_member_2'))),
+        c.expiresIn ? t('app.about_left', durationText(Math.max(1, Math.ceil(Number(c.expiresIn) / 60)))) : '')));
       var canAssign = c.state === 'waiting' ? orgHolds('K4') : c.state === 'assigned' && orgHolds('K5');
       if (canAssign && members.length) {
         box.appendChild(orgChoice(key + 'member', members, undefined));
@@ -4098,7 +4124,7 @@
           orgWrite(key + 'rm', function () { return post('orgChannelRemove', { id: r.id }); }, t('app.removed'));
         }));
         if (r.member) {
-          mr.appendChild(orgTwoTap('ghost', 'Mute ' + (orgBound('ChannelMuteMaxHours') || 1) + ' h', key + 'mute',
+          mr.appendChild(orgTwoTap('ghost', t('app.mute_hours', orgBound('ChannelMuteMaxHours') || 1), key + 'mute',
             t('app.tap_again_to_mute_them'), function () {
               orgWrite(key + 'mute', function () {
                 return post('orgChannelMute', { member: r.member, hours: orgBound('ChannelMuteMaxHours') || 1 });
@@ -4138,7 +4164,7 @@
       var hire = orgCard(t('app.hire'), 'i-usercheck');
       var radius = orgBound('HireRadius');
       hire.appendChild(el('div', 'hint', t('app.invite_a_player_standing_beside_you')
-        + (radius ? ' (within ' + radius + ' m)' : '') + t('app.by_the_id_over_their_head')));
+        + (radius ? t('app.within_metres', radius) : '') + t('app.by_the_id_over_their_head')));
       var office = orgOfficeNote('M2');
       if (office) { hire.appendChild(office); }
       hire.appendChild(orgField('hire.target', t('app.their_id'), 'number', 'e.g. 42'));
@@ -4185,11 +4211,31 @@
     if (m.probation) { meta.appendChild(chip(t('app.probation'), 'plain', 'i-shield')); }
     if (m.channelMuted) { meta.appendChild(chip(t('app.muted_2'), 'plain', 'i-flag')); }
     if (Number(m.strikes) > 0) {
-      meta.appendChild(chip(m.strikes + ' strike' + (Number(m.strikes) === 1 ? '' : 's'), 'hot', 'i-shield'));
+      meta.appendChild(chip(tn('app.strikes', Number(m.strikes)), 'hot', 'i-shield'));
     }
     box.appendChild(meta);
     if (!open) { return box; }
     var key = 'm:' + m.ref + ':';
+
+    /* Their record in full (M11 or M5, as the server checks): the entries,
+       reasons and overturns behind the strike chip. A read, so one tap. */
+    if (orgHolds('M11') || orgHolds('M5')) {
+      var shown = state.org.open.record && state.org.open.record.ref === m.ref ? state.org.open.record.data : null;
+      var rr = orgRow();
+      rr.appendChild(actionButton('ghost ico i-shield', shown ? t('app.hide_the_record') : t('app.discipline_record'),
+        'org:record:' + m.ref, t('app.sending'), function () {
+          if (shown) { state.org.open.record = null; render(); return Promise.resolve(); }
+          return post('orgDisciplineRecord', { member: m.ref }).then(function (r) {
+            if (r && r.ok) { state.org.open.record = { ref: m.ref, data: r.data || {} }; render(); } else { fail(r); }
+          });
+        }));
+      box.appendChild(rr);
+      if (shown) {
+        var entries = asList(shown.rows);
+        if (!entries.length) { box.appendChild(el('div', 'hint', t('app.nothing_on_their_record'))); }
+        entries.forEach(function (r) { box.appendChild(orgDisciplineLine(r)); });
+      }
+    }
 
     if (orgHolds('M11')) {
       box.appendChild(orgField(key + 'dreason', t('app.reason_for_a_strike_or_warning'), 'text', t('app.what_they_did'), 200));
@@ -4205,7 +4251,7 @@
             });
           }, function (r) {
             var c = r && r.data && r.data.consequence;
-            return (k[0] === 'strike' ? t('app.strike_given') : t('app.warning_given')) + (c ? ' Then: ' + c + '.' : '');
+            return (k[0] === 'strike' ? t('app.strike_given') : t('app.warning_given')) + (c ? t('app.then_x', c) : '');
           });
         }, 'M11'));
       });
@@ -4239,8 +4285,8 @@
       box.appendChild(r7);
     }
     if (orgHolds('M8') && m.probation) {
-      box.appendChild(el('div', 'hint', t('app.on_probation_2') + (Number(m.probation.done) || 0) + ' of '
-        + (Number(m.probation.need) || 0) + t('app.completions_done')));
+      box.appendChild(el('div', 'hint', t('app.on_probation_of', Number(m.probation.done) || 0,
+        Number(m.probation.need) || 0)));
       var r8 = orgRow();
       r8.appendChild(orgTwoTap('ghost', t('app.end_probation'), key + 'probation', t('app.tap_again_to_end_it'), function () {
         orgWrite(key + 'probation', function () { return post('orgProbationEnd', { member: m.ref }); },
@@ -4382,11 +4428,10 @@
     head.onclick = function () { state.org.open.role = open ? null : r.grade; state.org.armed = null; render(); };
     box.appendChild(head);
     var meta = el('div', 'meta');
-    meta.appendChild(chip((Number(r.members) || 0) + ' member' + (Number(r.members) === 1 ? '' : 's'), 'plain',
-      'i-users'));
-    meta.appendChild(chip('Pay ' + money(Number(r.pay) || 0), 'plain', 'i-coin'));
+    meta.appendChild(chip(tn('app.members_count', Number(r.members) || 0), 'plain', 'i-users'));
+    meta.appendChild(chip(t('app.pay_amount', money(Number(r.pay) || 0)), 'plain', 'i-coin'));
     if (r.salary !== undefined && r.salary !== null) {
-      meta.appendChild(chip('Salary ' + money(Number(r.salary) || 0), 'plain', 'i-coin'));
+      meta.appendChild(chip(t('app.salary_amount', money(Number(r.salary) || 0)), 'plain', 'i-coin'));
     }
     if (r.boss) { meta.appendChild(chip(t('app.boss_role'), 'role', 'i-shield')); }
     box.appendChild(meta);
@@ -4567,7 +4612,7 @@
       var max = orgBound(k[3]);
       var total = orgBound('TotalCutCapPercent');
       var cap = max !== null && total !== null ? Math.min(max, total) : (max !== null ? max : total);
-      box.appendChild(orgField('cut.' + k[1], t('app.percent') + (cap !== null ? ' (0 to ' + cap + ')' : ''), 'number', '0'));
+      box.appendChild(orgField('cut.' + k[1], t('app.percent') + (cap !== null ? t('app.zero_to', cap) : ''), 'number', '0'));
       box.appendChild(el('div', 'hint', t('app.contracts_already_accepted_keep_the_cut')));
       var row = orgRow();
       row.appendChild(orgTwoTap('ghost', t('app.set_cut'), 'cut:' + k[1], t('app.tap_again_to_set_the_cut'), function () {
@@ -4598,7 +4643,7 @@
     }
     box.appendChild(orgChoice('tcut.' + kind, options, undefined));
     var cap = orgBound('CutMaxPercent');
-    box.appendChild(orgField('tcut.' + kind + '.pct', t('app.percent') + (cap !== null ? ' (0 to ' + cap + ')' : ''),
+    box.appendChild(orgField('tcut.' + kind + '.pct', t('app.percent') + (cap !== null ? t('app.zero_to', cap) : ''),
       'number', '0'));
     var row = orgRow();
     function send(percent, label) {
@@ -4713,7 +4758,7 @@
       var box = orgCard(ORG_SPOT_WORDS[k[1]], 'i-pin');
       if (k[1] !== 'office') { box.appendChild(orgField('spot.' + k[1], t('app.name'), 'text', ORG_SPOT_WORDS[k[1]], 64)); }
       if (k[1] === 'office' && orgBound('OfficeMoveMetres') !== null) {
-        box.appendChild(el('div', 'hint', 'Within ' + orgBound('OfficeMoveMetres') + t('app.m_of_where_staff_put_it')));
+        box.appendChild(el('div', 'hint', t('app.within_m_of_where_staff', orgBound('OfficeMoveMetres'))));
       }
       var note = orgOfficeNote(k[0]);
       if (note) { box.appendChild(note); }
@@ -4753,7 +4798,7 @@
   function orgNoticesScreen(view) {
     var box = orgCard(t('app.board_notice'), 'i-flag');
     var cap = orgBound('NoticeMaxLength');
-    box.appendChild(orgField('notice.text', t('app.notice') + (cap !== null ? t('app.up_to_2') + cap + ' characters)' : ''),
+    box.appendChild(orgField('notice.text', t('app.notice') + (cap !== null ? t('app.up_to_characters', cap) : ''),
       'area', state.org.mine.notice || t('app.write_the_notice'), cap || 500));
     box.appendChild(orgChoice('notice.broadcast', [{ value: false, label: t('app.board_only') },
       { value: true, label: t('app.also_message_every_member') }], false));
@@ -5160,13 +5205,13 @@
     var name = contract.targetName || 'them';
     var mine = [];
     if (any > 0) { mine.push(t('app.any_new_contract_for') + durationText(any)); }
-    if (same > 0) { mine.push(t('app.one_on') + name + ' for ' + durationText(same)); }
+    if (same > 0) { mine.push(t('app.one_on_for', name, durationText(same))); }
     /* The creator's own, and on a contract somebody took up, the wait on the
        target for every client: withdrawing one nobody took up starts none
        for anybody else, and the dialog said "Nobody else waits" after an
        operative had taken it and walked away. */
     var others = contract.everTaken && everyone > 0
-      ? t('app.nobody_else_can_place_one_on') + name + ' for ' + durationText(everyone) + t('app.either_2')
+      ? t('app.nobody_else_on_for_either', name, durationText(everyone))
       : '';
     if (!mine.length) { return others || null; }
     return t('app.after_this_you_cannot_place') + mine.join(', or ') + '.'
@@ -5180,8 +5225,7 @@
   function collectedText(contract) {
     var claimed = Number(contract.slotsClaimed) || 0;
     if (claimed <= 0) { return null; }
-    return claimed + ' of ' + Math.max(claimed, Number(contract.slots) || 1)
-      + t('app.payouts_were_collected');
+    return t('app.payouts_were_collected_of', claimed, Math.max(claimed, Number(contract.slots) || 1));
   }
 
   function cancelContract(contract) {
@@ -5296,7 +5340,7 @@
     var newPreset = preset > 0 && presets[preset - 1] !== contract.reason ? preset : undefined;
     if (newText !== undefined || newPreset !== undefined) {
       changes.push({ what: 'reason',
-        text: 'Reason: "' + (newText !== undefined ? newText : presets[preset - 1]) + '"',
+        text: t('app.reason_quoted', newText !== undefined ? newText : presets[preset - 1]),
         send: function () {
           return post('revise', { id: contract.id, reason: newText, reasonPreset: newPreset,
                                   deadlineSeconds: undefined });
@@ -5320,12 +5364,12 @@
       if (stake > stakeMost) {
         return { error: t('app.the_stake_can_be_at_most') + money(stakeMost) + t('app.on_this_contract') };
       }
-      changes.push({ what: 'stake', text: 'Stake: ' + money(stake),
+      changes.push({ what: 'stake', text: t('app.stake_is', money(stake)),
         send: function () {
           return post('propose', { id: contract.id, kind: 'raise_penalty', payload: { amount: stake } });
         } });
     } else if (stake < stakeNow) {
-      changes.push({ what: 'stake', text: stake > 0 ? 'Stake: ' + money(stake) : t('app.no_stake'),
+      changes.push({ what: 'stake', text: stake > 0 ? t('app.stake_is', money(stake)) : t('app.no_stake'),
         send: function () {
           return post('improve', { id: contract.id, kind: 'lower_penalty', payload: { amount: stake } });
         } });
@@ -5338,7 +5382,7 @@
       if (ceiling > 0 && hours * 60 > ceiling) {
         return { error: t('app.the_deadline_moves_by_at_most') + durationText(ceiling) + t('app.at_a_time') };
       }
-      changes.push({ what: 'deadline', text: 'Deadline: ' + hours + t('app.h_more'),
+      changes.push({ what: 'deadline', text: t('app.deadline_h_more', hours),
         send: function () {
           return post('improve', { id: contract.id, kind: 'extend_deadline',
                                    payload: { seconds: hours * 3600 } });
@@ -5350,7 +5394,7 @@
         return { error: t('app.there_is_not_that_much_deadline')
           + (bandOf(contract) ? bandOf(contract).text.toLowerCase() : t('app.no_deadline')) + '.' };
       }
-      changes.push({ what: 'deadline', text: 'Deadline: ' + (-hours) + t('app.h_less'),
+      changes.push({ what: 'deadline', text: t('app.deadline_h_less', -hours),
         send: function () {
           return post('propose', { id: contract.id, kind: 'shorten_deadline',
                                    payload: { seconds: -hours * 3600 } });
@@ -5406,7 +5450,7 @@
     if (isNaN(add) || add < 0) { return { error: t('app.add_a_whole_number_of_dollars') }; }
     if (add > 0) {
       var source = v.source === 'bank' ? 'bank' : 'cash';
-      changes.push({ what: 'reward', text: 'Reward: ' + money(add) + t('app.more_from_your') + source,
+      changes.push({ what: 'reward', text: t('app.reward_more_from_your', money(add), source),
         send: function () {
           var reward = { baseline: {} };
           reward.baseline[source] = add;
@@ -5423,7 +5467,7 @@
     var i = 0;
     function next() {
       if (i >= changes.length) {
-        say('Saved: ' + done.join(', ') + '.', 'ok');
+        say(t('app.saved_list', done.join(', ')), 'ok');
         return refresh();
       }
       var change = changes[i++];
@@ -5432,7 +5476,7 @@
         if (failed) {
           var why = !r.ok ? ((change.explain && change.explain(r)) || failText(r) || t('app.not_right_now'))
             : (ERRORS[r.data.err] || t('app.that_change_no_longer_fits_this'));
-          say((done.length ? 'Saved: ' + done.join(', ') + '. ' : '')
+          say((done.length ? t('app.saved_list', done.join(', ')) + ' ' : '')
             + t('app.not_saved') + change.what + ': ' + why);
           return refresh();
         }
@@ -5522,8 +5566,7 @@
     var contract = d.contract;
     var sheet = el('div', 'card dialog edit-sheet');
     sheet.appendChild(el('div', 'target', t('app.edit_this_contract')));
-    sheet.appendChild(el('div', 'reason', t('app.nobody_has_taken_it_so_changes')
-      + 'confirm. ' + (bandOf(contract) ? t('app.it_has') + bandOf(contract).text.toLowerCase() + '.' : '')));
+    sheet.appendChild(el('div', 'reason', t('app.nobody_has_taken_it_changes_apply') + ' ' + (bandOf(contract) ? t('app.it_has') + bandOf(contract).text.toLowerCase() + '.' : '')));
     // The fields scroll on a short screen; Save and Cancel stay put under
     // them, as the reward editor's lines do.
     var panel = el('div', 'sheet-body');
@@ -5690,7 +5733,7 @@
     var row = el('div', 'row');
     var confirming = !!(d.changes && d.changes.length);
     var save = el('button', confirming ? 'danger' : 'primary', confirming
-      ? t('app.confirm_2') + d.changes.length + (d.changes.length === 1 ? ' change' : ' changes')
+      ? tn('app.confirm_changes', d.changes.length)
       : t('app.save'));
     save.onclick = function () {
       if (confirming) {
@@ -5726,9 +5769,10 @@
     var idle = Number(settings().exclusiveIdleMinutes) || 0;
     var attempt = Number(settings().exclusiveAttemptMinutes) || 0;
     var ways = [];
-    if (idle > 0) { ways.push('going ' + durationText(idle) + t('app.without_going_near_them')); }
+    if (idle > 0) { ways.push(t('app.going_without_going_near', durationText(idle))); }
     if (attempt > 0) {
-      ways.push((ways.length ? '' : 'going ') + durationText(attempt) + t('app.without_an_attempt'));
+      ways.push(ways.length ? t('app.without_an_attempt_x', durationText(attempt))
+        : t('app.going_without_an_attempt', durationText(attempt)));
     }
     return ways.length ? ways.join(', or ') + t('app.while_they_are_in_the_city') : '';
   }
@@ -5747,8 +5791,7 @@
     var idle = idleText(contract);
     if (!idle) { return ''; }
     if (contract.mode === 'exclusive') {
-      return ' Exclusive: ' + idle + t('app.puts_it_back_on_the_board')
-        + 'again.';
+      return t('app.exclusive_idle_cannot_take_again', idle);
     }
     // A competitive contract is released from only while it is full.
     return t('app.while_it_is_full') + idle + t('app.gives_your_place')
@@ -5762,8 +5805,7 @@
     if (!idle) { return null; }
     var staked = Number(contract.penaltyAmount) > 0;
     if (contract.mode === 'exclusive') {
-      return el('div', 'hint', 'Exclusive: ' + idle + t('app.puts_it_back_on_the_board_2')
-        + t('app.is_not_yours_to_take_again') + (staked ? ' ' + stakeRule(contract) : ''));
+      return el('div', 'hint', t('app.exclusive_idle_not_yours', idle) + (staked ? ' ' + stakeRule(contract) : ''));
     }
     // On a competitive card only while it is full, which is when it applies.
     if ((Number(contract.hitmenActive) || 0) < (Number(contract.hitmenMax) || Infinity)) {
@@ -5892,8 +5934,7 @@
             return say(stake > 0 && short.part !== 'fee'
               ? t('app.you_need') + money(stake) + t('app.in_your_bank_or_in_your')
                 + t('app.stake_it_is_not_split_between')
-                + (fee > 0 ? ', plus ' + money(fee) + t('app.in_your') + from
-                  + t('app.for_anonymity') : '') + '.'
+                + (fee > 0 ? t('app.plus_fee_for_anonymity', money(fee), from) : '') + '.'
               : t('app.anonymity_costs') + money(fee) + t('app.from_your') + from
                 + t('app.and_it_does_not_hold_that'));
           }
@@ -5902,8 +5943,7 @@
           if (r.err === 'limit_reached') {
             var most = Number(r.data && r.data.max);
             return say(t('app.you_are_already_working')
-              + (most > 0 ? most + ' contract' + (most === 1 ? '' : 's')
-                + t('app.the_most_this_server_allows') : t('app.as_many_contracts_as_this_server'))
+              + (most > 0 ? tn('app.contracts_the_most_allowed', most) : t('app.as_many_contracts_as_this_server'))
               + t('app.finish_one_under_mine_before_you'));
           }
           return fail(r);
@@ -6038,16 +6078,16 @@
     var within = metres(armed);
     var deliver = (mustRestrain() ? t('app.restrain_them_or_get_them_into')
       : t('app.bring_them_alive_and_conscious'))
-      + (within ? 'within ' + within + t('app.m_of') : 'to')
+      + (within ? t('app.within_m_of', within) : t('app.to_word'))
       + t('app.the_person_who_placed_it_tap')
-      + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : t('app.until_it_finishes'));
+      + (kidnap.seconds ? t('app.for_seconds_short', kidnap.seconds) : t('app.until_it_finishes'));
     // With kill photos off (settings().killPhotos) nothing is photographed:
     // Verify kill is checked at the scene.
     var text = t('app.kill_a_downed_target_is_not')
         + (settings().killPhotos === false
           ? t('app.the_body_and_tap_verify_kill')
           : t('app.the_body_and_tap_verify_kill_2'))
-        + 'Alive: ' + deliver;
+        + t('app.alive_x', deliver);
     // Nobody can be met who cannot be found.
     if (contract.creatorAnonymous && settings().relay !== false) {
       text += t('app.your_client_is_anonymous_use_message')
@@ -6075,7 +6115,7 @@
   // "within 12 m of you and the target", for a missing placer.
   function nearPlacer(radius) {
     var m = metres(radius);
-    return m ? 'within ' + m + t('app.m_of_you_and_the_target')
+    return m ? t('app.within_m_of_you_and_target', m)
       : t('app.right_there_with_you_and_the');
   }
 
@@ -6104,7 +6144,7 @@
   function deliverAliveSteps(radius) {
     var m = metres(radius);
     var seconds = Number((settings().kidnap || {}).seconds);
-    var hold = (seconds > 0 ? 'for ' + seconds + ' seconds' : t('app.until_it_finishes_2'));
+    var hold = (seconds > 0 ? tn('app.for_seconds', seconds) : t('app.until_it_finishes_2'));
     // With the placer's Confirm handover on, the hold is followed by their tap.
     if ((settings().kidnap || {}).confirm === true) {
       hold += t('app.then_the_person_who_placed_it');
@@ -6724,7 +6764,7 @@
      minutes, rounded up. */
   function waitText(seconds) {
     var s = Math.max(0, Math.ceil(Number(seconds) || 0));
-    if (s < 60) { return s + (s === 1 ? ' second' : ' seconds'); }
+    if (s < 60) { return tn('app.seconds_count', s); }
     return durationText(Math.ceil(s / 60));
   }
 
@@ -6808,7 +6848,7 @@
        read as safe at once. Not "it closes now" otherwise: a hitman may take
        it between this dialog and the tap, and the reply says which. */
     var wait = buyoutWait(Number(settings().buyoutDelaySeconds) || 0);
-    ask('Pay ' + amount + t('app.to_close_this_contract'),
+    ask(t('app.pay_to_close_this_contract', amount),
         t('app.the_person_who_placed_it_gets')
           + t('app.full_from_your_bank_or_from')
           + t('app.never_split_between_them')
@@ -6853,7 +6893,7 @@
               return refresh();
             });
           });
-        }, { yes: 'Pay ' + amount });
+        }, { yes: t('app.pay_x', amount) });
   }
 
   /* ---------- informants ----------
@@ -6872,7 +6912,7 @@
     asList(found).forEach(function (f) {
       if (!f || !f.text) { return; }
       node.appendChild(el('div', 'informant-answer ico i-search',
-        'Informant: ' + (f.label || t('app.an_operative')) + ' is ' + f.text));
+        t('app.informant_label_is', f.label || t('app.an_operative'), f.text)));
     });
   }
 
@@ -6882,7 +6922,7 @@
   }
 
   function chanceOf(value) {
-    return Math.max(0, Math.min(100, Math.round(Number(value) || 0))) + '% chance';
+    return t('app.percent_chance', Math.max(0, Math.min(100, Math.round(Number(value) || 0))));
   }
 
   /* Whether the target's card offers it: where the server sells look-ups,
@@ -6930,7 +6970,7 @@
     var detail = t('app.your_informant_asks_around_about_the')
       + chanceOf(rules.chance) + t('app.they_find_out_who_it_is')
       + (shown.cost > 0
-        ? 'the ' + money(shown.cost) + t('app.from_your') + shown.account + t('app.is_paid_either_way')
+        ? t('app.the_cost_from_your_is_paid_either_way', money(shown.cost), shown.account)
         : t('app.it_is_free_on_this_server'))
       + t('app.nobody_is_told_you_asked')
       + lookUpsLeftText(contract.informantLeft, rules.maxPerContract);
@@ -6948,7 +6988,7 @@
     });
     askPick(t('app.buy_informant_data_2'), detail, options, function (pick) {
       doBuyInformant(contract, shown, pick);
-    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : t('app.ask'));
+    }, shown.cost > 0 ? t('app.pay_x', money(shown.cost)) : t('app.ask'));
     // Drawn again from the settings when they change while it is open
     // (readBoard), so the price it quotes, and sends back, is the price now.
     if (state.dialog) {
@@ -6960,8 +7000,7 @@
   function sayLookUp(data, miss) {
     var d = data || {};
     if (d.found) {
-      return say(t('app.your_informant_found_out') + (d.label || 'they') + ' is '
-        + (d.name || d.description) + '.', 'ok');
+      return say(t('app.your_informant_found_out_is', d.label || t('app.they_word'), d.name || d.description), 'ok');
     }
     say((d.message || miss) + (d.repeated
       ? t('app.that_is_the_answer_you_were') : ''));
@@ -7045,7 +7084,7 @@
     var detail = t('app.your_informant_asks_around_about_the_2')
       + chanceOf(rules.chance) + t('app.they_find_out_who_it_is')
       + (shown.cost > 0
-        ? 'the ' + money(shown.cost) + t('app.from_your') + shown.account + t('app.is_paid_either_way')
+        ? t('app.the_cost_from_your_is_paid_either_way', money(shown.cost), shown.account)
         : t('app.it_is_free_on_this_server'))
       + t('app.if_they_do_find_out_there') + chanceOf(rules.alertChance)
       + t('app.that_operative_notices_someone_was_asking')
@@ -7059,7 +7098,7 @@
     });
     askPick(t('app.informant_on_an_operative_2'), detail, options, function (pick) {
       doBuyPlacerInformant(contract, shown, pick);
-    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : t('app.ask'));
+    }, shown.cost > 0 ? t('app.pay_x', money(shown.cost)) : t('app.ask'));
     if (state.dialog) {
       state.dialog.redo = function () { state.dialog = null; buyPlacerInformant(contract); };
     }
@@ -7105,18 +7144,18 @@
       var by = p && p.seconds ? Math.round(p.seconds / 60) : 0;
       var band = contract ? bandOf(contract) : null;
       return t('app.shorten_the_deadline')
-        + (by ? ' by ' + durationText(by) : '')
-        + (by && band ? ' (now ' + band.text.toLowerCase() + ')' : '');
+        + (by ? t('app.by_duration', durationText(by)) : '')
+        + (by && band ? t('app.now_band', band.text.toLowerCase()) : '');
     },
     raise_penalty: function (p) {
-      return t('app.raise_the_stake') + (p && p.amount ? ' to ' + money(p.amount) : '');
+      return t('app.raise_the_stake') + (p && p.amount ? t('app.to_amount', money(p.amount)) : '');
     },
     change_mode: function (p) {
       return t('app.change_this_to_a') + ((p && p.mode) === 'exclusive'
         ? t('app.single_hitman_contract') : t('app.competitive_contract'));
     },
     change_reason: function (p) {
-      return t('app.change_the_stated_reason') + (p && p.reason ? ' to "' + p.reason + '"' : '');
+      return t('app.change_the_stated_reason') + (p && p.reason ? t('app.to_quoted', p.reason) : '');
     },
     /* Both kinds end the whole contract. The server applies an agreed
        `withdraw` exactly as it applies `cancel` — the contract closes for
@@ -7138,7 +7177,7 @@
 
   function stakeBack(contract) {
     return contract && contract.role === 'hitman' && Number(contract.penaltyAmount) > 0
-      ? '; your ' + money(contract.penaltyAmount) + t('app.stake_comes_back_to_you') : '';
+      ? t('app.your_stake_comes_back', money(contract.penaltyAmount)) : '';
   }
 
   function describeAmendment(proposal, contract) {
@@ -7308,6 +7347,14 @@
     return t('app.lapses_in') + durationText(Math.max(1, Math.ceil(seconds / 60)));
   }
 
+  /* The second tap of an answer (README: every write takes two): a dialog
+     that names the change being answered. Agree can move money at once (a
+     raised stake, a lower penalty, a deadline moved). */
+  function answerConfirm(proposal, contract, question, yes) {
+    return { question: question, detail: describeAmendment(proposal, contract),
+             yes: yes, no: t('app.not_now') };
+  }
+
   function takeBack(proposal) {
     return actionButton('', t('app.take_it_back'), 'amend:' + proposal.id, t('app.sending'),
       function () { return answerProposal(proposal, false, true); });
@@ -7327,11 +7374,11 @@
         proposal.mine ? t('app.your_proposal') : proposal.proposer + t('app.proposed_this')));
 
       // What a shorter clock costs the hitman being asked, said where they
-      // answer it. Agree is one tap and applies at once.
+      // answer it. Agree applies at once, on its second tap (the dialog
+      // that names the change).
       if (proposal.kind === 'shorten_deadline' && contract.role === 'hitman'
           && Number(contract.penaltyAmount) > 0) {
-        item.appendChild(el('div', 'hint is-warn', 'Your ' + money(contract.penaltyAmount)
-          + t('app.stake_goes_to_the_person_who')));
+        item.appendChild(el('div', 'hint is-warn', t('app.your_stake_goes_to_the_placer', money(contract.penaltyAmount))));
       }
       var lapses = lapsesIn(proposal);
 
@@ -7349,7 +7396,8 @@
         var applyRow = el('div', 'row');
         applyRow.appendChild(actionButton('primary', t('app.apply_it'),
           'amend:' + proposal.id, t('app.sending'),
-          function () { return answerProposal(proposal, true); }));
+          function () { return answerProposal(proposal, true); },
+          answerConfirm(proposal, contract, t('app.apply_this_change_now'), t('app.yes_apply_it'))));
         if (proposal.mine) { applyRow.appendChild(takeBack(proposal)); }
         item.appendChild(applyRow);
       } else if (proposal.mine || proposal.answered) {
@@ -7372,10 +7420,12 @@
         var row = el('div', 'row');
         row.appendChild(actionButton('primary', t('app.agree'),
           'amend:' + proposal.id, t('app.sending'),
-          function () { return answerProposal(proposal, true); }));
+          function () { return answerProposal(proposal, true); },
+          answerConfirm(proposal, contract, t('app.agree_to_this_change'), t('app.yes_agree'))));
         row.appendChild(actionButton('danger', t('app.decline'),
           'amend:' + proposal.id, t('app.sending'),
-          function () { return answerProposal(proposal, false); }));
+          function () { return answerProposal(proposal, false); },
+          answerConfirm(proposal, contract, t('app.decline_this_change'), t('app.yes_decline'))));
         item.appendChild(row);
       }
 
@@ -7473,7 +7523,7 @@
   function runsOut(contract) {
     var band = bandOf(contract);
     if (!band) { return t('app.has_no_deadline'); }
-    return 'has ' + band.text.toLowerCase();
+    return t('app.has_band', band.text.toLowerCase());
   }
 
   /* "3 days ago", from a server time in seconds; null without one. */
@@ -7492,7 +7542,7 @@
   function durationText(minutes) {
     if (minutes === null || minutes === undefined) { return t('app.no_set_deadline'); }
     if (minutes <= 0) { return t('app.no_time_left'); }
-    if (minutes < 60) { return minutes + (minutes === 1 ? ' minute' : ' minutes'); }
+    if (minutes < 60) { return tn('app.minutes_count', minutes); }
     var hours = Math.floor(minutes / 60);
     var rest = minutes % 60;
     return hours + 'h' + (rest ? ' ' + rest + 'm' : '');
@@ -7554,7 +7604,7 @@
     var options = [
       {
         label: t('app.shorten_the_deadline'),
-        note: bandOf(contract) ? bandOf(contract).text + '.' : 'It ' + runsOut(contract) + '.',
+        note: bandOf(contract) ? bandOf(contract).text + '.' : t('app.it_runs_out', runsOut(contract)),
         // Nothing to shorten without a deadline, or without time to spare.
         skip: most < 1,
         run: function () {
@@ -7575,8 +7625,7 @@
               confirm: untaken ? t('app.shorten') : t('app.propose'),
               hint: function (value) {
                 if (!value || value < 1 || value > most) {
-                  return 'Between 1 and ' + most + t('app.minutes_leaving_at_least')
-                    + keep + '.';
+                  return t('app.between_1_and_minutes_leaving', most, keep);
                 }
                 return t('app.it_would_then_have') + durationText(value) + t('app.less');
               }
@@ -7601,11 +7650,11 @@
            asked. */
         label: t('app.give_back_the_last_payout'),
         note: spare > 0
-          ? 'Payout ' + total + ' of ' + total + ', leaving ' + (total - 1) + '.'
+          ? t('app.payout_of_leaving', total, total, total - 1)
           : t('app.nothing_after_the_one_being_competed'),
         skip: spare <= 0,
         run: function () {
-          ask(t('app.give_back_payout') + total + ' of ' + total + '?',
+          ask(t('app.give_back_payout_of', total, total),
             (hitman
               ? t('app.you_are_offering_to_give_up')
                 + t('app.come_what_is_on_the_table')
@@ -7662,7 +7711,7 @@
         // applies on this confirm, and the next hitman stakes the new one.
         label: stakeNow > 0 ? t('app.raise_the_stake') : t('app.ask_for_a_stake'),
         note: stakeNow > 0
-          ? 'Now ' + money(stakeNow) + t('app.to_lower_it_use_change_reward')
+          ? t('app.now_to_lower_it_use_change_reward', money(stakeNow))
           : t('app.nobody_has_to_put_anything_up'),
         skip: hitman || !untaken || stakeMost <= stakeNow,
         run: function () {
@@ -7679,8 +7728,7 @@
               confirm: t('app.set_it'),
               hint: function (value) {
                 if (!value || value <= stakeNow || value > stakeMost) {
-                  return 'Between ' + money(stakeNow + 1) + ' and ' + money(stakeMost)
-                    + t('app.the_most_this_contract_can_ask');
+                  return t('app.between_the_most_this_contract_can_ask', money(stakeNow + 1), money(stakeMost));
                 }
                 return t('app.a_hitman_would_stake') + money(value) + t('app.to_take_it');
               }
@@ -7733,8 +7781,8 @@
       // contract pays and how long is left is what every one of these
       // choices is about, and it should not disappear because the option
       // that happened to carry it does not apply here.
-      detail: 'Pays ' + pays + ', ' + runsOut(contract)
-        + (total > 1 ? ', ' + total + ' payouts' : '')
+      detail: t('app.pays_runs_out', pays, runsOut(contract))
+        + (total > 1 ? t('app.comma_payouts', total) : '')
         + (untaken
           // Nobody holds it, so there is nobody to wait for.
           ? t('app.nobody_has_taken_it_so_this_3')
@@ -7846,7 +7894,7 @@
                 confirm: t('app.extend'),
                 hint: function (value) {
                   if (!value || value < 1 || (ceiling > 0 && value > ceiling)) {
-                    return ceiling > 0 ? 'Between 1 and ' + ceiling + t('app.minutes_2')
+                    return ceiling > 0 ? t('app.between_1_and_minutes', ceiling)
                                        : t('app.at_least_1_minute');
                   }
                   return t('app.it_would_then_have') + durationText(value)
@@ -7905,9 +7953,9 @@
     }
     // Named the way the Place form names it, so "bonus" is not left to
     // mean whichever bonus the reader guesses.
-    var text = what + ' — ' + (line.portion === 'bonus' ? t('app.kidnapping_bonus') : 'base');
+    var text = what + ' — ' + (line.portion === 'bonus' ? t('app.kidnapping_bonus') : t('app.base_word'));
     if ((Number(slots) || 1) > 1) {
-      text = 'Payout ' + (Number(line.slot) || 1) + ': ' + text;
+      text = t('app.payout_n_text', Number(line.slot) || 1, text);
     }
     return text;
   }
@@ -7949,6 +7997,7 @@
       // ticked that is adding, not taking back: raising the reward on a
       // contract nobody will take is the usual reason to be here, and it
       // sat beside a loud "Take back what I ticked" that did nothing.
+      if (edit.armed) { disarmTake(); }
       if (take) {
         var any = !!(amount || dirty || goods);
         take.className = 'btn ' + (any ? 'primary' : 'ghost') + ' take-back';
@@ -7963,8 +8012,20 @@
       var parts = [];
       if (amount) { parts.push(money(amount)); }
       if (dirty) { parts.push(money(dirty) + t('app.dirty_money_2')); }
-      if (goods) { parts.push(goods + (goods === 1 ? ' item' : ' items')); }
-      total.textContent = t('app.coming_back_to_you') + parts.join(' and ') + '.';
+      if (goods) { parts.push(tn('app.items_count', goods)); }
+      total.textContent = t('app.coming_back_to_you') + parts.join(t('app.and_sep')) + '.';
+      edit.totalText = parts.join(t('app.and_sep'));
+    }
+
+    /* Take back is a write: its first tap arms it and names what comes
+       back, the second sends it. A change to what is ticked disarms it, and
+       so does a wait (TIP_CONFIRM_MS). */
+    function disarmTake() {
+      edit.armed = false;
+      if (take) {
+        take.textContent = t('app.take_back_what_i_ticked');
+        take.classList.toggle('is-armed', false);
+      }
     }
 
     if (edit.pending) {
@@ -8062,7 +8123,21 @@
 
     if (edit.data && !edit.pending && takeable) {
       take = el('button', 'primary take-back', t('app.take_back_what_i_ticked'));
-      take.onclick = function () { withdrawChosen(edit); };
+      edit.armed = false;
+      take.onclick = function () {
+        // Nothing ticked sends nothing: withdrawChosen only says so.
+        if (!Object.keys(edit.chosen).length || edit.sending) { return withdrawChosen(edit); }
+        if (!edit.armed) {
+          edit.armed = true;
+          take.textContent = t('app.tap_again_to_take_back', edit.totalText || '');
+          take.classList.toggle('is-armed', true);
+          var armedButton = take;
+          setTimeout(function () { if (edit.armed && take === armedButton) { disarmTake(); } }, TIP_CONFIRM_MS);
+          return;
+        }
+        edit.armed = false;
+        withdrawChosen(edit);
+      };
       row.appendChild(take);
       showTotal();
     }
@@ -8187,7 +8262,7 @@
         [
           { id: 'item', label: t('app.item'), type: 'select', value: items[0].name,
             options: items.map(function (item) {
-              return { value: item.name, label: item.label + '  \u00b7  ' + item.count + ' held' };
+              return { value: item.name, label: t('app.item_held', item.label, item.count) };
             }) },
           { id: 'count', label: t('app.how_many'), type: 'number', value: 1, min: 1 }
         ],
@@ -8246,11 +8321,10 @@
           confirm: t('app.raise'),
           hint: function (value) {
             if (!value || value <= bonusNow || value > bonusCap) {
-              return 'Now ' + bonusNow + '%. Between ' + (bonusNow + 1) + ' and '
-                + bonusCap + '.';
+              return t('app.now_percent_between', bonusNow, bonusNow + 1, bonusCap);
             }
-            return 'Now ' + bonusNow + '%. About ' + money(Math.floor(base * (value - bonusNow) / 100))
-              + t('app.more_from_you') + (later > 0 ? t('app.and_the_same_share_of_each') : '.');
+            return t('app.now_percent_about_more_from_you', bonusNow, money(Math.floor(base * (value - bonusNow) / 100)))
+              + (later > 0 ? t('app.and_the_same_share_of_each') : '.');
           }
         });
     }
@@ -8266,8 +8340,7 @@
       if (ceiling < 1) {
         return say(t('app.this_contract_is_already_worth_as'));
       }
-      askNumber('Add ' + (SOURCE_LABELS[source] || source).toLowerCase()
-                  + t('app.to_the_reward'),
+      askNumber(t('app.add_source_to_the_reward', (SOURCE_LABELS[source] || source).toLowerCase()),
         t('app.it_is_taken_from_you_now'),
         function (value) {
           var reward = { baseline: {} };
@@ -8281,7 +8354,7 @@
           confirm: t('app.add'),
           hint: function (value) {
             if (!value || value < 1 || value > ceiling) {
-              return 'Between ' + money(1) + ' and ' + money(ceiling) + '.';
+              return t('app.between_x_and_y', money(1), money(ceiling));
             }
             return t('app.you_hold') + money(held) + '; '
               + money(held - value) + t('app.would_be_left');
@@ -8304,8 +8377,7 @@
         + (weapons.length === 1 ? t('app.weapon_2') : t('app.weapons_2')), run: addWeapon });
     }
     if (bonusRoom) {
-      options.push({ label: t('app.kidnapping_bonus_2'), note: 'Now ' + bonusNow
-        + t('app.paid_on_top_for_delivering_them_2'), run: raiseBonus });
+      options.push({ label: t('app.kidnapping_bonus_2'), note: t('app.now_percent_paid_on_top', bonusNow), run: raiseBonus });
     }
 
     // One thing to add, straight to it. More than one, ask which first.
@@ -8325,7 +8397,7 @@
      old figure gets the difference back. */
   function lowerStake(contract) {
     var now = Number(contract.penaltyAmount) || 0;
-    var detail = 'Now ' + money(now) + t('app.this_applies_at_once')
+    var detail = t('app.now_this_applies_at_once', money(now))
       + (Number(contract.hitmenActive) > 0
         ? t('app.and_anyone_already_staked_gets_the') : '.');
 
@@ -8351,7 +8423,7 @@
               min: 1, max: now - 1, confirm: t('app.lower'),
               hint: function (value) {
                 if (!value || value < 1 || value >= now) {
-                  return 'Between ' + money(1) + ' and ' + money(now - 1) + '.';
+                  return t('app.between_x_and_y', money(1), money(now - 1));
                 }
                 return t('app.a_hitman_would_stake') + money(value) + t('app.to_take_it');
               }
@@ -8846,7 +8918,7 @@
         SCREENS.forEach(function (sc) {
           if (!tabNode(sc[0])) { return; }
           if ((sc[1] + ' ' + sc[2]).toLowerCase().indexOf(q) === -1) { return; }
-          var go = el('button', 'ghost ico ico-end i-right', 'Open ' + sc[1]);
+          var go = el('button', 'ghost ico ico-end i-right', t('app.open_x', sc[1]));
           go.onclick = function () { goTab(sc[0]); };
           screens.appendChild(go);
         });
@@ -8915,7 +8987,7 @@
       forward.disabled = page >= pages;
       forward.onclick = function () { state.boardPage = page + 1; refresh(); };
       nav.appendChild(back);
-      nav.appendChild(el('div', 'page-of', 'Page ' + page + ' of ' + pages));
+      nav.appendChild(el('div', 'page-of', t('app.page_of', page, pages)));
       nav.appendChild(forward);
       view.appendChild(nav);
     }
@@ -9008,7 +9080,7 @@
 
   /* No burner phone, with the item it takes on this server. */
   function burnerText(item) {
-    return t('app.you_need_a_burner_phone') + (item ? ' (item: ' + item + ')' : '') + '.';
+    return t('app.you_need_a_burner_phone') + (item ? t('app.item_paren', item) : '') + '.';
   }
 
   function brokerPanel() {
@@ -9021,7 +9093,7 @@
     }
     people.forEach(function (p, i) {
       var pick = el('button', broker.picked === p.handle ? 'primary' : 'ghost',
-        'Person ' + (i + 1) + ', ' + (Number(p.metres) || 0) + t('app.m_away'));
+        t('app.person_m_away', i + 1, Number(p.metres) || 0));
       pick.onclick = function () { broker.picked = p.handle; render(); };
       box.appendChild(pick);
     });
@@ -9057,7 +9129,7 @@
     // Payouts held for proof of intent, the contract finished or not.
     asList(data.intentHeld).forEach(function (h) {
       any = true;
-      view.appendChild(el('div', 'notice gold intent-hold', (h.ref ? 'Ref ' + h.ref + ': ' : '')
+      view.appendChild(el('div', 'notice gold intent-hold', (h.ref ? t('app.ref_prefix', h.ref) : '')
         + intentHoldText(h, t('app.a_payout_of_yours_is_held'))));
     });
 
@@ -9235,12 +9307,12 @@
     if (entry.hitmenActive !== undefined && entry.hitmenActive !== null) {
       var taken = Number(entry.hitmenActive) || 0;
       meta.appendChild(taken > 0
-        ? chip(t('app.taken_by') + taken + (taken === 1 ? ' hitman' : ' hitmen'), 'hot', 'i-users')
+        ? chip(tn('app.taken_by_hitmen', taken), 'hot', 'i-users')
         : chip(t('app.open_no_hitman_yet'), null, 'i-users'));
     }
     var posted = agoText(entry.postedAt);
     if (posted) {
-      meta.appendChild(chip('Posted ' + posted.charAt(0).toLowerCase() + posted.slice(1),
+      meta.appendChild(chip(t('app.posted_ago', posted.charAt(0).toLowerCase() + posted.slice(1)),
         null, 'i-flag'));
     }
     var clock = clockChip(entry);
@@ -9318,9 +9390,7 @@
        of their own and nothing else. */
     var waiting = Number(data.waiting) || 0;
     if (waiting > 0) {
-      view.appendChild(el('div', 'hint', waiting + ' payment' + (waiting === 1 ? '' : 's')
-        + t('app.waiting_for_room_make_room_and') + (waiting === 1 ? t('app.it_is') : t('app.they_are'))
-        + t('app.handed_over_2')));
+      view.appendChild(el('div', 'hint', tn('app.payments_waiting_for_room', waiting)));
     }
 
     /* Photos kept for this client in the app whose ledger row is gone:
@@ -9379,7 +9449,7 @@
         var node = el('div', 'card');
         node.appendChild(el('div', 'target', t('app.kill_photo')));
         var taken = agoText(photo.taken_at);
-        if (taken) { node.appendChild(el('div', 'reason', 'Taken ' + taken.toLowerCase())); }
+        if (taken) { node.appendChild(el('div', 'reason', t('app.taken_ago', taken.toLowerCase()))); }
         node.appendChild(proofLine(photo));
         view.appendChild(node);
       });
@@ -9651,7 +9721,7 @@
       var failed = el('div', 'card');
       failed.appendChild(el('div', 'hint', state.walletFailed.text
         + t('app.money_still_works_items_and_weapons')
-        + (state.walletFailed.code ? ' (code: ' + state.walletFailed.code + ')' : '')));
+        + (state.walletFailed.code ? t('app.code_paren', state.walletFailed.code) : '')));
       var again = el('button', 'ghost ico i-refresh', t('app.try_again'));
       again.onclick = function () {
         state.walletFailed = null; state.walletPending = false; render();
@@ -9932,8 +10002,7 @@
       toggle.htmlFor = 'anon';
       toggle.appendChild(anon);
       toggle.appendChild(el('span', null, t('app.place_anonymously')
-        + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator'))
-          + t('app.from_your') + anonymityAccount() + ')' : '')));
+        + (anonymityFee('creator') > 0 ? t('app.costs_from_your_paren', money(anonymityFee('creator')), anonymityAccount()) : '')));
       anonSlot.appendChild(toggle);
     }
     drawAnonOption();
@@ -10081,8 +10150,8 @@
          notice instead. */
       if (count === 1) {
         say(t('app.this_server_now_takes_one_payout_2')
-          + (typed === 2 ? 'payout 2 was' : typed === 3 ? 'payouts 2 and 3 were'
-            : 'payouts 2 to ' + typed + ' were') + t('app.removed_2'), 'caution');
+          + (typed === 2 ? t('app.payout_2_was') : typed === 3 ? t('app.payouts_2_and_3_were')
+            : t('app.payouts_2_to_were', typed)) + t('app.removed_2'), 'caution');
       }
     } else if (note) {
       note.textContent = '';
@@ -10101,7 +10170,7 @@
     for (var i = 1; i <= count; i++) {
       var slot = el('div', 'slot');
       // Numbered only where there can be more than one.
-      slot.appendChild(el('h4', null, slotCeiling() > 1 ? 'Payout ' + i : t('app.reward')));
+      slot.appendChild(el('h4', null, slotCeiling() > 1 ? t('app.payout_n', i) : t('app.reward')));
 
       var caps = (state.wallet && state.wallet.caps) || {};
       var split = el('div', 'split');
@@ -10382,7 +10451,7 @@
       spare[item.name] = free;
       var option = document.createElement('option');
       option.value = item.name;
-      option.textContent = item.label + '  \u00b7  ' + free + ' spare';
+      option.textContent = t('app.item_spare', item.label, free);
       if (item.namesOwner && placingAnonymously()) {
         naming[item.name] = true;
         option.disabled = true;
@@ -10644,7 +10713,7 @@
 
     if (!parts.length) { return null; }
     return parts.length === 1 ? parts[0]
-      : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+      : t('app.list_and', parts.slice(0, -1).join(', '), parts[parts.length - 1]);
   }
 
   /* What placing the form would take, rewritten above the Place button on
@@ -10663,9 +10732,8 @@
     // The fee is charged, not held, so it is said apart from the escrow.
     var fee = state.draft.anon === true ? anonymityFee('creator') : 0;
     if (fee > 0) {
-      text += ' Plus ' + money(fee) + t('app.from_your')
-        + ((settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank')
-        + t('app.for_anonymity_2');
+      text += t('app.plus_from_your_for_anonymity', money(fee),
+        (settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank');
     }
     var bonus = composed.bonus.cash + composed.bonus.bank + composed.bonus.dirty;
     if (bonus > 0 || taken.indexOf(t('app.alive_only_3')) !== -1) {
@@ -10685,7 +10753,7 @@
     var terms = [];
     var moved = [];
     if (typeof placed.bailoutAmount === 'number' && placed.bailoutAmount > 0) {
-      terms.push('Buyout ' + money(placed.bailoutAmount));
+      terms.push(t('app.buyout_amount', money(placed.bailoutAmount)));
       if (asked.bailout > 0 && asked.bailout !== placed.bailoutAmount) { moved.push('buyout'); }
     }
     if (typeof placed.penaltyAmount === 'number' && placed.penaltyAmount > 0) {
@@ -10696,8 +10764,7 @@
     }
     if (terms.length) { text += ' ' + terms.join('; ') + '.'; }
     if (moved.length) {
-      text += ' The ' + moved.join(t('app.and_the')) + (moved.length > 1 ? ' were' : ' was')
-        + t('app.moved_to_the_nearest_amount_this');
+      text += tn('app.the_terms_were_moved', moved.length, moved.join(t('app.and_the')));
     }
     // A stake asked for and none placed: the reward cannot carry one.
     if (asked.penalty > 0 && placed.penaltyAmount === 0) {
@@ -10722,7 +10789,7 @@
     var band = bandOf(placed);
     var minutes = Number(settings().defaultDeadlineMinutes) || 0;
     if (band || minutes > 0) {
-      text += t('app.it_has_2') + (band ? band.text.toLowerCase() : durationText(minutes) + ' left')
+      text += t('app.it_has_2') + (band ? band.text.toLowerCase() : t('app.duration_left', durationText(minutes)))
         + t('app.unless_you_extend_it_its_clock')
         + t('app.operative_on_it_are_all_in');
     }
@@ -10730,10 +10797,9 @@
     var decay = settings().contractDecay;
     if (decay && typeof decay === 'object') {
       text += decay.mode === 'shorten'
-        ? t('app.while_nobody_takes_it_it_runs') + decay.percent + t('app.sooner_every') + decay.hours + ' h.'
-        : t('app.while_nobody_takes_it_its_reward') + decay.percent + '% every ' + decay.hours
-          + t('app.h_up_to') + decay.maxPercent + t('app.taken_from_your')
-          + (decay.account === 'cash' ? 'cash' : 'bank') + '.';
+        ? t('app.decay_shorten_h', decay.percent, decay.hours)
+        : t('app.decay_rise_h', decay.percent, decay.hours, decay.maxPercent,
+          decay.account === 'cash' ? 'cash' : 'bank');
       if (decay.mode !== 'shorten' && asked.anonymous === true) {
         text += t('app.not_this_one_a_contract_placed');
       } else {
@@ -10791,7 +10857,7 @@
       for (var src in labels) {
         var cap = Number(caps[src]);
         if (baseline[src] && cap > 0 && baseline[src] > cap) {
-          return say((numbered ? 'Payout ' + i + ': ' : '') + labels[src] + t('app.is_at_most')
+          return say((numbered ? t('app.payout_n_prefix', i) : '') + labels[src] + t('app.is_at_most')
             + money(cap) + t('app.on_this_server'));
         }
       }
@@ -10800,7 +10866,7 @@
       // do not: the server refuses a payout whose kill half is empty.
       if (!baseline.cash && !baseline.bank && !baseline.dirty
           && !baseline.items && !baseline.weapons) {
-        var which = numbered ? 'Payout ' + i : t('app.the_reward_2');
+        var which = numbered ? t('app.payout_n', i) : t('app.the_reward_2');
         return say(slots[i - 1].bonus
           ? which + t('app.pays_nothing_for_a_kill_put')
             + t('app.that_is_not_marked_alive_only')
@@ -11073,8 +11139,7 @@
         if (r.err === 'limit_reached') {
           var most = Number(r.data && r.data.max);
           return say(t('app.you_already_have')
-            + (most > 0 ? most + ' contract' + (most === 1 ? '' : 's')
-              + t('app.out_the_most_this_server_allows') : t('app.as_many_contracts_out_as_this'))
+            + (most > 0 ? tn('app.contracts_out_the_most_allowed', most) : t('app.as_many_contracts_out_as_this'))
             + t('app.counting_the_ones_placed_from_your')
             + t('app.wait_for_one_to_close_or')
             + t('app.under_mine'));
@@ -11392,7 +11457,7 @@
       // target was thirty-one metres away saw an empty list and no reason.
       var radius = settings().nearbyRadius;
       nearButton = el('button', 'ghost',
-        radius ? 'Within ' + Math.round(radius) + 'm' : t('app.near_me'));
+        radius ? t('app.within_m_short', Math.round(radius)) : t('app.near_me'));
       nearButton.id = 'target-scope-nearby';
       nearButton.onclick = function () { setScope('nearby'); };
       modes.appendChild(nearButton);
@@ -11537,10 +11602,10 @@
 
       if (paging && paging.total) {
         show(status, (browse.scope === 'nearby')
-          ? (paging.total + (paging.total === 1 ? t('app.person_near_you') : t('app.people_near_you')))
-          : ('Showing ' + people.length + ' of ' + paging.total + t('app.in_the_city_2')));
+          ? tn('app.people_near_you_count', paging.total)
+          : t('app.showing_of_in_the_city', people.length, paging.total));
       } else {
-        show(status, people.length + (people.length === 1 ? ' match' : ' matches'));
+        show(status, tn('app.matches_count', people.length));
       }
 
       people.forEach(function (person) { results.appendChild(personRow(person)); });
@@ -11560,7 +11625,7 @@
         };
         nav.appendChild(back);
         nav.appendChild(el('div', 'page-of',
-          'Page ' + paging.page + ' of ' + paging.pages));
+          t('app.page_of', paging.page, paging.pages)));
         nav.appendChild(forward);
         results.appendChild(nav);
       }
@@ -11582,7 +11647,7 @@
       }
       // A band, never the figure: "under 20m" (app.lua, NEARBY_BAND).
       if (person.metres !== undefined && person.metres !== null) {
-        tags.appendChild(el('span', 'chip ico i-pin', 'under ' + person.metres + 'm'));
+        tags.appendChild(el('span', 'chip ico i-pin', t('app.under_m', person.metres)));
       }
       if (tags.children.length > 0) { pick.appendChild(tags); }
 
@@ -12645,8 +12710,7 @@
       mine.forEach(function (job) {
         var c = el('div', 'card protection-job');
         c.appendChild(el('div', 'target', job.targetName || t('app.your_client')));
-        c.appendChild(el('div', 'hint', 'Paid ' + money(job.reward) + t('app.if_the_contract_on_them')
-          + t('app.ends_without_being_carried_out')));
+        c.appendChild(el('div', 'hint', t('app.paid_if_the_contract_on_them_ends', money(job.reward))));
         if (job.pinSet) {
           var row = el('div', 'row actions');
           row.appendChild(actionButton('ghost ico i-pin', t('app.set_gps_to_the_pin'),
@@ -12672,7 +12736,7 @@
     }
     open.forEach(function (job) {
       var c = el('div', 'card protection-job');
-      c.appendChild(el('div', 'target', 'Protection: ' + money(job.reward)));
+      c.appendChild(el('div', 'target', t('app.protection_amount', money(job.reward))));
       c.appendChild(el('div', 'hint', t('app.somebody_with_a_price_on_their')
         + t('app.take_it_and_you_get_their')
         + t('app.on_them_ends_without_being_carried')));
@@ -12720,7 +12784,7 @@
     if (job) {
       row.appendChild(el('div', 'notice ok protection-state', job.state === 'taken'
         ? t('app.your_protection_job') + money(job.reward) + t('app.was_taken')
-          + (job.guardName ? ' by ' + job.guardName : '') + t('app.they_have_your_name_and_your')
+          + (job.guardName ? t('app.by_name', job.guardName) : '') + t('app.they_have_your_name_and_your')
         : t('app.your_protection_job') + money(job.reward) + t('app.is_waiting_for_a_bodyguard')));
       more.appendChild(actionButton('ghost ico i-pin', t('app.move_the_pin_here'),
         'protection:pin:' + job.job, t('app.moving'), function () {
@@ -12751,13 +12815,13 @@
       var hire = el('button', 'ghost ico i-shield', t('app.hire_protection'));
       hire.onclick = function () {
         askFields(t('app.hire_a_bodyguard'), t('app.post_an_anonymous_protection_job_the')
-          + 'your ' + offer.account + t('app.now_and_held_the_bodyguard_is')
+          + t('app.your_account_now_and_held', offer.account)
           + t('app.ends_without_being_carried_out_and')
           + t('app.they_get_your_name_and_a'),
-          [{ id: 'amount', label: t('app.reward_2') + money(offer.min) + ' to ' + money(offer.max) + ')',
+          [{ id: 'amount', label: t('app.reward_range', money(offer.min), money(offer.max)),
              type: 'number', value: offer.min, min: offer.min, max: offer.max }],
           function (values) {
-            ask('Pay ' + money(values.amount) + t('app.from_your') + offer.account + '?',
+            ask(t('app.pay_from_your', money(values.amount), offer.account),
               t('app.held_until_the_contract_on_you'), function () {
                 return once('protection:post:' + contract.id, function () {
                   return post('protectionPost', { id: contract.id, amount: values.amount,
@@ -12766,7 +12830,7 @@
                     else { fail(r); }
                   });
                 });
-              }, { yes: 'Pay ' + money(values.amount), no: t('app.cancel') });
+              }, { yes: t('app.pay_x', money(values.amount)), no: t('app.cancel') });
           }, t('app.next'));
       };
       more.appendChild(hire);
@@ -12791,8 +12855,7 @@
   /* The placer's record on a board card: three counts and the days they
      cover, never who. An anonymous placer's come as bands ('1-4'). */
   function placerRecordText(r) {
-    return 'Placer: placed ' + r.placed + t('app.paid_out') + r.paidOut + ', cancelled '
-      + r.cancelled + ' (' + (Number(r.days) || 0) + ' days)';
+    return t('app.placer_record', r.placed, r.paidOut, r.cancelled, tn('app.days_count', Number(r.days) || 0));
   }
 
   /* A card in a tier above this player's level. */
@@ -12817,9 +12880,8 @@
       what = t('app.while_nobody_takes_it_it_runs_2') + d.percent + t('app.sooner_every')
         + d.hours + (d.hours === 1 ? t('app.hour') : t('app.hours'));
     } else {
-      what = t('app.while_nobody_takes_it_its_reward_2') + d.percent + '% every '
-        + d.hours + (d.hours === 1 ? ' hour' : ' hours') + t('app.up_to') + d.maxPercent
-        + t('app.taken_from_your') + (d.account === 'cash' ? 'cash' : 'bank') + '.';
+      what = tn('app.decay_rise_hours', d.hours, d.percent, d.hours, d.maxPercent,
+        d.account === 'cash' ? 'cash' : 'bank');
       if (Number(d.added) > 0) { what += t('app.added_so_far') + money(d.added) + '.'; }
     }
     if (d.off) { what = t('app.you_turned_off_the_change_for'); }

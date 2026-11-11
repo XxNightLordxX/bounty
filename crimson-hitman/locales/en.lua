@@ -10,6 +10,8 @@
 -- the right and set Config.Locale = 'de' in config/config.lua. Keep every %s
 -- and %d, in the same order: the code puts names, numbers and amounts there.
 -- A key your file leaves out reads in English, and the console says so once.
+-- The game's own words (map markers, the app icon, third-eye options) are in
+-- locales/client/en.lua: copy it to locales/client/<language>.lua the same way.
 -- The phone app and the admin panel read locales/<language>.json the same way.
 -- Left readable on an escrowed build (escrow_ignore in fxmanifest.lua).
 
@@ -153,26 +155,6 @@ CrimsonLocales.en = {
     -- =========================================================================
     ['announce.staff'] = 'Staff',
 
-    -- =========================================================================
-    --      IN GAME: THE APP ICON, MAP MARKERS, TARGET OPTIONS (client/)
-    -- =========================================================================
-    ['client.crimson_hitman'] = 'Crimson-Hitman',
-    ['client.contracts_quietly_arranged'] = 'Contracts, quietly arranged.',
-    ['client.crimson'] = 'Crimson',
-    ['client.informant_tip'] = 'Informant tip',
-    ['client.meeting_point'] = 'Meeting point',
-    ['client.kill_to_verify'] = 'Kill to verify',
-    ['client.handover'] = 'Handover',
-    ['client.protection_meeting_pin'] = 'Protection meeting pin',
-    ['client.body_to_collect'] = 'Body to collect',
-    ['client.disposal_vehicle'] = 'Disposal vehicle',
-    ['client.body_drop_off'] = 'Body drop-off',
-    ['client.broker'] = 'Broker',
-    ['client.informant'] = 'Informant',
-    ['client.organisation_office'] = 'Organisation office',
-    ['client.organisation_spot'] = 'Organisation spot',
-    ['client.load_the_body'] = 'Load the body',
-    ['client.drop_off_the_body'] = 'Drop off the body',
 
     -- =========================================================================
     --     THE ADMIN PANEL: STAFF ANSWERS AND REFUSALS (server/panel.lua)
@@ -698,7 +680,6 @@ CrimsonLocales.en = {
     ['settings.check_for_a_newer_version_at'] = 'Check for a newer version at start',
     ['settings.off_as_shipped_on_with_an'] = 'Off as shipped. On, with an address in Config.VersionCheck.Url (empty as shipped, which asks nothing), the server asks that address once at start, with a plain GET that sends no data of this server\'s, and says in the console when a newer version is out. Nothing else changes.',
     ['settings.asked_once_as_the_server_starts'] = 'Asked once, as the server starts: turned on now, the address is asked at the next start; turned off, the next start asks nothing.',
-    ['settings.debug'] = 'Debug',
     ['settings.debug_output_in_the_server_console'] = 'Debug output in the server console',
     ['settings.off_the_server_console_prints_only'] = 'Off: the server console prints only what needs you (refusing to start, money left for staff, a write that failed) and one line for every setting that needs attention. On: everything, each setting problem in full and page faults with their stack. The diagnosis lists all of it either way.',
     ['settings.read_at_every_line_printed_with'] = 'Read at every line printed, with no restart. The lines of a start before the panel\'s settings are applied (the store opening, its migrations) follow config.lua; the diagnosis lists them either way.',
@@ -988,10 +969,8 @@ CrimsonLocales.en = {
     ['settings.where_the_organisations_funds_are_kept'] = 'Where the organisation\'s funds are kept. \'none\': this resource\'s own ledger.',
     ['settings.read_for_the_first_choice_of'] = 'Read for the first choice of where the funds are kept, which is then kept: staff move them with the funds backend switch.',
     ['settings.sent_to_every_players_game_at'] = 'Sent to every player\'s game at once; what is already drawn stays until it is drawn again.',
-    ['settings.integrations'] = 'Integrations.',
     ['settings.other_scripts'] = 'Other scripts: ',
     ['settings.auto_the_first_installed_and_started'] = '\'auto\': the first installed and started. Without one: ',
-    ['settings.admin_commands'] = 'Admin.Commands.',
     ['settings.command_name'] = 'Command name: ',
     ['settings.without_the_slash'] = 'Without the slash.',
     ['settings.every_read_the_app_makes_of'] = 'Every read the app makes of its own state: Board, Mine, On me, the Ledger, proposals, threads and the whitelisted-job view, and the buyout command\'s list. Opening the app is four of these at once, and every refresh two more.',
@@ -1026,7 +1005,6 @@ CrimsonLocales.en = {
     ['settings.a_death_and_the_revive_after'] = 'a death and the revive after it are a report each',
     ['settings.players_are_refused_sooner_and_wait'] = '%s: players are refused sooner, and wait longer for it to refill. What this gates (above) answers "slow down" until it does.',
     ['settings.the_staff_panels_own_allowance_which'] = 'The staff panel\'s own allowance, which every request it makes spends: set too low from here it would refuse the very request that puts it back, at every start. Set it in config.lua.',
-    ['settings.cooldowns'] = 'Cooldowns.',
     ['settings.staff'] = 'Staff',
     ['settings.rate_limits'] = 'Rate limits',
     ['settings.refill_window'] = ': refill window (s)',

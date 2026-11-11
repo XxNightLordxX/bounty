@@ -331,7 +331,13 @@ describe('adapters: the client', function()
         Natives.resourceStates['ox_target'] = 'started'
         Client.boot()
         falsy(CrimsonNpc.targetUp(), 'no target adapter')
-        falsy(Client.netEvents['qb-clothing:client:loadOutfit'], 'no clothing event listened for')
+        -- Registered (the choice is read when the event comes: A2), and
+        -- answered with nothing while the choice is none.
+        Client.toServer = {}
+        Client.fire('qb-clothing:client:loadOutfit')
+        for _, sent in ipairs(Client.toServer) do
+            truthy(sent.name ~= 'crimson-hitman:appearanceChanged', 'no clothing event acted on')
+        end
         Client.toServer = {}
         Client.fire('crimson-hitman:renderMugshot')
         for _, sent in ipairs(Client.toServer) do
@@ -349,6 +355,29 @@ describe('adapters: the client', function()
         Client.fire('crimson-hitman:notify', { title = 'Crimson', content = 'Hello' })
         eq(#Client.feed, 1)
         truthy(Client.feed[1]:find('Hello', 1, true))
+        resetConfig()
+    end)
+
+    it('follows a live change of the clothing choice, either way (A2)', function()
+        local function told(event)
+            Client.toServer = {}
+            Client.fire(event)
+            for _, sent in ipairs(Client.toServer) do
+                if sent.name == 'crimson-hitman:appearanceChanged' then return true end
+            end
+            return false
+        end
+        resetConfig()
+        Config.Integrations.Clothing = 'none'
+        Client.boot()
+        falsy(told('illenium-appearance:client:reloadSkin'), 'none: nothing')
+        Config.Integrations.Clothing = 'auto'      -- the settings push, after the file loaded
+        truthy(told('illenium-appearance:client:reloadSkin'), 'auto now: listened for')
+        Config.Integrations.Clothing = 'qb-clothing'
+        truthy(told('qb-clothing:client:loadOutfit'), 'the one named')
+        falsy(told('illenium-appearance:client:reloadSkin'), 'not another')
+        Config.Integrations.Clothing = 'none'
+        falsy(told('qb-clothing:client:loadOutfit'), 'none again: nothing')
         resetConfig()
     end)
 

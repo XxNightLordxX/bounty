@@ -1460,8 +1460,8 @@ local function stakeTimeRefusal(contract, shown, shownBand)
     -- standing still from the hold start the card's does (Holds.why):
     -- worked out from now, under the restart hold every acceptance of a
     -- staked contract the lifetime ends was refused as terms changed. A
-    -- staff freeze is refused before this (Holds.on, 'staff'), so a
-    -- stranger's start is the one.
+    -- staff freeze is refused before this to a party on it, and never shown
+    -- to a stranger ('public'), so a stranger's start is the one.
     local hold = Holds.why(contract, nil, 'public')
     local start = hold and hold.since or nil
     local _, now = Util.timeBand(Util.bandLeft(contract, start))
@@ -1562,15 +1562,21 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     end
 
     -- On hold by staff, or the hitman is: nothing is taken. Somebody not on
-    -- it is told only "not right now": "on hold" to a stranger tapping Accept
-    -- said which contracts a frozen player was on, anonymous ones included.
+    -- it is told nothing of the hold: "on hold" to a stranger tapping Accept
+    -- said which contracts a frozen player was on, anonymous ones included,
+    -- and so did any answer an open contract would not give at the same
+    -- point (S8-STATE-5). So a stranger goes through every check an open
+    -- contract is put to, and only once all have passed, where an open one
+    -- would be taken, is refused as a momentary lock is (strangerHeld,
+    -- below the money checks).
     if Holds.of(actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
     -- Suspended by staff (server/sanctions.lua): nothing is taken.
     local suspension = Contracts.suspension(actor.cid)
     if suspension then return false, CH.ERR.SUSPENDED, Sanctions.refusal(suspension) end
+    local strangerHeld = false
     if Holds.on(contract, nil, 'staff') then
         if Storage.readHitman(contract.id, actor.cid) then return false, CH.ERR.CONTRACT_FROZEN end
-        return false, CH.ERR.BAD_STATE
+        strangerHeld = true
     end
 
     -- Past its deadline with the clock running, or past its lifetime, it is
@@ -1809,6 +1815,11 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     if stake > 0 and (left[stakeAccount] or 0) < stake then
         return false, CH.ERR.INSUFFICIENT, shortfall('stake', stake, 'bank_or_cash', fee, feeAccount)
     end
+
+    -- Held by staff, asked by somebody not on it: every check passed, so
+    -- answered as a contract locked for a moment is (Contracts.serialized),
+    -- and nothing is taken.
+    if strangerHeld then return false, CH.ERR.BUSY, { heldMs = 0 } end
 
     -- Every check passed, nothing written: what a staff reassignment asks
     -- before it takes anybody off the contract (opts.dryRun).

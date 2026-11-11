@@ -53,7 +53,33 @@ are named by their place in `config/config.lua`; the README has the details.
   `locales/en.json` (`app`), and so is the admin panel's (`admin`, its
   sections, header and help included): every word players and staff read
   is now in the language files (README, Escrow, and where the words live, which
-  says step by step how to add a language).
+  says step by step how to add a language). The game's own words (map
+  markers, the app icon, target options) are in `locales/client/en.lua`, the
+  only language file sent to every player. A page text with values names
+  them by `%s` (or `%2$s` to reorder), and one that depends on a count has
+  `_one` / `_other` forms (and `_few`, `_many` where a language needs them).
+  Setting keys never change with the language, and the pages read their
+  language files with the build stamp, so an update is never shown with an
+  old copy.
+
+**Fixes (sweep 8: client, pages, clocks)**
+- Agree, Decline and Apply it on a proposed change, and Take back what I
+  ticked, take two taps; the second names the change or what comes back.
+- A boss holding Issue strikes or the record power opens a member's
+  discipline record from their row on the phone.
+- Third-eye spots and disposal options come back when ox_target restarts or
+  starts late; a live change of `Config.Integrations.Clothing` is followed;
+  nothing waits for a phone that is not there; a barred job's game asks for
+  the NPC places once instead of every minute.
+- A kill pending its photo outlives a staff freeze (or freezes that could
+  not be read) on its contract, with the window it had left. An app pause
+  whose end could not be stored is not given back twice at the next start.
+  Disposal's `MaxHoldMinutes` leaves out the time staff held the step. An
+  organisation's reservation and accept approvals stand still while their
+  contract is held. Proposals do not run out between an unfreeze's steps,
+  and the freezes coming back after an outage give proposals their time
+  back. A stranger's Accept on a frozen contract no longer says which ones a
+  frozen player is on.
 
 **Organisation extras 3** (each its own switch under `Config.Organisation`, off as shipped)
 - **Several organisations** (`SeveralOrganisations`, `MaxOrganisations`):

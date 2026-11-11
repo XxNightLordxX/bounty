@@ -477,6 +477,52 @@ describe('a disposal on hold', function()
             s.holds.releaseRestart()
         end)
     end)
+
+    -- S8-STATE-4: the real-time ceiling (MaxHoldMinutes) leaves out the time
+    -- staff held the step, so a hold longer than it does not time the step
+    -- out (here: refunding the placer) the moment it ends.
+    local function longHold(hold, release)
+        local s, f, c = setup({ config = { OnTimeout = 'refund', TimeLimitMinutes = 30, MaxHoldMinutes = 120 } })
+        tick(s, 10)
+        truthy(stepRow(s, c), 'running')
+        local placer, hitman = cash(1), cash(3)
+        hold(s)
+        for _ = 1, 13 do tick(s, 600) end          -- 130 minutes held
+        release(s)
+        tick(s, 10)
+        truthy(stepRow(s, c), 'still running after a hold longer than the ceiling')
+        eq(cash(1), placer, 'nothing refunded to the placer')
+        eq(cash(3), hitman, 'nor taken from the hitman')
+        -- And it still times out on time once nothing holds it.
+        for _ = 1, 12 do tick(s, 600) end
+        eq(stepRow(s, c), nil, 'and its clock still runs out once nothing holds it')
+        return true
+    end
+
+    it('a hold longer than MaxHoldMinutes: the app pause (S8-STATE-4)', function()
+        truthy(longHold(function(s) Config.Holds.AppPaused = true; s.holds.syncAppPause() end,
+            function(s) Config.Holds.AppPaused = false; s.holds.syncAppPause() end))
+    end)
+
+    it('a hold longer than MaxHoldMinutes: a freeze on the target (S8-STATE-4)', function()
+        truthy(longHold(function(s) truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'a report')) end,
+            function(s) truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'fine')) end))
+    end)
+
+    it('stands still while the freezes cannot be read (S8-STATE-4, -7)', function()
+        local s, f, c = setup()
+        tick(s, 10)
+        local spent = s.disposal.list()[1].spent
+        local real = s.storage.readFreezes
+        s.storage.readFreezes = function() error('db down') end
+        s.holds.reload()
+        s.storage.readFreezes = real
+        tick(s, 600)
+        eq(s.disposal.list()[1].spent, spent, 'held like every other clock while unread')
+        s.holds.reload()
+        tick(s, 60)
+        truthy(s.disposal.list()[1].spent > spent, 'and runs again once they are read')
+    end)
 end)
 
 --------------------------------------------------------------------------

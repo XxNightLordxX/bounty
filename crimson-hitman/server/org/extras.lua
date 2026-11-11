@@ -52,6 +52,7 @@ local Window = CrimsonBoot.require('server.lib.window')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local L = CrimsonBoot.requireShared('locale').t
+local Holds = CrimsonBoot.require('server.holds')
 
 local Extras = {}
 
@@ -1024,8 +1025,22 @@ function Org.extrasTick(at)
     end
 end
 
+--- When each organisation's tick last ran: [org id] = os.time(). The span
+--- since is what a held contract's reservation and approvals are given.
+local HeldAt = {}
+
+--- Whether a contract is on hold (a staff freeze on a party, the app pause,
+--- the restart hold): nobody can accept it meanwhile, so its reservation and
+--- an approval asked for it stand still (S8-STATE-8).
+local function heldNow(contract)
+    local ok, held = pcall(Holds.on, contract)
+    return ok and held == true
+end
+
 tickOne = function(org, at, prune)
     local d = deps()
+    local span = math.max(0, at - (HeldAt[org.id] or at))
+    HeldAt[org.id] = at
     if next(org.settings.orgContracts) then
         if not on('OrgContracts') then
             -- Turned off: every one on the open board.
@@ -1033,9 +1048,15 @@ tickOne = function(org, at, prune)
         else
             local ids = {}
             for id in pairs(org.settings.orgContracts) do ids[#ids + 1] = id end
+            local extended = false
             for _, id in ipairs(ids) do
                 local entry = org.settings.orgContracts[id]
                 local contract = d.storage.readContract(id)
+                if span > 0 and entry.state ~= 'taken' and contract and not CH.TERMINAL[contract.state]
+                    and heldNow(contract) then
+                    entry.expires = (tonumber(entry.expires) or at) + span
+                    extended = true
+                end
                 if not contract or CH.TERMINAL[contract.state] then
                     release(org, id, 'ended')
                 elseif entry.state == 'assigned' and not org.members[entry.cid] then
@@ -1050,9 +1071,14 @@ tickOne = function(org, at, prune)
                     if not hitman or hitman.state ~= 'active' then release(org, id, 'ended') end
                 end
             end
+            if extended then kit.save() end
         end
     end
     for k, p in pairs(Pending) do
+        if span > 0 and (p.org == org.id or (p.org == nil and org == O.current())) then
+            local contract = d.storage.readContract(p.contractId)
+            if contract and not CH.TERMINAL[contract.state] and heldNow(contract) then p.expires = p.expires + span end
+        end
         if (p.org == nil or p.org == org.id) and (p.expires <= at or not on('AcceptApproval')) then
             Pending[k] = nil
             d.audit.action('org_accept_expired', p.cid, p.contractId, { org = org.id })

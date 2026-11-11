@@ -2,7 +2,8 @@
 ---
 --- Every notice, refusal and label is looked up here by its key, in the
 --- language Config.Locale names ('en' as shipped): locales/<language>.lua
---- on the server and the client, locales/<language>.json in the phone app
+--- on the server, locales/client/<language>.lua in the game,
+--- locales/<language>.json in the phone app
 --- and the admin panel (ui/app.js, ui/admin.js). A key the chosen language
 --- does not have reads in English, and the console says so once (the first
 --- key missing from a language whatever Debug says; each one with
@@ -37,20 +38,26 @@ local function console(text, always)
     if always then Console.always(text) else Console.debug(text) end
 end
 
---- A language's table: published by its file (locales/<language>.lua, a
---- client script) or loaded by name on the server. false when none.
+--- A language's table: published by its file or loaded by name on the
+--- server. false when none. The game's own words (client.*) are a file of
+--- their own, locales/client/<language>.lua (CrimsonClientLocales), the
+--- only language file the manifest sends every player: the rest of
+--- locales/<language>.lua (staff, Discord, the panel) stays on the server.
 ---@param lang string
+---@param game boolean|nil the game's words (a client.* key)
 ---@return table|false
-local function tableOf(lang)
-    if tables[lang] ~= nil then return tables[lang] end
-    local found = type(CrimsonLocales) == 'table' and CrimsonLocales[lang] or nil
+local function tableOf(lang, game)
+    local slot = game and ('client/' .. tostring(lang)) or lang
+    if tables[slot] ~= nil then return tables[slot] end
+    local published = game and rawget(_G, 'CrimsonClientLocales') or rawget(_G, 'CrimsonLocales')
+    local found = type(published) == 'table' and published[lang] or nil
     if type(found) ~= 'table' and type(lang) == 'string' and lang:match('^[%a_%-]+$')
         and boot() and boot().require then
-        local ok, mod = pcall(boot().require, 'locales.' .. lang)
+        local ok, mod = pcall(boot().require, (game and 'locales.client.' or 'locales.') .. lang)
         found = ok and mod or nil
     end
-    tables[lang] = type(found) == 'table' and found or false
-    return tables[lang]
+    tables[slot] = type(found) == 'table' and found or false
+    return tables[slot]
 end
 
 --- The language in force: Config.Locale, or English.
@@ -66,7 +73,8 @@ end
 ---@return string
 function Locale.t(key)
     local lang = Locale.language()
-    local chosen = tableOf(lang)
+    local game = type(key) == 'string' and key:sub(1, 7) == 'client.'
+    local chosen = tableOf(lang, game)
     local text = chosen and chosen[key]
     if type(text) == 'string' then return text end
     if lang ~= Locale.FALLBACK then
@@ -81,7 +89,7 @@ function Locale.t(key)
                 first[lang] = true
             end
         end
-        local english = tableOf(Locale.FALLBACK)
+        local english = tableOf(Locale.FALLBACK, game)
         text = english and english[key]
         if type(text) == 'string' then return text end
     end

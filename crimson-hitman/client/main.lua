@@ -225,7 +225,9 @@ local function attemptRegistration()
     -- No phone at all (Config.Integrations.Phone = 'none'): there is no app
     -- to register; the server said so in its one console line.
     if CrimsonIntegrations.choice('phone') == 'none' then return end
-    while not CrimsonIntegrations.has('phone') do Wait(500) end
+    -- No phone started yet: nothing waits for one. Its start
+    -- (onClientResourceStart below) runs this again.
+    if not CrimsonIntegrations.has('phone') then return end
     Wait(1000)
 
     for attempt = 1, 10 do
@@ -289,7 +291,7 @@ end)
 --- included. Without re-registering, the app is gone until the next server
 --- restart and nothing says why.
 AddEventHandler('onClientResourceStart', function(resource)
-    if resource ~= 'lb-phone' then return end
+    if not CrimsonIntegrations.isResourceOf('phone', resource) then return end
     appReady = false
     CreateThread(registerWithRetries)
 end)

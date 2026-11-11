@@ -40,6 +40,18 @@ local drawn = {}
 
 local asked = 0
 
+--- Refusals that pass by themselves (the server still starting, a
+--- slow-down, a character not loaded yet): asked again in a minute. Any
+--- other is the answer, and is not asked again on a timer.
+local TRANSIENT = { busy = true, rate_limited = true, no_player = true }
+local RETRY_MS = 60000
+--- Whether a retry is already waiting: one at most, however many refusals
+--- and change notices arrive meanwhile.
+local retrying = false
+--- Refused for this player's job (police, EMS, any barred job): nothing is
+--- asked until the server says their access changed.
+local barred = false
+
 local function keyOf(p)
     return ('%.1f:%.1f:%.1f:%s:%s'):format(p.x, p.y, p.z, p.model, p.scenario)
 end
@@ -128,15 +140,38 @@ end
 
 RegisterNetEvent('crimson-hitman:result', function(result)
     if type(result) ~= 'table' or result.event ~= 'rpPlaces' then return end
-    -- Not answered (the server still starting, a slow-down): asked again
-    -- in a minute, once per refusal.
-    if not result.ok then return SetTimeout(60000, ask) end
+    if not result.ok then
+        -- Not answered yet: asked again in a minute, with one retry waiting
+        -- at most. A barred job, or the feature off, is the answer itself:
+        -- asking again every minute only wrote a refusal row each time.
+        barred = result.err == 'blacklisted_job'
+        if TRANSIENT[result.err] and not retrying then
+            retrying = true
+            SetTimeout(RETRY_MS, function()
+                retrying = false
+                ask()
+            end)
+        end
+        return
+    end
+    barred = false
     apply(result.data)
 end)
 
--- An NPC moved, or staff changed one: ask again.
+-- An NPC moved, or staff changed one: ask again (not a barred job's game,
+-- which would only be refused again).
 RegisterNetEvent('crimson-hitman:rpPlacesChanged', function()
+    if barred or retrying then return end
     ask()
+end)
+
+-- The server's word on this player's access (client/main.lua registers
+-- the event): a barred job left is asked again.
+AddEventHandler('crimson-hitman:access', function(allowed)
+    if allowed == true and barred then
+        barred = false
+        ask()
+    end
 end)
 
 --- One pass: draw what came near, remove what went far. Returns whether

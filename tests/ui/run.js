@@ -573,13 +573,61 @@ async function main() {
     it('Translations: every key the phone asks for is in en.json', function () {
       const src = fs.readFileSync(APP, 'utf8');
       const missing = [];
-      (src.match(/\bt\('[\w]+\.[\w]+'\)/g) || []).forEach(function (call) {
+      (src.match(/\bt\('[\w]+\.[\w]+'[,)]/g) || []).forEach(function (call) {
         const key = call.slice(3, -2), at = key.indexOf('.');
         if (key === 'section.key') return;  // the comment that says how
         const sec = LOCALE_EN[key.slice(0, at)];
         if (!sec || typeof sec[key.slice(at + 1)] !== 'string') missing.push(key);
       });
+      (src.match(/\btn\('[\w]+\.[\w]+'[,)]/g) || []).forEach(function (call) {
+        const key = call.slice(4, -2), at = key.indexOf('.');
+        if (key === 'section.key') return;
+        const sec = LOCALE_EN[key.slice(0, at)];
+        ['_one', '_other'].forEach(function (form) {
+          if (!sec || typeof sec[key.slice(at + 1) + form] !== 'string') missing.push(key + form);
+        });
+      });
       eq(missing.join(', '), '');
+    });
+    // L1: values go into a text at %s, or by place (%2$s) for a language
+    // that puts them in another order, and a count picks its form
+    // (key_one, key_other, or the language's own, key_few ...). The page's
+    // own Text block, run on its own over a made-up language file.
+    it('Translations: t() fills values in order or by place, and tn() picks the plural form', function () {
+      const src = fs.readFileSync(APP, 'utf8');
+      const from = src.indexOf('  var Text = (function () {');
+      const to = src.indexOf('  var t = Text.t;', from);
+      truthy(from > 0 && to > from, 'the Text block');
+      const files = {
+        en: { s: { two: 'a %s, b %s', placed: 'b %2$s, a %1$s', n_one: '%s file', n_other: '%s files' } },
+        pl: { s: { two: 'x', placed: 'y', n_one: '%s plik', n_few: '%s pliki', n_other: '%s plików' } }
+      };
+      function Xhr() { this.status = 0; }
+      Xhr.prototype.open = function (m, url) { this.lang = /locales\/(\w+)\.json/.exec(url)[1]; };
+      Xhr.prototype.send = function () {
+        this.status = files[this.lang] ? 200 : 404;
+        this.responseText = JSON.stringify(files[this.lang] || {});
+      };
+      const vm = require('vm');
+      const box = { window: {}, XMLHttpRequest: Xhr, console: { warn: function () {} }, Intl: Intl };
+      vm.createContext(box);
+      vm.runInContext(src.slice(from, to) + '\nthis.Text = Text;', box);
+      const T = box.Text;
+      eq(T.t('s.two', 1, 2), 'a 1, b 2');
+      eq(T.t('s.placed', 'one', 'two'), 'b two, a one', 'by place');
+      eq(T.tn('s.n', 1), '1 file');
+      eq(T.tn('s.n', 3), '3 files');
+      T.use('pl');
+      eq(T.tn('s.n', 1), '1 plik');
+      eq(T.tn('s.n', 3), '3 pliki', 'the language\'s own form');
+      eq(T.tn('s.n', 5), '5 plików');
+    });
+    // L3: CEF keeps its own copy of a file by address, so the words are
+    // stamped with the build like app.js and app.css.
+    it('Translations: the language files are asked for with the build stamp', function () {
+      const asked = require('./dom.js').localeXhr.urls.filter(function (u) { return u.indexOf('locales/') !== -1; });
+      truthy(asked.length > 0, 'the page read its words');
+      eq(asked.filter(function (u) { return !/\.json\?v=[^&]+$/.test(u); }).join(', '), '', 'every one stamped');
     });
   })();
 
@@ -1867,6 +1915,18 @@ async function main() {
       await settle(); await settle();
     }
 
+    // P1: Agree can move money at once, so it takes two taps like every
+    // write: the first asks, naming the change, and sends nothing.
+    it('asks before it agrees, naming the change, and sends nothing on one tap', function () {
+      falsy(answered, 'one tap sent the answer');
+      truthy(app.view.textContent.indexOf('Agree to this change?') !== -1, app.view.textContent);
+      truthy(app.view.textContent.indexOf('Shorten the deadline by 15 minutes') !== -1, 'names the change');
+    });
+    if (agree) {
+      click(app, 'Yes, agree');
+      await settle(); await settle();
+    }
+
     it('sends the answer the server expects', function () {
       truthy(answered, 'nothing was sent');
       eq(answered.id, 'am00000001');
@@ -1901,6 +1961,7 @@ async function main() {
     tab(app, 'mine');
     await settle();
     click(app, 'Agree');
+    click(app, 'Yes, agree');
     await settle(); await settle(); await settle();
     it('says the proposal ran out, in words about proposals', function () {
       truthy(app.notice().indexOf('ran out') !== -1, 'the notice: ' + app.notice());
@@ -4016,7 +4077,7 @@ async function main() {
     if (tick) { tick.checked = true; tick.onchange(); }
     const takeBack = raced.view.all().concat(raced.document.body.all())
       .filter(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Take back what I ticked'; })[0];
-    if (takeBack) { takeBack.onclick(); }
+    if (takeBack) { takeBack.onclick(); takeBack.onclick(); }
     await settle(); await settle();
     it('says a hitman took it, rather than "Not right now."', function () {
       truthy(tick && takeBack, 'the editor drew a line and the button');
@@ -4089,7 +4150,14 @@ async function main() {
         'the total counted a line that was not ticked: ' + app.view.textContent);
     });
 
-    click(app, 'Take back what I ticked');
+    const takeTicked = click(app, 'Take back what I ticked');
+    await settle();
+    // P1: a write, so two taps; the first names what comes back.
+    it('arms on the first tap, naming what comes back, and sends nothing', function () {
+      eq(app.sent.filter(function (s) { return s.name === 'withdrawReward'; }).length, 0, 'one tap sent it');
+      eq(takeTicked.textContent, 'Tap again to take back $2,500 and 2 items');
+    });
+    takeTicked.onclick();
     await settle(); await settle();
 
     it('sends exactly the lines that were ticked', function () {
@@ -4176,8 +4244,9 @@ async function main() {
       return n.tagName === 'INPUT' && n.type === 'checkbox';
     });
     tb[1].checked = true; tb[1].onchange();
-    click(twice, 'Take back what I ticked');
-    click(twice, 'Take back what I ticked');
+    const twiceButton = click(twice, 'Take back what I ticked');
+    twiceButton.onclick();
+    twiceButton.onclick();
     await settle();
 
     it('sends one withdrawal however many times the button is pressed', function () {
@@ -4213,7 +4282,7 @@ async function main() {
       return n.tagName === 'INPUT' && n.type === 'checkbox';
     });
     qb[1].checked = true; qb[1].onchange();
-    click(queued, 'Take back what I ticked');
+    click(queued, 'Take back what I ticked').onclick();
     await settle(); await settle();
 
     it('says when part of it is waiting rather than back', function () {
@@ -8615,6 +8684,7 @@ async function main() {
       })[0];
       truthy(send, 'the button that sends it');
       send.onclick();
+      send.onclick();   // the second tap sends it (P1)
       await settle(); await settle();
 
       it('says what the rule actually is, and where the whole-reward button is', function () {
@@ -9468,6 +9538,7 @@ async function main() {
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
       click(app, 'Agree');
+      click(app, 'Yes, agree');
       await settle(); await settle();
       it('says it was agreed and no longer applies, and why, not that it ran out', function () {
         const said = app.notice();
@@ -9620,6 +9691,11 @@ async function main() {
           app.view.textContent);
       });
       click(app, 'Apply it');
+      await settle();
+      it('asks before it applies (P1)', function () {
+        falsy(answered, 'one tap applied it');
+      });
+      click(app, 'Yes, apply it');
       await settle(); await settle();
       it('offers the answer that applies it', function () {
         truthy(answered, 'nothing was sent');
@@ -15196,6 +15272,10 @@ async function main() {
       { orgMembers: { ok: true, data: { rows: [{ ref: 'm1_1111', name: 'Kestrel', grade: 0, role: 'Recruit',
         online: true, strikes: 2 }] } }, orgStrike: function () {
         return { ok: true, data: { id: 'dc9', strikes: 3, consequence: 'suspended 48 h' } };
+      }, orgDisciplineRecord: function () {
+        return { ok: true, data: { strikes: 2, rows: [
+          { kind: 'strike', reason: '<b>Missed the meet</b>', active: true, at: 0 },
+          { kind: 'warning', reason: 'Talked to the police', overturned: true, at: 0 }] } };
       } });
     await screen(disciplining, 'Members');
     const chips = disciplining.view.textContent;
@@ -15220,6 +15300,25 @@ async function main() {
       eq(sent.length, 1);
       eq(JSON.stringify(sent[0].body), '{"member":"m1_1111","kind":"strike","reason":"Late to the meet"}');
       drewCleanly(disciplining);
+    });
+    // U1: the record behind the strike chip, which the server lets M11 or
+    // M5 read for another member, opened from their row.
+    click(disciplining, 'Discipline record');
+    await settle(); await settle(); await settle();
+    const recordShown = disciplining.view.textContent;
+    it('ORG EXTRAS 2: a boss holding Issue strikes reads a member\'s record from their row (U1)', function () {
+      const asked = disciplining.orgSent.filter(function (x) { return x.name === 'orgDisciplineRecord'; });
+      eq(asked.length, 1, 'asked once');
+      eq(JSON.stringify(asked[0].body), '{"member":"m1_1111"}');
+      truthy(recordShown.indexOf('<b>Missed the meet</b>') !== -1, 'the reasons, as text: ' + recordShown);
+      truthy(recordShown.indexOf('Talked to the police') !== -1 && recordShown.indexOf('overturned') !== -1);
+      eq(disciplining.view.all().filter(function (n) { return n.tagName === 'B'; }).length, 0);
+      drewCleanly(disciplining);
+    });
+    click(disciplining, 'Hide the record');
+    await settle();
+    it('ORG EXTRAS 2: and hides it again', function () {
+      eq(disciplining.view.textContent.indexOf('Missed the meet'), -1);
     });
     const ARMORY = { ok: true, data: { items: [{ slot: 3, name: 'lockpick', label: 'Lockpick', count: 4 }],
       own: [{ slot: 7, name: 'bandage', label: '<u>Bandage</u>', count: 2 }], limits: { '0': 1 }, left: 1,

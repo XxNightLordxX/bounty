@@ -128,8 +128,11 @@ function Proof.handover(actor, rawId)
         return false, CH.ERR.KILL_NOT_ALLOWED
     end
     if Holds.on(contract, nil, 'staff') then return false, CH.ERR.CONTRACT_FROZEN end
-    -- On hold for the restart, or the whole app paused: the claim below
-    -- would be refused anyway, so the item is never taken to be given back.
+    -- On hold for the restart: the claim below would be refused anyway, so
+    -- the item is never taken to be given back. The app pause does not stop
+    -- a claim (Contracts.payoutRefusal; README: "a confirm still pays"), so
+    -- refusing a proof item under it is this route's own documented rule
+    -- (README, Proof items), not the claim's.
     if Holds.on(nil, nil, 'restart') then return false, CH.ERR.RESTART_HOLD end
     if Holds.on(nil, nil, 'app') then return false, CH.ERR.APP_PAUSED end
     if Contracts.slotCoolingDown(hitman) then return false, CH.ERR.SLOT_COOLDOWN end

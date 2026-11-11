@@ -70,16 +70,29 @@ local function announceAppearanceChange()
     TriggerServerEvent('crimson-hitman:appearanceChanged')
 end
 
+--- The same, for one clothing adapter's event: only while
+--- Config.Integrations.Clothing lets that adapter answer, read when the
+--- event comes, since staff change the choice live (the settings push).
+local function fromAdapter(name)
+    return function()
+        for _, adapter in ipairs(CrimsonIntegrations.candidates('clothing')) do
+            if adapter.name == name then return announceAppearanceChange() end
+        end
+    end
+end
+
 --- The clothing resources raise theirs from the server too (illenium's
 --- /reloadskin is a TriggerClientEvent), and a copy from the server reaches
 --- only a handler registered as a net event: with AddEventHandler alone it
 --- was dropped as not safe for net. Only the server sends a client its net
 --- events, so registering them opens nothing. Our own stays local.
---- Which events: those of the clothing adapters Config.Integrations.Clothing
---- lets answer (client/adapters/clothing/), read as this file loads.
-for _, adapter in ipairs(CrimsonIntegrations.candidates('clothing')) do
+--- Which events: every clothing adapter's (client/adapters/clothing/),
+--- each answered only while Config.Integrations.Clothing lets that
+--- adapter answer (fromAdapter).
+for _, name in ipairs(CrimsonIntegrations.names('clothing')) do
+    local adapter = CrimsonIntegrations.adapter('clothing', name)
     for _, event in ipairs(adapter.events or {}) do
-        RegisterNetEvent(event, announceAppearanceChange)
+        RegisterNetEvent(event, fromAdapter(name))
     end
 end
 AddEventHandler('crimson-hitman:appearanceChanged', announceAppearanceChange)

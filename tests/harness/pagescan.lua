@@ -68,10 +68,16 @@ function PageScan.literals(src)
                 local frame = stack[#stack]
                 local skipCall = false
                 for k = 1, #stack do if stack[k].skip then skipCall = true end end
+                -- t()/tn(): the key is not words; the values after it may be.
+                for k = 1, #stack do
+                    if stack[k].key and stack[k].args == 0 then
+                        skipCall = true
+                    end
+                end
                 local after = src:match('^%s*([^%s])', j + 1) or ''
                 local after2 = src:match('^%s*([=!]=)', j + 1)
                 out[#out + 1] = { text = src:sub(i + 1, j - 1), line = line,
-                    callee = frame and frame.callee, inCall = skipCall,
+                    callee = frame and frame.callee, arg = frame and frame.args or 0, inCall = skipCall,
                     before = last, after = after2 or after }
             end
             i = j + 1
@@ -86,9 +92,10 @@ function PageScan.literals(src)
         elseif c == '(' then
             local callee = (last ~= 'string' and last ~= ')' and lastName and isName(last:sub(1, 1))) and lastName or nil
             -- warn is the Text block's own console line.
-            local skip = callee ~= nil and (callee:match('^console%.') ~= nil or callee == 't'
+            local skip = callee ~= nil and (callee:match('^console%.') ~= nil
                 or callee == 'warn' or callee:match('^Text%.') ~= nil)
-            stack[#stack + 1] = { callee = callee, skip = skip }
+            local key = callee == 't' or callee == 'tn'
+            stack[#stack + 1] = { callee = callee, skip = skip, key = key, args = 0 }
             last, lastName = '(', nil
             i = i + 1
         elseif c == ')' then
@@ -96,6 +103,7 @@ function PageScan.literals(src)
             last, lastName = ')', nil
             i = i + 1
         else
+            if c == ',' and stack[#stack] then stack[#stack].args = stack[#stack].args + 1 end
             local op = src:match('^[=!]==?', i) or src:match('^[&|]+', i) or c
             if c ~= '.' then lastName = (c == '.' and lastName) or nil end
             last = (op:sub(1, 1) == '=' or op:sub(1, 1) == '!') and op or c
@@ -150,13 +158,52 @@ function PageScan.hardCoded(src, classes, allow)
     return found
 end
 
+--- English joined to other text with `+` (L1): ' of ', ' minute', ' ago',
+--- 'Stake: '. Each is a piece of a sentence a translator cannot reorder,
+--- and one word is enough, which hardCoded (two words or a title) lets by.
+--- A literal next to a `+` counts when it holds a word of two letters or
+--- more and is not a class list, a key prefix ('admin.') or a lone symbol.
+--- Plurals built in place ("? '' : 's'", "n === 1 ? ' item' : ' items'")
+--- count too.
+---@param src string
+---@param classes table<string, boolean>
+---@param allow table|nil
+---@return table[]
+function PageScan.joined(src, classes, allow)
+    local found = {}
+    for _, lit in ipairs(PageScan.literals(src)) do
+        local text = lit.text
+        local joined = lit.before == '+' or lit.after == '+'
+        if joined and not lit.inCall and text:find('%a%a') and text:find('%s')
+            and not classy(text, classes) and not (allow and allow[text]) then
+            found[#found + 1] = lit
+        end
+    end
+    local line = 1
+    for text in (src .. '\n'):gmatch('([^\n]*)\n') do
+        if text:find("%?%s*''%s*:%s*'s'") or text:find("%?%s*'s'%s*:%s*''")
+            or text:find("===?%s*1%s*%?%s*'[^']*%a%a[^']*'%s*:%s*'") then
+            found[#found + 1] = { text = "'' : 's'", line = line }
+        end
+        line = line + 1
+    end
+    return found
+end
+
 --- Every t('section.key') a page asks for: key -> line.
 ---@param src string
 ---@return table<string, integer>
 function PageScan.keysUsed(src)
     local used = {}
     for _, lit in ipairs(PageScan.literals(src)) do
-        if lit.callee == 't' or lit.callee == 'Text.t' then used[lit.text] = used[lit.text] or lit.line end
+        if (lit.callee == 't' or lit.callee == 'Text.t') and lit.arg == 0 then
+            used[lit.text] = used[lit.text] or lit.line
+        elseif lit.callee == 'tn' and lit.arg == 0 then
+            -- A count's words: the two forms English has.
+            for _, form in ipairs({ '_one', '_other' }) do
+                used[lit.text .. form] = used[lit.text .. form] or lit.line
+            end
+        end
     end
     return used
 end
